@@ -43,24 +43,22 @@ bellpepper-core = { git = "https://github.com/lurk-lab/bellpepper", branch = "ma
 ff = { version = "0.13", optional = true }
 
 # Mina/Kimchi - Plonk variant over Pasta curves with IPA commitments
-kimchi = { path = "/Users/ember/dev/proof-systems/kimchi", optional = true, default-features = false, features = ["prover"] }
-poly-commitment = { path = "/Users/ember/dev/proof-systems/poly-commitment", optional = true }
-mina-curves = { path = "/Users/ember/dev/proof-systems/curves", optional = true, default-features = false, features = ["asm"] }
-mina-poseidon = { path = "/Users/ember/dev/proof-systems/poseidon", optional = true }
-groupmap = { path = "/Users/ember/dev/proof-systems/groupmap", optional = true }
+kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", optional = true, default-features = false, features = ["prover"] }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", optional = true }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", optional = true, default-features = false, features = ["asm"] }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", optional = true }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", optional = true }
 ark-ff = { version = "0.5", optional = true, default-features = false, features = ["asm"] }
 
 # Binius - binary field tower proof system (Irreducible/Ulvetanna)
-# Requires nightly Rust (binius uses #![feature(array_try_map, array_try_from_fn)])
-# Local path: /Users/ember/src/binius/ (nightly-2025-02-20)
-binius_core = { path = "/Users/ember/src/binius/crates/core", optional = true }
-binius_field = { path = "/Users/ember/src/binius/crates/field", optional = true }
-binius_hash = { path = "/Users/ember/src/binius/crates/hash", optional = true }
-binius_hal = { path = "/Users/ember/src/binius/crates/hal", optional = true }
-binius_math = { path = "/Users/ember/src/binius/crates/math", optional = true }
-binius_circuits = { path = "/Users/ember/src/binius/crates/circuits", optional = true }
-binius_macros = { path = "/Users/ember/src/binius/crates/macros", optional = true }
-binius_utils = { path = "/Users/ember/src/binius/crates/utils", optional = true, default-features = false }
+binius_core = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_field = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_hash = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_hal = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_math = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_circuits = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_macros = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true }
+binius_utils = { git = "https://github.com/IrreducibleOSS/binius", rev = "46eef325", optional = true, default-features = false }
 bumpalo = { version = "3.16", optional = true }
 groestl_crypto = { package = "groestl", version = "0.10", optional = true }
 

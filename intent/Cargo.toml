@@ -1,0 +1,22 @@
+[package]
+name = "pyana-intent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Distributed intent engine for privacy-preserving capability discovery and matching"
+
+[dependencies]
+blake3 = "1"
+getrandom = { workspace = true }
+pyana-cell = { path = "../cell" }
+pyana-trace = { path = "../trace" }
+token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+globset = { workspace = true }
+
+[dev-dependencies]

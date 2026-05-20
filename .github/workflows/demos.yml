@@ -1,0 +1,146 @@
+name: Run demos and publish results
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  run-demos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-01-01
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build demo crates
+        run: cargo build --release -p pyana-demo -p pyana-demo-agent
+
+      - name: Run main demo binary
+        id: main_demo
+        run: |
+          START=$(date +%s%3N)
+          set +e
+          cargo run --release -p pyana-demo 2>&1 | tee /tmp/demo_main.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          END=$(date +%s%3N)
+          DURATION=$((END - START))
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
+
+      - name: Run all demo-agent examples
+        run: |
+          EXAMPLES=(
+            multi_org_delegation
+            sub_agent_spawn
+            private_orderbook
+            payment_channel
+            rbac_datalog
+            token_revocation
+            federation_bootstrap
+            offline_verification
+            progressive_disclosure
+            note_privacy
+            ivc_attenuation_chain
+            programmable_cell
+            wallet_lifecycle
+            web_auth_flow
+            multi_silo_budget
+            causal_ordering
+            nft_demo
+            escrow_demo
+            auction_demo
+            atomic_swap_demo
+          )
+
+          mkdir -p /tmp/demo_results
+
+          for example in "${EXAMPLES[@]}"; do
+            echo "::group::Running $example"
+            START=$(date +%s%3N)
+            set +e
+            cargo run --release -p pyana-demo-agent --example "$example" 2>&1 | tee "/tmp/demo_${example}.txt"
+            EXIT_CODE=${PIPESTATUS[0]}
+            set -e
+            END=$(date +%s%3N)
+            DURATION=$((END - START))
+
+            # Write individual result JSON
+            OUTPUT=$(cat "/tmp/demo_${example}.txt" | jq -Rs .)
+            cat > "/tmp/demo_results/${example}.json" <<ENDJSON
+          {
+            "name": "${example}",
+            "output": ${OUTPUT},
+            "exit_code": ${EXIT_CODE},
+            "duration_ms": ${DURATION}
+          }
+          ENDJSON
+            echo "::endgroup::"
+
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "::warning::Example $example exited with code $EXIT_CODE"
+            fi
+          done
+
+          # Also add main demo result
+          MAIN_OUTPUT=$(cat /tmp/demo_main.txt | jq -Rs .)
+          cat > "/tmp/demo_results/_main.json" <<ENDJSON
+          {
+            "name": "pyana-demo (main binary)",
+            "output": ${MAIN_OUTPUT},
+            "exit_code": ${{ steps.main_demo.outputs.exit_code }},
+            "duration_ms": ${{ steps.main_demo.outputs.duration }}
+          }
+          ENDJSON
+
+      - name: Assemble results.json
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Combine all individual results into one array
+          RESULTS=$(jq -s '.' /tmp/demo_results/*.json)
+
+          # Build final document
+          jq -n \
+            --arg sha "$COMMIT_SHA" \
+            --arg ts "$TIMESTAMP" \
+            --argjson results "$RESULTS" \
+            '{
+              "commit": $sha,
+              "timestamp": $ts,
+              "results": $results
+            }' > site/demos/results.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: run-demos
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

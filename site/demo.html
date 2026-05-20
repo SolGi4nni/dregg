@@ -56,6 +56,20 @@
   </section>
 
   <section>
+    <h2>Live demo results</h2>
+    <p>Every push to <code>main</code> runs the full demo suite in CI — real STARK proofs, real Datalog evaluation traces, real timing data. No simulations. This is the actual system executing 20+ authorization scenarios end-to-end.</p>
+    <p style="margin-top: var(--s4);"><a href="demos/" style="color: var(--accent); font-weight: bold; font-size: 1.1em;">View Live Demo Results &rarr;</a></p>
+    <ul style="list-style: none; padding: 0; margin-top: var(--s3); text-align: left; display: inline-block;">
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Multi-org delegation with cross-domain STARK proofs</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; IVC attenuation chains (incremental verifiable computation)</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Federation bootstrap with BFT consensus</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Privacy-preserving orderbook, escrow, atomic swaps</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; RBAC Datalog policies, token revocation, budget enforcement</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Full timing data — proof generation and verification latencies</li>
+    </ul>
+  </section>
+
+  <section>
     <h2>CLI demo</h2>
     <p>The <code>demo</code> and <code>demo-agent</code> crates provide a command-line demonstration of the full authorization flow:</p>
     <pre><code># Clone and build

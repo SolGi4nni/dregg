@@ -51,6 +51,8 @@ name = "causal_ordering"
 [[example]]
 name = "federation_bootstrap"
 
+[[example]]
+name = "offline_verification"
 
 [[example]]
 name = "wallet_lifecycle"

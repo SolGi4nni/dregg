@@ -1,0 +1,123 @@
+name: "Intent Pool Service"
+
+on:
+  schedule:
+    # Every 5 hours, offset by 50 min from Node 1
+    - cron: '50 2,7,12,17,22 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: intent-service
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  STATE_DIR: /tmp/pyana-intent-state
+
+jobs:
+  run-intent-service:
+    name: "Intent Pool Service"
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download previous intent pool state
+        uses: actions/download-artifact@v4
+        with:
+          name: intent-service-state
+          path: ${{ env.STATE_DIR }}
+        continue-on-error: true
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "relay -> relay/target"
+
+      - name: Build pyana-relay
+        working-directory: relay
+        run: cargo build --release
+
+      - name: Prepare state directory
+        run: mkdir -p "$STATE_DIR"
+
+      - name: Download discovery file
+        uses: actions/download-artifact@v4
+        with:
+          name: federation-discovery
+          path: /tmp/discovery
+        continue-on-error: true
+
+      - name: Resolve federation peers
+        id: peers
+        run: |
+          PEERS=""
+          if [ -f /tmp/discovery/discovery.json ]; then
+            PEERS=$(jq -r '.federation[].node_id' /tmp/discovery/discovery.json 2>/dev/null | paste -sd, -)
+          fi
+          echo "peer_list=$PEERS" >> "$GITHUB_OUTPUT"
+          echo "Resolved federation peers: $PEERS"
+
+      - name: Run intent pool service
+        env:
+          PYANA_ROOT_KEY: ${{ secrets.PYANA_ROOT_KEY }}
+          PYANA_NODE_KEY: ${{ secrets.PYANA_NODE_1_KEY }}
+          RUST_LOG: info
+        run: |
+          # Start the relay in intent-service mode
+          ./relay/target/release/pyana-relay \
+            --state-dir "$STATE_DIR" \
+            --discovery-file "$STATE_DIR/discovery.json" \
+            --peers "${{ steps.peers.outputs.peer_list }}" \
+            --node-role intent-service \
+            --intent-pool &
+          NODE_PID=$!
+
+          echo "Intent service started with PID $NODE_PID"
+
+          # Periodic state snapshots every 5 minutes
+          ELAPSED=0
+          INTERVAL=300
+          MAX_RUNTIME=20700  # 5h45m in seconds
+
+          while [ $ELAPSED -lt $MAX_RUNTIME ]; do
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+
+            if ! kill -0 $NODE_PID 2>/dev/null; then
+              echo "Intent service exited unexpectedly at ${ELAPSED}s"
+              break
+            fi
+
+            kill -USR1 $NODE_PID 2>/dev/null || true
+            echo "Snapshot triggered at ${ELAPSED}s ($(date -u +%H:%M:%S))"
+          done
+
+          # Graceful shutdown
+          echo "Sending SIGTERM for graceful shutdown..."
+          kill -TERM $NODE_PID 2>/dev/null || true
+          wait $NODE_PID 2>/dev/null || true
+          echo "Intent service shutdown complete"
+
+      - name: Upload intent pool state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-service-state
+          path: ${{ env.STATE_DIR }}/
+          retention-days: 7
+          overwrite: true
+
+      - name: Notify discovery service
+        if: always()
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          event-type: node-state-updated
+          client-payload: '{"node": "intent", "role": "intent-service"}'
+        continue-on-error: true

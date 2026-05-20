@@ -1,0 +1,143 @@
+name: "Federation Discovery"
+
+on:
+  schedule:
+    # Every 30 minutes — maintain fresh discovery info
+    - cron: '*/30 * * * *'
+  repository_dispatch:
+    types: [node-state-updated]
+  workflow_dispatch:
+
+concurrency:
+  group: discovery-update
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  update-discovery:
+    name: "Update Discovery File"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download Node 1 state
+        uses: actions/download-artifact@v4
+        with:
+          name: federation-node-1-state
+          path: /tmp/node-1-state
+        continue-on-error: true
+
+      - name: Download Node 2 state
+        uses: actions/download-artifact@v4
+        with:
+          name: federation-node-2-state
+          path: /tmp/node-2-state
+        continue-on-error: true
+
+      - name: Download Node 3 state
+        uses: actions/download-artifact@v4
+        with:
+          name: federation-node-3-state
+          path: /tmp/node-3-state
+        continue-on-error: true
+
+      - name: Download Intent Service state
+        uses: actions/download-artifact@v4
+        with:
+          name: intent-service-state
+          path: /tmp/intent-state
+        continue-on-error: true
+
+      - name: Assemble discovery.json
+        run: |
+          #!/bin/bash
+          set -euo pipefail
+
+          DISCOVERY='{"federation":[],"intent_service":null,"updated_at":"","commit":""}'
+
+          # Helper: read node discovery info from state dir
+          read_node_info() {
+            local state_dir="$1"
+            local role="$2"
+
+            if [ -f "$state_dir/discovery.json" ]; then
+              local node_id ticket last_seen
+              node_id=$(jq -r '.node_id // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
+              ticket=$(jq -r '.ticket // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
+              last_seen=$(jq -r '.last_seen // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
+
+              if [ -n "$node_id" ]; then
+                echo "{\"node_id\":\"$node_id\",\"ticket\":\"$ticket\",\"last_seen\":\"$last_seen\",\"role\":\"$role\"}"
+                return 0
+              fi
+            fi
+            return 1
+          }
+
+          NODES="[]"
+
+          # Read each node's state
+          for i in 1 2 3; do
+            if info=$(read_node_info "/tmp/node-$i-state" "node-$i"); then
+              NODES=$(echo "$NODES" | jq ". + [$info]")
+            fi
+          done
+
+          # Read intent service
+          INTENT_SERVICE="null"
+          if info=$(read_node_info "/tmp/intent-state" "intent-service"); then
+            INTENT_SERVICE="$info"
+          fi
+
+          # Build final discovery file
+          UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          COMMIT="${GITHUB_SHA:-unknown}"
+
+          jq -n \
+            --argjson federation "$NODES" \
+            --argjson intent_service "$INTENT_SERVICE" \
+            --arg updated_at "$UPDATED_AT" \
+            --arg commit "$COMMIT" \
+            '{
+              federation: $federation,
+              intent_service: $intent_service,
+              updated_at: $updated_at,
+              commit: $commit
+            }' > site/discovery.json
+
+          echo "Generated discovery.json:"
+          cat site/discovery.json
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet site/discovery.json 2>/dev/null; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push discovery.json
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "pyana-federation[bot]"
+          git config user.email "federation@pyana.dev"
+          git add site/discovery.json
+          git commit -m "chore(federation): update discovery.json [skip ci]"
+          git push
+        continue-on-error: true
+
+      - name: Upload discovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-discovery
+          path: site/discovery.json
+          retention-days: 7
+          overwrite: true

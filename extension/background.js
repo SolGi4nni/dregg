@@ -3,6 +3,8 @@
 
 const STORAGE_KEY = 'pyana_wallet';
 const NODE_WS_URL = 'ws://localhost:8420/ws';
+const DISCOVERY_URL = 'https://emberian.github.io/pyana/discovery.json';
+const DISCOVERY_POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 // ---------------------------------------------------------------------------
 // WASM module loading
@@ -336,6 +338,11 @@ async function handleMessage(message, sender) {
     case 'pyana:provisionDecision':
       // Handled by the per-popup listener in provisionToken; just ack here.
       return { id: message.id, result: true };
+    case 'pyana:getFederation':
+      return { id: message.id, result: federationState };
+    case 'pyana:refreshDiscovery':
+      await fetchDiscovery();
+      return { id: message.id, result: federationState };
     default:
       return { id: message.id, error: 'Unknown message type' };
   }
@@ -453,8 +460,77 @@ function scheduleReconnect() {
 }
 
 // ---------------------------------------------------------------------------
+// Federation Discovery
+// ---------------------------------------------------------------------------
+
+let federationState = {
+  nodes: [],
+  intentService: null,
+  lastUpdated: null,
+  fetchError: null,
+};
+
+async function fetchDiscovery() {
+  try {
+    const response = await fetch(DISCOVERY_URL, {
+      cache: 'no-cache',
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const data = await response.json();
+
+    federationState = {
+      nodes: (data.federation || []).map(node => ({
+        nodeId: node.node_id,
+        ticket: node.ticket,
+        lastSeen: node.last_seen,
+        role: node.role,
+      })),
+      intentService: data.intent_service ? {
+        nodeId: data.intent_service.node_id,
+        ticket: data.intent_service.ticket,
+        lastSeen: data.intent_service.last_seen,
+      } : null,
+      lastUpdated: data.updated_at,
+      commit: data.commit,
+      fetchError: null,
+    };
+
+    console.log('[pyana] Federation discovery updated:', federationState.nodes.length, 'nodes');
+    notifySubscribers('federation', {
+      nodes: federationState.nodes,
+      intentService: federationState.intentService,
+      lastUpdated: federationState.lastUpdated,
+    });
+  } catch (e) {
+    console.warn('[pyana] Federation discovery fetch failed:', e.message);
+    federationState.fetchError = e.message;
+  }
+}
+
+// Poll discovery on interval.
+let discoveryInterval = null;
+
+function startDiscoveryPolling() {
+  // Fetch immediately on startup.
+  fetchDiscovery();
+  // Then poll periodically.
+  discoveryInterval = setInterval(fetchDiscovery, DISCOVERY_POLL_INTERVAL);
+}
+
+function stopDiscoveryPolling() {
+  if (discoveryInterval) {
+    clearInterval(discoveryInterval);
+    discoveryInterval = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
 
 loadState();
 connectNodeWs();
+startDiscoveryPolling();
