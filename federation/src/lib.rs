@@ -67,7 +67,7 @@ pub mod transport;
 pub mod types;
 
 // Re-export primary types.
-pub use consensus::{ConsensusConfig, ConsensusOrchestrator, ConsensusState};
+pub use consensus::{ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, ReconfigurationProposal, ReconfigurationVotes};
 pub use node::{Federation, FederationNode};
 pub use revocation::{RevocationTree, RevocationVerifier, RevocationVerification};
 pub use threshold::{FederationCommittee, MemberSecret, ThresholdQC, ThresholdError, generate_test_committee};

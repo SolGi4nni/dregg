@@ -863,4 +863,323 @@ mod tests {
         assert_eq!(b2.height, 2);
         assert_eq!(b2.prev_hash, b1.block_hash);
     }
+
+    // =========================================================================
+    // Epoch-based reconfiguration tests
+    // =========================================================================
+
+    /// Helper to set up a federation with explicit member keys.
+    fn setup_members(n: usize) -> (ConsensusConfig, Vec<ConsensusState>, Vec<(SigningKey, PublicKey)>) {
+        let keypairs: Vec<(SigningKey, PublicKey)> = (0..n).map(|_| generate_keypair()).collect();
+        let members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        let config = ConsensusConfig::genesis(members);
+        let states: Vec<ConsensusState> = keypairs
+            .iter()
+            .enumerate()
+            .map(|(i, (sk, _))| ConsensusState::new(i, sk.clone(), config.clone()))
+            .collect();
+        (config, states, keypairs)
+    }
+
+    #[test]
+    fn test_genesis_config() {
+        let (_, _, keypairs) = setup_members(3);
+        let members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        let config = ConsensusConfig::genesis(members.clone());
+
+        assert_eq!(config.num_nodes, 3);
+        assert_eq!(config.epoch, 0);
+        assert_eq!(config.members.len(), 3);
+        // For n=3: f = (3-1)/3 = 0, threshold = 3-0 = 3 (all must agree).
+        assert_eq!(config.max_faults, 0);
+        assert_eq!(config.threshold, 3);
+        assert_eq!(config.members, members);
+    }
+
+    #[test]
+    fn test_propose_reconfiguration() {
+        let (config, _states, keypairs) = setup_members(3);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Node 0 proposes adding a 4th member.
+        let (new_sk, new_pk) = generate_keypair();
+        let _ = new_sk;
+        let mut new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        new_members.push(new_pk);
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members: new_members.clone(),
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+
+        let result = orchestrator.propose_reconfiguration(proposal);
+        assert!(result.is_ok());
+        assert!(orchestrator.pending_reconfiguration().is_some());
+    }
+
+    #[test]
+    fn test_reconfig_requires_threshold_votes() {
+        let (config, _states, keypairs) = setup_members(4);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Threshold for 4 nodes is 3.
+        let (_, new_pk) = generate_keypair();
+        let mut new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        new_members.push(new_pk);
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members,
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+
+        orchestrator.propose_reconfiguration(proposal).unwrap();
+
+        // Only proposer has voted (1 vote). Need 3.
+        assert!(!orchestrator.reconfig_has_quorum());
+
+        // Second vote.
+        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        assert!(!orchestrator.reconfig_has_quorum());
+
+        // Third vote — quorum reached.
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        assert!(orchestrator.reconfig_has_quorum());
+    }
+
+    #[test]
+    fn test_reconfig_applied_at_epoch_boundary() {
+        let (config, mut states, keypairs) = setup_members(4);
+        let mut orchestrator = ConsensusOrchestrator::new(config.clone());
+
+        // Propose adding a 5th member.
+        let (new_sk, new_pk) = generate_keypair();
+        let _ = new_sk;
+        let mut new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        new_members.push(new_pk.clone());
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members: new_members.clone(),
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+        orchestrator.propose_reconfiguration(proposal).unwrap();
+
+        // Collect enough votes.
+        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        assert!(orchestrator.reconfig_has_quorum());
+
+        // Now run a consensus round — reconfig should be applied after block finalization.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "token-reconfig".to_string(),
+            authority_id: 0,
+            signature: Signature([99u8; 64]),
+        });
+
+        let result = orchestrator.run_round(&mut states);
+        assert!(result.is_some());
+
+        // After the round, the config should have advanced to epoch 1.
+        assert_eq!(orchestrator.config.epoch, 1);
+        assert_eq!(orchestrator.config.num_nodes, 5);
+        assert_eq!(orchestrator.config.members.len(), 5);
+        assert!(orchestrator.config.members.contains(&new_pk));
+
+        // Node states should also reflect the new epoch.
+        for state in &states {
+            assert_eq!(state.epoch, 1);
+            assert_eq!(state.config.epoch, 1);
+            assert_eq!(state.config.num_nodes, 5);
+        }
+    }
+
+    #[test]
+    fn test_add_member() {
+        // 3 nodes → 4 nodes across an epoch.
+        let (config, mut states, keypairs) = setup_members(3);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Produce a block in epoch 0.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "pre-reconfig".to_string(),
+            authority_id: 0,
+            signature: Signature([10u8; 64]),
+        });
+        let r0 = orchestrator.run_round(&mut states);
+        assert!(r0.is_some());
+        assert_eq!(orchestrator.config.epoch, 0);
+
+        // Now propose adding a 4th member.
+        let (delta_sk, delta_pk) = generate_keypair();
+        let _ = delta_sk;
+        let mut new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        new_members.push(delta_pk.clone());
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members: new_members.clone(),
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+        orchestrator.propose_reconfiguration(proposal).unwrap();
+
+        // For n=3, threshold=3 (all must agree). Proposer already voted.
+        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+
+        // Run another round to trigger epoch transition.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "trigger-reconfig".to_string(),
+            authority_id: 0,
+            signature: Signature([11u8; 64]),
+        });
+        let r1 = orchestrator.run_round(&mut states);
+        assert!(r1.is_some());
+
+        // Should now be epoch 1 with 4 nodes.
+        assert_eq!(orchestrator.config.epoch, 1);
+        assert_eq!(orchestrator.config.num_nodes, 4);
+        assert_eq!(orchestrator.config.threshold, 3); // f=(4-1)/3=1, threshold=4-1=3
+        assert!(orchestrator.config.members.contains(&delta_pk));
+    }
+
+    #[test]
+    fn test_remove_member() {
+        // 4 nodes → 3 nodes across an epoch.
+        let (config, mut states, keypairs) = setup_members(4);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Propose removing the last member (node 3).
+        let new_members: Vec<PublicKey> = keypairs[..3].iter().map(|(_, pk)| pk.clone()).collect();
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members: new_members.clone(),
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+        orchestrator.propose_reconfiguration(proposal).unwrap();
+
+        // Threshold for 4 nodes is 3. Proposer = 1 vote.
+        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        assert!(orchestrator.reconfig_has_quorum());
+
+        // Run a round to trigger the transition.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "shrink".to_string(),
+            authority_id: 0,
+            signature: Signature([20u8; 64]),
+        });
+        let result = orchestrator.run_round(&mut states);
+        assert!(result.is_some());
+
+        // Should now be epoch 1 with 3 nodes.
+        assert_eq!(orchestrator.config.epoch, 1);
+        assert_eq!(orchestrator.config.num_nodes, 3);
+        assert!(!orchestrator.config.members.contains(&keypairs[3].1));
+    }
+
+    #[test]
+    fn test_reconfig_wrong_epoch_rejected() {
+        let (config, _states, keypairs) = setup_members(3);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        let new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        let msg = ReconfigurationProposal::signing_message(1, &new_members); // epoch 1, but we're at 0
+        let sig = sign(&keypairs[0].0, &msg);
+
+        let proposal = ReconfigurationProposal {
+            epoch: 1, // wrong epoch
+            new_members,
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+
+        let result = orchestrator.propose_reconfiguration(proposal);
+        assert_eq!(result, Err(ConsensusError::EpochMismatch { expected: 0, got: 1 }));
+    }
+
+    #[test]
+    fn test_consensus_continues_after_reconfig() {
+        let (config, mut states, keypairs) = setup_members(3);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Propose adding a 4th member.
+        let (delta_sk, delta_pk) = generate_keypair();
+        let mut new_members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
+        new_members.push(delta_pk.clone());
+
+        let msg = ReconfigurationProposal::signing_message(0, &new_members);
+        let sig = sign(&keypairs[0].0, &msg);
+        let proposal = ReconfigurationProposal {
+            epoch: 0,
+            new_members,
+            proposer: keypairs[0].1.clone(),
+            signature: sig,
+        };
+        orchestrator.propose_reconfiguration(proposal).unwrap();
+
+        // All 3 vote (threshold=3 for n=3).
+        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+
+        // Run a round to trigger the epoch boundary.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "epoch-trigger".to_string(),
+            authority_id: 0,
+            signature: Signature([30u8; 64]),
+        });
+        orchestrator.run_round(&mut states).unwrap();
+        assert_eq!(orchestrator.config.epoch, 1);
+        assert_eq!(orchestrator.config.num_nodes, 4);
+
+        // Now add a 4th node state to participate in the new config.
+        let new_state = ConsensusState::new(3, delta_sk, orchestrator.config.clone());
+        // Sync the new node's state to match existing nodes.
+        let mut new_state_synced = new_state;
+        new_state_synced.current_height = states[0].current_height;
+        new_state_synced.current_view = states[0].current_view;
+        new_state_synced.last_finalized_hash = states[0].last_finalized_hash;
+        states.push(new_state_synced);
+
+        // Run another round with the new 4-node configuration.
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "post-reconfig".to_string(),
+            authority_id: 0,
+            signature: Signature([31u8; 64]),
+        });
+        let result = orchestrator.run_round(&mut states);
+        assert!(result.is_some());
+
+        let (block, qc) = result.unwrap();
+        assert!(qc.is_valid());
+        assert_eq!(block.events[0].token_id, "post-reconfig");
+
+        // With 4 nodes, threshold is 3. Should have at least 3 votes.
+        assert!(qc.votes.len() >= 3);
+    }
 }
