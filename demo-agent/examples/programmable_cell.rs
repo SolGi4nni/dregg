@@ -300,10 +300,9 @@ fn main() {
     println!("  Case 3B: Turn with valid STARK proof");
 
     // Construct a proof that passes our mock verifier.
-    // The mock verifier checks that proof[..4] == vk[..4].
-    let vk_hash = *blake3::hash(&vk_data).as_bytes();
+    // The mock verifier checks that proof[..4] == vk.data[..4].
     let mut valid_proof = vec![0u8; 128]; // 128-byte simulated STARK proof
-    valid_proof[..4].copy_from_slice(&vk_hash[..4]); // Match VK prefix
+    valid_proof[..4].copy_from_slice(&vk_data[..4]); // Match VK data prefix
     // Fill rest with "proof data"
     for i in 4..128 {
         valid_proof[i] = (i as u8).wrapping_mul(7);

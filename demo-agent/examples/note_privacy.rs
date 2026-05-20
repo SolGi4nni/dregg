@@ -12,7 +12,7 @@
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_circuit::{
-    BabyBear, NoteSpendingWitness, prove_note_spend, verify_note_spend,
+    BabyBear, prove_note_spend, verify_note_spend,
     note_spending_air::create_test_witness,
     stark,
 };

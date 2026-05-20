@@ -63,6 +63,7 @@ fn short_id(id: &CellId) -> String {
 }
 
 /// Represents a spawned sub-agent with its attenuated token and identity.
+#[allow(dead_code)]
 struct SubAgent {
     name: &'static str,
     service: &'static str,

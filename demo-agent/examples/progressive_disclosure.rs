@@ -9,8 +9,8 @@
 //! 6. For each mode, show exactly what the verifier learns and what remains hidden
 
 use pyana_sdk::{AgentWallet, AuthorizationPresentation, VerificationMode, FactIndex};
+use pyana_sdk::{Attenuation, AuthRequest};
 use pyana_trace::Conclusion;
-use token::{Attenuation, AuthRequest};
 
 fn main() {
     println!("=== Pyana Progressive Disclosure Demo ===\n");
