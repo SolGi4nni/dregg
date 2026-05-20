@@ -113,48 +113,10 @@ fn main() {
     println!("  Each silo checked only its local slice — no locks, no consensus round.");
     println!();
 
-    // ─── Step 3: Byzantine Safety Guarantee ──────────────────────────────────
-    println!("--- Step 3: BYZANTINE SAFETY ---");
-    println!();
-    println!("  Suppose Silo D is Byzantine and tries to spend its ENTIRE ceiling.");
-    println!("  Even at maximum Byzantine behavior:");
+    // ─── Step 3: Slice Exhaustion ────────────────────────────────────────────
+    println!("--- Step 3: SLICE EXHAUSTION ---");
     println!();
 
-    // Byzantine silo spends everything it can
-    let mut byzantine_spent = 0u64;
-    loop {
-        let result = coord.try_debit(silo_d, 100, debit_digest(tx_counter));
-        tx_counter += 1;
-        match result {
-            Ok(()) => byzantine_spent += 100,
-            Err(_) => break,
-        }
-    }
-    // Spend the remainder
-    let remainder = coord.remaining(&silo_d).unwrap();
-    if remainder > 0 {
-        coord.try_debit(silo_d, remainder, debit_digest(tx_counter)).unwrap();
-        tx_counter += 1;
-        byzantine_spent += remainder;
-    }
-
-    println!("  Byzantine Silo D spent its full ceiling: {} computrons", byzantine_spent);
-    println!("  Total spent (all silos including Byzantine): {}", coord.total_spent());
-    println!();
-    println!("  Worst case total if ALL silos were Byzantine:");
-    println!("    4 silos x {} ceiling = {} (over-allocation)", ceiling, 4 * ceiling);
-    println!();
-    println!("  But honest silos will NEVER certify more than the true balance ({}).", total_budget);
-    println!("  The protocol guarantees: even with f={} Byzantine silos,", byzantine_tolerance);
-    println!("  the maximum *confirmed* overspend is bounded by ceiling ({}).", ceiling);
-    println!("  This overspend is detectable and punishable at rebalance time.");
-    println!();
-
-    // ─── Step 4: Slice Exhaustion ────────────────────────────────────────────
-    println!("--- Step 4: SLICE EXHAUSTION ---");
-    println!();
-
-    // Try to spend more from Silo A (which has some remaining from its 666-200=466)
     // Exhaust silo A's budget to demonstrate the error path
     let remaining_a = coord.remaining(&silo_a).unwrap();
     println!("  Silo A remaining: {}", remaining_a);
@@ -172,14 +134,12 @@ fn main() {
     println!("  Silo A's slice is exhausted. It must request rebalancing.");
     println!();
 
-    // ─── Step 5: Rebalancing ─────────────────────────────────────────────────
-    println!("--- Step 5: REBALANCING (Periodic Coordination) ---");
+    // ─── Step 4: Rebalancing ─────────────────────────────────────────────────
+    println!("--- Step 4: REBALANCING (Periodic Coordination) ---");
     println!();
     println!("  Collecting spending certificates from all silos...");
 
-    // Collect certificates from honest silos.
-    // In a real system, the Byzantine silo might submit a valid certificate too,
-    // since it can't exceed its ceiling (enforced locally by the slice).
+    // Collect certificates from all silos (Silo D spent nothing this epoch).
     let cert_a = coord.silo_states[&silo_a].certificate(silo_a);
     let cert_b = coord.silo_states[&silo_b].certificate(silo_b);
     let cert_c = coord.silo_states[&silo_c].certificate(silo_c);
@@ -214,8 +174,8 @@ fn main() {
     println!("    Silo D: ceiling = {}, remaining = {}", new_ceiling, coord.remaining(&silo_d).unwrap());
     println!();
 
-    // ─── Step 6: Post-Rebalance Spending ─────────────────────────────────────
-    println!("--- Step 6: POST-REBALANCE SPENDING ---");
+    // ─── Step 5: Post-Rebalance Spending ─────────────────────────────────────
+    println!("--- Step 5: POST-REBALANCE SPENDING ---");
     println!();
     println!("  Silo A can now spend again from its fresh slice!");
 
@@ -224,8 +184,53 @@ fn main() {
     println!("    Silo A: debit 50 -> remaining {}", coord.remaining(&silo_a).unwrap());
 
     coord.try_debit(silo_b, 30, debit_digest(tx_counter)).unwrap();
-    let _ = tx_counter + 1;
+    tx_counter += 1;
     println!("    Silo B: debit 30 -> remaining {}", coord.remaining(&silo_b).unwrap());
+    println!();
+
+    // ─── Step 6: Byzantine Safety Guarantee ──────────────────────────────────
+    println!("--- Step 6: BYZANTINE SAFETY ---");
+    println!();
+    println!("  Demonstrating with a separate budget coordinator that a Byzantine");
+    println!("  silo's damage is bounded by its ceiling...");
+    println!();
+
+    // Use a separate coordinator to demonstrate Byzantine behavior in isolation.
+    let mut byz_coord = BudgetCoordinator::new(agent, total_budget, silos.clone(), byzantine_tolerance)
+        .unwrap();
+    let byz_ceiling = byz_coord.compute_slice_ceiling();
+
+    // Byzantine silo spends everything it can
+    let mut byzantine_spent = 0u64;
+    let mut byz_tx: u64 = 1000;
+    loop {
+        let result = byz_coord.try_debit(silo_d, 100, debit_digest(byz_tx));
+        byz_tx += 1;
+        match result {
+            Ok(()) => byzantine_spent += 100,
+            Err(_) => break,
+        }
+    }
+    // Spend the remainder
+    let byz_remainder = byz_coord.remaining(&silo_d).unwrap();
+    if byz_remainder > 0 {
+        byz_coord.try_debit(silo_d, byz_remainder, debit_digest(byz_tx)).unwrap();
+        byzantine_spent += byz_remainder;
+    }
+
+    println!("  Byzantine Silo D spent its full ceiling: {} computrons", byzantine_spent);
+    assert_eq!(byzantine_spent, byz_ceiling);
+    println!("  Ceiling was: {} -- the silo CANNOT spend more than this.", byz_ceiling);
+    println!();
+    println!("  Even if the Byzantine silo lies about its spending, the protocol");
+    println!("  guarantees:");
+    println!("    - Its certificate cannot claim more than the ceiling");
+    println!("    - Honest silos independently track their own spending");
+    println!("    - Total confirmed spend is bounded by: balance + f * ceiling");
+    println!("      = {} + {} * {} = {}", total_budget, byzantine_tolerance, byz_ceiling, total_budget + (byzantine_tolerance as u64) * byz_ceiling);
+    println!();
+    println!("  In the worst case, the overspend ({}) is bounded and recoverable.", byz_ceiling);
+    println!("  No Byzantine silo can drain the entire system's balance.");
     println!();
 
     // ─── Summary ─────────────────────────────────────────────────────────────

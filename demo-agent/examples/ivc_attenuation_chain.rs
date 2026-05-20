@@ -18,7 +18,7 @@ use pyana_circuit::ivc::{
     IvcBuilder, IvcVerification, FoldDelta, verify_ivc, verify_ivc_with_roots,
 };
 use pyana_circuit::poseidon2::hash_fact;
-use pyana_commit::{Fact, FieldElement, TokenState, FoldDeltaBuilder, verify_fold_chain};
+use pyana_commit::{Fact, TokenState, FoldDeltaBuilder, verify_fold_chain};
 
 fn main() {
     println!("=== Pyana IVC Attenuation Chain Demo ===\n");
