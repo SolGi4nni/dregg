@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-01-01
+          toolchain: nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
 
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-01-01
+          toolchain: nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude pyana-morpheus
 
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-01-01
+          toolchain: nightly
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace -- -D warnings
@@ -55,6 +55,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-01-01
+          toolchain: nightly
           components: rustfmt
       - run: cargo fmt --all -- --check
