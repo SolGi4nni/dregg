@@ -87,9 +87,12 @@ pub mod poseidon2;
 pub mod poseidon2_air;
 pub mod presentation;
 
+pub mod block_transition_air;
+pub mod committed_threshold;
 pub mod non_revocation_air;
 pub mod note_spending_air;
 pub mod predicate_air;
+pub mod relational_predicate_air;
 pub mod stark;
 pub mod turn_validity_air;
 
@@ -156,4 +159,17 @@ pub use predicate_air::{
 };
 pub use turn_validity_air::{
     TurnValidityAir, TurnValidityWitness, prove_turn_validity, verify_turn_validity,
+};
+pub use block_transition_air::{
+    BlockEvent, BlockTransitionAir, BlockTransitionProof, MerkleUpdateWitness,
+    prove_block_transition, verify_block_transition,
+};
+pub use committed_threshold::{
+    CommittedThresholdAir, CommittedThresholdProof, CommittedThresholdWitness,
+    compute_threshold_commitment, generate_blinding, prove_committed_threshold,
+    verify_committed_threshold,
+};
+pub use relational_predicate_air::{
+    RelationalPredicateAir, RelationalPredicateProof, RelationalPredicateWitness, RelationType,
+    compute_value_commitment, prove_relational, prove_value_comparison, verify_relational,
 };

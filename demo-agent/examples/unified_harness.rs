@@ -1003,6 +1003,7 @@ fn run_seal_unseal_transfer() -> Result<(), Box<dyn Error>> {
         slot: 7,
         permissions: AuthRequired::Signature,
         breadstuff: None,
+        expires_at: None,
     };
 
     let pair = test_seal_pair(0xA0);

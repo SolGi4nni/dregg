@@ -203,6 +203,53 @@ pub fn verify_selective_presentation(
     }
 }
 
+/// Verify a disclosure presentation: revealed facts + predicate proofs.
+///
+/// This verifies:
+/// 1. The revealed facts commitment matches the plaintext revealed facts.
+/// 2. Each predicate proof verifies against its stated fact commitment.
+///
+/// Note: This does NOT verify the STARK proof itself (use
+/// `verify_authorization_proof` for that). This function checks the
+/// *selective disclosure layer* on top of the STARK.
+///
+/// # Returns
+///
+/// `true` if the revealed facts commitment matches AND all predicate proofs verify.
+pub fn verify_disclosure_presentation(
+    presentation: &crate::AuthorizationPresentation,
+) -> bool {
+    match presentation {
+        crate::AuthorizationPresentation::Selective {
+            revealed_facts,
+            revealed_facts_commitment,
+            predicate_proofs,
+            ..
+        } => {
+            // 1. Verify revealed facts commitment.
+            if !pyana_bridge::verify_revealed_facts_commitment(
+                revealed_facts,
+                *revealed_facts_commitment,
+            ) {
+                return false;
+            }
+
+            // 2. Verify each predicate proof.
+            for (_fact_index, pred_proof) in predicate_proofs {
+                if !pyana_bridge::verify_predicate_proof(
+                    pred_proof,
+                    pred_proof.fact_commitment,
+                ) {
+                    return false;
+                }
+            }
+
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Verify a validated IVC fold chain proof from serialized bytes.
 ///
 /// This is the verifier-side entry point for fully STARK-proven fold chains.

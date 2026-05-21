@@ -15,6 +15,7 @@ pyana-cell = { path = "../cell" }
 pyana-turn = { path = "../turn" }
 pyana-bridge = { path = "../bridge" }
 pyana-circuit = { path = "../circuit" }
+pyana-intent = { path = "../intent" }
 pyana-wire = { path = "../wire" }
 token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
 pyana-trace = { path = "../trace" }

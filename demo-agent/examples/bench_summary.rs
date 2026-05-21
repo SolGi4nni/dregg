@@ -477,7 +477,7 @@ fn main() {
     // ─── 11. Macaroon token (non-proof context) ─────────────────────────────
 
     {
-        use token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+        use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
         let key = {
             let mut k = [0u8; 32];

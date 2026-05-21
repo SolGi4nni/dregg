@@ -333,9 +333,9 @@ fn main() {
     let forest_root = temp_forest.hash();
 
     let alice_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
+        TurnExecutor::compute_partial_signing_message(&alice_action, 0);
     let bob_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
+        TurnExecutor::compute_partial_signing_message(&bob_action, 1);
 
     let alice_sig = alice_revealed.signing_key.sign(&alice_signing_msg);
     let bob_sig = bob_revealed.signing_key.sign(&bob_signing_msg);
@@ -366,9 +366,9 @@ fn main() {
     match &composed {
         Ok(turn) => {
             println!("  Atomic turn composed successfully!");
-            println!("  Action count: {}", turn.action_count());
-            println!("  Fee: {} computrons", turn.fee);
-            println!("  Memo: {:?}", turn.memo);
+            println!("  Action count: {}", turn.turn.action_count());
+            println!("  Fee: {} computrons", turn.turn.fee);
+            println!("  Memo: {:?}", turn.turn.memo);
         }
         Err(e) => {
             println!("  Composition result: {} (expected for demo)", e);

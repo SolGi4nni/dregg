@@ -58,6 +58,7 @@
 //! - [`network`]: Channel-based networking between nodes
 //! - [`node`]: Federation node implementation
 
+pub mod checkpoint;
 pub mod consensus;
 #[cfg(feature = "morpheus")]
 pub mod morpheus_adapter;
@@ -65,10 +66,15 @@ pub mod network;
 pub mod node;
 pub mod revocation;
 pub mod threshold;
+pub mod threshold_decrypt;
 pub mod transport;
 pub mod types;
 
 // Re-export primary types.
+pub use checkpoint::{
+    Checkpoint, CheckpointError, DEFAULT_CHECKPOINT_INTERVAL, create_checkpoint,
+    finalize_checkpoint, is_checkpoint_height, verify_checkpoint,
+};
 pub use consensus::{
     ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, PendingStateRoots,
     ReconfigurationProposal, ReconfigurationVotes,
@@ -77,6 +83,11 @@ pub use node::{Federation, FederationNode};
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
 pub use threshold::{
     FederationCommittee, MemberSecret, ThresholdError, ThresholdQC, generate_test_committee,
+};
+pub use threshold_decrypt::{
+    DecryptionShare, KeyShare, ThresholdCiphertext, ThresholdDecryptError,
+    ThresholdEncryptionKey, combine_shares, generate_epoch_key, produce_decryption_share,
+    threshold_encrypt,
 };
 pub use transport::{
     FederationEnvelope, FederationTransport, LocalTransport, NetworkConsensusNode,

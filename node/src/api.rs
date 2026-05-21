@@ -133,6 +133,19 @@ pub struct AttestedRootInfo {
     pub signatures: usize,
 }
 
+#[derive(Serialize)]
+pub struct CheckpointResponse {
+    pub height: u64,
+    pub ledger_state_root: String,
+    pub note_tree_root: String,
+    pub nullifier_set_root: String,
+    pub revocation_tree_root: String,
+    pub epoch: u64,
+    pub timestamp: i64,
+    pub federation_members: usize,
+    pub qc_votes: usize,
+}
+
 #[derive(Deserialize)]
 pub struct UnlockRequest {
     pub passphrase: String,
@@ -396,6 +409,8 @@ pub fn router(state: NodeState) -> Router {
     let public_routes = Router::new()
         .route("/status", get(get_status))
         .route("/federation/roots", get(get_federation_roots))
+        .route("/checkpoint/latest", get(get_checkpoint_latest))
+        .route("/checkpoint/{height}", get(get_checkpoint_at_height))
         .route(
             "/wallet/unlock",
             post({
@@ -1054,6 +1069,49 @@ async fn get_pending_conditionals(
         })
         .collect();
     Json(infos)
+}
+
+// =============================================================================
+// Checkpoint Handlers
+// =============================================================================
+
+/// GET /checkpoint/latest — returns the latest checkpoint.
+async fn get_checkpoint_latest(
+    State(state): State<NodeState>,
+) -> Result<Json<CheckpointResponse>, StatusCode> {
+    let s = state.read().await;
+    match s.store.latest_checkpoint() {
+        Ok(Some(cp)) => Ok(Json(checkpoint_to_response(&cp))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// GET /checkpoint/:height — returns the checkpoint at a specific height.
+async fn get_checkpoint_at_height(
+    State(state): State<NodeState>,
+    AxumPath(height): AxumPath<u64>,
+) -> Result<Json<CheckpointResponse>, StatusCode> {
+    let s = state.read().await;
+    match s.store.checkpoint_at_height(height) {
+        Ok(Some(cp)) => Ok(Json(checkpoint_to_response(&cp))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+fn checkpoint_to_response(cp: &pyana_federation::Checkpoint) -> CheckpointResponse {
+    CheckpointResponse {
+        height: cp.height,
+        ledger_state_root: hex_encode(&cp.ledger_state_root),
+        note_tree_root: hex_encode(&cp.note_tree_root),
+        nullifier_set_root: hex_encode(&cp.nullifier_set_root),
+        revocation_tree_root: hex_encode(&cp.revocation_tree_root),
+        epoch: cp.epoch,
+        timestamp: cp.timestamp,
+        federation_members: cp.federation_members.len(),
+        qc_votes: cp.qc.votes.len(),
+    }
 }
 
 // =============================================================================

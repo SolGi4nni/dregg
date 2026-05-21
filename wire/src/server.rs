@@ -51,10 +51,12 @@ pub struct StarkVerifier;
 impl ProofVerifier for StarkVerifier {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String> {
         let proof = pyana_circuit::stark::proof_from_bytes(proof_bytes)?;
+        // Use new_canonical() to reduce modulo p, preventing non-canonical field
+        // element malleability from deserialized proof data.
         let public_inputs: Vec<pyana_circuit::field::BabyBear> = proof
             .public_inputs
             .iter()
-            .map(|&v| pyana_circuit::field::BabyBear(v))
+            .map(|&v| pyana_circuit::field::BabyBear::new_canonical(v))
             .collect();
 
         // Verify action binding: the proof's last public input must be the canonical

@@ -23,6 +23,7 @@ pyana-types = { path = "../types" }
 pyana-commit = { path = "../commit" }
 pyana-cell = { path = "../cell" }
 pyana-circuit = { path = "../circuit" }
+pyana-federation = { path = "../federation" }
 pyana-audit = { path = "../audit", optional = true }
 
 [dev-dependencies]

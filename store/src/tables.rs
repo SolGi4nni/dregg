@@ -67,6 +67,12 @@ pub const NOTE_COMMITMENTS: TableDefinition<u64, &[u8; 32]> =
 /// Value: empty (presence in the table means the note is spent).
 pub const NULLIFIERS: TableDefinition<&[u8; 32], ()> = TableDefinition::new("nullifiers");
 
+/// Checkpoints: height (u64) -> serialized Checkpoint.
+///
+/// Key: checkpoint height (always a multiple of the checkpoint interval).
+/// Value: postcard-serialized `pyana_federation::Checkpoint` struct.
+pub const CHECKPOINTS: TableDefinition<u64, &[u8]> = TableDefinition::new("checkpoints");
+
 /// Byte-blob metadata table for values that don't fit in a u64.
 ///
 /// Key: metadata key name.
@@ -86,3 +92,12 @@ pub const META_NOTE_TREE_SIZE: &str = "note_tree_size";
 
 /// Key for the cached note tree root (stored in METADATA_BYTES).
 pub const META_NOTE_TREE_ROOT_CACHE: &str = "note_tree_root_cache";
+
+/// Key for the cached Poseidon2 note tree root (stored in METADATA_BYTES).
+///
+/// Stored as 4 bytes (little-endian u32) representing the BabyBear field element.
+/// Updated on every `store_note_commitment` / `spend_note_atomic` call.
+pub const META_POSEIDON2_NOTE_TREE_ROOT_CACHE: &str = "poseidon2_note_tree_root_cache";
+
+/// Key for the latest checkpoint height.
+pub const META_LATEST_CHECKPOINT_HEIGHT: &str = "latest_checkpoint_height";

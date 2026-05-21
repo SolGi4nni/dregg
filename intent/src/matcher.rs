@@ -436,7 +436,7 @@ mod tests {
             constraints,
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         Intent::new(
             IntentKind::Need,
@@ -503,7 +503,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: Some("documents/reports/*".into()),
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -515,7 +515,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: Some("secrets/*".into()),
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -530,7 +530,7 @@ mod tests {
             constraints: vec![Constraint::AppId("my-app".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -539,7 +539,7 @@ mod tests {
             constraints: vec![Constraint::AppId("other-app".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -557,7 +557,7 @@ mod tests {
             constraints: vec![Constraint::Service("http".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -572,7 +572,7 @@ mod tests {
             constraints: vec![Constraint::NotExpiredAt(3000)],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -581,7 +581,7 @@ mod tests {
             constraints: vec![Constraint::NotExpiredAt(6000)],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_expired, 100));
     }
@@ -596,7 +596,7 @@ mod tests {
             constraints: vec![Constraint::Feature("gpu".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -605,7 +605,7 @@ mod tests {
             constraints: vec![Constraint::Feature("quantum".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -623,7 +623,7 @@ mod tests {
             constraints: vec![],
             min_budget: Some(500),
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -635,7 +635,7 @@ mod tests {
             constraints: vec![],
             min_budget: Some(2000),
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_too_much, 100));
     }
@@ -651,7 +651,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -674,7 +674,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Offer,
@@ -746,7 +746,7 @@ mod tests {
             constraints: vec![Constraint::UserId("alice".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -761,7 +761,7 @@ mod tests {
             constraints: vec![Constraint::UserId("alice".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec_ok, 100));
 
@@ -770,7 +770,7 @@ mod tests {
             constraints: vec![Constraint::UserId("bob".into())],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(!satisfies_spec(&token, &spec_wrong, 100));
     }
@@ -796,7 +796,7 @@ mod tests {
             ],
             min_budget: None,
             resource_pattern: Some("api/*".into()),
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -812,7 +812,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Query,
@@ -901,7 +901,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: Some("documents/*".into()),
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -911,7 +911,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: Some("compute/*".into()),
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
             ]),
         };
@@ -965,7 +965,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: Some("documents/*".into()),
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -975,7 +975,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: Some("compute/*".into()),
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
             ]),
         };
@@ -1020,7 +1020,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: None,
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -1030,7 +1030,7 @@ mod tests {
                     constraints: vec![],
                     min_budget: None,
                     resource_pattern: None,
-                    compound: None,
+                    compound: None, predicate_requirements: vec![],
                 },
             ]),
         };

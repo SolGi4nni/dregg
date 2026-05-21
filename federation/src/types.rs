@@ -87,6 +87,13 @@ pub struct RevocationBlock {
     /// Nullifier set root after this block's events have been applied.
     #[serde(default)]
     pub nullifier_set_root: [u8; 32],
+    /// Serialized STARK proof of the state transition for this block.
+    ///
+    /// Proves: "applying this block's events to `pre_state_root` yields `post_state_root`."
+    /// Enables succinct history verification: a new node can verify state transitions
+    /// without replaying all historical events.
+    #[serde(default)]
+    pub transition_proof: Option<Vec<u8>>,
 }
 
 impl RevocationBlock {

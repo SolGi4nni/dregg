@@ -621,7 +621,7 @@ async fn tool_post_intent(params: &Value, state: &NodeState) -> McpToolResult {
         constraints: vec![],
         min_budget: None,
         resource_pattern: Some(resource.clone()),
-        compound: None,
+        compound: None, predicate_requirements: vec![],
     };
 
     let creator = pyana_intent::CommitmentId::random();

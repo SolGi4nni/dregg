@@ -44,6 +44,7 @@
 //! Public keys are stored in plaintext.
 
 pub mod audit;
+pub mod checkpoint;
 pub mod federation;
 pub mod keys;
 pub mod note_tree;
@@ -184,6 +185,8 @@ impl PersistentStore {
             // Note tree tables.
             let _ = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
+            // Checkpoint tables.
+            let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Metadata tables.
             let _ = write_txn.open_table(tables::METADATA)?;
             let _ = write_txn.open_table(tables::METADATA_BYTES)?;

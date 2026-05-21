@@ -217,18 +217,36 @@ pub struct AuthorizationTrace {
 }
 
 // -- Helper constructors for building symbols from strings --
+//
+// CANONICAL ENCODING RULE:
+//
+// All string-valued terms (app_id, service, action, user_id, feature names, etc.)
+// MUST be encoded via `symbol_from_str` (BLAKE3 hash). This is the canonical
+// representation used across the token→bridge→circuit pipeline.
+//
+// `symbol_from_bytes` is reserved ONLY for raw binary data that is already exactly
+// 32 bytes (e.g., pre-hashed keys, existing field elements). It MUST NOT be used
+// for arbitrary strings because it truncates at 32 bytes, causing different strings
+// with a shared prefix to collide, and produces different encodings than
+// `symbol_from_str` for the same input.
 
 /// Create a [`Symbol`] from a string by BLAKE3 hashing.
 ///
 /// This produces a collision-resistant 32-byte identifier for any string,
-/// regardless of length. Previously this function truncated at 32 bytes,
-/// meaning two strings sharing the same 32-byte prefix would produce
-/// identical symbols.
+/// regardless of length. This is the CANONICAL encoding for all string-valued
+/// terms in the token→bridge→circuit pipeline. All components that convert
+/// string fields to symbols MUST use this function to ensure consistent
+/// 32-byte representations.
 pub fn symbol_from_str(s: &str) -> Symbol {
     *blake3::hash(s.as_bytes()).as_bytes()
 }
 
 /// Create a [`Symbol`] from raw bytes by zero-padding or truncating to 32 bytes.
+///
+/// WARNING: This MUST NOT be used for arbitrary string encoding. Use `symbol_from_str`
+/// instead. This function is only appropriate for raw binary data that is already
+/// 32 bytes or for legacy backward-compatibility paths (e.g., Contains checks
+/// that need substring matching on raw bytes).
 pub fn symbol_from_bytes(b: &[u8]) -> Symbol {
     let mut sym = [0u8; 32];
     let len = b.len().min(32);

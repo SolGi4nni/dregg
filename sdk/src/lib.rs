@@ -54,8 +54,8 @@ pub use client::{PresentationResult, SiloClient};
 pub use error::SdkError;
 pub use runtime::{AgentRuntime, SubAgent};
 pub use wallet::{
-    AgentWallet, AuthorizationPresentation, DelegatedToken, FactIndex, HeldToken, SignedTurn,
-    VerificationMode,
+    AgentWallet, AuthorizationPresentation, DelegatedToken, DisclosureSpec, FactDisclosure,
+    FactIndex, HeldToken, SignedTurn, VerificationMode,
 };
 
 // Re-export commonly needed types from dependencies so users don't need
@@ -79,6 +79,6 @@ pub use mnemonic::generate_mnemonic;
 
 // Re-export standalone verification functions.
 pub use verify::{
-    verify_authorization_proof, verify_selective_disclosure, verify_selective_presentation,
-    verify_validated_ivc_proof,
+    verify_authorization_proof, verify_disclosure_presentation, verify_selective_disclosure,
+    verify_selective_presentation, verify_validated_ivc_proof,
 };

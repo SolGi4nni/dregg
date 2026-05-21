@@ -14,6 +14,10 @@ pub struct CapabilityRef {
     pub permissions: AuthRequired,
     /// Optional capability token hash for verification/revocation.
     pub breadstuff: Option<[u8; 32]>,
+    /// Optional expiry height. If set, the capability is considered invalid
+    /// after this block height (used for introduction-granted capabilities).
+    #[serde(default)]
+    pub expires_at: Option<u64>,
 }
 
 /// The c-list: the set of capabilities a cell holds.
@@ -53,6 +57,28 @@ impl CapabilitySet {
             slot,
             permissions,
             breadstuff,
+            expires_at: None,
+        });
+        Some(slot)
+    }
+
+    /// Grant a capability with an expiry block height.
+    /// After `expires_at`, the capability is considered invalid.
+    /// Returns the assigned slot number, or `None` if the slot counter would overflow.
+    pub fn grant_with_expiry(
+        &mut self,
+        target: CellId,
+        permissions: AuthRequired,
+        expires_at: u64,
+    ) -> Option<u32> {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        self.refs.push(CapabilityRef {
+            target,
+            slot,
+            permissions,
+            breadstuff: None,
+            expires_at: Some(expires_at),
         });
         Some(slot)
     }
@@ -93,6 +119,7 @@ impl CapabilitySet {
             slot: existing.slot,
             permissions: narrower,
             breadstuff: existing.breadstuff,
+            expires_at: existing.expires_at,
         })
     }
 

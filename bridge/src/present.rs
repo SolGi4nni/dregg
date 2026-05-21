@@ -2143,7 +2143,7 @@ pub fn verify_presentation_complete(
 // =============================================================================
 
 /// A predicate that can be proven about a private token attribute.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Predicate {
     /// Prove `attribute >= threshold`.
     Gte(u32),
@@ -2160,7 +2160,7 @@ pub enum Predicate {
 }
 
 /// A predicate proof over a token attribute, ready for verification.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BridgePredicateProof {
     /// The predicate that was proven.
     pub predicate: Predicate,
@@ -2171,7 +2171,7 @@ pub struct BridgePredicateProof {
 }
 
 /// Inner proof representation -- single proof for simple predicates, pair for InRange.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum BridgePredicateProofInner {
     /// A single predicate proof (GTE, LTE, GT, LT, NEQ).
     Single(pyana_circuit::PredicateProof),
@@ -2288,6 +2288,106 @@ pub fn verify_predicate_proof(
             )
         }
     }
+}
+
+// =============================================================================
+// Committed-Threshold Proofs (private threshold from verifier)
+// =============================================================================
+
+/// A committed-threshold proof: proves `value >= threshold` without revealing
+/// either value or threshold to third-party verifiers.
+///
+/// The verifier commits to their threshold: `Poseidon2(threshold, blinding)`.
+/// The prover proves: value >= threshold AND the commitment is correct.
+/// Public inputs are only the two commitments (threshold + fact).
+#[derive(Clone, Debug)]
+pub struct BridgeCommittedThresholdProof {
+    /// The circuit-level proof.
+    pub proof: pyana_circuit::CommittedThresholdProof,
+    /// The threshold commitment (for verifier cross-check).
+    pub threshold_commitment: BabyBear,
+    /// The fact commitment (binding to token state).
+    pub fact_commitment: BabyBear,
+}
+
+/// Generate a committed-threshold proof for a specific fact attribute.
+///
+/// This is the primary entry point for the committed-threshold protocol.
+///
+/// # Arguments
+///
+/// - `private_value`: The prover's private attribute value (kept hidden from verifier).
+/// - `threshold`: The verifier's threshold (received from verifier via secure channel).
+/// - `blinding`: The verifier's blinding factor (received from verifier via secure channel).
+/// - `fact_hash`: Poseidon2 hash of the fact containing the attribute.
+/// - `state_root`: Poseidon2 root of the token state containing the fact.
+///
+/// # Returns
+///
+/// `Some(BridgeCommittedThresholdProof)` if value >= threshold and proof succeeds,
+/// `None` if the statement is false or proof generation fails.
+///
+/// # Privacy
+///
+/// Third-party verifiers see only:
+/// - `threshold_commitment = Poseidon2(threshold, blinding)` — hides the threshold.
+/// - `fact_commitment = Poseidon2(fact_hash, state_root)` — hides the value.
+///
+/// They learn ONLY that "the committed value satisfies the committed threshold."
+pub fn prove_committed_threshold(
+    private_value: u32,
+    threshold: u32,
+    blinding: u32,
+    fact_hash: BabyBear,
+    state_root: BabyBear,
+) -> Option<BridgeCommittedThresholdProof> {
+    let value_bb = BabyBear::new(private_value);
+    let threshold_bb = BabyBear::new(threshold);
+    let blinding_bb = BabyBear::new(blinding);
+    let fact_commitment = pyana_circuit::compute_fact_commitment(fact_hash, state_root);
+
+    let witness = pyana_circuit::CommittedThresholdWitness {
+        private_value: value_bb,
+        threshold: threshold_bb,
+        blinding: blinding_bb,
+        fact_commitment,
+    };
+
+    let threshold_commitment = witness.compute_threshold_commitment();
+    let proof = pyana_circuit::prove_committed_threshold(witness)?;
+
+    Some(BridgeCommittedThresholdProof {
+        proof,
+        threshold_commitment,
+        fact_commitment,
+    })
+}
+
+/// Verify a committed-threshold proof.
+///
+/// # For the verifier (who knows their threshold):
+///
+/// ```ignore
+/// let expected_commitment = pyana_circuit::compute_threshold_commitment(
+///     BabyBear::new(my_threshold), BabyBear::new(my_blinding)
+/// );
+/// let valid = verify_committed_threshold_proof(&proof, expected_commitment, fact_commitment);
+/// ```
+///
+/// # For third-party auditors (who know neither value nor threshold):
+///
+/// They verify against the commitments they received from the protocol participants.
+/// They learn only: "this proof is valid for these commitments" (1 bit).
+pub fn verify_committed_threshold_proof(
+    proof: &BridgeCommittedThresholdProof,
+    expected_threshold_commitment: BabyBear,
+    expected_fact_commitment: BabyBear,
+) -> bool {
+    pyana_circuit::verify_committed_threshold(
+        &proof.proof,
+        expected_threshold_commitment,
+        expected_fact_commitment,
+    )
 }
 
 #[cfg(test)]

@@ -72,9 +72,9 @@ pub use obligation::{
     fulfill_obligation,
 };
 pub use error::TurnError;
-pub use eventual::{CycleError, EventualRef, Pipeline, PipelineError, Target, TurnOutput};
+pub use eventual::{CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult, Target, TurnBatch, TurnOutput};
 pub use executor::{
-    ComputronCosts, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline,
+    ComputronCosts, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline, execute_pipeline_result,
     resolve_eventual_ref,
 };
 pub use forest::{CallForest, CallTree};

@@ -19,12 +19,13 @@
 //!   (conclusion, accumulated_hash) without trusting the fulfiller
 
 use crate::matcher::HeldCapability;
-use crate::{CommitmentId, Intent, Match, VerificationMode};
+use crate::{CommitmentId, Intent, Match, PredicateRequirement, VerificationMode};
 use pyana_circuit::BabyBear;
 use pyana_circuit::multi_step_air::{
     MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
 };
 use pyana_circuit::stark;
+use pyana_circuit::{PredicateProof, PredicateType, verify_predicate};
 use pyana_token::{Attenuation, AuthToken, MacaroonToken};
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,10 @@ pub enum FulfillmentError {
     ActionsMismatch(String),
     /// Granted resource does not match the intent's requirements.
     ResourceMismatch(String),
+    /// A predicate proof failed verification.
+    PredicateProofFailed(String),
+    /// The state root is too stale for the predicate requirement.
+    StaleStateRoot(String),
 }
 
 impl std::fmt::Display for FulfillmentError {
@@ -57,6 +62,8 @@ impl std::fmt::Display for FulfillmentError {
             Self::MissingData(e) => write!(f, "missing data: {}", e),
             Self::ActionsMismatch(e) => write!(f, "actions mismatch: {}", e),
             Self::ResourceMismatch(e) => write!(f, "resource mismatch: {}", e),
+            Self::PredicateProofFailed(e) => write!(f, "predicate proof failed: {}", e),
+            Self::StaleStateRoot(e) => write!(f, "stale state root: {}", e),
         }
     }
 }
@@ -310,6 +317,140 @@ pub fn verify_fulfillment(
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Cross-party predicate proof fulfillment
+
+// ---------------------------------------------------------------------------
+// Cross-party predicate proof fulfillment
+// ---------------------------------------------------------------------------
+
+/// A fulfillment augmented with cross-party predicate proofs.
+///
+/// When an intent includes `predicate_requirements` in its MatchSpec, the fulfiller
+/// must attach a `PredicateProof` for each requirement. These proofs demonstrate
+/// that the fulfiller's state satisfies the predicates (e.g., "balance >= 1000")
+/// without revealing the exact values.
+///
+/// # Privacy
+///
+/// - The intent creator learns only that the predicates hold (yes/no).
+/// - The exact values remain private (never transmitted).
+/// - The proofs are bound to the fulfiller's attested state root, preventing fabrication.
+#[derive(Clone, Debug)]
+pub struct FulfillmentWithPredicates {
+    /// The base fulfillment (capability satisfaction).
+    pub base: Fulfillment,
+    /// Predicate proofs, one per requirement.
+    /// Each entry is `(requirement_index, proof)` where requirement_index
+    /// refers to the index in `intent.matcher.predicate_requirements`.
+    pub predicate_proofs: Vec<(usize, PredicateProof)>,
+    /// The state root the proofs are attested against.
+    /// The verifier checks this root is recent enough per the freshness requirements.
+    pub state_root: BabyBear,
+    /// The block height at which the state root was attested.
+    /// Used for freshness checking.
+    pub state_root_block: u64,
+}
+
+/// Verify a fulfillment with predicate proofs against its intent.
+///
+/// This extends `verify_fulfillment` with additional checks for predicate requirements:
+/// 1. All base fulfillment checks pass (actions, resource, mode-specific verification).
+/// 2. For each predicate requirement in the intent:
+///    - A corresponding proof exists in `predicate_proofs`.
+///    - The proof verifies against the expected threshold and predicate type.
+///    - The state root is fresh enough (not stale).
+pub fn verify_fulfillment_with_predicates(
+    fulfillment: &FulfillmentWithPredicates,
+    intent: &Intent,
+    state_root: BabyBear,
+    current_block: u64,
+) -> Result<(), FulfillmentError> {
+    // 1. Verify the base fulfillment (actions, resource, mode-specific).
+    verify_fulfillment(&fulfillment.base, intent, state_root)?;
+
+    // 2. Verify each predicate requirement.
+    let requirements = &intent.matcher.predicate_requirements;
+    for (idx, req) in requirements.iter().enumerate() {
+        // Find the proof for this requirement.
+        let proof = fulfillment
+            .predicate_proofs
+            .iter()
+            .find(|(i, _)| *i == idx)
+            .map(|(_, p)| p)
+            .ok_or_else(|| {
+                FulfillmentError::PredicateProofFailed(format!(
+                    "missing proof for predicate requirement {} (attribute: {})",
+                    idx, req.attribute
+                ))
+            })?;
+
+        // Check freshness: the state root must not be too old.
+        if current_block > fulfillment.state_root_block + req.state_root_freshness {
+            return Err(FulfillmentError::StaleStateRoot(format!(
+                "requirement {} ({}): state root at block {} is too old (current: {}, max age: {})",
+                idx, req.attribute, fulfillment.state_root_block, current_block, req.state_root_freshness
+            )));
+        }
+
+        // Verify the proof matches the expected predicate type and threshold.
+        verify_predicate_requirement(proof, req)?;
+    }
+
+    Ok(())
+}
+
+/// Verify a single predicate proof against its requirement.
+fn verify_predicate_requirement(
+    proof: &PredicateProof,
+    requirement: &PredicateRequirement,
+) -> Result<(), FulfillmentError> {
+    let expected_type = parse_predicate_type(&requirement.predicate_type).ok_or_else(|| {
+        FulfillmentError::PredicateProofFailed(format!(
+            "unknown predicate type: '{}'",
+            requirement.predicate_type
+        ))
+    })?;
+
+    if proof.predicate_type != expected_type {
+        return Err(FulfillmentError::PredicateProofFailed(format!(
+            "proof type {:?} does not match requirement type '{}'",
+            proof.predicate_type, requirement.predicate_type
+        )));
+    }
+
+    let expected_threshold = BabyBear::new(requirement.threshold as u32);
+    if proof.threshold != expected_threshold {
+        return Err(FulfillmentError::PredicateProofFailed(format!(
+            "proof threshold {:?} does not match requirement threshold {}",
+            proof.threshold, requirement.threshold
+        )));
+    }
+
+    if !verify_predicate(proof, expected_threshold, proof.fact_commitment) {
+        return Err(FulfillmentError::PredicateProofFailed(
+            "predicate proof cryptographic verification failed".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Parse a predicate type string into a [`PredicateType`].
+pub fn parse_predicate_type(s: &str) -> Option<PredicateType> {
+    match s {
+        "gte" => Some(PredicateType::Gte),
+        "lte" => Some(PredicateType::Lte),
+        "gt" => Some(PredicateType::Gt),
+        "lt" => Some(PredicateType::Lt),
+        "neq" => Some(PredicateType::Neq),
+        "in_range_low" => Some(PredicateType::InRangeLow),
+        "in_range_high" => Some(PredicateType::InRangeHigh),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal: produce a real attenuated macaroon
 // ---------------------------------------------------------------------------
 
@@ -522,7 +663,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: resource_pattern.map(String::from),
-            compound: None,
+            compound: None, predicate_requirements: vec![],
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None)
     }
@@ -1040,5 +1181,387 @@ mod tests {
             "deserialized proof should verify: {:?}",
             result.err()
         );
+    }
+
+    // =========================================================================
+    // Predicate fulfillment tests
+    // =========================================================================
+
+    #[test]
+    fn test_verify_fulfillment_with_valid_predicate_proofs() {
+        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
+        use pyana_circuit::poseidon2::hash_fact;
+
+        let intent = test_intent(vec!["read"], None);
+        // Create an intent with a predicate requirement
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "balance".into(),
+                predicate_type: "gte".into(),
+                threshold: 1000,
+                upper_bound: None,
+                state_root_freshness: 100, // max 100 blocks old
+            }],
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        // Generate a valid predicate proof (balance = 5000 >= 1000)
+        let balance = BabyBear::new(5000);
+        let threshold = BabyBear::new(1000);
+        let attr_hash = BabyBear::new(42); // simulated attribute hash
+        let fact_hash = hash_fact(attr_hash, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
+        let state_root = BabyBear::new(99999);
+        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+
+        let witness = PredicateWitness {
+            private_value: balance,
+            threshold,
+            predicate_type: PredicateType::Gte,
+            fact_commitment,
+        };
+        let predicate_proof = prove_predicate(witness).expect("proof should succeed");
+
+        // Build a base fulfillment (trusted mode for simplicity)
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
+            .unwrap();
+
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![(0, predicate_proof)],
+            state_root,
+            state_root_block: 950, // recent enough
+        };
+
+        // Verify at current block 1000 (state root at 950, freshness 100 => OK)
+        let result = verify_fulfillment_with_predicates(
+            &fulfillment_with_preds,
+            &pred_intent,
+            BabyBear::ZERO,
+            1000,
+        );
+        assert!(result.is_ok(), "valid predicate fulfillment should pass: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_verify_fulfillment_rejects_stale_state_root() {
+        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
+        use pyana_circuit::poseidon2::hash_fact;
+
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "balance".into(),
+                predicate_type: "gte".into(),
+                threshold: 1000,
+                upper_bound: None,
+                state_root_freshness: 50, // max 50 blocks old
+            }],
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let balance = BabyBear::new(5000);
+        let threshold = BabyBear::new(1000);
+        let attr_hash = BabyBear::new(42);
+        let fact_hash = hash_fact(attr_hash, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
+        let state_root = BabyBear::new(99999);
+        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+
+        let witness = PredicateWitness {
+            private_value: balance,
+            threshold,
+            predicate_type: PredicateType::Gte,
+            fact_commitment,
+        };
+        let predicate_proof = prove_predicate(witness).expect("proof should succeed");
+
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
+            .unwrap();
+
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![(0, predicate_proof)],
+            state_root,
+            state_root_block: 900, // too old
+        };
+
+        // Current block 1000, state root at 900, freshness 50 => STALE (900 + 50 < 1000)
+        let result = verify_fulfillment_with_predicates(
+            &fulfillment_with_preds,
+            &pred_intent,
+            BabyBear::ZERO,
+            1000,
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FulfillmentError::StaleStateRoot(msg) => {
+                assert!(msg.contains("too old"));
+            }
+            other => panic!("expected StaleStateRoot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_fulfillment_rejects_wrong_threshold() {
+        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
+        use pyana_circuit::poseidon2::hash_fact;
+
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "balance".into(),
+                predicate_type: "gte".into(),
+                threshold: 2000, // requirement says >= 2000
+                upper_bound: None,
+                state_root_freshness: 100,
+            }],
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        // Generate a proof for threshold 1000 (not 2000!)
+        let balance = BabyBear::new(5000);
+        let wrong_threshold = BabyBear::new(1000); // prover used wrong threshold
+        let attr_hash = BabyBear::new(42);
+        let fact_hash = hash_fact(attr_hash, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
+        let state_root = BabyBear::new(99999);
+        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+
+        let witness = PredicateWitness {
+            private_value: balance,
+            threshold: wrong_threshold,
+            predicate_type: PredicateType::Gte,
+            fact_commitment,
+        };
+        let predicate_proof = prove_predicate(witness).expect("proof should succeed");
+
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
+            .unwrap();
+
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![(0, predicate_proof)],
+            state_root,
+            state_root_block: 990,
+        };
+
+        let result = verify_fulfillment_with_predicates(
+            &fulfillment_with_preds,
+            &pred_intent,
+            BabyBear::ZERO,
+            1000,
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FulfillmentError::PredicateProofFailed(msg) => {
+                assert!(msg.contains("threshold"));
+            }
+            other => panic!("expected PredicateProofFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_fulfillment_rejects_missing_predicate_proof() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "reputation".into(),
+                predicate_type: "gte".into(),
+                threshold: 50,
+                upper_bound: None,
+                state_root_freshness: 100,
+            }],
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
+            .unwrap();
+
+        // No predicate proofs provided!
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![], // empty
+            state_root: BabyBear::new(99999),
+            state_root_block: 990,
+        };
+
+        let result = verify_fulfillment_with_predicates(
+            &fulfillment_with_preds,
+            &pred_intent,
+            BabyBear::ZERO,
+            1000,
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FulfillmentError::PredicateProofFailed(msg) => {
+                assert!(msg.contains("missing proof"));
+            }
+            other => panic!("expected PredicateProofFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_fulfillment_multiple_predicates_all_must_pass() {
+        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
+        use pyana_circuit::poseidon2::hash_fact;
+
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![
+                crate::PredicateRequirement {
+                    attribute: "balance".into(),
+                    predicate_type: "gte".into(),
+                    threshold: 1000,
+                    upper_bound: None,
+                    state_root_freshness: 100,
+                },
+                crate::PredicateRequirement {
+                    attribute: "reputation".into(),
+                    predicate_type: "gte".into(),
+                    threshold: 50,
+                    upper_bound: None,
+                    state_root_freshness: 100,
+                },
+            ],
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let state_root = BabyBear::new(99999);
+
+        // Generate proof for balance >= 1000 (balance = 5000)
+        let balance = BabyBear::new(5000);
+        let balance_attr = BabyBear::new(42);
+        let balance_fact = hash_fact(balance_attr, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
+        let balance_commitment = compute_fact_commitment(balance_fact, state_root);
+        let balance_proof = prove_predicate(PredicateWitness {
+            private_value: balance,
+            threshold: BabyBear::new(1000),
+            predicate_type: PredicateType::Gte,
+            fact_commitment: balance_commitment,
+        }).unwrap();
+
+        // Generate proof for reputation >= 50 (reputation = 85)
+        let reputation = BabyBear::new(85);
+        let rep_attr = BabyBear::new(99);
+        let rep_fact = hash_fact(rep_attr, &[reputation, BabyBear::ZERO, BabyBear::ZERO]);
+        let rep_commitment = compute_fact_commitment(rep_fact, state_root);
+        let rep_proof = prove_predicate(PredicateWitness {
+            private_value: reputation,
+            threshold: BabyBear::new(50),
+            predicate_type: PredicateType::Gte,
+            fact_commitment: rep_commitment,
+        }).unwrap();
+
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
+            .unwrap();
+
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![(0, balance_proof), (1, rep_proof)],
+            state_root,
+            state_root_block: 980,
+        };
+
+        let result = verify_fulfillment_with_predicates(
+            &fulfillment_with_preds,
+            &pred_intent,
+            BabyBear::ZERO,
+            1000,
+        );
+        assert!(result.is_ok(), "both predicates should verify: {:?}", result.err());
     }
 }

@@ -1,0 +1,328 @@
+// =============================================================================
+// Section 4: Zero-Knowledge Proof System
+// =============================================================================
+
+= Zero-Knowledge Proof System
+
+== Commitment Scheme
+
+=== 4-ary Merkle Trees
+
+Pyana uses quaternary Merkle trees: each internal node hashes 4 children via $"Poseidon2"(c_0, c_1, c_2, c_3)$ over BabyBear (width 8, $alpha = 7$, 8 external + 22 internal rounds). The 4-ary structure halves tree height relative to binary trees.
+
+=== Multi-Hash Roots
+
+The federation publishes roots under multiple commitment schemes:
+
+$ R_"STARK" &= "Poseidon2Root"(F) \
+  R_"Binius" &= "Groestl256Root"(F) \
+  R_"Halo2" &= "PoseidonBN254Root"(F) $
+
+Each proof backend references the root native to its field.
+
+=== Fold Deltas
+
+A _fold delta_ records a monotonic state transition: $Delta_(i -> i+1) = { f in F_i | f in.not F_(i+1) }$. The commitment to $F_(i+1)$ can be computed incrementally from $F_i$ and $Delta$---this is the structure enabling IVC.
+
+== The Fold AIR
+
+The STARK proves:
+
+#quote(block: true)[
+  "There exists a sequence of fact sets $F_0 supset.eq F_1 supset.eq ... supset.eq F_k$ such that $F_0$ is committed under a federation-attested root, each $F_(i+1) = F_i backslash Delta_i$ for valid removal sets $Delta_i$, and evaluating the standard policy rules over $F_k$ with the given request yields `allow`."
+]
+
+The AIR has three constraint families: membership (facts are valid leaves), fold (removals are correct), and derivation (Datalog steps are valid).
+
+== Public Inputs and Zero-Knowledge
+
+The verifier receives: federation root $R$, authorization request $(A, S, "Act")$, current time $t$, and the proof $pi$ ($tilde$24 KiB). From these, verification produces a single bit. The verifier learns nothing about chain length, intermediate delegators, other capabilities, or the issuer's identity.
+
+All STARK proofs use real Poseidon2 constraints over BabyBear4 (degree-4 extension field, providing 124-bit security). There are no vacuous or mock constraints in the production path.
+
+== Proof Architecture
+
+This section precisely states what each proof in the system proves, how they compose, and the resulting security guarantees. We work over $FF_p$ where $p = 2^(31) - 2^(27) + 1$ (BabyBear) with degree-4 extension $FF_(p^4)$ providing 124-bit challenge security.
+
+=== Poseidon2 Permutation Proof
+
+*Public inputs:* Input state $bold(x) in FF_p^8$, output state $bold(y) in FF_p^8$.
+
+*Private witness:* None (this is a deterministic computation proof).
+
+*Statement:* $bold(y) = "Poseidon2"(bold(x))$ where Poseidon2 uses width 8, $alpha = 7$ (degree-7 S-box), 8 external rounds + 22 internal rounds.
+
+*Constraints:* The AIR evaluator recomputes the full Poseidon2 permutation inside the constraint function and checks $bold(y)_i - "computed"_i = 0$ for all $i in {0, ..., 7}$, combined via random linear combination with verifier challenge $alpha$. Constraint degree: 7.
+
+*Soundness:* A cheating prover claiming $bold(y)' != "Poseidon2"(bold(x))$ produces a nonzero constraint polynomial. The STARK quotient polynomial then has degree exceeding the expected bound, and FRI rejects with overwhelming probability.
+
+=== Merkle Membership Proof
+
+*Public inputs:* Leaf hash $ell in FF_p$, root $r in FF_p$.
+
+*Private witness:* For each level $i in {0, ..., d-1}$: siblings $(s_(i,0), s_(i,1), s_(i,2)) in FF_p^3$ and position $p_i in {0, 1, 2, 3}$.
+
+*Statement:* $exists$ authentication path from $ell$ to $r$ in a 4-ary Poseidon2 Merkle tree of depth $d$.
+
+*Constraints (per level):*
+
+$ &"position validity:" quad p_i (p_i - 1)(p_i - 2)(p_i - 3) = 0 \
+  &"hash binding:" quad "parent"_i = "Poseidon2"_("4-to-1")(c_0, c_1, c_2, c_3) $
+
+where children $(c_0, ..., c_3)$ are determined by Lagrange interpolation on position: the current hash occupies slot $p_i$, siblings fill the remaining slots. Chain continuity: $"parent"_i = "current"_(i+1)$, with $"current"_0 = ell$ and $"parent"_(d-1) = r$.
+
+*Soundness:* Finding a false membership proof requires either (a) a Poseidon2 collision (finding two distinct inputs that hash to the same output), or (b) forging a valid low-degree polynomial that satisfies the degree-7 hash constraint at random evaluation points. Both reduce to collision resistance of Poseidon2 over $FF_p$.
+
+=== Note Spending Proof
+
+*Public inputs:* Nullifier $nu in FF_p$, Merkle root $r in FF_p$.
+
+*Private witness:* Owner $o$, value $v$, asset type $a$, creation nonce $n$, randomness $rho$, spending key $k$, Merkle path $(bold(s)_i, p_i)$ for $i in {0, ..., d-1}$.
+
+*Statement:* There exist $(o, v, a, n, rho, k)$ and a Merkle path such that:
+
+$ "commitment" &= "Poseidon2"(o, v, a, n, rho) \
+  nu &= "Poseidon2"("commitment", k, n) \
+  &"commitment is a leaf under root" r "via the given path" $
+
+*Constraints (5 families):*
++ _Is-Merkle binary:_ $m dot (m - 1) = 0$ where $m$ gates commitment vs. Merkle rows.
++ _Commitment preimage (row 0):_ $(1-m) dot ("commitment" - "Poseidon2"(o, v, a, n, rho)) = 0$.
++ _Nullifier derivation (row 0):_ $(1-m) dot (nu - "Poseidon2"("commitment", k, n)) = 0$.
++ _Position validity (all rows):_ $p(p-1)(p-2)(p-3) = 0$.
++ _Hash binding (Merkle rows):_ $m dot ("parent" - "Poseidon2"_("4-to-1")("children by position")) = 0$.
+
+*Soundness:* A cheating prover cannot:
+- Spend without the spending key: producing a valid $nu$ requires knowing $k$ (Poseidon2 preimage resistance).
+- Spend a nonexistent note: the commitment must exist in the tree (Merkle soundness).
+- Double-spend: the nullifier $nu$ is deterministic given $(k, "commitment", n)$; the verifier maintains a nullifier set and rejects duplicates.
+
+=== Multi-Step Datalog Derivation Proof
+
+*Public inputs:* Initial state root $R_0 in FF_p$, request hash $h in FF_p$, conclusion $c in {0, 1}$, step count $N$, final accumulated hash $H_N in FF_p$.
+
+*Private witness:* For each step $i in {1, ..., N}$: rule ID, body fact hashes, substitution $sigma$, head predicate, head terms, equal/memberof/GTE checks.
+
+*Statement:* Starting from fact set committed under $R_0$, there exists a sequence of $N$ valid Datalog rule applications where:
+- Each step's body facts have hashes present under root $R_0$
+- Variable substitutions are correctly applied (selector columns enforce $sigma$)
+- Equal checks hold: $sigma("lhs") = sigma("rhs")$
+- MemberOf checks hold: element $in$ set
+- GTE checks hold via bit decomposition (high bit = 0 ensures non-negative diff)
+- The final step derives predicate $"ALLOW"$ (if $c = 1$)
+- The hash chain $H_i = "Poseidon2"(H_(i-1) || "derived_hash"_i)$ commits to the full trace
+
+*Constraints (19 families):* Binary flags, substitution application via selector one-hot vectors, equal/memberof enforcement, GTE range check (31-bit decomposition with high-bit-zero), accumulated hash chain correctness, final-step-derives-ALLOW (gated by conclusion), body roots match state root, active-monotone-decreasing.
+
+*Constraint degree:* 4 (dominated by position validity and GTE bit binary checks).
+
+*Soundness:* A cheating prover cannot:
+- Claim ALLOW without deriving it: the constraint $c dot "is_final" dot ("head_pred" - "ALLOW") = 0$ forces the final step's predicate to be ALLOW when $c = 1$.
+- Skip a rule step: the accumulated hash chain commits to every derivation step; tampering changes $H_N$.
+- Use facts not in the committed set: body root constraints force $"root"_i = R_0$ for every active body atom.
+- Forge a substitution: selector-sum and substitution-application constraints algebraically bind derived terms to body atoms.
+
+=== Fold Chain (Attenuation) Proof
+
+*Public inputs:* Old root $R_"old" in FF_p$, new root $R_"new" in FF_p$.
+
+*Private witness:* Removed facts with predicates, terms, and Merkle membership proofs under $R_"old"$.
+
+*Statement:* There exists a set of facts $Delta subset.eq F_"old"$ such that removing $Delta$ from the fact set committed under $R_"old"$ yields the fact set committed under $R_"new"$, and each fact in $Delta$ has a valid Merkle membership proof under $R_"old"$.
+
+*Constraints:*
+- Fact hash correct: $"hash" = "Poseidon2"("predicate", "terms")$
+- Membership verified: each removed fact's hash is a valid leaf under $R_"old"$
+- Root transition binding: $"transition_hash" = "Poseidon2"(R_"old" || R_"new" || "fact_hashes")$
+
+*Soundness:* Capability amplification is impossible: the prover can only _remove_ facts from $F_"old"$ (enforced by membership proofs under $R_"old"$). Adding a fact not in $F_"old"$ requires forging a Merkle membership proof---equivalent to breaking Poseidon2 collision resistance.
+
+=== IVC Fold Chain Accumulation
+
+*Public inputs:* Initial root $R_0 in FF_p$, final root $R_N in FF_p$, step count $N$, accumulated hash $H in FF_p$.
+
+*Private witness:* For each step $i$: old root, new root, fold validity flag, hash chain values.
+
+*Statement:* There exists a sequence of $N$ valid fold steps $R_0 -> R_1 -> ... -> R_N$ where:
+- Each transition is a valid fold (monotone fact removal)
+- Root continuity: $R_i^"new" = R_(i+1)^"old"$
+- Hash chain: $H_i = "Poseidon2"(H_(i-1) || R_i^"new" || i)$ with $H_0 = "Poseidon2"("IVC0" || R_0 || 0)$
+- The final accumulated hash $H = H_N$
+
+*Key property:* The proof is _constant size_ regardless of $N$. Growth is $O(log N)$ via FRI compression.
+
+*Soundness:* Reordering attacks are prevented by including step count in the hash. Chain breaks (skipping a root transition) are caught by root continuity constraints. The trace commitment binds the IVC proof to actual fold computations.
+
+=== Recursive Verification Proof
+
+*Public inputs:* Inner proof's public inputs $pi_0, ..., pi_k$, proof commitment $C in FF_p$.
+
+*Private witness:* The inner proof's trace commitment, constraint commitment, FRI betas, query index, query trace values, Merkle authentication paths, quotient value, FRI layer values.
+
+*Statement:* There exists a valid STARK proof $pi$ whose public inputs are $(pi_0, ..., pi_k)$ and whose verification passes: Fiat-Shamir transcript replay produces challenges consistent with the committed data, FRI folding relations hold ($"even" + beta dot "odd" = "folded"$), and the quotient polynomial check passes at the queried point.
+
+*Constraints:*
+- Validity binary and always-one: every row passes its local check
+- Section tag validity: $"tag" in {0, 1, 2, 3, 4}$
+- FRI folding: $"data"_3 = "data"_0 + "data"_2 dot "data"_1$ (universal, satisfied trivially by non-FRI rows)
+- Proof commitment binding (last row): $"challenge_acc" = C$ (public input)
+
+*Soundness:* Forging a recursive proof requires either finding a valid STARK proof for a false statement (STARK soundness) or producing a verifier trace that claims valid-but-actually-isn't (caught by the constraint that validity flags must all be 1 and the FRI folding must hold algebraically). The Poseidon2 hash chain in `challenge_acc` binds all verification data, so the final commitment uniquely identifies the verified proof.
+
+== Proof Composition
+
+=== Full Authorization Proof
+
+The complete authorization proof composes:
+
+#align(center)[
+#block(
+  fill: luma(248),
+  inset: 12pt,
+  radius: 4pt,
+)[
+```
+Full Authorization Proof =
+    Derivation Proof (N rule steps -> ALLOW)
+  + Body Membership Proofs (each body fact in tree under R_0)
+  + Fold Chain Proof (R_issuer -> R_0 via attenuation)
+  + Issuer Membership Proof (issuer in federation Merkle tree)
+```
+]]
+
+The binding between components uses shared public inputs:
+- The derivation proof's `initial_state_root` = the fold chain's `final_root` $R_0$
+- The fold chain's `initial_root` = the issuer's committed capability root
+- The issuer membership proof's root = the federation's attested root
+
+=== Note Spending Proof
+
+#align(center)[
+#block(
+  fill: luma(248),
+  inset: 12pt,
+  radius: 4pt,
+)[
+```
+Note Spending Proof =
+    Spending Key Knowledge (nullifier = H(commitment || key || nonce))
+  + Commitment Preimage (commitment = H(owner || value || asset || nonce || rand))
+  + Merkle Membership (commitment in note tree under root r)
+```
+]]
+
+All three sub-statements are enforced in a _single_ AIR with 12 columns. The commitment row (row 0) handles key knowledge and preimage; subsequent rows handle Merkle membership. A row-type flag gates which constraints apply. This avoids composition overhead---one proof, one FRI invocation.
+
+=== Full Private Presentation
+
+#align(center)[
+#block(
+  fill: luma(248),
+  inset: 12pt,
+  radius: 4pt,
+)[
+```
+Full Private Presentation =
+    Authorization Proof (conclusion = ALLOW, root, accumulated_hash)
+  OR Note Spending Proof (nullifier, note_tree_root)
+
+IVC-Compressed Presentation =
+    IVC Fold Chain (constant-size, covers N attenuation steps)
+  + Derivation Proof (final state -> ALLOW)
+  + Issuer Membership Proof (issuer in federation)
+```
+]]
+
+The verifier of a Full Private Presentation receives only: a federation root $R_F$, a conclusion bit, and the proof(s). It learns nothing about delegation chain length, intermediate authorities, or the agent's other capabilities.
+
+=== Receipt Chain with IVC
+
+#align(center)[
+#block(
+  fill: luma(248),
+  inset: 12pt,
+  radius: 4pt,
+)[
+```
+Receipt Chain (N turns) =
+    N x State Transition (pre_hash -> post_hash, effects_hash, cost)
+
+IVC-Compressed Receipt Chain =
+    Single constant-size proof (initial_state -> final_state)
+    + Nullifier non-membership proof
+```
+]]
+
+Each state transition step contributes one fold to the IVC accumulator. The accumulated hash $H_N = "Poseidon2"(H_(N-1) || R_N || N)$ commits to the full history. Verification is $O(1)$: check the IVC proof, check the final state commitment, check nullifier freshness.
+
+== Why N Proofs Instead of One
+
+The authorization proof currently consists of N separate sub-proofs (derivation + memberships + fold + issuer) rather than a single monolithic proof. This is because:
+
++ *Different AIRs, different trace shapes.* The Merkle membership AIR has width 6 and depth-dependent rows. The derivation AIR has width 92 with $N$ rows. The fold AIR has width 12. Combining them into a single AIR would require a trace width of $max(6, 12, 92) = 92$ with most columns unused in most rows---wasting prover time on zero constraints.
+
++ *Modularity.* Each proof can be generated independently and in parallel. The Merkle proofs are embarrassingly parallel; the derivation proof depends only on the committed fact set.
+
++ *Incremental verification.* A verifier can reject early: if the issuer membership proof fails, it need not check the derivation.
+
+The proofs are bound together via shared public inputs. Specifically, the derivation proof's state root $R_0$ must equal the fold chain's final root, and the fold chain's initial root must appear as a leaf in the issuer membership proof. Tampering with any binding breaks the corresponding Merkle or hash commitment.
+
+== Path to a Single Proof
+
+Recursive verification collapses N proofs into 1:
+
++ *Generate* each sub-proof (derivation, fold, memberships) independently.
++ *Recursively verify* each sub-proof inside a new STARK circuit. The recursive verifier AIR encodes Fiat-Shamir transcript replay, FRI folding checks, and constraint evaluation at queried points.
++ *Chain* the recursive proofs: the proof verifying sub-proof $k$ also verifies the recursive proof covering sub-proofs $1, ..., k-1$.
++ The final output is a single STARK proof of constant size ($tilde 24$ KiB) that transitively attests to all sub-proofs.
+
+*Current status:* Recursive verification is implemented and working for pairs of proofs (verified via Plonky3). Arbitrary-$N$ aggregation uses sequential chaining (each step verifies the previous recursive proof). The `build_recursive_ivc_chain` function chains $N$ fold proofs into a single recursive attestation. Full composition of heterogeneous AIRs (derivation + fold + membership in one recursive proof) is designed but not yet operational.
+
+== Soundness Analysis
+
+=== Per-Component Security
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (left, left, left),
+    table.header([*Component*], [*Security Parameter*], [*Bound*]),
+    [BabyBear4 extension field], [$|FF_(p^4)| approx 2^(124)$], [124-bit challenge],
+    [FRI proximity (50 queries, blowup 4)], [$2^(-50) dot (1/4)^(50)$], [$tilde$100-bit soundness],
+    [Poseidon2 ($alpha = 7$, width 8)], [Min($|FF_p| dot d, 2^(128)$)], [$tilde$124-bit collision],
+    [BLAKE3 Merkle (trace commitment)], [256-bit output], [128-bit collision],
+    [Fiat-Shamir (BLAKE3 transcript)], [256-bit state], [128-bit binding],
+  ),
+  caption: [Security bounds for each proof system component.],
+)
+
+=== System Security
+
+The overall system security is the minimum across all components:
+
+$ lambda_"system" = min(lambda_"field", lambda_"FRI", lambda_"hash", lambda_"FS") approx 100 "bits" $
+
+The FRI soundness ($tilde$100 bits with 50 queries and blowup factor 4) is the binding constraint. This is standard for STARKs at this parameter set; production deployment would increase to 80--128 queries for 128-bit security.
+
+=== What Composition Does Not Hide
+
+The number of sub-proofs in a non-recursive presentation leaks the _structure_ (though not the _content_) of the authorization. Specifically:
+- A 3-proof presentation reveals "there was a fold chain, a derivation, and an issuer check"
+- Proof sizes reveal approximate trace lengths (hence: delegation chain length, derivation depth)
+
+Recursive composition eliminates this leakage: the final proof is constant-size and reveals only the conclusion bit. This is why recursive verification is architecturally critical---not merely a performance optimization, but a privacy requirement.
+
+== Proof Backend Agility
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, left, center, center, center),
+    table.header([*Backend*], [*Field/Curve*], [*Proof Size*], [*PQ?*], [*Recursion*]),
+    [BabyBear STARK], [$FF_(2^(31)-2^(27)+1)$ + FRI], [$tilde$24 KiB], [Yes], [Planned],
+    [Binius], [GF(2) tower + Groestl-256], [$tilde$1--4 KiB], [Yes], [No],
+    [Halo2], [BN254 / Pasta + KZG], [$tilde$1--5 KiB], [No], [Yes],
+    [Nova], [Pasta cycle (Pallas/Vesta)], [$tilde$10 KiB], [No], [IVC native],
+  ),
+  caption: [Proof backend characteristics. All prove the same logical statement against the same data model.],
+)

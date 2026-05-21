@@ -856,6 +856,7 @@ mod tests {
             post_state_root: [0; 32],
             note_tree_root: [0; 32],
             nullifier_set_root: [0; 32],
+            transition_proof: None,
         };
 
         transports[0].broadcast_proposal(&block).await.unwrap();

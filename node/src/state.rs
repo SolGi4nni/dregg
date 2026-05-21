@@ -15,6 +15,7 @@ use pyana_sdk::AgentWallet;
 use pyana_store::PersistentStore;
 
 use crate::federation_sync::GossipHandle;
+use crate::routing_table::RoutingTable;
 
 // =============================================================================
 // Events (broadcast to WebSocket clients)
@@ -76,6 +77,26 @@ pub struct NodeStateInner {
     pub known_federation_keys: Vec<pyana_types::PublicKey>,
     /// Maximum age (in seconds) for accepting incoming attested roots. Default: 3600.
     pub max_root_age_secs: u64,
+    /// This validator's threshold decryption key share (Phase 2 turn privacy).
+    /// Set during epoch initialization when the validator receives their share
+    /// from the key generation ceremony.
+    pub threshold_key_share: Option<pyana_federation::KeyShare>,
+    /// Threshold required for decryption (t in t-of-n).
+    pub decryption_threshold: usize,
+    /// Pending decryption shares for encrypted turns awaiting collaborative decryption.
+    /// Key: ciphertext_id, Value: collected shares so far.
+    pub pending_decryption_shares:
+        HashMap<[u8; 32], Vec<pyana_federation::DecryptionShare>>,
+    /// Local routing table populated from RoutingDirectives in turn receipts.
+    /// Maps CellId -> reachable peers, enabling three-party introductions to
+    /// produce actual network-level connectivity.
+    pub routing_table: RoutingTable,
+    /// Whether automatic pruning is enabled (--enable-pruning flag).
+    /// When true, old blocks/roots/audit entries are deleted after each checkpoint.
+    /// Archival nodes should leave this false.
+    pub pruning_enabled: bool,
+    /// Checkpoint interval in blocks. Defaults to 1000.
+    pub checkpoint_interval: u64,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -162,6 +183,12 @@ impl NodeState {
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
                 max_root_age_secs: 3600,
+                threshold_key_share: None,
+                decryption_threshold: 0,
+                pending_decryption_shares: HashMap::new(),
+                routing_table: RoutingTable::new(),
+                pruning_enabled: false,
+                checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -196,6 +223,12 @@ impl NodeState {
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
                 max_root_age_secs: 3600,
+                threshold_key_share: None,
+                decryption_threshold: 0,
+                pending_decryption_shares: HashMap::new(),
+                routing_table: RoutingTable::new(),
+                pruning_enabled: false,
+                checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),

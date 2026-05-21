@@ -1,0 +1,19 @@
+// =============================================================================
+// Section 1: Introduction
+// =============================================================================
+
+= Introduction
+
+Cross-domain authorization for autonomous agents presents a challenge that existing systems address incompletely. Consider an AI agent dispatched by Organization A to invoke a service hosted by Organization B. The agent must prove it is authorized---but without revealing Organization A's internal delegation structure, the identities of intermediate signatories, or what other capabilities the agent holds.
+
+Existing approaches each fail along a different axis:
+
+- *UCAN/ZCAP-LD* @ucan provide delegation chains but require revealing the full chain to the verifier. Privacy is absent.
+- *Coconut credentials* @coconut offer selective disclosure of attributes but lack the delegation semantics needed for capability attenuation.
+- *Cap'n Proto RPC* provides promise pipelining and E-style messaging but operates within a single trust domain with no privacy, no proof of authorization, and no offline verification.
+- *Blockchain-based authorization* achieves transparency but requires chain liveness, incurs gas costs, and exposes all authorization state on-chain.
+- *seL4* @sel4 provides a rigorous Capability Derivation Tree with synchronous kernel-enforced revocation, but requires a single address space and cannot distribute across trust boundaries.
+
+Pyana's contributions are: (1) proving monotonic attenuation of a bearer token chain in zero knowledge with backend-agnostic commitment; (2) a distributed CDT that replaces kernel enforcement with cryptographic proof; (3) E-style messaging semantics (promise pipelining, three-party introduction) integrated with proof-carrying state; (4) a privacy-preserving intent marketplace for capability discovery; (5) an economic model for federated validation with privacy-compatible staking; and (6) an AI agent coordination substrate built on capability-based authority.
+
+The design draws from Mina Protocol's execution model (cells as zkApp accounts, turns as ZkappCommands, call forests), E's distributed object semantics (eventual sends, three-party handoff), seL4's capability derivation (recast as a proof structure for asynchronous distributed systems), and Stingray's bounded counters for BFT budget channels.

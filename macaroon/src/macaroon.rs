@@ -179,10 +179,12 @@ impl Macaroon {
                 // Handle third-party caveat
                 let tp = ThirdPartyCaveat::decode_body(&wire_caveat.body)?;
 
-                // Find matching discharge by ticket (KID)
+                // Find matching discharge by ticket (KID) and location.
+                // Both must match to prevent a discharge from a different service
+                // that happens to share the same ticket bytes from being accepted.
                 let discharge = discharges
                     .iter()
-                    .find(|d| d.nonce.kid == tp.ticket)
+                    .find(|d| d.nonce.kid == tp.ticket && d.location == tp.location)
                     .ok_or_else(|| MacaroonError::MissingDischarge {
                         location: tp.location.clone(),
                     })?;

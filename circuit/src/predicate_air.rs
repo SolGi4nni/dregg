@@ -83,7 +83,7 @@ pub mod col {
 }
 
 /// The type of predicate being proven.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PredicateType {
     /// Prove `private_value >= threshold`.
     /// diff = private_value - threshold; bit decomp with high bit = 0.
@@ -334,7 +334,7 @@ impl Air for PredicateAir {
 }
 
 /// A complete predicate proof result.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PredicateProof {
     /// The type of predicate that was proven.
     pub predicate_type: PredicateType,

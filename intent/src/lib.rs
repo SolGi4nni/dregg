@@ -39,6 +39,27 @@ use serde::{Deserialize, Serialize};
 // Core types
 // ---------------------------------------------------------------------------
 
+/// A predicate requirement for cross-party verification.
+///
+/// When a cell posts an intent with predicate requirements, any fulfiller must
+/// provide a cryptographic proof that they satisfy each predicate WITHOUT
+/// revealing the exact value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PredicateRequirement {
+    /// The attribute being proven about (e.g., "balance", "reputation").
+    pub attribute: String,
+    /// The type of predicate: "gte", "lte", "gt", "lt", "neq", "in_range".
+    pub predicate_type: String,
+    /// The public threshold for comparison predicates.
+    pub threshold: u64,
+    /// For "in_range" predicates: the upper bound. Ignored for other types.
+    #[serde(default)]
+    pub upper_bound: Option<u64>,
+    /// Maximum age of the state root in blocks.
+    pub state_root_freshness: u64,
+}
+
+
 /// A commitment to an anonymous creator identity.
 /// This is NOT a public key -- it's a blinded commitment that can only be
 /// opened by the creator. Two intents from the same creator have different
@@ -206,6 +227,9 @@ pub struct MatchSpec {
     /// by the same wallet (possibly from different tokens).
     #[serde(default)]
     pub compound: Option<Vec<MatchSpec>>,
+    /// Cross-party predicate requirements.
+    #[serde(default)]
+    pub predicate_requirements: Vec<PredicateRequirement>,
 }
 
 /// A broadcast intent: someone needs/offers/queries a capability.
@@ -426,7 +450,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xAA; 32]);
         let i1 = Intent::new(IntentKind::Need, spec.clone(), creator, 1000, None);
@@ -444,7 +468,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let spec2 = MatchSpec {
             actions: vec![ActionPattern {
@@ -454,7 +478,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xBB; 32]);
         let i1 = Intent::new(IntentKind::Need, spec1, creator, 1000, None);
@@ -469,7 +493,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xCC; 32]);
         let intent = Intent::new(IntentKind::Need, spec, creator, 1000, None);
@@ -536,7 +560,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -556,7 +580,7 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None,
+               compound: None, predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
 

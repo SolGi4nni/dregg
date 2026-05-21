@@ -46,9 +46,10 @@ pub use authorize::{AuthError, authorize_with_trace};
 pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
 pub use present::{
-    BridgePresentationBuilder, BridgePresentationProof, BridgePredicateProof,
-    BridgePredicateProofInner, FederationRegistry, Predicate, WirePresentationProof,
-    DEFAULT_MAX_PROOF_AGE_SECS, compute_revealed_facts_commitment, prove_predicate_for_fact,
+    BridgeCommittedThresholdProof, BridgePresentationBuilder, BridgePresentationProof,
+    BridgePredicateProof, BridgePredicateProofInner, FederationRegistry, Predicate,
+    WirePresentationProof, DEFAULT_MAX_PROOF_AGE_SECS, compute_revealed_facts_commitment,
+    prove_committed_threshold, prove_predicate_for_fact, verify_committed_threshold_proof,
     verify_fold_chain, verify_predicate_proof, verify_presentation_complete,
     verify_presentation_full, verify_revealed_facts_commitment, verify_wire_fold_chain,
 };

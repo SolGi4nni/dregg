@@ -9,6 +9,7 @@
 mod api;
 mod federation_sync;
 mod mcp;
+mod routing_table;
 mod state;
 mod ws;
 
@@ -40,6 +41,28 @@ enum Command {
         /// Data directory for persistent state.
         #[arg(long, default_value = "~/.pyana")]
         data_dir: String,
+
+        /// Use the full Morpheus DAG-based BFT consensus instead of simplified consensus.
+        /// Requires the `morpheus` feature on pyana-federation.
+        #[arg(long)]
+        morpheus: bool,
+
+        /// This node's index in the federation (0-based). Required when --morpheus is set.
+        #[arg(long, default_value = "0")]
+        node_index: usize,
+
+        /// Total number of federation nodes. Required when --morpheus is set.
+        #[arg(long, default_value = "4")]
+        federation_size: usize,
+
+        /// Enable automatic pruning of old blocks/roots below the latest checkpoint.
+        /// Off by default (archival mode). Turn on to bound storage growth.
+        #[arg(long)]
+        enable_pruning: bool,
+
+        /// Checkpoint interval in blocks (default: 1000).
+        #[arg(long, default_value = "1000")]
+        checkpoint_interval: u64,
     },
 
     /// Initialize the data directory and generate a node keypair.
@@ -88,7 +111,24 @@ async fn main() {
             port,
             federation_peers,
             data_dir,
-        } => run_node(port, federation_peers, &data_dir).await,
+            morpheus,
+            node_index,
+            federation_size,
+            enable_pruning,
+            checkpoint_interval,
+        } => {
+            run_node(
+                port,
+                federation_peers,
+                &data_dir,
+                morpheus,
+                node_index,
+                federation_size,
+                enable_pruning,
+                checkpoint_interval,
+            )
+            .await
+        }
         Command::Init { data_dir } => init_node(&data_dir),
         Command::Status { port } => check_status(port).await,
         Command::Mcp {
@@ -99,7 +139,16 @@ async fn main() {
 }
 
 /// Run the node: start HTTP API server and federation sync.
-async fn run_node(port: u16, peers: Vec<String>, data_dir: &str) {
+async fn run_node(
+    port: u16,
+    peers: Vec<String>,
+    data_dir: &str,
+    morpheus: bool,
+    node_index: usize,
+    federation_size: usize,
+    enable_pruning: bool,
+    checkpoint_interval: u64,
+) {
     let data_path = expand_path(data_dir);
 
     if !data_path.exists() {
@@ -119,12 +168,33 @@ async fn run_node(port: u16, peers: Vec<String>, data_dir: &str) {
         }
     };
 
-    info!(port = port, data_dir = %data_path.display(), "starting pyana-node");
+    // Configure pruning.
+    {
+        let mut s = node_state.write().await;
+        s.pruning_enabled = enable_pruning;
+        s.checkpoint_interval = checkpoint_interval;
+    }
+
+    info!(
+        port = port,
+        data_dir = %data_path.display(),
+        pruning = enable_pruning,
+        checkpoint_interval = checkpoint_interval,
+        "starting pyana-node"
+    );
 
     // Spawn federation sync background task.
     let sync_state = node_state.clone();
+    let morpheus_config = if morpheus {
+        Some(federation_sync::MorpheusConfig {
+            node_index,
+            federation_size,
+        })
+    } else {
+        None
+    };
     tokio::spawn(async move {
-        federation_sync::run_federation_sync(sync_state).await;
+        federation_sync::run_federation_sync(sync_state, morpheus_config).await;
     });
 
     // Build and serve the HTTP API.

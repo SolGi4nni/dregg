@@ -1,9 +1,18 @@
-//! Eventual references and promise pipelining for the turn model.
+//! Batched topological execution with output forwarding.
 //!
-//! This module implements E-style eventual-send semantics: a turn can depend on
-//! the output of another pending turn, and both can be submitted together in a
-//! pipeline. The federation resolves the dependency graph and executes in causal
-//! order.
+//! # What this module IS
+//!
+//! This module implements **synchronous batched execution** of turns with declared
+//! dependency edges. Turns are submitted together in a `Pipeline` (aka `TurnBatch`),
+//! topologically sorted, and executed in causal order. Earlier turns' outputs are
+//! available to later turns via `EventualRef` (aka `OutputRef`).
+//!
+//! Useful for: multi-step local operations, atomic multi-party swaps, and tests.
+//!
+//! # What this module is NOT
+//!
+//! This is **not** async promise pipelining in the E-language sense. All execution
+//! is synchronous and local. For true E-style eventual-send, use the intent system.
 
 use pyana_cell::CellId;
 use serde::{Deserialize, Serialize};
@@ -81,9 +90,10 @@ impl From<EventualRef> for Target {
 /// An output produced by a turn, recorded in the receipt for pipeline resolution.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnOutput {
-    /// A capability was granted to a target cell.
+    /// A capability was granted.
     GrantedCapability {
-        /// The cell that received the capability.
+        /// The cell that RECEIVED the capability (the recipient, NOT the cell the
+        /// capability points to). Named `target` for backward compat.
         target: CellId,
         /// The slot number assigned to the granted capability.
         slot: u32,
@@ -158,6 +168,20 @@ pub enum PipelineError {
     },
     /// The pipeline is empty.
     Empty,
+    /// An EventualRef references a source_turn hash that does not exist in the batch.
+    InvalidOutputRef {
+        /// Index of the turn containing the invalid reference.
+        turn_index: usize,
+        /// The EventualRef with the invalid source_turn hash.
+        output_ref: EventualRef,
+    },
+    /// A turn's `depends_on` hash does not match any turn in the batch or committed receipts.
+    MissingDependency {
+        /// Index of the turn with the missing dependency.
+        turn_index: usize,
+        /// The hash that could not be found.
+        missing_hash: [u8; 32],
+    },
 }
 
 impl std::fmt::Display for PipelineError {
@@ -196,6 +220,14 @@ impl std::fmt::Display for PipelineError {
                 write!(f, "turn[{index}] execution failed: {reason}")
             }
             PipelineError::Empty => write!(f, "pipeline is empty"),
+            PipelineError::InvalidOutputRef { turn_index, output_ref } => {
+                write!(f, "turn[{}] has OutputRef with source_turn {:02x}{:02x}.. not in batch",
+                    turn_index, output_ref.source_turn[0], output_ref.source_turn[1])
+            }
+            PipelineError::MissingDependency { turn_index, missing_hash } => {
+                write!(f, "turn[{}] depends_on hash {:02x}{:02x}.. not found",
+                    turn_index, missing_hash[0], missing_hash[1])
+            }
         }
     }
 }
@@ -214,6 +246,8 @@ pub struct Pipeline {
     pub turns: Vec<Turn>,
     /// Dependency edges: (dependent_index, dependency_index).
     pub dependencies: Vec<(usize, usize)>,
+    /// When true, if ANY turn fails, ALL previously committed turns are rolled back.
+    pub atomic: bool,
 }
 
 impl Pipeline {
@@ -222,6 +256,7 @@ impl Pipeline {
         Self {
             turns: Vec::new(),
             dependencies: Vec::new(),
+            atomic: false,
         }
     }
 
@@ -333,6 +368,66 @@ impl Default for Pipeline {
         Self::new()
     }
 }
+
+
+// ─── PipelineResult ──────────────────────────────────────────────────────────
+
+/// The outcome of executing a pipeline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PipelineResult {
+    /// All turns in the pipeline committed successfully.
+    AllCommitted { committed: Vec<usize> },
+    /// Some turns committed, some are pending (conditional turns not yet resolved).
+    PartialWithPending { committed: Vec<usize>, pending: Vec<usize> },
+    /// Some turns failed. In non-atomic mode, others may have committed.
+    Failed { committed: Vec<usize>, failed: Vec<(usize, PipelineError)> },
+}
+
+/// Builder for constructing pipelines with a fluent API.
+pub struct PipelineBuilder {
+    pipeline: Pipeline,
+}
+
+impl PipelineBuilder {
+    /// Create a new pipeline builder.
+    pub fn new() -> Self {
+        Self { pipeline: Pipeline::new() }
+    }
+
+    /// Add a turn to the pipeline. Returns its index.
+    pub fn add_turn(&mut self, turn: Turn) -> usize {
+        self.pipeline.add_turn(turn)
+    }
+
+    /// Declare a dependency between turns.
+    pub fn add_dependency(&mut self, dependent: usize, dependency: usize) -> &mut Self {
+        self.pipeline.add_dependency(dependent, dependency);
+        self
+    }
+
+    /// Set the atomic flag: when true, all turns must succeed or all rollback.
+    pub fn atomic(&mut self) -> &mut Self {
+        self.pipeline.atomic = true;
+        self
+    }
+
+    /// Build the final Pipeline.
+    pub fn build(self) -> Pipeline {
+        self.pipeline
+    }
+}
+
+impl Default for PipelineBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Renamed from `EventualRef` for semantic clarity.
+pub type OutputRef = EventualRef;
+
+/// Renamed from `Pipeline` for semantic clarity.
+pub type TurnBatch = Pipeline;
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -583,6 +678,7 @@ mod tests {
                 slot: 0,
                 permissions: AuthRequired::None,
                 breadstuff: None,
+                expires_at: None,
             },
         };
         let turn0 = make_test_turn(id_a, 0, vec![grant_effect]);
@@ -1117,6 +1213,7 @@ mod tests {
                 slot: 0,
                 permissions: AuthRequired::None,
                 breadstuff: None,
+                expires_at: None,
             },
         };
         let turn_a = make_test_turn(id_alice, 0, vec![grant_effect]);
@@ -1461,3 +1558,5 @@ mod tests {
         assert!(ledger.get(&new_cell_id_2).is_some(), "cell 2 should exist");
     }
 }
+
+

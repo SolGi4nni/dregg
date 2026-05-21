@@ -303,6 +303,70 @@ impl CausalLedger {
     pub fn turn_count(&self) -> usize {
         self.dag.len()
     }
+
+    /// Execute a pipeline and insert committed turns into the causal DAG.
+    ///
+    /// This bridges the pipeline execution system with causal ordering:
+    /// 1. Executes the pipeline via `execute_pipeline_result`
+    /// 2. For each committed turn, creates a `CausalTurn` with appropriate causal deps
+    /// 3. Inserts all into the causal DAG
+    pub fn apply_pipeline(
+        &mut self,
+        pipeline: pyana_turn::Pipeline,
+        node_id: [u8; 32],
+    ) -> (pyana_turn::PipelineResult, Vec<[u8; 32]>) {
+        let executor = {
+            let mut ex = pyana_turn::TurnExecutor::new(self.executor_costs.clone());
+            ex.set_timestamp(self.current_timestamp);
+            ex.set_block_height(self.block_height);
+            ex
+        };
+
+        let base_frontier = self.frontier();
+        let pipeline_clone = pipeline.clone();
+
+        let (results, outcome) =
+            pyana_turn::execute_pipeline_result(pipeline, &mut self.ledger, &executor);
+
+        let mut causal_hashes: Vec<[u8; 32]> = Vec::new();
+        let mut idx_to_causal_hash: HashMap<usize, [u8; 32]> = HashMap::new();
+
+        for (idx, result) in results.iter().enumerate() {
+            if result.is_ok() {
+                let turn = pipeline_clone.turns[idx].clone();
+
+                let mut causal_deps = base_frontier.clone();
+                let pipeline_deps = pipeline_clone.dependencies_of(idx);
+                for dep_idx in pipeline_deps {
+                    if let Some(dep_hash) = idx_to_causal_hash.get(&dep_idx) {
+                        causal_deps.push(*dep_hash);
+                    }
+                }
+                causal_deps.sort();
+                causal_deps.dedup();
+
+                let sequence = self.next_sequence(&node_id);
+                let ct = CausalTurn::new(turn, causal_deps.clone(), node_id, sequence);
+                let ct_hash = ct.hash;
+
+                if self.dag.insert(ct_hash, &causal_deps).is_ok() {
+                    *self.node_sequences.entry(node_id).or_insert(0) = sequence + 1;
+                    let frontier = self.node_frontiers.entry(node_id).or_default();
+                    frontier.retain(|h| !causal_deps.contains(h));
+                    frontier.push(ct_hash);
+
+                    if let Ok(receipt) = result {
+                        self.receipts.insert(ct_hash, receipt.clone());
+                    }
+
+                    idx_to_causal_hash.insert(idx, ct_hash);
+                    causal_hashes.push(ct_hash);
+                }
+            }
+        }
+
+        (outcome, causal_hashes)
+    }
 }
 
 impl Default for CausalLedger {

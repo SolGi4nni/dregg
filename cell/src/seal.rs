@@ -338,6 +338,7 @@ impl SealPair {
             slot,
             permissions,
             breadstuff,
+            expires_at: None,
         })
     }
 
@@ -398,6 +399,7 @@ mod tests {
             slot: seed as u32,
             permissions: AuthRequired::Signature,
             breadstuff: None,
+            expires_at: None,
         }
     }
     fn make_test_cap_with_breadstuff(seed: u8) -> CapabilityRef {
@@ -412,6 +414,7 @@ mod tests {
             slot: seed as u32,
             permissions: AuthRequired::Either,
             breadstuff: Some(bs),
+            expires_at: None,
         }
     }
 

@@ -131,6 +131,11 @@ pub struct TurnExecutor {
     pub proposer_cell: Option<CellId>,
     /// Federation treasury cell (receives 30% of fees). If None, that share is burned.
     pub treasury_cell: Option<CellId>,
+    /// Maximum lifetime (in blocks) for capabilities introduced via three-party
+    /// introduction. After `current_height + max_introduction_lifetime`, the routing
+    /// directive expires and the introduced capability becomes stale.
+    /// Default: 1000 blocks.
+    pub max_introduction_lifetime: u64,
 }
 
 impl TurnExecutor {
@@ -149,6 +154,7 @@ impl TurnExecutor {
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
+            max_introduction_lifetime: 1000,
         }
     }
 
@@ -171,6 +177,7 @@ impl TurnExecutor {
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
+            max_introduction_lifetime: 1000,
         }
     }
 
@@ -189,6 +196,7 @@ impl TurnExecutor {
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
+            max_introduction_lifetime: 1000,
         }
     }
 
@@ -559,7 +567,12 @@ impl TurnExecutor {
             action_count: turn.call_forest.action_count(),
             previous_receipt_hash: turn.previous_receipt_hash,
             agent: turn.agent,
-            routing_directives: Self::collect_routing_directives(&turn.call_forest, &turn_hash),
+            routing_directives: Self::collect_routing_directives(
+                &turn.call_forest,
+                &turn_hash,
+                self.block_height,
+                self.max_introduction_lifetime,
+            ),
             derivation_records: Self::collect_derivation_records(
                 &turn.call_forest,
                 self.current_timestamp as u64,
@@ -661,9 +674,9 @@ impl TurnExecutor {
         }
 
         // Check target cell exists.
-        let target_cell = ledger
-            .get(&action.target)
-            .ok_or_else(|| (TurnError::CellNotFound { id: action.target }, path.clone()))?;
+        if ledger.get(&action.target).is_none() {
+            return Err((TurnError::CellNotFound { id: action.target }, path.clone()));
+        }
 
         // Check capability: does the parent have access to the target?
         // The agent (top-level parent) implicitly has access to itself.
@@ -691,12 +704,8 @@ impl TurnExecutor {
                             path,
                         ));
                     }
-                    DelegationMode::ParentsOwn
-                    | DelegationMode::Inherit
-                    | DelegationMode::SnapshotRefresh => {
-                        // TODO: Should walk the delegation chain (Cell.delegate) to find
-                        // an ancestor that holds the capability. Currently behaves
-                        // identically to DelegationMode::None.
+                    DelegationMode::ParentsOwn | DelegationMode::Inherit => {
+                        // ParentsOwn and Inherit are deprecated; behave like None.
                         return Err((
                             TurnError::CapabilityNotHeld {
                                 actor: *parent_cell,
@@ -705,9 +714,63 @@ impl TurnExecutor {
                             path,
                         ));
                     }
+                    DelegationMode::SnapshotRefresh => {
+                        // Walk the delegation chain from parent_cell upward to find
+                        // an ancestor that holds the capability to action.target.
+                        // If found, create a DelegatedRef snapshot on the child cell,
+                        // giving it a frozen view of the ancestor's capabilities.
+                        let found_ancestor =
+                            Self::walk_delegation_chain_for_capability(ledger, parent_cell, &action.target);
+                        if let Some(ancestor_id) = found_ancestor {
+                            let ancestor = ledger.get(&ancestor_id).unwrap();
+                            let snapshot: Vec<pyana_cell::CapabilityRef> =
+                                ancestor.capabilities.iter().cloned().collect();
+                            let delegation_epoch = ancestor.state.delegation_epoch;
+                            let now = self.current_timestamp as u64;
+                            let max_staleness = self.max_introduction_lifetime;
+
+                            // Set up a DelegatedRef on the acting child cell so it can
+                            // use the ancestor's capabilities for this and future actions.
+                            let child_cell = ledger.get_mut(parent_cell).unwrap();
+                            if child_cell.delegation.is_none() {
+                                journal.record_set_delegation(*parent_cell, None);
+                                child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
+                                    ancestor_id,
+                                    snapshot,
+                                    delegation_epoch,
+                                    now,
+                                    max_staleness,
+                                ));
+                            }
+                            // Re-check access now that the delegation snapshot is set.
+                            let child_cell_ref = ledger.get(parent_cell).unwrap();
+                            if !Self::has_access_including_delegation(child_cell_ref, &action.target) {
+                                return Err((
+                                    TurnError::CapabilityNotHeld {
+                                        actor: *parent_cell,
+                                        target: action.target,
+                                    },
+                                    path,
+                                ));
+                            }
+                        } else {
+                            return Err((
+                                TurnError::CapabilityNotHeld {
+                                    actor: *parent_cell,
+                                    target: action.target,
+                                },
+                                path,
+                            ));
+                        }
+                    }
                 }
             }
         }
+
+        // Re-fetch target_cell after potential delegation mutations above.
+        let target_cell = ledger
+            .get(&action.target)
+            .ok_or_else(|| (TurnError::CellNotFound { id: action.target }, path.clone()))?;
 
         // Check preconditions.
         self.check_preconditions(&action.preconditions, target_cell, &path)?;
@@ -2084,13 +2147,30 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Consent check: the target cell must allow delegation (delegate != Impossible).
+                let target_cell = ledger
+                    .get(target)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *target }, path.to_vec()))?;
+                if target_cell.permissions.delegate == pyana_cell::AuthRequired::Impossible {
+                    return Err((
+                        TurnError::IntroductionDenied {
+                            introducer: *introducer,
+                            recipient: *recipient,
+                            target: *target,
+                            reason: "target cell has delegate=Impossible (consent denied)"
+                                .to_string(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
                 if ledger.get(recipient).is_none() {
                     return Err((TurnError::CellNotFound { id: *recipient }, path.to_vec()));
                 }
                 let recipient_cell = ledger.get_mut(recipient).unwrap();
+                let expires_at = self.block_height + self.max_introduction_lifetime;
                 let granted_slot = recipient_cell
                     .capabilities
-                    .grant(*target, permissions.clone())
+                    .grant_with_expiry(*target, permissions.clone(), expires_at)
                     .ok_or_else(|| {
                         (
                             TurnError::CapabilitySlotOverflow { cell: *recipient },
@@ -2289,6 +2369,33 @@ impl TurnExecutor {
             }
         }
         false
+    }
+
+    /// Walk the delegation chain from `start_cell` upward (via `cell.delegate`)
+    /// looking for an ancestor that holds a capability to `target`.
+    ///
+    /// Returns `Some(ancestor_id)` if an ancestor with the capability is found,
+    /// `None` otherwise. Limits the walk to 16 hops to prevent infinite loops.
+    fn walk_delegation_chain_for_capability(
+        ledger: &Ledger,
+        start_cell: &CellId,
+        target: &CellId,
+    ) -> Option<CellId> {
+        let mut current_id = *start_cell;
+        let max_hops = 16;
+
+        for _ in 0..max_hops {
+            let cell = ledger.get(&current_id)?;
+            // Check if this cell's delegate (parent) has the capability.
+            let parent_id = cell.delegate?;
+            let parent_cell = ledger.get(&parent_id)?;
+            if Self::has_access_including_delegation(parent_cell, target) {
+                return Some(parent_id);
+            }
+            current_id = parent_id;
+        }
+
+        None
     }
 
     /// SECURITY: Check that the actor holds a capability to the given cell AND that
@@ -2754,10 +2861,18 @@ impl TurnExecutor {
     fn collect_routing_directives(
         forest: &crate::forest::CallForest,
         turn_hash: &[u8; 32],
+        block_height: u64,
+        max_introduction_lifetime: u64,
     ) -> Vec<RoutingDirective> {
         let mut directives = Vec::new();
         for tree in &forest.roots {
-            Self::collect_routing_directives_tree(tree, turn_hash, &mut directives);
+            Self::collect_routing_directives_tree(
+                tree,
+                turn_hash,
+                block_height,
+                max_introduction_lifetime,
+                &mut directives,
+            );
         }
         directives
     }
@@ -2765,6 +2880,8 @@ impl TurnExecutor {
     fn collect_routing_directives_tree(
         tree: &CallTree,
         turn_hash: &[u8; 32],
+        block_height: u64,
+        max_introduction_lifetime: u64,
         directives: &mut Vec<RoutingDirective>,
     ) {
         for effect in &tree.action.effects {
@@ -2776,12 +2893,18 @@ impl TurnExecutor {
                     sender: *recipient,
                     target: *target,
                     authorizing_turn: *turn_hash,
-                    expires: None,
+                    expires: Some(block_height + max_introduction_lifetime),
                 });
             }
         }
         for child in &tree.children {
-            Self::collect_routing_directives_tree(child, turn_hash, directives);
+            Self::collect_routing_directives_tree(
+                child,
+                turn_hash,
+                block_height,
+                max_introduction_lifetime,
+                directives,
+            );
         }
     }
 
@@ -2884,7 +3007,7 @@ impl TurnExecutor {
 
 // ─── Pipeline Execution ──────────────────────────────────────────────────────
 
-use crate::eventual::{EventualRef, Pipeline, PipelineError, TurnOutput};
+use crate::eventual::{EventualRef, Pipeline, PipelineError, PipelineResult, TurnBatch, TurnOutput};
 use std::collections::HashMap;
 
 /// A resolution table mapping (turn_hash, output_slot) to concrete outputs.
@@ -3098,14 +3221,16 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
         }
     }
 }
-
-/// Execute a pipeline of turns against a ledger in topological order.
+/// Execute a batch of turns against a ledger in topological order.
 ///
 /// Before executing each turn, any `PipelinedSend` effects are resolved using
 /// the resolution table (built from outputs of previously-committed turns).
-/// This implements E-style promise pipelining: turns can reference outputs of
-/// earlier turns via `EventualRef`, and the pipeline executor resolves them
-/// in causal order.
+/// Turns can reference outputs of earlier turns via `EventualRef` (OutputRef),
+/// and the batch executor resolves them in causal order.
+///
+/// Each turn's `depends_on` hashes are verified against the set of committed
+/// receipt hashes within this batch. If a turn declares a dependency on a hash
+/// that hasn't been committed, the turn is rejected.
 pub fn execute_pipeline(
     pipeline: Pipeline,
     ledger: &mut Ledger,
@@ -3126,14 +3251,15 @@ pub fn execute_pipeline(
     let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
     let mut failed: Vec<bool> = vec![false; n];
     let mut resolution_table: ResolutionTable = HashMap::new();
+    // Track committed turn hashes for depends_on verification.
+    let mut committed_hashes: std::collections::HashSet<[u8; 32]> =
+        std::collections::HashSet::new();
 
     // Pre-compute turn hashes for resolution table keying.
-    let mut turn_hashes: Vec<[u8; 32]> = Vec::with_capacity(n);
-    for turn in &pipeline.turns {
-        turn_hashes.push(turn.hash());
-    }
+    let turn_hashes: Vec<[u8; 32]> = pipeline.turns.iter().map(|t| t.hash()).collect();
 
     for &idx in &topo_order {
+        // Check explicit dependency edges (from add_dependency).
         let deps = pipeline.dependencies_of(idx);
         let mut dep_failed = None;
         for dep_idx in &deps {
@@ -3152,8 +3278,34 @@ pub fn execute_pipeline(
             continue;
         }
 
-        // Resolve EventualRefs in this turn before executing it.
+        // Verify depends_on hashes: all must be committed within this batch.
         let turn = &pipeline.turns[idx];
+        let mut depends_on_unmet = false;
+        for dep_hash in &turn.depends_on {
+            if !committed_hashes.contains(dep_hash) {
+                let dep_idx_opt = turn_hashes.iter().position(|h| h == dep_hash);
+                if let Some(dep_idx) = dep_idx_opt {
+                    failed[idx] = true;
+                    results[idx] = Some(Err(PipelineError::DependencyFailed {
+                        failed_index: dep_idx,
+                        dependent_index: idx,
+                    }));
+                } else {
+                    failed[idx] = true;
+                    results[idx] = Some(Err(PipelineError::MissingDependency {
+                        turn_index: idx,
+                        missing_hash: *dep_hash,
+                    }));
+                }
+                depends_on_unmet = true;
+                break;
+            }
+        }
+        if depends_on_unmet {
+            continue;
+        }
+
+        // Resolve EventualRefs in this turn before executing it.
         let resolved_turn = match resolve_turn(turn, &resolution_table) {
             Ok(t) => t,
             Err(e) => {
@@ -3167,6 +3319,7 @@ pub fn execute_pipeline(
 
         match result {
             TurnResult::Committed { receipt, .. } => {
+                committed_hashes.insert(turn_hashes[idx]);
                 let outputs = extract_turn_outputs(&resolved_turn, ledger);
                 let turn_hash = turn_hashes[idx];
                 for (slot, output) in outputs.into_iter().enumerate() {
@@ -3185,7 +3338,7 @@ pub fn execute_pipeline(
                 failed[idx] = true;
                 results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
                     index: idx,
-                    reason: "conditional turn not resolved in pipeline context".to_string(),
+                    reason: "conditional turn not resolved in batch context".to_string(),
                 }));
             }
         }
@@ -3198,6 +3351,12 @@ pub fn execute_pipeline(
 }
 
 /// Extract outputs from a committed turn's effects for the resolution table.
+///
+/// Output slots are assigned deterministically: effects are enumerated by DFS traversal
+/// of the call forest (root 0 first, depth-first through children, then root 1, etc.).
+/// Within each action node, effects are enumerated in declaration order. Only effects
+/// that produce externally-referenceable outputs (CreateCell, GrantCapability, SetField,
+/// NoteCreate, SpawnWithDelegation) receive a slot number.
 fn extract_turn_outputs(turn: &Turn, ledger: &Ledger) -> Vec<TurnOutput> {
     let mut outputs = Vec::new();
     for root in &turn.call_forest.roots {
@@ -3268,4 +3427,99 @@ pub fn resolve_eventual_ref<'a>(
             eventual_ref: eventual_ref.clone(),
             reason: "output slot not found in resolution table".to_string(),
         })
+}
+
+/// Resolve an OutputRef against the resolution table (preferred alias).
+pub fn resolve_output_ref<'a>(
+    output_ref: &crate::eventual::EventualRef,
+    table: &'a ResolutionTable,
+) -> Result<&'a TurnOutput, PipelineError> {
+    resolve_eventual_ref(output_ref, table)
+}
+
+
+/// Execute a pipeline with structured outcome (atomic + pending support).
+pub fn execute_pipeline_result(
+    pipeline: Pipeline,
+    ledger: &mut Ledger,
+    executor: &TurnExecutor,
+) -> (Vec<Result<TurnReceipt, PipelineError>>, PipelineResult) {
+    let n = pipeline.turns.len();
+    if n == 0 {
+        return (vec![], PipelineResult::AllCommitted { committed: vec![] });
+    }
+    let topo_order = match pipeline.topological_order() {
+        Ok(order) => order,
+        Err(cycle) => {
+            let r = vec![Err(PipelineError::Cycle(cycle.clone())); n];
+            let f: Vec<(usize, PipelineError)> = (0..n).map(|i| (i, PipelineError::Cycle(cycle.clone()))).collect();
+            return (r, PipelineResult::Failed { committed: vec![], failed: f });
+        }
+    };
+    let ledger_snapshot = if pipeline.atomic { Some(ledger.clone()) } else { None };
+    let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
+    let mut failed: Vec<bool> = vec![false; n];
+    let mut pending_flags: Vec<bool> = vec![false; n];
+    let mut resolution_table: ResolutionTable = HashMap::new();
+    let mut turn_hashes: Vec<[u8; 32]> = Vec::with_capacity(n);
+    for turn in &pipeline.turns { turn_hashes.push(turn.hash()); }
+    for &idx in &topo_order {
+        let deps = pipeline.dependencies_of(idx);
+        let mut dep_failed = None;
+        for dep_idx in &deps { if failed[*dep_idx] { dep_failed = Some(*dep_idx); break; } }
+        if let Some(fd) = dep_failed {
+            failed[idx] = true;
+            results[idx] = Some(Err(PipelineError::DependencyFailed { failed_index: fd, dependent_index: idx }));
+            continue;
+        }
+        if deps.iter().any(|d| pending_flags[*d]) {
+            pending_flags[idx] = true;
+            results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "dependency pending".to_string() }));
+            continue;
+        }
+        let turn = &pipeline.turns[idx];
+        let resolved_turn = match resolve_turn(turn, &resolution_table) {
+            Ok(t) => t,
+            Err(e) => { failed[idx] = true; results[idx] = Some(Err(e)); continue; }
+        };
+        let result = executor.execute(&resolved_turn, ledger);
+        match result {
+            TurnResult::Committed { receipt, .. } => {
+                let outputs = extract_turn_outputs(&resolved_turn, ledger);
+                let th = turn_hashes[idx];
+                for (slot, output) in outputs.into_iter().enumerate() { resolution_table.insert((th, slot as u32), output); }
+                results[idx] = Some(Ok(receipt));
+            }
+            TurnResult::Rejected { reason, .. } => {
+                failed[idx] = true;
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: format!("{}", reason) }));
+            }
+            TurnResult::Expired => {
+                failed[idx] = true;
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "expired".to_string() }));
+            }
+            TurnResult::Pending => {
+                pending_flags[idx] = true;
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "conditional pending".to_string() }));
+            }
+        }
+    }
+    let ci: Vec<usize> = (0..n).filter(|i| matches!(&results[*i], Some(Ok(_)))).collect();
+    let fi: Vec<(usize, PipelineError)> = (0..n).filter(|i| failed[*i])
+        .filter_map(|i| results[i].as_ref().and_then(|r| r.as_ref().err().cloned()).map(|e| (i, e))).collect();
+    let pi: Vec<usize> = (0..n).filter(|i| pending_flags[*i]).collect();
+    if pipeline.atomic && !fi.is_empty() {
+        if let Some(snap) = ledger_snapshot { *ledger = snap; }
+        let mut ar: Vec<Result<TurnReceipt, PipelineError>> = Vec::with_capacity(n);
+        for i in 0..n {
+            if failed[i] || pending_flags[i] { ar.push(results[i].take().unwrap_or(Err(PipelineError::Empty))); }
+            else { ar.push(Err(PipelineError::TurnExecutionFailed { index: i, reason: "atomic rollback".to_string() })); }
+        }
+        return (ar, PipelineResult::Failed { committed: vec![], failed: fi });
+    }
+    let fr: Vec<Result<TurnReceipt, PipelineError>> = results.into_iter().map(|r| r.unwrap_or(Err(PipelineError::Empty))).collect();
+    let outcome = if !fi.is_empty() { PipelineResult::Failed { committed: ci, failed: fi } }
+        else if !pi.is_empty() { PipelineResult::PartialWithPending { committed: ci, pending: pi } }
+        else { PipelineResult::AllCommitted { committed: ci } };
+    (fr, outcome)
 }

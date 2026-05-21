@@ -191,6 +191,15 @@ impl DerivationTree {
     pub fn record_derivation(&mut self, node: DerivationNode) {
         let key = node.key();
 
+        // If replacing an existing node, remove it from its old parent's children.
+        if let Some(old_node) = self.nodes.get(&key) {
+            if let Some(old_parent_key) = old_node.parent_key() {
+                if let Some(children) = self.children.get_mut(&old_parent_key) {
+                    children.retain(|k| k != &key);
+                }
+            }
+        }
+
         // If the node has a parent, register as a child.
         if let Some(parent_key) = node.parent_key() {
             self.children.entry(parent_key).or_default().push(key);

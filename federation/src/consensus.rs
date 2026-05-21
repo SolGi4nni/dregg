@@ -360,6 +360,7 @@ impl ConsensusState {
             post_state_root,
             note_tree_root,
             nullifier_set_root,
+            transition_proof: None,
         };
 
         self.current_proposal = Some(block.clone());

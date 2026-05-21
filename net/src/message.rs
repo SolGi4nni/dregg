@@ -69,6 +69,21 @@ pub enum PeerMessage {
         /// Serialized quorum certificate (signatures from participants).
         qc: Vec<u8>,
     },
+
+    // ─── Pipeline dissemination ────────────────────────────────────
+    /// Publish a pipeline to peers for federated execution.
+    PublishPipeline {
+        pipeline_hash: [u8; 32],
+        pipeline_data: Vec<u8>,
+    },
+
+    // ─── Checkpoint dissemination ─────────────────────────────────
+    /// Publish a checkpoint (federation-attested state snapshot) to peers.
+    /// Contains the checkpoint height and serialized checkpoint data.
+    PublishCheckpoint {
+        height: u64,
+        checkpoint_data: Vec<u8>,
+    },
 }
 
 /// Length-prefixed framing for messages over QUIC streams.
