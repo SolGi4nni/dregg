@@ -35,6 +35,17 @@ pub enum SdkError {
     #[error("invalid delegation: {0}")]
     InvalidDelegation(String),
 
+    /// A duplicate receipt was detected (same turn_hash already in chain).
+    #[error("duplicate receipt: turn_hash already exists in receipt chain")]
+    DuplicateReceipt {
+        /// The turn_hash of the duplicate receipt.
+        turn_hash: [u8; 32],
+    },
+
+    /// Attenuation does not narrow the original token's permissions.
+    #[error("attenuation does not narrow: {0}")]
+    AttenuationNotNarrowing(String),
+
     /// The remote silo rejected the operation.
     #[error("silo rejected: {0}")]
     Rejected(String),

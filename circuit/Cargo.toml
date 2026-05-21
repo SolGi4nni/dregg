@@ -72,7 +72,7 @@ bumpalo = { version = "3.16", optional = true }
 groestl_crypto = { package = "groestl", version = "0.10", optional = true }
 
 [features]
-default = ["mock"]
+default = ["mock", "recursion"]
 mock = []
 # SOUNDNESS WARNING: The QC AIR does NOT algebraically verify signatures or Merkle proofs.
 # Enable this feature ONLY for testing or non-adversarial contexts.

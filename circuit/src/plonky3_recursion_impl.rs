@@ -20,7 +20,7 @@
 //! - Base field: BabyBear (p = 2^31 - 2^27 + 1)
 //! - Extension: BinomialExtensionField<BabyBear, 4> (degree-4)
 //! - Hash/Compress/Challenger: Poseidon2 width-16 (matching recursion library)
-//! - FRI: testing params (log_blowup=1, no PoW)
+//! - FRI: log_blowup=3 (required for degree-7 AIR), cap_height=0, max_log_arity=1
 
 #[cfg(feature = "recursion")]
 pub mod recursive {
@@ -225,21 +225,23 @@ pub mod recursive {
     /// Create the recursion-compatible STARK config.
     ///
     /// Uses Poseidon2 width-16 for all hash operations and the Duplex challenger.
-    /// FRI parameters match the testing defaults from Plonky3 (log_blowup=2, 2 queries).
+    /// FRI parameters: log_blowup=3 (for degree-7 AIR), max_log_arity=1, 2 queries, no PoW.
     pub fn create_recursion_config() -> PyanaRecursionConfig {
         let perm = default_babybear_poseidon2_16();
         let hash = MyHash::new(perm.clone());
         let compress = MyCompress::new(perm.clone());
-        let val_mmcs = MyMmcs::new(hash, compress, 3);
+        // cap_height=0: single root digest. This is required because with small traces
+        // (e.g. 4 rows -> tree depth 2), a larger cap_height would exceed tree depth.
+        // The recursion library derives cap structure from the proof, so cap_height=0
+        // gives the most compatible behavior.
+        let val_mmcs = MyMmcs::new(hash, compress, 0);
         let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-        // NOTE: These FRI params match the recursion library's testing defaults.
-        // The OodEvaluationMismatch issue at Plonky3 rev 56952503 needs investigation
-        // (may require updating P3MerklePoseidon2Air for API changes between
-        // 82cfad73 and 56952503). See prove_for_recursion tests.
+        // log_blowup must be >= 3 because our AIR has degree-7 constraints (x^7 S-box).
+        // With degree d=7 and blowup B, the quotient domain needs B >= d-1 = 6, so log_blowup >= 3.
         let fri_params = FriParameters {
-            log_blowup: 2,
+            log_blowup: 3,
             log_final_poly_len: 0,
-            max_log_arity: 3,
+            max_log_arity: 1,
             num_queries: 2,
             commit_proof_of_work_bits: 0,
             query_proof_of_work_bits: 0,
@@ -251,7 +253,7 @@ pub mod recursive {
 
         use p3_circuit::ops::PermConfig;
         let fri_verifier_params = FriVerifierParams::with_mmcs(
-            2, // log_blowup (match prover)
+            3, // log_blowup (match prover)
             0, // log_final_poly_len
             0, // commit_pow_bits
             0, // query_pow_bits
@@ -333,7 +335,12 @@ pub mod recursive {
         output: &RecursionOutput<PyanaRecursionConfig>,
     ) -> Result<(), String> {
         let config = create_recursion_config();
-        let prover = BatchStarkProver::new(config);
+        let mut prover = BatchStarkProver::new(config);
+        // Register the NPO table provers that were used to produce the recursive proof.
+        // The verifier needs these to interpret the non-primitive ops in the proof.
+        prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+        // split_coeff_tables = false because Poseidon2Config::D (4) == extension degree D (4)
+        prover.register_recompose_table::<D>(false);
         prover
             .verify_all_tables(&output.0)
             .map_err(|e| format!("Recursive proof verification failed: {:?}", e))
