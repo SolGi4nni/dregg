@@ -30,8 +30,8 @@
 //!   - CDT tracking: every delegation creates a derivation record
 //!   - Cryptographic audit: walk receipt chains, verify all 8 cells' histories
 
-use std::sync::Mutex;
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 use pyana_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};

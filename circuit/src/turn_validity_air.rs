@@ -145,10 +145,7 @@ impl TurnValidityAir {
     ///
     /// Returns (trace, public_inputs).
     pub fn generate_trace(witness: &TurnValidityWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-        assert!(
-            witness.fee >= witness.min_fee,
-            "fee must be >= min_fee"
-        );
+        assert!(witness.fee >= witness.min_fee, "fee must be >= min_fee");
         assert!(
             witness.call_forest_size > 0,
             "call forest must be non-empty"
@@ -215,13 +212,13 @@ impl TurnValidityAir {
 
         // Public inputs.
         let public_inputs = vec![
-            turn_hash_lo,      // pi::TURN_COMMITMENT_LO
-            turn_hash_hi,      // pi::TURN_COMMITMENT_HI
-            agent_hash,        // pi::AGENT_COMMITMENT
-            nonce,             // pi::CLAIMED_NONCE
-            min_fee,           // pi::MIN_FEE
-            conflict_hash_lo,  // pi::CONFLICT_SET_LO
-            conflict_hash_hi,  // pi::CONFLICT_SET_HI
+            turn_hash_lo,     // pi::TURN_COMMITMENT_LO
+            turn_hash_hi,     // pi::TURN_COMMITMENT_HI
+            agent_hash,       // pi::AGENT_COMMITMENT
+            nonce,            // pi::CLAIMED_NONCE
+            min_fee,          // pi::MIN_FEE
+            conflict_hash_lo, // pi::CONFLICT_SET_LO
+            conflict_hash_hi, // pi::CONFLICT_SET_HI
         ];
 
         (trace, public_inputs)
@@ -299,21 +296,21 @@ impl StarkAir for TurnValidityAir {
 
         // Constraint 6: fee_minus_min = fee - min_fee (proves fee >= min_fee)
         if public_inputs.len() > pi::MIN_FEE {
-            let c_fee_diff =
-                is_meta_row * (local[col::FEE_MINUS_MIN] - (local[col::FEE] - public_inputs[pi::MIN_FEE]));
+            let c_fee_diff = is_meta_row
+                * (local[col::FEE_MINUS_MIN] - (local[col::FEE] - public_inputs[pi::MIN_FEE]));
             combined = combined + alpha_pow * c_fee_diff;
             alpha_pow = alpha_pow * alpha;
         }
 
         // Constraint 7: conflict_set hashes match public inputs
         if public_inputs.len() > pi::CONFLICT_SET_HI {
-            let c_cs_lo = is_meta_row
-                * (local[col::CONFLICT_HASH_LO] - public_inputs[pi::CONFLICT_SET_LO]);
+            let c_cs_lo =
+                is_meta_row * (local[col::CONFLICT_HASH_LO] - public_inputs[pi::CONFLICT_SET_LO]);
             combined = combined + alpha_pow * c_cs_lo;
             alpha_pow = alpha_pow * alpha;
 
-            let c_cs_hi = is_meta_row
-                * (local[col::CONFLICT_HASH_HI] - public_inputs[pi::CONFLICT_SET_HI]);
+            let c_cs_hi =
+                is_meta_row * (local[col::CONFLICT_HASH_HI] - public_inputs[pi::CONFLICT_SET_HI]);
             combined = combined + alpha_pow * c_cs_hi;
             alpha_pow = alpha_pow * alpha;
         }
@@ -421,10 +418,7 @@ pub fn prove_turn_validity(witness: &TurnValidityWitness) -> StarkProof {
 ///   - agent_cell.balance >= min_fee
 ///
 /// Returns Ok(()) if the STARK proof is valid, Err with reason otherwise.
-pub fn verify_turn_validity(
-    public_inputs: &[BabyBear],
-    proof: &StarkProof,
-) -> Result<(), String> {
+pub fn verify_turn_validity(public_inputs: &[BabyBear], proof: &StarkProof) -> Result<(), String> {
     if public_inputs.len() < NUM_PUBLIC_INPUTS {
         return Err(format!(
             "Expected {} public inputs, got {}",

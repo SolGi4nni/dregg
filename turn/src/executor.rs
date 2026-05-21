@@ -10,7 +10,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
     AuthRequired, Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Preconditions,
     note_bridge::{BridgedNullifierSet, PendingBridgeSet},
-    preconditions::EvalContext, state::STATE_SLOTS,
+    preconditions::EvalContext,
+    state::STATE_SLOTS,
 };
 use pyana_types::AttestedRoot;
 use serde::{Deserialize, Serialize};
@@ -719,8 +720,11 @@ impl TurnExecutor {
                         // an ancestor that holds the capability to action.target.
                         // If found, create a DelegatedRef snapshot on the child cell,
                         // giving it a frozen view of the ancestor's capabilities.
-                        let found_ancestor =
-                            Self::walk_delegation_chain_for_capability(ledger, parent_cell, &action.target);
+                        let found_ancestor = Self::walk_delegation_chain_for_capability(
+                            ledger,
+                            parent_cell,
+                            &action.target,
+                        );
                         if let Some(ancestor_id) = found_ancestor {
                             let ancestor = ledger.get(&ancestor_id).unwrap();
                             let snapshot: Vec<pyana_cell::CapabilityRef> =
@@ -744,7 +748,10 @@ impl TurnExecutor {
                             }
                             // Re-check access now that the delegation snapshot is set.
                             let child_cell_ref = ledger.get(parent_cell).unwrap();
-                            if !Self::has_access_including_delegation(child_cell_ref, &action.target) {
+                            if !Self::has_access_including_delegation(
+                                child_cell_ref,
+                                &action.target,
+                            ) {
                                 return Err((
                                     TurnError::CapabilityNotHeld {
                                         actor: *parent_cell,
@@ -1254,14 +1261,16 @@ impl TurnExecutor {
         })?;
 
         use ed25519_dalek::Verifier;
-        verifying_key.verify_strict(&message, &signature).map_err(|_| {
-            (
-                TurnError::InvalidAuthorization {
-                    reason: "Ed25519 signature verification failed".to_string(),
-                },
-                path.to_vec(),
-            )
-        })
+        verifying_key
+            .verify_strict(&message, &signature)
+            .map_err(|_| {
+                (
+                    TurnError::InvalidAuthorization {
+                        reason: "Ed25519 signature verification failed".to_string(),
+                    },
+                    path.to_vec(),
+                )
+            })
     }
 
     /// Verify a ZK proof against the target cell's verification key.
@@ -1411,10 +1420,7 @@ impl TurnExecutor {
     ///
     /// This allows a party to sign their part without knowing about other actions,
     /// enabling multi-party composition (DEX fills, atomic swaps, etc.)
-    pub fn compute_partial_signing_message(
-        action: &Action,
-        position: usize,
-    ) -> [u8; 32] {
+    pub fn compute_partial_signing_message(action: &Action, position: usize) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&action.hash());
         hasher.update(&(position as u64).to_le_bytes());
@@ -1891,25 +1897,26 @@ impl TurnExecutor {
                     .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
 
                 // Look up the capability by slot.
-                let cap = actor_cell.capabilities.lookup(*cap_slot).cloned().ok_or_else(|| {
-                    (
-                        TurnError::CapabilityNotHeld {
-                            actor: *actor,
-                            target: CellId::from_bytes([0u8; 32]), // slot doesn't exist
-                        },
-                        path.to_vec(),
-                    )
-                })?;
+                let cap = actor_cell
+                    .capabilities
+                    .lookup(*cap_slot)
+                    .cloned()
+                    .ok_or_else(|| {
+                        (
+                            TurnError::CapabilityNotHeld {
+                                actor: *actor,
+                                target: CellId::from_bytes([0u8; 32]), // slot doesn't exist
+                            },
+                            path.to_vec(),
+                        )
+                    })?;
 
                 let cap_target = cap.target;
 
                 // Verify the target cell exists.
-                let target_cell_ref = ledger.get(&cap_target).ok_or_else(|| {
-                    (
-                        TurnError::CellNotFound { id: cap_target },
-                        path.to_vec(),
-                    )
-                })?;
+                let target_cell_ref = ledger
+                    .get(&cap_target)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: cap_target }, path.to_vec()))?;
 
                 // Permission check: the capability's permissions must allow the operations.
                 // If the capability requires Impossible, reject.
@@ -1929,13 +1936,30 @@ impl TurnExecutor {
                 // This prevents bypassing target cell permissions via capability exercise.
                 for inner_effect in inner_effects.iter() {
                     let required_perm_action = match inner_effect {
-                        Effect::SetField { .. } => Some((pyana_cell::permissions::Action::SetState, "SetState")),
-                        Effect::Transfer { from, .. } if from == &cap_target => Some((pyana_cell::permissions::Action::Send, "Send")),
-                        Effect::IncrementNonce { .. } => Some((pyana_cell::permissions::Action::IncrementNonce, "IncrementNonce")),
-                        Effect::GrantCapability { .. } => Some((pyana_cell::permissions::Action::Delegate, "Delegate")),
-                        Effect::RevokeCapability { .. } => Some((pyana_cell::permissions::Action::Delegate, "Delegate")),
-                        Effect::SetPermissions { .. } => Some((pyana_cell::permissions::Action::SetPermissions, "SetPermissions")),
-                        Effect::SetVerificationKey { .. } => Some((pyana_cell::permissions::Action::SetVerificationKey, "SetVerificationKey")),
+                        Effect::SetField { .. } => {
+                            Some((pyana_cell::permissions::Action::SetState, "SetState"))
+                        }
+                        Effect::Transfer { from, .. } if from == &cap_target => {
+                            Some((pyana_cell::permissions::Action::Send, "Send"))
+                        }
+                        Effect::IncrementNonce { .. } => Some((
+                            pyana_cell::permissions::Action::IncrementNonce,
+                            "IncrementNonce",
+                        )),
+                        Effect::GrantCapability { .. } => {
+                            Some((pyana_cell::permissions::Action::Delegate, "Delegate"))
+                        }
+                        Effect::RevokeCapability { .. } => {
+                            Some((pyana_cell::permissions::Action::Delegate, "Delegate"))
+                        }
+                        Effect::SetPermissions { .. } => Some((
+                            pyana_cell::permissions::Action::SetPermissions,
+                            "SetPermissions",
+                        )),
+                        Effect::SetVerificationKey { .. } => Some((
+                            pyana_cell::permissions::Action::SetVerificationKey,
+                            "SetVerificationKey",
+                        )),
                         _ => None,
                     };
 
@@ -2030,7 +2054,9 @@ impl TurnExecutor {
                     )
                     .ok_or_else(|| {
                         (
-                            TurnError::CapabilitySlotOverflow { cell: *sealer_holder },
+                            TurnError::CapabilitySlotOverflow {
+                                cell: *sealer_holder,
+                            },
                             path.to_vec(),
                         )
                     })?;
@@ -2048,7 +2074,9 @@ impl TurnExecutor {
                     )
                     .ok_or_else(|| {
                         (
-                            TurnError::CapabilitySlotOverflow { cell: *unsealer_holder },
+                            TurnError::CapabilitySlotOverflow {
+                                cell: *unsealer_holder,
+                            },
                             path.to_vec(),
                         )
                     })?;
@@ -2089,9 +2117,9 @@ impl TurnExecutor {
                 let seal_pair = pyana_cell::SealPair::sealer_only(sealer_public);
                 let sealed = seal_pair.seal(capability);
                 // Store seal commitment in actor's field 7 for on-chain discoverability.
-                let actor_mut = ledger.get_mut(actor).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *actor }, path.to_vec())
-                })?;
+                let actor_mut = ledger
+                    .get_mut(actor)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
                 journal.record_set_field(*actor, 7, actor_mut.state.fields[7]);
                 actor_mut.state.fields[7] = sealed.commitment;
                 if actor_mut.state.commitments[7].is_some() {
@@ -2610,13 +2638,17 @@ impl TurnExecutor {
                     // For local conservation, bridge mints are treated as matching
                     // input+output (self-balancing) since the value comes from outside.
                     let entry = inputs.entry(portable_proof.asset_type).or_insert(0);
-                    *entry = entry
-                        .checked_add(portable_proof.value)
-                        .ok_or((portable_proof.asset_type, u64::MAX, 0))?;
+                    *entry = entry.checked_add(portable_proof.value).ok_or((
+                        portable_proof.asset_type,
+                        u64::MAX,
+                        0,
+                    ))?;
                     let entry = outputs.entry(portable_proof.asset_type).or_insert(0);
-                    *entry = entry
-                        .checked_add(portable_proof.value)
-                        .ok_or((portable_proof.asset_type, 0, u64::MAX))?;
+                    *entry = entry.checked_add(portable_proof.value).ok_or((
+                        portable_proof.asset_type,
+                        0,
+                        u64::MAX,
+                    ))?;
                 }
                 _ => {}
             }
@@ -2745,8 +2777,8 @@ impl TurnExecutor {
                     let e = updated_cells
                         .entry(*cell_id)
                         .or_insert_with(CellStateDelta::empty);
-                    e.balance_change = i64::try_from(diff)
-                        .unwrap_or(if diff > 0 { i64::MAX } else { i64::MIN });
+                    e.balance_change =
+                        i64::try_from(diff).unwrap_or(if diff > 0 { i64::MAX } else { i64::MIN });
                 }
             }
         }
@@ -3007,7 +3039,9 @@ impl TurnExecutor {
 
 // ─── Pipeline Execution ──────────────────────────────────────────────────────
 
-use crate::eventual::{EventualRef, Pipeline, PipelineError, PipelineResult, TurnBatch, TurnOutput};
+use crate::eventual::{
+    EventualRef, Pipeline, PipelineError, PipelineResult, TurnBatch, TurnOutput,
+};
 use std::collections::HashMap;
 
 /// A resolution table mapping (turn_hash, output_slot) to concrete outputs.
@@ -3437,7 +3471,6 @@ pub fn resolve_output_ref<'a>(
     resolve_eventual_ref(output_ref, table)
 }
 
-
 /// Execute a pipeline with structured outcome (atomic + pending support).
 pub fn execute_pipeline_result(
     pipeline: Pipeline,
@@ -3452,74 +3485,150 @@ pub fn execute_pipeline_result(
         Ok(order) => order,
         Err(cycle) => {
             let r = vec![Err(PipelineError::Cycle(cycle.clone())); n];
-            let f: Vec<(usize, PipelineError)> = (0..n).map(|i| (i, PipelineError::Cycle(cycle.clone()))).collect();
-            return (r, PipelineResult::Failed { committed: vec![], failed: f });
+            let f: Vec<(usize, PipelineError)> = (0..n)
+                .map(|i| (i, PipelineError::Cycle(cycle.clone())))
+                .collect();
+            return (
+                r,
+                PipelineResult::Failed {
+                    committed: vec![],
+                    failed: f,
+                },
+            );
         }
     };
-    let ledger_snapshot = if pipeline.atomic { Some(ledger.clone()) } else { None };
+    let ledger_snapshot = if pipeline.atomic {
+        Some(ledger.clone())
+    } else {
+        None
+    };
     let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
     let mut failed: Vec<bool> = vec![false; n];
     let mut pending_flags: Vec<bool> = vec![false; n];
     let mut resolution_table: ResolutionTable = HashMap::new();
     let mut turn_hashes: Vec<[u8; 32]> = Vec::with_capacity(n);
-    for turn in &pipeline.turns { turn_hashes.push(turn.hash()); }
+    for turn in &pipeline.turns {
+        turn_hashes.push(turn.hash());
+    }
     for &idx in &topo_order {
         let deps = pipeline.dependencies_of(idx);
         let mut dep_failed = None;
-        for dep_idx in &deps { if failed[*dep_idx] { dep_failed = Some(*dep_idx); break; } }
+        for dep_idx in &deps {
+            if failed[*dep_idx] {
+                dep_failed = Some(*dep_idx);
+                break;
+            }
+        }
         if let Some(fd) = dep_failed {
             failed[idx] = true;
-            results[idx] = Some(Err(PipelineError::DependencyFailed { failed_index: fd, dependent_index: idx }));
+            results[idx] = Some(Err(PipelineError::DependencyFailed {
+                failed_index: fd,
+                dependent_index: idx,
+            }));
             continue;
         }
         if deps.iter().any(|d| pending_flags[*d]) {
             pending_flags[idx] = true;
-            results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "dependency pending".to_string() }));
+            results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
+                index: idx,
+                reason: "dependency pending".to_string(),
+            }));
             continue;
         }
         let turn = &pipeline.turns[idx];
         let resolved_turn = match resolve_turn(turn, &resolution_table) {
             Ok(t) => t,
-            Err(e) => { failed[idx] = true; results[idx] = Some(Err(e)); continue; }
+            Err(e) => {
+                failed[idx] = true;
+                results[idx] = Some(Err(e));
+                continue;
+            }
         };
         let result = executor.execute(&resolved_turn, ledger);
         match result {
             TurnResult::Committed { receipt, .. } => {
                 let outputs = extract_turn_outputs(&resolved_turn, ledger);
                 let th = turn_hashes[idx];
-                for (slot, output) in outputs.into_iter().enumerate() { resolution_table.insert((th, slot as u32), output); }
+                for (slot, output) in outputs.into_iter().enumerate() {
+                    resolution_table.insert((th, slot as u32), output);
+                }
                 results[idx] = Some(Ok(receipt));
             }
             TurnResult::Rejected { reason, .. } => {
                 failed[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: format!("{}", reason) }));
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
+                    index: idx,
+                    reason: format!("{}", reason),
+                }));
             }
             TurnResult::Expired => {
                 failed[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "expired".to_string() }));
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
+                    index: idx,
+                    reason: "expired".to_string(),
+                }));
             }
             TurnResult::Pending => {
                 pending_flags[idx] = true;
-                results[idx] = Some(Err(PipelineError::TurnExecutionFailed { index: idx, reason: "conditional pending".to_string() }));
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
+                    index: idx,
+                    reason: "conditional pending".to_string(),
+                }));
             }
         }
     }
-    let ci: Vec<usize> = (0..n).filter(|i| matches!(&results[*i], Some(Ok(_)))).collect();
-    let fi: Vec<(usize, PipelineError)> = (0..n).filter(|i| failed[*i])
-        .filter_map(|i| results[i].as_ref().and_then(|r| r.as_ref().err().cloned()).map(|e| (i, e))).collect();
+    let ci: Vec<usize> = (0..n)
+        .filter(|i| matches!(&results[*i], Some(Ok(_))))
+        .collect();
+    let fi: Vec<(usize, PipelineError)> = (0..n)
+        .filter(|i| failed[*i])
+        .filter_map(|i| {
+            results[i]
+                .as_ref()
+                .and_then(|r| r.as_ref().err().cloned())
+                .map(|e| (i, e))
+        })
+        .collect();
     let pi: Vec<usize> = (0..n).filter(|i| pending_flags[*i]).collect();
     if pipeline.atomic && !fi.is_empty() {
-        if let Some(snap) = ledger_snapshot { *ledger = snap; }
+        if let Some(snap) = ledger_snapshot {
+            *ledger = snap;
+        }
         let mut ar: Vec<Result<TurnReceipt, PipelineError>> = Vec::with_capacity(n);
         for i in 0..n {
-            if failed[i] || pending_flags[i] { ar.push(results[i].take().unwrap_or(Err(PipelineError::Empty))); }
-            else { ar.push(Err(PipelineError::TurnExecutionFailed { index: i, reason: "atomic rollback".to_string() })); }
+            if failed[i] || pending_flags[i] {
+                ar.push(results[i].take().unwrap_or(Err(PipelineError::Empty)));
+            } else {
+                ar.push(Err(PipelineError::TurnExecutionFailed {
+                    index: i,
+                    reason: "atomic rollback".to_string(),
+                }));
+            }
         }
-        return (ar, PipelineResult::Failed { committed: vec![], failed: fi });
+        return (
+            ar,
+            PipelineResult::Failed {
+                committed: vec![],
+                failed: fi,
+            },
+        );
     }
-    let fr: Vec<Result<TurnReceipt, PipelineError>> = results.into_iter().map(|r| r.unwrap_or(Err(PipelineError::Empty))).collect();
-    let outcome = if !fi.is_empty() { PipelineResult::Failed { committed: ci, failed: fi } }
-        else if !pi.is_empty() { PipelineResult::PartialWithPending { committed: ci, pending: pi } }
-        else { PipelineResult::AllCommitted { committed: ci } };
+    let fr: Vec<Result<TurnReceipt, PipelineError>> = results
+        .into_iter()
+        .map(|r| r.unwrap_or(Err(PipelineError::Empty)))
+        .collect();
+    let outcome = if !fi.is_empty() {
+        PipelineResult::Failed {
+            committed: ci,
+            failed: fi,
+        }
+    } else if !pi.is_empty() {
+        PipelineResult::PartialWithPending {
+            committed: ci,
+            pending: pi,
+        }
+    } else {
+        PipelineResult::AllCommitted { committed: ci }
+    };
     (fr, outcome)
 }

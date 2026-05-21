@@ -55,12 +55,12 @@
 //!     rules whose hashes are leaves in the Merkle tree at `policy_root`. This is enforced
 //!     externally by the verifier comparing the public input against their known policy.
 
+use crate::constraint_prover::{Air, Constraint};
 use crate::derivation_air::{
     DERIVATION_AIR_WIDTH, DerivationWitness, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS,
     MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS, col as dcol,
 };
 use crate::field::BabyBear;
-use crate::constraint_prover::{Air, Constraint};
 use crate::poseidon2::{hash_2_to_1, hash_fact};
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
@@ -950,7 +950,9 @@ pub fn build_multi_step_witness(
 /// Takes a derivation trace (sequence of rule applications) and produces
 /// a STARK-verifiable proof that the evaluation concluded with the claimed
 /// conclusion. Returns `None` if the witness doesn't satisfy constraints.
-pub fn prove_authorization(witness: MultiStepWitness) -> Option<crate::constraint_prover::ConstraintProof> {
+pub fn prove_authorization(
+    witness: MultiStepWitness,
+) -> Option<crate::constraint_prover::ConstraintProof> {
     let air = MultiStepDerivationAir::new(witness);
     let result = crate::constraint_prover::ConstraintProver::verify(&air);
     if !result.is_valid() {
@@ -1396,15 +1398,19 @@ pub fn verify_authorization_stark(
     }
 
     let air = MultiStepStarkAir::new(num_steps);
-    let public_inputs: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear::new_canonical(v)).collect();
+    let public_inputs: Vec<BabyBear> = proof
+        .public_inputs
+        .iter()
+        .map(|&v| BabyBear::new_canonical(v))
+        .collect();
     stark::verify(&air, proof, &public_inputs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
     use crate::constraint_prover::ConstraintProver;
+    use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 
     /// Helper: create a derivation step that derives a fact with the given predicate.
     fn make_step(
@@ -2299,7 +2305,10 @@ mod tests {
         // Body fact hashes for all 6 atoms
         let body_hash_1 = hash_fact(has_role_pred, &[alice, admin_role, BabyBear::ZERO]);
         let body_hash_2 = hash_fact(role_perm_pred, &[admin_role, read_perm, BabyBear::ZERO]);
-        let body_hash_3 = hash_fact(perm_applies_pred, &[read_perm, file_resource, BabyBear::ZERO]);
+        let body_hash_3 = hash_fact(
+            perm_applies_pred,
+            &[read_perm, file_resource, BabyBear::ZERO],
+        );
         let body_hash_4 = hash_fact(res_dept_pred, &[file_resource, eng_dept, BabyBear::ZERO]);
         let body_hash_5 = hash_fact(dept_active_pred, &[eng_dept, active_status, BabyBear::ZERO]);
         let body_hash_6 = hash_fact(time_valid_pred, &[alice, time_slot, BabyBear::ZERO]);
@@ -2323,8 +2332,8 @@ mod tests {
                 num_variables: 7,
                 head_predicate: allow_pred,
                 head_terms: [
-                    (true, BabyBear::new(0)),  // User = alice
-                    (true, BabyBear::new(3)),  // Resource = file_resource
+                    (true, BabyBear::new(0)), // User = alice
+                    (true, BabyBear::new(3)), // Resource = file_resource
                     (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
                 ],
@@ -2332,48 +2341,48 @@ mod tests {
                     BodyAtomPattern {
                         predicate: has_role_pred,
                         terms: [
-                            (true, BabyBear::new(0)),  // User
-                            (true, BabyBear::new(1)),  // Role
+                            (true, BabyBear::new(0)), // User
+                            (true, BabyBear::new(1)), // Role
                             (false, BabyBear::ZERO),
                         ],
                     },
                     BodyAtomPattern {
                         predicate: role_perm_pred,
                         terms: [
-                            (true, BabyBear::new(1)),  // Role
-                            (true, BabyBear::new(2)),  // Perm
+                            (true, BabyBear::new(1)), // Role
+                            (true, BabyBear::new(2)), // Perm
                             (false, BabyBear::ZERO),
                         ],
                     },
                     BodyAtomPattern {
                         predicate: perm_applies_pred,
                         terms: [
-                            (true, BabyBear::new(2)),  // Perm
-                            (true, BabyBear::new(3)),  // Resource
+                            (true, BabyBear::new(2)), // Perm
+                            (true, BabyBear::new(3)), // Resource
                             (false, BabyBear::ZERO),
                         ],
                     },
                     BodyAtomPattern {
                         predicate: res_dept_pred,
                         terms: [
-                            (true, BabyBear::new(3)),  // Resource
-                            (true, BabyBear::new(4)),  // Dept
+                            (true, BabyBear::new(3)), // Resource
+                            (true, BabyBear::new(4)), // Dept
                             (false, BabyBear::ZERO),
                         ],
                     },
                     BodyAtomPattern {
                         predicate: dept_active_pred,
                         terms: [
-                            (true, BabyBear::new(4)),  // Dept
-                            (true, BabyBear::new(5)),  // Status
+                            (true, BabyBear::new(4)), // Dept
+                            (true, BabyBear::new(5)), // Status
                             (false, BabyBear::ZERO),
                         ],
                     },
                     BodyAtomPattern {
                         predicate: time_valid_pred,
                         terms: [
-                            (true, BabyBear::new(0)),  // User
-                            (true, BabyBear::new(6)),  // TimeSlot
+                            (true, BabyBear::new(0)), // User
+                            (true, BabyBear::new(6)), // TimeSlot
                             (false, BabyBear::ZERO),
                         ],
                     },
@@ -2385,8 +2394,12 @@ mod tests {
             },
             state_root,
             body_fact_hashes: vec![
-                body_hash_1, body_hash_2, body_hash_3,
-                body_hash_4, body_hash_5, body_hash_6,
+                body_hash_1,
+                body_hash_2,
+                body_hash_3,
+                body_hash_4,
+                body_hash_5,
+                body_hash_6,
             ],
             substitution,
             derived_predicate: allow_pred,
@@ -2419,7 +2432,8 @@ mod tests {
         // Verify policy_root is included in proof public inputs
         assert_eq!(proof.public_inputs.len(), 6);
         assert_ne!(
-            proof.public_inputs[pi::POLICY_ROOT], 0,
+            proof.public_inputs[pi::POLICY_ROOT],
+            0,
             "policy_root should be non-zero"
         );
 

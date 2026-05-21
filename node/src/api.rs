@@ -8,19 +8,19 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::{
-    Json, Router,
-    extract::Path as AxumPath,
-    extract::State,
-    extract::ConnectInfo,
-    http::StatusCode,
-    middleware,
-    routing::{get, post},
-};
 use axum::extract::DefaultBodyLimit;
 use axum::http::Request;
 use axum::http::{HeaderValue, Method, header};
 use axum::response::Response;
+use axum::{
+    Json, Router,
+    extract::ConnectInfo,
+    extract::Path as AxumPath,
+    extract::State,
+    http::StatusCode,
+    middleware,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -318,10 +318,11 @@ async fn require_auth(
     match auth_header {
         Some(header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
-            let expected_token_bytes =
-                blake3::derive_key("pyana-api-bearer-v1", &passphrase_hash);
-            let expected_token: String =
-                expected_token_bytes.iter().map(|b| format!("{b:02x}")).collect();
+            let expected_token_bytes = blake3::derive_key("pyana-api-bearer-v1", &passphrase_hash);
+            let expected_token: String = expected_token_bytes
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             drop(s);
 
             if token == expected_token {
@@ -342,10 +343,7 @@ async fn require_auth(
 // =============================================================================
 
 /// Middleware that adds CORS headers to every response.
-async fn cors_middleware(
-    req: Request<axum::body::Body>,
-    next: middleware::Next,
-) -> Response {
+async fn cors_middleware(req: Request<axum::body::Body>, next: middleware::Next) -> Response {
     let origin = req
         .headers()
         .get(header::ORIGIN)

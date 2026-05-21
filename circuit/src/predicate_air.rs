@@ -196,9 +196,7 @@ impl Air for PredicateAir {
             // Constraint 1: Threshold in trace matches public input.
             Constraint {
                 name: "threshold_matches_public_input".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::THRESHOLD] - public_inputs[0]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::THRESHOLD] - public_inputs[0]),
             },
             // Constraint 2: Fact commitment in trace matches public input.
             Constraint {
@@ -221,15 +219,9 @@ impl Air for PredicateAir {
                         PredicateType::Lte | PredicateType::InRangeHigh => {
                             diff - (threshold - value)
                         }
-                        PredicateType::Gt => {
-                            diff - (value - threshold - BabyBear::ONE)
-                        }
-                        PredicateType::Lt => {
-                            diff - (threshold - value - BabyBear::ONE)
-                        }
-                        PredicateType::Neq => {
-                            diff - (value - threshold)
-                        }
+                        PredicateType::Gt => diff - (value - threshold - BabyBear::ONE),
+                        PredicateType::Lt => diff - (threshold - value - BabyBear::ONE),
+                        PredicateType::Neq => diff - (value - threshold),
                     }
                 }),
             },
@@ -374,7 +366,11 @@ pub fn prove_predicate(witness: PredicateWitness) -> Option<PredicateProof> {
 ///
 /// The verifier provides the threshold and fact_commitment they expect and
 /// checks the proof is consistent.
-pub fn verify_predicate(proof: &PredicateProof, threshold: BabyBear, fact_commitment: BabyBear) -> bool {
+pub fn verify_predicate(
+    proof: &PredicateProof,
+    threshold: BabyBear,
+    fact_commitment: BabyBear,
+) -> bool {
     if proof.threshold != threshold || proof.fact_commitment != fact_commitment {
         return false;
     }
@@ -732,7 +728,10 @@ mod tests {
         let commitment = test_fact_commitment(value);
 
         let result = prove_in_range(value, low, high, commitment);
-        assert!(result.is_some(), "InRange 18 <= 25 <= 120 should produce proofs");
+        assert!(
+            result.is_some(),
+            "InRange 18 <= 25 <= 120 should produce proofs"
+        );
 
         let (low_proof, high_proof) = result.unwrap();
         assert!(
@@ -762,7 +761,10 @@ mod tests {
         let commitment = test_fact_commitment(value);
 
         let result = prove_in_range(value, low, high, commitment);
-        assert!(result.is_none(), "InRange with value above high should fail");
+        assert!(
+            result.is_none(),
+            "InRange with value above high should fail"
+        );
     }
 
     #[test]

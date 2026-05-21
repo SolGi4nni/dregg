@@ -163,7 +163,10 @@ impl BridgePresentationProof {
     /// For proofs from `prove_fast()`, use `is_constraint_checked()` to determine
     /// if the constraint system passed (useful for development, NOT for security).
     pub fn is_valid(&self) -> bool {
-        if self.real_stark_proof.is_none() && self.ivc_proof.is_none() && self.validated_ivc_proof.is_none() {
+        if self.real_stark_proof.is_none()
+            && self.ivc_proof.is_none()
+            && self.validated_ivc_proof.is_none()
+        {
             return false;
         }
         self.verification == PresentationVerification::Valid
@@ -602,7 +605,10 @@ impl BridgePresentationBuilder {
     ///
     /// A `BridgePresentationProof` with `is_valid() == false` (no cryptographic proof).
     /// Use `is_constraint_checked()` to check if constraints passed locally.
-    pub fn prove_fast(&mut self, request: &AuthRequest) -> Result<BridgePresentationProof, AuthError> {
+    pub fn prove_fast(
+        &mut self,
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, AuthError> {
         // 1. Get the final state.
         let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
         let final_state = &final_step.state;
@@ -666,10 +672,7 @@ impl BridgePresentationBuilder {
     /// A `BridgePresentationProof` backed by a real STARK issuer membership proof
     /// with Poseidon2 hash constraints (collision-resistant), or an error if
     /// authorization fails or the proof cannot be generated.
-    fn prove_real(
-        &mut self,
-        request: &AuthRequest,
-    ) -> Result<BridgePresentationProof, AuthError> {
+    fn prove_real(&mut self, request: &AuthRequest) -> Result<BridgePresentationProof, AuthError> {
         // 1. Get the final state.
         let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
         let final_state = &final_step.state;
@@ -1081,14 +1084,6 @@ impl BridgePresentationBuilder {
         let action_str = request.action.as_deref().unwrap_or("");
         let resource_str = request.app_id.as_deref().unwrap_or("");
         let request_pred_bb = pyana_circuit::compute_action_binding(action_str, resource_str);
-
-
-
-
-
-
-
-
 
         // Timestamp.
         let timestamp = request.now.unwrap_or(0);
@@ -1975,11 +1970,20 @@ pub fn verify_presentation_full(
     if air_name == BlindedMerklePoseidon2StarkAir.air_name() {
         // Ring membership: pi[0] is blinded_leaf (unlinkable), pi[1] is root.
         // The verifier does NOT check pi[0] against any expected value — it's random.
-        stark::verify(&BlindedMerklePoseidon2StarkAir, &real.issuer_membership_stark_proof, &pi)
-            .is_ok()
+        stark::verify(
+            &BlindedMerklePoseidon2StarkAir,
+            &real.issuer_membership_stark_proof,
+            &pi,
+        )
+        .is_ok()
     } else {
         // Legacy non-blinded: pi[0] is leaf_hash (linkable), pi[1] is root.
-        stark::verify(&MerklePoseidon2StarkAir, &real.issuer_membership_stark_proof, &pi).is_ok()
+        stark::verify(
+            &MerklePoseidon2StarkAir,
+            &real.issuer_membership_stark_proof,
+            &pi,
+        )
+        .is_ok()
     }
 }
 
@@ -2000,7 +2004,9 @@ pub fn verify_presentation_full(
 pub fn verify_presentation(proof: &BridgePresentationProof, federation_root: &[u8; 32]) -> bool {
     // A real STARK proof is required for cryptographic verification.
     if let Some(ref real) = proof.real_stark_proof {
-        use pyana_circuit::poseidon2_air::{BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir};
+        use pyana_circuit::poseidon2_air::{
+            BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir,
+        };
         use pyana_circuit::stark::StarkAir;
 
         let pi: Vec<BabyBear> = real
@@ -2053,7 +2059,9 @@ pub fn verify_presentation(proof: &BridgePresentationProof, federation_root: &[u
 /// Do NOT pass a value derived from the proof itself.
 pub fn verify_presentation_bb(proof: &BridgePresentationProof, expected_root: BabyBear) -> bool {
     if let Some(ref real) = proof.real_stark_proof {
-        use pyana_circuit::poseidon2_air::{BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir};
+        use pyana_circuit::poseidon2_air::{
+            BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir,
+        };
         use pyana_circuit::stark::StarkAir;
 
         let pi: Vec<BabyBear> = real
@@ -2097,7 +2105,9 @@ pub fn verify_presentation_bb(proof: &BridgePresentationProof, expected_root: Ba
 ///
 /// **DEPRECATED**: This only checks the prover-set `verification` field and provides
 /// no cryptographic guarantee. Use `verify_presentation()` with a federation root instead.
-#[deprecated(note = "Use verify_presentation(proof, federation_root) for cryptographic verification")]
+#[deprecated(
+    note = "Use verify_presentation(proof, federation_root) for cryptographic verification"
+)]
 pub fn verify_presentation_structural(proof: &BridgePresentationProof) -> bool {
     proof.is_valid()
 }
@@ -2315,8 +2325,11 @@ pub fn verify_predicate_proof(
     match &proof.proof {
         BridgePredicateProofInner::Single(inner) => {
             let threshold = match &proof.predicate {
-                Predicate::Gte(t) | Predicate::Lte(t) | Predicate::Gt(t)
-                | Predicate::Lt(t) | Predicate::Neq(t) => BabyBear::new(*t),
+                Predicate::Gte(t)
+                | Predicate::Lte(t)
+                | Predicate::Gt(t)
+                | Predicate::Lt(t)
+                | Predicate::Neq(t) => BabyBear::new(*t),
                 Predicate::InRange(..) => return false,
             };
             pyana_circuit::verify_predicate(inner, threshold, expected_fact_commitment)
@@ -3139,26 +3152,38 @@ mod tests {
         use pyana_trace::{Fact, Term, symbol_from_str};
 
         let facts = vec![
-            Fact::new(symbol_from_str("service"), vec![Term::Const(symbol_from_str("dns"))]),
-            Fact::new(symbol_from_str("action"), vec![Term::Const(symbol_from_str("read"))]),
+            Fact::new(
+                symbol_from_str("service"),
+                vec![Term::Const(symbol_from_str("dns"))],
+            ),
+            Fact::new(
+                symbol_from_str("action"),
+                vec![Term::Const(symbol_from_str("read"))],
+            ),
         ];
 
         let c1 = super::compute_revealed_facts_commitment(&facts);
         let c2 = super::compute_revealed_facts_commitment(&facts);
         assert_eq!(c1, c2, "commitment must be deterministic");
-        assert_ne!(c1, BabyBear::ZERO, "non-empty facts must produce non-zero commitment");
+        assert_ne!(
+            c1,
+            BabyBear::ZERO,
+            "non-empty facts must produce non-zero commitment"
+        );
     }
 
     #[test]
     fn test_compute_revealed_facts_commitment_different_facts_differ() {
         use pyana_trace::{Fact, Term, symbol_from_str};
 
-        let facts_a = vec![
-            Fact::new(symbol_from_str("service"), vec![Term::Const(symbol_from_str("dns"))]),
-        ];
-        let facts_b = vec![
-            Fact::new(symbol_from_str("service"), vec![Term::Const(symbol_from_str("storage"))]),
-        ];
+        let facts_a = vec![Fact::new(
+            symbol_from_str("service"),
+            vec![Term::Const(symbol_from_str("dns"))],
+        )];
+        let facts_b = vec![Fact::new(
+            symbol_from_str("service"),
+            vec![Term::Const(symbol_from_str("storage"))],
+        )];
 
         let ca = super::compute_revealed_facts_commitment(&facts_a);
         let cb = super::compute_revealed_facts_commitment(&facts_b);
@@ -3169,9 +3194,10 @@ mod tests {
     fn test_verify_revealed_facts_commitment_matches() {
         use pyana_trace::{Fact, Term, symbol_from_str};
 
-        let facts = vec![
-            Fact::new(symbol_from_str("app"), vec![Term::Const(symbol_from_str("myapp"))]),
-        ];
+        let facts = vec![Fact::new(
+            symbol_from_str("app"),
+            vec![Term::Const(symbol_from_str("myapp"))],
+        )];
 
         let commitment = super::compute_revealed_facts_commitment(&facts);
         assert!(
@@ -3184,12 +3210,14 @@ mod tests {
     fn test_verify_revealed_facts_commitment_rejects_wrong_facts() {
         use pyana_trace::{Fact, Term, symbol_from_str};
 
-        let real_facts = vec![
-            Fact::new(symbol_from_str("app"), vec![Term::Const(symbol_from_str("myapp"))]),
-        ];
-        let fake_facts = vec![
-            Fact::new(symbol_from_str("app"), vec![Term::Const(symbol_from_str("evil"))]),
-        ];
+        let real_facts = vec![Fact::new(
+            symbol_from_str("app"),
+            vec![Term::Const(symbol_from_str("myapp"))],
+        )];
+        let fake_facts = vec![Fact::new(
+            symbol_from_str("app"),
+            vec![Term::Const(symbol_from_str("evil"))],
+        )];
 
         let commitment = super::compute_revealed_facts_commitment(&real_facts);
         assert!(
@@ -3203,18 +3231,33 @@ mod tests {
         use pyana_trace::{Fact, Term, symbol_from_str};
 
         let facts_ab = vec![
-            Fact::new(symbol_from_str("a"), vec![Term::Const(symbol_from_str("x"))]),
-            Fact::new(symbol_from_str("b"), vec![Term::Const(symbol_from_str("y"))]),
+            Fact::new(
+                symbol_from_str("a"),
+                vec![Term::Const(symbol_from_str("x"))],
+            ),
+            Fact::new(
+                symbol_from_str("b"),
+                vec![Term::Const(symbol_from_str("y"))],
+            ),
         ];
         let facts_ba = vec![
-            Fact::new(symbol_from_str("b"), vec![Term::Const(symbol_from_str("y"))]),
-            Fact::new(symbol_from_str("a"), vec![Term::Const(symbol_from_str("x"))]),
+            Fact::new(
+                symbol_from_str("b"),
+                vec![Term::Const(symbol_from_str("y"))],
+            ),
+            Fact::new(
+                symbol_from_str("a"),
+                vec![Term::Const(symbol_from_str("x"))],
+            ),
         ];
 
         let ca = super::compute_revealed_facts_commitment(&facts_ab);
         let cb = super::compute_revealed_facts_commitment(&facts_ba);
         // Order matters since Poseidon2 sponge is sequential.
-        assert_ne!(ca, cb, "different ordering should produce different commitments");
+        assert_ne!(
+            ca, cb,
+            "different ordering should produce different commitments"
+        );
     }
 
     #[test]

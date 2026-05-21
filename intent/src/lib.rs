@@ -60,7 +60,6 @@ pub struct PredicateRequirement {
     pub state_root_freshness: u64,
 }
 
-
 /// A commitment to an anonymous creator identity.
 /// This is NOT a public key -- it's a blinded commitment that can only be
 /// opened by the creator. Two intents from the same creator have different
@@ -451,7 +450,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xAA; 32]);
         let i1 = Intent::new(IntentKind::Need, spec.clone(), creator, 1000, None);
@@ -469,7 +469,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let spec2 = MatchSpec {
             actions: vec![ActionPattern {
@@ -479,7 +480,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xBB; 32]);
         let i1 = Intent::new(IntentKind::Need, spec1, creator, 1000, None);
@@ -494,7 +496,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let creator = CommitmentId([0xCC; 32]);
         let intent = Intent::new(IntentKind::Need, spec, creator, 1000, None);
@@ -561,7 +564,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -581,7 +585,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-               compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
 
@@ -624,7 +629,10 @@ mod tests {
         let commitment = [0xDE; 32];
         let n_epoch0 = compute_stake_nullifier(&commitment, 0, 0);
         let n_epoch1 = compute_stake_nullifier(&commitment, 1, 0);
-        assert_ne!(n_epoch0, n_epoch1, "different epochs should produce different nullifiers");
+        assert_ne!(
+            n_epoch0, n_epoch1,
+            "different epochs should produce different nullifiers"
+        );
     }
 
     #[test]
@@ -644,6 +652,9 @@ mod tests {
         let c2 = [0xBB; 32];
         let n1 = compute_stake_nullifier(&c1, 0, 0);
         let n2 = compute_stake_nullifier(&c2, 0, 0);
-        assert_ne!(n1, n2, "different commitments should produce different nullifiers");
+        assert_ne!(
+            n1, n2,
+            "different commitments should produce different nullifiers"
+        );
     }
 }

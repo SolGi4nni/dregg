@@ -69,15 +69,18 @@ pub fn verify_token_datalog(
     // non-dimensional caveats (time, user, org, machine, etc.), inject
     // `unrestricted(1)` so the unrestricted rule can fire. Without this,
     // tokens with only time/user caveats would produce no matching allow rule.
-    let has_app_facts = state.all_facts().iter().any(|f| {
-        symbols.resolve(f.predicate) == Some("app")
-    });
-    let has_service_facts = state.all_facts().iter().any(|f| {
-        symbols.resolve(f.predicate) == Some("service")
-    });
-    let has_unrestricted_fact = state.all_facts().iter().any(|f| {
-        symbols.resolve(f.predicate) == Some("unrestricted")
-    });
+    let has_app_facts = state
+        .all_facts()
+        .iter()
+        .any(|f| symbols.resolve(f.predicate) == Some("app"));
+    let has_service_facts = state
+        .all_facts()
+        .iter()
+        .any(|f| symbols.resolve(f.predicate) == Some("service"));
+    let has_unrestricted_fact = state
+        .all_facts()
+        .iter()
+        .any(|f| symbols.resolve(f.predicate) == Some("unrestricted"));
 
     if !has_app_facts && !has_service_facts && !has_unrestricted_fact {
         // Token has facts (non-empty) but none are app/service dimensional.
@@ -423,9 +426,7 @@ fn committed_facts_to_trace(state: &TokenState, symbols: &SymbolTable) -> Vec<Tr
         // Expand app facts into per-action facts
         if pred_name == Some("app") {
             let id_term = resolve_term(&fact.terms[0], symbols);
-            let actions_str = symbols
-                .resolve(fact.terms[1])
-                .unwrap_or("");
+            let actions_str = symbols.resolve(fact.terms[1]).unwrap_or("");
             let action_set = Action::parse(actions_str);
             let action_allowed_pred = symbol_from_str("action_allowed");
 
@@ -444,9 +445,7 @@ fn committed_facts_to_trace(state: &TokenState, symbols: &SymbolTable) -> Vec<Tr
         // Expand service facts into per-action facts
         if pred_name == Some("service") {
             let id_term = resolve_term(&fact.terms[0], symbols);
-            let actions_str = symbols
-                .resolve(fact.terms[1])
-                .unwrap_or("");
+            let actions_str = symbols.resolve(fact.terms[1]).unwrap_or("");
             let action_set = Action::parse(actions_str);
             let svc_action_allowed_pred = symbol_from_str("svc_action_allowed");
 
@@ -1007,9 +1006,7 @@ pub fn verify_token_datalog_full(
             ));
         }
         if request.app_id.is_some() && !has_app_caveats {
-            return Err(TokenError::Denied(
-                "token does not grant app access".into(),
-            ));
+            return Err(TokenError::Denied("token does not grant app access".into()));
         }
     }
 
@@ -1245,7 +1242,10 @@ mod tests {
         // Both paths should now DENY this cross-dimension request.
         assert_paths_agree(&set, &request);
         let result = verify_token_datalog_full(&set, &request);
-        assert!(result.is_err(), "app-scoped token must not authorize service requests");
+        assert!(
+            result.is_err(),
+            "app-scoped token must not authorize service requests"
+        );
     }
 
     #[test]
@@ -1518,7 +1518,10 @@ mod tests {
         };
 
         let result = verify_token_datalog_full(&set, &request);
-        assert!(result.is_err(), "app-scoped token must NOT authorize service requests");
+        assert!(
+            result.is_err(),
+            "app-scoped token must NOT authorize service requests"
+        );
         match result.unwrap_err() {
             TokenError::Denied(msg) => {
                 assert!(msg.contains("service"), "denial reason: {}", msg);
@@ -1546,7 +1549,10 @@ mod tests {
         };
 
         let result = verify_token_datalog_full(&set, &request);
-        assert!(result.is_err(), "service-scoped token must NOT authorize app requests");
+        assert!(
+            result.is_err(),
+            "service-scoped token must NOT authorize app requests"
+        );
         match result.unwrap_err() {
             TokenError::Denied(msg) => {
                 assert!(msg.contains("app"), "denial reason: {}", msg);
@@ -1577,7 +1583,10 @@ mod tests {
             ..Default::default()
         };
         let result = verify_token_datalog_full(&set, &app_request);
-        assert!(result.is_ok(), "token with both dimensions should allow app request");
+        assert!(
+            result.is_ok(),
+            "token with both dimensions should allow app request"
+        );
 
         let svc_request = AuthRequest {
             service: Some("compute-api".into()),
@@ -1586,7 +1595,10 @@ mod tests {
             ..Default::default()
         };
         let result = verify_token_datalog_full(&set, &svc_request);
-        assert!(result.is_ok(), "token with both dimensions should allow service request");
+        assert!(
+            result.is_ok(),
+            "token with both dimensions should allow service request"
+        );
     }
 
     #[test]
@@ -1605,7 +1617,10 @@ mod tests {
             ..Default::default()
         };
         let result = verify_token_datalog_full(&set, &app_request);
-        assert!(result.is_err(), "token without app/service grants must deny app requests");
+        assert!(
+            result.is_err(),
+            "token without app/service grants must deny app requests"
+        );
 
         let svc_request = AuthRequest {
             service: Some("compute-api".into()),
@@ -1615,7 +1630,10 @@ mod tests {
             ..Default::default()
         };
         let result = verify_token_datalog_full(&set, &svc_request);
-        assert!(result.is_err(), "token without app/service grants must deny service requests");
+        assert!(
+            result.is_err(),
+            "token without app/service grants must deny service requests"
+        );
     }
 
     #[test]
@@ -1632,7 +1650,10 @@ mod tests {
             ..Default::default()
         };
         let result = verify_token_datalog_full(&set, &request);
-        assert!(result.is_ok(), "empty (unrestricted) token should allow all requests");
+        assert!(
+            result.is_ok(),
+            "empty (unrestricted) token should allow all requests"
+        );
     }
 
     #[test]
@@ -1653,7 +1674,10 @@ mod tests {
         };
         let old_result = crate::pyana_caveats::verify_caveats(&set, &request);
         let new_result = verify_token_datalog_full(&set, &request);
-        assert!(old_result.is_err(), "old path must also deny cross-dimension");
+        assert!(
+            old_result.is_err(),
+            "old path must also deny cross-dimension"
+        );
         assert!(new_result.is_err(), "new path must deny cross-dimension");
     }
 }

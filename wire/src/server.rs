@@ -783,9 +783,7 @@ impl SiloServer {
                             .await;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "pyana-wire: TLS handshake failed from {remote_addr}: {e}"
-                            );
+                            eprintln!("pyana-wire: TLS handshake failed from {remote_addr}: {e}");
                         }
                     }
                 } else {
@@ -1099,10 +1097,14 @@ impl SiloServer {
                 // Verify the proof using the injected verifier, binding to (action, resource).
                 // NOTE: No read lock is held here -- STARK verification can take
                 // milliseconds and must not block writers (issue 7: DoS prevention).
-                let accepted = match config.verifier.verify(&proof, &request.action, &request.resource) {
-                    Ok(result) => result,
-                    Err(_reason) => false, // parse/verification error -> reject
-                };
+                let accepted =
+                    match config
+                        .verifier
+                        .verify(&proof, &request.action, &request.resource)
+                    {
+                        Ok(result) => result,
+                        Err(_reason) => false, // parse/verification error -> reject
+                    };
 
                 event_log.lock().await.push(ServerEvent::TokenPresented {
                     proof_size: proof.len(),
@@ -1178,8 +1180,7 @@ impl SiloServer {
                 // attacks where an attacker replays a valid signature with a different
                 // nonce or timestamp.
                 let sig_message = {
-                    let mut hasher =
-                        blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+                    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
                     hasher.update(token_id.as_bytes());
                     hasher.update(&nonce);
                     hasher.update(&timestamp.to_le_bytes());
@@ -1200,12 +1201,7 @@ impl SiloServer {
                     // Update local state using the handler's root (no independent
                     // hash-chain computation -- the handler IS the authority).
                     let mut st = state.write().await;
-                    st.apply_revocation_delegated(
-                        &token_id,
-                        &authority,
-                        &authority_sig,
-                        handler,
-                    );
+                    st.apply_revocation_delegated(&token_id, &authority, &authority_sig, handler);
 
                     event_log
                         .lock()

@@ -269,7 +269,9 @@ pub struct CommittedThresholdProof {
 ///
 /// Returns `None` if the value does not satisfy the threshold (value < threshold)
 /// or if proof generation fails.
-pub fn prove_committed_threshold(witness: CommittedThresholdWitness) -> Option<CommittedThresholdProof> {
+pub fn prove_committed_threshold(
+    witness: CommittedThresholdWitness,
+) -> Option<CommittedThresholdProof> {
     if !witness.is_satisfiable() {
         return None;
     }
@@ -570,8 +572,7 @@ mod tests {
         let blinding = generate_blinding(); // verifier generates fresh randomness
 
         // Verifier computes their commitment.
-        let threshold_commitment =
-            compute_threshold_commitment(acceptance_threshold, blinding);
+        let threshold_commitment = compute_threshold_commitment(acceptance_threshold, blinding);
 
         // Prover receives threshold + blinding via secure channel.
         let score_fact_hash = hash_fact(

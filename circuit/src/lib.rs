@@ -70,12 +70,12 @@
 pub mod binding;
 pub mod body_membership;
 pub mod chunked_derivation;
+pub mod constraint_prover;
 pub mod derivation_air;
 pub mod field;
 pub mod fold_air;
 pub mod ivc;
 pub mod merkle_air;
-pub mod constraint_prover;
 
 /// Backward-compatible re-export. Prefer [`constraint_prover`] for new code.
 #[doc(hidden)]
@@ -119,18 +119,36 @@ pub use body_membership::{
     BodyFactMerkleProof, BodyMembershipProof, MembershipEntry, collect_body_fact_hashes,
     prove_authorization_with_membership, verify_authorization_with_membership,
 };
-pub use field::BabyBear;
-pub use ivc::{
-    FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBuilder, IvcPresentationProof, IvcProof,
-    IvcVerification, StateTransitionAir, ValidatedIvcProof, ValidatedIvcVerification,
-    prove_ivc, prove_ivc_stark, prove_validated_ivc, verify_ivc, verify_ivc_stark,
-    verify_validated_ivc,
-};
 pub use constraint_prover::{
     Air, ConstraintCheckResult, ConstraintProof, ConstraintProver, ConstraintViolation,
 };
+pub use field::BabyBear;
+pub use ivc::{
+    FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBuilder, IvcPresentationProof, IvcProof,
+    IvcVerification, StateTransitionAir, ValidatedIvcProof, ValidatedIvcVerification, prove_ivc,
+    prove_ivc_stark, prove_validated_ivc, verify_ivc, verify_ivc_stark, verify_validated_ivc,
+};
 
 // Backward-compatible aliases (hidden from docs).
+pub use accumulator_air::{
+    AccumulatorNonMembershipWitness, AccumulatorNonRevocationAir, AccumulatorNonRevocationWitness,
+    ExtElem, compute_accumulator, derive_alpha, prove_accumulator_non_revocation,
+    verify_accumulator_non_revocation,
+};
+pub use binding::compute_action_binding;
+pub use block_transition_air::{
+    BlockEvent, BlockTransitionAir, BlockTransitionProof, MerkleUpdateWitness,
+    prove_block_transition, verify_block_transition,
+};
+pub use chunked_derivation::{
+    ChunkedAuthorizationProof, DEFAULT_CHUNK_SIZE, prove_chunked_authorization,
+    verify_chunked_authorization,
+};
+pub use committed_threshold::{
+    CommittedThresholdAir, CommittedThresholdProof, CommittedThresholdWitness,
+    compute_threshold_commitment, generate_blinding, prove_committed_threshold,
+    verify_committed_threshold,
+};
 #[doc(hidden)]
 pub use constraint_prover::MockProof;
 #[doc(hidden)]
@@ -148,38 +166,18 @@ pub use non_revocation_air::{
 pub use note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, prove_note_spend, verify_note_spend,
 };
-pub use chunked_derivation::{
-    ChunkedAuthorizationProof, DEFAULT_CHUNK_SIZE, prove_chunked_authorization,
-    verify_chunked_authorization,
+pub use predicate_air::{
+    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
+    prove_in_range, prove_predicate, verify_in_range, verify_predicate,
 };
 pub use presentation::{
     AuthorizationProof, PresentationAir, PresentationProof, PresentationVerification,
     PresentationWitness, RealPresentationProof, prove_authorization,
 };
-pub use binding::compute_action_binding;
-pub use predicate_air::{
-    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
-    prove_in_range, prove_predicate, verify_in_range, verify_predicate,
+pub use relational_predicate_air::{
+    RelationType, RelationalPredicateAir, RelationalPredicateProof, RelationalPredicateWitness,
+    compute_value_commitment, prove_relational, prove_value_comparison, verify_relational,
 };
 pub use turn_validity_air::{
     TurnValidityAir, TurnValidityWitness, prove_turn_validity, verify_turn_validity,
-};
-pub use block_transition_air::{
-    BlockEvent, BlockTransitionAir, BlockTransitionProof, MerkleUpdateWitness,
-    prove_block_transition, verify_block_transition,
-};
-pub use committed_threshold::{
-    CommittedThresholdAir, CommittedThresholdProof, CommittedThresholdWitness,
-    compute_threshold_commitment, generate_blinding, prove_committed_threshold,
-    verify_committed_threshold,
-};
-pub use relational_predicate_air::{
-    RelationalPredicateAir, RelationalPredicateProof, RelationalPredicateWitness, RelationType,
-    compute_value_commitment, prove_relational, prove_value_comparison, verify_relational,
-};
-pub use accumulator_air::{
-    AccumulatorNonRevocationAir, AccumulatorNonRevocationWitness,
-    AccumulatorNonMembershipWitness, ExtElem,
-    compute_accumulator, derive_alpha,
-    prove_accumulator_non_revocation, verify_accumulator_non_revocation,
 };

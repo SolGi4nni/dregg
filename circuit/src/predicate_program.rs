@@ -53,8 +53,8 @@
 use std::collections::HashMap;
 
 use crate::compound_predicate_air::{
-    BooleanFormula, CompoundPredicateProof, Gate, prove_compound_predicate,
-    verify_compound_predicate, MAX_COMPOUND_PREDICATES,
+    BooleanFormula, CompoundPredicateProof, Gate, MAX_COMPOUND_PREDICATES,
+    prove_compound_predicate, verify_compound_predicate,
 };
 use crate::constraint_prover::ConstraintProof;
 use crate::field::BabyBear;
@@ -76,7 +76,6 @@ use crate::temporal_predicate_air::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PredicateExpr {
     // ─── Leaf predicates (dispatch to specific AIRs) ───
-
     /// Range comparison: `attribute <op> threshold`.
     /// Dispatches to `PredicateAir`.
     Range {
@@ -117,7 +116,6 @@ pub enum PredicateExpr {
     },
 
     // ─── Composition operators ───
-
     /// All sub-predicates must hold.
     And(Vec<PredicateExpr>),
 
@@ -128,7 +126,10 @@ pub enum PredicateExpr {
     Not(Box<PredicateExpr>),
 
     /// At least `k` of the given predicates must hold.
-    Threshold { k: usize, predicates: Vec<PredicateExpr> },
+    Threshold {
+        k: usize,
+        predicates: Vec<PredicateExpr>,
+    },
 }
 
 /// A predicate program: an expression tree with resource limits.
@@ -462,7 +463,9 @@ fn compile_boolean_composition(
     kind: CompositeFormulaKind,
 ) -> Result<CompiledPredicate, CompileError> {
     // Check if all children are range-type leaves (can flatten into CompoundPredicateAir).
-    let all_range = children.iter().all(|c| matches!(c, PredicateExpr::Range { .. }));
+    let all_range = children
+        .iter()
+        .all(|c| matches!(c, PredicateExpr::Range { .. }));
 
     if all_range && children.len() <= MAX_COMPOUND_PREDICATES {
         // Flatten into a single CompoundPredicateAir.
@@ -675,13 +678,14 @@ fn prove_single(
             threshold,
             min_blocks,
         } => {
-            let (values, roots) = private_state
-                .temporal_history
-                .get(attribute)
-                .ok_or_else(|| ProveError::MissingTemporalData {
-                    attribute: attribute.clone(),
-                    needed: *min_blocks,
-                })?;
+            let (values, roots) =
+                private_state
+                    .temporal_history
+                    .get(attribute)
+                    .ok_or_else(|| ProveError::MissingTemporalData {
+                        attribute: attribute.clone(),
+                        needed: *min_blocks,
+                    })?;
 
             if (values.len() as u64) < *min_blocks {
                 return Err(ProveError::MissingTemporalData {
@@ -690,20 +694,16 @@ fn prove_single(
                 });
             }
 
-            let values_bb: Vec<BabyBear> = values.iter().map(|v| BabyBear::new(*v as u32)).collect();
+            let values_bb: Vec<BabyBear> =
+                values.iter().map(|v| BabyBear::new(*v as u32)).collect();
             let threshold_bb = BabyBear::new(*threshold as u32);
 
-            let proof = prove_temporal_predicate(
-                &values_bb,
-                roots,
-                *predicate_type,
-                threshold_bb,
-            )
-            .ok_or_else(|| {
-                ProveError::NotSatisfiable(format!(
-                    "{attribute}: temporal predicate not satisfied across all steps"
-                ))
-            })?;
+            let proof = prove_temporal_predicate(&values_bb, roots, *predicate_type, threshold_bb)
+                .ok_or_else(|| {
+                    ProveError::NotSatisfiable(format!(
+                        "{attribute}: temporal predicate not satisfied across all steps"
+                    ))
+                })?;
 
             Ok(ProgramProof {
                 sub_proofs: vec![SubProof::Temporal(proof)],
@@ -714,7 +714,10 @@ fn prove_single(
         // Membership, Relational, and CommittedThreshold are recognized but
         // their proof generation is deferred to Phase 2 (composition engine).
         WitnessSpec::Membership { attribute, .. }
-        | WitnessSpec::Relational { my_attribute: attribute, .. }
+        | WitnessSpec::Relational {
+            my_attribute: attribute,
+            ..
+        }
         | WitnessSpec::CommittedThreshold { attribute, .. } => {
             Err(ProveError::ProofGenerationFailed(format!(
                 "AIR type for '{}' not yet supported in program prover",
@@ -732,7 +735,8 @@ fn prove_compound_range(
     state_root: BabyBear,
 ) -> Result<ProgramProof, ProveError> {
     // Build the predicate tuples for the compound AIR.
-    let mut predicates: Vec<(BabyBear, PredicateType, BabyBear)> = Vec::with_capacity(sub_predicates.len());
+    let mut predicates: Vec<(BabyBear, PredicateType, BabyBear)> =
+        Vec::with_capacity(sub_predicates.len());
     let mut commitments: Vec<BabyBear> = Vec::with_capacity(sub_predicates.len());
 
     for spec in sub_predicates {
@@ -770,13 +774,12 @@ fn prove_compound_range(
         }
     }
 
-    let proof = prove_compound_predicate(&predicates, formula.clone(), &commitments).ok_or_else(
-        || {
+    let proof =
+        prove_compound_predicate(&predicates, formula.clone(), &commitments).ok_or_else(|| {
             ProveError::NotSatisfiable(
                 "compound predicate not satisfiable with given values".to_string(),
             )
-        },
-    )?;
+        })?;
 
     Ok(ProgramProof {
         sub_proofs: vec![SubProof::Compound(proof)],
@@ -895,7 +898,12 @@ pub fn verify_program(
 ) -> bool {
     match (&proof.structure, compiled) {
         (ProofStructure::Single, CompiledPredicate::Single { witness_spec, .. }) => {
-            verify_single_proof(&proof.sub_proofs, witness_spec, expected_commitments, state_root)
+            verify_single_proof(
+                &proof.sub_proofs,
+                witness_spec,
+                expected_commitments,
+                state_root,
+            )
         }
         (
             ProofStructure::CompoundRange,
@@ -912,7 +920,10 @@ pub fn verify_program(
         ),
         (
             ProofStructure::Composite(_),
-            CompiledPredicate::Composite { sub_proofs: compiled_subs, formula },
+            CompiledPredicate::Composite {
+                sub_proofs: compiled_subs,
+                formula,
+            },
         ) => verify_composite_proof(
             &proof.sub_proofs,
             compiled_subs,
@@ -944,13 +955,14 @@ fn verify_single_proof(
                 ..
             },
         ) => {
-            let expected_commitment = expected_commitments
-                .get(attribute)
-                .copied()
-                .unwrap_or_else(|| {
-                    // If no explicit commitment provided, we cannot verify.
-                    BabyBear::ZERO
-                });
+            let expected_commitment =
+                expected_commitments
+                    .get(attribute)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        // If no explicit commitment provided, we cannot verify.
+                        BabyBear::ZERO
+                    });
             verify_predicate(proof, BabyBear::new(*threshold as u32), expected_commitment)
         }
 
@@ -999,7 +1011,11 @@ fn verify_compound_range_proof(
     let mut expected: Vec<BabyBear> = Vec::with_capacity(sub_predicates.len());
     for spec in sub_predicates {
         match spec {
-            WitnessSpec::Range { attribute, threshold, .. } => {
+            WitnessSpec::Range {
+                attribute,
+                threshold,
+                ..
+            } => {
                 let commitment = expected_commitments
                     .get(attribute)
                     .copied()
@@ -1036,7 +1052,12 @@ fn verify_composite_proof(
                     sub_proofs: sub_slice.to_vec(),
                     structure: infer_structure(compiled_sub),
                 };
-                if !verify_program(&sub_program_proof, compiled_sub, expected_commitments, state_root) {
+                if !verify_program(
+                    &sub_program_proof,
+                    compiled_sub,
+                    expected_commitments,
+                    state_root,
+                ) {
                     return false;
                 }
                 proof_idx += sub_proof_count;
@@ -1057,7 +1078,12 @@ fn verify_composite_proof(
                         sub_proofs: sub_slice.to_vec(),
                         structure: infer_structure(compiled_sub),
                     };
-                    if verify_program(&sub_program_proof, compiled_sub, expected_commitments, state_root) {
+                    if verify_program(
+                        &sub_program_proof,
+                        compiled_sub,
+                        expected_commitments,
+                        state_root,
+                    ) {
                         return true;
                     }
                 }
@@ -1080,7 +1106,12 @@ fn verify_composite_proof(
                     sub_proofs: sub_slice.to_vec(),
                     structure: infer_structure(compiled_sub),
                 };
-                if verify_program(&sub_program_proof, compiled_sub, expected_commitments, state_root) {
+                if verify_program(
+                    &sub_program_proof,
+                    compiled_sub,
+                    expected_commitments,
+                    state_root,
+                ) {
                     verified += 1;
                     proof_idx += sub_proof_count;
                 }
@@ -1110,9 +1141,7 @@ fn infer_structure(compiled: &CompiledPredicate) -> ProofStructure {
     match compiled {
         CompiledPredicate::Single { .. } => ProofStructure::Single,
         CompiledPredicate::CompoundRange { .. } => ProofStructure::CompoundRange,
-        CompiledPredicate::Composite { formula, .. } => {
-            ProofStructure::Composite(formula.clone())
-        }
+        CompiledPredicate::Composite { formula, .. } => ProofStructure::Composite(formula.clone()),
     }
 }
 
@@ -1266,7 +1295,10 @@ mod tests {
 
         let compiled = compile_predicate(&program).unwrap();
         match &compiled {
-            CompiledPredicate::Composite { sub_proofs, formula } => {
+            CompiledPredicate::Composite {
+                sub_proofs,
+                formula,
+            } => {
                 assert_eq!(sub_proofs.len(), 2);
                 assert!(matches!(formula, CompositeFormula::And));
             }
@@ -1300,15 +1332,24 @@ mod tests {
 
         let compiled = compile_predicate(&program).unwrap();
         match &compiled {
-            CompiledPredicate::Composite { sub_proofs, formula } => {
+            CompiledPredicate::Composite {
+                sub_proofs,
+                formula,
+            } => {
                 assert_eq!(sub_proofs.len(), 2);
                 assert!(matches!(formula, CompositeFormula::Or));
                 // First sub-proof should be CompoundRange (AND of two ranges).
-                assert!(matches!(&sub_proofs[0], CompiledPredicate::CompoundRange { .. }));
+                assert!(matches!(
+                    &sub_proofs[0],
+                    CompiledPredicate::CompoundRange { .. }
+                ));
                 // Second should be Single(Temporal).
                 assert!(matches!(
                     &sub_proofs[1],
-                    CompiledPredicate::Single { air_type: AirType::Temporal, .. }
+                    CompiledPredicate::Single {
+                        air_type: AirType::Temporal,
+                        ..
+                    }
                 ));
             }
             _ => panic!("expected Composite"),
@@ -1329,7 +1370,10 @@ mod tests {
         // Depth is 6 (5 levels of And + 1 leaf).
         let program = PredicateProgram::new(expr, 3); // max_depth = 3
         let result = compile_predicate(&program);
-        assert!(matches!(result, Err(CompileError::DepthExceeded { max: 3, .. })));
+        assert!(matches!(
+            result,
+            Err(CompileError::DepthExceeded { max: 3, .. })
+        ));
     }
 
     #[test]
@@ -1597,7 +1641,10 @@ mod tests {
             .insert("balance".to_string(), (values, roots));
 
         let result = prove_program(&compiled, &private_state, state_root);
-        assert!(matches!(result, Err(ProveError::MissingTemporalData { .. })));
+        assert!(matches!(
+            result,
+            Err(ProveError::MissingTemporalData { .. })
+        ));
     }
 
     #[test]

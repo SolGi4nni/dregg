@@ -441,8 +441,10 @@ mod tests {
 
         // The result should equal the target row exactly.
         assert_eq!(result.len(), index.entries[target_idx].len());
-        for (j, (&got, &expected)) in
-            result.iter().zip(index.entries[target_idx].iter()).enumerate()
+        for (j, (&got, &expected)) in result
+            .iter()
+            .zip(index.entries[target_idx].iter())
+            .enumerate()
         {
             assert_eq!(
                 got, expected,
@@ -478,7 +480,11 @@ mod tests {
         let (q_a, q_b) = generate_pir_queries(target_idx, index.num_rows());
 
         // q_a should be random (non-zero in general).
-        let nonzero_a = q_a.query_vector.iter().filter(|&&v| v != BabyBear::ZERO).count();
+        let nonzero_a = q_a
+            .query_vector
+            .iter()
+            .filter(|&&v| v != BabyBear::ZERO)
+            .count();
         assert!(
             nonzero_a > index.num_rows() / 2,
             "q_a should have many non-zero entries (has {nonzero_a}/{})",
@@ -486,7 +492,11 @@ mod tests {
         );
 
         // q_b should also look random (non-zero in general).
-        let nonzero_b = q_b.query_vector.iter().filter(|&&v| v != BabyBear::ZERO).count();
+        let nonzero_b = q_b
+            .query_vector
+            .iter()
+            .filter(|&&v| v != BabyBear::ZERO)
+            .count();
         assert!(
             nonzero_b > index.num_rows() / 2,
             "q_b should have many non-zero entries (has {nonzero_b}/{})",
@@ -494,30 +504,22 @@ mod tests {
         );
 
         // Neither q_a nor q_b should be e_i (the "obvious" query).
-        let is_unit_a = q_a
-            .query_vector
-            .iter()
-            .enumerate()
-            .all(|(i, &v)| {
-                if i == target_idx {
-                    v == BabyBear::ONE
-                } else {
-                    v == BabyBear::ZERO
-                }
-            });
+        let is_unit_a = q_a.query_vector.iter().enumerate().all(|(i, &v)| {
+            if i == target_idx {
+                v == BabyBear::ONE
+            } else {
+                v == BabyBear::ZERO
+            }
+        });
         assert!(!is_unit_a, "q_a should NOT be the unit vector e_i");
 
-        let is_unit_b = q_b
-            .query_vector
-            .iter()
-            .enumerate()
-            .all(|(i, &v)| {
-                if i == target_idx {
-                    v == BabyBear::ONE
-                } else {
-                    v == BabyBear::ZERO
-                }
-            });
+        let is_unit_b = q_b.query_vector.iter().enumerate().all(|(i, &v)| {
+            if i == target_idx {
+                v == BabyBear::ONE
+            } else {
+                v == BabyBear::ZERO
+            }
+        });
         assert!(!is_unit_b, "q_b should NOT be the unit vector e_i");
     }
 
@@ -587,13 +589,7 @@ mod tests {
             compound: None,
             predicate_requirements: vec![],
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x11; 32]),
-            9999,
-            None,
-        );
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x11; 32]), 9999, None);
 
         let index = IntentIndex::build_from_intents(&[intent.clone()]);
 

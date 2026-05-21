@@ -160,8 +160,7 @@ pub fn verify_selective_disclosure(
     // (PresentationPublicInputs::revealed_facts_commitment). Since we're working
     // with raw STARK proof bytes, we verify by recomputing the commitment and
     // comparing against what the prover claims.
-    let recomputed_commitment =
-        pyana_bridge::compute_revealed_facts_commitment(revealed_facts);
+    let recomputed_commitment = pyana_bridge::compute_revealed_facts_commitment(revealed_facts);
 
     // If no facts are revealed and commitment is zero, that's valid (fully private).
     // If facts ARE revealed, commitment must be non-zero and match.
@@ -185,20 +184,16 @@ pub fn verify_selective_disclosure(
 ///
 /// `true` if the revealed facts commitment matches (prover did not lie),
 /// `false` otherwise.
-pub fn verify_selective_presentation(
-    presentation: &crate::AuthorizationPresentation,
-) -> bool {
+pub fn verify_selective_presentation(presentation: &crate::AuthorizationPresentation) -> bool {
     match presentation {
         crate::AuthorizationPresentation::Selective {
             revealed_facts,
             revealed_facts_commitment,
             ..
-        } => {
-            pyana_bridge::verify_revealed_facts_commitment(
-                revealed_facts,
-                *revealed_facts_commitment,
-            )
-        }
+        } => pyana_bridge::verify_revealed_facts_commitment(
+            revealed_facts,
+            *revealed_facts_commitment,
+        ),
         _ => false,
     }
 }
@@ -216,9 +211,7 @@ pub fn verify_selective_presentation(
 /// # Returns
 ///
 /// `true` if the revealed facts commitment matches AND all predicate proofs verify.
-pub fn verify_disclosure_presentation(
-    presentation: &crate::AuthorizationPresentation,
-) -> bool {
+pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresentation) -> bool {
     match presentation {
         crate::AuthorizationPresentation::Selective {
             revealed_facts,
@@ -236,10 +229,7 @@ pub fn verify_disclosure_presentation(
 
             // 2. Verify each predicate proof.
             for (_fact_index, pred_proof) in predicate_proofs {
-                if !pyana_bridge::verify_predicate_proof(
-                    pred_proof,
-                    pred_proof.fact_commitment,
-                ) {
+                if !pyana_bridge::verify_predicate_proof(pred_proof, pred_proof.fact_commitment) {
                     return false;
                 }
             }
@@ -269,9 +259,7 @@ pub fn verify_disclosure_presentation(
 ///
 /// `Ok(true)` if the proof verifies, `Ok(false)` if verification fails,
 /// or `Err(...)` if deserialization fails.
-pub fn verify_validated_ivc_proof(
-    proof_bytes: &[u8],
-) -> Result<bool, SdkError> {
+pub fn verify_validated_ivc_proof(proof_bytes: &[u8]) -> Result<bool, SdkError> {
     let proof: pyana_circuit::ValidatedIvcProof =
         postcard::from_bytes(proof_bytes).map_err(|_| {
             SdkError::Wire("validated IVC proof bytes could not be deserialized".into())

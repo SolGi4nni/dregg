@@ -72,7 +72,5 @@ pub mod prelude {
     };
 
     #[cfg(any(test, feature = "dev"))]
-    pub use crate::server::{
-        MinSizeVerifier, NoopVerifier, RejectAllVerifier, VerificationMode,
-    };
+    pub use crate::server::{MinSizeVerifier, NoopVerifier, RejectAllVerifier, VerificationMode};
 }

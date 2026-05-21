@@ -85,17 +85,16 @@ pub use threshold::{
     FederationCommittee, MemberSecret, ThresholdError, ThresholdQC, generate_test_committee,
 };
 pub use threshold_decrypt::{
-    DecryptionShare, KeyShare, ThresholdCiphertext, ThresholdDecryptError,
-    ThresholdEncryptionKey, combine_shares, generate_epoch_key, produce_decryption_share,
-    threshold_encrypt,
+    DecryptionShare, KeyShare, ThresholdCiphertext, ThresholdDecryptError, ThresholdEncryptionKey,
+    combine_shares, generate_epoch_key, produce_decryption_share, threshold_encrypt,
 };
 pub use transport::{
     FederationEnvelope, FederationTransport, LocalTransport, NetworkConsensusNode,
     TcpFederationTransport, TransportError,
 };
 pub use types::{
-    AttestedRoot, ConsensusMessage, LightClientProof, NodeIdentity, PublicKey,
-    QuorumCertificate, RevocationBlock, RevocationEvent, RevocationProof, Signature, SigningKey,
-    Token, ViewChangeMessage, Vote, generate_keypair, sign, verify,
-    verify_attested_root_with_committee, verify_via_receipt_chain,
+    AttestedRoot, ConsensusMessage, LightClientProof, NodeIdentity, PublicKey, QuorumCertificate,
+    RevocationBlock, RevocationEvent, RevocationProof, Signature, SigningKey, Token,
+    ViewChangeMessage, Vote, generate_keypair, sign, verify, verify_attested_root_with_committee,
+    verify_via_receipt_chain,
 };

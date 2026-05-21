@@ -12,8 +12,9 @@
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_circuit::{
-    BabyBear, note_spending_air::{create_test_witness, key_to_field_elements}, prove_note_spend,
-    stark, verify_note_spend,
+    BabyBear,
+    note_spending_air::{create_test_witness, key_to_field_elements},
+    prove_note_spend, stark, verify_note_spend,
 };
 
 /// Asset type constant for GOLD.
@@ -94,7 +95,7 @@ fn main() {
         BabyBear::new(u32::from_le_bytes(alice_owner[0..4].try_into().unwrap())),
         BabyBear::new(100),               // value
         BabyBear::new(ASSET_GOLD as u32), // asset type (truncated for BabyBear)
-        key_to_field_elements(&alice_sk),  // spending key (8 limbs)
+        key_to_field_elements(&alice_sk), // spending key (8 limbs)
         4,                                // Merkle depth
     );
     let alice_proof = prove_note_spend(&alice_witness);

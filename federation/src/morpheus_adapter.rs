@@ -26,7 +26,7 @@
 use std::collections::VecDeque;
 
 use pyana_morpheus::test_harness::TestTransaction;
-use pyana_morpheus::{Identity, MorpheusProcess, KeyBook, Message, ViewNum};
+use pyana_morpheus::{Identity, KeyBook, Message, MorpheusProcess, ViewNum};
 
 use crate::consensus::ConsensusConfig;
 use crate::types::RevocationEvent;
@@ -131,7 +131,9 @@ impl MorpheusAdapter {
         if !self.pending_events.is_empty() {
             for event in self.pending_events.drain(..) {
                 let payload = postcard::to_stdvec(&event).unwrap_or_default();
-                self.process.ready_transactions.push(TestTransaction(payload));
+                self.process
+                    .ready_transactions
+                    .push(TestTransaction(payload));
             }
         }
 
@@ -143,7 +145,9 @@ impl MorpheusAdapter {
     /// Drain outbound messages that need to be sent via the federation transport.
     ///
     /// Each entry is (message, optional_target). If target is None, broadcast to all.
-    pub fn drain_outbox(&mut self) -> impl Iterator<Item = (Message<TestTransaction>, Option<Identity>)> + '_ {
+    pub fn drain_outbox(
+        &mut self,
+    ) -> impl Iterator<Item = (Message<TestTransaction>, Option<Identity>)> + '_ {
         self.outbox.drain(..)
     }
 

@@ -2,9 +2,9 @@
 //!
 //! See module-level docs for trace layout and constraint descriptions.
 
+use crate::constraint_prover::{Air, Constraint, ConstraintProver};
 use crate::field::BabyBear;
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
-use crate::constraint_prover::{Air, Constraint, ConstraintProver};
 use crate::poseidon2::{hash_fact, hash_many};
 
 pub const FOLD_AIR_WIDTH: usize = 12;

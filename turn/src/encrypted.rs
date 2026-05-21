@@ -218,9 +218,9 @@ pub fn order_encrypted_turns(turns: &[EncryptedTurn]) -> TurnOrdering {
         for (bucket_idx, bucket) in buckets.iter().enumerate() {
             let conflicts_with_bucket = bucket.turn_commitments.iter().any(|existing_commit| {
                 // Find the turn with this commitment and check conflict.
-                turns.iter().any(|t| {
-                    t.turn_commitment == *existing_commit && turns[i].may_conflict_with(t)
-                })
+                turns
+                    .iter()
+                    .any(|t| t.turn_commitment == *existing_commit && turns[i].may_conflict_with(t))
             });
 
             if !conflicts_with_bucket {

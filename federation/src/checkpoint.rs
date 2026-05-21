@@ -53,7 +53,10 @@ pub enum CheckpointError {
     /// The checkpoint height is not at a valid interval boundary.
     InvalidHeight { height: u64, interval: u64 },
     /// The checkpoint is too old (newer checkpoint exists).
-    Stale { checkpoint_height: u64, current_height: u64 },
+    Stale {
+        checkpoint_height: u64,
+        current_height: u64,
+    },
     /// Serialization/deserialization failure.
     Serialization(String),
 }
@@ -66,10 +69,19 @@ impl std::fmt::Display for CheckpointError {
             }
             Self::QcMismatch => write!(f, "QC block hash does not match checkpoint content hash"),
             Self::InvalidHeight { height, interval } => {
-                write!(f, "height {height} is not at checkpoint interval {interval}")
+                write!(
+                    f,
+                    "height {height} is not at checkpoint interval {interval}"
+                )
             }
-            Self::Stale { checkpoint_height, current_height } => {
-                write!(f, "checkpoint at height {checkpoint_height} is stale (current: {current_height})")
+            Self::Stale {
+                checkpoint_height,
+                current_height,
+            } => {
+                write!(
+                    f,
+                    "checkpoint at height {checkpoint_height} is stale (current: {current_height})"
+                )
             }
             Self::Serialization(msg) => write!(f, "serialization error: {msg}"),
         }
@@ -267,7 +279,15 @@ mod tests {
     #[test]
     fn test_checkpoint_content_hash_changes_with_height() {
         let members = vec![generate_keypair().1];
-        let cp1 = create_checkpoint(1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members.clone(), 1);
+        let cp1 = create_checkpoint(
+            1000,
+            [1u8; 32],
+            [2u8; 32],
+            [3u8; 32],
+            [4u8; 32],
+            members.clone(),
+            1,
+        );
         let mut cp2 = cp1.clone();
         cp2.height = 2000;
         assert_ne!(cp1.content_hash(), cp2.content_hash());
@@ -286,15 +306,8 @@ mod tests {
     fn test_verify_checkpoint_qc_mismatch() {
         let (signing_key, public_key) = generate_keypair();
         let members = vec![public_key.clone()];
-        let mut cp = create_checkpoint(
-            1000,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-            [4u8; 32],
-            members,
-            1,
-        );
+        let mut cp =
+            create_checkpoint(1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members, 1);
 
         // Create a QC with wrong block hash.
         let wrong_hash = [99u8; 32];
@@ -321,15 +334,8 @@ mod tests {
     fn test_verify_checkpoint_valid() {
         let (signing_key, public_key) = generate_keypair();
         let members = vec![public_key.clone()];
-        let mut cp = create_checkpoint(
-            1000,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-            [4u8; 32],
-            members,
-            1,
-        );
+        let mut cp =
+            create_checkpoint(1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members, 1);
 
         // Create a QC with correct block hash.
         let content_hash = cp.content_hash();
@@ -356,15 +362,7 @@ mod tests {
     fn test_finalize_checkpoint() {
         let (signing_key, public_key) = generate_keypair();
         let members = vec![public_key.clone()];
-        let cp = create_checkpoint(
-            1000,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-            [4u8; 32],
-            members,
-            1,
-        );
+        let cp = create_checkpoint(1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members, 1);
 
         let content_hash = cp.content_hash();
         let vote_msg = QuorumCertificate::vote_message(&content_hash, 1000, 0);

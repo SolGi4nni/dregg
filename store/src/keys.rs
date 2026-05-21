@@ -209,13 +209,11 @@ fn decrypt_key(blob: &[u8], master_key: &[u8; 32]) -> Result<[u8; 32]> {
     let cipher = ChaCha20Poly1305::new((&aead_key).into());
     let nonce = chacha20poly1305::Nonce::from_slice(nonce_bytes);
 
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext_and_tag)
-        .map_err(|_| {
-            StoreError::Crypto(
-                "authentication failed: invalid master key or corrupted data".to_string(),
-            )
-        })?;
+    let plaintext = cipher.decrypt(nonce, ciphertext_and_tag).map_err(|_| {
+        StoreError::Crypto(
+            "authentication failed: invalid master key or corrupted data".to_string(),
+        )
+    })?;
 
     let mut key = [0u8; 32];
     if plaintext.len() != 32 {

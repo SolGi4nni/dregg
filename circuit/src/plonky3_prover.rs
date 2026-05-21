@@ -296,9 +296,8 @@ where
             + sib1.clone() * one_minus_l0_l1;
 
         let l0_plus_l1: AB::Expr = l0.clone() + l1.clone();
-        let child2: AB::Expr = sib1.clone() * l0_plus_l1
-            + current.clone() * l2.clone()
-            + sib2.clone() * l3.clone();
+        let child2: AB::Expr =
+            sib1.clone() * l0_plus_l1 + current.clone() * l2.clone() + sib2.clone() * l3.clone();
 
         let one_minus_l3: AB::Expr = one.clone() - l3.clone();
         let child3: AB::Expr = sib2.clone() * one_minus_l3 + current.clone() * l3.clone();
@@ -408,12 +407,8 @@ where
         let leaf_hash: AB::Expr = public_values[0].into();
         let root: AB::Expr = public_values[1].into();
 
-        builder
-            .when_first_row()
-            .assert_zero(current - leaf_hash);
-        builder
-            .when_last_row()
-            .assert_zero(parent - root);
+        builder.when_first_row().assert_zero(current - leaf_hash);
+        builder.when_last_row().assert_zero(parent - root);
     }
 }
 
@@ -594,11 +589,7 @@ pub fn generate_sound_merkle_trace(
     }
 
     // The public root is the parent of the last trace row.
-    let final_root = if depth < padded {
-        extended_root
-    } else {
-        root
-    };
+    let final_root = if depth < padded { extended_root } else { root };
 
     let public_inputs = vec![leaf_hash, final_root];
     (trace, public_inputs)

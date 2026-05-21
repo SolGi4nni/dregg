@@ -80,9 +80,7 @@ pub fn create_cell(
         let token_id = *blake3::hash(b"pyana-wasm-default-domain").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, initial_balance);
         let cell_id = cell.id;
-        rt.ledger
-            .insert_cell(cell)
-            .map_err(|e| format!("{e}"))?;
+        rt.ledger.insert_cell(cell).map_err(|e| format!("{e}"))?;
 
         #[derive(Serialize)]
         struct CreateCellResult {
@@ -221,8 +219,7 @@ pub fn agent_mint_token(
         if agent_index >= rt.agents.len() {
             return Err("invalid agent index".to_string());
         }
-        let actions: Vec<String> =
-            serde_json::from_str(actions_json).map_err(|e| e.to_string())?;
+        let actions: Vec<String> = serde_json::from_str(actions_json).map_err(|e| e.to_string())?;
         let exp = if expiry == 0 { None } else { Some(expiry) };
         let token_idx = rt.agent_mint_token(agent_index, resource, &actions, exp);
 
@@ -234,7 +231,9 @@ pub fn agent_mint_token(
 
         let result = MintResult {
             token_index: token_idx,
-            token_id: rt.agents[agent_index].held_tokens[token_idx].token_id.clone(),
+            token_id: rt.agents[agent_index].held_tokens[token_idx]
+                .token_id
+                .clone(),
         };
         serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
     })
@@ -370,7 +369,9 @@ pub fn execute_turn_step_by_step(
 
         // Update trace with result.
         match &result {
-            TurnResult::Committed { computrons_used, .. } => {
+            TurnResult::Committed {
+                computrons_used, ..
+            } => {
                 for step in &mut trace_steps {
                     step.result = "committed".to_string();
                     step.computrons_used = *computrons_used;
@@ -471,11 +472,7 @@ pub fn grant_capability(
 
 /// Revoke a capability by slot.
 #[wasm_bindgen]
-pub fn revoke_capability(
-    handle: usize,
-    agent_index: usize,
-    slot: u32,
-) -> Result<JsValue, JsError> {
+pub fn revoke_capability(handle: usize, agent_index: usize, slot: u32) -> Result<JsValue, JsError> {
     with_runtime(handle, |rt| {
         if agent_index >= rt.agents.len() {
             return Err("invalid agent index".to_string());
@@ -611,11 +608,7 @@ pub fn spend_note(
 
 /// Create a simulated federation.
 #[wasm_bindgen]
-pub fn create_federation(
-    handle: usize,
-    name: &str,
-    num_nodes: usize,
-) -> Result<JsValue, JsError> {
+pub fn create_federation(handle: usize, name: &str, num_nodes: usize) -> Result<JsValue, JsError> {
     with_runtime(handle, |rt| {
         let idx = rt.create_federation(name, num_nodes);
         let fed = &rt.federations[idx];
@@ -910,10 +903,7 @@ pub fn advance_height(handle: usize, blocks: u64) -> Result<JsValue, JsError> {
 
 /// Create a revocation channel for an agent.
 #[wasm_bindgen]
-pub fn create_revocation_channel(
-    handle: usize,
-    revoker_agent: usize,
-) -> Result<JsValue, JsError> {
+pub fn create_revocation_channel(handle: usize, revoker_agent: usize) -> Result<JsValue, JsError> {
     with_runtime(handle, |rt| {
         if revoker_agent >= rt.agents.len() {
             return Err("invalid agent index".to_string());

@@ -57,10 +57,20 @@ const IRREDUCIBLE_W: BabyBear = BabyBear(11);
 
 impl BabyBear4 {
     /// The zero element of the extension field.
-    pub const ZERO: Self = Self([BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+    pub const ZERO: Self = Self([
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+    ]);
 
     /// The one element (multiplicative identity).
-    pub const ONE: Self = Self([BabyBear::ONE, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+    pub const ONE: Self = Self([
+        BabyBear::ONE,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+    ]);
 
     /// Create from four base field elements.
     pub fn new(a: BabyBear, b: BabyBear, c: BabyBear, d: BabyBear) -> Self {
@@ -596,10 +606,7 @@ mod tests {
 
     /// Derive a test alpha from a simple seed.
     fn test_alpha() -> BabyBear4 {
-        PolynomialAccumulator::derive_alpha(&[
-            BabyBear::new(0x1234),
-            BabyBear::new(0x5678),
-        ])
+        PolynomialAccumulator::derive_alpha(&[BabyBear::new(0x1234), BabyBear::new(0x5678)])
     }
 
     #[test]
@@ -833,15 +840,14 @@ mod tests {
 
         // Add a new element.
         let new_elem = BabyBear::new(600);
-        let (updated_witness, new_acc_value) =
-            PolynomialAccumulator::update_witness_for_insert(
-                &witness,
-                absent,
-                new_elem,
-                alpha,
-                acc.accumulator_value(),
-            )
-            .unwrap();
+        let (updated_witness, new_acc_value) = PolynomialAccumulator::update_witness_for_insert(
+            &witness,
+            absent,
+            new_elem,
+            alpha,
+            acc.accumulator_value(),
+        )
+        .unwrap();
 
         // Verify the updated witness against the new accumulator.
         assert!(PolynomialAccumulator::verify_non_membership(

@@ -21,20 +21,18 @@ use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_cell::seal::{SealPair, SealedBox};
 use pyana_circuit::{
-    BabyBear, PredicateProof, PredicateType, PredicateWitness,
-    compute_fact_commitment, prove_predicate, verify_predicate,
+    BabyBear, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
+    constraint_prover::ConstraintProof,
+    derivation_air::{CircuitRule, DerivationWitness},
+    fold_air::FoldWitness,
     poseidon2,
     presentation::{
         PresentationAir, PresentationVerification, PresentationWitness,
         create_poseidon2_compatible_witness,
     },
-    fold_air::FoldWitness,
-    derivation_air::{CircuitRule, DerivationWitness},
-    constraint_prover::ConstraintProof,
+    prove_predicate, verify_predicate,
 };
-use pyana_turn::{
-    ConditionalTurn, ProofCondition, ConditionProof, compute_conditional_deposit,
-};
+use pyana_turn::{ConditionProof, ConditionalTurn, ProofCondition, compute_conditional_deposit};
 
 /// Represents a bidder's private state.
 struct Bidder {
@@ -136,11 +134,11 @@ fn main() {
 
     // Create bidders with interesting amounts
     let bidder_configs: Vec<(&str, u64, u8)> = vec![
-        ("Apollo",   3500, 0xA0),
-        ("Bastet",   7200, 0xB0),
-        ("Cygnus",   1500, 0xC0),
-        ("Draco",   12000, 0xD0),
-        ("Echo",     4800, 0xE0),
+        ("Apollo", 3500, 0xA0),
+        ("Bastet", 7200, 0xB0),
+        ("Cygnus", 1500, 0xC0),
+        ("Draco", 12000, 0xD0),
+        ("Echo", 4800, 0xE0),
     ];
 
     let mut bidders: Vec<Bidder> = Vec::new();
@@ -165,7 +163,12 @@ fn main() {
         let bid_fields = [
             u64::from_le_bytes(auction_id[..8].try_into().unwrap()),
             *amount,
-            0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ];
         let bid_note = Note::with_randomness(pubkey, bid_fields, blinding);
 
@@ -189,8 +192,8 @@ fn main() {
             fact_commitment,
         };
 
-        let range_proof = prove_predicate(witness)
-            .expect("bid satisfies minimum — proof must succeed");
+        let range_proof =
+            prove_predicate(witness).expect("bid satisfies minimum — proof must succeed");
 
         // Verify the proof (as an observer would)
         let proof_valid = verify_predicate(
@@ -225,7 +228,10 @@ fn main() {
 
     // Display what an observer sees
     println!("  Bids submitted (observer's view):\n");
-    println!("  {:>5} | {:>20} | {:>12} | {:>10}", "#", "Commitment", "Range Proof", "Ring Proof");
+    println!(
+        "  {:>5} | {:>20} | {:>12} | {:>10}",
+        "#", "Commitment", "Range Proof", "Ring Proof"
+    );
     println!("  {}", "-".repeat(60));
     for (i, record) in public_records.iter().enumerate() {
         println!(
@@ -233,7 +239,11 @@ fn main() {
             i + 1,
             format!("{}", record.commitment.as_u32()),
             "VALID",
-            if record.ring_membership_valid { "VALID" } else { "INVALID" },
+            if record.ring_membership_valid {
+                "VALID"
+            } else {
+                "INVALID"
+            },
         );
     }
     println!();
@@ -247,14 +257,20 @@ fn main() {
     println!("    - HOW MUCH each bid is (only commitment + range proof visible)");
     println!("    - ANY relationship between bidders");
     println!();
-    println!("  Phase 1 timing: {:.2}ms (5 range proofs + 5 ring proofs)", phase1_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Phase 1 timing: {:.2}ms (5 range proofs + 5 ring proofs)",
+        phase1_time.as_secs_f64() * 1000.0
+    );
     println!();
 
     // =========================================================================
     // PHASE 2: REVEAL (after deadline)
     // =========================================================================
     println!("===============================================================================");
-    println!("  Phase 2: REVEAL (deadline reached at block {})", deadline_height);
+    println!(
+        "  Phase 2: REVEAL (deadline reached at block {})",
+        deadline_height
+    );
     println!("===============================================================================");
     println!();
     println!("  Bidders reveal (amount, blinding_factor).");
@@ -278,7 +294,10 @@ fn main() {
         let recomputed = poseidon2::hash_2_to_1(amount_field, blinding_field);
 
         let verified = recomputed == public_records[i].commitment;
-        assert!(verified, "Commitment verification must pass for honest bidder");
+        assert!(
+            verified,
+            "Commitment verification must pass for honest bidder"
+        );
 
         println!(
             "  {} reveals: {} units  |  commitment match: [{}]",
@@ -295,7 +314,8 @@ fn main() {
     }
 
     // Determine winner
-    let winner_reveal = revealed.iter()
+    let winner_reveal = revealed
+        .iter()
         .filter(|r| r.verified)
         .max_by_key(|r| r.amount)
         .expect("at least one valid reveal");
@@ -308,10 +328,16 @@ fn main() {
 
     println!();
     println!("  ┌─────────────────────────────────────────────────────────┐");
-    println!("  │  WINNER: {} with {} units                     │", winner.name, winning_amount);
+    println!(
+        "  │  WINNER: {} with {} units                     │",
+        winner.name, winning_amount
+    );
     println!("  └─────────────────────────────────────────────────────────┘");
     println!();
-    println!("  Phase 2 timing: {:.2}ms (5 commitment verifications)", phase2_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Phase 2 timing: {:.2}ms (5 commitment verifications)",
+        phase2_time.as_secs_f64() * 1000.0
+    );
     println!();
 
     // =========================================================================
@@ -338,14 +364,19 @@ fn main() {
         expires_at: None,
     });
     let sealed_bytes = postcard::to_stdvec(&artwork_sealed).expect("serialize sealed art");
-    println!("    Sealed artwork: {} bytes (encrypted to winner)", sealed_bytes.len());
+    println!(
+        "    Sealed artwork: {} bytes (encrypted to winner)",
+        sealed_bytes.len()
+    );
     println!("    Commitment: {}", short_hex(&artwork_sealed.commitment));
     println!();
 
     // Step 2: Winner's note is spent (payment to artist)
     println!("  Step 3b: Winner spends bid note (payment)");
     let winner_nullifier = winner.bid_note.nullifier(&winner.spending_key);
-    nullifier_set.insert(winner_nullifier).expect("winner spend should succeed");
+    nullifier_set
+        .insert(winner_nullifier)
+        .expect("winner spend should succeed");
     println!("    Nullifier: {}", short_hex(&winner_nullifier.0));
     println!();
 
@@ -355,7 +386,12 @@ fn main() {
         [
             u64::from_le_bytes(auction_id[..8].try_into().unwrap()),
             winning_amount,
-            0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ],
         [0xFF; 32],
     );
@@ -392,7 +428,10 @@ fn main() {
         deposit_amount: deposit,
     };
 
-    println!("    Winner's condition: 'Pay {} IFF sealed art delivered'", winning_amount);
+    println!(
+        "    Winner's condition: 'Pay {} IFF sealed art delivered'",
+        winning_amount
+    );
     println!("    Condition hash:     {}", short_hex(&art_delivery_hash));
     println!("    Timeout:            block {}", conditional_timeout);
     println!("    Deposit locked:     {} units", deposit);
@@ -428,7 +467,9 @@ fn main() {
             continue;
         }
         let nullifier = bidder.bid_note.nullifier(&bidder.spending_key);
-        nullifier_set.insert(nullifier).expect("refund spend should succeed");
+        nullifier_set
+            .insert(nullifier)
+            .expect("refund spend should succeed");
         let refund_note = Note::with_randomness(
             bidder.pubkey,
             [0, bidder.bid_amount, 0, 0, 0, 0, 0, 0],
@@ -445,7 +486,10 @@ fn main() {
 
     let phase3_time = phase3_start.elapsed();
     println!();
-    println!("  Phase 3 timing: {:.2}ms (seal + conditional + 4 refunds)", phase3_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Phase 3 timing: {:.2}ms (seal + conditional + 4 refunds)",
+        phase3_time.as_secs_f64() * 1000.0
+    );
     println!();
 
     // =========================================================================
@@ -459,15 +503,21 @@ fn main() {
     let phase4_start = Instant::now();
 
     // Winner uses their unsealer to decrypt the art
-    let recovered = winner_seal.unseal(&artwork_sealed).expect("winner can unseal");
+    let recovered = winner_seal
+        .unseal(&artwork_sealed)
+        .expect("winner can unseal");
     println!("  {} uses their unsealer key to decrypt...", winner.name);
     println!("    Target: {}", short_hex(recovered.target.as_bytes()));
-    println!("    Breadstuff (art hash): {}", short_hex(&recovered.breadstuff.unwrap()));
+    println!(
+        "    Breadstuff (art hash): {}",
+        short_hex(&recovered.breadstuff.unwrap())
+    );
     println!();
 
     // Verify it matches the original asset commitment
     assert_eq!(
-        recovered.breadstuff.unwrap(), asset_commitment,
+        recovered.breadstuff.unwrap(),
+        asset_commitment,
         "Unsealed art commitment must match original"
     );
     println!("  Art hash verification: [PASS]");
@@ -483,7 +533,10 @@ fn main() {
     println!();
 
     let phase4_time = phase4_start.elapsed();
-    println!("  Phase 4 timing: {:.2}ms", phase4_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Phase 4 timing: {:.2}ms",
+        phase4_time.as_secs_f64() * 1000.0
+    );
     println!();
 
     // =========================================================================
@@ -585,13 +638,20 @@ fn main() {
     println!();
 
     // Scenario B: Winner chooses to also reveal the amount (selective disclosure)
-    println!("  Scenario B: Prove \"I won AND I paid {}\" (hide identity only)", winning_amount);
+    println!(
+        "  Scenario B: Prove \"I won AND I paid {}\" (hide identity only)",
+        winning_amount
+    );
     println!();
 
     // Compute revealed facts commitment for the winning amount
     let revealed_amount_hash = poseidon2::hash_fact(
         BabyBear::new(42), // "bid_amount" predicate
-        &[BabyBear::new(winning_amount as u32), BabyBear::ZERO, BabyBear::ZERO],
+        &[
+            BabyBear::new(winning_amount as u32),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
     );
     let revealed_commitment = poseidon2::hash_many(&[revealed_amount_hash]);
 
@@ -599,12 +659,21 @@ fn main() {
     println!("    Fact commitment: {}", revealed_commitment.as_u32());
     println!("    Identity: STILL HIDDEN (blinded presentation tag)");
     println!();
-    println!("    {} flexes: \"I paid {} for Emergence in Blue\"", winner.name, winning_amount);
-    println!("    Observers: \"Someone paid {} — we don't know who.\"", winning_amount);
+    println!(
+        "    {} flexes: \"I paid {} for Emergence in Blue\"",
+        winner.name, winning_amount
+    );
+    println!(
+        "    Observers: \"Someone paid {} — we don't know who.\"",
+        winning_amount
+    );
     println!();
 
     let phase5_time = phase5_start.elapsed();
-    println!("  Phase 5 timing: {:.2}ms (blinded presentation + selective disclosure)", phase5_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Phase 5 timing: {:.2}ms (blinded presentation + selective disclosure)",
+        phase5_time.as_secs_f64() * 1000.0
+    );
     println!();
 
     // =========================================================================
@@ -692,7 +761,10 @@ fn main() {
     println!("===============================================================================");
     println!();
     println!("  Auction: \"Emergence in Blue\" by the artist");
-    println!("  Winner: {} (identity hidden from all observers)", winner.name);
+    println!(
+        "  Winner: {} (identity hidden from all observers)",
+        winner.name
+    );
     println!("  Winning bid: {} units", winning_amount);
     println!("  Total bidders: 5");
     println!("  Nullifiers consumed: {}", nullifier_set.len());
@@ -706,12 +778,30 @@ fn main() {
     println!("    6. Selective Disclosure — Reveal amount without revealing identity");
     println!();
     println!("  Timing:");
-    println!("    Phase 1 (5 sealed bids + proofs):  {:>8.2}ms", phase1_time.as_secs_f64() * 1000.0);
-    println!("    Phase 2 (5 reveals + verification): {:>8.2}ms", phase2_time.as_secs_f64() * 1000.0);
-    println!("    Phase 3 (atomic settlement):       {:>8.2}ms", phase3_time.as_secs_f64() * 1000.0);
-    println!("    Phase 4 (unseal art):              {:>8.2}ms", phase4_time.as_secs_f64() * 1000.0);
-    println!("    Phase 5 (selective disclosure):    {:>8.2}ms", phase5_time.as_secs_f64() * 1000.0);
-    println!("    Total:                             {:>8.2}ms", total_time.as_secs_f64() * 1000.0);
+    println!(
+        "    Phase 1 (5 sealed bids + proofs):  {:>8.2}ms",
+        phase1_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "    Phase 2 (5 reveals + verification): {:>8.2}ms",
+        phase2_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "    Phase 3 (atomic settlement):       {:>8.2}ms",
+        phase3_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "    Phase 4 (unseal art):              {:>8.2}ms",
+        phase4_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "    Phase 5 (selective disclosure):    {:>8.2}ms",
+        phase5_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "    Total:                             {:>8.2}ms",
+        total_time.as_secs_f64() * 1000.0
+    );
     println!();
     println!("===============================================================================");
     println!("  This is what privacy-preserving commerce looks like.");

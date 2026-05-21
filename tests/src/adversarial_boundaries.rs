@@ -12,14 +12,12 @@
 use proptest::prelude::*;
 
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use pyana_circuit::field::BabyBear;
 use pyana_circuit::stark::{
     MerkleStarkAir, generate_merkle_trace, proof_from_bytes, proof_to_bytes, prove, verify,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_turn::{
-    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
-};
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 // =============================================================================
 // Helpers
@@ -404,8 +402,8 @@ fn conservation_transfer_preserves_total_value() {
         alice.capabilities.grant(bob_id, AuthRequired::None);
     }
 
-    let total_before = ledger.get(&alice_id).unwrap().state.balance
-        + ledger.get(&bob_id).unwrap().state.balance;
+    let total_before =
+        ledger.get(&alice_id).unwrap().state.balance + ledger.get(&bob_id).unwrap().state.balance;
 
     // Execute a state-modifying turn (no balance transfer, just field set)
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -424,8 +422,8 @@ fn conservation_transfer_preserves_total_value() {
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_committed());
 
-    let total_after = ledger.get(&alice_id).unwrap().state.balance
-        + ledger.get(&bob_id).unwrap().state.balance;
+    let total_after =
+        ledger.get(&alice_id).unwrap().state.balance + ledger.get(&bob_id).unwrap().state.balance;
 
     assert_eq!(
         total_before, total_after,
@@ -575,10 +573,7 @@ fn replay_attack_nonce_must_be_sequential() {
     }
     let turn = builder.build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(
-        result.is_rejected(),
-        "Future nonce (gap) must be rejected"
-    );
+    assert!(result.is_rejected(), "Future nonce (gap) must be rejected");
 }
 
 // =============================================================================
@@ -918,7 +913,10 @@ fn token_expired_cannot_be_used() {
         now: Some(999),
         ..Default::default()
     };
-    assert!(token.verify(&before_request).is_ok(), "Token should work before expiry");
+    assert!(
+        token.verify(&before_request).is_ok(),
+        "Token should work before expiry"
+    );
 
     // Should fail after expiry
     let at_request = AuthRequest {
@@ -927,7 +925,10 @@ fn token_expired_cannot_be_used() {
         now: Some(1001),
         ..Default::default()
     };
-    assert!(token.verify(&at_request).is_err(), "Token must fail after expiry");
+    assert!(
+        token.verify(&at_request).is_err(),
+        "Token must fail after expiry"
+    );
 
     // Should fail way after expiry
     let after_request = AuthRequest {
@@ -936,7 +937,10 @@ fn token_expired_cannot_be_used() {
         now: Some(2_000_000_000),
         ..Default::default()
     };
-    assert!(token.verify(&after_request).is_err(), "Token must fail long after expiry");
+    assert!(
+        token.verify(&after_request).is_err(),
+        "Token must fail long after expiry"
+    );
 }
 
 // =============================================================================
@@ -1017,10 +1021,7 @@ fn proof_with_valid_header_but_truncated() {
     let mut data = vec![b'P', b'Y', b'N', b'A', 1]; // header + version
     data.extend_from_slice(&[0u8; 10]); // too short for any real proof
     let result = proof_from_bytes(&data);
-    assert!(
-        result.is_err(),
-        "Truncated proof must fail to parse"
-    );
+    assert!(result.is_err(), "Truncated proof must fail to parse");
 }
 
 #[test]

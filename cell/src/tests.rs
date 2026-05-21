@@ -375,7 +375,9 @@ fn capability_set_with_breadstuff() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
     let breadstuff = [0xBB; 32];
-    let slot = caps.grant_with_breadstuff(target, AuthRequired::Proof, Some(breadstuff)).unwrap();
+    let slot = caps
+        .grant_with_breadstuff(target, AuthRequired::Proof, Some(breadstuff))
+        .unwrap();
 
     let cap = caps.lookup(slot).unwrap();
     assert_eq!(cap.breadstuff, Some(breadstuff));

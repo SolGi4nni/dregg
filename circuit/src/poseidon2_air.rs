@@ -657,7 +657,11 @@ pub fn generate_blinded_merkle_poseidon2_trace(
 
         // Col 6: blinding_factor (only meaningful at row 0, zero elsewhere)
         // Col 7: hash_2_to_1(current, blinding) — must hold on every row
-        let row_blinding = if i == 0 { blinding_factor } else { BabyBear::ZERO };
+        let row_blinding = if i == 0 {
+            blinding_factor
+        } else {
+            BabyBear::ZERO
+        };
         let row_blinded = hash_2_to_1(current, row_blinding);
 
         trace.push(vec![

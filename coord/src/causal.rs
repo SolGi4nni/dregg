@@ -55,12 +55,7 @@ pub struct CausalTurn {
 
 impl CausalTurn {
     /// Create a new CausalTurn, computing its hash from the contents.
-    pub fn new(
-        turn: Turn,
-        causal_deps: Vec<[u8; 32]>,
-        node_id: [u8; 32],
-        sequence: u64,
-    ) -> Self {
+    pub fn new(turn: Turn, causal_deps: Vec<[u8; 32]>, node_id: [u8; 32], sequence: u64) -> Self {
         let turn_hash = turn.hash();
         let hash = Self::compute_hash(&turn_hash, &causal_deps, &node_id, sequence);
         CausalTurn {

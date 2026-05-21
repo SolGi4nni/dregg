@@ -123,19 +123,13 @@ fn main() {
     let alice_owner = owner_key("alice");
     let alice_sk = spending_key("alice");
 
-    let alice_note = Note::with_randomness(
-        alice_owner,
-        [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0],
-        [0xA1; 32],
-    );
+    let alice_note =
+        Note::with_randomness(alice_owner, [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0], [0xA1; 32]);
     let alice_commitment = alice_note.commitment();
 
     println!(
         "  Alice's note commitment: {:02x}{:02x}{:02x}{:02x}...",
-        alice_commitment.0[0],
-        alice_commitment.0[1],
-        alice_commitment.0[2],
-        alice_commitment.0[3]
+        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]
     );
     println!("  Value: 100 GOLD");
     println!("  Federation: A (alpha)");
@@ -153,10 +147,7 @@ fn main() {
 
     println!(
         "  Nullifier revealed in Fed A: {:02x}{:02x}{:02x}{:02x}...",
-        alice_nullifier.0[0],
-        alice_nullifier.0[1],
-        alice_nullifier.0[2],
-        alice_nullifier.0[3]
+        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]
     );
     println!("  Note is now spent in Federation A.");
     println!();
@@ -168,11 +159,8 @@ fn main() {
 
     // Bob's destination note in Federation B.
     let bob_owner = owner_key("bob");
-    let bob_note = Note::with_randomness(
-        bob_owner,
-        [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0],
-        [0xB2; 32],
-    );
+    let bob_note =
+        Note::with_randomness(bob_owner, [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0], [0xB2; 32]);
     let bob_commitment = bob_note.commitment();
 
     // In a real system, this would be a serialized StarkProof from prove_note_spend().
@@ -224,8 +212,12 @@ fn main() {
     println!("--- Step 4: Federation B Verifies the Portable Proof ---\n");
 
     // Federation B verifies the portable proof.
-    let verify_result =
-        verify_portable_note(&portable_proof, &fed_b_identity, &fed_b_trusted_roots, mock_stark_verify);
+    let verify_result = verify_portable_note(
+        &portable_proof,
+        &fed_b_identity,
+        &fed_b_trusted_roots,
+        mock_stark_verify,
+    );
 
     match &verify_result {
         Ok(()) => println!("  Verification: [PASS]"),
@@ -258,10 +250,7 @@ fn main() {
     );
     println!(
         "  New note minted in Fed B: commitment {:02x}{:02x}{:02x}{:02x}...",
-        bob_commitment.0[0],
-        bob_commitment.0[1],
-        bob_commitment.0[2],
-        bob_commitment.0[3]
+        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]
     );
     println!("  Value: 100 GOLD now belongs to Bob in Federation B.");
     println!();
@@ -301,8 +290,12 @@ fn main() {
         asset_type: ASSET_GOLD,
     };
 
-    let untrusted_result =
-        verify_portable_note(&evil_proof, &fed_b_identity, &fed_b_trusted_roots, mock_stark_verify);
+    let untrusted_result = verify_portable_note(
+        &evil_proof,
+        &fed_b_identity,
+        &fed_b_trusted_roots,
+        mock_stark_verify,
+    );
     match &untrusted_result {
         Ok(()) => println!("  Untrusted root: [UNEXPECTED PASS]"),
         Err(e) => println!("  Untrusted root: [REJECTED] {e}"),
@@ -330,8 +323,12 @@ fn main() {
         asset_type: ASSET_GOLD,
     };
 
-    let bad_stark_result =
-        verify_portable_note(&bad_proof, &fed_b_identity, &fed_b_trusted_roots, mock_stark_verify);
+    let bad_stark_result = verify_portable_note(
+        &bad_proof,
+        &fed_b_identity,
+        &fed_b_trusted_roots,
+        mock_stark_verify,
+    );
     match &bad_stark_result {
         Ok(()) => println!("  Invalid STARK proof: [UNEXPECTED PASS]"),
         Err(e) => println!("  Invalid STARK proof: [REJECTED] {e}"),
@@ -356,8 +353,14 @@ fn main() {
     println!("    - Spend validity: STARK proof verification");
     println!("    - Privacy: observers cannot link source/dest notes");
     println!();
-    println!("  Federation A nullifier set: {} entries", fed_a_nullifiers.len());
-    println!("  Federation B bridged set:   {} entries", fed_b_bridged.len());
+    println!(
+        "  Federation A nullifier set: {} entries",
+        fed_a_nullifiers.len()
+    );
+    println!(
+        "  Federation B bridged set:   {} entries",
+        fed_b_bridged.len()
+    );
     println!();
     println!("  Done.");
 }

@@ -153,7 +153,11 @@ impl Evaluator {
     }
 
     /// Run one round of rule application, returning newly derived facts.
-    fn derive_one_round(rules: &[Rule], facts: &[Fact], fact_set: &HashSet<Fact>) -> Vec<DerivationStep> {
+    fn derive_one_round(
+        rules: &[Rule],
+        facts: &[Fact],
+        fact_set: &HashSet<Fact>,
+    ) -> Vec<DerivationStep> {
         let mut new_steps = Vec::new();
         let mut new_facts_this_round: HashSet<Fact> = HashSet::new();
 

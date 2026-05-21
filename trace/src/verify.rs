@@ -44,9 +44,9 @@ pub fn verify_trace(facts: &[Fact], rules: &[Rule], trace: &AuthorizationTrace) 
         if fact.predicate == revocable_pred {
             // For each revocable(T), require not_revoked(T) in base facts
             let token_term = &fact.terms;
-            let has_not_revoked = facts.iter().any(|f| {
-                f.predicate == not_revoked_pred && f.terms == *token_term
-            });
+            let has_not_revoked = facts
+                .iter()
+                .any(|f| f.predicate == not_revoked_pred && f.terms == *token_term);
             if !has_not_revoked {
                 return false;
             }

@@ -419,7 +419,8 @@ impl PersistentStore {
         let prefix = "proof_hash:";
         let range = table.range(prefix..)?;
         for entry in range {
-            let entry = entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            let entry =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
             let key = entry.0.value();
             if !key.starts_with(prefix) {
                 break;

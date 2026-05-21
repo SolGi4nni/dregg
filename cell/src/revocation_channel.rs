@@ -588,14 +588,16 @@ mod tests {
         set.register(ch).unwrap();
 
         // Within staleness window.
-        assert!(set
-            .check_exercise_permitted(&channel_id, 150, 140, 60)
-            .is_ok());
+        assert!(
+            set.check_exercise_permitted(&channel_id, 150, 140, 60)
+                .is_ok()
+        );
 
         // Exactly at the boundary.
-        assert!(set
-            .check_exercise_permitted(&channel_id, 200, 140, 60)
-            .is_ok());
+        assert!(
+            set.check_exercise_permitted(&channel_id, 200, 140, 60)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -672,9 +674,10 @@ mod tests {
         set.register(ch).unwrap();
 
         // max_staleness=0 means "always check". last_checked_at must equal now.
-        assert!(set
-            .check_exercise_permitted(&channel_id, 200, 200, 0)
-            .is_ok());
+        assert!(
+            set.check_exercise_permitted(&channel_id, 200, 200, 0)
+                .is_ok()
+        );
 
         // Even 1 unit behind is stale.
         let result = set.check_exercise_permitted(&channel_id, 200, 199, 0);

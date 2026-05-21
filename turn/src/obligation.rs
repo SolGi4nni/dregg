@@ -80,10 +80,18 @@ impl core::fmt::Display for ObligationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ObligationError::AlreadyFulfilled { id } => {
-                write!(f, "obligation {:02x}{:02x}... already fulfilled", id[0], id[1])
+                write!(
+                    f,
+                    "obligation {:02x}{:02x}... already fulfilled",
+                    id[0], id[1]
+                )
             }
             ObligationError::AlreadySlashed { id } => {
-                write!(f, "obligation {:02x}{:02x}... already slashed", id[0], id[1])
+                write!(
+                    f,
+                    "obligation {:02x}{:02x}... already slashed",
+                    id[0], id[1]
+                )
             }
             ObligationError::AlreadyCancelled { id } => {
                 write!(
@@ -350,9 +358,20 @@ mod tests {
         // Fulfill with valid proof before deadline.
         let proof = ConditionProof::Preimage(preimage);
         let mut nullifiers = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut nullifiers, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &proof,
+            50,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut nullifiers,
+            &[],
+        );
         assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), ObligationOutcome::Fulfilled { .. }));
+        assert!(matches!(
+            result.unwrap(),
+            ObligationOutcome::Fulfilled { .. }
+        ));
     }
 
     #[test]
@@ -384,7 +403,15 @@ mod tests {
         // Try to fulfill after deadline.
         let proof = ConditionProof::Preimage(preimage);
         let mut n = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 101, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &proof,
+            101,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -421,7 +448,15 @@ mod tests {
         // Present wrong preimage.
         let wrong_proof = ConditionProof::Preimage([99u8; 32]);
         let mut n2 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &wrong_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &wrong_proof,
+            50,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n2,
+            &[],
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -430,14 +465,24 @@ mod tests {
 
         // Obligation is still pending — can still be fulfilled with correct proof.
         let correct_proof = ConditionProof::Preimage(preimage);
-        let result = fulfill_obligation(&obligation, &correct_proof, 60, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &correct_proof,
+            60,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n2,
+            &[],
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_obligation_with_remote_proof_condition() {
         use pyana_circuit::BabyBear;
-        use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
+        use pyana_circuit::poseidon2_air::{
+            MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace,
+        };
         use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
 
         // Generate a valid STARK proof.
@@ -446,10 +491,15 @@ mod tests {
             [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
             [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
             [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+            [
+                BabyBear::new(1000),
+                BabyBear::new(1100),
+                BabyBear::new(1200),
+            ],
         ];
         let positions: [u8; 4] = [0, 1, 2, 3];
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+        let (trace, public_inputs) =
+            generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
         let air = MerklePoseidon2StarkAir;
         let stark_proof = circuit_stark::prove(&air, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&stark_proof);
@@ -474,7 +524,15 @@ mod tests {
 
         let trusted: Vec<TrustedRoot> = vec![(fed_root, 100u64)];
         let mut n3 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 150, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n3, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &proof,
+            150,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n3,
+            &[],
+        );
         assert!(result.is_ok());
     }
 
@@ -526,7 +584,15 @@ mod tests {
         };
 
         let mut n4 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &wrong_type_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n4, &[]);
+        let result = fulfill_obligation(
+            &obligation,
+            &wrong_type_proof,
+            50,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n4,
+            &[],
+        );
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),

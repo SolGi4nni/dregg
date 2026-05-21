@@ -6,7 +6,7 @@
 //! This is pedagogical code — the production system uses Plonky3.
 //! Kept as a readable, annotated example of how FRI works from first principles.
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -386,11 +386,7 @@ impl StarkAir for MerkleStarkAir {
 // STARK Prover
 // ============================================================================
 
-fn prove(
-    air: &dyn StarkAir,
-    trace: &[Vec<BabyBear>],
-    public_inputs: &[BabyBear],
-) -> StarkProof {
+fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> StarkProof {
     let num_rows = trace.len();
     let num_cols = air.width();
     assert!(num_rows >= 2 && num_rows.is_power_of_two());

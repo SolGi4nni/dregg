@@ -373,9 +373,9 @@ impl PendingBridgeSet {
 
     /// Check if a nullifier is already locked in a pending bridge.
     pub fn is_locked(&self, nullifier: &[u8; 32]) -> bool {
-        self.bridges.get(nullifier).is_some_and(|b| {
-            matches!(b.state, BridgeState::Locked { .. })
-        })
+        self.bridges
+            .get(nullifier)
+            .is_some_and(|b| matches!(b.state, BridgeState::Locked { .. }))
     }
 
     /// Insert a new pending bridge. Returns error if the nullifier is already locked.
@@ -465,9 +465,11 @@ pub fn finalize_bridge(
     permanent_nullifiers: &mut BridgedNullifierSet,
 ) -> Result<(), BridgeError> {
     // Look up the pending bridge.
-    let bridge = pending_set.get(nullifier).ok_or(BridgeError::PendingBridgeNotFound {
-        nullifier: *nullifier,
-    })?;
+    let bridge = pending_set
+        .get(nullifier)
+        .ok_or(BridgeError::PendingBridgeNotFound {
+            nullifier: *nullifier,
+        })?;
 
     // Verify it's in Locked state.
     if !matches!(bridge.state, BridgeState::Locked { .. }) {
@@ -523,9 +525,11 @@ pub fn cancel_bridge(
     current_height: u64,
     pending_set: &mut PendingBridgeSet,
 ) -> Result<(), BridgeError> {
-    let bridge = pending_set.get(nullifier).ok_or(BridgeError::PendingBridgeNotFound {
-        nullifier: *nullifier,
-    })?;
+    let bridge = pending_set
+        .get(nullifier)
+        .ok_or(BridgeError::PendingBridgeNotFound {
+            nullifier: *nullifier,
+        })?;
 
     // Verify it's in Locked state.
     let timeout_height = match bridge.state {
@@ -557,7 +561,7 @@ pub fn cancel_bridge(
 ///
 /// Returns true if the receipt's signature is valid for any of the trusted keys.
 pub fn verify_bridge_receipt(receipt: &BridgeReceipt, trusted_keys: &[[u8; 32]]) -> bool {
-    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
     let message = BridgeReceipt::signing_message(
         &receipt.nullifier,
@@ -897,9 +901,11 @@ mod tests {
         let proof = make_proof([0xD0; 32], 500, 1);
 
         // Verification succeeds at the intended destination.
-        let result_a =
-            verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
-        assert!(result_a.is_ok(), "proof should pass at intended destination");
+        let result_a = verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
+        assert!(
+            result_a.is_ok(),
+            "proof should pass at intended destination"
+        );
 
         // Verification FAILS at a different federation (cross-federation replay).
         let federation_b = [0xBB; 32];
@@ -942,8 +948,7 @@ mod tests {
         let proof = make_proof([0xAA; 32], 100, 1);
         assert_ne!(proof.source_root.merkle_root, trusted[0].merkle_root);
 
-        let result =
-            verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
+        let result = verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
         assert!(
             matches!(result, Err(BridgeError::UntrustedRoot { .. })),
             "untrusted root must be rejected: got {:?}",
@@ -960,9 +965,9 @@ mod tests {
         proof.spending_proof[0] ^= 0xFF;
 
         let verify_checks_integrity = |_nullifier: &[u8; 32],
-                                        _root: &[u8; 32],
-                                        _dest_fed: &[u8; 32],
-                                        proof_bytes: &[u8]|
+                                       _root: &[u8; 32],
+                                       _dest_fed: &[u8; 32],
+                                       proof_bytes: &[u8]|
          -> Result<(), String> {
             if proof_bytes == &[1, 2, 3, 4] {
                 Ok(())
@@ -991,17 +996,16 @@ mod tests {
         let mut proof = make_proof([0xCC; 32], 100, 1);
         proof.value = 1000;
 
-        let result_naive =
-            verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
+        let result_naive = verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
         assert!(
             result_naive.is_ok(),
             "BUG DOCUMENTATION: naive verifier does not catch value inflation"
         );
 
         let verify_with_value_check = |_nullifier: &[u8; 32],
-                                        _root: &[u8; 32],
-                                        _dest_fed: &[u8; 32],
-                                        _proof_bytes: &[u8]|
+                                       _root: &[u8; 32],
+                                       _dest_fed: &[u8; 32],
+                                       _proof_bytes: &[u8]|
          -> Result<(), String> {
             Err("public input mismatch: proof binds value=100, claimed 1000".to_string())
         };
@@ -1028,16 +1032,15 @@ mod tests {
         let proof = make_proof(nullifier_a, 100, 1);
 
         let verify_nullifier_binding = |nullifier: &[u8; 32],
-                                         _root: &[u8; 32],
-                                         _dest_fed: &[u8; 32],
-                                         _proof_bytes: &[u8]|
+                                        _root: &[u8; 32],
+                                        _dest_fed: &[u8; 32],
+                                        _proof_bytes: &[u8]|
          -> Result<(), String> {
             let expected_nullifier = nullifier_b;
             if nullifier != &expected_nullifier {
                 Err(format!(
                     "nullifier binding failed: proof is for {:02x}{:02x}..., presented {:02x}{:02x}...",
-                    expected_nullifier[0], expected_nullifier[1],
-                    nullifier[0], nullifier[1]
+                    expected_nullifier[0], expected_nullifier[1], nullifier[0], nullifier[1]
                 ))
             } else {
                 Ok(())
@@ -1082,24 +1085,16 @@ mod tests {
         };
 
         let trusted_with_old = vec![old_root.clone()];
-        let result_with = verify_portable_note(
-            &proof,
-            &TEST_FEDERATION_ID,
-            &trusted_with_old,
-            verify_ok,
-        );
+        let result_with =
+            verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted_with_old, verify_ok);
         assert!(
             result_with.is_ok(),
             "stale root still in trusted set is accepted (by design)"
         );
 
         let trusted_without_old: Vec<AttestedRoot> = vec![];
-        let result_without = verify_portable_note(
-            &proof,
-            &TEST_FEDERATION_ID,
-            &trusted_without_old,
-            verify_ok,
-        );
+        let result_without =
+            verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted_without_old, verify_ok);
         assert!(
             matches!(result_without, Err(BridgeError::UntrustedRoot { .. })),
             "pruned stale root must be rejected: got {:?}",
@@ -1270,7 +1265,13 @@ mod tests {
         // Try to cancel at height 50 (before timeout of 100).
         let result = cancel_bridge(&nullifier, 50, &mut pending_set);
         assert!(
-            matches!(result, Err(BridgeError::TimeoutNotReached { current_height: 50, timeout_height: 100 })),
+            matches!(
+                result,
+                Err(BridgeError::TimeoutNotReached {
+                    current_height: 50,
+                    timeout_height: 100
+                })
+            ),
             "early cancel must be prevented: got {:?}",
             result
         );

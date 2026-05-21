@@ -141,7 +141,10 @@ impl AgentRuntime {
         domain: &str,
         ledger: Arc<Mutex<Ledger>>,
     ) -> Self {
-        let cell_id = wallet.read().unwrap_or_else(|e| e.into_inner()).cell_id(domain);
+        let cell_id = wallet
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .cell_id(domain);
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
 
         AgentRuntime {
@@ -229,7 +232,11 @@ impl AgentRuntime {
         // Compute the signing message and sign with the wallet's key (read lock).
         // We sign before acquiring the ledger lock since signing is pure.
         let message = TurnExecutor::compute_signing_message(&action_unsigned);
-        let sig = self.wallet.read().unwrap_or_else(|e| e.into_inner()).sign_bytes(&message);
+        let sig = self
+            .wallet
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .sign_bytes(&message);
 
         // Rebuild the action with the signature attached.
         let action_signed = Action {
@@ -278,7 +285,10 @@ impl AgentRuntime {
                 // Release ledger lock before taking wallet write lock.
                 drop(ledger);
                 // Append the receipt to the wallet's chain (write lock).
-                self.wallet.write().unwrap_or_else(|e| e.into_inner()).append_receipt(receipt.clone());
+                self.wallet
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .append_receipt(receipt.clone());
                 Ok(receipt)
             }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
@@ -308,7 +318,10 @@ impl AgentRuntime {
                 // Release ledger lock before taking wallet write lock.
                 drop(ledger);
                 // Append the receipt to the wallet's chain (write lock).
-                self.wallet.write().unwrap_or_else(|e| e.into_inner()).append_receipt(receipt.clone());
+                self.wallet
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .append_receipt(receipt.clone());
                 Ok(receipt)
             }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
@@ -383,7 +396,11 @@ impl AgentRuntime {
             wallet: Arc::new(sub_wallet),
             cell_id: sub_cell_id,
             token: delegated_token,
-            parent: self.wallet.read().unwrap_or_else(|e| e.into_inner()).public_key(),
+            parent: self
+                .wallet
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .public_key(),
             domain: self.domain.clone(),
             ledger: self.ledger.clone(),
             nonce: Mutex::new(0),

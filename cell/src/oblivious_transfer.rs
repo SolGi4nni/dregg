@@ -116,8 +116,8 @@ impl OtSender {
         m0: &[u8],
         m1: &[u8],
     ) -> Result<OtSenderPayload, OtError> {
-        let b_point =
-            decompress_point(&receiver_msg.receiver_public).ok_or(OtError::InvalidReceiverPublic)?;
+        let b_point = decompress_point(&receiver_msg.receiver_public)
+            .ok_or(OtError::InvalidReceiverPublic)?;
 
         // k0 = kdf(a * B)
         let shared0 = self.secret * b_point;
@@ -143,7 +143,10 @@ impl OtReceiver {
     ///
     /// - If choice=false (0): `B = b_key * G`
     /// - If choice=true  (1): `B = A + b_key * G`
-    pub fn new(choice: bool, sender_msg: &OtSenderSetup) -> Result<(Self, OtReceiverResponse), OtError> {
+    pub fn new(
+        choice: bool,
+        sender_msg: &OtSenderSetup,
+    ) -> Result<(Self, OtReceiverResponse), OtError> {
         let sender_public =
             decompress_point(&sender_msg.sender_public).ok_or(OtError::InvalidSenderPublic)?;
 
@@ -258,7 +261,8 @@ pub fn ot_1_of_n(messages: &[&[u8]], choice: usize) -> Result<Vec<u8>, OtError> 
 
     // Receiver combines their keys and decrypts.
     let receiver_combined = combine_keys_for_index_receiver(choice, &receiver_keys, num_bits);
-    decrypt_message(&receiver_combined, &encrypted_messages[choice]).ok_or(OtError::DecryptionFailed)
+    decrypt_message(&receiver_combined, &encrypted_messages[choice])
+        .ok_or(OtError::DecryptionFailed)
 }
 
 // --- Internal helpers ---
@@ -331,7 +335,11 @@ fn decrypt_message(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
 
 /// Combine per-bit keys for a given index j using BLAKE3.
 /// The combined key is: BLAKE3("pyana-ot-combine-v1", key_{bit0(j)} || key_{bit1(j)} || ...).
-fn combine_keys_for_index(index: usize, key_pairs: &[([u8; 32], [u8; 32])], num_bits: usize) -> [u8; 32] {
+fn combine_keys_for_index(
+    index: usize,
+    key_pairs: &[([u8; 32], [u8; 32])],
+    num_bits: usize,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("pyana-ot-combine-v1");
     for bit_idx in 0..num_bits {
         let bit = (index >> bit_idx) & 1;
@@ -345,7 +353,11 @@ fn combine_keys_for_index(index: usize, key_pairs: &[([u8; 32], [u8; 32])], num_
 }
 
 /// Combine the receiver's obtained keys for their choice index.
-fn combine_keys_for_index_receiver(choice: usize, receiver_keys: &[[u8; 32]], num_bits: usize) -> [u8; 32] {
+fn combine_keys_for_index_receiver(
+    choice: usize,
+    receiver_keys: &[[u8; 32]],
+    num_bits: usize,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("pyana-ot-combine-v1");
     for bit_idx in 0..num_bits {
         // The receiver obtained key_{choice_bit_i} for each bit position.

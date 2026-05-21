@@ -299,12 +299,15 @@ impl ConsensusState {
     /// If `pending_state_roots` is set, those roots are included in the block.
     /// Otherwise, zero roots are used (legacy/backward-compatible mode).
     pub fn create_proposal(&mut self) -> Option<RevocationBlock> {
-        let roots = self.pending_state_roots.take().unwrap_or(PendingStateRoots {
-            pre_state_root: [0u8; 32],
-            post_state_root: [0u8; 32],
-            note_tree_root: [0u8; 32],
-            nullifier_set_root: [0u8; 32],
-        });
+        let roots = self
+            .pending_state_roots
+            .take()
+            .unwrap_or(PendingStateRoots {
+                pre_state_root: [0u8; 32],
+                post_state_root: [0u8; 32],
+                note_tree_root: [0u8; 32],
+                nullifier_set_root: [0u8; 32],
+            });
         self.create_proposal_with_state_roots(
             roots.pre_state_root,
             roots.post_state_root,
@@ -361,7 +364,6 @@ impl ConsensusState {
             note_tree_root,
             nullifier_set_root,
             transition_proof: None,
-            folding_accumulator: None,
         };
 
         self.current_proposal = Some(block.clone());
@@ -1460,10 +1462,16 @@ mod tests {
 
         // Other nodes should accept this proposal (pre_state_root matches).
         let vote = states[0].vote_on_proposal(&proposal);
-        assert!(vote.is_some(), "node 0 should vote for block with matching state root");
+        assert!(
+            vote.is_some(),
+            "node 0 should vote for block with matching state root"
+        );
 
         let vote2 = states[2].vote_on_proposal(&proposal);
-        assert!(vote2.is_some(), "node 2 should vote for block with matching state root");
+        assert!(
+            vote2.is_some(),
+            "node 2 should vote for block with matching state root"
+        );
     }
 
     #[test]
@@ -1497,10 +1505,16 @@ mod tests {
 
         // Nodes with a different local state root should REJECT this proposal.
         let vote = states[0].vote_on_proposal(&proposal);
-        assert!(vote.is_none(), "node 0 should reject block with mismatched state root");
+        assert!(
+            vote.is_none(),
+            "node 0 should reject block with mismatched state root"
+        );
 
         let vote2 = states[2].vote_on_proposal(&proposal);
-        assert!(vote2.is_none(), "node 2 should reject block with mismatched state root");
+        assert!(
+            vote2.is_none(),
+            "node 2 should reject block with mismatched state root"
+        );
     }
 
     #[test]
@@ -1525,7 +1539,10 @@ mod tests {
 
         // Nodes should still accept (zero pre_state_root means no divergence check).
         let vote = states[0].vote_on_proposal(&proposal);
-        assert!(vote.is_some(), "zero pre_state_root should skip divergence check");
+        assert!(
+            vote.is_some(),
+            "zero pre_state_root should skip divergence check"
+        );
     }
 
     #[test]
@@ -1550,8 +1567,14 @@ mod tests {
         let root_a = tree_a.root();
         let root_b = tree_b.root();
 
-        assert_eq!(root_a, root_b, "same events should produce matching state roots");
-        assert_ne!(root_a, [0u8; 32], "roots should be non-zero after revocations");
+        assert_eq!(
+            root_a, root_b,
+            "same events should produce matching state roots"
+        );
+        assert_ne!(
+            root_a, [0u8; 32],
+            "roots should be non-zero after revocations"
+        );
     }
 
     #[test]
@@ -1607,15 +1630,7 @@ mod tests {
 
         let legacy_hash = RevocationBlock::compute_hash(1, 1, 0, &events, &prev_hash);
         let new_hash = RevocationBlock::compute_hash_with_state_roots(
-            1,
-            1,
-            0,
-            &events,
-            &prev_hash,
-            &[0u8; 32],
-            &[0u8; 32],
-            &[0u8; 32],
-            &[0u8; 32],
+            1, 1, 0, &events, &prev_hash, &[0u8; 32], &[0u8; 32], &[0u8; 32], &[0u8; 32],
         );
 
         assert_eq!(

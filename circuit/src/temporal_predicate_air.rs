@@ -51,7 +51,7 @@
 
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::field::BabyBear;
-use crate::predicate_air::{PredicateType, PREDICATE_DIFF_BITS};
+use crate::predicate_air::{PREDICATE_DIFF_BITS, PredicateType};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants and column layout
@@ -284,9 +284,7 @@ impl Air for TemporalPredicateAir {
             // First row: state_root matches initial_state_root (public_inputs[2])
             Constraint {
                 name: "initial_state_root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::STATE_ROOT] - public_inputs[2]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::STATE_ROOT] - public_inputs[2]),
             },
         ]
     }
@@ -297,16 +295,12 @@ impl Air for TemporalPredicateAir {
             // This enforces that the predicate held at EVERY step.
             Constraint {
                 name: "final_accumulator_matches_num_steps".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::ACCUMULATOR] - public_inputs[1]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::ACCUMULATOR] - public_inputs[1]),
             },
             // Last row: state_root matches final_state_root (public_inputs[3])
             Constraint {
                 name: "final_state_root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::STATE_ROOT] - public_inputs[3]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::STATE_ROOT] - public_inputs[3]),
             },
         ]
     }
@@ -533,12 +527,10 @@ mod tests {
     fn test_temporal_gte_all_pass() {
         // Balance >= 100 for 10 steps. All values are above threshold.
         let threshold = BabyBear::new(100);
-        let values: Vec<BabyBear> = vec![
-            150, 200, 300, 100, 500, 120, 999, 101, 100, 250,
-        ]
-        .into_iter()
-        .map(BabyBear::new)
-        .collect();
+        let values: Vec<BabyBear> = vec![150, 200, 300, 100, 500, 120, 999, 101, 100, 250]
+            .into_iter()
+            .map(BabyBear::new)
+            .collect();
         let state_roots = test_state_roots(10);
 
         let proof = prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold);
@@ -549,13 +541,8 @@ mod tests {
         assert_eq!(proof.threshold, threshold);
 
         // Verify
-        let valid = verify_temporal_predicate(
-            &proof,
-            threshold,
-            10,
-            state_roots[0],
-            state_roots[9],
-        );
+        let valid =
+            verify_temporal_predicate(&proof, threshold, 10, state_roots[0], state_roots[9]);
         assert!(valid, "Verification should pass");
     }
 
@@ -792,10 +779,7 @@ mod tests {
     fn test_temporal_gt_all_pass() {
         // All values > 100 (strictly greater).
         let threshold = BabyBear::new(100);
-        let values: Vec<BabyBear> = vec![101, 200, 999]
-            .into_iter()
-            .map(BabyBear::new)
-            .collect();
+        let values: Vec<BabyBear> = vec![101, 200, 999].into_iter().map(BabyBear::new).collect();
         let state_roots = test_state_roots(3);
 
         let proof = prove_temporal_predicate(&values, &state_roots, PredicateType::Gt, threshold);
@@ -806,10 +790,7 @@ mod tests {
     fn test_temporal_gt_equal_fails() {
         // Value exactly at threshold fails for GT.
         let threshold = BabyBear::new(100);
-        let values: Vec<BabyBear> = vec![101, 100, 200]
-            .into_iter()
-            .map(BabyBear::new)
-            .collect();
+        let values: Vec<BabyBear> = vec![101, 100, 200].into_iter().map(BabyBear::new).collect();
         let state_roots = test_state_roots(3);
 
         let proof = prove_temporal_predicate(&values, &state_roots, PredicateType::Gt, threshold);

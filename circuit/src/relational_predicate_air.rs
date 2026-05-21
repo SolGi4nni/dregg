@@ -259,21 +259,11 @@ impl Air for RelationalPredicateAir {
                     let value_b = row[col::VALUE_B];
                     let diff = row[col::DIFF];
                     match relation {
-                        RelationType::GreaterThan => {
-                            diff - (value_a - value_b - BabyBear::ONE)
-                        }
-                        RelationType::LessThan => {
-                            diff - (value_b - value_a - BabyBear::ONE)
-                        }
-                        RelationType::GreaterOrEqual => {
-                            diff - (value_a - value_b)
-                        }
-                        RelationType::LessOrEqual => {
-                            diff - (value_b - value_a)
-                        }
-                        RelationType::Equal | RelationType::NotEqual => {
-                            diff - (value_a - value_b)
-                        }
+                        RelationType::GreaterThan => diff - (value_a - value_b - BabyBear::ONE),
+                        RelationType::LessThan => diff - (value_b - value_a - BabyBear::ONE),
+                        RelationType::GreaterOrEqual => diff - (value_a - value_b),
+                        RelationType::LessOrEqual => diff - (value_b - value_a),
+                        RelationType::Equal | RelationType::NotEqual => diff - (value_a - value_b),
                         RelationType::DiffGreaterThan(threshold) => {
                             diff - (value_a - value_b - threshold - BabyBear::ONE)
                         }
@@ -354,16 +344,12 @@ impl Air for RelationalPredicateAir {
             // (A valid proof always has result_bit = 1.)
             Constraint {
                 name: "result_bit_matches_pi".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::RESULT_BIT] - public_inputs[2]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::RESULT_BIT] - public_inputs[2]),
             },
             // Constraint 10: Result bit is 1 (proof only valid if relation holds).
             Constraint {
                 name: "result_bit_is_one".to_string(),
-                eval: Box::new(|row, _, _| {
-                    row[col::RESULT_BIT] - BabyBear::ONE
-                }),
+                eval: Box::new(|row, _, _| row[col::RESULT_BIT] - BabyBear::ONE),
             },
         ]
     }
@@ -870,9 +856,13 @@ mod tests {
         let blinding_b = BabyBear::new(222);
 
         let proof = prove_value_comparison(
-            value_a, blinding_a, value_b, blinding_b,
+            value_a,
+            blinding_a,
+            value_b,
+            blinding_b,
             RelationType::GreaterThan,
-        ).expect("should produce proof");
+        )
+        .expect("should produce proof");
 
         let commitment_a = compute_value_commitment(value_a, blinding_a);
         let commitment_b = compute_value_commitment(value_b, blinding_b);
@@ -884,8 +874,10 @@ mod tests {
     fn test_prove_returns_none_for_false_statement() {
         // a(50) > b(100) is false
         let result = prove_value_comparison(
-            BabyBear::new(50), BabyBear::new(111),
-            BabyBear::new(100), BabyBear::new(222),
+            BabyBear::new(50),
+            BabyBear::new(111),
+            BabyBear::new(100),
+            BabyBear::new(222),
             RelationType::GreaterThan,
         );
         assert!(result.is_none(), "Cannot prove false statement");
@@ -899,9 +891,13 @@ mod tests {
         let blinding_b = BabyBear::new(222);
 
         let proof = prove_value_comparison(
-            value_a, blinding_a, value_b, blinding_b,
+            value_a,
+            blinding_a,
+            value_b,
+            blinding_b,
             RelationType::GreaterThan,
-        ).expect("should produce proof");
+        )
+        .expect("should produce proof");
 
         let commitment_b = compute_value_commitment(value_b, blinding_b);
         // Use wrong commitment for A
@@ -917,9 +913,13 @@ mod tests {
         let blinding_b = BabyBear::new(222);
 
         let proof = prove_value_comparison(
-            value_a, blinding_a, value_b, blinding_b,
+            value_a,
+            blinding_a,
+            value_b,
+            blinding_b,
             RelationType::GreaterThan,
-        ).expect("should produce proof");
+        )
+        .expect("should produce proof");
 
         let commitment_a = compute_value_commitment(value_a, blinding_a);
         // Use wrong commitment for B
@@ -975,10 +975,13 @@ mod tests {
 
         // Comparison service proves Alice > Bob
         let proof = prove_value_comparison(
-            alice_bid, alice_blinding,
-            bob_bid, bob_blinding,
+            alice_bid,
+            alice_blinding,
+            bob_bid,
+            bob_blinding,
             RelationType::GreaterThan,
-        ).expect("Alice's bid is higher");
+        )
+        .expect("Alice's bid is higher");
 
         // Anyone can verify: the bid behind alice_commitment > the bid behind bob_commitment
         assert!(verify_relational(&proof, alice_commitment, bob_commitment));
@@ -1005,10 +1008,13 @@ mod tests {
 
         // Prove combined > 500
         let proof = prove_value_comparison(
-            alice_balance, alice_blinding,
-            bob_balance, bob_blinding,
+            alice_balance,
+            alice_blinding,
+            bob_balance,
+            bob_blinding,
             RelationType::SumGreaterThan(BabyBear::new(500)),
-        ).expect("combined balance qualifies");
+        )
+        .expect("combined balance qualifies");
 
         assert!(verify_relational(&proof, alice_commitment, bob_commitment));
     }
@@ -1031,10 +1037,13 @@ mod tests {
 
         // Prove: alice_rep - bob_rep > 500 (i.e., 600 > 500)
         let proof = prove_value_comparison(
-            alice_rep, alice_blinding,
-            bob_rep, bob_blinding,
+            alice_rep,
+            alice_blinding,
+            bob_rep,
+            bob_blinding,
             RelationType::DiffGreaterThan(BabyBear::new(500)),
-        ).expect("reputation difference qualifies");
+        )
+        .expect("reputation difference qualifies");
 
         assert!(verify_relational(&proof, alice_commitment, bob_commitment));
     }

@@ -670,8 +670,11 @@ fn build_recursive_step_circuit(has_previous: bool) -> (Vec<CircuitGate<Fp>>, us
     // The zero/output gate will be at poseidon_start + poseidon_rows
     let last_wire = Wire::for_row(poseidon_start + poseidon_rows);
 
-    let (poseidon_gates, _) =
-        CircuitGate::<Fp>::create_poseidon_gadget(poseidon_start, [first_wire, last_wire], round_constants);
+    let (poseidon_gates, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+        poseidon_start,
+        [first_wire, last_wire],
+        round_constants,
+    );
     gates.extend(poseidon_gates);
     // After extending: gates.len() = public_count + poseidon_rows + 1 (the +1 is the zero/output gate)
 

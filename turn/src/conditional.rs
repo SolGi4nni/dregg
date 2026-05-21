@@ -209,7 +209,14 @@ pub fn resolve_condition(
         return ConditionalResult::InvalidProof("proof already used".to_string());
     }
 
-    let result = resolve_inner(condition, proof, current_height, trusted_roots, max_root_age, trusted_executor_keys);
+    let result = resolve_inner(
+        condition,
+        proof,
+        current_height,
+        trusted_roots,
+        max_root_age,
+        trusted_executor_keys,
+    );
 
     if result == ConditionalResult::Resolved {
         used_proof_hashes.insert(proof_hash);
@@ -286,7 +293,10 @@ fn resolve_inner(
             }
 
             // Root must be trusted AND recent.
-            match trusted_roots.iter().find(|(root, _)| root == federation_root) {
+            match trusted_roots
+                .iter()
+                .find(|(root, _)| root == federation_root)
+            {
                 None => {
                     return ConditionalResult::InvalidProof(
                         "federation root is not in trusted set".to_string(),
@@ -326,17 +336,12 @@ fn resolve_inner(
             };
 
             // Reconstruct public inputs as BabyBear field elements.
-            let pi: Vec<BabyBear> = public_outputs
-                .iter()
-                .map(|&v| BabyBear::new(v))
-                .collect();
+            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
             // Verify the STARK proof against the MerklePoseidon2 AIR.
             let air = MerklePoseidon2StarkAir;
             if stark::verify(&air, &stark_proof, &pi).is_err() {
-                return ConditionalResult::InvalidProof(
-                    "STARK verification failed".to_string(),
-                );
+                return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
             match public_outputs.first() {
@@ -345,9 +350,7 @@ fn resolve_inner(
                     "conclusion {} is less than expected {}",
                     c, expected_conclusion
                 )),
-                None => {
-                    ConditionalResult::InvalidProof("no public outputs in proof".to_string())
-                }
+                None => ConditionalResult::InvalidProof("no public outputs in proof".to_string()),
             }
         }
 
@@ -387,17 +390,12 @@ fn resolve_inner(
             };
 
             // Reconstruct public inputs as BabyBear field elements.
-            let pi: Vec<BabyBear> = public_outputs
-                .iter()
-                .map(|&v| BabyBear::new(v))
-                .collect();
+            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
             // Verify the STARK proof against the MerklePoseidon2 AIR.
             let air = MerklePoseidon2StarkAir;
             if stark::verify(&air, &stark_proof, &pi).is_err() {
-                return ConditionalResult::InvalidProof(
-                    "STARK verification failed".to_string(),
-                );
+                return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
             if public_outputs.len() < expected_public_inputs.len() {
@@ -472,14 +470,15 @@ fn resolve_inner(
                 ConditionalResult::Resolved
             } else {
                 ConditionalResult::InvalidProof(
-                    "receipt executor_signature not verified by any trusted executor key".to_string(),
+                    "receipt executor_signature not verified by any trusted executor key"
+                        .to_string(),
                 )
             }
         }
 
-        _ => ConditionalResult::InvalidProof(
-            "proof type does not match condition type".to_string(),
-        ),
+        _ => {
+            ConditionalResult::InvalidProof("proof type does not match condition type".to_string())
+        }
     }
 }
 
@@ -547,7 +546,11 @@ mod tests {
             [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
             [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
             [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+            [
+                BabyBear::new(1000),
+                BabyBear::new(1100),
+                BabyBear::new(1200),
+            ],
         ];
         let positions: [u8; 4] = [0, 1, 2, 3];
         let (trace, public_inputs) =
@@ -566,7 +569,16 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -577,7 +589,16 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage([99u8; 32]);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -588,7 +609,16 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            101,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert_eq!(result, ConditionalResult::Expired);
     }
 
@@ -609,7 +639,16 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -628,7 +667,16 @@ mod tests {
             air_name: "transfer_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -648,7 +696,16 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -666,7 +723,16 @@ mod tests {
             air_name: "pyana-merkle-poseidon2-v1".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -683,13 +749,22 @@ mod tests {
             air_name: "compute_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
     #[test]
     fn test_turn_executed_resolved() {
-        use ed25519_dalek::{SigningKey, Signer};
+        use ed25519_dalek::{Signer, SigningKey};
 
         let turn_hash = [0xAB; 32];
         let condition = ProofCondition::TurnExecuted { turn_hash };
@@ -721,7 +796,16 @@ mod tests {
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
         let trusted_keys: &[[u8; 32]] = &[executor_pub];
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, trusted_keys);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            trusted_keys,
+        );
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -746,8 +830,19 @@ mod tests {
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
-        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("no executor_signature")));
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("no executor_signature"))
+        );
     }
 
     #[test]
@@ -771,7 +866,16 @@ mod tests {
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -785,7 +889,16 @@ mod tests {
             air_name: "x".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -819,10 +932,31 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let r1 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        let r1 = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
         assert_eq!(r1, ConditionalResult::Resolved);
-        let r2 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
-        assert_eq!(r2, ConditionalResult::InvalidProof("proof already used".to_string()));
+        let r2 = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert_eq!(
+            r2,
+            ConditionalResult::InvalidProof("proof already used".to_string())
+        );
     }
 
     #[test]
@@ -862,8 +996,19 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
-        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch"))
+        );
     }
 
     #[test]
@@ -879,8 +1024,19 @@ mod tests {
             air_name: "other_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
-        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch"))
+        );
     }
 
     #[test]
@@ -995,13 +1151,27 @@ mod tests {
 
         // First resolution succeeds.
         let r1 = resolve_condition(
-            &condition_1, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition_1,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert_eq!(r1, ConditionalResult::Resolved);
 
         // Second resolution with THE SAME proof must FAIL — replay attack caught.
         let r2 = resolve_condition(
-            &condition_2, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition_2,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert_eq!(
             r2,
@@ -1035,11 +1205,19 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")),
-            "wrong AIR proof must be rejected: got {:?}", result
+            "wrong AIR proof must be rejected: got {:?}",
+            result
         );
     }
 
@@ -1070,11 +1248,19 @@ mod tests {
         // Current height 1000, root at height 5, max_root_age 500.
         // Age = 1000 - 5 = 995 > 500.
         let result = resolve_condition(
-            &condition, &proof, 1000, 2000, &trusted, 500, &mut used, &[],
+            &condition,
+            &proof,
+            1000,
+            2000,
+            &trusted,
+            500,
+            &mut used,
+            &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("too old")),
-            "stale root must be rejected: got {:?}", result
+            "stale root must be rejected: got {:?}",
+            result
         );
     }
 
@@ -1095,7 +1281,14 @@ mod tests {
 
         // At exactly timeout_height (100): should still resolve (not expired).
         let at_deadline = resolve_condition(
-            &condition, &proof, 100, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            100,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert_eq!(
             at_deadline,
@@ -1115,7 +1308,14 @@ mod tests {
 
         // At timeout_height + 1: must be expired.
         let past_deadline = resolve_condition(
-            &condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            101,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert_eq!(
             past_deadline,
@@ -1151,11 +1351,19 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("not in trusted set")),
-            "fabricated root must be rejected: got {:?}", result
+            "fabricated root must be rejected: got {:?}",
+            result
         );
     }
 
@@ -1183,11 +1391,19 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
-            "empty proof_bytes must be rejected gracefully: got {:?}", result
+            "empty proof_bytes must be rejected gracefully: got {:?}",
+            result
         );
     }
 
@@ -1208,11 +1424,19 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
-            "empty proof_bytes in local proof must be rejected: got {:?}", result
+            "empty proof_bytes in local proof must be rejected: got {:?}",
+            result
         );
     }
 
@@ -1244,12 +1468,20 @@ mod tests {
         let mut used = nullifiers();
         // This should not panic or OOM. The STARK verifier rejects it as malformed.
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
+            &condition,
+            &proof,
+            60,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut used,
+            &[],
         );
         // The garbage bytes will fail deserialization, returning InvalidProof.
         assert!(
             matches!(result, ConditionalResult::InvalidProof(_)),
-            "huge garbage proof must be rejected: got {:?}", result
+            "huge garbage proof must be rejected: got {:?}",
+            result
         );
     }
 
@@ -1307,8 +1539,8 @@ mod tests {
 
     #[test]
     fn test_conditional_with_insufficient_deposit_rejected() {
-        use crate::forest::CallForest;
         use crate::error::TurnError;
+        use crate::forest::CallForest;
         // timeout_height=110, current_height=100 => deposit = 600, but fee = 500
         let turn = Turn {
             agent: pyana_cell::CellId([1u8; 32]),
@@ -1329,8 +1561,15 @@ mod tests {
         };
         let err = validate_conditional_submission(&ct, 100).unwrap_err();
         assert!(
-            matches!(err, TurnError::InsufficientConditionalDeposit { required: 600, provided: 500 }),
-            "expected InsufficientConditionalDeposit, got: {:?}", err,
+            matches!(
+                err,
+                TurnError::InsufficientConditionalDeposit {
+                    required: 600,
+                    provided: 500
+                }
+            ),
+            "expected InsufficientConditionalDeposit, got: {:?}",
+            err,
         );
     }
 

@@ -122,11 +122,7 @@ impl CompoundPredicateWitness {
     /// Returns `true` if the compound statement is satisfiable (all individual predicates
     /// that need to pass do pass according to the formula).
     pub fn is_satisfiable(&self) -> bool {
-        let results: Vec<bool> = self
-            .predicates
-            .iter()
-            .map(|w| w.is_satisfiable())
-            .collect();
+        let results: Vec<bool> = self.predicates.iter().map(|w| w.is_satisfiable()).collect();
         evaluate_formula_bool(&self.formula, &results)
     }
 }
@@ -284,7 +280,10 @@ impl Air for CompoundPredicateAir {
                         let diff = row[col::DIFF];
 
                         // For the composition row (value=0, threshold=0), diff should be 0.
-                        if value == BabyBear::ZERO && threshold == BabyBear::ZERO && diff == BabyBear::ZERO {
+                        if value == BabyBear::ZERO
+                            && threshold == BabyBear::ZERO
+                            && diff == BabyBear::ZERO
+                        {
                             return BabyBear::ZERO;
                         }
 
@@ -582,12 +581,14 @@ pub fn prove_compound_predicate(
     let witnesses: Vec<PredicateWitness> = predicates
         .iter()
         .zip(fact_commitments.iter())
-        .map(|(&(value, pred_type, threshold), &commitment)| PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: pred_type,
-            fact_commitment: commitment,
-        })
+        .map(
+            |(&(value, pred_type, threshold), &commitment)| PredicateWitness {
+                private_value: value,
+                threshold,
+                predicate_type: pred_type,
+                fact_commitment: commitment,
+            },
+        )
         .collect();
 
     let compound_witness = CompoundPredicateWitness {
@@ -685,7 +686,10 @@ mod tests {
         let formula = BooleanFormula::And(vec![0, 1]);
 
         let proof = prove_compound_predicate(&predicates, formula.clone(), &commitments);
-        assert!(proof.is_some(), "AND with both passing should produce a proof");
+        assert!(
+            proof.is_some(),
+            "AND with both passing should produce a proof"
+        );
 
         let proof = proof.unwrap();
         assert!(
@@ -738,7 +742,10 @@ mod tests {
         let formula = BooleanFormula::Or(vec![0, 1]);
 
         let proof = prove_compound_predicate(&predicates, formula.clone(), &commitments);
-        assert!(proof.is_some(), "OR with one passing should produce a proof");
+        assert!(
+            proof.is_some(),
+            "OR with one passing should produce a proof"
+        );
 
         let proof = proof.unwrap();
         assert!(
@@ -975,8 +982,7 @@ mod tests {
         let commitments = vec![age_commitment, balance_commitment];
         let formula = BooleanFormula::And(vec![0, 1]);
 
-        let proof =
-            prove_compound_predicate(&predicates, formula.clone(), &commitments).unwrap();
+        let proof = prove_compound_predicate(&predicates, formula.clone(), &commitments).unwrap();
 
         // Try to verify with wrong commitments.
         let wrong_commitments = vec![BabyBear::new(12345), balance_commitment];
@@ -1000,8 +1006,7 @@ mod tests {
         let commitments = vec![age_commitment, balance_commitment];
         let formula = BooleanFormula::And(vec![0, 1]);
 
-        let proof =
-            prove_compound_predicate(&predicates, formula.clone(), &commitments).unwrap();
+        let proof = prove_compound_predicate(&predicates, formula.clone(), &commitments).unwrap();
 
         // Try to verify with a different formula.
         let wrong_formula = BooleanFormula::Or(vec![0, 1]);
@@ -1052,10 +1057,7 @@ mod tests {
         let formula = BooleanFormula::And((0..9).collect());
 
         let proof = prove_compound_predicate(&predicates, formula, &commitments);
-        assert!(
-            proof.is_none(),
-            "More than 8 predicates should be rejected"
-        );
+        assert!(proof.is_none(), "More than 8 predicates should be rejected");
     }
 
     #[test]

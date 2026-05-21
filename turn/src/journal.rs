@@ -6,8 +6,7 @@
 //! to restore the ledger to its exact pre-turn state.
 
 use pyana_cell::{
-    CapabilityRef, CellId, DelegatedRef, Ledger, Permissions, VerificationKey,
-    state::FieldElement,
+    CapabilityRef, CellId, DelegatedRef, Ledger, Permissions, VerificationKey, state::FieldElement,
 };
 
 /// A single undo entry in the journal.
@@ -143,8 +142,10 @@ impl LedgerJournal {
 
     /// Record a delegation change.
     pub fn record_set_delegation(&mut self, cell: CellId, old_delegation: Option<DelegatedRef>) {
-        self.entries
-            .push(JournalEntry::SetDelegation { cell, old_delegation });
+        self.entries.push(JournalEntry::SetDelegation {
+            cell,
+            old_delegation,
+        });
     }
 
     /// Record a delegation_epoch change.

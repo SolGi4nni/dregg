@@ -241,10 +241,8 @@ fn main() {
     );
 
     // Compute the signing messages for each party
-    let alice_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&alice_action, 0);
-    let bob_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&bob_action, 1);
+    let alice_signing_msg = TurnExecutor::compute_partial_signing_message(&alice_action, 0);
+    let bob_signing_msg = TurnExecutor::compute_partial_signing_message(&bob_action, 1);
 
     // Alice and Bob sign their messages
     let alice_sig = alice_sk.sign(&alice_signing_msg);

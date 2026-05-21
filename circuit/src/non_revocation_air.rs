@@ -693,10 +693,7 @@ pub fn prove_non_revocation(
 /// and the STARK proof. The derivation path remains private.
 ///
 /// Returns Ok(()) if the proof is valid, Err with reason otherwise.
-pub fn verify_non_revocation(
-    revocation_root: BabyBear,
-    proof: &StarkProof,
-) -> Result<(), String> {
+pub fn verify_non_revocation(revocation_root: BabyBear, proof: &StarkProof) -> Result<(), String> {
     // Determine tree depth from the proof's trace length and number of ancestors.
     // Each ancestor uses 1 + 2*depth rows. We use the default depth.
     let air = NonRevocationAir::new(REVOCATION_TREE_DEPTH);
@@ -1065,9 +1062,8 @@ mod tests {
     #[test]
     fn proof_size_reasonable() {
         let tree = build_test_tree(5);
-        let ancestor_hashes: Vec<BabyBear> = (0..3u32)
-            .map(|i| make_revocation_hash(700 + i))
-            .collect();
+        let ancestor_hashes: Vec<BabyBear> =
+            (0..3u32).map(|i| make_revocation_hash(700 + i)).collect();
 
         let proof = prove_non_revocation(&ancestor_hashes, &tree).unwrap();
         let bytes = stark::proof_to_bytes(&proof);

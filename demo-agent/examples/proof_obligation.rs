@@ -15,20 +15,26 @@
 //! ## Adversarial Path
 //! 4. Bob fails to deliver proof -> Alice slashes Bob's stake as compensation
 
-use std::collections::HashSet;
-use pyana_cell::note::NoteCommitment;
 use pyana_cell::CellId;
+use pyana_cell::note::NoteCommitment;
 use pyana_turn::{
     ConditionProof, DEFAULT_MAX_ROOT_AGE, ProofCondition, ProofObligation, TrustedRoot,
     obligation::{ObligationOutcome, check_expiry, create_obligation, fulfill_obligation},
 };
+use std::collections::HashSet;
 
 fn short_id(id: CellId) -> String {
-    format!("{:02x}{:02x}{:02x}{:02x}", id.0[0], id.0[1], id.0[2], id.0[3])
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        id.0[0], id.0[1], id.0[2], id.0[3]
+    )
 }
 
 fn short_hex(bytes: &[u8; 32]) -> String {
-    format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}...",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    )
 }
 
 fn main() {
@@ -93,10 +99,16 @@ fn main() {
 
     println!("  Alice's obligation: {}", short_hex(&alice_obligation.id));
     println!("    Prove: transfer tokens to Bob in Fed A");
-    println!("    Stake locked: {} (forfeit if she fails)", short_hex(&alice_stake.0));
+    println!(
+        "    Stake locked: {} (forfeit if she fails)",
+        short_hex(&alice_stake.0)
+    );
     println!("  Bob's obligation: {}", short_hex(&bob_obligation.id));
     println!("    Prove: transfer NFT to Alice in Fed B");
-    println!("    Stake locked: {} (forfeit if he fails)", short_hex(&bob_stake.0));
+    println!(
+        "    Stake locked: {} (forfeit if he fails)",
+        short_hex(&bob_stake.0)
+    );
 
     // ─── Step 2: Happy Path — Both Deliver Proofs ───────────────────────────────
 
@@ -125,7 +137,10 @@ fn main() {
     match &alice_result {
         Ok(ObligationOutcome::Fulfilled { .. }) => {
             println!("  Alice fulfilled obligation at height {}!", current_height);
-            println!("    -> Stake {} returned to Alice", short_hex(&alice_stake.0));
+            println!(
+                "    -> Stake {} returned to Alice",
+                short_hex(&alice_stake.0)
+            );
         }
         Ok(other) => println!("  Unexpected outcome: {:?}", other),
         Err(e) => println!("  ERROR: {}", e),
@@ -174,13 +189,8 @@ fn main() {
         expected_conclusion: 1,
     };
 
-    let bob_obligation_2 = create_obligation(
-        bob,
-        alice,
-        bob_condition_2,
-        deadline_height,
-        bob_stake,
-    );
+    let bob_obligation_2 =
+        create_obligation(bob, alice, bob_condition_2, deadline_height, bob_stake);
 
     println!("  Bob's obligation: {}", short_hex(&bob_obligation_2.id));
     println!("  Simulating: Bob does NOT deliver proof...");
@@ -194,7 +204,10 @@ fn main() {
     match &expiry {
         Some(ObligationOutcome::Slashed) => {
             println!("\n  Obligation EXPIRED at height {}!", expired_height);
-            println!("  -> Bob's stake {} SLASHED to Alice", short_hex(&bob_stake.0));
+            println!(
+                "  -> Bob's stake {} SLASHED to Alice",
+                short_hex(&bob_stake.0)
+            );
             println!("  -> Alice receives compensation for wasted time/resources");
         }
         Some(other) => println!("  Unexpected: {:?}", other),

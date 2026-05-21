@@ -7,23 +7,27 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::{Poseidon2State, hash_4_to_1, hash_many, WIDTH};
-use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, Poseidon2Air, generate_merkle_poseidon2_trace};
-use pyana_circuit::stark::{self, MerkleStarkAir, StarkProof, generate_merkle_trace, proof_to_bytes};
+use pyana_circuit::ivc::{
+    FoldDelta, create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
+};
+use pyana_circuit::multi_step_air::{
+    MultiStepStarkAir, MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
+    verify_authorization_stark,
+};
+use pyana_circuit::non_revocation_air::{
+    NonRevocationAir, REVOCATION_TREE_DEPTH, SortedRevocationTree, prove_non_revocation,
+    verify_non_revocation,
+};
 use pyana_circuit::note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, create_test_witness as create_note_witness,
     prove_note_spend, test_spending_key, verify_note_spend,
 };
-use pyana_circuit::multi_step_air::{
-    MultiStepStarkAir, MultiStepWitness, build_multi_step_witness,
-    prove_authorization_stark, verify_authorization_stark,
+use pyana_circuit::poseidon2::{Poseidon2State, WIDTH, hash_4_to_1, hash_many};
+use pyana_circuit::poseidon2_air::{
+    MerklePoseidon2StarkAir, Poseidon2Air, generate_merkle_poseidon2_trace,
 };
-use pyana_circuit::ivc::{
-    FoldDelta, create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
-};
-use pyana_circuit::non_revocation_air::{
-    NonRevocationAir, SortedRevocationTree, REVOCATION_TREE_DEPTH,
-    prove_non_revocation, verify_non_revocation,
+use pyana_circuit::stark::{
+    self, MerkleStarkAir, StarkProof, generate_merkle_trace, proof_to_bytes,
 };
 
 // =============================================================================
@@ -38,8 +42,14 @@ fn bench_poseidon2_stark_prove(c: &mut Criterion) {
     let mut group = c.benchmark_group("poseidon2_stark");
 
     let input: [BabyBear; WIDTH] = [
-        BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
-        BabyBear::new(5), BabyBear::new(6), BabyBear::new(7), BabyBear::new(8),
+        BabyBear::new(1),
+        BabyBear::new(2),
+        BabyBear::new(3),
+        BabyBear::new(4),
+        BabyBear::new(5),
+        BabyBear::new(6),
+        BabyBear::new(7),
+        BabyBear::new(8),
     ];
     let (trace, public_inputs) = Poseidon2Air::generate_trace(&input);
     let air = Poseidon2Air;
@@ -74,7 +84,13 @@ fn bench_merkle_membership(c: &mut Criterion) {
 
     for &depth in &[4, 8, 16] {
         let siblings: Vec<[u32; 3]> = (0..depth)
-            .map(|i| [(i * 100 + 10) as u32, (i * 100 + 20) as u32, (i * 100 + 30) as u32])
+            .map(|i| {
+                [
+                    (i * 100 + 10) as u32,
+                    (i * 100 + 20) as u32,
+                    (i * 100 + 30) as u32,
+                ]
+            })
             .collect();
         let positions: Vec<u32> = (0..depth).map(|i| (i % 4) as u32).collect();
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
@@ -425,8 +441,8 @@ fn bench_non_revocation(c: &mut Criterion) {
 
 fn bench_body_membership_proof(c: &mut Criterion) {
     use pyana_circuit::body_membership::{
-        BodyFactMerkleProof, collect_body_fact_hashes,
-        prove_authorization_with_membership, verify_authorization_with_membership,
+        BodyFactMerkleProof, collect_body_fact_hashes, prove_authorization_with_membership,
+        verify_authorization_with_membership,
     };
 
     let mut group = c.benchmark_group("body_membership_composed");
@@ -469,9 +485,8 @@ fn bench_body_membership_proof(c: &mut Criterion) {
     group.bench_function("verify_4_steps", |b| {
         b.iter(|| {
             black_box(
-                verify_authorization_with_membership(
-                    &composed, conclusion, acc_hash, &body_hashes,
-                ).unwrap()
+                verify_authorization_with_membership(&composed, conclusion, acc_hash, &body_hashes)
+                    .unwrap(),
             )
         });
     });
@@ -509,10 +524,7 @@ fn bench_chunked_authorization(c: &mut Criterion) {
     let mut group = c.benchmark_group("chunked_authorization");
     group.sample_size(10);
 
-    for &(total_steps, chunk_size, label) in &[
-        (4usize, 2usize, "2_chunks"),
-        (8, 2, "4_chunks"),
-    ] {
+    for &(total_steps, chunk_size, label) in &[(4usize, 2usize, "2_chunks"), (8, 2, "4_chunks")] {
         let witness = build_test_multi_step_witness(total_steps);
         let conclusion = witness.conclusion();
         let state_root = witness.initial_state_root;
@@ -560,7 +572,10 @@ fn bench_primitive_operations(c: &mut Criterion) {
 
     // Poseidon2 single hash
     let input = [
-        BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
+        BabyBear::new(1),
+        BabyBear::new(2),
+        BabyBear::new(3),
+        BabyBear::new(4),
     ];
     group.bench_function("poseidon2_hash_4_to_1", |b| {
         b.iter(|| black_box(hash_4_to_1(&input)));
@@ -569,7 +584,10 @@ fn bench_primitive_operations(c: &mut Criterion) {
     // Poseidon2 permutation
     group.bench_function("poseidon2_permutation", |b| {
         let mut state = Poseidon2State::from_elements(&[
-            BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
         ]);
         b.iter(|| {
             state.permute();
@@ -654,8 +672,10 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
 
 #[cfg(feature = "plonky3")]
 fn bench_plonky3_backend(c: &mut Criterion) {
-    use pyana_circuit::plonky3_prover::{prove_plonky3, verify_plonky3, prove_membership_plonky3};
-    use pyana_circuit::poseidon2_air::{generate_merkle_poseidon2_trace, create_poseidon2_test_witness};
+    use pyana_circuit::plonky3_prover::{prove_membership_plonky3, prove_plonky3, verify_plonky3};
+    use pyana_circuit::poseidon2_air::{
+        create_poseidon2_test_witness, generate_merkle_poseidon2_trace,
+    };
 
     let mut group = c.benchmark_group("plonky3_backend");
     group.sample_size(10);
@@ -743,7 +763,10 @@ fn bench_pickles_backend(c: &mut Criterion) {
         let roots: Vec<BabyBear> = ds.iter().map(|d| d.fold.new_root).collect();
         let (sp, _) = prove_ivc_stark(root, &roots);
         let size = proof_to_bytes(&sp).len();
-        eprintln!("  [pickles {steps}-step] proof size: {:.1} KiB (should be ~constant)", size as f64 / 1024.0);
+        eprintln!(
+            "  [pickles {steps}-step] proof size: {:.1} KiB (should be ~constant)",
+            size as f64 / 1024.0
+        );
     }
 
     group.finish();
@@ -786,10 +809,26 @@ criterion_group!(pickles_benches, bench_pickles_backend);
 criterion_main!(individual_proofs, composed_proofs, context_and_pipeline);
 
 #[cfg(all(feature = "plonky3", not(feature = "mina")))]
-criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, plonky3_benches);
+criterion_main!(
+    individual_proofs,
+    composed_proofs,
+    context_and_pipeline,
+    plonky3_benches
+);
 
 #[cfg(all(not(feature = "plonky3"), feature = "mina"))]
-criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, pickles_benches);
+criterion_main!(
+    individual_proofs,
+    composed_proofs,
+    context_and_pipeline,
+    pickles_benches
+);
 
 #[cfg(all(feature = "plonky3", feature = "mina"))]
-criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, plonky3_benches, pickles_benches);
+criterion_main!(
+    individual_proofs,
+    composed_proofs,
+    context_and_pipeline,
+    plonky3_benches,
+    pickles_benches
+);

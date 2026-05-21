@@ -193,7 +193,8 @@ pub async fn run_federation_sync(state: NodeState, morpheus_config: Option<Morph
     // (which they can compute from the sender's known public identity).
     let signing_key = {
         let s = state.read().await;
-        s.wallet.derive_symmetric_key("pyana-gossip-envelope-signing-v1")
+        s.wallet
+            .derive_symmetric_key("pyana-gossip-envelope-signing-v1")
     };
 
     // Create the GossipNetwork.
@@ -456,10 +457,9 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
             }
 
             // Verify the Ed25519 signature over the turn hash.
-            let sig_valid = signed_turn.signer.verify(
-                &computed_hash,
-                &signed_turn.signature,
-            );
+            let sig_valid = signed_turn
+                .signer
+                .verify(&computed_hash, &signed_turn.signature);
             if !sig_valid {
                 warn!(from = %from, turn_hash = %hash_hex, "invalid signature on gossiped turn");
                 return;
@@ -472,8 +472,11 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
 
             match exec_result {
                 pyana_turn::TurnResult::Committed { receipt, .. } => {
-                    let receipt_hash_hex: String =
-                        receipt.turn_hash.iter().map(|b| format!("{b:02x}")).collect();
+                    let receipt_hash_hex: String = receipt
+                        .turn_hash
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
 
                     // Process routing directives from the receipt into the local
                     // routing table. This is the consumption point: introductions
@@ -496,7 +499,9 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
                     s.wallet.append_receipt(receipt);
                     drop(s);
                     // Emit to local WS subscribers.
-                    state.emit(NodeEvent::Receipt { hash: receipt_hash_hex });
+                    state.emit(NodeEvent::Receipt {
+                        hash: receipt_hash_hex,
+                    });
                     info!(turn_hash = %hash_hex, "gossiped turn executed and committed");
                 }
                 pyana_turn::TurnResult::Rejected { reason, .. } => {
@@ -515,9 +520,7 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
                 }
             }
         }
-        PeerMessage::PublishPipeline {
-            pipeline_hash, ..
-        } => {
+        PeerMessage::PublishPipeline { pipeline_hash, .. } => {
             let hash_hex: String = pipeline_hash.iter().map(|b| format!("{b:02x}")).collect();
             // TODO: implement pipeline execution once pyana_turn::TurnBatch is stabilized.
             warn!(from = %from, pipeline_hash = %hash_hex, "received pipeline via gossip (not yet supported)");
@@ -841,14 +844,14 @@ async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerM
             info!(from = %from, root_len = root.len(), "received attested root via gossip");
 
             // Attempt to deserialize the root.
-            let attested_root =
-                match postcard::from_bytes::<pyana_store::StoredAttestedRoot>(&root) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(from = %from, error = %e, "failed to decode attested root from gossip");
-                        return;
-                    }
-                };
+            let attested_root = match postcard::from_bytes::<pyana_store::StoredAttestedRoot>(&root)
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(from = %from, error = %e, "failed to decode attested root from gossip");
+                    return;
+                }
+            };
 
             let height = attested_root.height;
             let merkle_hex: String = attested_root
@@ -878,11 +881,7 @@ async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerM
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
 
-                    if !typed_root.is_valid_at(
-                        &s.known_federation_keys,
-                        now,
-                        s.max_root_age_secs,
-                    ) {
+                    if !typed_root.is_valid_at(&s.known_federation_keys, now, s.max_root_age_secs) {
                         if !typed_root.is_valid(&s.known_federation_keys) {
                             warn!(
                                 from = %from,
@@ -914,8 +913,12 @@ async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerM
                     if remote_note_root != zero {
                         if let Ok(local_note_root) = s.store.note_tree_root() {
                             if local_note_root != zero && local_note_root != remote_note_root {
-                                let local_hex: String = local_note_root.iter().map(|b| format!("{b:02x}")).collect();
-                                let remote_hex: String = remote_note_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let local_hex: String =
+                                    local_note_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let remote_hex: String = remote_note_root
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect();
                                 error!(
                                     from = %from,
                                     height = height,
@@ -933,8 +936,12 @@ async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerM
                     if remote_null_root != zero {
                         if let Ok(local_null_root) = s.store.nullifier_set_root() {
                             if local_null_root != zero && local_null_root != remote_null_root {
-                                let local_hex: String = local_null_root.iter().map(|b| format!("{b:02x}")).collect();
-                                let remote_hex: String = remote_null_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let local_hex: String =
+                                    local_null_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let remote_hex: String = remote_null_root
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect();
                                 error!(
                                     from = %from,
                                     height = height,

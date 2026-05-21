@@ -20,9 +20,7 @@ use pyana_cell::{
 };
 use pyana_turn::{
     Action, Authorization, CallForest, CallTree, ComputronCosts, DelegationMode, Effect,
-    TurnExecutor, TurnReceipt, TurnResult,
-    turn::Turn,
-    verify::verify_receipt_chain,
+    TurnExecutor, TurnReceipt, TurnResult, turn::Turn, verify::verify_receipt_chain,
 };
 
 // ============================================================================
@@ -55,11 +53,21 @@ fn setup_ledger(n: u8, balance_each: u64) -> (Ledger, Vec<CellId>) {
 #[derive(Clone, Debug)]
 enum CapOp {
     /// Grant a capability from cell[from_idx] to cell[to_idx] targeting cell[target_idx].
-    Grant { from_idx: usize, to_idx: usize, target_idx: usize, perm: AuthRequired },
+    Grant {
+        from_idx: usize,
+        to_idx: usize,
+        target_idx: usize,
+        perm: AuthRequired,
+    },
     /// Revoke slot N from cell[cell_idx].
     Revoke { cell_idx: usize, slot: u32 },
     /// Introduce: cell[intro_idx] introduces cell[target_idx] to cell[recipient_idx].
-    Introduce { intro_idx: usize, recipient_idx: usize, target_idx: usize, perm: AuthRequired },
+    Introduce {
+        intro_idx: usize,
+        recipient_idx: usize,
+        target_idx: usize,
+        perm: AuthRequired,
+    },
 }
 
 /// Strategy for a random AuthRequired value.
@@ -83,7 +91,10 @@ fn arb_cap_op(n_cells: usize) -> impl Strategy<Value = CapOp> {
             target_idx: tgt,
             perm: p,
         }),
-        (0..n, 0..10u32).prop_map(|(c, s)| CapOp::Revoke { cell_idx: c, slot: s }),
+        (0..n, 0..10u32).prop_map(|(c, s)| CapOp::Revoke {
+            cell_idx: c,
+            slot: s
+        }),
         (0..n, 0..n, 0..n, arb_auth_required()).prop_map(|(i, r, t, p)| CapOp::Introduce {
             intro_idx: i,
             recipient_idx: r,
@@ -120,7 +131,12 @@ fn execute_cap_ops(
 ) {
     for op in ops {
         match op {
-            CapOp::Grant { from_idx, to_idx, target_idx, perm } => {
+            CapOp::Grant {
+                from_idx,
+                to_idx,
+                target_idx,
+                perm,
+            } => {
                 let from_id = ids[*from_idx];
                 let to_id = ids[*to_idx];
                 let target_id = ids[*target_idx];
@@ -150,7 +166,12 @@ fn execute_cap_ops(
                 let cell = ledger.get_mut(&cell_id).unwrap();
                 cell.capabilities.revoke(*slot);
             }
-            CapOp::Introduce { intro_idx, recipient_idx, target_idx, perm } => {
+            CapOp::Introduce {
+                intro_idx,
+                recipient_idx,
+                target_idx,
+                perm,
+            } => {
                 let intro_id = ids[*intro_idx];
                 let recipient_id = ids[*recipient_idx];
                 let target_id = ids[*target_idx];
@@ -160,10 +181,11 @@ fn execute_cap_ops(
                 let has_recipient = intro_cell.capabilities.has_access(&recipient_id);
                 let held_target = intro_cell.capabilities.lookup_by_target(&target_id);
 
-                let can_introduce = has_recipient && match held_target {
-                    Some(cap) => is_attenuation(&cap.permissions, perm),
-                    None => false,
-                };
+                let can_introduce = has_recipient
+                    && match held_target {
+                        Some(cap) => is_attenuation(&cap.permissions, perm),
+                        None => false,
+                    };
 
                 if can_introduce {
                     let recipient_cell = ledger.get_mut(&recipient_id).unwrap();
@@ -187,8 +209,7 @@ fn assert_confinement_invariant(ledger: &Ledger, ids: &[CellId], grants: &[Grant
         for cap in cell.capabilities.iter() {
             // This capability must have been granted to this cell.
             let was_granted = grants.iter().any(|g| {
-                g.to == *id && g.target == cap.target
-                    && is_attenuation(&g.perm, &cap.permissions)
+                g.to == *id && g.target == cap.target && is_attenuation(&g.perm, &cap.permissions)
             });
             assert!(
                 was_granted,
@@ -245,7 +266,11 @@ proptest! {
 #[derive(Clone, Debug)]
 enum BalanceOp {
     /// Transfer amount from cell[from_idx] to cell[to_idx].
-    Transfer { from_idx: usize, to_idx: usize, amount: u64 },
+    Transfer {
+        from_idx: usize,
+        to_idx: usize,
+        amount: u64,
+    },
 }
 
 fn arb_balance_op(n_cells: usize) -> impl Strategy<Value = BalanceOp> {

@@ -41,11 +41,14 @@ pub use id::CellId;
 pub use ledger::{CellStateDelta, Ledger, LedgerDelta, LedgerError, MembershipProof, Side};
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
 pub use note_bridge::{
-    BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge,
-    PendingBridgeSet, PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge,
-    initiate_bridge, verify_bridge_receipt, verify_portable_note,
+    BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge, PendingBridgeSet,
+    PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge, initiate_bridge,
+    verify_bridge_receipt, verify_portable_note,
 };
 pub use nullifier_set::{MerkleMembershipProof, NonMembershipProof, NullifierSet};
+pub use oblivious_transfer::{
+    OtError, OtReceiver, OtReceiverResponse, OtSender, OtSenderPayload, OtSenderSetup, ot_1_of_n,
+};
 pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
 pub use preconditions::{
     CellStatePrecondition, EvalContext, NetworkPrecondition, Preconditions, TimeRange,
@@ -53,9 +56,6 @@ pub use preconditions::{
 pub use program::{CellProgram, ProgramError, StateConstraint};
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,
-};
-pub use oblivious_transfer::{
-    OtError, OtReceiver, OtReceiverResponse, OtSender, OtSenderPayload, OtSenderSetup, ot_1_of_n,
 };
 pub use seal::{SealError, SealPair, SealedBox, SealerPublic, test_seal_pair};
 pub use state::{

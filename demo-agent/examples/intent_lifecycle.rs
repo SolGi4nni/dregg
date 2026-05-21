@@ -91,14 +91,16 @@ fn main() {
         constraints: vec![],
         min_budget: Some(10_000), // need at least 10k budget
         resource_pattern: Some("treasury/*".into()),
-        compound: None, predicate_requirements: vec![],
+        compound: None,
+        predicate_requirements: vec![],
     };
 
     // Broadcast: service posts the intent with expiry 1 hour from now
     let now = 1_700_000_000u64; // simulated timestamp
     let expiry = now + 3600; // 1 hour
-    let intent =
-        service_pool.broadcast_intent(IntentKind::Need, match_spec, expiry, Some(stake_proof)).expect("broadcast intent");
+    let intent = service_pool
+        .broadcast_intent(IntentKind::Need, match_spec, expiry, Some(stake_proof))
+        .expect("broadcast intent");
 
     println!("  Intent posted:");
     println!(
@@ -494,7 +496,8 @@ fn main() {
         constraints: vec![],
         min_budget: None,
         resource_pattern: None,
-        compound: None, predicate_requirements: vec![],
+        compound: None,
+        predicate_requirements: vec![],
     };
 
     // Create a Query intent (probe) -- Eve provides no real stake

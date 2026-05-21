@@ -27,8 +27,8 @@ use crate::fulfillment::Fulfillment;
 use crate::matcher::{HeldCapability, MatchResult, match_intent};
 use crate::validation::{self, ValidationError};
 use crate::{
-    CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof,
-    compute_stake_nullifier, current_epoch, MAX_STAKE_USES_PER_EPOCH,
+    CommitmentId, Intent, IntentKind, MAX_STAKE_USES_PER_EPOCH, Match, MatchSpec, StakeProof,
+    compute_stake_nullifier, current_epoch,
 };
 
 /// Maximum intents allowed per creator per minute.
@@ -403,11 +403,8 @@ impl IntentPool {
                     // Try counter 0..K-1 -- if ALL nullifiers for this epoch are used, reject.
                     let epoch = current_epoch(self.current_block_height);
                     let all_used = (0..MAX_STAKE_USES_PER_EPOCH).all(|counter| {
-                        let nullifier = compute_stake_nullifier(
-                            &stake_proof.commitment.0,
-                            epoch,
-                            counter,
-                        );
+                        let nullifier =
+                            compute_stake_nullifier(&stake_proof.commitment.0, epoch, counter);
                         self.used_stake_nullifiers.contains(&nullifier)
                     });
                     if all_used {
@@ -447,11 +444,7 @@ impl IntentPool {
             let epoch = current_epoch(self.current_block_height);
             // Find the first unused counter and insert its nullifier
             for counter in 0..MAX_STAKE_USES_PER_EPOCH {
-                let nullifier = compute_stake_nullifier(
-                    &stake_proof.commitment.0,
-                    epoch,
-                    counter,
-                );
+                let nullifier = compute_stake_nullifier(&stake_proof.commitment.0, epoch, counter);
                 if !self.used_stake_nullifiers.contains(&nullifier) {
                     self.used_stake_nullifiers.insert(nullifier);
                     break;
@@ -901,13 +894,19 @@ mod tests {
     fn test_broadcast_adds_to_pool() {
         let mut pool = test_pool();
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, None).unwrap();
+        let intent = pool
+            .broadcast_intent(IntentKind::Need, spec, 9999, None)
+            .unwrap();
         assert_eq!(pool.len(), 1);
         assert!(pool.get_intent(&intent.id).is_some());
     }
@@ -917,13 +916,23 @@ mod tests {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read", "write"], "*")]);
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, valid_stake());
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            valid_stake(),
+        );
         let result = pool.receive_intent(intent, 100);
         assert!(result.is_some());
     }
@@ -933,13 +942,19 @@ mod tests {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, valid_stake()).unwrap();
+        let intent = pool
+            .broadcast_intent(IntentKind::Need, spec, 9999, valid_stake())
+            .unwrap();
         let result = pool.receive_intent(intent, 100);
         assert!(result.is_none());
     }
@@ -952,9 +967,16 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x33; 32]), 50, valid_stake());
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x33; 32]),
+            50,
+            valid_stake(),
+        );
         let result = pool.receive_intent(intent, 100);
         assert!(result.is_none());
     }
@@ -967,12 +989,31 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = Intent::new(IntentKind::Need, spec.clone(), CommitmentId([0x44; 32]), 200, None);
-        pool.intents.insert(intent.id, StoredIntent { intent, arrived_at: 50 });
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec.clone(),
+            CommitmentId([0x44; 32]),
+            200,
+            None,
+        );
+        pool.intents.insert(
+            intent.id,
+            StoredIntent {
+                intent,
+                arrived_at: 50,
+            },
+        );
         let intent2 = Intent::new(IntentKind::Need, spec, CommitmentId([0x55; 32]), 500, None);
-        pool.intents.insert(intent2.id, StoredIntent { intent: intent2, arrived_at: 60 });
+        pool.intents.insert(
+            intent2.id,
+            StoredIntent {
+                intent: intent2,
+                arrived_at: 60,
+            },
+        );
         assert_eq!(pool.len(), 2);
         pool.gc(300);
         assert_eq!(pool.len(), 1);
@@ -983,13 +1024,23 @@ mod tests {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x66; 32]), 9999, valid_stake());
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x66; 32]),
+            9999,
+            valid_stake(),
+        );
         let r1 = pool.receive_intent(intent.clone(), 100);
         assert!(r1.is_some());
         let r2 = pool.receive_intent(intent, 100);
@@ -1001,14 +1052,24 @@ mod tests {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![]);
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x77; 32]), 9999, None);
-        pool.intents.insert(intent.id, StoredIntent { intent, arrived_at: 50 });
+        pool.intents.insert(
+            intent.id,
+            StoredIntent {
+                intent,
+                arrived_at: 50,
+            },
+        );
         let matches = pool.rematch_all(100);
         assert!(matches.is_empty());
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
@@ -1021,19 +1082,34 @@ mod tests {
         let root = test_known_root();
         let mut pool = IntentPool::new(
             CommitmentId([0x11; 32]),
-            IntentPoolConfig { max_intents: 3, gc_interval_secs: 60, auto_match: false, minimum_stake_value: 0 },
+            IntentPoolConfig {
+                max_intents: 3,
+                gc_interval_secs: 60,
+                auto_match: false,
+                minimum_stake_value: 0,
+            },
             AutoFulfillPolicy::Never,
             root,
         );
         for i in 0..5u8 {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
+                actions: vec![ActionPattern {
+                    action: Some(format!("action_{i}")),
+                    resource: None,
+                }],
                 constraints: vec![],
                 min_budget: None,
                 resource_pattern: None,
-                compound: None, predicate_requirements: vec![],
+                compound: None,
+                predicate_requirements: vec![],
             };
-            let intent = Intent::new(IntentKind::Need, spec, CommitmentId([i + 0x80; 32]), (1000 + i as u64) * 10, valid_stake());
+            let intent = Intent::new(
+                IntentKind::Need,
+                spec,
+                CommitmentId([i + 0x80; 32]),
+                (1000 + i as u64) * 10,
+                valid_stake(),
+            );
             pool.receive_intent(intent, 100 + i as u64);
         }
         assert!(pool.len() <= 3);
@@ -1042,11 +1118,36 @@ mod tests {
     #[test]
     fn test_active_intents_filters_expired() {
         let mut pool = test_pool();
-        let spec1 = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![] };
-        let i1 = Intent::new(IntentKind::Need, spec1.clone(), CommitmentId([0xA0; 32]), 200, None);
+        let spec1 = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let i1 = Intent::new(
+            IntentKind::Need,
+            spec1.clone(),
+            CommitmentId([0xA0; 32]),
+            200,
+            None,
+        );
         let i2 = Intent::new(IntentKind::Need, spec1, CommitmentId([0xB0; 32]), 500, None);
-        pool.intents.insert(i1.id, StoredIntent { intent: i1, arrived_at: 50 });
-        pool.intents.insert(i2.id, StoredIntent { intent: i2, arrived_at: 60 });
+        pool.intents.insert(
+            i1.id,
+            StoredIntent {
+                intent: i1,
+                arrived_at: 50,
+            },
+        );
+        pool.intents.insert(
+            i2.id,
+            StoredIntent {
+                intent: i2,
+                arrived_at: 60,
+            },
+        );
         let active = pool.active_intents(300);
         assert_eq!(active.len(), 1);
     }
@@ -1056,11 +1157,15 @@ mod tests {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
         let result = pool.receive_intent_checked(intent.clone(), 100, true);
@@ -1072,11 +1177,24 @@ mod tests {
     #[test]
     fn test_gossip_rejects_invalid_stake_proof() {
         let mut pool = test_pool();
-        let spec = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![] };
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
         let fake_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
         let (_root, mut real_proof) = build_test_tree();
         real_proof.commitment = fake_commitment;
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, Some(real_proof));
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            Some(real_proof),
+        );
         let result = pool.receive_intent_checked(intent, 100, true);
         assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
     }
@@ -1087,12 +1205,30 @@ mod tests {
         let wrong_root = BabyBear::new(0xBAD_CAFE);
         let mut pool = IntentPool::new(
             CommitmentId([0x11; 32]),
-            IntentPoolConfig { max_intents: 100, gc_interval_secs: 60, auto_match: false, minimum_stake_value: 0 },
+            IntentPoolConfig {
+                max_intents: 100,
+                gc_interval_secs: 60,
+                auto_match: false,
+                minimum_stake_value: 0,
+            },
             AutoFulfillPolicy::Never,
             wrong_root,
         );
-        let spec = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![] };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, Some(stake_proof));
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            Some(stake_proof),
+        );
         let result = pool.receive_intent_checked(intent, 100, true);
         assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
     }
@@ -1103,23 +1239,49 @@ mod tests {
         // Same stake can be used MAX_STAKE_USES_PER_EPOCH times in one epoch
         for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
-                constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+                actions: vec![ActionPattern {
+                    action: Some(format!("action_{i}")),
+                    resource: None,
+                }],
+                constraints: vec![],
+                min_budget: None,
+                resource_pattern: None,
+                compound: None,
+                predicate_requirements: vec![],
             };
             let intent = Intent::new(
-                IntentKind::Need, spec, CommitmentId([0x22 + i as u8; 32]), 9999, valid_stake(),
+                IntentKind::Need,
+                spec,
+                CommitmentId([0x22 + i as u8; 32]),
+                9999,
+                valid_stake(),
             );
             let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
-            assert!(result.is_ok(), "intent {i} should succeed (K={} uses per epoch)", crate::MAX_STAKE_USES_PER_EPOCH);
+            assert!(
+                result.is_ok(),
+                "intent {i} should succeed (K={} uses per epoch)",
+                crate::MAX_STAKE_USES_PER_EPOCH
+            );
         }
 
         // The (K+1)th use in the same epoch should be rejected
         let spec_overflow = MatchSpec {
-            actions: vec![ActionPattern { action: Some("overflow".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("overflow".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent_overflow = Intent::new(
-            IntentKind::Need, spec_overflow, CommitmentId([0x99; 32]), 9999, valid_stake(),
+            IntentKind::Need,
+            spec_overflow,
+            CommitmentId([0x99; 32]),
+            9999,
+            valid_stake(),
         );
         let result = pool.receive_intent_checked(intent_overflow, 110, true);
         assert_eq!(result, Err(ReceiveError::StakeAlreadyUsed));
@@ -1131,11 +1293,22 @@ mod tests {
         // Use all K slots in epoch 0
         for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("e0_action_{i}")), resource: None }],
-                constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+                actions: vec![ActionPattern {
+                    action: Some(format!("e0_action_{i}")),
+                    resource: None,
+                }],
+                constraints: vec![],
+                min_budget: None,
+                resource_pattern: None,
+                compound: None,
+                predicate_requirements: vec![],
             };
             let intent = Intent::new(
-                IntentKind::Need, spec, CommitmentId([0x30 + i as u8; 32]), 9999, valid_stake(),
+                IntentKind::Need,
+                spec,
+                CommitmentId([0x30 + i as u8; 32]),
+                9999,
+                valid_stake(),
             );
             let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
             assert!(result.is_ok(), "epoch 0, use {i} should succeed");
@@ -1146,13 +1319,25 @@ mod tests {
 
         // Same stake should be accepted again in the new epoch
         let spec_new_epoch = MatchSpec {
-            actions: vec![ActionPattern { action: Some("new_epoch_action".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("new_epoch_action".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent_new_epoch = Intent::new(
-            IntentKind::Need, spec_new_epoch, CommitmentId([0xEE; 32]), 99999, valid_stake(),
+            IntentKind::Need,
+            spec_new_epoch,
+            CommitmentId([0xEE; 32]),
+            99999,
+            valid_stake(),
         );
-        let result = pool.receive_intent_checked(intent_new_epoch, crate::EPOCH_DURATION_BLOCKS + 1, true);
+        let result =
+            pool.receive_intent_checked(intent_new_epoch, crate::EPOCH_DURATION_BLOCKS + 1, true);
         assert!(result.is_ok(), "same stake should work in new epoch");
     }
 
@@ -1162,11 +1347,22 @@ mod tests {
         // Use all K slots for one commitment
         for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
-                constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+                actions: vec![ActionPattern {
+                    action: Some(format!("action_{i}")),
+                    resource: None,
+                }],
+                constraints: vec![],
+                min_budget: None,
+                resource_pattern: None,
+                compound: None,
+                predicate_requirements: vec![],
             };
             let intent = Intent::new(
-                IntentKind::Need, spec, CommitmentId([0x22 + i as u8; 32]), 9999, valid_stake(),
+                IntentKind::Need,
+                spec,
+                CommitmentId([0x22 + i as u8; 32]),
+                9999,
+                valid_stake(),
             );
             let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
             assert!(result.is_ok());
@@ -1202,11 +1398,22 @@ mod tests {
         pool.update_known_note_root(root);
 
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("diff_commitment".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("diff_commitment".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(
-            IntentKind::Need, spec, CommitmentId([0xDD; 32]), 9999, Some(diff_stake),
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xDD; 32]),
+            9999,
+            Some(diff_stake),
         );
         let result = pool.receive_intent_checked(intent, 200, true);
         assert!(result.is_ok(), "different commitment should be independent");
@@ -1218,16 +1425,30 @@ mod tests {
         let creator = CommitmentId([0x99; 32]);
         for i in 0..MAX_INTENTS_PER_CREATOR_PER_MINUTE {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
-                constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+                actions: vec![ActionPattern {
+                    action: Some(format!("action_{i}")),
+                    resource: None,
+                }],
+                constraints: vec![],
+                min_budget: None,
+                resource_pattern: None,
+                compound: None,
+                predicate_requirements: vec![],
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
             let result = pool.receive_intent_checked(intent, 100, false);
             assert!(result.is_ok(), "intent {i} should succeed");
         }
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("action_overflow".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("action_overflow".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
         let result = pool.receive_intent_checked(intent, 100, false);
@@ -1240,15 +1461,29 @@ mod tests {
         let creator = CommitmentId([0xAA; 32]);
         for i in 0..MAX_INTENTS_PER_CREATOR_PER_MINUTE {
             let spec = MatchSpec {
-                actions: vec![ActionPattern { action: Some(format!("a_{i}")), resource: None }],
-                constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+                actions: vec![ActionPattern {
+                    action: Some(format!("a_{i}")),
+                    resource: None,
+                }],
+                constraints: vec![],
+                min_budget: None,
+                resource_pattern: None,
+                compound: None,
+                predicate_requirements: vec![],
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
             pool.receive_intent_checked(intent, 100, false).unwrap();
         }
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("new_window".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("new_window".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
         let result = pool.receive_intent_checked(intent, 161, false);
@@ -1258,9 +1493,27 @@ mod tests {
     #[test]
     fn test_validation_rejects_oversized_intent() {
         let mut pool = test_pool();
-        let actions: Vec<ActionPattern> = (0..65).map(|i| ActionPattern { action: Some(format!("act_{i}")), resource: None }).collect();
-        let spec = MatchSpec { actions, constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![] };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, valid_stake());
+        let actions: Vec<ActionPattern> = (0..65)
+            .map(|i| ActionPattern {
+                action: Some(format!("act_{i}")),
+                resource: None,
+            })
+            .collect();
+        let spec = MatchSpec {
+            actions,
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            valid_stake(),
+        );
         let result = pool.receive_intent_checked(intent, 100, true);
         assert!(matches!(result, Err(ReceiveError::Invalid(_))));
     }
@@ -1282,7 +1535,11 @@ mod tests {
         assert!(pool.has_commitment_for(&[0x01; 32]));
         assert_eq!(pool.pending_commitment_count(), 1);
         let commitment_hash = IntentPool::hash_commitment(&commitment);
-        let reveal = FulfillmentReveal { commitment_hash, fulfillment: fulfillment.clone(), nonce: [0xFF; 32] };
+        let reveal = FulfillmentReveal {
+            commitment_hash,
+            fulfillment: fulfillment.clone(),
+            nonce: [0xFF; 32],
+        };
         let result = pool.reveal_fulfillment(&reveal, 102);
         assert_eq!(result, Err(CommitRevealError::TooEarly { remaining: 3 }));
         let result = pool.reveal_fulfillment(&reveal, 106);
@@ -1303,7 +1560,11 @@ mod tests {
             granted_resource: "docs/*".into(),
             expiry: Some(5000),
         };
-        let reveal = FulfillmentReveal { commitment_hash: [0xFF; 32], fulfillment, nonce: [0x00; 32] };
+        let reveal = FulfillmentReveal {
+            commitment_hash: [0xFF; 32],
+            fulfillment,
+            nonce: [0x00; 32],
+        };
         let result = pool.reveal_fulfillment(&reveal, 200);
         assert_eq!(result, Err(CommitRevealError::NoCommitment));
     }
@@ -1312,8 +1573,15 @@ mod tests {
     fn test_fulfilled_intent_rejected_on_resubmit() {
         let mut pool = test_pool();
         let spec = MatchSpec {
-            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
-            constraints: vec![], min_budget: None, resource_pattern: None, compound: None, predicate_requirements: vec![],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
         let intent_id = intent.id;

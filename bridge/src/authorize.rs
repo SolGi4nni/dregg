@@ -217,15 +217,27 @@ fn auth_request_to_trace(request: &AuthRequest) -> Result<TraceRequest, AuthErro
     // This is consistent with committed_facts_to_trace, enabling both:
     // - Equality matching (same string -> same 32 bytes for unification)
     // - Contains matching (raw string bytes preserve substring relationships)
-    let app_id = request.app_id.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
-    let service = request.service.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
-    let action = request.action.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
+    let app_id = request
+        .app_id
+        .as_deref()
+        .map(|s| symbol_from_bytes(s.as_bytes()));
+    let service = request
+        .service
+        .as_deref()
+        .map(|s| symbol_from_bytes(s.as_bytes()));
+    let action = request
+        .action
+        .as_deref()
+        .map(|s| symbol_from_bytes(s.as_bytes()));
     let features: Vec<[u8; 32]> = request
         .features
         .iter()
         .map(|f| symbol_from_bytes(f.as_bytes()))
         .collect();
-    let user_id = request.user_id.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
+    let user_id = request
+        .user_id
+        .as_deref()
+        .map(|s| symbol_from_bytes(s.as_bytes()));
 
     let now = request.now.unwrap_or_else(|| {
         std::time::SystemTime::now()

@@ -14,8 +14,8 @@
 //! Tokens with a `Revocable` caveat are checked against this filter during
 //! verification. Tokens without the caveat skip the check entirely.
 
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use scalable_cuckoo_filter::{ScalableCuckooFilter, ScalableCuckooFilterBuilder};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;

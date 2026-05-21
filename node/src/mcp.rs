@@ -493,11 +493,16 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         None => return McpToolResult::error("missing required parameter: method"),
     };
     let fee = params.get("fee").and_then(|v| v.as_u64()).unwrap_or(0);
-    let memo = params.get("memo").and_then(|v| v.as_str()).map(String::from);
+    let memo = params
+        .get("memo")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let agent_bytes = match hex_decode(target_cell_hex) {
         Ok(b) => b,
-        Err(_) => return McpToolResult::error("invalid hex for target_cell (expected 64 hex chars)"),
+        Err(_) => {
+            return McpToolResult::error("invalid hex for target_cell (expected 64 hex chars)");
+        }
     };
 
     let s = state.read().await;
@@ -621,7 +626,8 @@ async fn tool_post_intent(params: &Value, state: &NodeState) -> McpToolResult {
         constraints: vec![],
         min_budget: None,
         resource_pattern: Some(resource.clone()),
-        compound: None, predicate_requirements: vec![],
+        compound: None,
+        predicate_requirements: vec![],
     };
 
     let creator = pyana_intent::CommitmentId::random();
@@ -724,7 +730,13 @@ async fn tool_check_capabilities(state: &NodeState) -> McpToolResult {
     let s = state.read().await;
     let ws = crate::state::WalletStatus {
         unlocked: s.unlocked,
-        public_key: s.wallet.public_key().0.iter().map(|b| format!("{b:02x}")).collect(),
+        public_key: s
+            .wallet
+            .public_key()
+            .0
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
         token_count: s.wallet.tokens().len(),
         receipt_chain_length: s.wallet.receipt_chain_length(),
     };
@@ -777,10 +789,7 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
 }
 
 async fn tool_get_receipt_chain(params: &Value, state: &NodeState) -> McpToolResult {
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     let s = state.read().await;
     let chain = s.wallet.receipt_chain();
@@ -864,7 +873,10 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         Some(h) => h,
         None => return McpToolResult::error("missing required parameter: note_commitment"),
     };
-    let dest_federation_hex = match params.get("destination_federation").and_then(|v| v.as_str()) {
+    let dest_federation_hex = match params
+        .get("destination_federation")
+        .and_then(|v| v.as_str())
+    {
         Some(h) => h,
         None => return McpToolResult::error("missing required parameter: destination_federation"),
     };
@@ -873,7 +885,9 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         return McpToolResult::error("invalid hex for note_commitment (expected 64 hex chars)");
     }
     if hex_decode(dest_federation_hex).is_err() {
-        return McpToolResult::error("invalid hex for destination_federation (expected 64 hex chars)");
+        return McpToolResult::error(
+            "invalid hex for destination_federation (expected 64 hex chars)",
+        );
     }
 
     let s = state.read().await;
@@ -914,11 +928,8 @@ pub async fn run_stdio(state: NodeState) {
         let request: JsonRpcRequest = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
-                let err_resp = JsonRpcResponse::error(
-                    Value::Null,
-                    -32700,
-                    format!("Parse error: {e}"),
-                );
+                let err_resp =
+                    JsonRpcResponse::error(Value::Null, -32700, format!("Parse error: {e}"));
                 let _ = write_response(&mut stdout, &err_resp).await;
                 continue;
             }

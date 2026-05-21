@@ -123,8 +123,11 @@ fn compute_update_root(
 /// that the AIR can reference.
 pub fn compute_sibling_commitment(witness: &MerkleUpdateWitness) -> BabyBear {
     let mut acc = BabyBear::ZERO;
-    for (level_idx, (siblings, &pos)) in
-        witness.siblings.iter().zip(witness.positions.iter()).enumerate()
+    for (level_idx, (siblings, &pos)) in witness
+        .siblings
+        .iter()
+        .zip(witness.positions.iter())
+        .enumerate()
     {
         let level_hash = hash_4_to_1(&[
             siblings[0],
@@ -141,10 +144,7 @@ pub fn compute_sibling_commitment(witness: &MerkleUpdateWitness) -> BabyBear {
 ///
 /// Inserts `new_leaf` at the given position in a 4-ary Merkle tree,
 /// replacing whatever was there before, using the provided sibling witnesses.
-pub fn compute_new_root_full(
-    new_leaf: BabyBear,
-    witness: &MerkleUpdateWitness,
-) -> BabyBear {
+pub fn compute_new_root_full(new_leaf: BabyBear, witness: &MerkleUpdateWitness) -> BabyBear {
     let mut current = new_leaf;
     for (siblings, &pos) in witness.siblings.iter().zip(witness.positions.iter()) {
         let mut children = [BabyBear::ZERO; 4];
@@ -416,8 +416,7 @@ mod tests {
         let proof = prove_block_transition(pre_root, &events, &witnesses);
 
         // Compute expected post_state_root
-        let (_, public_inputs) =
-            generate_block_transition_trace(pre_root, &events, &witnesses);
+        let (_, public_inputs) = generate_block_transition_trace(pre_root, &events, &witnesses);
         let post_root = public_inputs[1];
 
         let result = verify_block_transition(&proof, pre_root, post_root);
@@ -442,8 +441,7 @@ mod tests {
 
         let proof = prove_block_transition(pre_root, &events, &witnesses);
 
-        let (_, public_inputs) =
-            generate_block_transition_trace(pre_root, &events, &witnesses);
+        let (_, public_inputs) = generate_block_transition_trace(pre_root, &events, &witnesses);
         let post_root = public_inputs[1];
 
         let result = verify_block_transition(&proof, pre_root, post_root);
@@ -485,8 +483,7 @@ mod tests {
 
         let proof = prove_block_transition(pre_root, &events, &witnesses);
 
-        let (_, public_inputs) =
-            generate_block_transition_trace(pre_root, &events, &witnesses);
+        let (_, public_inputs) = generate_block_transition_trace(pre_root, &events, &witnesses);
         let post_root = public_inputs[1];
 
         // Use a wrong pre_state_root
@@ -561,8 +558,7 @@ mod tests {
                 position: i,
             })
             .collect();
-        let witnesses: Vec<MerkleUpdateWitness> =
-            (0..4).map(|i| make_test_witness(4, i)).collect();
+        let witnesses: Vec<MerkleUpdateWitness> = (0..4).map(|i| make_test_witness(4, i)).collect();
 
         let (trace, _) = generate_block_transition_trace(pre_root, &events, &witnesses);
 
@@ -596,11 +592,9 @@ mod tests {
                 position: i,
             })
             .collect();
-        let witnesses: Vec<MerkleUpdateWitness> =
-            (0..4).map(|i| make_test_witness(4, i)).collect();
+        let witnesses: Vec<MerkleUpdateWitness> = (0..4).map(|i| make_test_witness(4, i)).collect();
 
-        let (trace, public_inputs) =
-            generate_block_transition_trace(pre_root, &events, &witnesses);
+        let (trace, public_inputs) = generate_block_transition_trace(pre_root, &events, &witnesses);
         let air = BlockTransitionAir::new(events.len());
         let alpha = BabyBear::new(7);
 
@@ -630,8 +624,7 @@ mod tests {
                 position: 1,
             },
         ];
-        let witnesses: Vec<MerkleUpdateWitness> =
-            (0..2).map(|i| make_test_witness(4, i)).collect();
+        let witnesses: Vec<MerkleUpdateWitness> = (0..2).map(|i| make_test_witness(4, i)).collect();
 
         let (mut trace, public_inputs) =
             generate_block_transition_trace(pre_root, &events, &witnesses);

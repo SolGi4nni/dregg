@@ -1866,12 +1866,7 @@ mod tests {
             let omega = get_root_of_unity(log_n);
             let n = 1u32 << log_n;
             // omega^n must equal 1
-            assert_eq!(
-                omega.pow(n),
-                BabyBear::ONE,
-                "omega^(2^{}) must be 1",
-                log_n
-            );
+            assert_eq!(omega.pow(n), BabyBear::ONE, "omega^(2^{}) must be 1", log_n);
             // omega^(n/2) must NOT equal 1 (primitive root)
             if log_n > 0 {
                 assert_ne!(
@@ -1933,10 +1928,7 @@ mod tests {
         t.absorb_field(BabyBear::new(12345));
         let s1 = t.squeeze_field();
         let s2 = t.squeeze_field();
-        assert_ne!(
-            s1, s2,
-            "Consecutive squeezes must produce different values"
-        );
+        assert_ne!(s1, s2, "Consecutive squeezes must produce different values");
         // A third squeeze is also different from both
         let s3 = t.squeeze_field();
         assert_ne!(s3, s1);

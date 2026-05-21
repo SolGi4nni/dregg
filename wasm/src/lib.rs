@@ -18,8 +18,8 @@ use wasm_bindgen::prelude::*;
 use pyana_token::AuthToken;
 
 // Full runtime simulation modules.
-pub mod runtime;
 pub mod bindings;
+pub mod runtime;
 
 // ============================================================================
 // Token operations (Macaroon backend)

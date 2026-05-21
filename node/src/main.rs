@@ -198,8 +198,7 @@ async fn run_node(
     });
 
     // Build and serve the HTTP API.
-    let app = api::router(node_state.clone())
-        .into_make_service_with_connect_info::<SocketAddr>();
+    let app = api::router(node_state.clone()).into_make_service_with_connect_info::<SocketAddr>();
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
 
     info!(%addr, "HTTP API listening");

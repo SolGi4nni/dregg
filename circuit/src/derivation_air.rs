@@ -54,8 +54,8 @@
 //! 17. GTE bits are binary
 //! 18. GTE high bit is 0 (diff < 2^30 < p/2, meaning a >= b)
 
-use crate::field::BabyBear;
 use crate::constraint_prover::{Air, Constraint};
+use crate::field::BabyBear;
 use crate::poseidon2::hash_fact;
 
 /// Trace width for the derivation AIR.
@@ -1149,7 +1149,7 @@ mod tests {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         let body_fact = hash_fact(owns_pred, &[alice, file, BabyBear::ZERO]);
@@ -1203,7 +1203,7 @@ mod tests {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         let body_fact = hash_fact(owns_pred, &[alice, file, BabyBear::ZERO]);
@@ -1262,7 +1262,7 @@ mod tests {
             }],
             memberof_checks: vec![],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         // X=alice, Y=alice (they are equal, so the check passes)
@@ -1323,7 +1323,7 @@ mod tests {
             }],
             memberof_checks: vec![],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         // X=alice (1000), Y=file (2000) — NOT equal
@@ -1391,7 +1391,7 @@ mod tests {
             }],
             memberof_checks: vec![],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         // X=alice=1000, check is X==1000, should pass
@@ -1452,7 +1452,7 @@ mod tests {
                 rhs_value: BabyBear::new(1), // Y (the allowed action hash)
             }],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         // X=action_hash, Y=action_hash (matching -> member)
@@ -1512,7 +1512,7 @@ mod tests {
                 rhs_value: BabyBear::new(1), // Y (allowed action)
             }],
             gte_check: None,
-        lt_check: None,
+            lt_check: None,
         };
 
         // X=request_hash, Y=allowed_hash (DIFFERENT -> not a member)

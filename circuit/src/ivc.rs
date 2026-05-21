@@ -38,9 +38,9 @@
 //! The API is designed so that swapping to real recursion requires no changes to
 //! callers.
 
+use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
-use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::poseidon2::hash_many;
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
@@ -1484,10 +1484,7 @@ pub fn verify_validated_ivc(proof: &ValidatedIvcProof) -> ValidatedIvcVerificati
         let membership_public_inputs = vec![entry.removed_fact_hash, entry.old_root];
         let air = crate::poseidon2_air::MerklePoseidon2StarkAir;
         if let Err(e) = stark::verify(&air, &entry.proof, &membership_public_inputs) {
-            return ValidatedIvcVerification::MembershipProofInvalid {
-                step: i,
-                reason: e,
-            };
+            return ValidatedIvcVerification::MembershipProofInvalid { step: i, reason: e };
         }
     }
 
@@ -1994,7 +1991,12 @@ mod tests {
             body_fact_hashes: vec![body_hash],
             substitution: vec![BabyBear::new(888)],
             derived_predicate: BabyBear::new(999),
-            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [
+                BabyBear::new(888),
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ],
         };
 
         let derivation_air = DerivationAir::new(derivation);
@@ -2334,8 +2336,7 @@ mod tests {
 
         for i in 0..num_steps {
             // Get the Merkle proof for fact[i] in the current tree.
-            let (siblings, positions) =
-                get_merkle_proof_for_leaf(&current_leaves, i, tree_depth);
+            let (siblings, positions) = get_merkle_proof_for_leaf(&current_leaves, i, tree_depth);
 
             let old_root = current_root;
 
@@ -2441,7 +2442,11 @@ mod tests {
         let (initial_root, witnesses) = build_validated_ivc_chain(3);
 
         let result = prove_validated_ivc(initial_root, &witnesses);
-        assert!(result.is_ok(), "prove_validated_ivc failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "prove_validated_ivc failed: {:?}",
+            result.err()
+        );
 
         let proof = result.unwrap();
         assert_eq!(proof.step_count, 3);
@@ -2523,10 +2528,7 @@ mod tests {
             ValidatedIvcVerification::MembershipProofInvalid { step, .. } => {
                 assert_eq!(step, 1, "Should fail at step 1 where we tampered");
             }
-            other => panic!(
-                "Expected MembershipProofInvalid at step 1, got {:?}",
-                other
-            ),
+            other => panic!("Expected MembershipProofInvalid at step 1, got {:?}", other),
         }
     }
 
@@ -2585,11 +2587,7 @@ mod tests {
         witnesses[1].old_root = BabyBear::new(0xBADBAD);
 
         let result = prove_validated_ivc(initial_root, &witnesses);
-        assert!(
-            result.is_err(),
-            "Chain break should fail: {:?}",
-            result
-        );
+        assert!(result.is_err(), "Chain break should fail: {:?}", result);
         assert!(result.unwrap_err().contains("Chain break"));
     }
 
@@ -2640,7 +2638,11 @@ mod tests {
         let result = builder.finalize_validated(&witnesses);
         assert!(result.is_some());
         let validated = result.unwrap();
-        assert!(validated.is_ok(), "finalize_validated failed: {:?}", validated.err());
+        assert!(
+            validated.is_ok(),
+            "finalize_validated failed: {:?}",
+            validated.err()
+        );
 
         let proof = validated.unwrap();
         let verification = verify_validated_ivc(&proof);

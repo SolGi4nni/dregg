@@ -534,7 +534,10 @@ impl FederationTransport for TcpFederationTransport {
                     }
                 }
                 if !sent {
-                    tracing::warn!(peer_id, "failed to send finalized block to peer after retries");
+                    tracing::warn!(
+                        peer_id,
+                        "failed to send finalized block to peer after retries"
+                    );
                 }
             }
             Ok(())
@@ -768,10 +771,8 @@ impl NetworkConsensusNode {
                     // Verify the view-change signature if members are configured.
                     let valid = if !self.config.members.is_empty() {
                         if let Some(voter_pk) = self.config.members.get(vc_msg.voter) {
-                            let msg_bytes = ViewChangeMessage::signing_message(
-                                vc_msg.new_view,
-                                vc_msg.height,
-                            );
+                            let msg_bytes =
+                                ViewChangeMessage::signing_message(vc_msg.new_view, vc_msg.height);
                             voter_pk.verify(&msg_bytes, &vc_msg.signature)
                         } else {
                             false

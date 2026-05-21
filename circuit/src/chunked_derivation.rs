@@ -115,7 +115,10 @@ pub fn prove_chunked_authorization_with_depth(
     tree_depth: usize,
 ) -> ChunkedAuthorizationProof {
     assert!(chunk_size >= 1, "chunk_size must be at least 1");
-    assert!(!witness.steps.is_empty(), "witness must have at least 1 step");
+    assert!(
+        !witness.steps.is_empty(),
+        "witness must have at least 1 step"
+    );
 
     let total_steps = witness.steps.len();
     let num_chunks = total_steps.div_ceil(chunk_size);
@@ -173,10 +176,8 @@ pub fn prove_chunked_authorization_with_depth(
         chunk_proofs.push(proof);
 
         // Collect derived fact hashes from this chunk and evolve the tree.
-        let chunk_derived: Vec<BabyBear> = chunk_steps
-            .iter()
-            .map(|step| step.derived_hash())
-            .collect();
+        let chunk_derived: Vec<BabyBear> =
+            chunk_steps.iter().map(|step| step.derived_hash()).collect();
 
         for &fact_hash in &chunk_derived {
             tree_leaves.push(fact_hash);
@@ -293,9 +294,11 @@ pub fn verify_chunked_authorization(
             ));
         }
 
-        let chunk_initial_root = BabyBear::new_canonical(chunk_proof.public_inputs[pi::INITIAL_STATE_ROOT]);
+        let chunk_initial_root =
+            BabyBear::new_canonical(chunk_proof.public_inputs[pi::INITIAL_STATE_ROOT]);
         let chunk_conclusion = BabyBear::new_canonical(chunk_proof.public_inputs[pi::CONCLUSION]);
-        let chunk_final_acc = BabyBear::new_canonical(chunk_proof.public_inputs[pi::FINAL_ACCUMULATED_HASH]);
+        let chunk_final_acc =
+            BabyBear::new_canonical(chunk_proof.public_inputs[pi::FINAL_ACCUMULATED_HASH]);
         let chunk_policy_root = BabyBear::new_canonical(chunk_proof.public_inputs[pi::POLICY_ROOT]);
 
         // Check that the proof's embedded initial_root matches our tracked root.
@@ -330,11 +333,8 @@ pub fn verify_chunked_authorization(
         }
 
         // Check 5: Verify the individual STARK proof.
-        verify_authorization_stark(chunk_conclusion, chunk_final_acc, chunk_proof).map_err(
-            |e| {
-                format!("Chunk {} STARK verification failed: {}", chunk_idx, e)
-            },
-        )?;
+        verify_authorization_stark(chunk_conclusion, chunk_final_acc, chunk_proof)
+            .map_err(|e| format!("Chunk {} STARK verification failed: {}", chunk_idx, e))?;
     }
 
     // Check 6: Total steps consistency.
@@ -477,15 +477,16 @@ mod tests {
 
         let proof = prove_chunked_authorization(&witness, DEFAULT_CHUNK_SIZE);
 
-        assert_eq!(proof.chunk_proofs.len(), 1, "10 steps should fit in 1 chunk");
+        assert_eq!(
+            proof.chunk_proofs.len(),
+            1,
+            "10 steps should fit in 1 chunk"
+        );
         assert_eq!(proof.total_steps, 10);
         assert_eq!(proof.conclusion, BabyBear::ONE);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(
             result.is_ok(),
             "10-step single-chunk proof should verify: {:?}",
@@ -505,7 +506,11 @@ mod tests {
 
         let proof = prove_chunked_authorization(&witness, DEFAULT_CHUNK_SIZE);
 
-        assert_eq!(proof.chunk_proofs.len(), 2, "50 steps should split into 2 chunks (32 + 18)");
+        assert_eq!(
+            proof.chunk_proofs.len(),
+            2,
+            "50 steps should split into 2 chunks (32 + 18)"
+        );
         assert_eq!(proof.total_steps, 50);
         assert_eq!(proof.conclusion, BabyBear::ONE);
 
@@ -513,11 +518,8 @@ mod tests {
         assert_eq!(proof.chunk_proofs[0].public_inputs[pi::NUM_STEPS], 32);
         assert_eq!(proof.chunk_proofs[1].public_inputs[pi::NUM_STEPS], 18);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(
             result.is_ok(),
             "50-step two-chunk proof should verify: {:?}",
@@ -537,7 +539,11 @@ mod tests {
 
         let proof = prove_chunked_authorization(&witness, DEFAULT_CHUNK_SIZE);
 
-        assert_eq!(proof.chunk_proofs.len(), 4, "100 steps should split into 4 chunks (32+32+32+4)");
+        assert_eq!(
+            proof.chunk_proofs.len(),
+            4,
+            "100 steps should split into 4 chunks (32+32+32+4)"
+        );
         assert_eq!(proof.total_steps, 100);
         assert_eq!(proof.conclusion, BabyBear::ONE);
 
@@ -547,11 +553,8 @@ mod tests {
         assert_eq!(proof.chunk_proofs[2].public_inputs[pi::NUM_STEPS], 32);
         assert_eq!(proof.chunk_proofs[3].public_inputs[pi::NUM_STEPS], 4);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(
             result.is_ok(),
             "100-step four-chunk proof should verify: {:?}",
@@ -571,14 +574,13 @@ mod tests {
         // Tamper with the second chunk's trace commitment.
         proof.chunk_proofs[1].trace_commitment[0] ^= 0xFF;
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(result.is_err(), "Tampered chunk should fail verification");
         assert!(
-            result.unwrap_err().contains("Chunk 1 STARK verification failed"),
+            result
+                .unwrap_err()
+                .contains("Chunk 1 STARK verification failed"),
             "Error should identify the tampered chunk"
         );
     }
@@ -595,17 +597,19 @@ mod tests {
         // Swap chunks to simulate wrong ordering.
         proof.chunk_proofs.swap(0, 1);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
+        assert!(
+            result.is_err(),
+            "Wrong chunk order should fail verification"
         );
-        assert!(result.is_err(), "Wrong chunk order should fail verification");
         // Detection: swapping means the ALLOW-concluding chunk is no longer last,
         // triggering "non-final chunk has ALLOW" or the now-last chunk missing ALLOW.
         let err = result.unwrap_err();
         assert!(
-            err.contains("conclusion") || err.contains("ALLOW") || err.contains("initial_state_root"),
+            err.contains("conclusion")
+                || err.contains("ALLOW")
+                || err.contains("initial_state_root"),
             "Error should detect wrong ordering, got: {}",
             err
         );
@@ -665,11 +669,8 @@ mod tests {
         assert_eq!(proof.chunk_proofs[2].public_inputs[pi::NUM_STEPS], 5);
         assert_eq!(proof.chunk_proofs[3].public_inputs[pi::NUM_STEPS], 1);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(
             result.is_ok(),
             "Custom chunk_size=5 should verify: {:?}",
@@ -687,14 +688,19 @@ mod tests {
         assert_eq!(witness.steps.len(), 32);
 
         let proof = prove_chunked_authorization(&witness, DEFAULT_CHUNK_SIZE);
-        assert_eq!(proof.chunk_proofs.len(), 1, "32 steps should fit in exactly 1 chunk");
-
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
+        assert_eq!(
+            proof.chunk_proofs.len(),
+            1,
+            "32 steps should fit in exactly 1 chunk"
         );
-        assert!(result.is_ok(), "Exact-fit proof should verify: {:?}", result.err());
+
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
+        assert!(
+            result.is_ok(),
+            "Exact-fit proof should verify: {:?}",
+            result.err()
+        );
     }
 
     // ========================================================================
@@ -707,15 +713,16 @@ mod tests {
         assert_eq!(witness.steps.len(), 64);
 
         let proof = prove_chunked_authorization(&witness, DEFAULT_CHUNK_SIZE);
-        assert_eq!(proof.chunk_proofs.len(), 2, "64 steps should split into exactly 2 chunks");
+        assert_eq!(
+            proof.chunk_proofs.len(),
+            2,
+            "64 steps should split into exactly 2 chunks"
+        );
         assert_eq!(proof.chunk_proofs[0].public_inputs[pi::NUM_STEPS], 32);
         assert_eq!(proof.chunk_proofs[1].public_inputs[pi::NUM_STEPS], 32);
 
-        let result = verify_chunked_authorization(
-            &proof,
-            BabyBear::ONE,
-            witness.initial_state_root,
-        );
+        let result =
+            verify_chunked_authorization(&proof, BabyBear::ONE, witness.initial_state_root);
         assert!(
             result.is_ok(),
             "64-step two-exact-chunk proof should verify: {:?}",

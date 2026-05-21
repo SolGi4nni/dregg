@@ -755,9 +755,7 @@ impl Effect {
             Effect::BridgeMint { portable_proof } => {
                 32 + 32 + 8 + 8 + portable_proof.spending_proof.len() // nullifier + commitment + value + asset + proof
             }
-            Effect::BridgeLock {
-                spending_proof, ..
-            } => {
+            Effect::BridgeLock { spending_proof, .. } => {
                 32 + 32 + 8 + 8 + 8 + spending_proof.len() // nullifier + dest + value + asset + timeout + proof
             }
             Effect::BridgeFinalize { .. } => {

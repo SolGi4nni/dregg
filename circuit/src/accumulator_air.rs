@@ -103,7 +103,12 @@ const W: BabyBear = BabyBear(11);
 
 impl ExtElem {
     pub const ZERO: Self = Self([BabyBear::ZERO; 4]);
-    pub const ONE: Self = Self([BabyBear::ONE, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+    pub const ONE: Self = Self([
+        BabyBear::ONE,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+    ]);
 
     /// Embed a base field element.
     pub fn from_base(x: BabyBear) -> Self {
@@ -160,10 +165,26 @@ impl ExtElem {
 
         let mut mat = [[BabyBear::ZERO; 5]; 4];
 
-        mat[0][0] = a[0]; mat[0][1] = w * a[3]; mat[0][2] = w * a[2]; mat[0][3] = w * a[1]; mat[0][4] = BabyBear::ONE;
-        mat[1][0] = a[1]; mat[1][1] = a[0]; mat[1][2] = w * a[3]; mat[1][3] = w * a[2]; mat[1][4] = BabyBear::ZERO;
-        mat[2][0] = a[2]; mat[2][1] = a[1]; mat[2][2] = a[0]; mat[2][3] = w * a[3]; mat[2][4] = BabyBear::ZERO;
-        mat[3][0] = a[3]; mat[3][1] = a[2]; mat[3][2] = a[1]; mat[3][3] = a[0]; mat[3][4] = BabyBear::ZERO;
+        mat[0][0] = a[0];
+        mat[0][1] = w * a[3];
+        mat[0][2] = w * a[2];
+        mat[0][3] = w * a[1];
+        mat[0][4] = BabyBear::ONE;
+        mat[1][0] = a[1];
+        mat[1][1] = a[0];
+        mat[1][2] = w * a[3];
+        mat[1][3] = w * a[2];
+        mat[1][4] = BabyBear::ZERO;
+        mat[2][0] = a[2];
+        mat[2][1] = a[1];
+        mat[2][2] = a[0];
+        mat[2][3] = w * a[3];
+        mat[2][4] = BabyBear::ZERO;
+        mat[3][0] = a[3];
+        mat[3][1] = a[2];
+        mat[3][2] = a[1];
+        mat[3][3] = a[0];
+        mat[3][4] = BabyBear::ZERO;
 
         for c in 0..4 {
             let mut pivot_row = None;
@@ -174,15 +195,23 @@ impl ExtElem {
                 }
             }
             let pivot_row = pivot_row?;
-            if pivot_row != c { mat.swap(c, pivot_row); }
+            if pivot_row != c {
+                mat.swap(c, pivot_row);
+            }
 
             let inv_pivot = mat[c][c].inverse()?;
-            for j in 0..5 { mat[c][j] = mat[c][j] * inv_pivot; }
+            for j in 0..5 {
+                mat[c][j] = mat[c][j] * inv_pivot;
+            }
 
             for row in 0..4 {
-                if row == c { continue; }
+                if row == c {
+                    continue;
+                }
                 let factor = mat[row][c];
-                for j in 0..5 { mat[row][j] = mat[row][j] - factor * mat[c][j]; }
+                for j in 0..5 {
+                    mat[row][j] = mat[row][j] - factor * mat[c][j];
+                }
             }
         }
 
@@ -199,7 +228,12 @@ impl ExtElem {
 
     /// Read from a trace row at the given column offset.
     fn read_from(row: &[BabyBear], offset: usize) -> Self {
-        Self([row[offset], row[offset + 1], row[offset + 2], row[offset + 3]])
+        Self([
+            row[offset],
+            row[offset + 1],
+            row[offset + 2],
+            row[offset + 3],
+        ])
     }
 }
 
@@ -276,9 +310,10 @@ impl AccumulatorNonRevocationAir {
             sum.write_to(&mut row, col::SUM);
 
             // v_inv_i: inverse of v_i (proves nonzero)
-            let v_inv = anc.remainder.inverse().expect(
-                "Remainder must be nonzero for non-membership witness"
-            );
+            let v_inv = anc
+                .remainder
+                .inverse()
+                .expect("Remainder must be nonzero for non-membership witness");
             v_inv.write_to(&mut row, col::V_INV);
 
             // check_i = v_i * v_inv_i (should be ONE)
@@ -524,11 +559,8 @@ pub fn prove_accumulator_non_revocation(
 
     let witness = AccumulatorNonRevocationWitness { ancestors };
     let air = AccumulatorNonRevocationAir;
-    let (trace, public_inputs) = AccumulatorNonRevocationAir::generate_trace(
-        &witness,
-        accumulator,
-        alpha,
-    );
+    let (trace, public_inputs) =
+        AccumulatorNonRevocationAir::generate_trace(&witness, accumulator, alpha);
 
     Some(stark::prove(&air, &trace, &public_inputs))
 }
@@ -615,8 +647,10 @@ mod tests {
     #[test]
     fn ext_elem_mul_identity() {
         let a = ExtElem([
-            BabyBear::new(7), BabyBear::new(13),
-            BabyBear::new(21), BabyBear::new(42),
+            BabyBear::new(7),
+            BabyBear::new(13),
+            BabyBear::new(21),
+            BabyBear::new(42),
         ]);
         assert_eq!(a.mul(ExtElem::ONE), a);
         assert_eq!(ExtElem::ONE.mul(a), a);
@@ -625,8 +659,10 @@ mod tests {
     #[test]
     fn ext_elem_inverse() {
         let a = ExtElem([
-            BabyBear::new(100), BabyBear::new(200),
-            BabyBear::new(300), BabyBear::new(400),
+            BabyBear::new(100),
+            BabyBear::new(200),
+            BabyBear::new(300),
+            BabyBear::new(400),
         ]);
         let inv = a.inverse().unwrap();
         assert_eq!(a.mul(inv), ExtElem::ONE);
@@ -635,12 +671,16 @@ mod tests {
     #[test]
     fn ext_elem_mul_commutative() {
         let a = ExtElem([
-            BabyBear::new(5), BabyBear::new(10),
-            BabyBear::new(15), BabyBear::new(20),
+            BabyBear::new(5),
+            BabyBear::new(10),
+            BabyBear::new(15),
+            BabyBear::new(20),
         ]);
         let b = ExtElem([
-            BabyBear::new(3), BabyBear::new(7),
-            BabyBear::new(11), BabyBear::new(19),
+            BabyBear::new(3),
+            BabyBear::new(7),
+            BabyBear::new(11),
+            BabyBear::new(19),
         ]);
         assert_eq!(a.mul(b), b.mul(a));
     }
@@ -695,8 +735,11 @@ mod tests {
             });
         }
 
-        let witness = AccumulatorNonRevocationWitness { ancestors: witness_ancestors };
-        let (trace, public_inputs) = AccumulatorNonRevocationAir::generate_trace(&witness, acc, alpha);
+        let witness = AccumulatorNonRevocationWitness {
+            ancestors: witness_ancestors,
+        };
+        let (trace, public_inputs) =
+            AccumulatorNonRevocationAir::generate_trace(&witness, acc, alpha);
 
         // Verify dimensions.
         assert!(trace.len().is_power_of_two());
@@ -713,7 +756,8 @@ mod tests {
             let next = if i + 1 < trace.len() { i + 1 } else { 0 };
             let c = air.eval_constraints(&trace[i], &trace[next], &public_inputs, alpha_verifier);
             assert_eq!(
-                c, BabyBear::ZERO,
+                c,
+                BabyBear::ZERO,
                 "Constraint non-zero at row {i}: c = {}",
                 c.0
             );
@@ -746,9 +790,9 @@ mod tests {
 
         // Include a revoked hash in ancestors.
         let ancestors = vec![
-            make_hash(7777), // not revoked
+            make_hash(7777),   // not revoked
             revocation_set[2], // REVOKED
-            make_hash(8888), // not revoked
+            make_hash(8888),   // not revoked
         ];
 
         let result = prove_accumulator_non_revocation(&ancestors, acc, alpha, &revocation_set);
@@ -773,7 +817,11 @@ mod tests {
             .expect("Should handle MAX_ANCESTORS");
 
         let result = verify_accumulator_non_revocation(acc, alpha, ancestors.len(), &proof);
-        assert!(result.is_ok(), "MAX_ANCESTORS proof should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "MAX_ANCESTORS proof should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -783,13 +831,15 @@ mod tests {
         let acc = compute_accumulator(&revocation_set, alpha);
 
         let ancestors = vec![make_hash(9999)];
-        let proof = prove_accumulator_non_revocation(&ancestors, acc, alpha, &revocation_set)
-            .unwrap();
+        let proof =
+            prove_accumulator_non_revocation(&ancestors, acc, alpha, &revocation_set).unwrap();
 
         // Verify with wrong accumulator.
         let wrong_acc = ExtElem([
-            BabyBear::new(1), BabyBear::new(2),
-            BabyBear::new(3), BabyBear::new(4),
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
         ]);
         let result = verify_accumulator_non_revocation(wrong_acc, alpha, ancestors.len(), &proof);
         assert!(result.is_err(), "Wrong accumulator should be rejected");
@@ -806,7 +856,11 @@ mod tests {
             .expect("Empty ancestors should produce proof");
 
         let result = verify_accumulator_non_revocation(acc, alpha, 0, &proof);
-        assert!(result.is_ok(), "Empty ancestor proof should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Empty ancestor proof should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -824,7 +878,11 @@ mod tests {
             .expect("Should prove for large set");
 
         let result = verify_accumulator_non_revocation(acc, alpha, 1, &proof);
-        assert!(result.is_ok(), "Large set proof should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Large set proof should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -840,7 +898,10 @@ mod tests {
 
         // Attempting to prove non-membership should fail.
         let result = prove_accumulator_non_revocation(&[present], acc, alpha, &revocation_set);
-        assert!(result.is_none(), "Should not prove non-membership of a member");
+        assert!(
+            result.is_none(),
+            "Should not prove non-membership of a member"
+        );
     }
 
     #[test]
@@ -857,8 +918,10 @@ mod tests {
         let absent_s = make_hash(999);
         let absent_l = make_hash(999);
 
-        let proof_s = prove_accumulator_non_revocation(&[absent_s], acc_s, alpha_s, &small_set).unwrap();
-        let proof_l = prove_accumulator_non_revocation(&[absent_l], acc_l, alpha_l, &large_set).unwrap();
+        let proof_s =
+            prove_accumulator_non_revocation(&[absent_s], acc_s, alpha_s, &small_set).unwrap();
+        let proof_l =
+            prove_accumulator_non_revocation(&[absent_l], acc_l, alpha_l, &large_set).unwrap();
 
         // Both proofs should have the same trace dimensions.
         assert_eq!(proof_s.trace_len, proof_l.trace_len);
@@ -872,8 +935,8 @@ mod tests {
         let acc = compute_accumulator(&revocation_set, alpha);
 
         let ancestors = vec![make_hash(9999)];
-        let mut proof = prove_accumulator_non_revocation(&ancestors, acc, alpha, &revocation_set)
-            .unwrap();
+        let mut proof =
+            prove_accumulator_non_revocation(&ancestors, acc, alpha, &revocation_set).unwrap();
 
         // Tamper.
         proof.trace_commitment[0] ^= 0xFF;

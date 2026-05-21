@@ -120,9 +120,7 @@ impl PersistentStore {
 
             // Load the existing chain within the write transaction.
             let mut chain: TokenChain = {
-                let existing = table
-                    .get(token_id)?
-                    .ok_or(StoreError::NotFound)?;
+                let existing = table.get(token_id)?.ok_or(StoreError::NotFound)?;
                 postcard::from_bytes(existing.value())?
             };
 

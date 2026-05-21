@@ -165,9 +165,9 @@ impl ProofVerifier for StarkProofVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyana_circuit::binding::compute_action_binding;
     use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{proof_to_bytes, prove};
-    use pyana_circuit::binding::compute_action_binding;
 
     /// Helper: generate a valid proof with action binding (3 public inputs).
     /// Uses the canonical `compute_action_binding` to produce the binding commitment.
@@ -176,7 +176,11 @@ mod tests {
             [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
             [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
             [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+            [
+                BabyBear::new(1000),
+                BabyBear::new(1100),
+                BabyBear::new(1200),
+            ],
         ];
         let positions: [u8; 4] = [0, 1, 2, 3];
         let leaf_hash = BabyBear::new(12345);

@@ -20,8 +20,8 @@
 //! 4. Last row's parent = expected root (public input)
 //! 5. First row's current = leaf hash (public input)
 
-use crate::field::BabyBear;
 use crate::constraint_prover::{Air, Constraint};
+use crate::field::BabyBear;
 use crate::poseidon2::hash_4_to_1;
 
 /// The tree depth (number of levels from leaf to root).

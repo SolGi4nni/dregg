@@ -10,7 +10,7 @@
 use ed25519_dalek::Signer;
 use zeroize::{Zeroize, Zeroizing};
 
-use pyana_bridge::{BridgePresentationProof, BridgePredicateProof, Predicate};
+use pyana_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
 use pyana_cell::CellId;
 use pyana_circuit::BabyBear;
 use pyana_circuit::IvcProof;
@@ -158,7 +158,10 @@ impl DisclosureSpec {
     ) -> &mut Self {
         self.add(
             fact_index,
-            FactDisclosure::CommittedThreshold { threshold, blinding },
+            FactDisclosure::CommittedThreshold {
+                threshold,
+                blinding,
+            },
         )
     }
 
@@ -723,8 +726,8 @@ impl AgentWallet {
         // (b) Deserialization check: ensure the token can be decoded as a valid macaroon.
         // We use a zeroed root_key since we don't have the issuer key -- this verifies
         // structural validity (parse, caveat structure) without HMAC chain verification.
-        let _decoded = MacaroonToken::from_encoded(&delegated.token_bytes, [0u8; 32])
-            .map_err(|e| {
+        let _decoded =
+            MacaroonToken::from_encoded(&delegated.token_bytes, [0u8; 32]).map_err(|e| {
                 SdkError::InvalidDelegation(format!("token failed to deserialize: {e}"))
             })?;
 
@@ -986,8 +989,7 @@ impl AgentWallet {
 
         // Step 3: Compute the Poseidon2 commitment over the revealed facts.
         // This cryptographically binds the revealed facts to the STARK proof.
-        let commitment =
-            pyana_bridge::compute_revealed_facts_commitment(&revealed_facts);
+        let commitment = pyana_bridge::compute_revealed_facts_commitment(&revealed_facts);
 
         // Step 4: Generate STARK proof via the bridge with the commitment as a public input.
         let bridge_proof = self.prove_authorization_selective(token, request, commitment)?;
@@ -1649,14 +1651,18 @@ impl AgentWallet {
                 poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
 
             // Generate the predicate proof.
-            let bridge_proof =
-                pyana_bridge::prove_predicate_for_fact(*value as u32, fact_hash, state_root, &predicate)
-                    .ok_or_else(|| {
-                        SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
-                            "predicate proof failed for '{}': value {} does not satisfy {:?}",
-                            req.attribute, value, predicate
-                        )))
-                    })?;
+            let bridge_proof = pyana_bridge::prove_predicate_for_fact(
+                *value as u32,
+                fact_hash,
+                state_root,
+                &predicate,
+            )
+            .ok_or_else(|| {
+                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                    "predicate proof failed for '{}': value {} does not satisfy {:?}",
+                    req.attribute, value, predicate
+                )))
+            })?;
 
             // Extract the inner circuit proof(s).
             // For simple predicates (Gte, Lte, etc.) we get a single proof.
@@ -2065,11 +2071,17 @@ mod tests {
             ..Default::default()
         };
         let proof_result = wallet.prove_authorization(&attenuated, &request);
-        assert!(proof_result.is_err(), "attenuated token should not be able to generate federation membership proofs");
+        assert!(
+            proof_result.is_err(),
+            "attenuated token should not be able to generate federation membership proofs"
+        );
 
         // But the ROOT token can still prove.
         let root_proof_result = wallet.prove_authorization(&root_token, &request);
-        assert!(root_proof_result.is_ok(), "root token should still be able to prove");
+        assert!(
+            root_proof_result.is_ok(),
+            "root token should still be able to prove"
+        );
     }
 
     #[test]
@@ -2085,11 +2097,17 @@ mod tests {
             services: vec![("storage".to_string(), "r".to_string())],
             ..Default::default()
         };
-        let delegated = wallet.delegate(&root_token, &delegatee_pk, &restrictions).unwrap();
+        let delegated = wallet
+            .delegate(&root_token, &delegatee_pk, &restrictions)
+            .unwrap();
 
         // The delegated token's underlying attenuated HeldToken in the wallet
         // should also have zeroed root_key.
-        let attenuated_in_wallet = wallet.tokens().iter().find(|t| t.id.contains("att")).unwrap();
+        let attenuated_in_wallet = wallet
+            .tokens()
+            .iter()
+            .find(|t| t.id.contains("att"))
+            .unwrap();
         assert!(!attenuated_in_wallet.can_mint());
         assert_eq!(attenuated_in_wallet.root_key(), &[0u8; 32]);
 

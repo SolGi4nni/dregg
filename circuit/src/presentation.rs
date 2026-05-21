@@ -18,12 +18,12 @@
 //! The presentation proof proves: "I hold a valid attenuated token chain whose
 //! final state authorizes action X" without revealing the chain or capabilities.
 
+use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::derivation_air::{CircuitRule, DerivationAir, DerivationWitness};
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
 use crate::ivc::{FoldDelta, IvcPresentationProof, prove_ivc};
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
-use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::multi_step_air;
 use crate::poseidon2::hash_fact;
 use crate::stark::{self, MerkleStarkAir, StarkAir, StarkProof};
@@ -286,8 +286,7 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+        let presentation_tag = crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -454,8 +453,7 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+        let presentation_tag = crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -520,10 +518,7 @@ impl PresentationAir {
                 w.request_predicate,
             )?
         } else {
-            generate_merkle_poseidon2_stark_proof_bound(
-                &w.issuer_membership,
-                w.request_predicate,
-            )?
+            generate_merkle_poseidon2_stark_proof_bound(&w.issuer_membership, w.request_predicate)?
         };
 
         // Compute public inputs — roots stay private, tag is public.
@@ -533,8 +528,7 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+        let presentation_tag = crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -653,8 +647,7 @@ impl Air for PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+        let presentation_tag = crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
 
         let row = vec![
             w.federation_root,
@@ -1599,7 +1592,12 @@ mod tests {
             body_fact_hashes: vec![BabyBear::new(555)],
             substitution: vec![BabyBear::new(777)],
             derived_predicate: BabyBear::new(300),
-            derived_terms: [BabyBear::new(777), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [
+                BabyBear::new(777),
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ],
         };
 
         let issuer_witness = crate::merkle_air::create_test_witness(BabyBear::new(9999), 8);
@@ -1653,7 +1651,11 @@ mod tests {
 
         // Verify with real STARK verifier using MerklePoseidon2StarkAir
         use crate::poseidon2_air::MerklePoseidon2StarkAir;
-        let pi: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear::new_canonical(v)).collect();
+        let pi: Vec<BabyBear> = proof
+            .public_inputs
+            .iter()
+            .map(|&v| BabyBear::new_canonical(v))
+            .collect();
         let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);
         assert!(
             result.is_ok(),
@@ -1669,7 +1671,11 @@ mod tests {
 
         // Verify with wrong root
         use crate::poseidon2_air::MerklePoseidon2StarkAir;
-        let mut pi: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear::new_canonical(v)).collect();
+        let mut pi: Vec<BabyBear> = proof
+            .public_inputs
+            .iter()
+            .map(|&v| BabyBear::new_canonical(v))
+            .collect();
         // Tamper: change the root
         pi[1] = BabyBear::new(999999);
         let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);

@@ -508,7 +508,12 @@ impl GossipNetwork {
     /// gossip envelopes (HMAC-blake3). All peers in the network must share this
     /// key for envelope verification.
     pub fn new(endpoint: Endpoint, node_id: NodeId, signing_key: [u8; 32]) -> Self {
-        Self::with_max_connections(endpoint, node_id, signing_key, DEFAULT_MAX_GOSSIP_CONNECTIONS)
+        Self::with_max_connections(
+            endpoint,
+            node_id,
+            signing_key,
+            DEFAULT_MAX_GOSSIP_CONNECTIONS,
+        )
     }
 
     /// Create a new gossip network with a custom max_connections limit.
@@ -1162,8 +1167,7 @@ impl GossipNetwork {
                             if messages.len() >= MAX_ANTI_ENTROPY_RESPONSE_MESSAGES {
                                 break;
                             }
-                            if total_bytes + cached.payload.len()
-                                > MAX_ANTI_ENTROPY_RESPONSE_BYTES
+                            if total_bytes + cached.payload.len() > MAX_ANTI_ENTROPY_RESPONSE_BYTES
                             {
                                 break;
                             }
@@ -1253,7 +1257,9 @@ impl GossipNetwork {
                 let expired: Vec<_> = s
                     .pending_ihaves
                     .iter()
-                    .filter(|(_, (_, received_at))| now.duration_since(*received_at) > IHAVE_TIMEOUT)
+                    .filter(|(_, (_, received_at))| {
+                        now.duration_since(*received_at) > IHAVE_TIMEOUT
+                    })
                     .map(|((topic_id, msg_hash), (addr, _))| (*topic_id, *msg_hash, *addr))
                     .collect();
 

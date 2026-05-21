@@ -2508,11 +2508,7 @@ fn test_grant_capability_attenuation_succeeds() {
 // =============================================================================
 
 /// Helper: create a partial-commitment action and sign it for composition.
-fn sign_partial_action(
-    action: &Action,
-    position: usize,
-    signing_key: &SigningKey,
-) -> [u8; 64] {
+fn sign_partial_action(action: &Action, position: usize, signing_key: &SigningKey) -> [u8; 64] {
     let message = TurnExecutor::compute_partial_signing_message(action, position);
     let sig = signing_key.sign(&message);
     sig.to_bytes()
@@ -2550,8 +2546,7 @@ fn test_partial_commitment_signature_valid() {
     let sig_bytes = sign_partial_action(&action, position, &kp.signing_key);
 
     // Verify manually.
-    let message =
-        TurnExecutor::compute_partial_signing_message(&action, position);
+    let message = TurnExecutor::compute_partial_signing_message(&action, position);
     let verifying_key: VerifyingKey = (&kp.signing_key).into();
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     assert!(verifying_key.verify(&message, &signature).is_ok());
@@ -5101,7 +5096,10 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
 
     let (target, _) = make_open_cell(10, 0);
     let target_id = target.id;
-    let slot = parent.capabilities.grant(target_id, AuthRequired::None).unwrap();
+    let slot = parent
+        .capabilities
+        .grant(target_id, AuthRequired::None)
+        .unwrap();
 
     ledger.insert_cell(parent).unwrap();
     ledger.insert_cell(target).unwrap();

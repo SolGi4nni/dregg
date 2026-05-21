@@ -85,8 +85,7 @@ pub struct NodeStateInner {
     pub decryption_threshold: usize,
     /// Pending decryption shares for encrypted turns awaiting collaborative decryption.
     /// Key: ciphertext_id, Value: collected shares so far.
-    pub pending_decryption_shares:
-        HashMap<[u8; 32], Vec<pyana_federation::DecryptionShare>>,
+    pub pending_decryption_shares: HashMap<[u8; 32], Vec<pyana_federation::DecryptionShare>>,
     /// Local routing table populated from RoutingDirectives in turn receipts.
     /// Maps CellId -> reachable peers, enabling three-party introductions to
     /// produce actual network-level connectivity.
@@ -134,8 +133,8 @@ impl NodeState {
         // Issue 4: Load or generate node identity key.
         let key_path = data_dir.join("node.key");
         let wallet = if key_path.exists() {
-            let key_bytes_vec = std::fs::read(&key_path)
-                .map_err(|e| format!("failed to read node.key: {e}"))?;
+            let key_bytes_vec =
+                std::fs::read(&key_path).map_err(|e| format!("failed to read node.key: {e}"))?;
             if key_bytes_vec.len() != 32 {
                 return Err(format!(
                     "node.key has invalid length: expected 32, got {}",

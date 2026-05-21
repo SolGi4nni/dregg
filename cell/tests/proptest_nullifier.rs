@@ -14,9 +14,16 @@ use pyana_cell::nullifier_set::NullifierSet;
 #[derive(Clone, Debug)]
 enum NoteOp {
     /// Create a note with the given seed parameters.
-    Create { owner_seed: u8, amount: u64, randomness: [u8; 32] },
+    Create {
+        owner_seed: u8,
+        amount: u64,
+        randomness: [u8; 32],
+    },
     /// Spend the note at the given index in our created-notes list.
-    Spend { index: usize, spending_key: [u8; 32] },
+    Spend {
+        index: usize,
+        spending_key: [u8; 32],
+    },
 }
 
 /// Strategy for generating a random note operation.
@@ -31,8 +38,10 @@ fn arb_note_op(max_notes: usize) -> impl Strategy<Value = NoteOp> {
             }
         ),
         // Spend: pick an index and a spending key
-        (0..max_notes, any::<[u8; 32]>())
-            .prop_map(|(index, spending_key)| NoteOp::Spend { index, spending_key }),
+        (0..max_notes, any::<[u8; 32]>()).prop_map(|(index, spending_key)| NoteOp::Spend {
+            index,
+            spending_key
+        }),
     ]
 }
 

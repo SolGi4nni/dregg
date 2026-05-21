@@ -218,7 +218,11 @@ fn extract_tree_access(
             Effect::IncrementNonce { cell } => {
                 write_set.push(*cell);
             }
-            Effect::CreateCell { public_key, token_id, .. } => {
+            Effect::CreateCell {
+                public_key,
+                token_id,
+                ..
+            } => {
                 let id = CellId::derive_raw(public_key, token_id);
                 write_set.push(id);
             }
@@ -231,7 +235,10 @@ fn extract_tree_access(
             Effect::EmitEvent { cell, .. } => {
                 read_set.push(*cell);
             }
-            Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+            Effect::CreateSealPair {
+                sealer_holder,
+                unsealer_holder,
+            } => {
                 write_set.push(*sealer_holder);
                 write_set.push(*unsealer_holder);
             }

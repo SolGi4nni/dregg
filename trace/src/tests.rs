@@ -290,7 +290,10 @@ fn test_multi_step_derived_facts() {
     let facts = vec![
         Fact::new(
             sym("app"),
-            vec![Term::Const(sym("dashboard")), Term::Const(sym("read,write"))],
+            vec![
+                Term::Const(sym("dashboard")),
+                Term::Const(sym("read,write")),
+            ],
         ),
         Fact::new(sym("has_role"), vec![Term::Const(sym("admin"))]),
         Fact::new(

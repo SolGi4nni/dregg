@@ -389,7 +389,11 @@ pub fn verify_fulfillment_with_predicates(
         if current_block > fulfillment.state_root_block + req.state_root_freshness {
             return Err(FulfillmentError::StaleStateRoot(format!(
                 "requirement {} ({}): state root at block {} is too old (current: {}, max age: {})",
-                idx, req.attribute, fulfillment.state_root_block, current_block, req.state_root_freshness
+                idx,
+                req.attribute,
+                fulfillment.state_root_block,
+                current_block,
+                req.state_root_freshness
             )));
         }
 
@@ -663,7 +667,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: resource_pattern.map(String::from),
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None)
     }
@@ -1189,8 +1194,10 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_with_valid_predicate_proofs() {
-        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
         use pyana_circuit::poseidon2::hash_fact;
+        use pyana_circuit::{
+            PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
+        };
 
         let intent = test_intent(vec!["read"], None);
         // Create an intent with a predicate requirement
@@ -1242,8 +1249,14 @@ mod tests {
             root_key: Some(test_root_key()),
             ..Default::default()
         };
-        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
-            .unwrap();
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
 
         let fulfillment_with_preds = FulfillmentWithPredicates {
             base,
@@ -1259,13 +1272,19 @@ mod tests {
             BabyBear::ZERO,
             1000,
         );
-        assert!(result.is_ok(), "valid predicate fulfillment should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "valid predicate fulfillment should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_verify_fulfillment_rejects_stale_state_root() {
-        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
         use pyana_circuit::poseidon2::hash_fact;
+        use pyana_circuit::{
+            PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
+        };
 
         let spec = MatchSpec {
             actions: vec![ActionPattern {
@@ -1313,8 +1332,14 @@ mod tests {
             root_key: Some(test_root_key()),
             ..Default::default()
         };
-        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
-            .unwrap();
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
 
         let fulfillment_with_preds = FulfillmentWithPredicates {
             base,
@@ -1341,8 +1366,10 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_rejects_wrong_threshold() {
-        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
         use pyana_circuit::poseidon2::hash_fact;
+        use pyana_circuit::{
+            PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
+        };
 
         let spec = MatchSpec {
             actions: vec![ActionPattern {
@@ -1391,8 +1418,14 @@ mod tests {
             root_key: Some(test_root_key()),
             ..Default::default()
         };
-        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
-            .unwrap();
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
 
         let fulfillment_with_preds = FulfillmentWithPredicates {
             base,
@@ -1449,8 +1482,14 @@ mod tests {
             root_key: Some(test_root_key()),
             ..Default::default()
         };
-        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
-            .unwrap();
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
 
         // No predicate proofs provided!
         let fulfillment_with_preds = FulfillmentWithPredicates {
@@ -1477,8 +1516,10 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_multiple_predicates_all_must_pass() {
-        use pyana_circuit::{PredicateWitness, PredicateType, compute_fact_commitment, prove_predicate};
         use pyana_circuit::poseidon2::hash_fact;
+        use pyana_circuit::{
+            PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
+        };
 
         let spec = MatchSpec {
             actions: vec![ActionPattern {
@@ -1520,7 +1561,8 @@ mod tests {
             threshold: BabyBear::new(1000),
             predicate_type: PredicateType::Gte,
             fact_commitment: balance_commitment,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Generate proof for reputation >= 50 (reputation = 85)
         let reputation = BabyBear::new(85);
@@ -1532,7 +1574,8 @@ mod tests {
             threshold: BabyBear::new(50),
             predicate_type: PredicateType::Gte,
             fact_commitment: rep_commitment,
-        }).unwrap();
+        })
+        .unwrap();
 
         let token = source_token();
         let matched = Match {
@@ -1546,8 +1589,14 @@ mod tests {
             root_key: Some(test_root_key()),
             ..Default::default()
         };
-        let base = fulfill(&pred_intent, &matched, &token, CommitmentId([0xBB; 32]), &options)
-            .unwrap();
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
 
         let fulfillment_with_preds = FulfillmentWithPredicates {
             base,
@@ -1562,6 +1611,10 @@ mod tests {
             BabyBear::ZERO,
             1000,
         );
-        assert!(result.is_ok(), "both predicates should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "both predicates should verify: {:?}",
+            result.err()
+        );
     }
 }

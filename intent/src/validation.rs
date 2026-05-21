@@ -150,7 +150,10 @@ pub fn validate_intent(intent: &Intent) -> Result<(), ValidationError> {
 }
 
 /// Recursively validate compound spec depth and total count.
-fn validate_compound_depth(specs: &[crate::MatchSpec], current_depth: usize) -> Result<(), ValidationError> {
+fn validate_compound_depth(
+    specs: &[crate::MatchSpec],
+    current_depth: usize,
+) -> Result<(), ValidationError> {
     if current_depth > MAX_COMPOUND_DEPTH {
         return Err(ValidationError::CompoundTooDeep {
             depth: current_depth,
@@ -198,7 +201,8 @@ mod tests {
             constraints: vec![Constraint::AppId("myapp".into())],
             min_budget: None,
             resource_pattern: Some("documents/*".into()),
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None)
     }
@@ -222,7 +226,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -242,7 +247,8 @@ mod tests {
             constraints,
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -263,7 +269,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -278,7 +285,8 @@ mod tests {
             constraints: vec![],
             min_budget: None,
             resource_pattern: Some(long_pattern),
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -296,7 +304,8 @@ mod tests {
             constraints: vec![Constraint::AppId(long_string)],
             min_budget: None,
             resource_pattern: None,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -322,7 +331,8 @@ mod tests {
             constraints,
             min_budget: None,
             resource_pattern: Some(max_string),
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         assert!(validate_intent(&intent).is_ok());

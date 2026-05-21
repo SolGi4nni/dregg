@@ -60,10 +60,7 @@ impl RoutingTable {
             created_at: now,
         };
 
-        self.routes
-            .entry(directive.target)
-            .or_default()
-            .push(entry);
+        self.routes.entry(directive.target).or_default().push(entry);
     }
 
     /// Look up routes to reach a given cell.

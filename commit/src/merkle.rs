@@ -402,10 +402,7 @@ impl MerkleTree {
         // Construct the range of [u8; 32] values whose first 4 bytes match `prefix`.
         let lo = prefix_to_hash_lo(prefix);
         let hi = prefix_to_hash_hi(prefix);
-        self.leaves
-            .range(lo..=hi)
-            .map(|(hash, _)| hash)
-            .collect()
+        self.leaves.range(lo..=hi).map(|(hash, _)| hash).collect()
     }
 
     /// Check if there are any leaves whose path_key falls in [start, end].
@@ -740,8 +737,8 @@ mod tests {
     #[test]
     fn path_key_extraction() {
         let hash = [
-            0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0,
         ];
         let key = path_key(&hash);
         assert_eq!(key, 0x12345678);

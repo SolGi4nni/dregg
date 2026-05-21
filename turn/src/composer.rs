@@ -259,10 +259,8 @@ impl TurnComposer {
         let mut position = 0usize;
         for (frag_idx, fragment) in self.fragments.iter().enumerate() {
             for (action_idx, action) in fragment.actions.iter().enumerate() {
-                let signing_message = TurnExecutor::compute_partial_signing_message(
-                    action,
-                    position,
-                );
+                let signing_message =
+                    TurnExecutor::compute_partial_signing_message(action, position);
 
                 // Verify the signature.
                 let sig_bytes = fragment.signatures[action_idx];

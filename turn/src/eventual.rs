@@ -220,13 +220,25 @@ impl std::fmt::Display for PipelineError {
                 write!(f, "turn[{index}] execution failed: {reason}")
             }
             PipelineError::Empty => write!(f, "pipeline is empty"),
-            PipelineError::InvalidOutputRef { turn_index, output_ref } => {
-                write!(f, "turn[{}] has OutputRef with source_turn {:02x}{:02x}.. not in batch",
-                    turn_index, output_ref.source_turn[0], output_ref.source_turn[1])
+            PipelineError::InvalidOutputRef {
+                turn_index,
+                output_ref,
+            } => {
+                write!(
+                    f,
+                    "turn[{}] has OutputRef with source_turn {:02x}{:02x}.. not in batch",
+                    turn_index, output_ref.source_turn[0], output_ref.source_turn[1]
+                )
             }
-            PipelineError::MissingDependency { turn_index, missing_hash } => {
-                write!(f, "turn[{}] depends_on hash {:02x}{:02x}.. not found",
-                    turn_index, missing_hash[0], missing_hash[1])
+            PipelineError::MissingDependency {
+                turn_index,
+                missing_hash,
+            } => {
+                write!(
+                    f,
+                    "turn[{}] depends_on hash {:02x}{:02x}.. not found",
+                    turn_index, missing_hash[0], missing_hash[1]
+                )
             }
         }
     }
@@ -369,7 +381,6 @@ impl Default for Pipeline {
     }
 }
 
-
 // ─── PipelineResult ──────────────────────────────────────────────────────────
 
 /// The outcome of executing a pipeline.
@@ -378,9 +389,15 @@ pub enum PipelineResult {
     /// All turns in the pipeline committed successfully.
     AllCommitted { committed: Vec<usize> },
     /// Some turns committed, some are pending (conditional turns not yet resolved).
-    PartialWithPending { committed: Vec<usize>, pending: Vec<usize> },
+    PartialWithPending {
+        committed: Vec<usize>,
+        pending: Vec<usize>,
+    },
     /// Some turns failed. In non-atomic mode, others may have committed.
-    Failed { committed: Vec<usize>, failed: Vec<(usize, PipelineError)> },
+    Failed {
+        committed: Vec<usize>,
+        failed: Vec<(usize, PipelineError)>,
+    },
 }
 
 /// Builder for constructing pipelines with a fluent API.
@@ -391,7 +408,9 @@ pub struct PipelineBuilder {
 impl PipelineBuilder {
     /// Create a new pipeline builder.
     pub fn new() -> Self {
-        Self { pipeline: Pipeline::new() }
+        Self {
+            pipeline: Pipeline::new(),
+        }
     }
 
     /// Add a turn to the pipeline. Returns its index.
@@ -1558,5 +1577,3 @@ mod tests {
         assert!(ledger.get(&new_cell_id_2).is_some(), "cell 2 should exist");
     }
 }
-
-

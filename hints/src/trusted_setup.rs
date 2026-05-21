@@ -18,8 +18,7 @@ impl Default for JsonTrustedSetup {
     fn default() -> Self {
         // The embedded data is a compile-time constant; a parse failure here
         // indicates a build corruption and is unrecoverable.
-        JsonTrustedSetup::from_embed()
-            .expect("embedded trusted setup data is corrupt")
+        JsonTrustedSetup::from_embed().expect("embedded trusted setup data is corrupt")
     }
 }
 

@@ -262,16 +262,18 @@ impl Federation {
         }
 
         // Determine leader and compute pre_state_root from the leader's tree.
-        let view = self.consensus_states.iter().find(|s| s.is_online)?.current_view;
+        let view = self
+            .consensus_states
+            .iter()
+            .find(|s| s.is_online)?
+            .current_view;
         let leader_id = self.config.leader_for_view(view);
         if leader_id >= self.nodes.len() || !self.nodes[leader_id].is_online {
             // Fall back to standard round if leader identification fails.
-            return self
-                .run_consensus_round()
-                .map(|(b, qc)| {
-                    let proof = LightClientProof::from_block(&b, &qc);
-                    (b, qc, proof)
-                });
+            return self.run_consensus_round().map(|(b, qc)| {
+                let proof = LightClientProof::from_block(&b, &qc);
+                (b, qc, proof)
+            });
         }
 
         let pre_state_root = self.nodes[leader_id].compute_state_root();

@@ -14,20 +14,22 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use pyana_cell::{
-    AuthRequired, CapabilityRef, Cell, CellId, Ledger, Note, NoteCommitment, NullifierSet,
-    Nullifier, Permissions, RevocationChannel, RevocationChannelSet,
-};
 use pyana_cell::revocation_channel::ChannelState;
+use pyana_cell::{
+    AuthRequired, CapabilityRef, Cell, CellId, Ledger, Note, NoteCommitment, Nullifier,
+    NullifierSet, Permissions, RevocationChannel, RevocationChannelSet,
+};
+use pyana_intent::matcher::{
+    HeldCapability, MatchResult, Sensitivity, match_intent, satisfies_spec,
+};
 use pyana_intent::{
     ActionPattern, CommitmentId, Constraint, Intent, IntentKind, MatchSpec, VerificationMode,
 };
-use pyana_intent::matcher::{HeldCapability, MatchResult, Sensitivity, match_intent, satisfies_spec};
+use pyana_turn::conditional::{ConditionalTurn, ProofCondition};
 use pyana_turn::{
     Action, Authorization, BudgetGate, CallForest, CallTree, ComputronCosts, DelegationMode,
     Effect, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
 };
-use pyana_turn::conditional::{ConditionalTurn, ProofCondition};
 
 // ============================================================================
 // Internal state types
@@ -231,7 +233,11 @@ impl PyanaRuntime {
         let cell_id = agent.cell_id;
 
         // Get current nonce.
-        let nonce = self.ledger.get(&cell_id).map(|c| c.state.nonce).unwrap_or(0);
+        let nonce = self
+            .ledger
+            .get(&cell_id)
+            .map(|c| c.state.nonce)
+            .unwrap_or(0);
 
         let mut builder = TurnBuilder::new(cell_id, nonce);
         builder.set_fee(fee);
@@ -254,12 +260,7 @@ impl PyanaRuntime {
     }
 
     /// Create a note for an agent.
-    pub fn create_note(
-        &mut self,
-        agent_idx: usize,
-        value: u64,
-        asset_type: u64,
-    ) -> NoteCommitment {
+    pub fn create_note(&mut self, agent_idx: usize, value: u64, asset_type: u64) -> NoteCommitment {
         let agent = &self.agents[agent_idx];
         let mut fields = [0u64; 8];
         fields[0] = asset_type;
@@ -296,7 +297,10 @@ impl PyanaRuntime {
             hasher.update(name.as_bytes());
             hasher.update(&(i as u64).to_le_bytes());
             let pk = *hasher.finalize().as_bytes();
-            nodes.push(SimFedNode { id: i, public_key: pk });
+            nodes.push(SimFedNode {
+                id: i,
+                public_key: pk,
+            });
         }
 
         self.federations.push(SimFederation {
@@ -371,7 +375,8 @@ impl PyanaRuntime {
             constraints,
             min_budget: None,
             resource_pattern,
-            compound: None, predicate_requirements: vec![],
+            compound: None,
+            predicate_requirements: vec![],
             predicate_requirements: vec![],
         };
         let intent = Intent::new(kind, spec, agent.commitment_id, expiry, None);
@@ -381,11 +386,7 @@ impl PyanaRuntime {
     }
 
     /// Match an intent against an agent's held tokens.
-    pub fn match_intent_for_agent(
-        &self,
-        intent_idx: usize,
-        agent_idx: usize,
-    ) -> MatchResult {
+    pub fn match_intent_for_agent(&self, intent_idx: usize, agent_idx: usize) -> MatchResult {
         let intent = &self.intents[intent_idx];
         let agent = &self.agents[agent_idx];
         match_intent(
@@ -408,7 +409,11 @@ impl PyanaRuntime {
     ) -> [u8; 32] {
         let agent = &self.agents[agent_idx];
         let cell_id = agent.cell_id;
-        let nonce = self.ledger.get(&cell_id).map(|c| c.state.nonce).unwrap_or(0);
+        let nonce = self
+            .ledger
+            .get(&cell_id)
+            .map(|c| c.state.nonce)
+            .unwrap_or(0);
 
         let mut builder = TurnBuilder::new(cell_id, nonce);
         builder.set_fee(fee);
@@ -451,10 +456,7 @@ impl PyanaRuntime {
     }
 
     /// Create a revocation channel.
-    pub fn create_revocation_channel(
-        &mut self,
-        revoker_agent: usize,
-    ) -> [u8; 32] {
+    pub fn create_revocation_channel(&mut self, revoker_agent: usize) -> [u8; 32] {
         let revoker_cell_id = self.agents[revoker_agent].cell_id;
         let nonce = self.revocation_channels.len() as u64;
         let channel = RevocationChannel::new(revoker_cell_id, nonce, self.current_height);

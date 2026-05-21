@@ -66,8 +66,7 @@ impl PersistentStore {
         let table = read_txn.open_table(tables::CHECKPOINTS)?;
         match table.get(height)? {
             Some(value) => {
-                let checkpoint: pyana_federation::Checkpoint =
-                    postcard::from_bytes(value.value())?;
+                let checkpoint: pyana_federation::Checkpoint = postcard::from_bytes(value.value())?;
                 Ok(Some(checkpoint))
             }
             None => Ok(None),
@@ -84,8 +83,7 @@ impl PersistentStore {
 
         match table.get(height)? {
             Some(value) => {
-                let checkpoint: pyana_federation::Checkpoint =
-                    postcard::from_bytes(value.value())?;
+                let checkpoint: pyana_federation::Checkpoint = postcard::from_bytes(value.value())?;
                 Ok(Some(checkpoint))
             }
             None => Ok(None),

@@ -17,14 +17,14 @@
 //! This replaces HTLC hash-lock patterns with receipt-based conditions,
 //! which are strictly more general (any provable statement, not just preimage knowledge).
 
-use std::collections::HashSet;
-use pyana_cell::{Cell, CellId, Ledger, permissions::Permissions, AuthRequired};
+use pyana_cell::{AuthRequired, Cell, CellId, Ledger, permissions::Permissions};
 use pyana_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
     compute_conditional_deposit,
 };
+use std::collections::HashSet;
 
 /// Create permissions that allow all operations without authorization.
 /// Used for demo purposes only.
@@ -42,13 +42,7 @@ fn open_permissions() -> Permissions {
 }
 
 /// Build a simple transfer turn.
-fn build_transfer_turn(
-    agent: CellId,
-    nonce: u64,
-    from: CellId,
-    to: CellId,
-    amount: u64,
-) -> Turn {
+fn build_transfer_turn(agent: CellId, nonce: u64, from: CellId, to: CellId, amount: u64) -> Turn {
     let mut forest = CallForest::new();
     forest.roots.push(CallTree::new(Action {
         target: from,
@@ -92,9 +86,7 @@ fn main() {
     let mut bob_a = Cell::with_balance(bob_a_pk, token_id, 0);
     bob_a.permissions = open_permissions();
     let bob_a_id = bob_a.id;
-    alice_a
-        .capabilities
-        .grant(bob_a_id, AuthRequired::None);
+    alice_a.capabilities.grant(bob_a_id, AuthRequired::None);
 
     fed_a_ledger.insert_cell(alice_a).unwrap();
     fed_a_ledger.insert_cell(bob_a).unwrap();
@@ -113,9 +105,7 @@ fn main() {
     let mut bob_b = Cell::with_balance(bob_b_pk, token_id, 1);
     bob_b.permissions = open_permissions();
     let bob_b_id = bob_b.id;
-    bob_b
-        .capabilities
-        .grant(alice_b_id, AuthRequired::None);
+    bob_b.capabilities.grant(alice_b_id, AuthRequired::None);
 
     fed_b_ledger.insert_cell(alice_b).unwrap();
     fed_b_ledger.insert_cell(bob_b).unwrap();
@@ -259,9 +249,7 @@ fn main() {
     let mut dave = Cell::with_balance(dave_pk, token_id, 0);
     dave.permissions = open_permissions();
     let dave_id = dave.id;
-    charlie
-        .capabilities
-        .grant(dave_id, AuthRequired::None);
+    charlie.capabilities.grant(dave_id, AuthRequired::None);
     fed_c_ledger.insert_cell(charlie).unwrap();
     fed_c_ledger.insert_cell(dave).unwrap();
 
@@ -404,13 +392,31 @@ fn main() {
 
     let trusted_roots = vec![(fed_root, 50u64)];
     let mut nullifiers = HashSet::new();
-    let result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &trusted_roots, DEFAULT_MAX_ROOT_AGE, &mut nullifiers, &[]);
+    let result = pyana_turn::resolve_condition(
+        &condition,
+        &stark_proof,
+        60,
+        100,
+        &trusted_roots,
+        DEFAULT_MAX_ROOT_AGE,
+        &mut nullifiers,
+        &[],
+    );
     assert_eq!(result, ConditionalResult::Resolved);
     println!("  RemoteProof condition resolved with valid STARK proof");
     println!("    Federation root: {}", short_hex(&fed_root));
     println!("    Conclusion: ALLOW (1)");
-        let mut n2 = HashSet::new();
-    let untrusted_result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
+    let mut n2 = HashSet::new();
+    let untrusted_result = pyana_turn::resolve_condition(
+        &condition,
+        &stark_proof,
+        60,
+        100,
+        &[],
+        DEFAULT_MAX_ROOT_AGE,
+        &mut n2,
+        &[],
+    );
     assert!(matches!(
         untrusted_result,
         ConditionalResult::InvalidProof(_)

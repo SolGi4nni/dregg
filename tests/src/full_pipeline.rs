@@ -13,24 +13,24 @@
 use std::collections::HashSet;
 
 use pyana_bridge::present::{
-    bytes_to_babybear, hash_index, verify_presentation, verify_presentation_bb,
-    BridgePresentationBuilder,
+    BridgePresentationBuilder, bytes_to_babybear, hash_index, verify_presentation,
+    verify_presentation_bb,
 };
 use pyana_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, DelegatedRef, Ledger, Note, NoteCommitment,
     Nullifier, NullifierSet, Permissions, VerificationKey,
-};
-use pyana_circuit::{
-    BabyBear, BodyMembershipProof, MultiStepWitness, NoteSpendingAir, NoteSpendingWitness,
-    collect_body_fact_hashes, prove_authorization_stark, prove_authorization_with_membership,
-    prove_note_spend, verify_authorization_stark, verify_authorization_with_membership,
-    verify_note_spend,
 };
 use pyana_circuit::body_membership::BodyFactMerkleProof;
 use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 use pyana_circuit::multi_step_air::{self, ALLOW_PREDICATE, build_multi_step_witness};
 use pyana_circuit::poseidon2::{self, hash_fact};
 use pyana_circuit::stark::{self, proof_from_bytes, proof_to_bytes};
+use pyana_circuit::{
+    BabyBear, BodyMembershipProof, MultiStepWitness, NoteSpendingAir, NoteSpendingWitness,
+    collect_body_fact_hashes, prove_authorization_stark, prove_authorization_with_membership,
+    prove_note_spend, verify_authorization_stark, verify_authorization_with_membership,
+    verify_note_spend,
+};
 use pyana_commit::poseidon2_tree::{Poseidon2MerkleTree, commitment_to_field};
 use pyana_sdk::wallet::{AgentWallet, AuthorizationPresentation, VerificationMode};
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
@@ -139,8 +139,14 @@ fn test_full_private_authorization_pipeline() {
     // Set root token + add attenuations
     let fresh_root = MacaroonToken::mint(issuer_key, b"pipeline-kid", "compute.pyana.dev");
     builder.set_root_token(fresh_root);
-    assert!(builder.add_attenuation(&att1), "first attenuation should succeed");
-    assert!(builder.add_attenuation(&att2), "second attenuation should succeed");
+    assert!(
+        builder.add_attenuation(&att1),
+        "first attenuation should succeed"
+    );
+    assert!(
+        builder.add_attenuation(&att2),
+        "second attenuation should succeed"
+    );
     assert_eq!(builder.chain_length(), 3); // root + 2 attenuations
 
     // --- Step 4: Verify fold chain integrity ---
@@ -184,7 +190,13 @@ fn test_full_private_authorization_pipeline() {
         deserialized.public_inputs.len()
     );
     assert_eq!(
-        deserialized.public_inputs, proof.real_stark_proof.as_ref().unwrap().issuer_membership_stark_proof.public_inputs,
+        deserialized.public_inputs,
+        proof
+            .real_stark_proof
+            .as_ref()
+            .unwrap()
+            .issuer_membership_stark_proof
+            .public_inputs,
         "round-trip should preserve public inputs"
     );
 
@@ -208,7 +220,9 @@ fn test_full_private_authorization_pipeline() {
     if let Some(ref mut real) = tampered_proof.real_stark_proof {
         // Tamper with a query proof value
         if !real.issuer_membership_stark_proof.query_proofs.is_empty()
-            && !real.issuer_membership_stark_proof.query_proofs[0].trace_values.is_empty()
+            && !real.issuer_membership_stark_proof.query_proofs[0]
+                .trace_values
+                .is_empty()
         {
             real.issuer_membership_stark_proof.query_proofs[0].trace_values[0] ^= 0xDEAD;
         }
@@ -240,9 +254,7 @@ fn test_full_authorization_with_body_membership() {
 
     // Generate 10 facts with distinct predicates and terms
     let mut fact_hashes: Vec<BabyBear> = Vec::new();
-    let predicates: Vec<BabyBear> = (0..10)
-        .map(|i| BabyBear::new(100 + i))
-        .collect();
+    let predicates: Vec<BabyBear> = (0..10).map(|i| BabyBear::new(100 + i)).collect();
     let alice = BabyBear::new(1000);
     let app1 = BabyBear::new(2000);
     let read_perm = BabyBear::new(3000);
@@ -276,7 +288,12 @@ fn test_full_authorization_with_body_membership() {
     // Fill with other facts
     for i in 1..10u32 {
         let pred = predicates[i as usize];
-        let terms = [alice, BabyBear::new(2000 + i), BabyBear::new(3000 + i), BabyBear::ZERO];
+        let terms = [
+            alice,
+            BabyBear::new(2000 + i),
+            BabyBear::new(3000 + i),
+            BabyBear::ZERO,
+        ];
         real_tree.append(hash_fact(pred, &terms));
     }
 
@@ -284,7 +301,9 @@ fn test_full_authorization_with_body_membership() {
     let real_state_root = real_tree_for_root.root();
 
     // --- Step 3: Get Merkle proof for the body fact ---
-    let merkle_proof = real_tree.prove_membership(0).expect("leaf 0 should have a proof");
+    let merkle_proof = real_tree
+        .prove_membership(0)
+        .expect("leaf 0 should have a proof");
     assert!(
         Poseidon2MerkleTree::verify_membership(real_state_root, body_fact_hash, &merkle_proof),
         "Merkle membership proof should verify"
@@ -302,8 +321,8 @@ fn test_full_authorization_with_body_membership() {
             num_variables: 3,
             head_predicate: allow_pred,
             head_terms: [
-                (true, BabyBear::new(0)),  // X -> alice
-                (true, BabyBear::new(1)),  // App -> app1
+                (true, BabyBear::new(0)), // X -> alice
+                (true, BabyBear::new(1)), // App -> app1
                 (false, BabyBear::ZERO),
                 (false, BabyBear::ZERO),
             ],
@@ -341,8 +360,7 @@ fn test_full_authorization_with_body_membership() {
         positions: merkle_proof.positions.clone(),
     }];
 
-    let composite_proof =
-        prove_authorization_with_membership(&witness, &body_merkle_proofs);
+    let composite_proof = prove_authorization_with_membership(&witness, &body_merkle_proofs);
 
     // --- Step 6: Verify: all membership proofs valid, derivation valid, roots cross-check ---
     let conclusion = witness.conclusion();
@@ -364,7 +382,10 @@ fn test_full_authorization_with_body_membership() {
     // Verify state root consistency
     assert_eq!(composite_proof.state_root, real_state_root);
     assert_eq!(composite_proof.membership_proofs.len(), 1);
-    assert_eq!(composite_proof.membership_proofs[0].fact_hash, body_fact_hash);
+    assert_eq!(
+        composite_proof.membership_proofs[0].fact_hash,
+        body_fact_hash
+    );
 
     // --- Step 7: Tamper with one membership proof -> verification catches it ---
     let mut tampered_composite = composite_proof.clone();
@@ -404,11 +425,7 @@ fn test_full_note_lifecycle() {
     let spending_key = test_key("note-spending-key");
     let gold_asset: u64 = 0x474F4C44; // "GOLD" in ASCII
 
-    let note = Note::with_randomness(
-        owner_key,
-        [gold_asset, 100, 0, 0, 0, 0, 0, 0],
-        [0x42u8; 32],
-    );
+    let note = Note::with_randomness(owner_key, [gold_asset, 100, 0, 0, 0, 0, 0, 0], [0x42u8; 32]);
     assert_eq!(note.asset_type(), gold_asset);
     assert_eq!(note.value(), 100);
 
@@ -429,7 +446,11 @@ fn test_full_note_lifecycle() {
 
     // Compute the circuit-level commitment (this is what the Merkle tree stores)
     let circuit_commitment = poseidon2::hash_many(&[
-        owner_bb, value_bb, asset_bb, creation_nonce_bb, randomness_bb,
+        owner_bb,
+        value_bb,
+        asset_bb,
+        creation_nonce_bb,
+        randomness_bb,
     ]);
 
     let mut note_tree = Poseidon2MerkleTree::with_depth(4);
@@ -446,7 +467,9 @@ fn test_full_note_lifecycle() {
     let tree_root = tree_for_root.root();
 
     // Get the Merkle proof for our note
-    let merkle_proof = note_tree.prove_membership(0).expect("should have proof for position 0");
+    let merkle_proof = note_tree
+        .prove_membership(0)
+        .expect("should have proof for position 0");
     assert!(
         Poseidon2MerkleTree::verify_membership(tree_root, circuit_commitment, &merkle_proof),
         "membership proof should verify before STARK"
@@ -465,7 +488,11 @@ fn test_full_note_lifecycle() {
     );
 
     // Verify the witness computes correct commitment and nullifier
-    assert_eq!(witness.commitment(), circuit_commitment, "witness commitment should match");
+    assert_eq!(
+        witness.commitment(),
+        circuit_commitment,
+        "witness commitment should match"
+    );
     let circuit_nullifier = witness.nullifier();
     let circuit_merkle_root = witness.merkle_root();
 
@@ -531,7 +558,9 @@ fn test_full_note_lifecycle() {
 
     // --- Step 6: Insert nullifier into NullifierSet ---
     let mut nullifier_set = NullifierSet::new();
-    nullifier_set.insert(nullifier1).expect("first insert should succeed");
+    nullifier_set
+        .insert(nullifier1)
+        .expect("first insert should succeed");
     assert!(nullifier_set.contains(&nullifier1));
 
     // --- Step 7: Attempt double-spend -> NullifierSet rejects ---
@@ -752,7 +781,7 @@ fn test_full_cross_federation_conditional_swap() {
     let expired_resolution = resolve_condition(
         &conditional_timeout.condition,
         &ConditionProof::Preimage([0u8; 32]), // wrong proof type
-        101,                                   // past timeout
+        101,                                  // past timeout
         conditional_timeout.timeout_height,
         &trusted_roots,
         500,
@@ -1013,9 +1042,10 @@ fn test_full_delegation_and_revocation() {
     // --- Step 7: Verify CDT has correct provenance edges ---
     // The spawn's receipt should contain a derivation record with type=Delegate
     if let TurnResult::Committed { receipt, .. } = spawn_result {
-        let has_delegate_edge = receipt.derivation_records.iter().any(|record| {
-            record.edge.derivation_type == pyana_cell::DerivationType::Delegate
-        });
+        let has_delegate_edge = receipt
+            .derivation_records
+            .iter()
+            .any(|record| record.edge.derivation_type == pyana_cell::DerivationType::Delegate);
         assert!(
             has_delegate_edge,
             "spawn receipt should contain a Delegate derivation record"

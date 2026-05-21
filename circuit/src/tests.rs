@@ -204,7 +204,10 @@ fn end_to_end_authorization_proof() {
     println!("\n--- Proof Statistics ---");
     println!("  Fold proofs: {}", proof.fold_proofs.len());
     println!("  Total proof size: {}", proof.proof_size_display());
-    println!("  Presentation tag: {}", proof.public_inputs.presentation_tag);
+    println!(
+        "  Presentation tag: {}",
+        proof.public_inputs.presentation_tag
+    );
     println!("  Federation root: {}", proof.public_inputs.federation_root);
     println!("  Timestamp: {}", proof.public_inputs.timestamp);
 
@@ -364,7 +367,12 @@ fn long_attenuation_chain() {
         body_fact_hashes: vec![body_hash],
         substitution: vec![BabyBear::new(888)],
         derived_predicate: BabyBear::new(999),
-        derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        derived_terms: [
+            BabyBear::new(888),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
     };
 
     let issuer_witness = create_test_witness(BabyBear::new(5555), 8);
@@ -743,7 +751,12 @@ fn proof_size_scaling() {
             body_fact_hashes: vec![body_hash],
             substitution: vec![BabyBear::new(888)],
             derived_predicate: BabyBear::new(999),
-            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [
+                BabyBear::new(888),
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ],
         };
 
         let issuer_witness = create_test_witness(BabyBear::new(5555), 8);

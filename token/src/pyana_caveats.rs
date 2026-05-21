@@ -469,9 +469,7 @@ pub fn verify_caveats(
             ));
         }
         if request.app_id.is_some() && apps.is_empty() {
-            return Err(TokenError::Denied(
-                "token does not grant app access".into(),
-            ));
+            return Err(TokenError::Denied("token does not grant app access".into()));
         }
     }
 
@@ -1049,8 +1047,10 @@ mod tests {
             now: Some(1700000000),
             ..Default::default()
         };
-        assert!(verify_caveats(&set, &request).is_err(),
-            "app-scoped token must not authorize service requests");
+        assert!(
+            verify_caveats(&set, &request).is_err(),
+            "app-scoped token must not authorize service requests"
+        );
     }
 
     #[test]
