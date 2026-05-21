@@ -277,7 +277,7 @@ impl std::error::Error for PipelineError {}
 ///
 /// The executor processes turns in topological order, resolving EventualRefs
 /// as earlier turns produce outputs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Pipeline {
     /// The turns in this pipeline.
     pub turns: Vec<Turn>,

@@ -868,6 +868,34 @@ async function authorize(request) {
 
   // For predicate proofs, generate real ZK range/comparison proofs via WASM.
   if (mode === 'selective' && request._predicateFacts) {
+    // Fetch the current ledger Merkle state root from the node ONCE for all predicates.
+    // The circuit's compute_blinded_fact_commitment expects the same state_root
+    // that the verifier will check against. Using the receipt chain hash was
+    // incorrect — it doesn't match the circuit's expectation.
+    let stateRoot = 0;
+    try {
+      const statusResp = await fetch('http://localhost:8420/status', {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (statusResp.ok) {
+        const statusData = await statusResp.json();
+        // The node's /status endpoint returns the current Merkle state root
+        // as a hex string. Convert the first 8 hex chars to a u32.
+        const merkleRoot = statusData.merkle_root || statusData.state_root || '';
+        if (merkleRoot) {
+          stateRoot = parseInt(merkleRoot.slice(0, 8), 16) >>> 0;
+        }
+      }
+    } catch (_e) {
+      // If the node is unreachable, fall back to a BLAKE3 hash of the
+      // receipt chain (degraded mode — proofs may not verify cross-system).
+      const stateRootInput = wallet.receiptChain.length > 0
+        ? wallet.receiptChain[wallet.receiptChain.length - 1]
+        : '0';
+      const stateRootHash = wasm.blake3_hash(stateRootInput);
+      stateRoot = parseInt(stateRootHash.slice(0, 8), 16) >>> 0;
+    }
+
     result.predicateProofs = request._predicateFacts.map(pf => {
       // Look up the private value for this fact from the token.
       const privateValue = resolvePrivateValue(matchingToken, pf.key);
@@ -894,14 +922,6 @@ async function authorize(request) {
       const thresholdValue = typeof pf.threshold === 'number'
         ? pf.threshold
         : parseInt(pf.threshold, 10) || 0;
-
-      // Compute a state root from the current receipt chain (deterministic binding).
-      const stateRootInput = wallet.receiptChain.length > 0
-        ? wallet.receiptChain[wallet.receiptChain.length - 1]
-        : '0';
-      // Use BLAKE3 hash of the state root string as a u32 field element.
-      const stateRootHash = wasm.blake3_hash(stateRootInput);
-      const stateRoot = parseInt(stateRootHash.slice(0, 8), 16) >>> 0;
 
       try {
         const proofResult = wasm.generate_predicate_proof(

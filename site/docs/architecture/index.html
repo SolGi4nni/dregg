@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture - Pyana Docs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">architecture</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Architecture</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="overview.html">System Design</a>
+        <a class="docs-sidebar__link" href="consensus.html">Consensus</a>
+        <a class="docs-sidebar__link" href="cryptography.html">Cryptography</a>
+        <a class="docs-sidebar__link" href="capabilities.html">Capabilities</a>
+        <a class="docs-sidebar__link" href="privacy.html">Privacy</a>
+        <a class="docs-sidebar__link" href="federation.html">Federation Model</a>
+        <a class="docs-sidebar__link" href="economics.html">Economics</a>
+      </div>
+    </div>
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Related</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="../../paper.html">Technical Paper</a>
+        <a class="docs-sidebar__link" href="../developers/sdk.html">SDK Reference</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Architecture</span>
+    </div>
+
+    <h1>Architecture</h1>
+
+    <p>
+      Pyana is built as a layered system where each layer has clean boundaries and
+      can be understood independently. The system spans ~125k lines of Rust across
+      22+ crates, with rigorous separation between cryptographic primitives, consensus,
+      execution semantics, and user-facing APIs.
+    </p>
+
+    <h2>Contents</h2>
+
+    <div class="toc">
+      <p class="toc__title">In this section</p>
+      <ul class="toc__list">
+        <li><a href="overview.html">System Design</a> -- The 22-crate workspace and how layers interact</li>
+        <li><a href="consensus.html">Consensus</a> -- Morpheus DAG-BFT, adaptive modes, epoch reconfiguration</li>
+        <li><a href="cryptography.html">Cryptography</a> -- BabyBear, Poseidon2, STARKs, Plonky3, FRI</li>
+        <li><a href="capabilities.html">Capabilities</a> -- Cells, turns, c-lists, delegation, three-party introduction</li>
+        <li><a href="privacy.html">Privacy</a> -- Anonymous creds, predicates, notes, PIR, non-revocation</li>
+        <li><a href="federation.html">Federation Model</a> -- Single-fed, cross-fed, bridge nodes</li>
+        <li><a href="economics.html">Economics</a> -- Fees, deposits, budget channels, computrons</li>
+      </ul>
+    </div>
+
+    <h2>Design Principles</h2>
+
+    <ul>
+      <li><strong>Capability attenuation IS incrementally verifiable computation.</strong>
+          Each delegation is a fold over a committed fact set. The STARK proves a valid chain.</li>
+      <li><strong>Offline-first verification.</strong> A STARK proof + attested root is complete.
+          No federation liveness required.</li>
+      <li><strong>Agents own their state.</strong> Receipt chains are portable proof-carrying state.
+          Exit any federation at any time.</li>
+      <li><strong>Progressive privacy.</strong> Three modes (trusted, selective, private) let
+          developers choose the right tradeoff per interaction.</li>
+      <li><strong>Post-quantum security.</strong> STARK proofs are hash-based (Poseidon2/BLAKE3).
+          No elliptic curve assumptions on the verification path.</li>
+    </ul>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentation - Pyana</title>
+  <meta name="description" content="Pyana documentation: guides for users, operators, developers, and architects.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">documentation</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="index.html">Docs</a>
+    <a class="nav__link" href="../paper.html">Paper</a>
+    <a class="nav__link" href="../demo.html">Demo</a>
+    <a class="nav__link" href="../explorer/">Explorer</a>
+    <a class="nav__link" href="../playground/">Playground</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<div class="page-header">
+  <h1>Pyana Documentation</h1>
+  <p>
+    Pyana is a distributed object-capability runtime where agents hold unforgeable
+    capabilities, delegate with attenuation, prove authorization with ZK STARKs,
+    and carry their own state as proof chains.
+  </p>
+</div>
+
+<section>
+  <p style="color: var(--fg-dim); font-size: 1.02rem; margin-bottom: var(--s5);">
+    Choose your path based on what you need to accomplish:
+  </p>
+
+  <div class="audience-grid">
+
+    <a class="audience-card" href="users/index.html">
+      <span class="audience-card__label">for users</span>
+      <span class="audience-card__title">Using Pyana</span>
+      <span class="audience-card__desc">
+        Install the browser extension, create an agent identity, manage tokens,
+        authorize actions, and discover capabilities in the intent marketplace.
+      </span>
+      <span class="audience-card__link">Get started &#8594;</span>
+    </a>
+
+    <a class="audience-card" href="operators/index.html">
+      <span class="audience-card__label">for operators</span>
+      <span class="audience-card__title">Running a Node</span>
+      <span class="audience-card__desc">
+        Set up a pyana-node, join a federation, run a cross-federation bridge,
+        monitor health, and deploy devnet clusters.
+      </span>
+      <span class="audience-card__link">Node setup &#8594;</span>
+    </a>
+
+    <a class="audience-card" href="developers/index.html">
+      <span class="audience-card__label">for developers</span>
+      <span class="audience-card__title">Building on Pyana</span>
+      <span class="audience-card__desc">
+        Use the Rust SDK to mint tokens, generate STARK proofs, submit turns,
+        integrate with AI agents via MCP, and build browser extensions.
+      </span>
+      <span class="audience-card__link">SDK quickstart &#8594;</span>
+    </a>
+
+    <a class="audience-card" href="architecture/index.html">
+      <span class="audience-card__label">for architects</span>
+      <span class="audience-card__title">System Architecture</span>
+      <span class="audience-card__desc">
+        Understand the 22-crate Rust workspace, Morpheus DAG-BFT consensus,
+        BabyBear STARK cryptography, object-capability model, and privacy architecture.
+      </span>
+      <span class="audience-card__link">Deep dive &#8594;</span>
+    </a>
+
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section__title">Quick Links</h2>
+  <div class="link-cards">
+    <a class="link-card" href="users/quickstart.html">
+      <span class="link-card__title">Quickstart (5 min)</span>
+      <span class="link-card__desc">Install the extension and authorize your first action.</span>
+    </a>
+    <a class="link-card" href="developers/sdk.html">
+      <span class="link-card__title">SDK Reference</span>
+      <span class="link-card__desc">Rust API: AgentWallet, tokens, proofs, turns.</span>
+    </a>
+    <a class="link-card" href="operators/setup.html">
+      <span class="link-card__title">Node Setup</span>
+      <span class="link-card__desc">pyana-node init, run, and federation join.</span>
+    </a>
+    <a class="link-card" href="architecture/overview.html">
+      <span class="link-card__title">Architecture Overview</span>
+      <span class="link-card__desc">How the 22 crates fit together.</span>
+    </a>
+    <a class="link-card" href="../explorer/">
+      <span class="link-card__title">Explorer</span>
+      <span class="link-card__desc">Browse federation state, blocks, and receipts.</span>
+    </a>
+    <a class="link-card" href="../playground/">
+      <span class="link-card__title">Playground</span>
+      <span class="link-card__desc">Experiment with tokens and proofs in your browser.</span>
+    </a>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="../index.html">Home</a>
+      <a href="../paper.html">Paper</a>
+      <a href="../demo.html">Demo</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

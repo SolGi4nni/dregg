@@ -61,7 +61,6 @@ use crate::compound_predicate_air::{
     BooleanFormula, CompoundPredicateProof, Gate, MAX_COMPOUND_PREDICATES,
     prove_compound_predicate, verify_compound_predicate,
 };
-use crate::constraint_prover::ConstraintProof;
 use crate::field::BabyBear;
 use crate::poseidon2;
 use crate::predicate_air::{
@@ -746,6 +745,9 @@ fn prove_single(
                 threshold: BabyBear::new(*threshold as u32),
                 predicate_type: *predicate_type,
                 fact_commitment,
+                blinding: None,
+                fact_hash: Some(fact_hash),
+                state_root: Some(state_root),
             };
 
             let proof = prove_predicate(witness).ok_or_else(|| {
@@ -1222,12 +1224,20 @@ fn verify_single_proof(
                 ..
             },
         ) => {
-            // For temporal, the verifier checks threshold, num_steps, and state roots.
+            // Verify the temporal STARK proof with full cryptographic verification.
+            // The verifier checks that:
+            // 1. The proof covers at least min_blocks steps
+            // 2. The threshold matches
+            // 3. The STARK proof itself is valid (bit decomposition, accumulator, etc.)
             proof.num_steps as u64 >= *min_blocks
                 && proof.threshold == BabyBear::new(*threshold as u32)
-                // The proof internally verifies via its constraint proof.
-                // TODO: implement actual STARK proof verification for temporal predicates
-                && true
+                && verify_temporal_predicate(
+                    proof,
+                    BabyBear::new(*threshold as u32),
+                    proof.num_steps,
+                    proof.initial_state_root,
+                    proof.final_state_root,
+                )
         }
 
         (SubProof::Arithmetic(proof), WitnessSpec::Arithmetic { inputs, .. }) => {

@@ -1,0 +1,37 @@
+[package]
+name = "pyana-teasting"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+description = "Integration test simulation suite for pyana — end-to-end flows across federation boundaries"
+
+[dependencies]
+pyana-types = { path = "../types" }
+pyana-cell = { path = "../cell" }
+pyana-turn = { path = "../turn" }
+pyana-circuit = { path = "../circuit" }
+pyana-federation = { path = "../federation" }
+pyana-morpheus = { path = "../morpheus" }
+pyana-sdk = { path = "../sdk" }
+pyana-bridge = { path = "../bridge", features = ["test-utils"] }
+pyana-wire = { path = "../wire" }
+# pyana-node is a binary crate (no lib target); use its deps directly instead.
+# pyana-node = { path = "../node" }
+pyana-commit = { path = "../commit" }
+pyana-net = { path = "../net" }
+pyana-intent = { path = "../intent" }
+pyana-coord = { path = "../coord" }
+token = { path = "../token" }
+pyana-store = { path = "../store" }
+macaroon = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
+serde = { workspace = true }
+
+[lints]
+workspace = true

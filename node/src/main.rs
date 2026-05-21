@@ -7,6 +7,7 @@
 //! - Syncs state with federation peers
 
 mod api;
+mod bridge;
 mod federation_sync;
 mod genesis;
 mod mcp;
@@ -118,6 +119,50 @@ enum Command {
         #[arg(long, default_value = "./devnet-config")]
         output: PathBuf,
     },
+
+    /// Run as a cross-federation bridge node.
+    ///
+    /// Connects to multiple federations' gossip networks and relays messages
+    /// between them: attested roots, revocations, receipts, and conditional
+    /// proof completions. Enables cross-federation token operations.
+    Bridge {
+        /// Data directory for persistent state.
+        #[arg(long, default_value = "~/.pyana")]
+        data_dir: String,
+
+        /// Local federation peer addresses (host:port), comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        federation_peers: Vec<String>,
+
+        /// Remote federation peer addresses (federation_id_hex:host:port), comma-separated.
+        /// The federation_id is a 64-character hex string identifying the remote federation.
+        #[arg(long, value_delimiter = ',')]
+        remote_peers: Vec<String>,
+
+        /// Port for the bridge's local HTTP API (status/admin).
+        #[arg(long, default_value = "8421")]
+        port: u16,
+
+        /// Disable relay of attested roots between federations.
+        #[arg(long)]
+        no_relay_roots: bool,
+
+        /// Disable relay of revocations between federations.
+        #[arg(long)]
+        no_relay_revocations: bool,
+
+        /// Disable relay of receipts between federations.
+        #[arg(long)]
+        no_relay_receipts: bool,
+
+        /// Disable relay of conditional proof completions.
+        #[arg(long)]
+        no_relay_conditionals: bool,
+
+        /// Maximum age (seconds) for accepting remote attested roots. Default: 3600.
+        #[arg(long, default_value = "3600")]
+        max_remote_root_age: u64,
+    },
 }
 
 #[tokio::main]
@@ -169,6 +214,29 @@ async fn main() {
             checkpoint_interval,
             output,
         } => genesis::run_genesis(validators, epoch_length, checkpoint_interval, &output),
+        Command::Bridge {
+            data_dir,
+            federation_peers,
+            remote_peers,
+            port: _port,
+            no_relay_roots,
+            no_relay_revocations,
+            no_relay_receipts,
+            no_relay_conditionals,
+            max_remote_root_age,
+        } => {
+            run_bridge(
+                &data_dir,
+                federation_peers,
+                remote_peers,
+                no_relay_roots,
+                no_relay_revocations,
+                no_relay_receipts,
+                no_relay_conditionals,
+                max_remote_root_age,
+            )
+            .await
+        }
     }
 }
 
@@ -346,6 +414,69 @@ async fn run_mcp(data_dir: &str, peers: Vec<String>) {
     };
 
     mcp::run_stdio(node_state).await;
+}
+
+/// Run the cross-federation bridge node.
+async fn run_bridge(
+    data_dir: &str,
+    federation_peers: Vec<String>,
+    remote_peers: Vec<String>,
+    no_relay_roots: bool,
+    no_relay_revocations: bool,
+    no_relay_receipts: bool,
+    no_relay_conditionals: bool,
+    max_remote_root_age: u64,
+) {
+    let data_path = expand_path(data_dir);
+
+    if !data_path.exists() {
+        error!(
+            "data directory does not exist: {}. Run `pyana-node init` first.",
+            data_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Initialize node state (bridge uses the same local state as a regular node).
+    let node_state = match state::NodeState::new(&data_path, federation_peers.clone()) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("failed to initialize node state: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Start local federation sync if peers are configured.
+    if !federation_peers.is_empty() {
+        let sync_state = node_state.clone();
+        tokio::spawn(async move {
+            federation_sync::run_federation_sync(sync_state, None).await;
+        });
+    }
+
+    // Build relay configuration from CLI flags.
+    let relay_config = bridge::RelayConfig {
+        relay_roots: !no_relay_roots,
+        relay_revocations: !no_relay_revocations,
+        relay_receipts: !no_relay_receipts,
+        relay_conditionals: !no_relay_conditionals,
+        max_remote_root_age_secs: max_remote_root_age,
+        max_cached_roots: 100,
+    };
+
+    info!(
+        data_dir = %data_path.display(),
+        local_peers = federation_peers.len(),
+        remote_peers = remote_peers.len(),
+        relay_roots = relay_config.relay_roots,
+        relay_revocations = relay_config.relay_revocations,
+        relay_receipts = relay_config.relay_receipts,
+        relay_conditionals = relay_config.relay_conditionals,
+        "starting cross-federation bridge node"
+    );
+
+    // Run the bridge (blocks forever).
+    bridge::run_bridge(node_state, remote_peers, relay_config).await;
 }
 
 /// P2 Fix 8: Wait for Ctrl-C (SIGINT) to trigger graceful shutdown.

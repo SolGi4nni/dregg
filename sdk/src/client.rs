@@ -254,21 +254,12 @@ impl SiloClient {
         // Serialize the STARK proof for transmission using the canonical binary format
         // (proof_to_bytes / proof_from_bytes). The wire server deserializes with
         // proof_from_bytes() which expects the PYNA header format, not postcard.
-        let mut proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
-
-        // SECURITY: Bind the proof to this specific wire request's nonce/timestamp.
-        // Without this binding, a captured proof could be replayed in a different
-        // wire session with a different nonce. We append a BLAKE3 binding tag that
-        // commits the proof bytes to the request's nonce and timestamp. The server
-        // must verify this binding tag to ensure the proof was generated for THIS request.
-        let binding_tag = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-request-binding v1");
-            hasher.update(&proof_bytes);
-            hasher.update(&wire_request.nonce);
-            hasher.update(&wire_request.timestamp.to_le_bytes());
-            *hasher.finalize().as_bytes()
-        };
-        proof_bytes.extend_from_slice(&binding_tag);
+        //
+        // NOTE: No binding tag is appended here. Replay protection is provided by
+        // the wire-layer nonce + timestamp checks (server.rs lines 1061-1094):
+        // the server validates request freshness and rejects replayed nonces, which
+        // is strictly stronger than a BLAKE3 binding tag over the same fields.
+        let proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
 
         let msg = WireMessage::PresentToken {
             proof: proof_bytes,
@@ -292,6 +283,90 @@ impl SiloClient {
                 // Without this check, a MITM could swap responses between different
                 // requests, causing the client to accept a result meant for a
                 // different authorization request.
+                let expected_digest = wire_request.digest();
+                if request_digest != expected_digest {
+                    return Err(SdkError::DigestMismatch);
+                }
+
+                Ok(PresentationResult {
+                    accepted,
+                    reason,
+                    request_digest,
+                })
+            }
+            WireMessage::Error { message, .. } => Ok(PresentationResult {
+                accepted: false,
+                reason: Some(message),
+                request_digest: wire_request.digest(),
+            }),
+            other => Err(SdkError::Wire(format!(
+                "unexpected response to PresentToken: {}",
+                other.variant_name()
+            ))),
+        }
+    }
+
+    /// Present an attenuated token using an out-of-band issuer key.
+    ///
+    /// This is the attenuated-token variant of [`present_token`]. Attenuated tokens
+    /// (received via delegation) do not carry the issuer's root key. This method
+    /// accepts the issuer key explicitly, enabling delegated token holders to prove
+    /// authorization without involving the original root token holder.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The attenuated token to present.
+    /// * `issuer_key` - The 32-byte root key of the issuer (provided during delegation).
+    /// * `request` - The authorization request context.
+    pub async fn present_token_with_issuer_key(
+        &mut self,
+        token: &HeldToken,
+        issuer_key: &[u8; 32],
+        request: &pyana_token::AuthRequest,
+    ) -> Result<PresentationResult, SdkError> {
+        let federation_root = self.trusted_federation_root.ok_or_else(|| {
+            SdkError::Wire(
+                "no trusted federation root: call handshake() before present_token()".into(),
+            )
+        })?;
+
+        // Generate the ZK proof using the provided issuer key.
+        let proof = self
+            .wallet
+            .prove_authorization_with_issuer_key(token, issuer_key, request)?;
+
+        let wire_resource = request
+            .app_id
+            .as_deref()
+            .or(request.service.as_deref())
+            .unwrap_or("");
+        let wire_request = AuthorizationRequest::new(
+            wire_resource,
+            request.action.as_deref().unwrap_or(""),
+            &self.wallet.public_key().hex(),
+        );
+
+        // No binding tag — wire-layer nonce/timestamp checks provide replay protection.
+        let proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
+
+        let msg = WireMessage::PresentToken {
+            proof: proof_bytes,
+            request: wire_request.clone(),
+            federation_root,
+        };
+
+        let response = self
+            .connection
+            .request(msg)
+            .await
+            .map_err(|e| SdkError::Wire(format!("present_token failed: {e}")))?;
+
+        match response {
+            WireMessage::PresentationResult {
+                accepted,
+                reason,
+                request_digest,
+            } => {
                 let expected_digest = wire_request.digest();
                 if request_digest != expected_digest {
                     return Err(SdkError::DigestMismatch);

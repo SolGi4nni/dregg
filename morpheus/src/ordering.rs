@@ -173,15 +173,12 @@ pub fn extract_new_transactions<Tx: Transaction>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::*;
     use crate::crypto::*;
+    use crate::types::*;
     use std::sync::Arc;
 
     /// A minimal transaction type for testing.
-    #[derive(
-        Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug,
-        Serialize, Deserialize,
-    )]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
     struct TestTx(u64);
 
     impl ark_serialize::CanonicalSerialize for TestTx {
@@ -209,7 +206,9 @@ mod tests {
             compress: ark_serialize::Compress,
             validate: ark_serialize::Validate,
         ) -> Result<Self, ark_serialize::SerializationError> {
-            Ok(TestTx(u64::deserialize_with_mode(reader, compress, validate)?))
+            Ok(TestTx(u64::deserialize_with_mode(
+                reader, compress, validate,
+            )?))
         }
     }
 
@@ -314,9 +313,18 @@ mod tests {
         let bk1 = make_block_key(1, 0, 0);
         let bk2 = make_block_key(2, 1, 1);
 
-        state.blocks.insert(bk3.clone(), make_signed_block(bk3.clone(), vec![TestTx(30)]));
-        state.blocks.insert(bk1.clone(), make_signed_block(bk1.clone(), vec![TestTx(10)]));
-        state.blocks.insert(bk2.clone(), make_signed_block(bk2.clone(), vec![TestTx(20)]));
+        state.blocks.insert(
+            bk3.clone(),
+            make_signed_block(bk3.clone(), vec![TestTx(30)]),
+        );
+        state.blocks.insert(
+            bk1.clone(),
+            make_signed_block(bk1.clone(), vec![TestTx(10)]),
+        );
+        state.blocks.insert(
+            bk2.clone(),
+            make_signed_block(bk2.clone(), vec![TestTx(20)]),
+        );
 
         state.finalized.insert(bk3);
         state.finalized.insert(bk1);
@@ -363,8 +371,14 @@ mod tests {
             hash: Some(BlockHash(200)),
         };
 
-        state.blocks.insert(bk1.clone(), make_signed_block(bk1.clone(), vec![TestTx(42), TestTx(1)]));
-        state.blocks.insert(bk2.clone(), make_signed_block(bk2.clone(), vec![TestTx(42), TestTx(2)]));
+        state.blocks.insert(
+            bk1.clone(),
+            make_signed_block(bk1.clone(), vec![TestTx(42), TestTx(1)]),
+        );
+        state.blocks.insert(
+            bk2.clone(),
+            make_signed_block(bk2.clone(), vec![TestTx(42), TestTx(2)]),
+        );
         state.finalized.insert(bk1);
         state.finalized.insert(bk2);
 
@@ -394,7 +408,10 @@ mod tests {
 
         // First batch: one block finalized.
         let bk1 = make_block_key(1, 0, 0);
-        state.blocks.insert(bk1.clone(), make_signed_block(bk1.clone(), vec![TestTx(1), TestTx(2)]));
+        state.blocks.insert(
+            bk1.clone(),
+            make_signed_block(bk1.clone(), vec![TestTx(1), TestTx(2)]),
+        );
         state.finalized.insert(bk1.clone());
 
         let batch1 = extract_new_transactions(&state, &mut cursor);
@@ -406,7 +423,10 @@ mod tests {
 
         // Third batch: new block finalized, with a duplicate tx.
         let bk2 = make_block_key(2, 1, 1);
-        state.blocks.insert(bk2.clone(), make_signed_block(bk2.clone(), vec![TestTx(2), TestTx(3)]));
+        state.blocks.insert(
+            bk2.clone(),
+            make_signed_block(bk2.clone(), vec![TestTx(2), TestTx(3)]),
+        );
         state.finalized.insert(bk2.clone());
 
         let batch3 = extract_new_transactions(&state, &mut cursor);
@@ -442,7 +462,10 @@ mod tests {
 
         // A finalized Tr block.
         let tr_bk = make_block_key(1, 0, 0);
-        state.blocks.insert(tr_bk.clone(), make_signed_block(tr_bk.clone(), vec![TestTx(7)]));
+        state.blocks.insert(
+            tr_bk.clone(),
+            make_signed_block(tr_bk.clone(), vec![TestTx(7)]),
+        );
         state.finalized.insert(tr_bk);
 
         let result = extract_total_order(&state);

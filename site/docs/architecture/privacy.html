@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Architecture - Pyana Architecture</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">architecture</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Architecture</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="overview.html">System Design</a>
+        <a class="docs-sidebar__link" href="consensus.html">Consensus</a>
+        <a class="docs-sidebar__link" href="cryptography.html">Cryptography</a>
+        <a class="docs-sidebar__link" href="capabilities.html">Capabilities</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="privacy.html">Privacy</a>
+        <a class="docs-sidebar__link" href="federation.html">Federation Model</a>
+        <a class="docs-sidebar__link" href="economics.html">Economics</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Architecture</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Privacy</span>
+    </div>
+
+    <h1>Privacy Architecture</h1>
+
+    <p>
+      Pyana provides privacy at multiple levels: anonymous credential presentation,
+      predicate proofs about private values, private note transfers (hidden balances),
+      private discovery (PIR), and non-revocation proofs.
+    </p>
+
+    <h2 id="anonymous-creds">Anonymous Credentials</h2>
+    <p>
+      The BlindedMerklePoseidon2StarkAir generates fresh blinding per presentation.
+      The public input is <code>hash_2_to_1(leaf_hash, blinding)</code> instead of
+      the raw leaf hash. The verifier cannot determine which Merkle leaf corresponds
+      to this proof. Multiple proofs from the same holder are unlinkable.
+    </p>
+
+    <h2 id="predicates">Predicate Proofs</h2>
+    <p>
+      Prove properties about private values without revealing them:
+    </p>
+    <ul>
+      <li><strong>Simple predicates:</strong> value >= threshold, value <= threshold, value != x</li>
+      <li><strong>Committed thresholds:</strong> value >= T where T is hidden behind Poseidon2(T, blinding)</li>
+      <li><strong>Relational:</strong> my_value > their_value (two-party, sealed channel)</li>
+      <li><strong>Arithmetic:</strong> expressions over multiple values (balance_a + balance_b >= 2000)</li>
+      <li><strong>Programmable:</strong> arbitrary expression trees compiled to AIR</li>
+    </ul>
+
+    <h2 id="notes">Private Notes</h2>
+    <p>
+      Notes are commitments to (owner, value, asset_type, randomness). The commitment
+      is a Poseidon2 hash -- binding (cannot open to different value) but hiding
+      (reveals nothing about contents). Spending requires proving knowledge of the
+      spending key and Merkle membership, producing a nullifier for double-spend prevention.
+    </p>
+
+    <h2 id="pir">Private Discovery (PIR)</h2>
+    <p>
+      Intent discovery uses 2-server information-theoretic PIR. The client generates
+      a random vector and XORs a unit vector at the target position. Each server sees
+      a random-looking query. Responses are XORed client-side to recover the target row.
+      Security is information-theoretic (not computational) under non-collusion.
+    </p>
+
+    <h2 id="non-revocation">Non-Revocation</h2>
+    <p>
+      The NonRevocationAir proves sorted-Merkle non-membership: for each ancestor
+      in a token's derivation path, find two adjacent leaves in the sorted revocation
+      tree that bracket the ancestor's hash. Prove membership of both neighbors and
+      that the ancestor falls between them (absent). All ancestors are proven
+      simultaneously in a single STARK.
+    </p>
+
+    <div class="stub-notice">
+      <p>Formal privacy model, composability analysis, and comparison with Zcash/Aleo privacy are being written.</p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

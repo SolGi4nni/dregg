@@ -46,6 +46,7 @@ pub mod discharge;
 pub mod discovery;
 pub mod error;
 pub mod mnemonic;
+pub mod privacy;
 pub mod runtime;
 pub mod verify;
 pub mod wallet;
@@ -78,6 +79,13 @@ pub use pyana_circuit::PresentationVerification;
 
 // Re-export mnemonic generation at crate root for convenience.
 pub use mnemonic::generate_mnemonic;
+
+// Re-export privacy API types at crate root for convenience.
+pub use privacy::{
+    AnonymousPresentation, NonRevocationProof, NoteSecret, NoteTransferProof,
+    UnlinkablePredicateProof, verify_anonymous_presentation, verify_non_revocation_proof,
+    verify_note_spending,
+};
 
 // Re-export discharge gateway client functions.
 pub use discharge::{authorize_with_discharges, extract_third_party_tickets, obtain_discharge};

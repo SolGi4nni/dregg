@@ -203,10 +203,15 @@ fn main() {
     println!("  Collecting spending certificates from all silos...");
 
     // Collect certificates from all silos (Silo D spent nothing this epoch).
-    let cert_a = coord.silo_states[&silo_a].certificate(silo_a);
-    let cert_b = coord.silo_states[&silo_b].certificate(silo_b);
-    let cert_c = coord.silo_states[&silo_c].certificate(silo_c);
-    let cert_d = coord.silo_states[&silo_d].certificate(silo_d);
+    // Each silo signs its certificate with a key derived from its identity.
+    let key_a = *blake3::hash(&silo_a).as_bytes();
+    let key_b = *blake3::hash(&silo_b).as_bytes();
+    let key_c = *blake3::hash(&silo_c).as_bytes();
+    let key_d = *blake3::hash(&silo_d).as_bytes();
+    let cert_a = coord.silo_states[&silo_a].certificate(silo_a, &key_a);
+    let cert_b = coord.silo_states[&silo_b].certificate(silo_b, &key_b);
+    let cert_c = coord.silo_states[&silo_c].certificate(silo_c, &key_c);
+    let cert_d = coord.silo_states[&silo_d].certificate(silo_d, &key_d);
 
     println!(
         "    Silo A certificate: spent {} ({} debits)",

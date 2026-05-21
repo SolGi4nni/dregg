@@ -950,10 +950,96 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
                 }
             }
         }
-        PeerMessage::PublishPipeline { pipeline_hash, .. } => {
+        PeerMessage::PublishPipeline {
+            pipeline_hash,
+            pipeline_data,
+        } => {
             let hash_hex: String = pipeline_hash.iter().map(|b| format!("{b:02x}")).collect();
-            // TODO: implement pipeline execution once pyana_turn::TurnBatch is stabilized.
-            warn!(from = %from, pipeline_hash = %hash_hex, "received pipeline via gossip (not yet supported)");
+            info!(from = %from, pipeline_hash = %hash_hex, "received pipeline via gossip");
+
+            // Deserialize the TurnBatch (Pipeline) from the gossip payload.
+            let batch: pyana_turn::TurnBatch = match postcard::from_bytes(&pipeline_data) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(from = %from, error = %e, "failed to deserialize gossiped pipeline");
+                    return;
+                }
+            };
+
+            // Validate pipeline structure before execution.
+            if let Err(e) = batch.validate() {
+                warn!(from = %from, error = %e, "invalid pipeline structure, rejecting");
+                return;
+            }
+
+            // Execute the pipeline against the local ledger.
+            let mut s = state.write().await;
+            let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+
+            // Configure executor from node state.
+            let local_fed_id = *blake3::hash(s.wallet.public_key().as_bytes()).as_bytes();
+            executor.set_local_federation_id(local_fed_id);
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            executor.set_timestamp(now);
+
+            let current_height = s
+                .store
+                .latest_attested_root()
+                .ok()
+                .flatten()
+                .map(|r| r.height)
+                .unwrap_or(0);
+            executor.set_block_height(current_height);
+
+            let results = pyana_turn::execute_pipeline(batch, &mut s.ledger, &executor);
+
+            // Collect receipts from successful turns and resolve pending turns.
+            let mut committed_count = 0usize;
+            let mut failed_count = 0usize;
+            for result in &results {
+                match result {
+                    Ok(receipt) => {
+                        committed_count += 1;
+                        // Resolve any pending turns waiting on this receipt.
+                        s.pending_turns.resolve(
+                            receipt.turn_hash,
+                            pyana_turn::ResolutionOutcome::Resolved(receipt.clone()),
+                        );
+                        s.wallet.append_receipt(receipt.clone());
+                    }
+                    Err(_) => {
+                        failed_count += 1;
+                    }
+                }
+            }
+
+            drop(s);
+
+            // Emit receipts to WS subscribers.
+            for result in &results {
+                if let Ok(receipt) = result {
+                    let receipt_hash_hex: String = receipt
+                        .turn_hash
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
+                    state.emit(NodeEvent::Receipt {
+                        hash: receipt_hash_hex,
+                    });
+                }
+            }
+
+            info!(
+                from = %from,
+                pipeline_hash = %hash_hex,
+                committed = committed_count,
+                failed = failed_count,
+                "pipeline execution complete"
+            );
         }
         _ => {
             // Unexpected message type on turns topic — ignore.

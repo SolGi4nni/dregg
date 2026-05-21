@@ -502,6 +502,9 @@ fn main() {
         threshold: stronger_threshold,
         predicate_type: PredicateType::Gte,
         fact_commitment: experience_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
     };
 
     let selective_start = Instant::now();
@@ -539,6 +542,9 @@ fn main() {
         threshold: BabyBear::new(200000),
         predicate_type: PredicateType::Lte,
         fact_commitment: lying_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
     };
     let lying_proof = prove_predicate(lying_witness);
     println!(
@@ -577,6 +583,9 @@ fn main() {
         threshold: BabyBear::new(50), // wrong threshold!
         predicate_type: PredicateType::Gte,
         fact_commitment: wrong_threshold_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
     };
     let wrong_threshold_proof = prove_predicate(wrong_threshold_witness)
         .expect("proof for wrong threshold generates fine (statement is still true)");

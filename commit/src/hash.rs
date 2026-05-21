@@ -3,6 +3,25 @@
 //! Uses BLAKE3 as a placeholder for algebraic Poseidon hash. The API is designed
 //! so that swapping to real Poseidon over a specific field requires changing only
 //! this module.
+//!
+//! # BLAKE3 vs Poseidon2: Architecture Decision
+//!
+//! This module uses BLAKE3, which is the CORRECT choice for external-facing operations
+//! (storage, networking, Ed25519 signature domains, tooling interop). BLAKE3 is:
+//! - 10-100x faster than Poseidon2 for non-ZK uses
+//! - Widely supported by external tooling and libraries
+//! - Appropriate for all paths that never enter a STARK/SNARK circuit
+//!
+//! The Poseidon2 tree in `poseidon2_tree.rs` provides the ZK-friendly alternative
+//! for in-circuit use. These two systems intentionally coexist:
+//!
+//! - **BLAKE3** (this module): non-ZK paths — storage keys, gossip message hashes,
+//!   capability token derivation, general-purpose Merkle commitments.
+//! - **Poseidon2** (`poseidon2_tree.rs`): STARK-provable operations — note tree
+//!   commitments, nullifier sets, IVC hash chains, anything that must be verified
+//!   inside a circuit.
+//!
+//! This is not a migration TODO — it is the intended dual-hash architecture.
 
 use std::sync::LazyLock;
 

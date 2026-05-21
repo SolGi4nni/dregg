@@ -1225,7 +1225,10 @@ impl AgentWallet {
     }
 
     /// Convert a PredicateType + threshold to the bridge Predicate enum.
-    fn predicate_type_to_bridge(predicate_type: PredicateType, threshold: u32) -> Predicate {
+    pub(crate) fn predicate_type_to_bridge(
+        predicate_type: PredicateType,
+        threshold: u32,
+    ) -> Predicate {
         match predicate_type {
             PredicateType::Gte | PredicateType::InRangeLow => Predicate::Gte(threshold),
             PredicateType::Lte | PredicateType::InRangeHigh => Predicate::Lte(threshold),
@@ -1322,11 +1325,13 @@ impl AgentWallet {
     ) -> Result<BridgePresentationProof, SdkError> {
         // SECURITY: Use the token's actual root_key for the federation membership proof.
         // Attenuated tokens (root_key == zeroed) cannot generate federation membership
-        // proofs — they must be proven through their delegation chain instead.
+        // proofs — they must use `prove_authorization_with_issuer_key()` instead,
+        // providing the issuer's root key out-of-band.
         if !token.can_mint() {
             return Err(SdkError::MissingKey(
                 "attenuated tokens cannot generate federation membership proofs; \
-                 use the root token holder to prove, or present the attenuated chain directly"
+                 use prove_authorization_with_issuer_key() with the issuer's root key, \
+                 or use the root token holder to prove directly"
                     .into(),
             ));
         }
@@ -1350,6 +1355,70 @@ impl AgentWallet {
         Ok(proof)
     }
 
+    /// Generate a STARK presentation proof for an attenuated token using a provided issuer key.
+    ///
+    /// Attenuated tokens (those received via delegation) do not carry the root key and
+    /// therefore cannot call [`prove_authorization`] directly. This method allows an
+    /// attenuated token holder to generate a valid STARK proof when the issuer's root
+    /// key is provided out-of-band (e.g., the delegator includes it in the delegation
+    /// metadata, or the federation publishes it).
+    ///
+    /// # Security Model
+    ///
+    /// The issuer key is used ONLY for computing the federation Merkle membership proof
+    /// (proving "my issuer is a member of this federation"). The attenuated token's
+    /// caveat chain is still verified: the proof commits to the actual encoded token
+    /// (with all its attenuations), not a freshly-minted unrestricted token.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The attenuated token to prove authorization from.
+    /// * `issuer_key` - The 32-byte root key of the original issuer (provided out-of-band).
+    /// * `request` - The authorization request to prove.
+    ///
+    /// # Returns
+    ///
+    /// A [`BridgePresentationProof`] with a real STARK proof, or an error if proof
+    /// generation fails.
+    ///
+    /// # Future Work
+    ///
+    /// A full chain-proof path (proving the delegation chain is valid without revealing
+    /// intermediate tokens) would allow proving without any out-of-band key material.
+    /// See: `prove_with_chain` for the root-holder variant of chain proofs.
+    pub fn prove_authorization_with_issuer_key(
+        &self,
+        token: &HeldToken,
+        issuer_key: &[u8; 32],
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, SdkError> {
+        // Verify the issuer key is not zeroed (caller must provide a real key).
+        if *issuer_key == [0u8; 32] {
+            return Err(SdkError::MissingKey(
+                "issuer_key must not be zeroed; provide the real issuer root key".into(),
+            ));
+        }
+
+        let federation_root_bb = Self::compute_federation_root_bb(issuer_key);
+        let federation_root = Self::bb_to_bytes(federation_root_bb);
+
+        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+            *issuer_key,
+            federation_root,
+            federation_root_bb,
+        );
+
+        // Decode the attenuated token. For attenuated tokens the internal root_key is
+        // zeroed, but we can still decode the macaroon structure (caveats, identifiers).
+        // The STARK proof will commit to the issuer's federation membership via the
+        // provided issuer_key, while the token's caveat chain binds the authorization.
+        let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
+        builder.set_root_token(actual_token);
+
+        let proof = builder.prove(request)?;
+        Ok(proof)
+    }
+
     /// Generate a STARK presentation proof with a revealed facts commitment.
     ///
     /// This is the internal implementation for selective disclosure mode. It generates
@@ -1366,8 +1435,9 @@ impl AgentWallet {
     ) -> Result<BridgePresentationProof, SdkError> {
         if !token.can_mint() {
             return Err(SdkError::MissingKey(
-                "attenuated tokens cannot generate federation membership proofs; \
-                 use the root token holder to prove, or present the attenuated chain directly"
+                "attenuated tokens cannot generate selective disclosure proofs; \
+                 use prove_authorization_with_issuer_key() with the issuer's root key, \
+                 or use the root token holder to prove directly"
                     .into(),
             ));
         }
@@ -1429,7 +1499,7 @@ impl AgentWallet {
         if !root_token.can_mint() {
             return Err(SdkError::MissingKey(
                 "attenuated tokens cannot generate federation membership proofs; \
-                 use the root token holder to prove"
+                 use prove_authorization_with_issuer_key() with the issuer's root key"
                     .into(),
             ));
         }
@@ -1944,7 +2014,18 @@ impl AgentWallet {
         runtime: &crate::runtime::AgentRuntime,
     ) -> Result<pyana_turn::TurnReceipt, SdkError> {
         // Step 1: Generate predicate proofs for the intent's requirements.
-        let state_root = BabyBear::new(99999); // TODO: use real committed state root
+        // Derive the state root from this wallet's receipt chain head. The receipt
+        // chain's post_state_hash is the committed state that verifiers can check.
+        let state_root = self
+            .current_state_commitment()
+            .map(|hash| Self::bytes_to_babybear(&hash))
+            .ok_or_else(|| {
+                SdkError::MissingKey(
+                    "wallet has no receipt chain; cannot derive state root for predicate proofs. \
+                     Call append_receipt() after executing at least one turn."
+                        .into(),
+                )
+            })?;
         let predicate_proofs = self.prove_for_intent_predicates(intent, my_values, state_root)?;
 
         // Step 2: Determine the block height from the runtime's executor.
@@ -2071,7 +2152,7 @@ impl AgentWallet {
     }
 
     /// Compress a 32-byte value into a single BabyBear element via Poseidon2.
-    fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
+    pub(crate) fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
         let limbs = BabyBear::encode_hash(bytes);
         poseidon2::hash_many(&limbs)
     }

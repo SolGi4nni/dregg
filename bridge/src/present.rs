@@ -2416,6 +2416,9 @@ pub fn prove_predicate_for_fact(
                 threshold: BabyBear::new(threshold),
                 predicate_type,
                 fact_commitment,
+                blinding: None,
+                fact_hash: Some(fact_hash),
+                state_root: Some(state_root),
             };
 
             let proof = pyana_circuit::prove_predicate(witness)?;

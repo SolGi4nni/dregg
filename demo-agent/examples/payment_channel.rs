@@ -8,7 +8,7 @@
 //! 5. Uses `coord/src/budget.rs` bounded counters (BudgetCoordinator struct)
 
 use pyana_cell::CellId;
-use pyana_coord::budget::{BudgetCoordinator, SpendingCertificate};
+use pyana_coord::budget::BudgetCoordinator;
 use pyana_turn::turn::TurnReceipt;
 use pyana_turn::verify::verify_receipt_chain;
 
@@ -304,8 +304,9 @@ fn main() {
     println!("--- Step 5: CLOSE CHANNEL (settlement) ---");
 
     // Alice's silo produces a spending certificate for the rebalance
+    let alice_signing_key = *blake3::hash(&alice_silo).as_bytes();
     let alice_slice = budget.silo_states.get(&alice_silo).unwrap();
-    let alice_cert = alice_slice.certificate(alice_silo);
+    let alice_cert = alice_slice.certificate(alice_silo, &alice_signing_key);
 
     println!("  Alice's spending certificate:");
     println!(
@@ -318,30 +319,18 @@ fn main() {
     println!();
 
     // Bob's silo spent nothing (he only receives)
-    let bob_cert = SpendingCertificate {
-        silo: bob_silo,
-        agent: alice_cell_id,
-        version: budget.version,
-        total_spent: 0,
-        debits: vec![],
-    };
+    let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
+    let bob_slice = budget.silo_states.get(&bob_silo).unwrap();
+    let bob_cert = bob_slice.certificate(bob_silo, &bob_signing_key);
 
     // Witnesses also spent nothing
-    let w1_cert = SpendingCertificate {
-        silo: witness_1,
-        agent: alice_cell_id,
-        version: budget.version,
-        total_spent: 0,
-        debits: vec![],
-    };
+    let w1_signing_key = *blake3::hash(&witness_1).as_bytes();
+    let w1_slice = budget.silo_states.get(&witness_1).unwrap();
+    let w1_cert = w1_slice.certificate(witness_1, &w1_signing_key);
 
-    let w2_cert = SpendingCertificate {
-        silo: witness_2,
-        agent: alice_cell_id,
-        version: budget.version,
-        total_spent: 0,
-        debits: vec![],
-    };
+    let w2_signing_key = *blake3::hash(&witness_2).as_bytes();
+    let w2_slice = budget.silo_states.get(&witness_2).unwrap();
+    let w2_cert = w2_slice.certificate(witness_2, &w2_signing_key);
 
     // Rebalance (settlement)
     let total_spent = budget

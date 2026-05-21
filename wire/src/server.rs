@@ -59,12 +59,17 @@ impl ProofVerifier for StarkVerifier {
             .map(|&v| pyana_circuit::field::BabyBear::new_canonical(v))
             .collect();
 
-        // Verify action binding: the proof's last public input must be the canonical
-        // commitment to (action, resource) via compute_action_binding.
+        // Verify action binding: public_inputs[2] must be the canonical commitment
+        // to (action, resource) via compute_action_binding.
+        // Layout: [leaf_hash, merkle_root, action_binding, composition_commitment]
+        // The bridge verifier (bridge/src/verifier.rs) also uses pi[2].
         let expected_binding = pyana_circuit::compute_action_binding(action, resource);
-        match public_inputs.last() {
-            Some(&last_pi) if last_pi == expected_binding => {}
-            _ => return Ok(false), // Proof not bound to this (action, resource)
+        if public_inputs.len() < 3 {
+            return Ok(false);
+        }
+        let proof_binding = public_inputs[2];
+        if proof_binding != expected_binding {
+            return Ok(false); // Proof not bound to this (action, resource)
         }
 
         // Try Poseidon2 AIR first (production path).

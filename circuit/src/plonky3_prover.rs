@@ -609,7 +609,7 @@ pub fn from_p3(val: P3BabyBear) -> BabyBear {
 }
 
 /// Convert our trace to a Plonky3 RowMajorMatrix.
-fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
+pub fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
     let width = trace[0].len();
     let values: Vec<P3BabyBear> = trace
         .iter()

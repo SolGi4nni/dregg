@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>User Guide - Pyana Docs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">user guide</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">User Guide</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="quickstart.html">Quickstart</a>
+        <a class="docs-sidebar__link" href="wallet.html">Wallet</a>
+        <a class="docs-sidebar__link" href="privacy.html">Privacy Modes</a>
+        <a class="docs-sidebar__link" href="intents.html">Intent Marketplace</a>
+      </div>
+    </div>
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Related</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="../developers/index.html">Developer Docs</a>
+        <a class="docs-sidebar__link" href="../operators/index.html">Operator Docs</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Users</span>
+    </div>
+
+    <h1>User Guide</h1>
+
+    <p>
+      Pyana is a distributed object-capability runtime designed for AI agents and
+      the applications that orchestrate them. As a user, you interact with pyana
+      through the browser extension wallet, which manages your agent identity,
+      holds authorization tokens, and generates zero-knowledge proofs on your behalf.
+    </p>
+
+    <h2>What is Pyana?</h2>
+
+    <p>
+      Pyana lets autonomous agents prove what they are authorized to do without
+      revealing how they obtained that authority. It combines unforgeable capability
+      tokens (like API keys that can only get weaker, never stronger) with
+      zero-knowledge STARK proofs (so verifiers learn only "yes, authorized" or
+      "no, denied"). Agents carry their own state as proof chains, enabling offline
+      verification and federation exit without data loss.
+    </p>
+
+    <h2>Contents</h2>
+
+    <div class="toc">
+      <p class="toc__title">In this section</p>
+      <ul class="toc__list">
+        <li><a href="quickstart.html">Quickstart</a> -- Install the extension and make your first authorization</li>
+        <li><a href="wallet.html">Wallet</a> -- Create identities, receive tokens, manage credentials</li>
+        <li><a href="privacy.html">Privacy Modes</a> -- Full disclosure, selective, and fully private</li>
+        <li><a href="intents.html">Intent Marketplace</a> -- Post needs, discover offers, fulfill capabilities</li>
+      </ul>
+    </div>
+
+    <h2>Key Concepts</h2>
+
+    <h3>Capabilities (Tokens)</h3>
+    <p>
+      A capability token is an unforgeable proof of authority. When you receive one
+      (via delegation from another agent), you can use it to authorize actions.
+      Tokens can only be <em>attenuated</em> (restricted further), never amplified.
+      If you receive "read+write" access to a service, you can create a narrower
+      token with only "read" access to hand off to a sub-agent.
+    </p>
+
+    <h3>Agent Identity</h3>
+    <p>
+      Your wallet holds an Ed25519 signing key. This is your agent identity. Every
+      action you take (signing turns, generating proofs) is bound to this key. You
+      can derive sub-agent identities from a single mnemonic (BIP39 + BLAKE3).
+    </p>
+
+    <h3>Federations</h3>
+    <p>
+      A federation is a group of nodes running consensus together. Your wallet
+      connects to a federation through a local pyana-node. Multiple federations
+      can interoperate via bridge nodes.
+    </p>
+
+    <div class="callout callout--note">
+      <p>
+        For deeper technical details on how capabilities and proofs work internally,
+        see the <a href="../architecture/overview.html">Architecture Overview</a>.
+      </p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cryptographic Foundations - Pyana Architecture</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">architecture</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Architecture</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="overview.html">System Design</a>
+        <a class="docs-sidebar__link" href="consensus.html">Consensus</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="cryptography.html">Cryptography</a>
+        <a class="docs-sidebar__link" href="capabilities.html">Capabilities</a>
+        <a class="docs-sidebar__link" href="privacy.html">Privacy</a>
+        <a class="docs-sidebar__link" href="federation.html">Federation Model</a>
+        <a class="docs-sidebar__link" href="economics.html">Economics</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Architecture</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Cryptography</span>
+    </div>
+
+    <h1>Cryptographic Foundations</h1>
+
+    <p>
+      Pyana's proof system is built on BabyBear-field STARKs with Poseidon2 as the
+      in-circuit hash function. This achieves post-quantum security on the verification
+      path (hash-based, no elliptic curve assumptions).
+    </p>
+
+    <h2 id="field">BabyBear Field</h2>
+
+    <p>
+      The BabyBear prime field (p = 2^31 - 2^27 + 1 = 2013265921) is optimized for
+      STARK arithmetic. 32-bit limbs mean native CPU word operations with no carries
+      for addition/subtraction in most cases.
+    </p>
+
+    <h2 id="poseidon2">Poseidon2</h2>
+
+    <p>
+      Poseidon2 is the algebraic hash function used inside circuits. It operates natively
+      over BabyBear field elements, making Merkle tree operations and fact commitments
+      cheap inside the AIR (Algebraic Intermediate Representation).
+    </p>
+
+    <ul>
+      <li><code>hash_fact(predicate, terms)</code> -- Commit a Datalog fact to a single field element</li>
+      <li><code>hash_2_to_1(left, right)</code> -- Binary Merkle node hash</li>
+      <li><code>hash_many(inputs)</code> -- Variable-width sponge hash</li>
+    </ul>
+
+    <h2 id="stark">STARK Proof System</h2>
+
+    <p>
+      The STARK prover/verifier is based on FRI (Fast Reed-Solomon Interactive Oracle
+      Proofs of Proximity). Key properties:
+    </p>
+
+    <ul>
+      <li><strong>Proof size:</strong> ~24 KiB (constant regardless of computation size)</li>
+      <li><strong>Verification time:</strong> ~2ms</li>
+      <li><strong>Generation time:</strong> 200ms-500ms depending on mode</li>
+      <li><strong>Security:</strong> Hash-based (post-quantum), 128-bit security level</li>
+      <li><strong>Transparency:</strong> No trusted setup required</li>
+    </ul>
+
+    <h2 id="airs">AIR Definitions</h2>
+
+    <p>The <code>pyana-circuit</code> crate defines these constraint systems:</p>
+
+    <ul>
+      <li><strong>MultiStepDerivationAir</strong> -- Proves a multi-step Datalog derivation is valid</li>
+      <li><strong>MerklePoseidon2StarkAir</strong> -- Proves Merkle membership (federation root)</li>
+      <li><strong>BlindedMerklePoseidon2StarkAir</strong> -- Blinded membership (anonymous presentation)</li>
+      <li><strong>FoldAir</strong> -- Proves a state transition fold (IVC)</li>
+      <li><strong>NoteSpendingAir</strong> -- Proves valid note spending (private transfers)</li>
+      <li><strong>NonRevocationAir</strong> -- Proves sorted-Merkle non-membership (non-revocation)</li>
+      <li><strong>PredicateAir</strong> -- Proves value predicates (gte, lte, range)</li>
+    </ul>
+
+    <h2 id="ivc">IVC (Incrementally Verifiable Computation)</h2>
+
+    <p>
+      The IVC system allows receipt chains to be compressed to a constant-size proof.
+      Each new receipt extends the IVC accumulator. The final proof covers the entire
+      state transition history regardless of chain length.
+    </p>
+
+    <h2 id="signatures">Signature Schemes</h2>
+
+    <ul>
+      <li><strong>Ed25519</strong> -- Agent identity, turn signing, federation consensus messages</li>
+      <li><strong>BLS12-381</strong> -- Threshold signatures for attested roots</li>
+      <li><strong>X25519-ChaCha20Poly1305</strong> -- Sealed capabilities (encrypt under token)</li>
+      <li><strong>HMAC-SHA256</strong> -- Macaroon token chain binding</li>
+      <li><strong>BLAKE3</strong> -- Domain-separated key derivation, fast Merkle trees</li>
+    </ul>
+
+    <div class="stub-notice">
+      <p>Detailed security analysis, parameter selection rationale, and comparison with Plonky3 are being written.</p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

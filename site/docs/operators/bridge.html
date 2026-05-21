@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bridge Nodes - Pyana Operator Guide</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">operator guide</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Operator Guide</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="setup.html">Node Setup</a>
+        <a class="docs-sidebar__link" href="federation.html">Joining a Federation</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="bridge.html">Bridge Nodes</a>
+        <a class="docs-sidebar__link" href="monitoring.html">Monitoring</a>
+        <a class="docs-sidebar__link" href="security.html">Security Hardening</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Operators</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Bridge Nodes</span>
+    </div>
+
+    <h1>Cross-Federation Bridge Nodes</h1>
+
+    <p>
+      A bridge node connects to multiple federations' gossip networks and relays
+      messages between them: attested roots, revocations, receipts, and conditional
+      proof completions. This enables cross-federation token operations.
+    </p>
+
+    <h2 id="running">Running a Bridge</h2>
+
+    <pre><code>pyana-node bridge \
+  --data-dir ~/.pyana \
+  --federation-peers "local1:8420,local2:8420" \
+  --remote-peers "abcdef01...:remote1.other-fed.io:8420" \
+  --port 8421</code></pre>
+
+    <p>
+      The <code>--remote-peers</code> format is <code>federation_id_hex:host:port</code>,
+      where the federation ID is the 64-character hex identifier of the remote federation.
+    </p>
+
+    <h2 id="relay-config">Relay Configuration</h2>
+
+    <table class="comparison">
+      <thead>
+        <tr><th>Flag</th><th>Default</th><th>What it relays</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>--no-relay-roots</code></td><td>relay enabled</td><td>Attested root commitments</td></tr>
+        <tr><td><code>--no-relay-revocations</code></td><td>relay enabled</td><td>Token revocation notices</td></tr>
+        <tr><td><code>--no-relay-receipts</code></td><td>relay enabled</td><td>Turn receipts (state proofs)</td></tr>
+        <tr><td><code>--no-relay-conditionals</code></td><td>relay enabled</td><td>Conditional proof completions</td></tr>
+        <tr><td><code>--max-remote-root-age</code></td><td>3600s</td><td>Maximum age for accepting remote roots</td></tr>
+      </tbody>
+    </table>
+
+    <div class="stub-notice">
+      <p>Detailed bridge protocol documentation, security model, and multi-hop relay configuration is being written.</p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1874,13 +1874,7 @@ impl StarkAir for ArithmeticPredicateStarkAir {
         alpha_pow = alpha_pow * alpha;
 
         // Constraint 3: Arithmetic operation correctness (expression A).
-        let c3 = eval_ops_constraints(
-            &self.compiled_ops,
-            local,
-            layout.slots_start,
-            &layout,
-            0,
-        );
+        let c3 = eval_ops_constraints(&self.compiled_ops, local, layout.slots_start, &layout, 0);
         result = result + alpha_pow * c3;
         alpha_pow = alpha_pow * alpha;
 
@@ -1902,15 +1896,9 @@ impl StarkAir for ArithmeticPredicateStarkAir {
         // Constraint 5: Diff is correctly computed based on predicate type.
         let result_a = local[layout.slots_start + self.result_slot];
         let c5 = match &self.diff_kind {
-            DiffKind::ResultMinusThreshold => {
-                local[diff_col] - (result_a - local[threshold_col])
-            }
-            DiffKind::ThresholdMinusResult => {
-                local[diff_col] - (local[threshold_col] - result_a)
-            }
-            DiffKind::Equality => {
-                local[diff_col] - (result_a - local[threshold_col])
-            }
+            DiffKind::ResultMinusThreshold => local[diff_col] - (result_a - local[threshold_col]),
+            DiffKind::ThresholdMinusResult => local[diff_col] - (local[threshold_col] - result_a),
+            DiffKind::Equality => local[diff_col] - (result_a - local[threshold_col]),
             DiffKind::CompareGte => {
                 let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
                 local[diff_col] - (result_a - result_b)

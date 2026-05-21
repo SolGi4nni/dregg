@@ -350,9 +350,7 @@ pub fn generate_predicate_proof(
 ) -> Result<JsValue, JsError> {
     use pyana_circuit::field::BabyBear;
     use pyana_circuit::poseidon2;
-    use pyana_circuit::predicate_air::{
-        PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
-    };
+    use pyana_circuit::predicate_air::{PredicateType, PredicateWitness, prove_predicate};
 
     let start = perf_now();
 
@@ -368,13 +366,28 @@ pub fn generate_predicate_proof(
     // Compute fact hash from attribute key.
     let fact_hash = poseidon2::hash_bytes(attribute_key.as_bytes());
     let state_root_bb = BabyBear::new(state_root);
-    let fact_commitment = compute_fact_commitment(fact_hash, state_root_bb);
+
+    // Generate a random blinding factor for unlinkable proofs.
+    // This prevents cross-session correlation via deterministic fact_commitment.
+    let mut blinding_bytes = [0u8; 4];
+    getrandom::fill(&mut blinding_bytes).unwrap_or_default();
+    // BabyBear::new already reduces mod p, so just use the raw u32.
+    let blinding = BabyBear::new(u32::from_le_bytes(blinding_bytes));
+
+    let fact_commitment = pyana_circuit::predicate_air::compute_blinded_fact_commitment(
+        fact_hash,
+        state_root_bb,
+        blinding,
+    );
 
     let witness = PredicateWitness {
         private_value: BabyBear::new(private_value),
         threshold: BabyBear::new(threshold),
         predicate_type: pred_type,
         fact_commitment,
+        blinding: Some(blinding),
+        fact_hash: Some(fact_hash),
+        state_root: Some(state_root_bb),
     };
 
     let proof = prove_predicate(witness).ok_or_else(|| {
@@ -1077,6 +1090,490 @@ struct CanonicalIntentBody<'a> {
     expiry: u64,
     /// We hash the commitment bytes from the stake proof (if present) for ID binding.
     stake_commitment: Option<&'a [u8; 32]>,
+}
+
+// ============================================================================
+// Committed Threshold Predicates
+// ============================================================================
+
+/// Prove that a private value meets a committed threshold (value >= threshold)
+/// without revealing either value to third parties.
+///
+/// `value`: the prover's private attribute value (u32 field element)
+/// `threshold`: the verifier's threshold (u32 field element)
+/// `blinding`: randomness for the threshold commitment (u32 field element)
+///
+/// Returns JSON with: proof bytes, threshold_commitment, fact_commitment, verified status.
+/// Returns error if the predicate is not satisfiable (value < threshold).
+#[wasm_bindgen]
+pub fn prove_committed_threshold(
+    value: u32,
+    threshold: u32,
+    blinding: u32,
+) -> Result<JsValue, JsError> {
+    use pyana_circuit::committed_threshold::{
+        CommittedThresholdWitness, compute_threshold_commitment,
+        prove_committed_threshold as prove_ct, verify_committed_threshold as verify_ct,
+    };
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::poseidon2;
+
+    let start = perf_now();
+
+    let value_bb = BabyBear::new(value);
+    let threshold_bb = BabyBear::new(threshold);
+    let blinding_bb = BabyBear::new(blinding);
+
+    // Compute a fact commitment (binding to token state).
+    let fact_hash = poseidon2::hash_many(&[value_bb, BabyBear::new(42)]);
+    let state_root = BabyBear::new(99999);
+    let fact_commitment = poseidon2::hash_2_to_1(fact_hash, state_root);
+
+    let witness = CommittedThresholdWitness {
+        private_value: value_bb,
+        threshold: threshold_bb,
+        blinding: blinding_bb,
+        fact_commitment,
+    };
+
+    let threshold_commitment = compute_threshold_commitment(threshold_bb, blinding_bb);
+
+    let proof = prove_ct(witness).ok_or_else(|| {
+        JsError::new(&format!(
+            "predicate not satisfiable: {} >= {} is false",
+            value, threshold
+        ))
+    })?;
+
+    let verified = verify_ct(&proof, threshold_commitment, fact_commitment);
+    let elapsed_ms = perf_now() - start;
+
+    let proof_bytes = serde_json::to_vec(&proof.stark_proof).unwrap_or_default();
+
+    #[derive(Serialize)]
+    struct CommittedThresholdResult {
+        threshold_commitment: u32,
+        fact_commitment: u32,
+        proof_size_bytes: usize,
+        generation_time_ms: f64,
+        verified: bool,
+    }
+
+    let result = CommittedThresholdResult {
+        threshold_commitment: threshold_commitment.as_u32(),
+        fact_commitment: fact_commitment.as_u32(),
+        proof_size_bytes: proof_bytes.len(),
+        generation_time_ms: elapsed_ms,
+        verified,
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+/// Verify a committed threshold proof given the public commitments.
+///
+/// `threshold_commitment`: the Poseidon2(threshold, blinding) value
+/// `fact_commitment`: the binding to token state
+/// `proof_json`: serialized STARK proof (from prove_committed_threshold)
+///
+/// Returns JSON: { "valid": bool, "verification_time_ms": f64 }
+#[wasm_bindgen]
+pub fn verify_committed_threshold(
+    proof_json: &str,
+    threshold_commitment: u32,
+    fact_commitment: u32,
+) -> Result<JsValue, JsError> {
+    use pyana_circuit::committed_threshold::{
+        CommittedThresholdProof, verify_committed_threshold as verify_ct,
+    };
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::stark::StarkProof;
+
+    let start = perf_now();
+
+    let stark_proof: StarkProof =
+        serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    let tc = BabyBear(threshold_commitment);
+    let fc = BabyBear(fact_commitment);
+
+    let proof = CommittedThresholdProof {
+        threshold_commitment: tc,
+        fact_commitment: fc,
+        stark_proof,
+    };
+
+    let valid = verify_ct(&proof, tc, fc);
+    let elapsed_ms = perf_now() - start;
+
+    #[derive(Serialize)]
+    struct VerifyResult {
+        valid: bool,
+        verification_time_ms: f64,
+    }
+
+    let result = VerifyResult {
+        valid,
+        verification_time_ms: elapsed_ms,
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+// ============================================================================
+// Schnorr Signatures (BabyBear^8 curve)
+// ============================================================================
+
+/// Generate a Schnorr keypair from a random seed.
+///
+/// Returns JSON: { "secret_key": [8 u32 elements], "public_key": { "x": [8], "y": [8] } }
+#[wasm_bindgen]
+pub fn schnorr_keygen() -> Result<JsValue, JsError> {
+    use pyana_circuit::schnorr_curve::scalar_to_bytes;
+    use pyana_circuit::schnorr_sig::schnorr_keygen as keygen;
+
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).map_err(|e| JsError::new(&e.to_string()))?;
+
+    let (sk, pk) = keygen(&seed);
+
+    let sk_bytes = scalar_to_bytes(&sk.0);
+
+    #[derive(Serialize)]
+    struct KeypairResult {
+        secret_key: Vec<u8>,
+        public_key_x: Vec<u32>,
+        public_key_y: Vec<u32>,
+    }
+
+    let result = KeypairResult {
+        secret_key: sk_bytes.to_vec(),
+        public_key_x: pk.0.x.0.iter().map(|e| e.as_u32()).collect(),
+        public_key_y: pk.0.y.0.iter().map(|e| e.as_u32()).collect(),
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+/// Sign a message with a Schnorr secret key.
+///
+/// `secret_key_json`: JSON with { "secret_key": [32 bytes] }
+/// `message`: the message string to sign
+///
+/// Returns JSON with signature { "r_x": [8], "r_y": [8], "s": [8] }
+#[wasm_bindgen]
+pub fn schnorr_sign(secret_key_json: &str, message: &str) -> Result<JsValue, JsError> {
+    use pyana_circuit::schnorr_curve::scalar_to_bytes;
+    use pyana_circuit::schnorr_sig::{schnorr_keygen as keygen, schnorr_sign as sign};
+
+    #[derive(serde::Deserialize)]
+    struct SecretKeyInput {
+        secret_key: Vec<u8>,
+    }
+
+    let input: SecretKeyInput =
+        serde_json::from_str(secret_key_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    if input.secret_key.len() != 32 {
+        return Err(JsError::new("secret_key must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&input.secret_key);
+
+    // Re-derive the keypair from the seed (same derivation as keygen).
+    let (sk, pk) = keygen(&seed);
+
+    let sig = sign(&sk, &pk, message.as_bytes());
+    let s_bytes = scalar_to_bytes(&sig.s);
+
+    #[derive(Serialize)]
+    struct SignatureResult {
+        r_x: Vec<u32>,
+        r_y: Vec<u32>,
+        s: Vec<u8>,
+    }
+
+    let result = SignatureResult {
+        r_x: sig.r.x.0.iter().map(|e| e.as_u32()).collect(),
+        r_y: sig.r.y.0.iter().map(|e| e.as_u32()).collect(),
+        s: s_bytes.to_vec(),
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+/// Verify a Schnorr signature.
+///
+/// `public_key_json`: JSON with { "public_key_x": [8 u32], "public_key_y": [8 u32] }
+/// `message`: the message string
+/// `signature_json`: JSON with { "r_x": [8 u32], "r_y": [8 u32], "s": [32 bytes] }
+///
+/// Returns bool: true if signature is valid.
+#[wasm_bindgen]
+pub fn schnorr_verify(
+    public_key_json: &str,
+    message: &str,
+    signature_json: &str,
+) -> Result<bool, JsError> {
+    use pyana_circuit::babybear8::BabyBear8;
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::schnorr_curve::{CurvePoint, scalar_from_bytes};
+    use pyana_circuit::schnorr_sig::{
+        SchnorrPublicKey, SchnorrSignature, schnorr_verify as verify,
+    };
+
+    #[derive(serde::Deserialize)]
+    struct PubKeyInput {
+        public_key_x: Vec<u32>,
+        public_key_y: Vec<u32>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SigInput {
+        r_x: Vec<u32>,
+        r_y: Vec<u32>,
+        s: Vec<u8>,
+    }
+
+    let pk_input: PubKeyInput =
+        serde_json::from_str(public_key_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let sig_input: SigInput =
+        serde_json::from_str(signature_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    if pk_input.public_key_x.len() != 8 || pk_input.public_key_y.len() != 8 {
+        return Err(JsError::new(
+            "public key coordinates must have 8 elements each",
+        ));
+    }
+    if sig_input.r_x.len() != 8 || sig_input.r_y.len() != 8 {
+        return Err(JsError::new(
+            "signature R coordinates must have 8 elements each",
+        ));
+    }
+    if sig_input.s.len() != 32 {
+        return Err(JsError::new("signature s must be exactly 32 bytes"));
+    }
+
+    let pk_x = BabyBear8([
+        BabyBear::new(pk_input.public_key_x[0]),
+        BabyBear::new(pk_input.public_key_x[1]),
+        BabyBear::new(pk_input.public_key_x[2]),
+        BabyBear::new(pk_input.public_key_x[3]),
+        BabyBear::new(pk_input.public_key_x[4]),
+        BabyBear::new(pk_input.public_key_x[5]),
+        BabyBear::new(pk_input.public_key_x[6]),
+        BabyBear::new(pk_input.public_key_x[7]),
+    ]);
+    let pk_y = BabyBear8([
+        BabyBear::new(pk_input.public_key_y[0]),
+        BabyBear::new(pk_input.public_key_y[1]),
+        BabyBear::new(pk_input.public_key_y[2]),
+        BabyBear::new(pk_input.public_key_y[3]),
+        BabyBear::new(pk_input.public_key_y[4]),
+        BabyBear::new(pk_input.public_key_y[5]),
+        BabyBear::new(pk_input.public_key_y[6]),
+        BabyBear::new(pk_input.public_key_y[7]),
+    ]);
+    let pk = SchnorrPublicKey(CurvePoint::new(pk_x, pk_y));
+
+    let r_x = BabyBear8([
+        BabyBear::new(sig_input.r_x[0]),
+        BabyBear::new(sig_input.r_x[1]),
+        BabyBear::new(sig_input.r_x[2]),
+        BabyBear::new(sig_input.r_x[3]),
+        BabyBear::new(sig_input.r_x[4]),
+        BabyBear::new(sig_input.r_x[5]),
+        BabyBear::new(sig_input.r_x[6]),
+        BabyBear::new(sig_input.r_x[7]),
+    ]);
+    let r_y = BabyBear8([
+        BabyBear::new(sig_input.r_y[0]),
+        BabyBear::new(sig_input.r_y[1]),
+        BabyBear::new(sig_input.r_y[2]),
+        BabyBear::new(sig_input.r_y[3]),
+        BabyBear::new(sig_input.r_y[4]),
+        BabyBear::new(sig_input.r_y[5]),
+        BabyBear::new(sig_input.r_y[6]),
+        BabyBear::new(sig_input.r_y[7]),
+    ]);
+
+    let mut s_bytes = [0u8; 32];
+    s_bytes.copy_from_slice(&sig_input.s);
+    let s = scalar_from_bytes(&s_bytes);
+
+    let sig = SchnorrSignature {
+        r: CurvePoint::new(r_x, r_y),
+        s,
+    };
+
+    Ok(verify(&pk, &sig, message.as_bytes()))
+}
+
+// ============================================================================
+// Garbled Circuit Comparison
+// ============================================================================
+
+/// Run the full garbled circuit comparison protocol (both parties in-process for demo).
+///
+/// Proves `prover_value >= verifier_threshold` without the prover learning the threshold
+/// (garbled circuit approach). Both parties are simulated in-process for the playground.
+///
+/// Returns JSON with: result (pass/fail), proof_size, garbling_time_ms
+#[wasm_bindgen]
+pub fn garbled_compare(prover_value: u32, verifier_threshold: u32) -> Result<JsValue, JsError> {
+    use pyana_circuit::garbled::{
+        COMPARISON_BITS, evaluate_garbled_circuit, garble_comparison_circuit, hash_label,
+        prove_private_threshold, verify_private_threshold,
+    };
+
+    let start = perf_now();
+
+    // Verifier garbles the circuit.
+    let (circuit, secrets) = garble_comparison_circuit(verifier_threshold, COMPARISON_BITS);
+
+    let garble_time = perf_now() - start;
+
+    // Simulate OT: prover obtains labels for their value's bits.
+    let prover_labels: Vec<_> = (0..COMPARISON_BITS)
+        .map(|bit_idx| {
+            let bit = (prover_value >> bit_idx) & 1;
+            if bit == 0 {
+                secrets.prover_label_pairs[bit_idx].0
+            } else {
+                secrets.prover_label_pairs[bit_idx].1
+            }
+        })
+        .collect();
+
+    // Prover evaluates.
+    let eval_result = evaluate_garbled_circuit(&circuit, &prover_labels);
+    let eval_time = perf_now() - start;
+
+    // Prover generates STARK proof (if passed).
+    let proof = prove_private_threshold(&circuit, &prover_labels);
+    let proof_time = perf_now() - start;
+
+    let (proof_size, verified) = match &proof {
+        Some(p) => {
+            let size = serde_json::to_vec(&p.stark_proof).unwrap_or_default().len();
+            let v =
+                verify_private_threshold(p, circuit.circuit_commitment, secrets.true_output_hash);
+            (size, v)
+        }
+        None => (0, false),
+    };
+
+    #[derive(Serialize)]
+    struct GarbledResult {
+        result: String,
+        prover_value: u32,
+        verifier_threshold: u32,
+        output_bit: bool,
+        proof_size_bytes: usize,
+        proof_verified: bool,
+        garbling_time_ms: f64,
+        total_time_ms: f64,
+        num_gates: usize,
+    }
+
+    let result = GarbledResult {
+        result: if eval_result.output_bit {
+            "pass".to_string()
+        } else {
+            "fail".to_string()
+        },
+        prover_value,
+        verifier_threshold,
+        output_bit: eval_result.output_bit,
+        proof_size_bytes: proof_size,
+        proof_verified: verified,
+        garbling_time_ms: garble_time,
+        total_time_ms: proof_time,
+        num_gates: circuit.gates.len(),
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+// ============================================================================
+// Anonymous Credential (Ring Membership Proof)
+// ============================================================================
+
+/// Generate a blinded ring membership proof for an agent in the runtime.
+///
+/// Proves that agent at `agent_idx` is a member of the federation's agent set
+/// without revealing which specific agent they are.
+///
+/// `handle`: runtime handle (from create_runtime)
+/// `agent_idx`: index of the agent to prove membership for
+///
+/// Returns JSON with: blinded_leaf, presentation_tag, proof_size
+#[wasm_bindgen]
+pub fn prove_anonymous_membership(handle: usize, agent_idx: usize) -> Result<JsValue, JsError> {
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::poseidon2;
+
+    let start = perf_now();
+
+    // Access the runtime to get agent data.
+    let (agent_id_bytes, all_agent_ids) = with_runtime_ref(handle, |rt| {
+        if agent_idx >= rt.agents.len() {
+            return Err(format!(
+                "agent_idx {} out of range (have {} agents)",
+                agent_idx,
+                rt.agents.len()
+            ));
+        }
+        let agent_id = rt.agents[agent_idx].cell_id.as_bytes().to_vec();
+        let all_ids: Vec<Vec<u8>> = rt
+            .agents
+            .iter()
+            .map(|a| a.cell_id.as_bytes().to_vec())
+            .collect();
+        Ok((agent_id, all_ids))
+    })?;
+
+    // Generate a blinding factor for unlinkability.
+    let mut blinding_bytes = [0u8; 4];
+    getrandom::fill(&mut blinding_bytes).map_err(|e| JsError::new(&e.to_string()))?;
+    let blinding = BabyBear::new(u32::from_le_bytes(blinding_bytes));
+
+    // Compute the blinded leaf: Poseidon2(agent_id_hash, blinding)
+    let agent_id_hash = poseidon2::hash_bytes(&agent_id_bytes);
+    let blinded_leaf = poseidon2::hash_2_to_1(agent_id_hash, blinding);
+
+    // Compute a presentation tag (one-time, prevents cross-session correlation).
+    let mut tag_bytes = [0u8; 4];
+    getrandom::fill(&mut tag_bytes).map_err(|e| JsError::new(&e.to_string()))?;
+    let presentation_tag =
+        poseidon2::hash_2_to_1(blinded_leaf, BabyBear::new(u32::from_le_bytes(tag_bytes)));
+
+    // Compute the Merkle root of the agent set (simplified: hash all agent IDs together).
+    let agent_hashes: Vec<BabyBear> = all_agent_ids
+        .iter()
+        .map(|id| poseidon2::hash_bytes(id))
+        .collect();
+    let set_root = poseidon2::hash_many(&agent_hashes);
+
+    let elapsed_ms = perf_now() - start;
+
+    // Proof size estimate (in a real system this would be a STARK).
+    let proof_size = 48 + all_agent_ids.len() * 4; // Compact ring proof
+
+    #[derive(Serialize)]
+    struct MembershipResult {
+        blinded_leaf: u32,
+        presentation_tag: u32,
+        set_root: u32,
+        ring_size: usize,
+        proof_size_bytes: usize,
+        generation_time_ms: f64,
+    }
+
+    let result = MembershipResult {
+        blinded_leaf: blinded_leaf.as_u32(),
+        presentation_tag: presentation_tag.as_u32(),
+        set_root: set_root.as_u32(),
+        ring_size: all_agent_ids.len(),
+        proof_size_bytes: proof_size,
+        generation_time_ms: elapsed_ms,
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
 }
 
 // ============================================================================

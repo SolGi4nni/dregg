@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Joining a Federation - Pyana Operator Guide</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">operator guide</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Operator Guide</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link" href="setup.html">Node Setup</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="federation.html">Joining a Federation</a>
+        <a class="docs-sidebar__link" href="bridge.html">Bridge Nodes</a>
+        <a class="docs-sidebar__link" href="monitoring.html">Monitoring</a>
+        <a class="docs-sidebar__link" href="security.html">Security Hardening</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Operators</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Joining a Federation</span>
+    </div>
+
+    <h1>Joining a Federation</h1>
+
+    <p>
+      A federation is a set of nodes that run consensus together, producing attested
+      roots at regular intervals. Joining an existing federation requires exchanging
+      public keys with current members and configuring peer addresses.
+    </p>
+
+    <h2 id="peers">Configuring Peers</h2>
+
+    <p>
+      Pass the <code>--federation-peers</code> flag with comma-separated addresses
+      of existing federation members:
+    </p>
+
+    <pre><code>pyana-node run \
+  --federation-peers "node1.fed.example:8420,node2.fed.example:8420,node3.fed.example:8420"</code></pre>
+
+    <h2 id="keys">Key Exchange</h2>
+
+    <p>
+      Share your node's public key (printed during <code>pyana-node init</code>) with
+      the federation operator. They will add it to the validator set for the next epoch
+      reconfiguration.
+    </p>
+
+    <h2 id="sync">Initial Sync</h2>
+
+    <p>
+      On first connection, the node downloads the chain state from peers. The sync
+      process fetches attested roots and any committed blocks since genesis.
+      Progress is logged at <code>INFO</code> level.
+    </p>
+
+    <h2 id="morpheus">Morpheus Consensus</h2>
+
+    <p>
+      For production federations, enable the full Morpheus DAG-BFT consensus engine:
+    </p>
+
+    <pre><code>pyana-node run \
+  --morpheus \
+  --node-index 2 \
+  --federation-size 4 \
+  --federation-peers "..."</code></pre>
+
+    <p>
+      Morpheus provides adaptive modes: fast path (all-correct) and slow path
+      (tolerates up to f = (n-1)/3 Byzantine faults). See
+      <a href="../architecture/consensus.html">Consensus Architecture</a> for details.
+    </p>
+
+    <div class="stub-notice">
+      <p>Detailed peer discovery, epoch reconfiguration, and state sync protocol documentation is being written.</p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -118,15 +118,18 @@ pub fn match_intent(
         return MatchResult::WrongKind;
     }
 
-    // For Offer intents, we reverse the matching direction: an Offer matches
-    // if we have a NEED that the offer could satisfy. For now, we treat an Offer
-    // as matchable using the same spec evaluation (the offer's spec describes what
-    // it provides, and we check if our held tokens are compatible).
-    // TODO: Full Offer matching should check against our pending needs, not held tokens.
-    // For now, we return WrongKind with a clear error until the bidirectional
-    // matching logic is implemented.
+    // For Offer intents, we match in reverse: an Offer describes what the offerer
+    // PROVIDES. We match it if we (the receiver) could USE that capability -- i.e.,
+    // if the offered capability fills a gap in our held tokens.
+    //
+    // Matching logic: An Offer matches if:
+    // 1. We do NOT already hold a token that satisfies the offer's spec (we need it).
+    // 2. The offered capability is compatible with our holder context (resource/service).
+    //
+    // This makes Offer matching the dual of Need matching: a Need asks "do I have
+    // something that satisfies this?", an Offer asks "do I LACK something this provides?"
     if intent.kind == IntentKind::Offer {
-        return MatchResult::WrongKind;
+        return match_offer(intent, held_tokens, our_commitment, mode, now);
     }
 
     // Handle compound intents: ALL sub-specs must be satisfiable.
@@ -198,6 +201,74 @@ fn match_compound(
     MatchResult::CompoundMatched {
         token_indices,
         matched,
+    }
+}
+
+/// Match an Offer intent against held capabilities (reverse matching).
+///
+/// An Offer matches if the offered capability fills a gap in our token set:
+/// - The offer's spec describes what is being PROVIDED.
+/// - We match if we do NOT already hold a token satisfying that spec.
+/// - This means the offer is useful to us (we need what they're offering).
+///
+/// If we already hold a token that covers the offered capability, the offer is
+/// not useful to us and we return NoMatch.
+fn match_offer(
+    intent: &Intent,
+    held_tokens: &[HeldCapability],
+    our_commitment: CommitmentId,
+    mode: VerificationMode,
+    now: u64,
+) -> MatchResult {
+    // Check if any of our held tokens already satisfies the offer's spec.
+    // If so, we don't need this offer -- return NoMatch.
+    let already_have = held_tokens.iter().any(|token| {
+        if token.sensitivity == Sensitivity::Sensitive {
+            return false; // Don't consider sensitive tokens for gap analysis
+        }
+        satisfies_spec(token, &intent.matcher, now)
+    });
+
+    if already_have {
+        // We already hold a capability that covers what's being offered.
+        // No need to match this offer.
+        return MatchResult::NoMatch;
+    }
+
+    // We do NOT have a token covering the offered capability -- this offer is
+    // useful to us. Return a match indicating we'd accept this offer.
+    //
+    // The "token_index" is meaningless for offer matching (there's no local token
+    // that satisfied anything -- the LACK of a token is what triggered the match).
+    // We use usize::MAX as a sentinel indicating "no local token was involved."
+    let matched = Match {
+        intent_id: intent.id,
+        satisfier: our_commitment,
+        proof: generate_offer_match_proof(intent, mode),
+        mode,
+    };
+    MatchResult::Matched {
+        token_index: usize::MAX,
+        matched,
+    }
+}
+
+/// Generate a proof for an offer match (the receiver proving they need it).
+///
+/// In trusted mode, no proof is needed. In other modes, we produce a commitment
+/// to the fact that we lack the offered capability (proof of absence).
+fn generate_offer_match_proof(intent: &Intent, mode: VerificationMode) -> Option<Vec<u8>> {
+    match mode {
+        VerificationMode::Trusted => None,
+        VerificationMode::Selective | VerificationMode::Private => {
+            // Produce a commitment proving we evaluated the offer and determined need.
+            let mut hasher = blake3::Hasher::new_derive_key("pyana-offer-match-v1");
+            hasher.update(&intent.id);
+            let mut rand_bytes = [0u8; 32];
+            crate::getrandom(&mut rand_bytes);
+            hasher.update(&rand_bytes);
+            Some(hasher.finalize().as_bytes().to_vec())
+        }
     }
 }
 
@@ -680,10 +751,14 @@ mod tests {
     }
 
     #[test]
-    fn test_offer_intent_returns_wrong_kind() {
+    fn test_offer_intent_no_match_when_already_held() {
+        // We already hold a wildcard read token -- the offer of "read on *" is useless.
         let token = make_token(&["read"], "*");
         let spec = MatchSpec {
-            actions: vec![],
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
@@ -699,7 +774,63 @@ mod tests {
         );
         let our_id = CommitmentId([0xBB; 32]);
         let result = match_intent(&intent, &[token], our_id, VerificationMode::Trusted, 100);
-        assert!(matches!(result, MatchResult::WrongKind));
+        // We already have the capability -- offer is not useful.
+        assert!(matches!(result, MatchResult::NoMatch));
+    }
+
+    #[test]
+    fn test_offer_intent_matches_when_capability_needed() {
+        // We hold only a "read" token on documents -- an offer of "write" on documents
+        // fills a gap we have.
+        let token = make_token(&["read"], "documents/*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("write".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: Some("documents/*".into()),
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(
+            IntentKind::Offer,
+            spec,
+            CommitmentId([0xAA; 32]),
+            u64::MAX,
+            None,
+        );
+        let our_id = CommitmentId([0xBB; 32]);
+        let result = match_intent(&intent, &[token], our_id, VerificationMode::Trusted, 100);
+        // We lack "write" on documents -- the offer is useful.
+        assert!(matches!(result, MatchResult::Matched { .. }));
+    }
+
+    #[test]
+    fn test_offer_intent_matches_when_wallet_empty() {
+        // Empty wallet -- any offer is useful.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(
+            IntentKind::Offer,
+            spec,
+            CommitmentId([0xAA; 32]),
+            u64::MAX,
+            None,
+        );
+        let our_id = CommitmentId([0xBB; 32]);
+        let result = match_intent(&intent, &[], our_id, VerificationMode::Trusted, 100);
+        assert!(matches!(result, MatchResult::Matched { .. }));
     }
 
     #[test]

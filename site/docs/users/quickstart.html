@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quickstart - Pyana User Guide</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">user guide</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">User Guide</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="quickstart.html">Quickstart</a>
+        <a class="docs-sidebar__link" href="wallet.html">Wallet</a>
+        <a class="docs-sidebar__link" href="privacy.html">Privacy Modes</a>
+        <a class="docs-sidebar__link" href="intents.html">Intent Marketplace</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Users</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>Quickstart</span>
+    </div>
+
+    <h1>Quickstart</h1>
+
+    <p>
+      Get up and running with pyana in under 5 minutes. By the end you will have
+      an agent identity, a capability token, and will have authorized an action
+      with a zero-knowledge proof.
+    </p>
+
+    <h2 id="prerequisites">Prerequisites</h2>
+
+    <ul>
+      <li>A Chromium-based browser (Chrome, Edge, Brave, Arc) or Firefox</li>
+      <li>A running pyana-node on localhost (see <a href="../operators/setup.html">Node Setup</a>), or access to a public devnet</li>
+    </ul>
+
+    <h2 id="install">Step 1: Install the Extension</h2>
+
+    <p>
+      The pyana wallet lives as a browser extension. It manages your keys,
+      tokens, and proof generation without exposing secrets to web pages.
+    </p>
+
+    <ol>
+      <li>Download the latest <code>.zip</code> from the <a href="https://github.com/emberian/pyana/releases">releases page</a>.</li>
+      <li>Navigate to <code>chrome://extensions</code> (or equivalent for your browser).</li>
+      <li>Enable "Developer mode" and click "Load unpacked".</li>
+      <li>Select the unzipped <code>extension/</code> directory.</li>
+    </ol>
+
+    <p>
+      You should see the pyana icon in your browser toolbar.
+    </p>
+
+    <h2 id="create-identity">Step 2: Create Your Agent Identity</h2>
+
+    <p>
+      Click the pyana extension icon to open the wallet popup. On first launch, it
+      will prompt you to create or restore an identity.
+    </p>
+
+    <ol>
+      <li>Click <strong>"Create New Identity"</strong>.</li>
+      <li>The wallet generates a 24-word mnemonic. Write it down securely -- this is
+          your backup. The mnemonic derives your Ed25519 signing key via BLAKE3-based
+          HD key derivation at path <code>pyana/0</code>.</li>
+      <li>Confirm the mnemonic and set an unlock passphrase.</li>
+    </ol>
+
+    <p>
+      Your public key (agent ID) is now displayed in the wallet. This is your
+      identity across all federations.
+    </p>
+
+    <h2 id="connect">Step 3: Connect to a Federation</h2>
+
+    <p>
+      Open the wallet settings and enter the federation node URL. If you are running
+      a local node, this is <code>http://127.0.0.1:8420</code> by default.
+    </p>
+
+    <p>
+      The extension connects to the node's HTTP API and WebSocket endpoint for
+      real-time state updates. The status indicator should turn green once connected.
+    </p>
+
+    <h2 id="receive-token">Step 4: Receive a Capability Token</h2>
+
+    <p>
+      Tokens are delegated to you by other agents. For testing, the devnet faucet
+      can issue you a root token:
+    </p>
+
+    <pre><code># From another terminal (or ask the devnet operator):
+curl -X POST http://127.0.0.1:8420/api/faucet \
+  -H "Content-Type: application/json" \
+  -d '{"recipient": "YOUR_PUBLIC_KEY_HEX", "service": "demo"}'</code></pre>
+
+    <p>
+      The token appears in your wallet's "Tokens" tab. It shows the service name,
+      any restrictions (caveats), and whether it is a root token or attenuated.
+    </p>
+
+    <h2 id="authorize">Step 5: Authorize an Action</h2>
+
+    <p>
+      When a web page calls <code>window.pyana.authorize()</code>, the extension
+      prompts you to approve. The page specifies what service and action it needs:
+    </p>
+
+    <pre><code>// In the web page:
+const result = await window.pyana.authorize({
+  service: "demo",
+  action: "read",
+  mode: "private"  // Zero-knowledge: verifier learns only yes/no
+});
+
+// result.proof contains the STARK proof (~24 KiB)
+// result.conclusion is true/false</code></pre>
+
+    <p>
+      The wallet:
+    </p>
+    <ol>
+      <li>Shows you which token will be used and what the page is requesting.</li>
+      <li>You approve (or deny).</li>
+      <li>The wallet generates the STARK proof locally (sub-second).</li>
+      <li>The proof is returned to the page. Your token contents, delegation chain,
+          and identity are NOT revealed to the verifier.</li>
+    </ol>
+
+    <div class="callout callout--note">
+      <p>
+        The privacy mode (<code>"trusted"</code>, <code>"selective"</code>, or
+        <code>"private"</code>) determines how much the verifier learns.
+        See <a href="privacy.html">Privacy Modes</a> for details.
+      </p>
+    </div>
+
+    <h2 id="next-steps">Next Steps</h2>
+
+    <ul>
+      <li><a href="wallet.html">Wallet Guide</a> -- Manage multiple tokens, delegate to sub-agents, back up keys</li>
+      <li><a href="privacy.html">Privacy Modes</a> -- Understand what each verification mode reveals</li>
+      <li><a href="intents.html">Intent Marketplace</a> -- Discover and fulfill capabilities privately</li>
+      <li><a href="../developers/sdk.html">Developer SDK</a> -- Build applications that use pyana authorization</li>
+    </ul>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

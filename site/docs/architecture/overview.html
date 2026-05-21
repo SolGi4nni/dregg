@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System Design - Pyana Architecture</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../../assets/style.css">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name">Pyana</span>
+  <span class="nav__tag">architecture</span>
+  <div class="nav__links">
+    <a class="nav__link" href="../../index.html">Home</a>
+    <a class="nav__link nav__link--active" href="../index.html">Docs</a>
+    <a class="nav__link" href="../../paper.html">Paper</a>
+    <a class="nav__link" href="../../explorer/">Explorer</a>
+    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar__section">
+      <p class="docs-sidebar__heading">Architecture</p>
+      <div class="docs-sidebar__list">
+        <a class="docs-sidebar__link" href="index.html">Overview</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="overview.html">System Design</a>
+        <a class="docs-sidebar__link" href="consensus.html">Consensus</a>
+        <a class="docs-sidebar__link" href="cryptography.html">Cryptography</a>
+        <a class="docs-sidebar__link" href="capabilities.html">Capabilities</a>
+        <a class="docs-sidebar__link" href="privacy.html">Privacy</a>
+        <a class="docs-sidebar__link" href="federation.html">Federation Model</a>
+        <a class="docs-sidebar__link" href="economics.html">Economics</a>
+      </div>
+    </div>
+  </aside>
+
+  <div class="docs-content">
+    <div class="docs-breadcrumb">
+      <a href="../index.html">Docs</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <a href="index.html">Architecture</a>
+      <span class="docs-breadcrumb__sep">/</span>
+      <span>System Design</span>
+    </div>
+
+    <h1>System Design</h1>
+
+    <p>
+      Pyana is structured as a Rust workspace of 22+ crates. Each crate encapsulates
+      a single concern with well-defined interfaces between layers.
+    </p>
+
+    <h2 id="layers">Layer Architecture</h2>
+
+    <pre><code>Browser Extension (wallet UI)
+  window.pyana: authorize | postIntent | offerCapability | provision
+  ---------------------------------------------------------------
+SDK Layer              AgentWallet | AgentRuntime | SiloClient
+  ---------------------------------------------------------------
+Intent Engine          Gossip broadcast | local Datalog matching | STARK fulfillment
+  ---------------------------------------------------------------
+Network                TCP wire protocol | QUIC relay | postcard framing
+  ---------------------------------------------------------------
+Federation             Morpheus adaptive BFT | BLS12-381 threshold sigs
+                       Ed25519 consensus | epoch reconfig | revocation trees
+  ---------------------------------------------------------------
+Coordination           Causal DAG | 2PC atomic | bounded counters (Stingray)
+  ---------------------------------------------------------------
+Execution              Cells (isolated objects + c-lists) | Turns (atomic txns)
+                       Three-party introduction | routing directives
+  ---------------------------------------------------------------
+Proof                  BabyBear STARK + FRI (~24 KiB) | Poseidon2 in-circuit
+                       IVC fold chains | AIR: fold, derivation, Merkle
+  ---------------------------------------------------------------
+Commitment             4-ary Merkle trees (BLAKE3 fast / Poseidon2 ZK)
+  ---------------------------------------------------------------
+Policy                 Datalog evaluator | Macaroon HMAC + Biscuit Ed25519
+                       X25519-ChaCha20Poly1305 seal/unseal
+  ---------------------------------------------------------------
+Storage                redb ACID | OS keychain | note commitment tree
+                       nullifier set | audit log</code></pre>
+
+    <h2 id="crates">Crate Map</h2>
+
+    <h3>Core Primitives</h3>
+    <table class="comparison">
+      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>pyana-types</code></td><td>PublicKey, Signature, SigningKey -- shared type definitions</td></tr>
+        <tr><td><code>pyana-token</code></td><td>Macaroon token minting, attenuation, verification, Datalog evaluator</td></tr>
+        <tr><td><code>pyana-cell</code></td><td>Cell model: isolated objects with c-lists, balance, notes, predicates</td></tr>
+        <tr><td><code>pyana-turn</code></td><td>Turn execution: atomic state transitions, receipt chains, call forests</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Cryptographic Layer</h3>
+    <table class="comparison">
+      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>pyana-circuit</code></td><td>AIR definitions, BabyBear field, Poseidon2, STARK prover/verifier, IVC</td></tr>
+        <tr><td><code>pyana-bridge</code></td><td>Bridge between SDK types and circuit types, presentation proof builder</td></tr>
+        <tr><td><code>pyana-trace</code></td><td>Authorization trace representation (facts, steps, conclusions)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Federation and Network</h3>
+    <table class="comparison">
+      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>pyana-federation</code></td><td>Morpheus DAG-BFT consensus, epoch management, attested roots</td></tr>
+        <tr><td><code>pyana-gossip</code></td><td>Gossip protocol for federation peer communication</td></tr>
+        <tr><td><code>pyana-wire</code></td><td>Wire protocol framing (postcard + length-prefixed)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>SDK and Applications</h3>
+    <table class="comparison">
+      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>pyana-sdk</code></td><td>Unified agent SDK: wallet, runtime, privacy APIs, discovery</td></tr>
+        <tr><td><code>pyana-node</code></td><td>Node binary: HTTP API, federation sync, MCP server, bridge</td></tr>
+        <tr><td><code>pyana-wasm</code></td><td>WebAssembly build for browser extension and playground</td></tr>
+        <tr><td><code>pyana-demo-agent</code></td><td>End-to-end demo exercising the full stack</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="data-flow">Data Flow: Authorization Proof</h2>
+
+    <ol>
+      <li><strong>SDK</strong>: <code>wallet.authorize(token, request, mode)</code> is called.</li>
+      <li><strong>Policy</strong>: Datalog evaluator runs locally, producing a trace of derived facts.</li>
+      <li><strong>Bridge</strong>: Trace is compiled to circuit witness (BabyBear field elements).</li>
+      <li><strong>Circuit</strong>: AIR constraint system generates a STARK proof (~24 KiB).</li>
+      <li><strong>SDK</strong>: Returns <code>AuthorizationPresentation</code> with proof + selected facts.</li>
+      <li><strong>Verifier</strong>: Checks proof against attested federation root (~2ms).</li>
+    </ol>
+
+    <h2 id="data-flow-turn">Data Flow: Turn Execution</h2>
+
+    <ol>
+      <li><strong>SDK</strong>: Build a <code>Turn</code> with a call forest targeting cells.</li>
+      <li><strong>Wallet</strong>: Sign the turn with <code>wallet.sign_turn(&turn)</code>.</li>
+      <li><strong>Node API</strong>: Submit signed turn to <code>POST /api/turn</code>.</li>
+      <li><strong>Execution</strong>: Cell runtime evaluates effects atomically (commit or rollback).</li>
+      <li><strong>Consensus</strong>: Federation commits the turn and produces a <code>TurnReceipt</code>.</li>
+      <li><strong>Wallet</strong>: <code>wallet.append_receipt(receipt)</code> extends the proof chain.</li>
+    </ol>
+
+    <h2 id="core-insight">Core Insight</h2>
+
+    <p>
+      <strong>Capability attenuation is incrementally verifiable computation.</strong>
+    </p>
+
+    <p>
+      Each delegation step is a fold over a committed fact set. The fact set tracks
+      which permissions exist, which are narrowed, and the derivation rules that
+      produced them. The STARK proves that this fold chain is valid from root to leaf,
+      without revealing any intermediate step. This is why verification is
+      O(1) regardless of chain length.
+    </p>
+
+    <div class="callout callout--note">
+      <p>
+        For the cryptographic details of how this fold is committed and proven,
+        see <a href="cryptography.html">Cryptographic Foundations</a>.
+        For the capability semantics (cells, turns, c-lists), see
+        <a href="capabilities.html">Object-Capability Model</a>.
+      </p>
+    </div>
+
+  </div>
+</div>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime.</span>
+    <div class="site-foot__links">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html">Docs</a>
+      <a href="https://github.com/emberian/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

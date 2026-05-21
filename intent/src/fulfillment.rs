@@ -1421,6 +1421,9 @@ mod tests {
             threshold,
             predicate_type: PredicateType::Gte,
             fact_commitment,
+            blinding: None,
+            fact_hash: None,
+            state_root: None,
         };
         let predicate_proof = prove_predicate(witness).expect("proof should succeed");
 
@@ -1505,6 +1508,9 @@ mod tests {
             threshold,
             predicate_type: PredicateType::Gte,
             fact_commitment,
+            blinding: None,
+            fact_hash: None,
+            state_root: None,
         };
         let predicate_proof = prove_predicate(witness).expect("proof should succeed");
 
@@ -1591,6 +1597,9 @@ mod tests {
             threshold: wrong_threshold,
             predicate_type: PredicateType::Gte,
             fact_commitment,
+            blinding: None,
+            fact_hash: None,
+            state_root: None,
         };
         let predicate_proof = prove_predicate(witness).expect("proof should succeed");
 
@@ -1749,6 +1758,9 @@ mod tests {
             threshold: BabyBear::new(1000),
             predicate_type: PredicateType::Gte,
             fact_commitment: balance_commitment,
+            blinding: None,
+            fact_hash: None,
+            state_root: None,
         })
         .unwrap();
 
@@ -1762,6 +1774,9 @@ mod tests {
             threshold: BabyBear::new(50),
             predicate_type: PredicateType::Gte,
             fact_commitment: rep_commitment,
+            blinding: None,
+            fact_hash: None,
+            state_root: None,
         })
         .unwrap();
 

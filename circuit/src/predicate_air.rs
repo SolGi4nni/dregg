@@ -48,6 +48,7 @@
 use crate::constraint_prover::{Air, Constraint};
 use crate::field::BabyBear;
 use crate::poseidon2;
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Number of bits for the range check.
 ///
@@ -61,8 +62,9 @@ use crate::poseidon2;
 pub const PREDICATE_DIFF_BITS: usize = 30;
 
 /// Trace width for the predicate AIR.
-/// private_value(1) + threshold(1) + diff(1) + diff_bits(30) + fact_commitment(1) + neq_inverse(1) = 35
-pub const PREDICATE_AIR_WIDTH: usize = 35;
+/// private_value(1) + threshold(1) + diff(1) + diff_bits(30) + fact_commitment(1) + neq_inverse(1)
+/// + blinding(1) + fact_hash(1) + state_root(1) = 38
+pub const PREDICATE_AIR_WIDTH: usize = 38;
 
 /// Column indices for the predicate AIR trace.
 pub mod col {
@@ -80,6 +82,12 @@ pub mod col {
     pub const FACT_COMMITMENT: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 33
     /// Multiplicative inverse of diff (used only for NEQ predicate).
     pub const NEQ_INVERSE: usize = FACT_COMMITMENT + 1; // 34
+    /// Per-proof blinding factor (witness, private). Prevents cross-session linking.
+    pub const BLINDING: usize = NEQ_INVERSE + 1; // 35
+    /// The fact hash (witness, private). Used to verify blinded commitment derivation.
+    pub const FACT_HASH: usize = BLINDING + 1; // 36
+    /// The state root (witness, private). Used to verify blinded commitment derivation.
+    pub const STATE_ROOT: usize = FACT_HASH + 1; // 37
 
     /// Get the column for diff_bits[bit_idx].
     #[inline]
@@ -124,9 +132,21 @@ pub struct PredicateWitness {
     pub threshold: BabyBear,
     /// The type of predicate.
     pub predicate_type: PredicateType,
-    /// Fact commitment: Poseidon2(fact_hash, state_root).
-    /// Binds this proof to a specific fact in a specific token state.
+    /// Fact commitment: binds this proof to a specific fact in a specific token state.
+    /// When blinding is used, this is `Poseidon2(fact_hash, state_root, blinding, 0)`.
+    /// When blinding is zero/None, this is the legacy `Poseidon2(fact_hash, state_root)`.
     pub fact_commitment: BabyBear,
+    /// Per-proof blinding factor for unlinkability. When `Some(nonzero)`, the
+    /// fact_commitment is computed as `Poseidon2(fact_hash, state_root, blinding, 0)`.
+    /// When `None` or `Some(ZERO)`, the legacy deterministic commitment is used.
+    /// This value is private (in the witness) and never revealed to the verifier.
+    pub blinding: Option<BabyBear>,
+    /// The fact hash (private witness). Required when blinding is used so the AIR
+    /// can verify the commitment derivation.
+    pub fact_hash: Option<BabyBear>,
+    /// The state root (private witness). Required when blinding is used so the AIR
+    /// can verify the commitment derivation.
+    pub state_root: Option<BabyBear>,
 }
 
 impl PredicateWitness {
@@ -291,6 +311,41 @@ impl Air for PredicateAir {
                     diff * inverse - BabyBear::ONE
                 }),
             },
+            // Constraint 8: Blinded fact commitment derivation.
+            // When fact_hash and state_root are both zero (components not provided),
+            // this constraint is a no-op (legacy path — external verification).
+            // When components are provided:
+            //   If blinding != 0: fact_commitment == Poseidon2(fact_hash, state_root, blinding, 0)
+            //   If blinding == 0: fact_commitment == Poseidon2(fact_hash, state_root) [2-to-1]
+            Constraint {
+                name: "fact_commitment_derivation".to_string(),
+                eval: Box::new(move |row, _, _| {
+                    let fact_commitment = row[col::FACT_COMMITMENT];
+                    let blinding = row[col::BLINDING];
+                    let fact_hash = row[col::FACT_HASH];
+                    let state_root = row[col::STATE_ROOT];
+
+                    // Skip when components are not provided (legacy path).
+                    if fact_hash == BabyBear::ZERO && state_root == BabyBear::ZERO {
+                        return BabyBear::ZERO;
+                    }
+
+                    if blinding == BabyBear::ZERO {
+                        // Unblinded: commitment = hash_2_to_1(fact_hash, state_root)
+                        let expected = poseidon2::hash_2_to_1(fact_hash, state_root);
+                        fact_commitment - expected
+                    } else {
+                        // Blinded: commitment = hash_4_to_1([fact_hash, state_root, blinding, 0])
+                        let expected = poseidon2::hash_4_to_1(&[
+                            fact_hash,
+                            state_root,
+                            blinding,
+                            BabyBear::ZERO,
+                        ]);
+                        fact_commitment - expected
+                    }
+                }),
+            },
         ]
     }
 
@@ -302,6 +357,9 @@ impl Air for PredicateAir {
         row[col::PRIVATE_VALUE] = w.private_value;
         row[col::THRESHOLD] = w.threshold;
         row[col::FACT_COMMITMENT] = w.fact_commitment;
+        row[col::BLINDING] = w.blinding.unwrap_or(BabyBear::ZERO);
+        row[col::FACT_HASH] = w.fact_hash.unwrap_or(BabyBear::ZERO);
+        row[col::STATE_ROOT] = w.state_root.unwrap_or(BabyBear::ZERO);
 
         let diff = w.compute_diff();
         row[col::DIFF] = diff;
@@ -331,6 +389,129 @@ impl Air for PredicateAir {
     }
 }
 
+impl StarkAir for PredicateAir {
+    fn width(&self) -> usize {
+        PREDICATE_AIR_WIDTH
+    }
+
+    fn constraint_degree(&self) -> usize {
+        2
+    }
+
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+
+    fn air_name(&self) -> &'static str {
+        "pyana-predicate-v1"
+    }
+
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let predicate_type = self.witness.predicate_type;
+
+        // C1: threshold matches public input
+        let c1 = local[col::THRESHOLD] - public_inputs[0];
+        // C2: fact_commitment matches public input
+        let c2 = local[col::FACT_COMMITMENT] - public_inputs[1];
+        // C3: diff is correctly computed
+        let c3 = {
+            let value = local[col::PRIVATE_VALUE];
+            let threshold = local[col::THRESHOLD];
+            let diff = local[col::DIFF];
+            match predicate_type {
+                PredicateType::Gte | PredicateType::InRangeLow => diff - (value - threshold),
+                PredicateType::Lte | PredicateType::InRangeHigh => diff - (threshold - value),
+                PredicateType::Gt => diff - (value - threshold - BabyBear::ONE),
+                PredicateType::Lt => diff - (threshold - value - BabyBear::ONE),
+                PredicateType::Neq => diff - (value - threshold),
+            }
+        };
+        // C4: bit decomposition correct
+        let c4 = if predicate_type == PredicateType::Neq {
+            BabyBear::ZERO
+        } else {
+            let diff = local[col::DIFF];
+            let mut recomposed = BabyBear::ZERO;
+            let mut power_of_two = BabyBear::ONE;
+            for i in 0..PREDICATE_DIFF_BITS {
+                let bit = local[col::diff_bit(i)];
+                recomposed = recomposed + bit * power_of_two;
+                power_of_two = power_of_two + power_of_two;
+            }
+            recomposed - diff
+        };
+        // C5: bits are binary
+        let c5 = if predicate_type == PredicateType::Neq {
+            BabyBear::ZERO
+        } else {
+            let mut result = BabyBear::ZERO;
+            for i in 0..PREDICATE_DIFF_BITS {
+                let bit = local[col::diff_bit(i)];
+                result = result + bit * (bit - BabyBear::ONE);
+            }
+            result
+        };
+        // C6: high bit is zero
+        let c6 = if predicate_type == PredicateType::Neq {
+            BabyBear::ZERO
+        } else {
+            local[col::diff_bit(PREDICATE_DIFF_BITS - 1)]
+        };
+        // C7: NEQ inverse valid (diff * inverse = 1)
+        let c7 = if predicate_type != PredicateType::Neq {
+            BabyBear::ZERO
+        } else {
+            let diff = local[col::DIFF];
+            let inverse = local[col::NEQ_INVERSE];
+            diff * inverse - BabyBear::ONE
+        };
+
+        // Combine with alpha powers
+        let mut combined = c1;
+        let mut alpha_pow = alpha;
+        combined = combined + alpha_pow * c2;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c3;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c4;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c5;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c6;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c7;
+
+        combined
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 2 {
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::THRESHOLD,
+                value: public_inputs[0],
+            });
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::FACT_COMMITMENT,
+                value: public_inputs[1],
+            });
+        }
+        constraints
+    }
+}
+
 /// A complete predicate proof result.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PredicateProof {
@@ -340,8 +521,8 @@ pub struct PredicateProof {
     pub threshold: BabyBear,
     /// The fact commitment (public input).
     pub fact_commitment: BabyBear,
-    /// The constraint proof (trace digest + public inputs).
-    pub proof: crate::constraint_prover::ConstraintProof,
+    /// The STARK proof (FRI-based, cryptographically sound).
+    pub stark_proof: StarkProof,
 }
 
 /// Generate a predicate proof from a witness.
@@ -358,13 +539,20 @@ pub fn prove_predicate(witness: PredicateWitness) -> Option<PredicateProof> {
     let fact_commitment = witness.fact_commitment;
 
     let air = PredicateAir::new(witness);
-    let proof = crate::constraint_prover::ConstraintProof::generate(&air)?;
+    let (mut trace, public_inputs) = air.generate_trace();
+
+    // STARK prover requires trace length >= 2 and power-of-two.
+    while trace.len() < 2 || !trace.len().is_power_of_two() {
+        trace.push(trace[0].clone());
+    }
+
+    let stark_proof = stark::prove(&air, &trace, &public_inputs);
 
     Some(PredicateProof {
         predicate_type,
         threshold,
         fact_commitment,
-        proof,
+        stark_proof,
     })
 }
 
@@ -380,18 +568,62 @@ pub fn verify_predicate(
     if proof.threshold != threshold || proof.fact_commitment != fact_commitment {
         return false;
     }
-    let expected_pi = [threshold, fact_commitment];
-    proof.proof.verify(&expected_pi)
+    let public_inputs = vec![threshold, fact_commitment];
+    // Reconstruct a dummy witness for the AIR (only needed for constraint evaluation shape).
+    let dummy_witness = PredicateWitness {
+        private_value: BabyBear::ZERO,
+        threshold,
+        predicate_type: proof.predicate_type,
+        fact_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
+    };
+    let air = PredicateAir::new(dummy_witness);
+    stark::verify(&air, &proof.stark_proof, &public_inputs).is_ok()
 }
 
-/// Compute the fact commitment that binds a proven value to a token state.
+/// Compute the (unblinded) fact commitment that binds a proven value to a token state.
 ///
 /// `fact_commitment = Poseidon2(fact_hash, state_root)`
 ///
 /// - `fact_hash`: The Poseidon2 hash of the fact containing the proven attribute.
 /// - `state_root`: The Merkle root of the token state containing the fact.
+///
+/// WARNING: This produces a deterministic commitment. If the same fact is proven
+/// multiple times from the same state, the commitment is identical, enabling
+/// cross-session correlation. Use [`compute_blinded_fact_commitment`] for
+/// unlinkable proofs.
 pub fn compute_fact_commitment(fact_hash: BabyBear, state_root: BabyBear) -> BabyBear {
     poseidon2::hash_2_to_1(fact_hash, state_root)
+}
+
+/// Compute a blinded fact commitment that prevents cross-session linkability.
+///
+/// `blinded_fact_commitment = Poseidon2(fact_hash, state_root, blinding, 0)`
+///
+/// The `blinding` factor MUST be generated fresh (random BabyBear element) for
+/// each proof. It goes into the witness (private) so the verifier cannot recover
+/// `fact_hash` or `state_root` from the commitment.
+///
+/// When `blinding` is zero, this produces the same result as [`compute_fact_commitment`]
+/// (backward compatibility for testing/migration).
+///
+/// - `fact_hash`: The Poseidon2 hash of the fact containing the proven attribute.
+/// - `state_root`: The Merkle root of the token state containing the fact.
+/// - `blinding`: A fresh random BabyBear element (per-proof).
+pub fn compute_blinded_fact_commitment(
+    fact_hash: BabyBear,
+    state_root: BabyBear,
+    blinding: BabyBear,
+) -> BabyBear {
+    if blinding == BabyBear::ZERO {
+        // Legacy path: deterministic 2-to-1 hash.
+        poseidon2::hash_2_to_1(fact_hash, state_root)
+    } else {
+        // Blinded path: 4-to-1 hash with blinding factor.
+        poseidon2::hash_4_to_1(&[fact_hash, state_root, blinding, BabyBear::ZERO])
+    }
 }
 
 /// Prove an InRange predicate (value >= low AND value <= high).
@@ -411,6 +643,9 @@ pub fn prove_in_range(
         threshold: low,
         predicate_type: PredicateType::InRangeLow,
         fact_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
     };
 
     let high_witness = PredicateWitness {
@@ -418,6 +653,9 @@ pub fn prove_in_range(
         threshold: high,
         predicate_type: PredicateType::InRangeHigh,
         fact_commitment,
+        blinding: None,
+        fact_hash: None,
+        state_root: None,
     };
 
     let low_proof = prove_predicate(low_witness)?;
@@ -443,11 +681,39 @@ mod tests {
     use crate::constraint_prover::ConstraintProver;
     use crate::poseidon2::hash_fact;
 
-    /// Helper: create a fact commitment for testing.
-    fn test_fact_commitment(value: BabyBear) -> BabyBear {
+    /// Test state root used in all test helpers.
+    const TEST_STATE_ROOT: u32 = 99999;
+
+    /// Helper: create a fact commitment and its components for testing.
+    /// Returns (commitment, fact_hash, state_root).
+    fn test_fact_commitment_parts(value: BabyBear) -> (BabyBear, BabyBear, BabyBear) {
         let fact_hash = hash_fact(BabyBear::new(100), &[value, BabyBear::ZERO, BabyBear::ZERO]);
-        let state_root = BabyBear::new(99999);
-        compute_fact_commitment(fact_hash, state_root)
+        let state_root = BabyBear::new(TEST_STATE_ROOT);
+        let commitment = compute_fact_commitment(fact_hash, state_root);
+        (commitment, fact_hash, state_root)
+    }
+
+    /// Helper: create a fact commitment for testing (legacy convenience).
+    fn test_fact_commitment(value: BabyBear) -> BabyBear {
+        test_fact_commitment_parts(value).0
+    }
+
+    /// Helper: build a PredicateWitness with fact_hash and state_root populated for constraint 8.
+    fn test_witness(
+        private_value: BabyBear,
+        threshold: BabyBear,
+        predicate_type: PredicateType,
+    ) -> PredicateWitness {
+        let (commitment, fh, sr) = test_fact_commitment_parts(private_value);
+        PredicateWitness {
+            private_value,
+            threshold,
+            predicate_type,
+            fact_commitment: commitment,
+            blinding: None,
+            fact_hash: Some(fh),
+            state_root: Some(sr),
+        }
     }
 
     // =========================================================================
@@ -457,17 +723,7 @@ mod tests {
     #[test]
     fn test_predicate_gte_passes() {
         // Prove: value(25) >= threshold(18)
-        let value = BabyBear::new(25);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(25), BabyBear::new(18), PredicateType::Gte);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -480,17 +736,7 @@ mod tests {
     #[test]
     fn test_predicate_gte_equal_passes() {
         // Prove: value(18) >= threshold(18)
-        let value = BabyBear::new(18);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(18), BabyBear::new(18), PredicateType::Gte);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -504,17 +750,7 @@ mod tests {
     fn test_predicate_gte_fails() {
         // Prove: value(15) >= threshold(18) — should FAIL
         // diff = 15 - 18 in BabyBear wraps to p - 3 (high bit set)
-        let value = BabyBear::new(15);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(15), BabyBear::new(18), PredicateType::Gte);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "GTE 15 >= 18 should fail");
@@ -537,17 +773,7 @@ mod tests {
     #[test]
     fn test_predicate_lte_passes() {
         // Prove: value(10) <= threshold(100)
-        let value = BabyBear::new(10);
-        let threshold = BabyBear::new(100);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Lte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(10), BabyBear::new(100), PredicateType::Lte);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -560,17 +786,7 @@ mod tests {
     #[test]
     fn test_predicate_lte_fails() {
         // Prove: value(200) <= threshold(100) — should FAIL
-        let value = BabyBear::new(200);
-        let threshold = BabyBear::new(100);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Lte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(200), BabyBear::new(100), PredicateType::Lte);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "LTE 200 <= 100 should fail");
@@ -583,17 +799,7 @@ mod tests {
     #[test]
     fn test_predicate_gt_passes() {
         // Prove: value(25) > threshold(18)
-        let value = BabyBear::new(25);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gt,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(25), BabyBear::new(18), PredicateType::Gt);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -607,17 +813,7 @@ mod tests {
     fn test_predicate_gt_equal_fails() {
         // Prove: value(18) > threshold(18) — should FAIL (not strictly greater)
         // diff = 18 - 18 - 1 = p - 1 in BabyBear (wraps, high bit set)
-        let value = BabyBear::new(18);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gt,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(18), BabyBear::new(18), PredicateType::Gt);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "GT 18 > 18 should fail");
@@ -626,17 +822,7 @@ mod tests {
     #[test]
     fn test_predicate_lt_passes() {
         // Prove: value(5) < threshold(18)
-        let value = BabyBear::new(5);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Lt,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(5), BabyBear::new(18), PredicateType::Lt);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -649,17 +835,7 @@ mod tests {
     #[test]
     fn test_predicate_lt_equal_fails() {
         // Prove: value(18) < threshold(18) — should FAIL
-        let value = BabyBear::new(18);
-        let threshold = BabyBear::new(18);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Lt,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(18), BabyBear::new(18), PredicateType::Lt);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "LT 18 < 18 should fail");
@@ -672,17 +848,7 @@ mod tests {
     #[test]
     fn test_predicate_neq_passes() {
         // Prove: value(42) != target(0)
-        let value = BabyBear::new(42);
-        let target = BabyBear::new(0);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold: target,
-            predicate_type: PredicateType::Neq,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(42), BabyBear::new(0), PredicateType::Neq);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(
@@ -696,17 +862,7 @@ mod tests {
     fn test_predicate_neq_fails() {
         // Prove: value(7) != target(7) — should FAIL
         // diff = 0, inverse doesn't exist, constraint diff * inv = 1 fails.
-        let value = BabyBear::new(7);
-        let target = BabyBear::new(7);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold: target,
-            predicate_type: PredicateType::Neq,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(7), BabyBear::new(7), PredicateType::Neq);
         let air = PredicateAir::new(witness);
         let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "NEQ 7 != 7 should fail");
@@ -799,14 +955,8 @@ mod tests {
     fn test_prove_and_verify_gte() {
         let value = BabyBear::new(1000);
         let threshold = BabyBear::new(500);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
+        let witness = test_witness(value, threshold, PredicateType::Gte);
+        let commitment = witness.fact_commitment;
 
         let proof = prove_predicate(witness).expect("should produce proof");
         assert!(verify_predicate(&proof, threshold, commitment));
@@ -815,17 +965,7 @@ mod tests {
     #[test]
     fn test_prove_returns_none_for_false_statement() {
         // Trying to prove 5 >= 100 should return None.
-        let value = BabyBear::new(5);
-        let threshold = BabyBear::new(100);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
-
+        let witness = test_witness(BabyBear::new(5), BabyBear::new(100), PredicateType::Gte);
         let proof = prove_predicate(witness);
         assert!(proof.is_none(), "Cannot prove false statement");
     }
@@ -834,14 +974,8 @@ mod tests {
     fn test_verify_fails_with_wrong_threshold() {
         let value = BabyBear::new(1000);
         let threshold = BabyBear::new(500);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
+        let witness = test_witness(value, threshold, PredicateType::Gte);
+        let commitment = witness.fact_commitment;
 
         let proof = prove_predicate(witness).expect("should produce proof");
         // Verify with a different threshold — should fail.
@@ -853,14 +987,7 @@ mod tests {
     fn test_verify_fails_with_wrong_commitment() {
         let value = BabyBear::new(1000);
         let threshold = BabyBear::new(500);
-        let commitment = test_fact_commitment(value);
-
-        let witness = PredicateWitness {
-            private_value: value,
-            threshold,
-            predicate_type: PredicateType::Gte,
-            fact_commitment: commitment,
-        };
+        let witness = test_witness(value, threshold, PredicateType::Gte);
 
         let proof = prove_predicate(witness).expect("should produce proof");
         // Verify with a different commitment — should fail.
@@ -877,15 +1004,18 @@ mod tests {
 
         // The fact is balance(5000) in some token state.
         let balance_pred = BabyBear::new(42); // "balance" predicate symbol
-        let fact_hash = hash_fact(balance_pred, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
-        let state_root = BabyBear::new(77777);
-        let commitment = compute_fact_commitment(fact_hash, state_root);
+        let fh = hash_fact(balance_pred, &[balance, BabyBear::ZERO, BabyBear::ZERO]);
+        let sr = BabyBear::new(77777);
+        let commitment = compute_fact_commitment(fh, sr);
 
         let witness = PredicateWitness {
             private_value: balance,
             threshold: min_balance,
             predicate_type: PredicateType::Gte,
             fact_commitment: commitment,
+            blinding: None,
+            fact_hash: Some(fh),
+            state_root: Some(sr),
         };
 
         let proof = prove_predicate(witness).expect("balance proof should succeed");
@@ -893,5 +1023,83 @@ mod tests {
         // Verifier only knows: threshold=1000, fact_commitment
         // They learn: "the balance in that fact is >= 1000" without knowing the exact value.
         assert!(verify_predicate(&proof, min_balance, commitment));
+    }
+
+    // =========================================================================
+    // Blinding / unlinkability tests
+    // =========================================================================
+
+    #[test]
+    fn test_blinded_commitment_differs_across_proofs() {
+        // The same fact proven with different blinding factors must produce
+        // different fact_commitments, preventing cross-session linking.
+        let fh = hash_fact(
+            BabyBear::new(100),
+            &[BabyBear::new(25), BabyBear::ZERO, BabyBear::ZERO],
+        );
+        let sr = BabyBear::new(TEST_STATE_ROOT);
+
+        let blinding_a = BabyBear::new(12345);
+        let blinding_b = BabyBear::new(67890);
+
+        let commit_a = compute_blinded_fact_commitment(fh, sr, blinding_a);
+        let commit_b = compute_blinded_fact_commitment(fh, sr, blinding_b);
+
+        assert_ne!(
+            commit_a, commit_b,
+            "Different blinding must produce different commitments"
+        );
+    }
+
+    #[test]
+    fn test_blinded_proof_verifies() {
+        // Generate a proof with blinding and verify it.
+        let value = BabyBear::new(25);
+        let threshold = BabyBear::new(18);
+        let fh = hash_fact(BabyBear::new(100), &[value, BabyBear::ZERO, BabyBear::ZERO]);
+        let sr = BabyBear::new(TEST_STATE_ROOT);
+        let blinding = BabyBear::new(42424242);
+
+        let commitment = compute_blinded_fact_commitment(fh, sr, blinding);
+
+        let witness = PredicateWitness {
+            private_value: value,
+            threshold,
+            predicate_type: PredicateType::Gte,
+            fact_commitment: commitment,
+            blinding: Some(blinding),
+            fact_hash: Some(fh),
+            state_root: Some(sr),
+        };
+
+        let air = PredicateAir::new(witness.clone());
+        let result = ConstraintProver::verify(&air);
+        assert!(
+            result.is_valid(),
+            "Blinded GTE 25 >= 18 should pass: {:?}",
+            result.violations()
+        );
+
+        // Also verify via prove/verify path.
+        let proof = prove_predicate(witness).expect("blinded proof should succeed");
+        assert!(verify_predicate(&proof, threshold, commitment));
+    }
+
+    #[test]
+    fn test_zero_blinding_matches_legacy() {
+        // When blinding is zero, the blinded commitment equals the legacy commitment.
+        let fh = hash_fact(
+            BabyBear::new(100),
+            &[BabyBear::new(25), BabyBear::ZERO, BabyBear::ZERO],
+        );
+        let sr = BabyBear::new(TEST_STATE_ROOT);
+
+        let legacy = compute_fact_commitment(fh, sr);
+        let blinded_zero = compute_blinded_fact_commitment(fh, sr, BabyBear::ZERO);
+
+        assert_eq!(
+            legacy, blinded_zero,
+            "Zero blinding must equal legacy commitment"
+        );
     }
 }

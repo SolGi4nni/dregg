@@ -180,8 +180,8 @@ pub use note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, prove_note_spend, verify_note_spend,
 };
 pub use predicate_air::{
-    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
-    prove_in_range, prove_predicate, verify_in_range, verify_predicate,
+    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_blinded_fact_commitment,
+    compute_fact_commitment, prove_in_range, prove_predicate, verify_in_range, verify_predicate,
 };
 pub use presentation::{
     AuthorizationProof, PresentationAir, PresentationProof, PresentationVerification,

@@ -4715,6 +4715,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-teasting"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "macaroon",
+ "postcard",
+ "pyana-bridge",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-commit",
+ "pyana-coord",
+ "pyana-federation",
+ "pyana-intent",
+ "pyana-morpheus",
+ "pyana-net",
+ "pyana-sdk",
+ "pyana-store",
+ "pyana-turn",
+ "pyana-types",
+ "pyana-wire",
+ "serde",
+ "token",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "pyana-tests"
 version = "0.1.0"
 dependencies = [

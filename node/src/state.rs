@@ -137,6 +137,12 @@ pub struct NodeStateInner {
     pub pending_unlock_requests: Vec<UnlockRequest>,
     /// Budget epoch version (tracks coordinator rebalance cycles).
     pub budget_epoch: u64,
+
+    // ─── Cross-Federation Bridge State ───────────────────────────────────────
+    /// Revocations from remote federations (federation_id -> set of revoked token hashes).
+    /// Populated by the bridge node when it receives revocation messages from
+    /// remote federation gossip networks.
+    pub cross_federation_revocations: HashMap<[u8; 32], HashSet<[u8; 32]>>,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -258,6 +264,7 @@ impl NodeState {
                 pending_spending_certificates: Vec::new(),
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
+                cross_federation_revocations: HashMap::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -312,6 +319,7 @@ impl NodeState {
                 pending_spending_certificates: Vec::new(),
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
+                cross_federation_revocations: HashMap::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -548,6 +556,33 @@ impl NodeStateInner {
             })?;
         let (amount, _silo) = mgr.apply_unlock_certificate(certificate)?;
         Ok(amount)
+    }
+
+    /// Check if a token is revoked in a remote federation.
+    ///
+    /// Used by the bridge to check cross-federation token revocation status
+    /// before accepting tokens that originate from another federation.
+    pub fn is_cross_federation_revoked(
+        &self,
+        federation_id: &[u8; 32],
+        token_hash: &[u8; 32],
+    ) -> bool {
+        self.cross_federation_revocations
+            .get(federation_id)
+            .map(|set| set.contains(token_hash))
+            .unwrap_or(false)
+    }
+
+    /// Add a revocation to the cross-federation revocation cache.
+    pub fn add_cross_federation_revocation(
+        &mut self,
+        federation_id: [u8; 32],
+        token_hash: [u8; 32],
+    ) {
+        self.cross_federation_revocations
+            .entry(federation_id)
+            .or_default()
+            .insert(token_hash);
     }
 
     /// Load federation keys and mark the federation as configured.
