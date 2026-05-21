@@ -4347,6 +4347,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "getrandom 0.3.4",
+ "proptest",
  "pyana-types",
  "serde",
  "serde_json",
@@ -4635,8 +4636,10 @@ dependencies = [
  "pyana-circuit",
  "pyana-commit",
  "pyana-federation",
+ "pyana-sdk",
  "pyana-trace",
  "pyana-turn",
+ "pyana-types",
  "pyana-wire",
  "token",
 ]
@@ -4656,6 +4659,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
+ "proptest",
  "pyana-cell",
  "pyana-types",
  "serde",

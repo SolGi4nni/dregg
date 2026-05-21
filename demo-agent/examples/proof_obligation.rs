@@ -15,10 +15,11 @@
 //! ## Adversarial Path
 //! 4. Bob fails to deliver proof -> Alice slashes Bob's stake as compensation
 
+use std::collections::HashSet;
 use pyana_cell::note::NoteCommitment;
 use pyana_cell::CellId;
 use pyana_turn::{
-    ConditionProof, ProofCondition, ProofObligation,
+    ConditionProof, DEFAULT_MAX_ROOT_AGE, ProofCondition, ProofObligation, TrustedRoot,
     obligation::{ObligationOutcome, check_expiry, create_obligation, fulfill_obligation},
 };
 
@@ -46,7 +47,8 @@ fn main() {
     // Federation roots (trusted by both parties).
     let fed_a_root = [0xFA; 32];
     let fed_b_root = [0xFB; 32];
-    let trusted_roots = [fed_a_root, fed_b_root];
+    let trusted_roots: Vec<TrustedRoot> = vec![(fed_a_root, 10u64), (fed_b_root, 10u64)];
+    let mut nullifiers = HashSet::new();
 
     println!("Participants:");
     println!("  Alice: {} (obligor in Fed A)", short_id(alice));
@@ -107,6 +109,7 @@ fn main() {
         proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE],
         federation_root: fed_a_root,
         public_outputs: vec![1], // conclusion = ALLOW
+        air_name: "transfer_air".to_string(),
     };
 
     let alice_result = fulfill_obligation(
@@ -114,6 +117,8 @@ fn main() {
         &alice_proof,
         current_height,
         &trusted_roots,
+        DEFAULT_MAX_ROOT_AGE,
+        &mut nullifiers,
     );
 
     match &alice_result {
@@ -131,6 +136,7 @@ fn main() {
         proof_bytes: vec![0xBA, 0xDC, 0x0F, 0xFE, 0xE0],
         federation_root: fed_b_root,
         public_outputs: vec![1],
+        air_name: "nft_transfer_air".to_string(),
     };
 
     let bob_result = fulfill_obligation(
@@ -138,6 +144,8 @@ fn main() {
         &bob_proof,
         current_height,
         &trusted_roots,
+        DEFAULT_MAX_ROOT_AGE,
+        &mut nullifiers,
     );
 
     match &bob_result {
@@ -198,12 +206,15 @@ fn main() {
         proof_bytes: vec![0xBA, 0xDC, 0x0F, 0xFE, 0xE0],
         federation_root: fed_b_root,
         public_outputs: vec![1],
+        air_name: "nft_transfer_air".to_string(),
     };
     let late_result = fulfill_obligation(
         &bob_obligation_2,
         &late_proof,
         expired_height,
         &trusted_roots,
+        DEFAULT_MAX_ROOT_AGE,
+        &mut nullifiers,
     );
     match &late_result {
         Err(e) => {

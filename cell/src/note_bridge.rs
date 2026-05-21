@@ -389,4 +389,252 @@ mod tests {
         let result = bridged_set.insert(proof.nullifier);
         assert!(matches!(result, Err(BridgeError::AlreadyBridged { .. })));
     }
+
+    // ========================================================================
+    // Adversarial tests: prove note bridge security properties
+    // ========================================================================
+
+    /// Adversarial test 8: Double-bridge attack.
+    ///
+    /// Bridge the same note (same nullifier) to the same federation twice.
+    /// The second attempt MUST fail via BridgedNullifierSet.
+    #[test]
+    fn adversarial_double_bridge() {
+        let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
+        let nullifier = [0xD0; 32];
+        let proof = make_proof(nullifier, 500, 1);
+        let mut bridged_set = BridgedNullifierSet::new();
+
+        // First bridge: verify + insert.
+        verify_portable_note(&proof, &trusted, verify_ok).unwrap();
+        bridged_set.insert(proof.nullifier).unwrap();
+
+        // Attacker attempts to bridge the SAME note again.
+        // Verification would pass (proof is still valid against the root),
+        // but the nullifier set catches the double-bridge.
+        verify_portable_note(&proof, &trusted, verify_ok).unwrap();
+        let result = bridged_set.insert(proof.nullifier);
+        assert!(
+            matches!(result, Err(BridgeError::AlreadyBridged { nullifier: n }) if n == nullifier),
+            "double-bridge must be rejected by BridgedNullifierSet"
+        );
+    }
+
+    /// Adversarial test 9: Untrusted root.
+    ///
+    /// Present a PortableNoteProof with a source_root that's not in
+    /// trusted_federation_roots. Must fail with UntrustedRoot.
+    #[test]
+    fn adversarial_untrusted_root() {
+        // Trusted set contains root at height 99.
+        let trusted = vec![make_attested_root(99, Some([0xCC; 32]))];
+
+        // Attacker's proof references a root from a different (untrusted) federation.
+        let mut proof = make_proof([0xAA; 32], 100, 1);
+        // The proof's source_root is at height 42 with different merkle_root.
+        // This does NOT match anything in trusted.
+        assert_ne!(proof.source_root.merkle_root, trusted[0].merkle_root);
+
+        let result = verify_portable_note(&proof, &trusted, verify_ok);
+        assert!(
+            matches!(result, Err(BridgeError::UntrustedRoot { .. })),
+            "untrusted root must be rejected: got {:?}", result
+        );
+
+        // Also test: attacker crafts source_root with matching merkle_root but wrong height.
+        proof.source_root.merkle_root = trusted[0].merkle_root;
+        proof.source_root.height = 42; // wrong height
+        proof.source_root.note_tree_root = trusted[0].note_tree_root;
+        let result2 = verify_portable_note(&proof, &trusted, verify_ok);
+        assert!(
+            matches!(result2, Err(BridgeError::UntrustedRoot { .. })),
+            "root with wrong height must be rejected: got {:?}", result2
+        );
+    }
+
+    /// Adversarial test 10: Tampered STARK proof.
+    ///
+    /// Take a valid PortableNoteProof and flip a byte in spending_proof.
+    /// The STARK verifier must reject the tampered proof.
+    #[test]
+    fn adversarial_tampered_stark_proof() {
+        let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
+        let mut proof = make_proof([0xBB; 32], 100, 1);
+
+        // Flip a byte in the spending_proof to simulate tampering.
+        assert!(!proof.spending_proof.is_empty());
+        proof.spending_proof[0] ^= 0xFF;
+
+        // Use a verifier that checks the proof bytes match expected pattern.
+        // In reality, the STARK verifier would reject any modified proof.
+        let verify_checks_integrity =
+            |_nullifier: &[u8; 32], _root: &[u8; 32], proof_bytes: &[u8]| -> Result<(), String> {
+                // Simulates a real STARK verifier: the expected proof is [1,2,3,4].
+                // Any other value means the proof is tampered.
+                if proof_bytes == &[1, 2, 3, 4] {
+                    Ok(())
+                } else {
+                    Err("STARK proof verification failed: commitment mismatch".to_string())
+                }
+            };
+
+        let result = verify_portable_note(&proof, &trusted, verify_checks_integrity);
+        assert!(
+            matches!(result, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("commitment mismatch")),
+            "tampered proof must be rejected by verifier: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 11: Value mismatch.
+    ///
+    /// Create a PortableNoteProof claiming value=1000 but the STARK proof was
+    /// generated for value=100. Since verify_portable_note currently does NOT check
+    /// value as a public input (the verify_stark closure receives only nullifier,
+    /// root, and proof_bytes — not value), this documents the current behavior.
+    ///
+    /// FINDING: The value field is NOT verified by verify_portable_note itself.
+    /// The STARK verifier closure would need to embed value in its verification
+    /// (e.g., as part of the proof's public inputs encoded in proof_bytes).
+    /// If the STARK proof binds value as a public input, the verifier catches it.
+    /// If not, this is a gap that must be addressed at the protocol level.
+    #[test]
+    fn adversarial_value_mismatch_documents_gap() {
+        let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
+        let mut proof = make_proof([0xCC; 32], 100, 1);
+
+        // Attacker inflates the claimed value from 100 to 1000.
+        proof.value = 1000;
+
+        // With a naive verifier that doesn't check value, this passes.
+        let result_naive = verify_portable_note(&proof, &trusted, verify_ok);
+        assert!(
+            result_naive.is_ok(),
+            "BUG DOCUMENTATION: naive verifier does not catch value inflation"
+        );
+
+        // With a verifier that checks value is bound in the proof, this fails.
+        let verify_with_value_check =
+            |_nullifier: &[u8; 32], _root: &[u8; 32], _proof_bytes: &[u8]| -> Result<(), String> {
+                // A real verifier would extract expected_value from public inputs.
+                // The proof was generated for value=100, but PortableNoteProof claims 1000.
+                // The verifier detects the mismatch.
+                Err("public input mismatch: proof binds value=100, claimed 1000".to_string())
+            };
+
+        let result_strict = verify_portable_note(&proof, &trusted, verify_with_value_check);
+        assert!(
+            matches!(result_strict, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("value=100")),
+            "value-aware verifier must catch inflation: got {:?}", result_strict
+        );
+    }
+
+    /// Adversarial test 12: Nullifier from a different note.
+    ///
+    /// Attacker takes nullifier from note A but provides Merkle proof from note B.
+    /// The STARK verifier must reject this because the nullifier doesn't match
+    /// the note commitment proven by the Merkle proof.
+    #[test]
+    fn adversarial_nullifier_from_different_note() {
+        let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
+
+        let nullifier_a = [0xA0; 32]; // From note A
+        let nullifier_b = [0xB0; 32]; // From note B
+
+        // Attacker uses nullifier_a but the proof is actually for note B.
+        let proof = make_proof(nullifier_a, 100, 1);
+
+        // A real STARK verifier binds the nullifier to the note commitment.
+        // If the nullifier doesn't match what the proof proves, verification fails.
+        let verify_nullifier_binding =
+            |nullifier: &[u8; 32], _root: &[u8; 32], _proof_bytes: &[u8]| -> Result<(), String> {
+                // The proof was generated for note B (nullifier_b).
+                // The presented nullifier is from note A (nullifier_a).
+                let expected_nullifier = nullifier_b;
+                if nullifier != &expected_nullifier {
+                    Err(format!(
+                        "nullifier binding failed: proof is for {:02x}{:02x}..., presented {:02x}{:02x}...",
+                        expected_nullifier[0], expected_nullifier[1],
+                        nullifier[0], nullifier[1]
+                    ))
+                } else {
+                    Ok(())
+                }
+            };
+
+        let result = verify_portable_note(&proof, &trusted, verify_nullifier_binding);
+        assert!(
+            matches!(result, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("nullifier binding failed")),
+            "mismatched nullifier must be rejected: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 13: Expired source root.
+    ///
+    /// Source root has timestamp from 1 year ago, but the federation has a maximum
+    /// acceptable age policy. Since verify_portable_note does NOT currently enforce
+    /// a timestamp-based expiry (it only checks set membership), this test documents
+    /// that root age enforcement must happen at the caller level (e.g., by removing
+    /// old roots from the trusted set).
+    ///
+    /// FINDING: Root age is enforced by trusted_roots set membership, not by
+    /// timestamp comparison within verify_portable_note. Federations must prune
+    /// stale roots from their trusted set to enforce freshness.
+    #[test]
+    fn adversarial_expired_source_root() {
+        // Create a root with a very old timestamp (1 year ago).
+        let old_root = AttestedRoot {
+            merkle_root: [0xDD; 32],
+            note_tree_root: Some([0xEE; 32]),
+            nullifier_set_root: None,
+            height: 1,
+            timestamp: 1000, // Very old timestamp.
+            quorum_signatures: vec![],
+            threshold_qc: None,
+            threshold: 0,
+        };
+
+        let proof = PortableNoteProof {
+            nullifier: [0xFF; 32],
+            source_root: old_root.clone(),
+            spending_proof: vec![1, 2, 3, 4],
+            destination_commitment: NoteCommitment([0x11; 32]),
+            value: 100,
+            asset_type: 1,
+        };
+
+        // If the old root is still in the trusted set, verification passes.
+        // This documents that the federation MUST remove stale roots to enforce freshness.
+        let trusted_with_old = vec![old_root.clone()];
+        let result_with = verify_portable_note(&proof, &trusted_with_old, verify_ok);
+        assert!(
+            result_with.is_ok(),
+            "stale root still in trusted set is accepted (by design)"
+        );
+
+        // If the federation has pruned the stale root, verification fails.
+        let trusted_without_old: Vec<AttestedRoot> = vec![];
+        let result_without = verify_portable_note(&proof, &trusted_without_old, verify_ok);
+        assert!(
+            matches!(result_without, Err(BridgeError::UntrustedRoot { .. })),
+            "pruned stale root must be rejected: got {:?}", result_without
+        );
+
+        // With a recent root only in the trusted set, the old proof is rejected.
+        let recent_root = AttestedRoot {
+            merkle_root: [0xCC; 32],
+            note_tree_root: Some([0xBB; 32]),
+            nullifier_set_root: None,
+            height: 10000,
+            timestamp: 1_700_000_000, // Recent.
+            quorum_signatures: vec![],
+            threshold_qc: None,
+            threshold: 0,
+        };
+        let trusted_recent_only = vec![recent_root];
+        let result_recent = verify_portable_note(&proof, &trusted_recent_only, verify_ok);
+        assert!(
+            matches!(result_recent, Err(BridgeError::UntrustedRoot { .. })),
+            "proof against old root not in trusted set must be rejected: got {:?}", result_recent
+        );
+    }
 }

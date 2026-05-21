@@ -17,10 +17,11 @@
 //! This replaces HTLC hash-lock patterns with receipt-based conditions,
 //! which are strictly more general (any provable statement, not just preimage knowledge).
 
+use std::collections::HashSet;
 use pyana_cell::{Cell, CellId, Ledger, permissions::Permissions, AuthRequired};
 use pyana_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
-    Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
+    DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
 };
 
@@ -207,11 +208,14 @@ fn main() {
     let proof = ConditionProof::Receipt(bob_receipt);
     let executor_a = TurnExecutor::new(ComputronCosts::zero());
 
+    let mut null_a = HashSet::new();
     let alice_result = executor_a.execute_conditional(
         &alice_conditional,
         &proof,
         current_height + 5, // within timeout
         &[],
+        DEFAULT_MAX_ROOT_AGE,
+        &mut null_a,
         &mut fed_a_ledger,
     );
 
@@ -276,11 +280,14 @@ fn main() {
     let proof = ConditionProof::Preimage(wrong_preimage);
     let executor_c = TurnExecutor::new(ComputronCosts::zero());
 
+    let mut null_c1 = HashSet::new();
     let expired_result = executor_c.execute_conditional(
         &charlie_conditional,
         &proof,
         81,
         &[],
+        DEFAULT_MAX_ROOT_AGE,
+        &mut null_c1,
         &mut fed_c_ledger,
     );
 
@@ -303,11 +310,14 @@ fn main() {
     println!("\n--- Step 6: Demonstrating invalid proof rejection ---\n");
 
     let wrong_proof = ConditionProof::Preimage([99u8; 32]);
+    let mut null_c2 = HashSet::new();
     let invalid_result = executor_c.execute_conditional(
         &charlie_conditional,
         &wrong_proof,
         60, // within timeout
         &[],
+        DEFAULT_MAX_ROOT_AGE,
+        &mut null_c2,
         &mut fed_c_ledger,
     );
 
@@ -341,11 +351,14 @@ fn main() {
     };
 
     let correct_proof = ConditionProof::Preimage(secret);
+    let mut null_c3 = HashSet::new();
     let success_result = executor_c.execute_conditional(
         &charlie_conditional2,
         &correct_proof,
         60,
         &[],
+        DEFAULT_MAX_ROOT_AGE,
+        &mut null_c3,
         &mut fed_c_ledger,
     );
 
@@ -381,17 +394,18 @@ fn main() {
         proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE],
         federation_root: fed_root,
         public_outputs: vec![1],
+        air_name: "transfer_v1".to_string(),
     };
 
-    let trusted_roots = vec![fed_root];
-    let result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &trusted_roots);
+    let trusted_roots = vec![(fed_root, 50u64)];
+    let mut nullifiers = HashSet::new();
+    let result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &trusted_roots, DEFAULT_MAX_ROOT_AGE, &mut nullifiers);
     assert_eq!(result, ConditionalResult::Resolved);
     println!("  RemoteProof condition resolved with valid STARK proof");
     println!("    Federation root: {}", short_hex(&fed_root));
     println!("    Conclusion: ALLOW (1)");
-
-    let untrusted_result =
-        pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &[]);
+        let mut n2 = HashSet::new();
+    let untrusted_result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n2);
     assert!(matches!(
         untrusted_result,
         ConditionalResult::InvalidProof(_)

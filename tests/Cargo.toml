@@ -18,6 +18,8 @@ pyana-bridge = { path = "../bridge" }
 pyana-wire = { path = "../wire" }
 pyana-turn = { path = "../turn" }
 pyana-cell = { path = "../cell" }
+pyana-sdk = { path = "../sdk" }
+pyana-types = { path = "../types" }
 hints = { path = "../hints" }
 token = { path = "../token", default-features = false, features = ["macaroon"] }
 blake3 = "1"

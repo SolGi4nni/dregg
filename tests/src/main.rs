@@ -18,3 +18,6 @@ mod trace_attacks;
 
 // End-to-end integration tests: token -> proof -> turn execution
 mod integration;
+
+// Full pipeline integration tests: all layers with real crypto
+mod full_pipeline;

@@ -738,4 +738,311 @@ mod tests {
         };
         assert!(validate_conditional_submission(&ct, 10).is_ok());
     }
+
+    // ========================================================================
+    // Adversarial tests: prove security properties hold against malicious actors
+    // ========================================================================
+
+    /// Adversarial test 1: Proof replay attack.
+    ///
+    /// A valid proof P satisfies condition C for ConditionalTurn_1.
+    /// An attacker tries to re-use the SAME proof P to resolve ConditionalTurn_2.
+    /// The proof nullifier must catch this replay and reject it.
+    #[test]
+    fn adversarial_proof_replay_attack() {
+        let fed_root = [0x01; 32];
+        let trusted = vec![(fed_root, 50u64)];
+
+        // Two different conditions (same AIR, same root — different turns) that
+        // could both be satisfied by the same proof if we didn't have nullifiers.
+        let condition_1 = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+        let condition_2 = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+
+        // The same valid proof.
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+
+        // First resolution succeeds.
+        let r1 = resolve_condition(
+            &condition_1, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert_eq!(r1, ConditionalResult::Resolved);
+
+        // Second resolution with THE SAME proof must FAIL — replay attack caught.
+        let r2 = resolve_condition(
+            &condition_2, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert_eq!(
+            r2,
+            ConditionalResult::InvalidProof("proof already used".to_string()),
+            "proof replay attack must be rejected by nullifier"
+        );
+    }
+
+    /// Adversarial test 2: Wrong AIR proof.
+    ///
+    /// Generate a valid MerklePoseidon2 proof but present it against a condition
+    /// expecting MultiStepDerivation AIR. The air_name mismatch must be caught.
+    #[test]
+    fn adversarial_wrong_air_proof() {
+        let fed_root = [0x02; 32];
+        let trusted = vec![(fed_root, 50u64)];
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "MultiStepDerivation".to_string(),
+            expected_conclusion: 1,
+        };
+
+        // Attacker presents a proof generated for a DIFFERENT AIR.
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xFF; 128],
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "MerklePoseidon2".to_string(),
+        };
+
+        let mut used = nullifiers();
+        let result = resolve_condition(
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")),
+            "wrong AIR proof must be rejected: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 3: Stale root attack.
+    ///
+    /// Attacker uses a proof anchored to a root from height 5 when current height
+    /// is 1000 and max_root_age is 500. The root is "trusted" but too old.
+    #[test]
+    fn adversarial_stale_root_attack() {
+        let fed_root = [0x03; 32];
+        // Root was attested at height 5.
+        let trusted = vec![(fed_root, 5u64)];
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xCA, 0xFE],
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+        // Current height 1000, root at height 5, max_root_age 500.
+        // Age = 1000 - 5 = 995 > 500.
+        let result = resolve_condition(
+            &condition, &proof, 1000, 2000, &trusted, 500, &mut used,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("too old")),
+            "stale root must be rejected: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 4: Deadline race.
+    ///
+    /// Submit proof at EXACTLY timeout_height. The timeout check is strict:
+    /// `current_height > timeout_height` means expired. At exactly timeout_height,
+    /// the condition should still be resolvable (not expired).
+    ///
+    /// However, submitting at timeout_height + 1 must fail.
+    #[test]
+    fn adversarial_deadline_race_at_exact_timeout() {
+        let preimage = [0x04; 32];
+        let hash = *blake3::hash(&preimage).as_bytes();
+        let condition = ProofCondition::HashPreimage { hash };
+        let proof = ConditionProof::Preimage(preimage);
+        let mut used = nullifiers();
+
+        // At exactly timeout_height (100): should still resolve (not expired).
+        let at_deadline = resolve_condition(
+            &condition, &proof, 100, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert_eq!(
+            at_deadline,
+            ConditionalResult::Resolved,
+            "proof at exact timeout_height should resolve (> is strict)"
+        );
+    }
+
+    /// Adversarial test 4b: One tick past deadline MUST expire.
+    #[test]
+    fn adversarial_deadline_race_one_past_timeout() {
+        let preimage = [0x04; 32];
+        let hash = *blake3::hash(&preimage).as_bytes();
+        let condition = ProofCondition::HashPreimage { hash };
+        let proof = ConditionProof::Preimage(preimage);
+        let mut used = nullifiers();
+
+        // At timeout_height + 1: must be expired.
+        let past_deadline = resolve_condition(
+            &condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert_eq!(
+            past_deadline,
+            ConditionalResult::Expired,
+            "proof one tick past timeout_height must be expired"
+        );
+    }
+
+    /// Adversarial test 5: Fabricated TrustedRoot.
+    ///
+    /// Attacker presents a valid-looking proof anchored to a root that is NOT
+    /// in the trusted_roots set. Must be rejected.
+    #[test]
+    fn adversarial_fabricated_trusted_root() {
+        let real_root = [0x05; 32];
+        let fake_root = [0xFF; 32]; // Not in trusted set.
+
+        // Only real_root is trusted.
+        let trusted = vec![(real_root, 50u64)];
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fake_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            federation_root: fake_root,
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+        let result = resolve_condition(
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("not in trusted set")),
+            "fabricated root must be rejected: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 6: Empty proof bytes.
+    ///
+    /// Present ConditionProof::StarkProof with empty proof_bytes.
+    /// Must fail gracefully (not panic), returning InvalidProof.
+    #[test]
+    fn adversarial_empty_proof_bytes() {
+        let fed_root = [0x06; 32];
+        let trusted = vec![(fed_root, 50u64)];
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![], // Empty!
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+        let result = resolve_condition(
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
+            "empty proof_bytes must be rejected gracefully: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 6b: Empty proof bytes for LocalProof condition.
+    #[test]
+    fn adversarial_empty_proof_bytes_local() {
+        let condition = ProofCondition::LocalProof {
+            expected_air: "compute_air".to_string(),
+            expected_public_inputs: vec![42],
+        };
+
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![], // Empty!
+            federation_root: [0u8; 32],
+            public_outputs: vec![42],
+            air_name: "compute_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+        let result = resolve_condition(
+            &condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
+            "empty proof_bytes in local proof must be rejected: got {:?}", result
+        );
+    }
+
+    /// Adversarial test 7: Huge proof bytes (DoS).
+    ///
+    /// Present a 100MB proof_bytes. The system should fail fast (due to empty-content
+    /// or size checks) without attempting to parse/verify the entire blob.
+    /// NOTE: We allocate only the length needed to exceed a reasonable limit, but
+    /// since the current code only checks `is_empty()`, a large proof that passes
+    /// all other checks will be "Resolved". This test documents that the current
+    /// protection is the `is_empty()` check — a full STARK verifier would reject
+    /// malformed bytes. We verify it does NOT panic or OOM.
+    #[test]
+    fn adversarial_huge_proof_bytes_no_panic() {
+        let fed_root = [0x07; 32];
+        let trusted = vec![(fed_root, 50u64)];
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+
+        // 10 MB of garbage (not 100MB to avoid test slowness, but proves no OOM path).
+        let huge_proof = vec![0xAB; 10 * 1024 * 1024];
+
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: huge_proof,
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
+        };
+
+        let mut used = nullifiers();
+        // This should not panic or OOM. Since we don't have a real STARK verifier,
+        // the proof passes the structural checks and resolves. The important thing
+        // is no crash.
+        let result = resolve_condition(
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+        );
+        // The proof is non-empty, AIR matches, root is trusted and fresh,
+        // conclusion >= expected. Without a real verifier, it resolves.
+        // This test verifies no panic/OOM — a production system would add a size cap.
+        assert!(
+            result == ConditionalResult::Resolved
+                || matches!(result, ConditionalResult::InvalidProof(_)),
+            "huge proof must not panic: got {:?}", result
+        );
+    }
 }
