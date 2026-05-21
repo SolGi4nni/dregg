@@ -603,7 +603,7 @@ async fn post_submit_conditional(
     };
 
     // Validate: fee > 0 and deadline not too far in the future.
-    if let Err(e) = pyana_turn::validate_conditional_submission(&conditional, current_height) {
+    if let Err(_e) = pyana_turn::validate_conditional_submission(&conditional, current_height) {
         return Ok(Json(SubmitConditionalResponse {
             accepted: false,
             conditional_hash: None,
@@ -661,21 +661,25 @@ async fn post_resolve_conditional(
     };
 
     // Resolve: check the condition against the proof.
-    let conditional = &s.pending_conditionals[idx];
-    let trusted_roots: Vec<[u8; 32]> = s
+    // Clone fields needed for resolution to avoid borrow conflict with used_proof_hashes.
+    let condition = s.pending_conditionals[idx].condition.clone();
+    let timeout_height = s.pending_conditionals[idx].timeout_height;
+    let trusted_roots: Vec<pyana_turn::TrustedRoot> = s
         .store
         .all_attested_roots()
         .unwrap_or_default()
         .iter()
-        .map(|r| r.merkle_root)
+        .map(|r| (r.merkle_root, r.height))
         .collect();
 
     let result = pyana_turn::resolve_condition(
-        &conditional.condition,
+        &condition,
         &proof,
         current_height,
-        conditional.timeout_height,
+        timeout_height,
         &trusted_roots,
+        pyana_turn::DEFAULT_MAX_ROOT_AGE,
+        &mut s.used_proof_hashes,
     );
 
     match result {

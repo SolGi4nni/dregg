@@ -14,7 +14,7 @@ use pyana_trace::{Conclusion, symbol_from_str};
 use crate::authorize::{self, AuthError};
 use crate::convert::macaroon_to_factset;
 use crate::delta::{compute_fold_delta, further_attenuation_delta, initial_attenuation_delta};
-use crate::present::{BridgePresentationBuilder, verify_presentation};
+use crate::present::{BridgePresentationBuilder, verify_presentation_bb};
 
 // ============================================================================
 // Test helpers
@@ -215,8 +215,9 @@ fn test_end_to_end_macaroon_to_zk_proof() {
         Conclusion::Deny => panic!("Expected Allow conclusion"),
     }
 
-    // Standalone verification.
-    assert!(verify_presentation(&proof, &proof.federation_root));
+    // Standalone STARK verification with the matching federation root BabyBear value.
+    let matching_root_bb = compute_matching_federation_root_bb(&root_key);
+    assert!(verify_presentation_bb(&proof, matching_root_bb));
 
     println!(
         "End-to-end proof generated successfully: {} (chain length: {})",

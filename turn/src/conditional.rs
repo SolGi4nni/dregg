@@ -19,35 +19,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::turn::{Turn, TurnReceipt};
 
-/// A trusted federation root with the height at which it was established.
+/// A trusted root entry: the root hash and the height at which it was attested.
 pub type TrustedRoot = ([u8; 32], u64);
 
-/// Default maximum age (in blocks) for a trusted root to be valid.
-pub const DEFAULT_MAX_ROOT_AGE: u64 = 1000;
+/// Default maximum root age: roots older than this many blocks are rejected.
+pub const DEFAULT_MAX_ROOT_AGE: u64 = 500;
 
-/// Maximum allowed deadline for conditional turns (in blocks from current height).
-pub const MAX_CONDITIONAL_DEADLINE: u64 = 10_000;
-
-/// Validate that a conditional turn submission's deadline is within acceptable bounds.
-///
-/// Returns `Ok(())` if `timeout_height - current_height <= MAX_CONDITIONAL_DEADLINE`,
-/// otherwise returns an error string.
-pub fn validate_conditional_submission(
-    timeout_height: u64,
-    current_height: u64,
-) -> Result<(), String> {
-    if timeout_height <= current_height {
-        return Err("timeout must be in the future".to_string());
-    }
-    let span = timeout_height - current_height;
-    if span > MAX_CONDITIONAL_DEADLINE {
-        return Err(format!(
-            "conditional deadline {} exceeds maximum {}",
-            span, MAX_CONDITIONAL_DEADLINE
-        ));
-    }
-    Ok(())
-}
+/// Maximum number of blocks into the future a conditional turn deadline may be set.
+pub const MAX_CONDITIONAL_DEADLINE: u64 = 1000;
 
 /// A condition that must be satisfied before a turn executes.
 ///
@@ -61,38 +40,24 @@ pub enum ProofCondition {
     },
 
     /// Cross-federation: present a valid STARK proof from a remote federation.
-    ///
-    /// The proof must verify against the remote federation's attested root
-    /// and prove a specific AIR execution with expected public outputs.
     RemoteProof {
         /// The remote federation's attested Merkle root this proof verifies against.
-        /// This is a 32-byte commitment (not a field element) so it works across
-        /// federations regardless of their internal field choice.
         federation_root: [u8; 32],
         /// What the proof must prove (AIR identifier).
         expected_air: String,
-        /// Minimum expected conclusion value. The proof's first public output
-        /// must be >= this value (e.g., ALLOW = 1).
+        /// Minimum expected conclusion value.
         expected_conclusion: u32,
     },
 
     /// Same-federation: present a valid STARK proof with these public inputs.
-    ///
-    /// Used for intra-federation conditional execution where you want
-    /// proof of some computation without cross-domain concerns.
     LocalProof {
         /// AIR identifier the proof must satisfy.
         expected_air: String,
         /// Expected public inputs the proof must bind to.
-        /// Each element is a BabyBear field element (u32 < 2^31 - 2^27 + 1).
         expected_public_inputs: Vec<u32>,
     },
 
     /// Receipt-based: prove a specific turn was executed (by presenting its receipt).
-    ///
-    /// The simplest cross-federation condition: just show me a valid TurnReceipt
-    /// whose turn_hash matches. This is weaker than a STARK proof (you trust the
-    /// remote federation's executor) but much cheaper.
     TurnExecuted {
         /// BLAKE3 hash of the turn that must have been executed.
         turn_hash: [u8; 32],
@@ -100,9 +65,6 @@ pub enum ProofCondition {
 }
 
 /// A turn that's pending execution until its condition is satisfied.
-///
-/// ConditionalTurns are stored in the node's pending pool and garbage-collected
-/// when their timeout height is exceeded.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConditionalTurn {
     /// The underlying turn to execute once the condition is met.
@@ -110,7 +72,6 @@ pub struct ConditionalTurn {
     /// The condition that must be satisfied before execution.
     pub condition: ProofCondition,
     /// The block height at which this conditional turn expires.
-    /// If no valid proof arrives before this height, the turn is discarded.
     pub timeout_height: u64,
     /// The block height at which this conditional turn was submitted.
     pub submitted_at: u64,
@@ -123,7 +84,6 @@ impl ConditionalTurn {
         hasher.update(&self.turn.hash());
         hasher.update(&self.timeout_height.to_le_bytes());
         hasher.update(&self.submitted_at.to_le_bytes());
-        // Include the condition type discriminant.
         match &self.condition {
             ProofCondition::HashPreimage { hash } => {
                 hasher.update(&[0u8]);
@@ -166,19 +126,17 @@ impl ConditionalTurn {
 /// The result of attempting to resolve a conditional turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConditionalResult {
-    /// Condition satisfied — turn should be executed.
+    /// Condition satisfied.
     Resolved,
-    /// Condition not yet satisfied — turn remains pending.
+    /// Condition not yet satisfied.
     Pending,
-    /// Timeout reached — turn expires without execution.
+    /// Timeout reached.
     Expired,
     /// Condition proof is invalid.
     InvalidProof(String),
 }
 
 /// The proof presented to satisfy a condition.
-///
-/// Must match the condition variant of the ConditionalTurn it resolves.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ConditionProof {
     /// Reveal a preimage (for HashPreimage conditions).
@@ -191,6 +149,9 @@ pub enum ConditionProof {
         federation_root: [u8; 32],
         /// Public inputs / outputs from the proof.
         public_outputs: Vec<u32>,
+        /// The AIR identifier this proof was generated for.
+        /// Must match `expected_air` in the condition.
+        air_name: String,
     },
     /// Present a turn receipt (for TurnExecuted conditions).
     Receipt(TurnReceipt),
@@ -198,35 +159,74 @@ pub enum ConditionProof {
 
 /// Resolve a conditional turn by presenting a proof.
 ///
-/// This function checks:
-/// 1. Whether the timeout has been exceeded (returns Expired).
-/// 2. Whether the proof type matches the condition type.
-/// 3. Whether the proof satisfies the condition's constraints.
-///
-/// For STARK proofs, this performs a structural check (matching federation roots,
-/// AIR names, and public inputs). Actual cryptographic STARK verification is
-/// delegated to the executor's ProofVerifier.
-///
-/// # Arguments
-/// * `condition` — the condition to check against
-/// * `proof` — the proof being presented
-/// * `current_height` — current block height for timeout check
-/// * `timeout_height` — the conditional turn's timeout
-/// * `trusted_roots` — set of known/trusted federation roots (for RemoteProof)
+/// Checks timeout, proof nullifier (reuse prevention), proof type matching,
+/// AIR name verification, root freshness, and constraint satisfaction.
 pub fn resolve_condition(
     condition: &ProofCondition,
     proof: &ConditionProof,
     current_height: u64,
     timeout_height: u64,
-    trusted_roots: &[[u8; 32]],
+    trusted_roots: &[TrustedRoot],
+    max_root_age: u64,
+    used_proof_hashes: &mut HashSet<[u8; 32]>,
 ) -> ConditionalResult {
-    // Check timeout first.
     if current_height > timeout_height {
         return ConditionalResult::Expired;
     }
 
+    // Proof nullifier: prevent reuse.
+    let proof_hash = compute_proof_hash(proof);
+    if used_proof_hashes.contains(&proof_hash) {
+        return ConditionalResult::InvalidProof("proof already used".to_string());
+    }
+
+    let result = resolve_inner(condition, proof, current_height, trusted_roots, max_root_age);
+
+    if result == ConditionalResult::Resolved {
+        used_proof_hashes.insert(proof_hash);
+    }
+
+    result
+}
+
+/// Compute a BLAKE3 hash of the proof for nullifier tracking.
+fn compute_proof_hash(proof: &ConditionProof) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-nullifier-v1");
+    match proof {
+        ConditionProof::Preimage(preimage) => {
+            hasher.update(&[0u8]);
+            hasher.update(preimage);
+        }
+        ConditionProof::StarkProof {
+            proof_bytes,
+            federation_root,
+            public_outputs,
+            air_name,
+        } => {
+            hasher.update(&[1u8]);
+            hasher.update(proof_bytes);
+            hasher.update(federation_root);
+            for po in public_outputs {
+                hasher.update(&po.to_le_bytes());
+            }
+            hasher.update(air_name.as_bytes());
+        }
+        ConditionProof::Receipt(receipt) => {
+            hasher.update(&[2u8]);
+            hasher.update(&receipt.turn_hash);
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn resolve_inner(
+    condition: &ProofCondition,
+    proof: &ConditionProof,
+    current_height: u64,
+    trusted_roots: &[TrustedRoot],
+    max_root_age: u64,
+) -> ConditionalResult {
     match (condition, proof) {
-        // Hash preimage: verify BLAKE3(preimage) == expected hash.
         (ProofCondition::HashPreimage { hash }, ConditionProof::Preimage(preimage)) => {
             let computed = *blake3::hash(preimage).as_bytes();
             if computed == *hash {
@@ -236,70 +236,90 @@ pub fn resolve_condition(
             }
         }
 
-        // Remote STARK proof: check federation root is trusted and public outputs match.
         (
             ProofCondition::RemoteProof {
                 federation_root,
-                expected_air: _,
+                expected_air,
                 expected_conclusion,
             },
             ConditionProof::StarkProof {
                 proof_bytes,
                 federation_root: proof_fed_root,
                 public_outputs,
+                air_name,
             },
         ) => {
-            // Verify the proof claims to be from the expected federation.
             if proof_fed_root != federation_root {
                 return ConditionalResult::InvalidProof(
                     "proof federation root does not match expected".to_string(),
                 );
             }
 
-            // Verify the federation root is in our trusted set.
-            if !trusted_roots.contains(federation_root) {
-                return ConditionalResult::InvalidProof(
-                    "federation root is not in trusted set".to_string(),
-                );
+            // Root must be trusted AND recent.
+            match trusted_roots.iter().find(|(root, _)| root == federation_root) {
+                None => {
+                    return ConditionalResult::InvalidProof(
+                        "federation root is not in trusted set".to_string(),
+                    );
+                }
+                Some(&(_, root_height)) => {
+                    if current_height.saturating_sub(root_height) > max_root_age {
+                        return ConditionalResult::InvalidProof(format!(
+                            "federation root is too old: root height {}, current {}, max age {}",
+                            root_height, current_height, max_root_age
+                        ));
+                    }
+                }
             }
 
-            // Verify the proof is non-empty (actual STARK verification is external).
+            // AIR name must match.
+            if air_name != expected_air {
+                return ConditionalResult::InvalidProof(format!(
+                    "air name mismatch: expected '{}', got '{}'",
+                    expected_air, air_name
+                ));
+            }
+
             if proof_bytes.is_empty() {
                 return ConditionalResult::InvalidProof("proof bytes are empty".to_string());
             }
 
-            // Check conclusion: first public output must be >= expected_conclusion.
             match public_outputs.first() {
-                Some(&conclusion) if conclusion >= *expected_conclusion => {
-                    ConditionalResult::Resolved
-                }
-                Some(&conclusion) => ConditionalResult::InvalidProof(format!(
+                Some(&c) if c >= *expected_conclusion => ConditionalResult::Resolved,
+                Some(&c) => ConditionalResult::InvalidProof(format!(
                     "conclusion {} is less than expected {}",
-                    conclusion, expected_conclusion
+                    c, expected_conclusion
                 )),
-                None => ConditionalResult::InvalidProof(
-                    "no public outputs in proof".to_string(),
-                ),
+                None => {
+                    ConditionalResult::InvalidProof("no public outputs in proof".to_string())
+                }
             }
         }
 
-        // Local STARK proof: check public inputs match expected.
         (
             ProofCondition::LocalProof {
-                expected_air: _,
+                expected_air,
                 expected_public_inputs,
             },
             ConditionProof::StarkProof {
                 proof_bytes,
                 public_outputs,
+                air_name,
                 ..
             },
         ) => {
+            // AIR name must match.
+            if air_name != expected_air {
+                return ConditionalResult::InvalidProof(format!(
+                    "air name mismatch: expected '{}', got '{}'",
+                    expected_air, air_name
+                ));
+            }
+
             if proof_bytes.is_empty() {
                 return ConditionalResult::InvalidProof("proof bytes are empty".to_string());
             }
 
-            // Verify public outputs match expected inputs.
             if public_outputs.len() < expected_public_inputs.len() {
                 return ConditionalResult::InvalidProof(format!(
                     "proof has {} public outputs, expected at least {}",
@@ -324,42 +344,60 @@ pub fn resolve_condition(
             ConditionalResult::Resolved
         }
 
-        // Turn executed: check the receipt's turn_hash matches.
-        (
-            ProofCondition::TurnExecuted { turn_hash },
-            ConditionProof::Receipt(receipt),
-        ) => {
+        (ProofCondition::TurnExecuted { turn_hash }, ConditionProof::Receipt(receipt)) => {
             if receipt.turn_hash == *turn_hash {
                 ConditionalResult::Resolved
             } else {
                 ConditionalResult::InvalidProof(format!(
-                    "receipt turn_hash does not match: expected {:02x}{:02x}..., got {:02x}{:02x}...",
-                    turn_hash[0], turn_hash[1],
-                    receipt.turn_hash[0], receipt.turn_hash[1],
+                    "receipt turn_hash mismatch: expected {:02x}{:02x}..., got {:02x}{:02x}...",
+                    turn_hash[0], turn_hash[1], receipt.turn_hash[0], receipt.turn_hash[1],
                 ))
             }
         }
 
-        // Type mismatch: wrong proof type for the condition.
         _ => ConditionalResult::InvalidProof(
             "proof type does not match condition type".to_string(),
         ),
     }
 }
 
+/// Validate a ConditionalTurn at submission time.
+///
+/// Checks that the deadline is not too far in the future and fee > 0.
+pub fn validate_conditional_submission(
+    conditional: &ConditionalTurn,
+    current_height: u64,
+) -> Result<(), String> {
+    if conditional.timeout_height > current_height + MAX_CONDITIONAL_DEADLINE {
+        return Err(format!(
+            "deadline too far in the future: timeout_height {} exceeds current_height {} + max {}",
+            conditional.timeout_height, current_height, MAX_CONDITIONAL_DEADLINE
+        ));
+    }
+    if conditional.turn.fee == 0 {
+        return Err(
+            "conditional turn requires fee > 0 to prevent storage DoS".to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn nullifiers() -> HashSet<[u8; 32]> {
+        HashSet::new()
+    }
 
     #[test]
     fn test_hash_preimage_resolved() {
         let preimage = [42u8; 32];
         let hash = *blake3::hash(&preimage).as_bytes();
-
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
-
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -367,12 +405,10 @@ mod tests {
     fn test_hash_preimage_invalid() {
         let preimage = [42u8; 32];
         let hash = *blake3::hash(&preimage).as_bytes();
-
         let condition = ProofCondition::HashPreimage { hash };
-        let wrong_preimage = [99u8; 32];
-        let proof = ConditionProof::Preimage(wrong_preimage);
-
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let proof = ConditionProof::Preimage([99u8; 32]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -380,12 +416,10 @@ mod tests {
     fn test_timeout_expired() {
         let preimage = [42u8; 32];
         let hash = *blake3::hash(&preimage).as_bytes();
-
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
-
-        // current_height (101) > timeout_height (100)
-        let result = resolve_condition(&condition, &proof, 101, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert_eq!(result, ConditionalResult::Expired);
     }
 
@@ -395,17 +429,17 @@ mod tests {
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
             expected_air: "transfer_air".to_string(),
-            expected_conclusion: 1, // ALLOW
+            expected_conclusion: 1,
         };
-
         let proof = ConditionProof::StarkProof {
-            proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF], // non-empty
+            proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
             federation_root: fed_root,
-            public_outputs: vec![1], // conclusion = ALLOW
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
         };
-
-        let trusted = vec![fed_root];
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted);
+        let trusted = vec![(fed_root, 5u64)];
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -417,15 +451,14 @@ mod tests {
             expected_air: "transfer_air".to_string(),
             expected_conclusion: 1,
         };
-
         let proof = ConditionProof::StarkProof {
             proof_bytes: vec![0xDE, 0xAD],
             federation_root: fed_root,
             public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
         };
-
-        // No trusted roots
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -435,17 +468,17 @@ mod tests {
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
             expected_air: "transfer_air".to_string(),
-            expected_conclusion: 2, // need >= 2
+            expected_conclusion: 2,
         };
-
         let proof = ConditionProof::StarkProof {
             proof_bytes: vec![0xDE, 0xAD],
             federation_root: fed_root,
-            public_outputs: vec![1], // only 1, less than required 2
+            public_outputs: vec![1],
+            air_name: "transfer_air".to_string(),
         };
-
-        let trusted = vec![fed_root];
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted);
+        let trusted = vec![(fed_root, 5u64)];
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -455,14 +488,14 @@ mod tests {
             expected_air: "compute_air".to_string(),
             expected_public_inputs: vec![100, 200, 300],
         };
-
         let proof = ConditionProof::StarkProof {
             proof_bytes: vec![0xFF; 64],
             federation_root: [0u8; 32],
             public_outputs: vec![100, 200, 300],
+            air_name: "compute_air".to_string(),
         };
-
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -472,14 +505,14 @@ mod tests {
             expected_air: "compute_air".to_string(),
             expected_public_inputs: vec![100, 200, 300],
         };
-
         let proof = ConditionProof::StarkProof {
             proof_bytes: vec![0xFF; 64],
             federation_root: [0u8; 32],
-            public_outputs: vec![100, 999, 300], // mismatch at index 1
+            public_outputs: vec![100, 999, 300],
+            air_name: "compute_air".to_string(),
         };
-
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -487,7 +520,6 @@ mod tests {
     fn test_turn_executed_resolved() {
         let turn_hash = [0xAB; 32];
         let condition = ProofCondition::TurnExecuted { turn_hash };
-
         let receipt = TurnReceipt {
             turn_hash,
             forest_hash: [0u8; 32],
@@ -503,9 +535,9 @@ mod tests {
             derivation_records: vec![],
             executor_signature: None,
         };
-
         let proof = ConditionProof::Receipt(receipt);
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -513,9 +545,8 @@ mod tests {
     fn test_turn_executed_wrong_hash() {
         let turn_hash = [0xAB; 32];
         let condition = ProofCondition::TurnExecuted { turn_hash };
-
         let receipt = TurnReceipt {
-            turn_hash: [0xCD; 32], // different hash
+            turn_hash: [0xCD; 32],
             forest_hash: [0u8; 32],
             pre_state_hash: [0u8; 32],
             post_state_hash: [0u8; 32],
@@ -529,9 +560,9 @@ mod tests {
             derivation_records: vec![],
             executor_signature: None,
         };
-
         let proof = ConditionProof::Receipt(receipt);
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -542,16 +573,16 @@ mod tests {
             proof_bytes: vec![1, 2, 3],
             federation_root: [0u8; 32],
             public_outputs: vec![1],
+            air_name: "x".to_string(),
         };
-
-        let result = resolve_condition(&condition, &proof, 10, 100, &[]);
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
     #[test]
     fn test_conditional_turn_hash_deterministic() {
         use crate::forest::CallForest;
-
         let turn = Turn {
             agent: pyana_cell::CellId([1u8; 32]),
             nonce: 0,
@@ -562,16 +593,149 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
         };
-
         let ct = ConditionalTurn {
             turn,
             condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
             timeout_height: 100,
             submitted_at: 50,
         };
+        assert_eq!(ct.hash(), ct.hash());
+    }
 
-        let h1 = ct.hash();
-        let h2 = ct.hash();
-        assert_eq!(h1, h2);
+    #[test]
+    fn test_proof_nullifier_prevents_reuse() {
+        let preimage = [42u8; 32];
+        let hash = *blake3::hash(&preimage).as_bytes();
+        let condition = ProofCondition::HashPreimage { hash };
+        let proof = ConditionProof::Preimage(preimage);
+        let mut n = nullifiers();
+        let r1 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        assert_eq!(r1, ConditionalResult::Resolved);
+        let r2 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        assert_eq!(r2, ConditionalResult::InvalidProof("proof already used".to_string()));
+    }
+
+    #[test]
+    fn test_root_too_old() {
+        let fed_root = [1u8; 32];
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "t".to_string(),
+            expected_conclusion: 1,
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xDE, 0xAD],
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "t".to_string(),
+        };
+        let trusted = vec![(fed_root, 10u64)];
+        let mut n = nullifiers();
+        // current=1000, root_height=10, max_age=50 -> age=990 > 50
+        let result = resolve_condition(&condition, &proof, 1000, 2000, &trusted, 50, &mut n);
+        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("too old")));
+    }
+
+    #[test]
+    fn test_air_name_mismatch_remote() {
+        let fed_root = [1u8; 32];
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "transfer_air".to_string(),
+            expected_conclusion: 1,
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xDE, 0xAD],
+            federation_root: fed_root,
+            public_outputs: vec![1],
+            air_name: "wrong_air".to_string(),
+        };
+        let trusted = vec![(fed_root, 5u64)];
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
+        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
+    }
+
+    #[test]
+    fn test_air_name_mismatch_local() {
+        let condition = ProofCondition::LocalProof {
+            expected_air: "compute_air".to_string(),
+            expected_public_inputs: vec![100],
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: vec![0xFF; 64],
+            federation_root: [0u8; 32],
+            public_outputs: vec![100],
+            air_name: "other_air".to_string(),
+        };
+        let mut n = nullifiers();
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
+    }
+
+    #[test]
+    fn test_validate_deadline_too_far() {
+        use crate::forest::CallForest;
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 100,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
+            timeout_height: 5000,
+            submitted_at: 10,
+        };
+        assert!(validate_conditional_submission(&ct, 10).is_err());
+    }
+
+    #[test]
+    fn test_validate_zero_fee() {
+        use crate::forest::CallForest;
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
+            timeout_height: 100,
+            submitted_at: 10,
+        };
+        assert!(validate_conditional_submission(&ct, 10).is_err());
+    }
+
+    #[test]
+    fn test_validate_ok() {
+        use crate::forest::CallForest;
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 100,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
+            timeout_height: 100,
+            submitted_at: 10,
+        };
+        assert!(validate_conditional_submission(&ct, 10).is_ok());
     }
 }

@@ -122,5 +122,8 @@ name = "cross_fed_atomic"
 [[example]]
 name = "proof_obligation"
 
+[[example]]
+name = "bench_summary"
+
 [lints]
 workspace = true

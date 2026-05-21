@@ -59,10 +59,13 @@ pub use budget_gate::{BudgetGate, BudgetSlice};
 pub use builder::{ActionBuilder, TurnBuilder};
 pub use composer::{ComposeError, SignedFragment, TurnComposer};
 pub use conditional::{
-    ConditionProof, ConditionalResult, ConditionalTurn, ProofCondition, resolve_condition,
+    ConditionProof, ConditionalResult, ConditionalTurn, DEFAULT_MAX_ROOT_AGE,
+    MAX_CONDITIONAL_DEADLINE, ProofCondition, TrustedRoot, resolve_condition,
+    validate_conditional_submission,
 };
 pub use obligation::{
-    ObligationError, ObligationOutcome, ProofObligation, check_expiry, create_obligation,
+    MAX_OBLIGATION_DEADLINE, ObligationError, ObligationOutcome, ProofObligation, check_expiry,
+    create_obligation, validate_obligation_deadline,
     fulfill_obligation,
 };
 pub use error::TurnError;

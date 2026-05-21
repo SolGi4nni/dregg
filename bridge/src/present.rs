@@ -1388,6 +1388,36 @@ pub fn verify_presentation(proof: &BridgePresentationProof, federation_root: &[u
     }
 }
 
+/// Verify a presentation proof against a BabyBear-encoded federation root.
+///
+/// This is the lower-level verification function used when the federation root
+/// is already known as a BabyBear field element (e.g., computed from a synthetic
+/// Merkle path in tests, or stored directly alongside the federation tree).
+pub fn verify_presentation_bb(proof: &BridgePresentationProof, expected_root: BabyBear) -> bool {
+    if let Some(ref real) = proof.real_stark_proof {
+        use pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
+
+        let pi: Vec<BabyBear> = real
+            .issuer_membership_stark_proof
+            .public_inputs
+            .iter()
+            .map(|&v| BabyBear::new(v))
+            .collect();
+
+        if pi.len() < 2 {
+            return false;
+        }
+
+        if pi[1] != expected_root {
+            return false;
+        }
+
+        stark::verify(&MerklePoseidon2StarkAir, &real.issuer_membership_stark_proof, &pi).is_ok()
+    } else {
+        false
+    }
+}
+
 /// Verify a presentation proof (legacy API, checks only structural validity).
 ///
 /// **DEPRECATED**: This only checks the prover-set `verification` field and provides

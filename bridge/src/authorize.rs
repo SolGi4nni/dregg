@@ -213,15 +213,19 @@ fn field_element_to_int(fe: &FieldElement) -> Option<i64> {
 
 /// Convert a `token::AuthRequest` to a `trace::AuthorizationRequest`.
 fn auth_request_to_trace(request: &AuthRequest) -> Result<TraceRequest, AuthError> {
-    let app_id = request.app_id.as_deref().map(symbol_from_str);
-    let service = request.service.as_deref().map(symbol_from_str);
-    let action = request.action.as_deref().map(symbol_from_str);
+    // Use symbol_from_bytes (raw zero-padded string) for request values.
+    // This is consistent with committed_facts_to_trace, enabling both:
+    // - Equality matching (same string -> same 32 bytes for unification)
+    // - Contains matching (raw string bytes preserve substring relationships)
+    let app_id = request.app_id.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
+    let service = request.service.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
+    let action = request.action.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
     let features: Vec<[u8; 32]> = request
         .features
         .iter()
-        .map(|f| symbol_from_str(f))
+        .map(|f| symbol_from_bytes(f.as_bytes()))
         .collect();
-    let user_id = request.user_id.as_deref().map(symbol_from_str);
+    let user_id = request.user_id.as_deref().map(|s| symbol_from_bytes(s.as_bytes()));
 
     let now = request.now.unwrap_or_else(|| {
         std::time::SystemTime::now()

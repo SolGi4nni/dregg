@@ -609,6 +609,7 @@ impl Effect {
                         proof_bytes,
                         federation_root,
                         public_outputs,
+                        air_name,
                     } => {
                         hasher.update(&[1u8]);
                         hasher.update(&(proof_bytes.len() as u64).to_le_bytes());
@@ -617,6 +618,7 @@ impl Effect {
                         for po in public_outputs {
                             hasher.update(&po.to_le_bytes());
                         }
+                        hasher.update(air_name.as_bytes());
                     }
                     ConditionProof::Receipt(receipt) => {
                         hasher.update(&[2u8]);

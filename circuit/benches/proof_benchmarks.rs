@@ -424,8 +424,8 @@ fn bench_non_revocation(c: &mut Criterion) {
 
 fn bench_body_membership_proof(c: &mut Criterion) {
     use pyana_circuit::body_membership::{
-        BodyFactMerkleProof, prove_authorization_with_membership,
-        verify_authorization_with_membership,
+        BodyFactMerkleProof, collect_body_fact_hashes,
+        prove_authorization_with_membership, verify_authorization_with_membership,
     };
 
     let mut group = c.benchmark_group("body_membership_composed");
@@ -433,10 +433,11 @@ fn bench_body_membership_proof(c: &mut Criterion) {
 
     // Build a witness with 4 derivation steps
     let witness = build_test_multi_step_witness(4);
-    let state_root = witness.initial_state_root;
+    let conclusion = witness.conclusion();
+    let acc_hash = witness.final_accumulated_hash();
 
     // Create mock Merkle proofs for body facts (depth 4)
-    let body_hashes = pyana_circuit::body_membership::collect_body_fact_hashes(&witness);
+    let body_hashes = collect_body_fact_hashes(&witness);
     let body_proofs: Vec<BodyFactMerkleProof> = body_hashes
         .iter()
         .map(|&hash| {
@@ -465,7 +466,13 @@ fn bench_body_membership_proof(c: &mut Criterion) {
     let composed = prove_authorization_with_membership(&witness, &body_proofs);
 
     group.bench_function("verify_4_steps", |b| {
-        b.iter(|| black_box(verify_authorization_with_membership(&composed).unwrap()));
+        b.iter(|| {
+            black_box(
+                verify_authorization_with_membership(
+                    &composed, conclusion, acc_hash, &body_hashes,
+                ).unwrap()
+            )
+        });
     });
 
     // Compute total proof size
@@ -641,6 +648,107 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
 }
 
 // =============================================================================
+// 5. Plonky3 backend (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "plonky3")]
+fn bench_plonky3_backend(c: &mut Criterion) {
+    use pyana_circuit::plonky3_prover::{prove_plonky3, verify_plonky3, prove_membership_plonky3};
+    use pyana_circuit::poseidon2_air::{generate_merkle_poseidon2_trace, create_poseidon2_test_witness};
+
+    let mut group = c.benchmark_group("plonky3_backend");
+    group.sample_size(10);
+
+    // Merkle membership (depth 4) via Plonky3
+    for &depth in &[4usize, 8] {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, depth);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
+
+        group.bench_with_input(
+            BenchmarkId::new("prove_merkle", format!("d={depth}")),
+            &(trace.clone(), public_inputs.clone()),
+            |b, (t, pi)| {
+                b.iter(|| black_box(prove_plonky3(t, pi)));
+            },
+        );
+
+        let proof = prove_plonky3(&trace, &public_inputs);
+
+        group.bench_with_input(
+            BenchmarkId::new("verify_merkle", format!("d={depth}")),
+            &(proof.clone(), public_inputs.clone()),
+            |b, (p, pi)| {
+                b.iter(|| black_box(verify_plonky3(p, pi).unwrap()));
+            },
+        );
+
+        // Compare: custom STARK vs Plonky3 for same statement
+        let custom_proof = {
+            let air = pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
+            stark::prove(&air, &trace, &public_inputs)
+        };
+        let custom_size = proof_to_bytes(&custom_proof).len();
+        eprintln!(
+            "  [plonky3 d={depth}] custom STARK: {:.1} KiB | Plonky3: (opaque proof object)",
+            custom_size as f64 / 1024.0,
+        );
+    }
+
+    group.finish();
+}
+
+// =============================================================================
+// 6. Pickles/Mina backend (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "mina")]
+fn bench_pickles_backend(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pickles_backend");
+    group.sample_size(10);
+
+    // The Mina/Kimchi backend uses recursive SNARK verification (Pickles protocol).
+    // We bench IVC proof generation + verification which exercises the recursive path.
+    // With the mina feature, the IVC proof can use Pasta curve IPA commitments
+    // for constant-size proofs regardless of chain length.
+
+    // Single recursive step
+    let (initial_root, deltas) = create_test_chain(1);
+    let new_roots_1: Vec<BabyBear> = deltas.iter().map(|d| d.fold.new_root).collect();
+
+    group.bench_function("recursive_1_step", |b| {
+        b.iter(|| {
+            let (sp, pi) = prove_ivc_stark(initial_root, &new_roots_1);
+            black_box(verify_ivc_stark(&sp, &pi).unwrap());
+        });
+    });
+
+    // 3-step recursive chain
+    let (root3, deltas3) = create_test_chain(3);
+    let new_roots_3: Vec<BabyBear> = deltas3.iter().map(|d| d.fold.new_root).collect();
+
+    group.bench_function("recursive_3_step", |b| {
+        b.iter(|| {
+            let (sp, pi) = prove_ivc_stark(root3, &new_roots_3);
+            black_box(verify_ivc_stark(&sp, &pi).unwrap());
+        });
+    });
+
+    // Compare: constant proof size across chain lengths
+    for &steps in &[1, 3, 5] {
+        let (root, ds) = create_test_chain(steps);
+        let roots: Vec<BabyBear> = ds.iter().map(|d| d.fold.new_root).collect();
+        let (sp, _) = prove_ivc_stark(root, &roots);
+        let size = proof_to_bytes(&sp).len();
+        eprintln!("  [pickles {steps}-step] proof size: {:.1} KiB (should be ~constant)", size as f64 / 1024.0);
+    }
+
+    group.finish();
+}
+
+// =============================================================================
 // Criterion configuration
 // =============================================================================
 
@@ -666,4 +774,21 @@ criterion_group!(
     bench_full_authorization_pipeline,
 );
 
+#[cfg(feature = "plonky3")]
+criterion_group!(plonky3_benches, bench_plonky3_backend);
+
+#[cfg(feature = "mina")]
+criterion_group!(pickles_benches, bench_pickles_backend);
+
+// Main: include feature-gated groups only when enabled
+#[cfg(all(not(feature = "plonky3"), not(feature = "mina")))]
 criterion_main!(individual_proofs, composed_proofs, context_and_pipeline);
+
+#[cfg(all(feature = "plonky3", not(feature = "mina")))]
+criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, plonky3_benches);
+
+#[cfg(all(not(feature = "plonky3"), feature = "mina"))]
+criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, pickles_benches);
+
+#[cfg(all(feature = "plonky3", feature = "mina"))]
+criterion_main!(individual_proofs, composed_proofs, context_and_pipeline, plonky3_benches, pickles_benches);

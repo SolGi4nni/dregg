@@ -17,10 +17,15 @@
 //! 4. Both deliver proofs -> both turns execute + both stakes returned
 //! 5. If one fails -> their stake is slashed to the other party (compensation)
 
+use std::collections::HashSet;
+
 use pyana_cell::{CellId, NoteCommitment};
 use serde::{Deserialize, Serialize};
 
-use crate::conditional::{ConditionProof, ConditionalResult, ProofCondition, resolve_condition};
+use crate::conditional::{
+    ConditionProof, ConditionalResult, DEFAULT_MAX_ROOT_AGE, ProofCondition, TrustedRoot,
+    resolve_condition,
+};
 
 /// Maximum allowed deadline for proof obligations (in blocks from current height).
 pub const MAX_OBLIGATION_DEADLINE: u64 = 10_000;
@@ -250,7 +255,9 @@ pub fn fulfill_obligation(
     obligation: &ProofObligation,
     proof: &ConditionProof,
     current_height: u64,
-    trusted_roots: &[[u8; 32]],
+    trusted_roots: &[TrustedRoot],
+    max_root_age: u64,
+    used_proof_hashes: &mut HashSet<[u8; 32]>,
 ) -> Result<ObligationOutcome, ObligationError> {
     // Check deadline.
     if current_height > obligation.deadline_height {
@@ -268,6 +275,8 @@ pub fn fulfill_obligation(
         current_height,
         obligation.deadline_height,
         trusted_roots,
+        max_root_age,
+        used_proof_hashes,
     );
 
     match result {
