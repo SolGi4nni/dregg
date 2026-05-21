@@ -149,6 +149,7 @@ fn main() {
         TurnResult::Rejected { reason, .. } => {
             panic!("Introduction failed: {}", reason);
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 
@@ -181,6 +182,7 @@ fn main() {
         TurnResult::Committed { .. } => {
             panic!("Should have been rejected!");
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 
@@ -234,6 +236,7 @@ fn main() {
         TurnResult::Rejected { reason, .. } => {
             panic!("Transitive introduction failed: {}", reason);
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 
@@ -318,6 +321,7 @@ fn main() {
         TurnResult::Committed { .. } => {
             panic!("Amplification should have been denied!");
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 

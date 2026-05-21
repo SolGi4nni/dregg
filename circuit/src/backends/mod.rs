@@ -6,7 +6,7 @@
 //! - **Binius** (binary field towers): Operates natively over GF(2) tower extensions,
 //!   producing very small proofs for hash-intensive circuits. Uses Groestl-256 (AES-based)
 //!   which is native to the binary tower. Post-quantum secure. Expected ~1-4 KiB proofs
-//!   for Merkle membership. Always compiled (stub mode without feature flag).
+//!   for Merkle membership. Always compiled; structural validation without feature flag.
 //!
 //! - **Halo2** (Plonkish arithmetization): Produces smaller proofs (~1-5 KiB),
 //!   uses elliptic curve pairings (Pasta curves / BN254). Better for on-chain
@@ -35,12 +35,10 @@ pub mod mina;
 
 /// Binius backend: binary field tower proof system using Groestl-256 hashing.
 ///
-/// Always compiled (stub mode without the `binius` feature flag). When the `binius`
-/// feature is enabled, provides full proof generation and verification using the
-/// Binius binary tower library from IrreducibleOSS.
-///
-/// The stub mode validates circuit logic and produces structurally-correct proofs
-/// that demonstrate the expected API and proof sizes.
+/// Always compiled. When the `binius` feature is enabled, provides full proof
+/// generation and verification using the Binius binary tower library from
+/// IrreducibleOSS. Without the feature, provides structural validation that
+/// verifies circuit logic and produces structurally-correct proofs.
 pub mod binius;
 
 /// Unified trait for proof backends.

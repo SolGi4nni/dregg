@@ -43,10 +43,10 @@ fn test_federation_root() -> [u8; 32] {
     root
 }
 
-/// Compute the BabyBear federation root that the synthetic Merkle path produces
-/// for a given key. This lets tests construct a builder with a matching root.
+/// Compute the BabyBear federation root that the synthetic Poseidon2 Merkle path
+/// produces for a given key. This lets tests construct a builder with a matching root.
 fn compute_matching_federation_root_bb(key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::MerkleAir;
+    use pyana_circuit::poseidon2;
     let issuer_hash = crate::present::bytes_to_babybear(key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -57,7 +57,18 @@ fn compute_matching_federation_root_bb(key: &[u8; 32]) -> BabyBear {
             BabyBear::new(crate::present::hash_index(i, 1, key)),
             BabyBear::new(crate::present::hash_index(i, 2, key)),
         ];
-        current = MerkleAir::compute_parent(current, position, &siblings);
+        // Use Poseidon2 hashing to match prove()'s issuer membership path.
+        let mut children = [BabyBear::ZERO; 4];
+        let mut sib_idx = 0;
+        for j in 0..4u8 {
+            if j == position {
+                children[j as usize] = current;
+            } else {
+                children[j as usize] = siblings[sib_idx];
+                sib_idx += 1;
+            }
+        }
+        current = poseidon2::hash_4_to_1(&children);
     }
     current
 }
@@ -157,7 +168,7 @@ fn test_end_to_end_macaroon_to_zk_proof() {
         ..Default::default()
     };
 
-    let proof_result = builder.prove(&auth_request);
+    let proof_result = builder.prove_fast(&auth_request);
     assert!(
         proof_result.is_ok(),
         "Proof generation should succeed: {:?}",
@@ -215,7 +226,7 @@ fn test_end_to_end_denial() {
         ..Default::default()
     };
 
-    let result = builder.prove(&request);
+    let result = builder.prove_fast(&request);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), AuthError::Denied);
 }
@@ -408,7 +419,7 @@ fn test_service_scoped_full_pipeline() {
         ..Default::default()
     };
 
-    let proof = builder.prove(&request);
+    let proof = builder.prove_fast(&request);
     assert!(
         proof.is_ok(),
         "Service-scoped proof should succeed: {:?}",
@@ -444,7 +455,7 @@ fn test_unrestricted_token_proof() {
         ..Default::default()
     };
 
-    let proof = builder.prove(&request);
+    let proof = builder.prove_fast(&request);
     assert!(
         proof.is_ok(),
         "Unrestricted proof should succeed: {:?}",
@@ -537,7 +548,7 @@ fn test_presentation_air_full_verification() {
         ..Default::default()
     };
 
-    let proof = builder.prove(&request).unwrap();
+    let proof = builder.prove_fast(&request).unwrap();
 
     // Verify individual sub-proofs.
     assert!(!proof.circuit_proof.fold_proofs.is_empty());
@@ -577,7 +588,7 @@ fn test_proof_metadata() {
         ..Default::default()
     };
 
-    let proof = builder.prove(&request).unwrap();
+    let proof = builder.prove_fast(&request).unwrap();
 
     assert_eq!(proof.chain_length, 3); // root + 2 attenuations
     assert_ne!(proof.final_state_root, [0u8; 32]);
@@ -614,7 +625,7 @@ fn test_deterministic_verification() {
             ..Default::default()
         };
 
-        builder.prove(&request).unwrap()
+        builder.prove_fast(&request).unwrap()
     };
 
     let proof1 = build_and_prove();

@@ -184,7 +184,7 @@ fn main() {
     builder.set_root_token(fresh_token);
     builder.add_attenuation(&user_attenuation);
 
-    let proof: BridgePresentationProof = builder.prove(&page_request).unwrap();
+    let proof: BridgePresentationProof = builder.prove_fast(&page_request).unwrap();
 
     let step3_time = step3_start.elapsed();
 

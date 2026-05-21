@@ -40,9 +40,12 @@
 
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
-use crate::mock_prover::{Air, Constraint, MockProof, MockProver};
+use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
+// Backward-compat alias used internally.
+use crate::constraint_prover::ConstraintProof as MockProof;
+use crate::constraint_prover::ConstraintProver as MockProver;
 use crate::poseidon2::hash_many;
-use crate::stark::{self, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -517,6 +520,32 @@ impl StarkAir for StateTransitionAir {
         // The STARK prover's interpolation + FRI ensure the trace is low-degree
         // (and thus consistent across all rows).
         c1 + alpha * (step * (step - BabyBear::ONE) * BabyBear::ZERO) // padding term (zero)
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 4 {
+            // Public inputs: [initial_root, final_root, step_count, accumulated_hash]
+            // Row 0, col OLD_HASH (1) = initial_accumulated_hash(public_inputs[0])
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: st_col::OLD_HASH,
+                value: initial_accumulated_hash(public_inputs[0]),
+            });
+            // Last row, col NEW_HASH (3) = public_inputs[3] (accumulated_hash)
+            // The last non-padding row should have the final accumulated hash.
+            // Since padding duplicates the last row, this holds for the actual last row too.
+            constraints.push(BoundaryConstraint {
+                row: trace_len - 1,
+                col: st_col::NEW_HASH,
+                value: public_inputs[3],
+            });
+        }
+        constraints
     }
 }
 

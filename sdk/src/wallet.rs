@@ -869,19 +869,19 @@ impl AgentWallet {
         let fresh_token = MacaroonToken::mint(*token.root_key(), token.id.as_bytes(), &token.service);
         builder.set_root_token(fresh_token);
 
-        let proof = builder.prove_real(request)?;
+        let proof = builder.prove(request)?;
         Ok(proof)
     }
 
-    /// Generate a mock (non-STARK) presentation proof for a held token.
+    /// Generate a fast (constraint-checked) presentation proof for a held token.
     ///
-    /// This is the fast, development-only path that validates circuit constraints
-    /// without producing a real cryptographic proof. Use for testing or when proof
-    /// generation latency is unacceptable.
+    /// This validates circuit constraints without producing a full STARK proof,
+    /// yielding faster proof generation. Use when proof generation latency is
+    /// unacceptable or during development iteration.
     ///
-    /// For production use, prefer [`prove_authorization`](Self::prove_authorization)
-    /// which produces real STARK proofs.
-    pub fn prove_authorization_mock(
+    /// For production use across trust boundaries, prefer
+    /// [`prove_authorization`](Self::prove_authorization) which produces real STARK proofs.
+    pub fn prove_fast(
         &self,
         token: &HeldToken,
         request: &AuthRequest,
@@ -899,7 +899,7 @@ impl AgentWallet {
         let fresh_token = MacaroonToken::mint(*token.root_key(), token.id.as_bytes(), &token.service);
         builder.set_root_token(fresh_token);
 
-        let proof = builder.prove(request)?;
+        let proof = builder.prove_fast(request)?;
         Ok(proof)
     }
 
@@ -940,7 +940,7 @@ impl AgentWallet {
             builder.add_attenuation(att);
         }
 
-        let proof = builder.prove_real(request)?;
+        let proof = builder.prove(request)?;
         Ok(proof)
     }
 

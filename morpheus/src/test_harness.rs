@@ -1,4 +1,4 @@
-//! Simulator that runs a mock network of nodes
+//! Simulator that runs a local network of nodes
 //
 //! Time is "logical", we don't actually wait for anything to happen
 //! We call set_now to simulate the passage of time in single-step increments
@@ -26,9 +26,9 @@ pub struct TestTransaction(pub Vec<u8>);
 
 impl Transaction for TestTransaction {}
 
-/// A basic simulation harness for MorpheusProcess
+/// A simulation harness for MorpheusProcess
 #[derive(Clone)]
-pub struct MockHarness {
+pub struct SimulationHarness {
     /// The current logical time of the simulation
     pub time: u128,
 
@@ -60,8 +60,8 @@ pub enum TxGenPolicy {
     Never,
 }
 
-impl MockHarness {
-    pub fn create_test_setup(num_parties: usize) -> MockHarness {
+impl SimulationHarness {
+    pub fn create_test_setup(num_parties: usize) -> SimulationHarness {
         let domain_max = (1 + num_parties).next_power_of_two();
         let gd = hints::GlobalData::new(domain_max, &mut test_rng()).unwrap();
         let privs = vec![hints::SecretKey::random(&mut test_rng()); domain_max - 1];
@@ -102,7 +102,7 @@ impl MockHarness {
             .collect();
 
         // Create a harness with these processes
-        MockHarness::new(processes, 100)
+        SimulationHarness::new(processes, 100)
     }
 
     /// Create a new mock harness with the given nodes
@@ -115,7 +115,7 @@ impl MockHarness {
             processes.insert(id, node);
         }
 
-        MockHarness {
+        SimulationHarness {
             time: 0,
             processes,
             pending_messages: VecDeque::new(),

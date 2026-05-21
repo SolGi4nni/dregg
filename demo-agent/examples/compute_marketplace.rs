@@ -549,6 +549,8 @@ fn main() {
         TurnResult::Rejected { reason, at_action } => {
             panic!("Settlement REJECTED at {:?}: {}", at_action, reason);
         }
+        TurnResult::Expired => panic!("Settlement turn expired"),
+        TurnResult::Pending => panic!("Settlement turn pending"),
     }
 
     // Verify final balances
@@ -657,6 +659,7 @@ fn main() {
         TurnResult::Committed { .. } => {
             panic!("Should have been rejected by budget gate!");
         }
+        _ => panic!("Unexpected turn result"),
     }
     assert!(budget_result.is_rejected());
     println!();

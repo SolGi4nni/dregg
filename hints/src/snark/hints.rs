@@ -91,7 +91,7 @@ impl GlobalData {
                 "n must be a power of 2".to_string(),
             ));
         }
-        if i > n {
+        if i >= n {
             return Err(HintsError::InvalidInput(format!(
                 "Party index {} out of bounds for n={}",
                 i, n

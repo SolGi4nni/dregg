@@ -120,29 +120,29 @@ fn make_builder_and_request_linear() -> (BridgePresentationBuilder, AuthRequest)
 // Benchmarks
 // =============================================================================
 
-fn bench_prove_mock(c: &mut Criterion) {
-    c.bench_function("bridge_prove_mock", |b| {
+fn bench_prove_fast(c: &mut Criterion) {
+    c.bench_function("bridge_prove_fast", |b| {
         b.iter(|| {
             let (mut builder, request) = make_builder_and_request_linear();
+            black_box(builder.prove_fast(&request).unwrap());
+        });
+    });
+}
+
+fn bench_prove_stark(c: &mut Criterion) {
+    c.bench_function("bridge_prove_poseidon2_stark", |b| {
+        b.iter(|| {
+            let (mut builder, request) = make_builder_and_request();
             black_box(builder.prove(&request).unwrap());
         });
     });
 }
 
-fn bench_prove_real(c: &mut Criterion) {
-    c.bench_function("bridge_prove_real_poseidon2_stark", |b| {
-        b.iter(|| {
-            let (mut builder, request) = make_builder_and_request();
-            black_box(builder.prove_real(&request).unwrap());
-        });
-    });
-}
-
-fn bench_prove_real_linear(c: &mut Criterion) {
-    c.bench_function("bridge_prove_real_linear_stark", |b| {
+fn bench_prove_linear(c: &mut Criterion) {
+    c.bench_function("bridge_prove_linear_stark", |b| {
         b.iter(|| {
             let (mut builder, request) = make_builder_and_request_linear();
-            black_box(builder.prove_real_linear(&request).unwrap());
+            black_box(builder.prove_linear(&request).unwrap());
         });
     });
 }
@@ -211,7 +211,7 @@ fn bench_end_to_end_cycle(c: &mut Criterion) {
             };
             let _attenuated = token.attenuate(&att).unwrap();
 
-            // Build presentation (uses mock prove() which needs linear root)
+            // Build presentation (uses prove_fast() which needs linear root)
             let (fed_root_bb, fed_root_bytes) = compute_matching_federation_root_linear(&key);
             let mut builder =
                 BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
@@ -223,7 +223,7 @@ fn bench_end_to_end_cycle(c: &mut Criterion) {
                 action: Some("r".into()),
                 ..Default::default()
             };
-            let proof = builder.prove(&request).unwrap();
+            let proof = builder.prove_fast(&request).unwrap();
 
             // Verify
             black_box(proof.is_valid());
@@ -233,7 +233,7 @@ fn bench_end_to_end_cycle(c: &mut Criterion) {
 
 fn bench_verify_presentation(c: &mut Criterion) {
     let (mut builder, request) = make_builder_and_request_linear();
-    let proof = builder.prove(&request).unwrap();
+    let proof = builder.prove_fast(&request).unwrap();
 
     c.bench_function("bridge_verify_presentation", |b| {
         b.iter(|| {
@@ -244,9 +244,9 @@ fn bench_verify_presentation(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_prove_mock,
-    bench_prove_real,
-    bench_prove_real_linear,
+    bench_prove_fast,
+    bench_prove_stark,
+    bench_prove_linear,
     bench_prove_ivc,
     bench_macaroon_to_factset_bench,
     bench_authorize_with_trace_bench,

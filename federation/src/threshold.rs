@@ -134,20 +134,45 @@ impl FederationCommittee {
     /// Create a new federation committee with the given member keys, equal weights,
     /// and a BFT threshold.
     ///
-    /// Uses a random KZG setup (suitable for testing). For production, use
-    /// `new_with_eth_setup` which uses the Ethereum KZG ceremony.
+    /// Uses a random KZG setup with OS-provided entropy. For production with
+    /// auditable parameters, use `new_with_eth_setup` which uses the Ethereum
+    /// KZG ceremony.
     ///
     /// `num_members` must be <= 63 (since hints requires power-of-2 domain, and
     /// the max supported degree with random setup depends on the RNG).
     pub fn new(member_secrets: &[MemberSecret], threshold: u64) -> Result<Self, ThresholdError> {
+        Self::new_with_rng(member_secrets, threshold, &mut ark_std::rand::rngs::OsRng)
+    }
+
+    /// Create a new federation committee with a caller-supplied RNG.
+    ///
+    /// This is the inner constructor that both `new` (OsRng) and
+    /// `new_deterministic` (test_rng) delegate to.
+    pub fn new_with_rng(
+        member_secrets: &[MemberSecret],
+        threshold: u64,
+        rng: &mut impl ark_std::rand::RngCore,
+    ) -> Result<Self, ThresholdError> {
         let num_members = member_secrets.len();
         // hints requires domain size to be a power of 2, with exactly domain_size-1 parties.
         let domain_size = (num_members + 1).next_power_of_two();
 
-        let mut rng = ark_std::test_rng();
-        let gd = GlobalData::new(domain_size, &mut rng)?;
+        let gd = GlobalData::new(domain_size, rng)?;
 
         Self::from_global_data(gd, member_secrets, threshold)
+    }
+
+    /// Create a new federation committee with a deterministic test RNG.
+    ///
+    /// # Security
+    /// **This must only be used in tests.** The RNG is seeded with a fixed value,
+    /// meaning the KZG toxic waste is known and proofs can be forged.
+    #[cfg(test)]
+    pub fn new_deterministic(
+        member_secrets: &[MemberSecret],
+        threshold: u64,
+    ) -> Result<Self, ThresholdError> {
+        Self::new_with_rng(member_secrets, threshold, &mut ark_std::test_rng())
     }
 
     /// Create a committee using the Ethereum KZG trusted setup.

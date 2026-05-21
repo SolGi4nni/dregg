@@ -62,7 +62,7 @@ use crate::derivation_air::{
 use crate::field::BabyBear;
 use crate::mock_prover::{Air, Constraint};
 use crate::poseidon2::{hash_2_to_1, hash_fact};
-use crate::stark::{self, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Trace width for the multi-step derivation AIR.
 pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5; // 138 + 5 = 143
@@ -848,13 +848,13 @@ pub fn build_multi_step_witness(
 /// Takes a derivation trace (sequence of rule applications) and produces
 /// a STARK-verifiable proof that the evaluation concluded with the claimed
 /// conclusion. Returns `None` if the witness doesn't satisfy constraints.
-pub fn prove_authorization(witness: MultiStepWitness) -> Option<crate::mock_prover::MockProof> {
+pub fn prove_authorization(witness: MultiStepWitness) -> Option<crate::constraint_prover::ConstraintProof> {
     let air = MultiStepDerivationAir::new(witness);
-    let result = crate::mock_prover::MockProver::verify(&air);
+    let result = crate::constraint_prover::ConstraintProver::verify(&air);
     if !result.is_valid() {
         return None;
     }
-    crate::mock_prover::MockProof::generate(&air)
+    crate::constraint_prover::ConstraintProof::generate(&air)
 }
 
 // ============================================================================
@@ -1125,6 +1125,50 @@ impl StarkAir for MultiStepStarkAir {
         let _ = next; // Acknowledge the next row parameter (unused in this AIR)
 
         result
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 5 {
+            // Row 0, col PREV_ACCUMULATED = public_inputs[0] (initial_state_root)
+            // This binds the first row's prev_accumulated to the claimed initial state root.
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::PREV_ACCUMULATED,
+                value: public_inputs[pi::INITIAL_STATE_ROOT],
+            });
+            // Row 0, col IS_ACTIVE = 1 (first row must be active)
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::IS_ACTIVE,
+                value: BabyBear::ONE,
+            });
+            // Row 0, col STEP_INDEX = 0
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::STEP_INDEX,
+                value: BabyBear::ZERO,
+            });
+            // Last active row (num_steps - 1), col ACCUMULATED_HASH = public_inputs[4]
+            // This binds the final accumulated hash to the public input.
+            let last_active_row = self.num_steps - 1;
+            constraints.push(BoundaryConstraint {
+                row: last_active_row,
+                col: col::ACCUMULATED_HASH,
+                value: public_inputs[pi::FINAL_ACCUMULATED_HASH],
+            });
+            // Last active row, col IS_FINAL_STEP = 1
+            constraints.push(BoundaryConstraint {
+                row: last_active_row,
+                col: col::IS_FINAL_STEP,
+                value: BabyBear::ONE,
+            });
+        }
+        constraints
     }
 }
 

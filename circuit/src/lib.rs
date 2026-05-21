@@ -33,8 +33,8 @@
 //!
 //! # Features
 //!
-//! - `mock` (default): Uses a constraint satisfaction checker (mock prover)
-//!   that evaluates AIR constraints directly without generating real STARK proofs.
+//! - `mock` (default): Uses a constraint satisfaction checker that evaluates
+//!   AIR constraints directly without generating real STARK proofs.
 //!   This validates circuit correctness and is suitable for development/testing.
 //!
 //! - `plonky3` (optional): Plonky3 dependencies available for future optimized prover.
@@ -44,8 +44,8 @@
 //! - [`stark`]: Real STARK proof generation with FRI-based polynomial commitment.
 //!   Produces actual cryptographic proofs (~24 KiB for a 4-level Merkle membership).
 //!   Uses BLAKE3 Merkle trees, Fiat-Shamir transform, and Reed-Solomon encoding.
-//! - [`mock_prover`]: Constraint satisfaction checker (validates circuit logic without
-//!   generating real proofs, for development/testing).
+//! - [`constraint_prover`]: Constraint satisfaction checker that validates circuit
+//!   logic by evaluating AIR constraints directly on the execution trace.
 //!
 //! # Security Properties
 //!
@@ -64,7 +64,7 @@
 //! - [`derivation_air`]: Single Datalog derivation step circuit.
 //! - [`fold_air`]: Attenuation (fold) step circuit.
 //! - [`presentation`]: Complete presentation proof combining all pieces.
-//! - [`mock_prover`]: Constraint evaluator for testing.
+//! - [`constraint_prover`]: Constraint satisfaction evaluator.
 //! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
 
 pub mod body_membership;
@@ -74,7 +74,13 @@ pub mod field;
 pub mod fold_air;
 pub mod ivc;
 pub mod merkle_air;
-pub mod mock_prover;
+pub mod constraint_prover;
+
+/// Backward-compatible re-export. Prefer [`constraint_prover`] for new code.
+#[doc(hidden)]
+pub mod mock_prover {
+    pub use crate::constraint_prover::*;
+}
 pub mod multi_step_air;
 pub mod poseidon2;
 pub mod poseidon2_air;
@@ -110,7 +116,17 @@ pub use ivc::{
     prove_ivc, prove_ivc_stark, prove_validated_ivc, verify_ivc, verify_ivc_stark,
     verify_validated_ivc,
 };
-pub use mock_prover::{Air, MockProof, MockProofResult, MockProver};
+pub use constraint_prover::{
+    Air, ConstraintCheckResult, ConstraintProof, ConstraintProver, ConstraintViolation,
+};
+
+// Backward-compatible aliases (hidden from docs).
+#[doc(hidden)]
+pub use constraint_prover::MockProof;
+#[doc(hidden)]
+pub use constraint_prover::MockProofResult;
+#[doc(hidden)]
+pub use constraint_prover::MockProver;
 pub use multi_step_air::{
     ALLOW_PREDICATE, MultiStepDerivationAir, MultiStepStarkAir, MultiStepWitness,
     prove_authorization_stark, verify_authorization_stark,

@@ -227,12 +227,14 @@ fn main() {
                     (true, BabyBear::new(0)),
                     (true, BabyBear::new(1)),
                     (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: has_role_pred,
                     terms: [
                         (true, BabyBear::new(0)),
                         (true, BabyBear::new(1)),
+                        (false, BabyBear::ZERO),
                         (false, BabyBear::ZERO),
                     ],
                 }],
@@ -244,7 +246,7 @@ fn main() {
             body_fact_hashes: vec![body_hash],
             substitution: vec![stark_alice, stark_app],
             derived_predicate: allow_pred,
-            derived_terms: [stark_alice, stark_app, BabyBear::ZERO],
+            derived_terms: [stark_alice, stark_app, BabyBear::ZERO, BabyBear::ZERO],
         }],
     );
 

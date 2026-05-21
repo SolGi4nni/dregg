@@ -199,7 +199,7 @@ fn main() {
     };
 
     let presentation = builder
-        .prove_real(&proof_request)
+        .prove(&proof_request)
         .expect("Proof generation should succeed");
 
     println!("  STARK proof generated:");
@@ -288,7 +288,7 @@ fn main() {
         ..Default::default()
     };
 
-    let bad_result = bad_builder.prove_real(&bad_request);
+    let bad_result = bad_builder.prove(&bad_request);
     match bad_result {
         Err(e) => {
             println!("  Proof generation REJECTED: {}", e);

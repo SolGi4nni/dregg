@@ -5,6 +5,7 @@ use ark_poly::univariate::DensePolynomial;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, CompressedChecked, SerializationError,
 };
+use zeroize::Zeroize;
 
 use crate::kzg::UniversalParams;
 use crate::snark::{AggregationKey, Curve, PartyError, Proof, VerifierKey, F, G1, G2};
@@ -210,22 +211,51 @@ impl From<crate::trusted_setup::TrustedSetupError> for HintsError {
 impl std::error::Error for HintsError {}
 
 /// BLS Secret Key.
+///
+/// The inner field element is `pub(crate)` to prevent accidental leakage.
+/// Implements `Zeroize` and `ZeroizeOnDrop` so memory is scrubbed when the key
+/// is dropped.  `Debug` is manually implemented to redact the secret material.
 #[derive(
     Clone,
-    Debug,
     PartialEq,
     Eq,
     PartialOrd,
     Ord,
     Hash,
-    Default,
     CanonicalSerialize,
     CanonicalDeserialize,
     Serialize,
     Deserialize,
 )]
 #[serde(from = "CompressedChecked<Self>", into = "CompressedChecked<Self>")]
-pub struct SecretKey(pub F);
+pub struct SecretKey(pub(crate) F);
+
+impl std::fmt::Debug for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretKey(<redacted>)")
+    }
+}
+
+impl Default for SecretKey {
+    /// Panics unconditionally. Use `SecretKey::random()` or `SecretKey::dummy()` instead.
+    fn default() -> Self {
+        panic!("SecretKey::default() is not allowed; use SecretKey::random() or SecretKey::dummy()")
+    }
+}
+
+impl Zeroize for SecretKey {
+    fn zeroize(&mut self) {
+        // F is ark_bls12_381::Fr backed by a Montgomery representation.
+        // Overwrite with zero field element to clear secret material.
+        self.0 = F::from(0u64);
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 /// BLS Public Key.
 #[derive(

@@ -1,13 +1,13 @@
 use ark_std::test_rng;
 use hints::{F, GlobalData};
-use pyana_morpheus::test_harness::{MockHarness, TxGenPolicy};
+use pyana_morpheus::test_harness::{SimulationHarness, TxGenPolicy};
 use pyana_morpheus::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[test_log::test]
 fn test_mock_harness_enqueue_message() {
-    let mut harness = MockHarness::create_test_setup(2);
+    let mut harness = SimulationHarness::create_test_setup(2);
 
     // Initial state - no pending messages
     assert_eq!(harness.pending_messages.len(), 0);
@@ -35,7 +35,7 @@ fn test_mock_harness_enqueue_message() {
 fn test_basic_txgen() {
     assert!(cfg!(debug_assertions));
 
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // A freshly created process should have no invariant violations
     for process in harness.processes.values() {
@@ -142,7 +142,7 @@ fn test_basic_txgen() {
 
 #[test_log::test]
 fn test_basic_integration() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Initial state
     assert_eq!(harness.time, 0);
@@ -171,7 +171,7 @@ fn test_basic_integration() {
 
 #[test_log::test]
 fn test_directed_message_flow() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Create messages flowing from process1 to process2
     let message1 = Message::EndView(Arc::new(ThreshPartial::from_data(
@@ -203,7 +203,7 @@ fn test_directed_message_flow() {
 
 #[test_log::test]
 fn test_process_round_no_messages() {
-    let mut harness = MockHarness::create_test_setup(1);
+    let mut harness = SimulationHarness::create_test_setup(1);
 
     // Initial state - no pending messages
     assert_eq!(harness.pending_messages.len(), 0);
@@ -215,7 +215,7 @@ fn test_process_round_no_messages() {
 
 #[test_log::test]
 fn test_check_all_timeouts() {
-    let mut harness = MockHarness::create_test_setup(1);
+    let mut harness = SimulationHarness::create_test_setup(1);
 
     // Check timeouts
     let made_progress = harness.check_all_timeouts();
@@ -226,7 +226,7 @@ fn test_check_all_timeouts() {
 
 #[test_log::test]
 fn test_basic_process_interaction() {
-    let mut harness = MockHarness::create_test_setup(2);
+    let mut harness = SimulationHarness::create_test_setup(2);
 
     // Create a simple EndView message to trigger some interaction
     let end_view_message = Message::EndView(Arc::new(ThreshPartial::from_data(
@@ -249,7 +249,7 @@ fn test_basic_process_interaction() {
 
 #[test_log::test]
 fn test_broadcast_message() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Create a simple EndView message to broadcast
     let end_view_message = Message::EndView(Arc::new(ThreshPartial::from_data(
@@ -276,7 +276,7 @@ fn test_broadcast_message() {
 
 #[test_log::test]
 fn test_pending_votes_invariants() {
-    let mut harness = MockHarness::create_test_setup(1);
+    let mut harness = SimulationHarness::create_test_setup(1);
     let process = harness.processes.get_mut(&Identity(1)).unwrap();
 
     // Verify no invariant violations in initial state

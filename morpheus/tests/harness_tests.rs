@@ -1,7 +1,7 @@
 use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
 use hints::{F, GlobalData};
-use pyana_morpheus::test_harness::MockHarness;
+use pyana_morpheus::test_harness::SimulationHarness;
 use pyana_morpheus::{
     BlockKey, BlockType, Identity, Message, MorpheusProcess, Signed, SlotNum, ThreshPartial,
     ThreshSigned, ViewNum, VoteData,
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 #[test_log::test]
 fn test_multiple_rounds_end_view() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Create a few simple messages
     let message1 = Message::EndView(Arc::new(ThreshPartial::from_data(
@@ -73,7 +73,7 @@ fn test_multiple_rounds_end_view() {
 
 #[test_log::test]
 fn test_time_advancement_affects_processes() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Initial time should be 0 for harness and all processes
     assert_eq!(harness.time, 0);
@@ -95,7 +95,7 @@ fn test_time_advancement_affects_processes() {
 
 #[test_log::test]
 fn test_complex_simulation() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Initial state
     assert_eq!(harness.time, 0);
@@ -155,7 +155,7 @@ fn test_complex_simulation() {
 
 #[test_log::test]
 fn test_message_enqueue_and_processing() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Create a simple vote data
     let vote_data = VoteData {
@@ -194,7 +194,7 @@ fn test_message_enqueue_and_processing() {
 
 #[test_log::test]
 fn test_step_sequence() {
-    let mut harness = MockHarness::create_test_setup(3);
+    let mut harness = SimulationHarness::create_test_setup(3);
 
     // Initial state
     assert_eq!(harness.time, 0);

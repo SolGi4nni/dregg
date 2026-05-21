@@ -36,7 +36,7 @@
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_4_to_1, hash_many};
-use crate::stark::{self, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Maximum number of ancestors supported in a single non-revocation proof.
 /// This bounds the derivation chain depth we can prove in one shot.
@@ -431,6 +431,23 @@ impl StarkAir for NonRevocationAir {
         combined = combined + alpha_pow * c_control_left;
 
         combined
+    }
+
+    fn boundary_constraints(
+        &self,
+        _public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        // The NonRevocationAir proves non-membership of ancestor hashes.
+        // The revocation_root is enforced indirectly through Merkle hash chain
+        // constraints: each Merkle path must hash up to the root, and the AIR
+        // verifies hash correctness per-row. If the prover claims a different
+        // root, the hash constraints are violated on active Merkle rows.
+        //
+        // We return no boundary constraints here because:
+        // 1. Empty ancestor lists (all padding) are valid proofs
+        // 2. The root binding comes from the hash chain constraints
+        vec![]
     }
 }
 

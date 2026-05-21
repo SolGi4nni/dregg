@@ -30,7 +30,7 @@
 //!   - CDT tracking: every delegation creates a derivation record
 //!   - Cryptographic audit: walk receipt chains, verify all 8 cells' histories
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::collections::HashSet;
 
 use pyana_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
@@ -220,6 +220,7 @@ fn main() {
         TurnResult::Rejected { reason, .. } => {
             panic!("Introduction failed: {}", reason);
         }
+        _ => panic!("Unexpected turn result"),
     }
 
     // Verify agent has access to gateway.
@@ -265,6 +266,7 @@ fn main() {
         TurnResult::Rejected { reason, .. } => {
             panic!("3PI introduction failed: {}", reason);
         }
+        _ => panic!("Unexpected turn result"),
     }
 
     let agent_cell = ledger.get(&agent_id).unwrap();
@@ -514,7 +516,7 @@ fn main() {
     // Now use BudgetGate integration with executor (high-fee turn rejected).
     // Use zero costs so that the fee IS the only budget consideration.
     let mut executor_with_budget = TurnExecutor::new(ComputronCosts::zero());
-    executor_with_budget.budget_gate = Some(RefCell::new(BudgetGate::new(1, BudgetSlice::new(50))));
+    executor_with_budget.budget_gate = Some(Mutex::new(BudgetGate::new(1, BudgetSlice::new(50))));
 
     // Turn with fee=100 exceeds the 50-computron budget.
     let mut builder = TurnBuilder::new(agent_id, 6);
@@ -532,7 +534,7 @@ fn main() {
     println!("  Executor with BudgetGate(ceiling=50): fee=100 turn REJECTED");
 
     // Turn with fee=30 succeeds (reset the gate for a fresh slice).
-    executor_with_budget.budget_gate = Some(RefCell::new(BudgetGate::new(1, BudgetSlice::new(50))));
+    executor_with_budget.budget_gate = Some(Mutex::new(BudgetGate::new(1, BudgetSlice::new(50))));
     let mut builder = TurnBuilder::new(agent_id, 6);
     builder.set_fee(30);
     {
@@ -868,6 +870,7 @@ fn main() {
             TurnResult::Rejected { reason, .. } => {
                 panic!("Audit step {i} rejected: {reason}");
             }
+            _ => panic!("Unexpected turn result at step {i}"),
         }
     }
     println!();

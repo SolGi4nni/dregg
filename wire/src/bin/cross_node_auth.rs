@@ -5,7 +5,7 @@
 //! 1. Start Node A (Org A's federation node) -- binds TCP
 //! 2. Start Node B (Org B's verification server) -- binds TCP
 //! 3. Agent at Node A: mints token for cross-org delegation
-//! 4. Agent at Node A: generates a REAL STARK proof (using prove_real())
+//! 4. Agent at Node A: generates a STARK proof (using prove())
 //! 5. Agent connects to Node B over TCP and submits the presentation
 //! 6. Node B: verifies the STARK proof against its known federation root
 //! 7. Node B: returns AUTHORIZED or DENIED
@@ -209,9 +209,9 @@ async fn main() {
     println!();
 
     // =========================================================================
-    // Phase 3: Generate a REAL STARK proof using prove_real()
+    // Phase 3: Generate a STARK proof using prove()
     // =========================================================================
-    println!("[Phase 3] Generating REAL Poseidon2 STARK proof...");
+    println!("[Phase 3] Generating Poseidon2 STARK proof...");
     println!();
 
     let proof_start = Instant::now();
@@ -246,8 +246,8 @@ async fn main() {
     // This produces a cryptographically valid proof of issuer membership in the
     // federation tree, using collision-resistant Poseidon2 hash constraints.
     let presentation = builder
-        .prove_real(&auth_request)
-        .expect("prove_real() should succeed");
+        .prove(&auth_request)
+        .expect("prove() should succeed");
 
     let proof_time = proof_start.elapsed();
 

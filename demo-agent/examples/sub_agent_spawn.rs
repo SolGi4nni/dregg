@@ -376,6 +376,12 @@ fn main() {
             TurnResult::Rejected { reason, .. } => {
                 panic!("  {} turn rejected: {}", agent.name, reason);
             }
+            TurnResult::Expired => {
+                panic!("  {} turn expired", agent.name);
+            }
+            TurnResult::Pending => {
+                panic!("  {} turn pending (condition not yet met)", agent.name);
+            }
         }
     }
     println!();
@@ -472,7 +478,7 @@ fn main() {
             ..Default::default()
         };
 
-        let proof = builder.prove_real(&req);
+        let proof = builder.prove(&req);
         match proof {
             Ok(presentation) => {
                 let valid = verify_presentation(&presentation);

@@ -545,12 +545,14 @@ fn main() {
                 (true, BabyBear::new(0)), // $user -> bob
                 (true, BabyBear::new(1)), // $role -> editor
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: has_role_pred,
                 terms: [
                     (true, BabyBear::new(0)),
                     (true, BabyBear::new(1)),
+                    (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
                 ],
             }],
@@ -562,7 +564,7 @@ fn main() {
         body_fact_hashes: vec![body_hash],
         substitution: vec![bob_val, editor_val],
         derived_predicate: allow_pred,
-        derived_terms: [bob_val, editor_val, BabyBear::ZERO],
+        derived_terms: [bob_val, editor_val, BabyBear::ZERO, BabyBear::ZERO],
     };
 
     let witness = build_multi_step_witness(state_root, request_hash, vec![step]);

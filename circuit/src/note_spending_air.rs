@@ -50,7 +50,7 @@
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_4_to_1, hash_many};
-use crate::stark::{self, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Trace width for the note spending AIR.
 /// 19 columns: 5 note preimage + commitment + 8 key limbs + nullifier + randomness + is_merkle + 2 unused.
@@ -450,6 +450,32 @@ impl StarkAir for NoteSpendingAir {
         combined = combined + alpha_pow * c_nullifier;
 
         combined
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 2 {
+            // Row 0, col NULLIFIER (14) = public_inputs[0] (nullifier)
+            // This binds the trace's computed nullifier to the claimed public input.
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::NULLIFIER,
+                value: public_inputs[pi::NULLIFIER],
+            });
+            // Padding rows have col[CURRENT] = merkle_root.
+            // The last row (whether padding or the actual last Merkle level) has
+            // col[CURRENT] = merkle_root. We bind the last row's CURRENT to merkle_root.
+            constraints.push(BoundaryConstraint {
+                row: trace_len - 1,
+                col: merkle_col::CURRENT,
+                value: public_inputs[pi::MERKLE_ROOT],
+            });
+        }
+        constraints
     }
 }
 

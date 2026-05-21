@@ -445,7 +445,7 @@ fn run_multi_org_delegation(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>
     });
     assert!(builder.verify_chain());
 
-    let proof_result = builder.prove_real(&AuthRequest {
+    let proof_result = builder.prove(&AuthRequest {
         service: Some("data-warehouse".into()),
         app_id: Some("cross-org-query".into()),
         action: Some("r".into()),

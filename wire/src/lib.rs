@@ -66,8 +66,10 @@ pub mod prelude {
         AuthorizationRequest, PROTOCOL_VERSION, PublicKey, Signature, ThresholdQC, WireMessage,
         error_codes,
     };
+    pub use crate::server::{ProofVerifier, SiloConfig, SiloServer, SiloState, StarkVerifier};
+
+    #[cfg(any(test, feature = "dev"))]
     pub use crate::server::{
-        MinSizeVerifier, NoopVerifier, ProofVerifier, RejectAllVerifier, SiloConfig, SiloServer,
-        SiloState, StarkVerifier, VerificationMode,
+        MinSizeVerifier, NoopVerifier, RejectAllVerifier, VerificationMode,
     };
 }

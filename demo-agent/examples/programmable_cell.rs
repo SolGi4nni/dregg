@@ -289,6 +289,7 @@ fn main() {
         TurnResult::Committed { .. } => {
             panic!("Should have been rejected!");
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 
@@ -361,6 +362,7 @@ fn main() {
         TurnResult::Rejected { reason, .. } => {
             panic!("Should have been accepted, got: {}", reason);
         }
+        _ => panic!("Unexpected turn result"),
     }
     println!();
 
@@ -424,6 +426,7 @@ fn main() {
         TurnResult::Committed { .. } => {
             panic!("Should have been rejected!");
         }
+        _ => panic!("Unexpected turn result"),
     }
 
     // Confirm state was NOT modified (atomicity).
