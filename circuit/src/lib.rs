@@ -68,6 +68,7 @@
 //! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
 
 pub mod body_membership;
+pub mod chunked_derivation;
 pub mod derivation_air;
 pub mod field;
 pub mod fold_air;
@@ -104,8 +105,10 @@ pub use body_membership::{
 };
 pub use field::BabyBear;
 pub use ivc::{
-    FoldDelta, IvcBuilder, IvcPresentationProof, IvcProof, IvcVerification, StateTransitionAir,
-    prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
+    FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBuilder, IvcPresentationProof, IvcProof,
+    IvcVerification, StateTransitionAir, ValidatedIvcProof, ValidatedIvcVerification,
+    prove_ivc, prove_ivc_stark, prove_validated_ivc, verify_ivc, verify_ivc_stark,
+    verify_validated_ivc,
 };
 pub use mock_prover::{Air, MockProof, MockProofResult, MockProver};
 pub use multi_step_air::{
@@ -118,6 +121,10 @@ pub use non_revocation_air::{
 };
 pub use note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, prove_note_spend, verify_note_spend,
+};
+pub use chunked_derivation::{
+    ChunkedAuthorizationProof, DEFAULT_CHUNK_SIZE, prove_chunked_authorization,
+    verify_chunked_authorization,
 };
 pub use presentation::{
     AuthorizationProof, PresentationAir, PresentationProof, PresentationVerification,
