@@ -94,6 +94,14 @@ pub struct RevocationBlock {
     /// without replaying all historical events.
     #[serde(default)]
     pub transition_proof: Option<Vec<u8>>,
+    /// Serialized Nova-style folding accumulator after this block.
+    ///
+    /// Each block carries the updated accumulator produced by folding this block's
+    /// transition instance into the running state. This enables O(1) per-block cost
+    /// (~5ms) for accumulating state transition validity. At epoch boundaries, a
+    /// full STARK proves the accumulator is valid.
+    #[serde(default)]
+    pub folding_accumulator: Option<Vec<u8>>,
 }
 
 impl RevocationBlock {

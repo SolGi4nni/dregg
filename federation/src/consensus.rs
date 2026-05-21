@@ -361,6 +361,7 @@ impl ConsensusState {
             note_tree_root,
             nullifier_set_root,
             transition_proof: None,
+            folding_accumulator: None,
         };
 
         self.current_proposal = Some(block.clone());

@@ -31,6 +31,7 @@
 pub mod fulfillment;
 pub mod gossip;
 pub mod matcher;
+pub mod pir;
 pub mod validation;
 
 use serde::{Deserialize, Serialize};

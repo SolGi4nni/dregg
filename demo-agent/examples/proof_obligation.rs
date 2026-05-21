@@ -119,6 +119,7 @@ fn main() {
         &trusted_roots,
         DEFAULT_MAX_ROOT_AGE,
         &mut nullifiers,
+        &[],
     );
 
     match &alice_result {
@@ -146,6 +147,7 @@ fn main() {
         &trusted_roots,
         DEFAULT_MAX_ROOT_AGE,
         &mut nullifiers,
+        &[],
     );
 
     match &bob_result {
@@ -215,6 +217,7 @@ fn main() {
         &trusted_roots,
         DEFAULT_MAX_ROOT_AGE,
         &mut nullifiers,
+        &[],
     );
     match &late_result {
         Err(e) => {

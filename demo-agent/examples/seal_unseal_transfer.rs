@@ -44,6 +44,7 @@ fn main() {
         slot: 7,
         permissions: AuthRequired::Signature,
         breadstuff: None,
+        expires_at: None,
     };
     println!("  Capability to transfer: access to Carol (slot 7, requires Signature)");
     println!();
@@ -224,6 +225,7 @@ fn main() {
         slot: 42,
         permissions: AuthRequired::Either,
         breadstuff: Some([0xDE; 32]),
+        expires_at: None,
     };
 
     let sealed2 = pair.seal(&cap2);

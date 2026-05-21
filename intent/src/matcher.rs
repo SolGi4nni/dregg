@@ -914,6 +914,7 @@ mod tests {
                     compound: None, predicate_requirements: vec![],
                 },
             ]),
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -978,6 +979,7 @@ mod tests {
                     compound: None, predicate_requirements: vec![],
                 },
             ]),
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1033,6 +1035,7 @@ mod tests {
                     compound: None, predicate_requirements: vec![],
                 },
             ]),
+            predicate_requirements: vec![],
         };
         let intent = Intent::new(
             IntentKind::Need,

@@ -242,9 +242,9 @@ fn main() {
 
     // Compute the signing messages for each party
     let alice_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
+        TurnExecutor::compute_partial_signing_message(&alice_action, 0);
     let bob_signing_msg =
-        TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
+        TurnExecutor::compute_partial_signing_message(&bob_action, 1);
 
     // Alice and Bob sign their messages
     let alice_sig = alice_sk.sign(&alice_signing_msg);
@@ -302,9 +302,9 @@ fn main() {
                 "  Agent (fee payer): {:02x}{:02x}{:02x}{:02x}...",
                 matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]
             );
-            println!("  Action count: {}", turn.action_count());
-            println!("  Fee: {} computrons", turn.fee);
-            println!("  Memo: {:?}", turn.memo);
+            println!("  Action count: {}", turn.turn.action_count());
+            println!("  Fee: {} computrons", turn.turn.fee);
+            println!("  Memo: {:?}", turn.turn.memo);
         }
         Err(e) => {
             // ExcessImbalance is expected when balance_change is used, but our swap

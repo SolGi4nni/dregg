@@ -1511,6 +1511,53 @@ impl AgentWallet {
     }
 
     // =========================================================================
+    // Programmable Predicate Programs
+    // =========================================================================
+
+    /// Prove a programmable predicate program against this wallet's private state.
+    ///
+    /// This is the high-level entry point for the programmable predicates system.
+    /// It takes a predicate program (an expression tree of conditions) and proves
+    /// all conditions are satisfied using the wallet's private attribute values.
+    ///
+    /// The program is compiled to the appropriate AIR(s) and proven in zero knowledge.
+    /// The verifier learns only that the program is satisfied, not the actual values.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token whose attributes are being proven about.
+    /// * `program` - The predicate program to prove (expression tree).
+    /// * `attribute_values` - Map from attribute names to actual (private) values.
+    ///
+    /// # Returns
+    ///
+    /// A `ProgramProof` that can be verified by anyone knowing the program and
+    /// fact commitments, or an error if the program cannot be proven.
+    pub fn prove_program(
+        &self,
+        token: &HeldToken,
+        program: &pyana_circuit::predicate_program::PredicateProgram,
+        attribute_values: &std::collections::HashMap<String, u64>,
+    ) -> Result<pyana_circuit::predicate_program::ProgramProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+
+        // Compute a state root from the token's issuer key.
+        let issuer_key = token.root_key();
+        let state_root = Self::bytes_to_babybear(issuer_key);
+
+        // Prove via the bridge layer.
+        let proof = pyana_bridge::prove_predicate_program(program, attribute_values, state_root)
+            .map_err(|e| {
+                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                    "predicate program proof failed: {e}"
+                )))
+            })?;
+
+        Ok(proof)
+    }
+
+    // =========================================================================
     // Cross-party Predicate Proofs (Intent Integration)
     // =========================================================================
 

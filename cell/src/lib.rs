@@ -19,6 +19,7 @@ pub mod ledger;
 pub mod note;
 pub mod note_bridge;
 pub mod nullifier_set;
+pub mod oblivious_transfer;
 pub mod permissions;
 pub mod preconditions;
 pub mod program;
@@ -52,6 +53,9 @@ pub use preconditions::{
 pub use program::{CellProgram, ProgramError, StateConstraint};
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,
+};
+pub use oblivious_transfer::{
+    OtError, OtReceiver, OtReceiverResponse, OtSender, OtSenderPayload, OtSenderSetup, ot_1_of_n,
 };
 pub use seal::{SealError, SealPair, SealedBox, SealerPublic, test_seal_pair};
 pub use state::{

@@ -42,6 +42,7 @@
 //! The tree structure and API are designed for drop-in replacement once
 //! a concrete field (BN254, BLS12-381, etc.) is selected.
 
+pub mod accumulator;
 pub mod fact;
 pub mod factset;
 pub mod field;
@@ -53,6 +54,7 @@ pub mod state;
 pub mod symbol;
 
 // Re-export primary types at crate root for convenience.
+pub use accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
 pub use fact::Fact;
 pub use factset::FactSet;
 pub use field::FieldElement;

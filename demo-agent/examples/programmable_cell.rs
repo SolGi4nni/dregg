@@ -25,7 +25,7 @@ use pyana_turn::{Action, Authorization, DelegationMode, Effect, Turn, TurnResult
 struct MockStarkVerifier;
 
 impl ProofVerifier for MockStarkVerifier {
-    fn verify(&self, proof: &[u8], _public_inputs: &[u8], vk: &[u8]) -> bool {
+    fn verify(&self, proof: &[u8], _action: &str, _resource: &str, vk: &[u8]) -> bool {
         // Simple mock: proof is valid if it starts with the VK prefix (first 4 bytes).
         // In production this would be a real STARK/SNARK verifier.
         if proof.len() < 4 || vk.len() < 4 {

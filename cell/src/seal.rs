@@ -525,6 +525,7 @@ mod tests {
                 slot: 99,
                 permissions: perm.clone(),
                 breadstuff: None,
+                expires_at: None,
             };
             assert_eq!(pair.unseal(&pair.seal(&cap)).unwrap().permissions, perm);
         }

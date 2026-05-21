@@ -87,13 +87,17 @@ pub mod poseidon2;
 pub mod poseidon2_air;
 pub mod presentation;
 
+pub mod accumulator_air;
 pub mod block_transition_air;
 pub mod committed_threshold;
+pub mod compound_predicate_air;
 pub mod non_revocation_air;
 pub mod note_spending_air;
 pub mod predicate_air;
+pub mod predicate_program;
 pub mod relational_predicate_air;
 pub mod stark;
+pub mod temporal_predicate_air;
 pub mod turn_validity_air;
 
 #[cfg(feature = "plonky3")]
@@ -172,4 +176,10 @@ pub use committed_threshold::{
 pub use relational_predicate_air::{
     RelationalPredicateAir, RelationalPredicateProof, RelationalPredicateWitness, RelationType,
     compute_value_commitment, prove_relational, prove_value_comparison, verify_relational,
+};
+pub use accumulator_air::{
+    AccumulatorNonRevocationAir, AccumulatorNonRevocationWitness,
+    AccumulatorNonMembershipWitness, ExtElem,
+    compute_accumulator, derive_alpha,
+    prove_accumulator_non_revocation, verify_accumulator_non_revocation,
 };

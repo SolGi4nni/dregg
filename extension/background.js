@@ -839,6 +839,7 @@ async function authorize(request) {
     timestamp: Date.now(),
     mode,
     disclosedFacts: request._disclosedFacts || null,
+    predicateFacts: request._predicateFacts || null,
   });
   await saveState();
 
@@ -853,6 +854,23 @@ async function authorize(request) {
       );
     });
     result.disclosedFacts = request._disclosedFacts;
+  }
+
+  // For predicate proofs, generate range proofs for each predicate fact.
+  if (mode === 'selective' && request._predicateFacts) {
+    result.predicateProofs = request._predicateFacts.map(pf => {
+      // Generate a predicate proof (via WASM when available, stub otherwise).
+      const predicateWitness = new TextEncoder().encode(
+        JSON.stringify({ key: pf.key, predicateType: pf.predicateType, threshold: pf.threshold })
+      );
+      const predicateProof = generateProof(predicateWitness, 'selective');
+      return {
+        key: pf.key,
+        predicateType: pf.predicateType,
+        threshold: pf.threshold,
+        proof: Array.from(predicateProof),
+      };
+    });
   }
 
   // For zero-knowledge, strip all facts from the result.
@@ -1019,6 +1037,8 @@ async function authorizeWithDisclosure(request, origin) {
   let disclosureLevel;
   let disclosedFacts = [];
 
+  let predicateFacts = [];
+
   if (savedPref && !request.forceDisclosurePicker) {
     // Use saved preference.
     disclosureLevel = savedPref.level;
@@ -1033,6 +1053,28 @@ async function authorizeWithDisclosure(request, origin) {
 
     disclosureLevel = decision.level;
     disclosedFacts = decision.disclosedFacts || [];
+
+    // Extract predicate proof specs from the structured facts array.
+    if (decision.facts && Array.isArray(decision.facts)) {
+      for (const factDecision of decision.facts) {
+        if (factDecision.disclosure === 'reveal') {
+          // Ensure revealed facts are in the disclosedFacts array.
+          const factObj = tokenFacts[factDecision.index];
+          if (factObj && !disclosedFacts.includes(factObj.key)) {
+            disclosedFacts.push(factObj.key);
+          }
+        } else if (factDecision.disclosure === 'predicate') {
+          const factObj = tokenFacts[factDecision.index];
+          if (factObj) {
+            predicateFacts.push({
+              key: factObj.key,
+              predicateType: factDecision.predicateType || 'gte',
+              threshold: factDecision.threshold,
+            });
+          }
+        }
+      }
+    }
 
     // Save preference if user checked "remember".
     if (decision.remember && origin) {
@@ -1049,6 +1091,7 @@ async function authorizeWithDisclosure(request, origin) {
     ...request,
     mode,
     _disclosedFacts: disclosedFacts.length > 0 ? disclosedFacts : null,
+    _predicateFacts: predicateFacts.length > 0 ? predicateFacts : null,
   });
 }
 

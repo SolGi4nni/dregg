@@ -48,10 +48,12 @@ pub use delta::attenuation_to_delta;
 pub use present::{
     BridgeCommittedThresholdProof, BridgePresentationBuilder, BridgePresentationProof,
     BridgePredicateProof, BridgePredicateProofInner, FederationRegistry, Predicate,
-    WirePresentationProof, DEFAULT_MAX_PROOF_AGE_SECS, compute_revealed_facts_commitment,
-    prove_committed_threshold, prove_predicate_for_fact, verify_committed_threshold_proof,
-    verify_fold_chain, verify_predicate_proof, verify_presentation_complete,
-    verify_presentation_full, verify_revealed_facts_commitment, verify_wire_fold_chain,
+    ProgramProveError, WirePresentationProof, DEFAULT_MAX_PROOF_AGE_SECS,
+    compute_revealed_facts_commitment, prove_committed_threshold, prove_predicate_for_fact,
+    prove_predicate_program, prove_predicate_program_full, verify_committed_threshold_proof,
+    verify_fold_chain, verify_predicate_program, verify_predicate_proof,
+    verify_presentation_complete, verify_presentation_full, verify_revealed_facts_commitment,
+    verify_wire_fold_chain,
 };
 #[cfg(feature = "turn")]
 pub use verifier::StarkProofVerifier;

@@ -80,7 +80,18 @@ function isFactSiteRequested(fact) {
 }
 
 // ---------------------------------------------------------------------------
-// Build fact picker UI
+// Numeric fact detection
+// ---------------------------------------------------------------------------
+
+function isNumericFact(fact) {
+  const val = fact.value;
+  if (typeof val === 'number') return true;
+  if (typeof val === 'string' && val.trim() !== '' && !isNaN(Number(val))) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Build fact picker UI (three-way: reveal / predicate / hide)
 // ---------------------------------------------------------------------------
 
 function buildFactPicker() {
@@ -89,7 +100,9 @@ function buildFactPicker() {
 
   // Group facts by category.
   const grouped = {};
-  for (const fact of tokenFacts) {
+  for (let i = 0; i < tokenFacts.length; i++) {
+    const fact = tokenFacts[i];
+    fact._index = i; // Track index for radio name uniqueness.
     const cat = categorizeFact(fact);
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(fact);
@@ -113,19 +126,14 @@ function buildFactPicker() {
     for (const fact of facts) {
       const required = isFactRequired(fact);
       const siteRequested = isFactSiteRequested(fact);
+      const numeric = isNumericFact(fact);
+      const radioName = `fact-${fact._index}`;
 
       const itemEl = document.createElement('div');
-      itemEl.className = 'fact-item' + (required ? ' required' : '');
+      itemEl.className = 'fact-disclosure' + (required ? ' required mode-reveal' : '');
+      itemEl.dataset.factIndex = fact._index;
 
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = required || siteRequested;
-      checkbox.dataset.factKey = fact.key;
-      if (required) {
-        checkbox.disabled = true;
-      }
-      checkbox.addEventListener('change', updatePreview);
-
+      // Fact label (key + value).
       const labelEl = document.createElement('div');
       labelEl.className = 'fact-label';
 
@@ -139,9 +147,84 @@ function buildFactPicker() {
 
       labelEl.appendChild(keyEl);
       labelEl.appendChild(valueEl);
-
-      itemEl.appendChild(checkbox);
       itemEl.appendChild(labelEl);
+
+      // Three-way disclosure options.
+      const optionsEl = document.createElement('div');
+      optionsEl.className = 'disclosure-options';
+
+      // Option: Reveal
+      const revealOpt = document.createElement('label');
+      revealOpt.className = 'disclosure-opt opt-reveal' + ((required || siteRequested) ? ' active' : '');
+      const revealRadio = document.createElement('input');
+      revealRadio.type = 'radio';
+      revealRadio.name = radioName;
+      revealRadio.value = 'reveal';
+      revealRadio.checked = required || siteRequested;
+      revealRadio.dataset.factKey = fact.key;
+      revealRadio.dataset.factIndex = fact._index;
+      if (required) revealRadio.disabled = true;
+      revealOpt.appendChild(revealRadio);
+      revealOpt.appendChild(document.createTextNode(' Reveal'));
+      optionsEl.appendChild(revealOpt);
+
+      // Option: Prove Predicate (only for numeric facts, and not required facts)
+      if (numeric && !required) {
+        const predOpt = document.createElement('label');
+        predOpt.className = 'disclosure-opt opt-predicate';
+        const predRadio = document.createElement('input');
+        predRadio.type = 'radio';
+        predRadio.name = radioName;
+        predRadio.value = 'predicate';
+        predRadio.dataset.factKey = fact.key;
+        predRadio.dataset.factIndex = fact._index;
+        predOpt.appendChild(predRadio);
+        predOpt.appendChild(document.createTextNode(' ≥ '));
+
+        const thresholdInput = document.createElement('input');
+        thresholdInput.type = 'number';
+        thresholdInput.className = 'threshold-input';
+        thresholdInput.placeholder = 'min';
+        thresholdInput.dataset.factIndex = fact._index;
+        thresholdInput.addEventListener('click', (e) => e.stopPropagation());
+        thresholdInput.addEventListener('input', () => {
+          // Auto-select the predicate radio when user types a threshold.
+          predRadio.checked = true;
+          updateFactItemMode(itemEl, 'predicate');
+          updatePreview();
+        });
+        predOpt.appendChild(thresholdInput);
+
+        // Tooltip
+        const tooltip = document.createElement('span');
+        tooltip.className = 'predicate-tooltip';
+        tooltip.textContent = '?';
+        tooltip.dataset.tooltip = 'Prove that this value satisfies a condition without revealing the exact value';
+        predOpt.appendChild(tooltip);
+
+        optionsEl.appendChild(predOpt);
+      }
+
+      // Option: Hide
+      if (!required) {
+        const hideOpt = document.createElement('label');
+        hideOpt.className = 'disclosure-opt opt-hide' + ((!required && !siteRequested) ? ' active' : '');
+        const hideRadio = document.createElement('input');
+        hideRadio.type = 'radio';
+        hideRadio.name = radioName;
+        hideRadio.value = 'hide';
+        hideRadio.dataset.factKey = fact.key;
+        hideRadio.dataset.factIndex = fact._index;
+        if (!required && !siteRequested) {
+          hideRadio.checked = true;
+          itemEl.className = 'fact-disclosure mode-hide';
+        }
+        hideOpt.appendChild(hideRadio);
+        hideOpt.appendChild(document.createTextNode(' Hide'));
+        optionsEl.appendChild(hideOpt);
+      }
+
+      itemEl.appendChild(optionsEl);
 
       if (required) {
         const reqTag = document.createElement('span');
@@ -150,19 +233,39 @@ function buildFactPicker() {
         itemEl.appendChild(reqTag);
       }
 
-      // Click the row to toggle checkbox.
-      itemEl.addEventListener('click', (e) => {
-        if (e.target === checkbox) return;
-        if (!checkbox.disabled) {
-          checkbox.checked = !checkbox.checked;
+      // Attach change listeners to all radios in this item.
+      const radios = optionsEl.querySelectorAll('input[type="radio"]');
+      for (const radio of radios) {
+        radio.addEventListener('change', () => {
+          updateFactItemMode(itemEl, radio.value);
+          updateActiveOpts(optionsEl, radio.value);
           updatePreview();
-        }
-      });
+        });
+      }
+
+      // Set initial mode class.
+      if (required || siteRequested) {
+        itemEl.classList.add('mode-reveal');
+        updateActiveOpts(optionsEl, 'reveal');
+      }
 
       categoryEl.appendChild(itemEl);
     }
 
     factListEl.appendChild(categoryEl);
+  }
+}
+
+function updateFactItemMode(itemEl, mode) {
+  itemEl.classList.remove('mode-reveal', 'mode-predicate', 'mode-hide');
+  itemEl.classList.add(`mode-${mode}`);
+}
+
+function updateActiveOpts(optionsEl, activeValue) {
+  const opts = optionsEl.querySelectorAll('.disclosure-opt');
+  for (const opt of opts) {
+    const radio = opt.querySelector('input[type="radio"]');
+    opt.classList.toggle('active', radio.value === activeValue);
   }
 }
 
@@ -208,34 +311,73 @@ function updatePreview() {
 
   previewEl.classList.add('visible');
 
-  const checked = getCheckedFacts();
-  const unchecked = tokenFacts.filter(f => !checked.some(c => c.key === f.key));
+  const decisions = getFactDecisions();
+  const revealed = decisions.filter(d => d.disclosure === 'reveal');
+  const proven = decisions.filter(d => d.disclosure === 'predicate');
+  const hidden = decisions.filter(d => d.disclosure === 'hide');
 
   let html = '';
-  if (checked.length > 0) {
+  if (revealed.length > 0) {
     html += '<span class="preview-revealed">Revealed: ' +
-      checked.map(f => formatFactKey(f.key)).join(', ') + '</span>';
+      revealed.map(d => {
+        const fact = tokenFacts[d.index];
+        return `${formatFactKey(fact.key)}=${formatFactValue(fact.key, fact.value)}`;
+      }).join(', ') + '</span>';
   }
-  if (unchecked.length > 0) {
+  if (proven.length > 0) {
+    html += (html ? '<br>' : '') +
+      '<span class="preview-proven">Proven: ' +
+      proven.map(d => {
+        const fact = tokenFacts[d.index];
+        const thresholdStr = d.threshold != null ? d.threshold : '?';
+        return `${formatFactKey(fact.key)} ≥ ${thresholdStr}`;
+      }).join(', ') + '</span>';
+  }
+  if (hidden.length > 0) {
     html += (html ? '<br>' : '') +
       '<span class="preview-hidden">Hidden: ' +
-      unchecked.map(f => formatFactKey(f.key)).join(', ') + '</span>';
+      hidden.map(d => formatFactKey(tokenFacts[d.index].key)).join(', ') + '</span>';
   }
   previewEl.innerHTML = html;
 
   updateAuthorizeButton();
 }
 
-function getCheckedFacts() {
-  const checkboxes = document.querySelectorAll('#factList input[type="checkbox"]');
-  const checked = [];
-  for (const cb of checkboxes) {
-    if (cb.checked) {
-      const fact = tokenFacts.find(f => f.key === cb.dataset.factKey);
-      if (fact) checked.push(fact);
+/**
+ * Get the disclosure decision for each fact as a structured array.
+ */
+function getFactDecisions() {
+  const decisions = [];
+  for (let i = 0; i < tokenFacts.length; i++) {
+    const radioName = `fact-${i}`;
+    const selected = document.querySelector(`input[name="${radioName}"]:checked`);
+    if (!selected) {
+      // Default: required facts are revealed, others hidden.
+      const required = isFactRequired(tokenFacts[i]);
+      decisions.push({ index: i, disclosure: required ? 'reveal' : 'hide' });
+      continue;
     }
+    const decision = { index: i, disclosure: selected.value };
+    if (selected.value === 'predicate') {
+      const thresholdInput = document.querySelector(`.threshold-input[data-fact-index="${i}"]`);
+      if (thresholdInput && thresholdInput.value !== '') {
+        decision.predicateType = 'gte';
+        decision.threshold = Number(thresholdInput.value);
+      }
+    }
+    decisions.push(decision);
   }
-  return checked;
+  return decisions;
+}
+
+/**
+ * Legacy helper: get facts that are set to "reveal" (for backward compat).
+ */
+function getCheckedFacts() {
+  const decisions = getFactDecisions();
+  return decisions
+    .filter(d => d.disclosure === 'reveal')
+    .map(d => tokenFacts[d.index]);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +428,15 @@ function updateAuthorizeButton() {
       btn.textContent = 'Authorize (full disclosure)';
       break;
     case 'selective': {
-      const count = getCheckedFacts().length;
-      btn.textContent = `Authorize with ${count} fact${count !== 1 ? 's' : ''} revealed`;
+      const decisions = getFactDecisions();
+      const revealCount = decisions.filter(d => d.disclosure === 'reveal').length;
+      const provenCount = decisions.filter(d => d.disclosure === 'predicate').length;
+      const hiddenCount = decisions.filter(d => d.disclosure === 'hide').length;
+      const parts = [];
+      if (revealCount > 0) parts.push(`${revealCount} revealed`);
+      if (provenCount > 0) parts.push(`${provenCount} proven`);
+      if (hiddenCount > 0) parts.push(`${hiddenCount} hidden`);
+      btn.textContent = `Authorize (${parts.join(', ')})`;
       break;
     }
     case 'private':
@@ -302,11 +451,16 @@ function updateAuthorizeButton() {
 
 function sendDecision(authorized) {
   const level = getSelectedLevel();
+  const decisions = level === 'selective' ? getFactDecisions() : [];
   const message = {
     type: 'pyana:disclosureDecision',
     authorized,
     level,
-    disclosedFacts: level === 'selective' ? getCheckedFacts().map(f => f.key) : [],
+    // Legacy field for backward compat.
+    disclosedFacts: decisions.filter(d => d.disclosure === 'reveal').map(d => tokenFacts[d.index].key),
+    // Full structured disclosure spec.
+    facts: decisions,
+    mode: level === 'selective' ? 'selective' : level,
     remember: document.getElementById('rememberCheckbox').checked,
   };
   chrome.runtime.sendMessage(message);

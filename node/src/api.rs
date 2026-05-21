@@ -176,6 +176,35 @@ pub struct IntentSubmitResponse {
     pub stored: bool,
 }
 
+// =============================================================================
+// PIR (Private Information Retrieval) types
+// =============================================================================
+
+/// Request body for a PIR query against the intent index.
+#[derive(Deserialize)]
+pub struct PirQueryRequest {
+    /// The query vector (BabyBear field elements serialized as u32 values).
+    pub query_vector: Vec<u32>,
+}
+
+/// Response to a PIR query.
+#[derive(Serialize)]
+pub struct PirQueryResponse {
+    /// The server's response vector (BabyBear field elements as u32 values).
+    pub response: Vec<u32>,
+}
+
+/// Metadata about the PIR database (needed for clients to construct valid queries).
+#[derive(Serialize)]
+pub struct PirInfoResponse {
+    /// Number of rows (capability tags) in the index.
+    pub num_rows: usize,
+    /// Number of columns per row (in field elements).
+    pub row_width: usize,
+    /// The ordered list of capability tags.
+    pub tags: Vec<String>,
+}
+
 #[derive(Serialize)]
 pub struct IntentListEntry {
     pub id: String,
@@ -411,6 +440,8 @@ pub fn router(state: NodeState) -> Router {
         .route("/federation/roots", get(get_federation_roots))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
+        .route("/pir/info", get(get_pir_info))
+        .route("/pir/query", post(post_pir_query))
         .route(
             "/wallet/unlock",
             post({
@@ -1069,6 +1100,66 @@ async fn get_pending_conditionals(
         })
         .collect();
     Json(infos)
+}
+
+// =============================================================================
+// PIR (Private Information Retrieval) Handlers
+// =============================================================================
+
+/// GET /pir/info — returns metadata about the PIR database.
+///
+/// Clients need this to know the database dimensions and tag ordering before
+/// constructing a valid PIR query vector.
+async fn get_pir_info(State(state): State<NodeState>) -> Json<PirInfoResponse> {
+    let s = state.read().await;
+
+    // Build the intent index from the node's local intent pool.
+    let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
+    let index = pyana_intent::pir::IntentIndex::build_from_intents(&intents);
+
+    Json(PirInfoResponse {
+        num_rows: index.num_rows(),
+        row_width: index.row_width(),
+        tags: index.tags,
+    })
+}
+
+/// POST /pir/query — accepts a PIR query vector and returns the server's response.
+///
+/// The node computes the matrix-vector product of the intent index against the
+/// query vector, returning a response that reveals nothing about which row was
+/// queried (when combined with a complementary query to a second node).
+async fn post_pir_query(
+    State(state): State<NodeState>,
+    Json(req): Json<PirQueryRequest>,
+) -> Result<Json<PirQueryResponse>, StatusCode> {
+    let s = state.read().await;
+
+    // Build the intent index from the node's local intent pool.
+    let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
+    let index = pyana_intent::pir::IntentIndex::build_from_intents(&intents);
+
+    // Validate query vector length matches the database.
+    if req.query_vector.len() != index.num_rows() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Convert the u32 query vector to BabyBear field elements.
+    let query = pyana_intent::pir::PirQuery {
+        query_vector: req
+            .query_vector
+            .iter()
+            .map(|&v| pyana_circuit::field::BabyBear::new(v))
+            .collect(),
+    };
+
+    // Compute the PIR response.
+    let response = pyana_intent::pir::compute_pir_response(&query, &index.entries);
+
+    // Convert back to u32 for serialization.
+    Ok(Json(PirQueryResponse {
+        response: response.response.iter().map(|e| e.as_u32()).collect(),
+    }))
 }
 
 // =============================================================================

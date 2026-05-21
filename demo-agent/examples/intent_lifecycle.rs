@@ -98,7 +98,7 @@ fn main() {
     let now = 1_700_000_000u64; // simulated timestamp
     let expiry = now + 3600; // 1 hour
     let intent =
-        service_pool.broadcast_intent(IntentKind::Need, match_spec, expiry, Some(stake_proof));
+        service_pool.broadcast_intent(IntentKind::Need, match_spec, expiry, Some(stake_proof)).expect("broadcast intent");
 
     println!("  Intent posted:");
     println!(
@@ -293,7 +293,7 @@ fn main() {
         note_tree_root,
     );
 
-    let (_nonce, commitment) = agent_pool.commit_to_fulfill(intent.id, &fulfillment, now);
+    let commitment = agent_pool.commit_to_fulfill(intent.id, &fulfillment, now);
 
     println!("  Commitment posted:");
     println!(

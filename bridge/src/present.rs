@@ -831,6 +831,53 @@ impl BridgePresentationBuilder {
         })
     }
 
+    /// Generate a STARK-backed presentation proof with per-fact disclosure control.
+    ///
+    /// This extends `prove()` with predicate proof generation for specified facts.
+    /// For each fact in `predicate_facts`, a `BridgePredicateProof` is generated
+    /// proving the fact's value satisfies the given predicate without revealing it.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorization request to prove.
+    /// * `predicate_facts` - List of (fact_value, fact_hash, predicate) tuples.
+    ///   Each entry generates an independent predicate proof bound to the token state.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (BridgePresentationProof, Vec<BridgePredicateProof>) where the
+    /// presentation proof covers the full authorization and the predicate proofs
+    /// cover individual fact predicates.
+    pub fn prove_with_disclosure(
+        &mut self,
+        request: &AuthRequest,
+        predicate_facts: &[(u32, BabyBear, &Predicate)],
+    ) -> Result<(BridgePresentationProof, Vec<BridgePredicateProof>), AuthError> {
+        // Generate the main STARK proof.
+        let main_proof = self.prove_real(request)?;
+
+        // Compute state root from the final state for fact commitment binding.
+        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
+        let mut final_state_clone = final_step.state.clone();
+        let state_root_bytes = final_state_clone.root();
+        let state_root = bytes_to_babybear(&state_root_bytes);
+
+        // Generate predicate proofs for each specified fact.
+        let mut pred_proofs = Vec::with_capacity(predicate_facts.len());
+        for &(value, fact_hash, ref predicate) in predicate_facts {
+            let proof = prove_predicate_for_fact(value, fact_hash, state_root, predicate)
+                .ok_or_else(|| {
+                    AuthError::InvalidRequest(format!(
+                        "predicate proof generation failed for value {} with {:?}",
+                        value, predicate
+                    ))
+                })?;
+            pred_proofs.push(proof);
+        }
+
+        Ok((main_proof, pred_proofs))
+    }
+
     /// Generate a STARK-proven presentation proof with validated fold chain.
     ///
     /// This is the strongest proving path: it produces real STARK proofs for:
@@ -2388,6 +2435,139 @@ pub fn verify_committed_threshold_proof(
         expected_threshold_commitment,
         expected_fact_commitment,
     )
+}
+
+// =============================================================================
+// Programmable Predicate Programs
+// =============================================================================
+
+/// Error from the predicate program proving pipeline.
+#[derive(Clone, Debug)]
+pub enum ProgramProveError {
+    /// Compilation failed.
+    CompileError(pyana_circuit::predicate_program::CompileError),
+    /// Proof generation failed.
+    ProveError(pyana_circuit::predicate_program::ProveError),
+}
+
+impl std::fmt::Display for ProgramProveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CompileError(e) => write!(f, "compile error: {e}"),
+            Self::ProveError(e) => write!(f, "prove error: {e}"),
+        }
+    }
+}
+
+impl From<pyana_circuit::predicate_program::CompileError> for ProgramProveError {
+    fn from(e: pyana_circuit::predicate_program::CompileError) -> Self {
+        Self::CompileError(e)
+    }
+}
+
+impl From<pyana_circuit::predicate_program::ProveError> for ProgramProveError {
+    fn from(e: pyana_circuit::predicate_program::ProveError) -> Self {
+        Self::ProveError(e)
+    }
+}
+
+/// Compile and prove a predicate program in one step.
+///
+/// This is the primary bridge-level entry point for the programmable predicates
+/// pipeline. It takes a high-level program specification and private values,
+/// compiles the program to AIR(s), and generates the appropriate proof(s).
+///
+/// # Arguments
+///
+/// * `program` - The predicate program to prove.
+/// * `private_values` - Map from attribute names to private values.
+/// * `state_root` - The Poseidon2 root of the current token state.
+///
+/// # Returns
+///
+/// A `ProgramProof` that can be verified by anyone knowing the public inputs,
+/// or a `ProgramProveError` if compilation or proof generation fails.
+///
+/// # Example
+///
+/// ```ignore
+/// use pyana_circuit::predicate_program::{PredicateExpr, PredicateProgram};
+/// use pyana_circuit::predicate_air::PredicateType;
+/// use pyana_circuit::BabyBear;
+/// use std::collections::HashMap;
+///
+/// let program = PredicateProgram::with_default_depth(PredicateExpr::Range {
+///     attribute: "balance".to_string(),
+///     predicate_type: PredicateType::Gte,
+///     threshold: 1000,
+/// });
+///
+/// let mut values = HashMap::new();
+/// values.insert("balance".to_string(), 5000u64);
+///
+/// let proof = pyana_bridge::prove_predicate_program(
+///     &program, &values, BabyBear::new(99999),
+/// ).unwrap();
+/// ```
+pub fn prove_predicate_program(
+    program: &pyana_circuit::predicate_program::PredicateProgram,
+    private_values: &std::collections::HashMap<String, u64>,
+    state_root: BabyBear,
+) -> Result<pyana_circuit::predicate_program::ProgramProof, ProgramProveError> {
+    use pyana_circuit::predicate_program::{PrivateState, compile_predicate, prove_program};
+
+    // Compile the program to a proof plan.
+    let compiled = compile_predicate(program)?;
+
+    // Build the private state from the provided values.
+    let mut private_state = PrivateState::default();
+    private_state.values = private_values.clone();
+
+    // Generate the proof.
+    let proof = prove_program(&compiled, &private_state, state_root)?;
+    Ok(proof)
+}
+
+/// Compile and prove a predicate program with full private state (including temporal history).
+///
+/// This is the extended version of [`prove_predicate_program`] that supports
+/// temporal predicates by accepting full [`PrivateState`] including historical
+/// values and state roots.
+pub fn prove_predicate_program_full(
+    program: &pyana_circuit::predicate_program::PredicateProgram,
+    private_state: &pyana_circuit::predicate_program::PrivateState,
+    state_root: BabyBear,
+) -> Result<pyana_circuit::predicate_program::ProgramProof, ProgramProveError> {
+    use pyana_circuit::predicate_program::{compile_predicate, prove_program};
+
+    let compiled = compile_predicate(program)?;
+    let proof = prove_program(&compiled, private_state, state_root)?;
+    Ok(proof)
+}
+
+/// Verify a predicate program proof.
+///
+/// The verifier provides:
+/// - The program (they know what was proven).
+/// - The proof to verify.
+/// - Expected fact commitments for each attribute.
+/// - The state root the proofs are bound to.
+///
+/// Returns `true` if the proof is valid.
+pub fn verify_predicate_program(
+    program: &pyana_circuit::predicate_program::PredicateProgram,
+    proof: &pyana_circuit::predicate_program::ProgramProof,
+    expected_commitments: &std::collections::HashMap<String, BabyBear>,
+    state_root: BabyBear,
+) -> bool {
+    use pyana_circuit::predicate_program::{compile_predicate, verify_program};
+
+    let compiled = match compile_predicate(program) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    verify_program(proof, &compiled, expected_commitments, state_root)
 }
 
 #[cfg(test)]
