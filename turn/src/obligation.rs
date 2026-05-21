@@ -434,21 +434,40 @@ mod tests {
 
     #[test]
     fn test_obligation_with_remote_proof_condition() {
+        use pyana_circuit::BabyBear;
+        use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
+        use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
+
+        // Generate a valid STARK proof.
+        let leaf_hash = BabyBear::new(77777);
+        let siblings = [
+            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
+            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
+            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
+            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+        ];
+        let positions: [u8; 4] = [0, 1, 2, 3];
+        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+        let air = MerklePoseidon2StarkAir;
+        let stark_proof = circuit_stark::prove(&air, &trace, &public_inputs);
+        let proof_bytes = proof_to_bytes(&stark_proof);
+        let public_outputs: Vec<u32> = public_inputs.iter().map(|bb| bb.0).collect();
+
         let fed_root = [0xFE; 32];
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "transfer_air".to_string(),
-            expected_conclusion: 1,
+            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_conclusion: public_outputs[0],
         };
 
         let obligation = create_obligation(alice(), bob(), condition, 200, test_stake());
 
         // Fulfill with valid STARK proof.
         let proof = ConditionProof::StarkProof {
-            proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            proof_bytes,
             federation_root: fed_root,
-            public_outputs: vec![1],
-            air_name: "transfer_air".to_string(),
+            public_outputs,
+            air_name: "pyana-merkle-poseidon2-v1".to_string(),
         };
 
         let trusted: Vec<TrustedRoot> = vec![(fed_root, 100u64)];

@@ -162,12 +162,12 @@ impl ProofVerifier for StarkProofVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyana_circuit::poseidon2;
     use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{proof_to_bytes, prove};
 
-    #[test]
-    fn test_stark_verifier_valid_proof() {
-        // Generate a valid Poseidon2 Merkle membership proof.
+    /// Helper: generate a valid proof with action binding (3 public inputs).
+    fn generate_bound_proof(action_msg: &[u8; 32]) -> (Vec<u8>, Vec<BabyBear>) {
         let siblings = [
             [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
             [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
@@ -176,11 +176,25 @@ mod tests {
         ];
         let positions: [u8; 4] = [0, 1, 2, 3];
         let leaf_hash = BabyBear::new(12345);
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+        let (trace, mut public_inputs) =
+            generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+
+        // Append action commitment as third public input
+        let action_commitment =
+            poseidon2::hash_many(&BabyBear::encode_hash(action_msg));
+        public_inputs.push(action_commitment);
 
         let air = MerklePoseidon2StarkAir;
         let proof = prove(&air, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&proof);
+        (proof_bytes, public_inputs)
+    }
+
+    #[test]
+    fn test_stark_verifier_valid_proof() {
+        // Generate a valid Poseidon2 Merkle membership proof bound to an action.
+        let action_msg = [0x42u8; 32];
+        let (proof_bytes, public_inputs) = generate_bound_proof(&action_msg);
 
         // The federation root is public_inputs[1] (the Merkle root).
         let root_bb = public_inputs[1];
@@ -189,26 +203,13 @@ mod tests {
         vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
 
         let verifier = StarkProofVerifier::new();
-        // Action signing message must be non-empty (32 bytes).
-        let action_msg = [0x42u8; 32];
         assert!(verifier.verify(&proof_bytes, &action_msg, &vk));
     }
 
     #[test]
     fn test_stark_verifier_wrong_federation_root() {
-        let siblings = [
-            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
-            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
-            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
-        ];
-        let positions: [u8; 4] = [0, 1, 2, 3];
-        let leaf_hash = BabyBear::new(12345);
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-
-        let air = MerklePoseidon2StarkAir;
-        let proof = prove(&air, &trace, &public_inputs);
-        let proof_bytes = proof_to_bytes(&proof);
+        let action_msg = [0x42u8; 32];
+        let (proof_bytes, _public_inputs) = generate_bound_proof(&action_msg);
 
         // Use a WRONG federation root.
         let mut vk = [0u8; 32];
@@ -221,19 +222,8 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_tampered_proof() {
-        let siblings = [
-            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
-            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
-            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
-        ];
-        let positions: [u8; 4] = [0, 1, 2, 3];
-        let leaf_hash = BabyBear::new(12345);
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-
-        let air = MerklePoseidon2StarkAir;
-        let proof = prove(&air, &trace, &public_inputs);
-        let mut proof_bytes = proof_to_bytes(&proof);
+        let action_msg = [0x42u8; 32];
+        let (mut proof_bytes, public_inputs) = generate_bound_proof(&action_msg);
 
         // Tamper with the proof.
         if proof_bytes.len() > 10 {
@@ -245,7 +235,6 @@ mod tests {
         vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
 
         let verifier = StarkProofVerifier::new();
-        let action_msg = [0x42u8; 32];
         assert!(!verifier.verify(&proof_bytes, &action_msg, &vk));
     }
 
@@ -259,27 +248,33 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_empty_public_inputs_rejected() {
-        // Empty public_inputs should be rejected (action binding check).
-        let siblings = [
-            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
-            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
-            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
-        ];
-        let positions: [u8; 4] = [0, 1, 2, 3];
-        let leaf_hash = BabyBear::new(12345);
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-
-        let air = MerklePoseidon2StarkAir;
-        let proof = prove(&air, &trace, &public_inputs);
-        let proof_bytes = proof_to_bytes(&proof);
+        // Empty public_inputs (action message) should be rejected.
+        let action_msg = [0x42u8; 32];
+        let (proof_bytes, public_inputs) = generate_bound_proof(&action_msg);
 
         let root_bb = public_inputs[1];
         let mut vk = [0u8; 32];
         vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
 
         let verifier = StarkProofVerifier::new();
-        // Empty public inputs should be rejected.
+        // Empty action message should be rejected.
         assert!(!verifier.verify(&proof_bytes, &[], &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_wrong_action_rejected() {
+        // A proof bound to action A should be rejected when presented for action B.
+        let action_a = [0x42u8; 32];
+        let action_b = [0x99u8; 32]; // Different action
+
+        let (proof_bytes, public_inputs) = generate_bound_proof(&action_a);
+
+        let root_bb = public_inputs[1];
+        let mut vk = [0u8; 32];
+        vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
+
+        let verifier = StarkProofVerifier::new();
+        // Proof bound to action_a must fail when verified against action_b.
+        assert!(!verifier.verify(&proof_bytes, &action_b, &vk));
     }
 }
