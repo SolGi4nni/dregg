@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Documentation — Pyana</title>
-  <meta name="description" content="Pyana API documentation and crate reference.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1f17'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <meta name="description" content="Pyana documentation: getting started, core concepts, API reference, and design documents.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -13,73 +13,202 @@
 <nav class="nav">
   <span class="nav__mark">&pi;</span>
   <span class="nav__name">Pyana</span>
-  <span class="nav__tag">distributed object-capability authorization</span>
+  <span class="nav__tag">distributed object-capability runtime</span>
   <div class="nav__links">
     <a class="nav__link" href="index.html">Home</a>
     <a class="nav__link nav__link--active" href="docs.html">Docs</a>
     <a class="nav__link" href="paper.html">Paper</a>
     <a class="nav__link" href="demo.html">Demo</a>
-    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+    <a class="nav__link" href="https://github.com/user/pyana">GitHub</a>
   </div>
 </nav>
 
 <main class="wrap">
   <div class="page-header">
     <h1>Documentation</h1>
-    <p>API reference, crate documentation, and integration guides for the Pyana authorization system.</p>
+    <p>Everything you need to build with pyana: from first steps through the full design rationale.</p>
   </div>
 
-  <section>
-    <h2>Crate reference</h2>
-    <p>Pyana is a 22-crate Rust workspace. When published, each crate will have full rustdoc on docs.rs.</p>
-    <div class="features" style="margin-top: var(--s4);">
-      <div class="feature">
-        <h3>pyana-sdk</h3>
-        <p>High-level SDK: AgentWallet, AgentRuntime, SiloClient. The entry point for most integrations.</p>
-      </div>
-      <div class="feature">
-        <h3>circuit</h3>
-        <p>BabyBear STARK prover/verifier. AIR constraints for fold, derivation, and Merkle membership.</p>
-      </div>
-      <div class="feature">
-        <h3>morpheus</h3>
-        <p>Adaptive BFT consensus (Lewis-Pye &amp; Shapiro). View-change, block finalization, Byzantine fault tolerance.</p>
-      </div>
-      <div class="feature">
-        <h3>token</h3>
-        <p>AuthToken trait implementations: Macaroon (HMAC-based) and Biscuit (Ed25519 + Datalog).</p>
-      </div>
-      <div class="feature">
-        <h3>trace</h3>
-        <p>Datalog evaluator with derivation traces. Policy evaluation that produces provable witnesses.</p>
-      </div>
-      <div class="feature">
-        <h3>commit</h3>
-        <p>4-ary Merkle trees with dual hash paths (BLAKE3 fast, Poseidon2 ZK). Fold delta tracking.</p>
+  <!-- Getting Started -->
+  <section class="section">
+    <span class="section__label">Quick Start</span>
+    <h2 class="section__title">Getting started</h2>
+
+    <div class="quickstart">
+      <div class="quickstart__steps">
+        <div class="quickstart__step">
+          <span class="quickstart__n">1</span>
+          <div>
+            <p>Clone and build the workspace:</p>
+            <pre><code>git clone https://github.com/user/pyana
+cd pyana
+cargo build</code></pre>
+          </div>
+        </div>
+        <div class="quickstart__step">
+          <span class="quickstart__n">2</span>
+          <div>
+            <p>Run the test suite:</p>
+            <pre><code>cargo test</code></pre>
+          </div>
+        </div>
+        <div class="quickstart__step">
+          <span class="quickstart__n">3</span>
+          <div>
+            <p>Run the end-to-end demo:</p>
+            <pre><code>cargo run -p pyana-demo-agent</code></pre>
+          </div>
+        </div>
+        <div class="quickstart__step">
+          <span class="quickstart__n">4</span>
+          <div>
+            <p>Build and load the browser extension:</p>
+            <pre><code>cd extension && ./build.sh
+# Load extension/manifest.json as unpacked extension in Chrome/Firefox</code></pre>
+          </div>
+        </div>
+        <div class="quickstart__step">
+          <span class="quickstart__n">5</span>
+          <div>
+            <p>Try the browser wallet API:</p>
+            <pre><code>// Check connection
+await pyana.isConnected();
+
+// Broadcast an intent
+await pyana.postIntent({
+  actions: [{ action: "read", resource: "documents/*" }],
+  constraints: [{ Service: "storage" }]
+});
+
+// Listen for matches
+pyana.onMatch(match => console.log("Found:", match));</code></pre>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <section>
-    <h2>External links</h2>
-    <div class="links">
-      <a class="link-card" href="https://docs.rs/pyana-sdk">
-        <span class="link-card__title">docs.rs/pyana-sdk</span>
-        <span class="link-card__desc">Full API reference (available after first publish)</span>
-      </a>
-      <a class="link-card" href="https://github.com/emberian/pyana">
-        <span class="link-card__title">Source on GitHub</span>
-        <span class="link-card__desc">Browse the workspace, issues, and CI</span>
-      </a>
+  <!-- Core Concepts -->
+  <section class="section">
+    <span class="section__label">Concepts</span>
+    <h2 class="section__title">Core concepts</h2>
+
+    <div class="docs-grid">
+      <div class="docs-section">
+        <h3 class="docs-section__title">Object-Capability Model</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#cells">Cells -- isolated objects with c-lists</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#turns">Turns -- atomic state transitions</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#capabilities">Capabilities -- unforgeable references</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#introduction">Three-party introduction</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Authorization &amp; Privacy</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/docs/verification-modes.md">Verification modes (trusted / selective / private)</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#attenuation">Capability attenuation as IVC</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#stark-proofs">STARK proof construction</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#intents">Privacy-preserving intents</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Federation &amp; Consensus</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/docs/infrastructure.md">Federation infrastructure</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#morpheus">Morpheus adaptive BFT</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/proof-carrying-state.md">Proof-carrying state (federation as ordering service)</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#receipt-chains">Receipt chains and exit</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Cryptography</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/docs/pq-roadmap.md">Post-quantum migration path</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/research-recursive-stark.md">Recursive STARK-in-STARK research</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#poseidon2">Poseidon2 algebraic hashing</a>
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md#ivc">IVC fold chain compression</a>
+        </div>
+      </div>
     </div>
   </section>
 
-  <footer class="site-foot">
-    <div class="row">
-      <span>Pyana &middot; distributed object-capability authorization with ZK proofs</span>
-      <a href="https://github.com/emberian/pyana">GitHub</a>
+  <!-- API Reference -->
+  <section class="section">
+    <span class="section__label">Reference</span>
+    <h2 class="section__title">API reference</h2>
+
+    <div class="docs-grid">
+      <div class="docs-section">
+        <h3 class="docs-section__title">SDK (pyana-sdk)</h3>
+        <div class="docs-section__list">
+          <a href="https://docs.rs/pyana-sdk">AgentWallet -- key management, minting, attenuation</a>
+          <a href="https://docs.rs/pyana-sdk">AgentRuntime -- turn execution, cell management</a>
+          <a href="https://docs.rs/pyana-sdk">SiloClient -- federation connection, root sync</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Node HTTP/WS API</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/crates/node/src/api.rs">POST /verify -- submit proof for verification</a>
+          <a href="https://github.com/user/pyana/blob/main/crates/node/src/api.rs">GET /roots -- attested federation roots</a>
+          <a href="https://github.com/user/pyana/blob/main/crates/node/src/api.rs">WS /intents -- intent stream subscription</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Browser Extension (window.pyana)</h3>
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/tree/main/extension">pyana.authorize(request) -- request capability proof</a>
+          <a href="https://github.com/user/pyana/tree/main/extension">pyana.postIntent(intent) -- broadcast capability need</a>
+          <a href="https://github.com/user/pyana/tree/main/extension">pyana.offerCapability(offer) -- respond to intent</a>
+          <a href="https://github.com/user/pyana/tree/main/extension">pyana.provision(token) -- import token into wallet</a>
+        </div>
+      </div>
+      <div class="docs-section">
+        <h3 class="docs-section__title">Key Crates</h3>
+        <div class="docs-section__list">
+          <a href="https://docs.rs/pyana-circuit">circuit -- STARK prover/verifier, AIR constraints</a>
+          <a href="https://docs.rs/pyana-token">token -- Macaroon + Biscuit token formats</a>
+          <a href="https://docs.rs/pyana-trace">trace -- Datalog evaluator with derivation traces</a>
+          <a href="https://docs.rs/pyana-commit">commit -- Merkle trees, fold deltas</a>
+          <a href="https://docs.rs/pyana-morpheus">morpheus -- Adaptive BFT consensus</a>
+          <a href="https://docs.rs/pyana-intent">intent -- Distributed intent engine</a>
+        </div>
+      </div>
     </div>
-  </footer>
+  </section>
+
+  <!-- Design Documents -->
+  <section class="section">
+    <span class="section__label">Design</span>
+    <h2 class="section__title">Design documents</h2>
+    <div class="docs-grid" style="grid-template-columns: 1fr;">
+      <div class="docs-section">
+        <div class="docs-section__list">
+          <a href="https://github.com/user/pyana/blob/main/PYANA_DESIGN.md">PYANA_DESIGN.md -- Full architecture, security model, comparison</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/proof-carrying-state.md">proof-carrying-state.md -- Federation as ordering service</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/verification-modes.md">verification-modes.md -- Three-mode verification specification</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/infrastructure.md">infrastructure.md -- GitHub Actions federation deployment</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/pq-roadmap.md">pq-roadmap.md -- Post-quantum migration path</a>
+          <a href="https://github.com/user/pyana/blob/main/docs/research-recursive-stark.md">research-recursive-stark.md -- Recursive STARK-in-STARK plan</a>
+          <a href="paper.html">Whitepaper (typst source + PDF)</a>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="index.html">Home</a>
+      <a href="paper.html">Paper</a>
+      <a href="demo.html">Demo</a>
+      <a href="https://github.com/user/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
 </body>
 </html>

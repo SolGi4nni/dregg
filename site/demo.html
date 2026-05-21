@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Demo — Pyana</title>
-  <meta name="description" content="Interactive WASM demo: generate and verify STARK authorization proofs in the browser.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1f17'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <meta name="description" content="Interactive demonstrations: WASM proof generation, browser extension wallet, live CI results, and CLI quickstart.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -13,83 +13,109 @@
 <nav class="nav">
   <span class="nav__mark">&pi;</span>
   <span class="nav__name">Pyana</span>
-  <span class="nav__tag">distributed object-capability authorization</span>
+  <span class="nav__tag">distributed object-capability runtime</span>
   <div class="nav__links">
     <a class="nav__link" href="index.html">Home</a>
     <a class="nav__link" href="docs.html">Docs</a>
     <a class="nav__link" href="paper.html">Paper</a>
     <a class="nav__link nav__link--active" href="demo.html">Demo</a>
-    <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
+    <a class="nav__link" href="https://github.com/user/pyana">GitHub</a>
   </div>
 </nav>
 
 <main class="wrap">
   <div class="page-header">
-    <h1>Interactive demo</h1>
-    <p>Generate and verify STARK authorization proofs directly in the browser via WebAssembly. Demonstrate capability attenuation, ZK presentation, and offline verification.</p>
+    <h1>Demonstrations</h1>
+    <p>See pyana in action. Generate real STARK proofs in the browser, interact with the wallet extension, view CI-generated results from the live federation, or run the CLI locally.</p>
   </div>
 
-  <section>
-    <h2>WASM proof engine</h2>
-    <p>The interactive playground is live. It compiles Pyana's <code>circuit</code>, <code>token</code>, <code>commit</code>, and <code>trace</code> crates to WebAssembly and runs everything client-side.</p>
-    <p style="margin-top: var(--s4);"><a href="demo/" style="color: var(--accent); font-weight: bold; font-size: 1.1em;">Launch Interactive Playground &rarr;</a></p>
-    <ul style="list-style: none; padding: 0; margin-top: var(--s3); text-align: left; display: inline-block;">
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Mint a root macaroon and attenuate it with caveats</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Generate real STARK proofs (BabyBear field, FRI commitment)</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Verify proofs, tamper with them to see verification fail</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Build 4-ary BLAKE3 Merkle trees with membership/non-membership proofs</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Run the Datalog evaluator with standard policy rules</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Demonstrate fold-chain attenuation (cryptographic narrowing)</li>
-    </ul>
-  </section>
+  <div class="demo-cards">
 
-  <section>
-    <h2>Browser extension wallet</h2>
-    <p>With the <a href="https://github.com/emberian/pyana/tree/main/extension" style="color: var(--accent);">Pyana wallet extension</a> installed, web pages can request capability-based authorization via <code>window.pyana</code>.</p>
-    <p style="margin-top: var(--s4);"><a href="examples/auth-demo.html" style="color: var(--accent); font-weight: bold; font-size: 1.1em;">Launch Auth Demo &rarr;</a></p>
-    <ul style="list-style: none; padding: 0; margin-top: var(--s3); text-align: left; display: inline-block;">
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Provision a demo token into the wallet</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Request authorization (the wallet evaluates Datalog + generates STARK proof)</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; See what the verifier learns at each privacy level</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; All crypto runs locally in WASM — no server round-trip</li>
-    </ul>
-  </section>
+    <div class="demo-card">
+      <h2 class="demo-card__title">WASM Playground</h2>
+      <p class="demo-card__desc">
+        The interactive playground compiles pyana's <code>circuit</code>, <code>token</code>,
+        <code>commit</code>, and <code>trace</code> crates to WebAssembly and runs everything
+        client-side. No server, no backend.
+      </p>
+      <ul class="demo-card__features">
+        <li>Mint a root macaroon and attenuate it with caveats</li>
+        <li>Generate real STARK proofs (BabyBear field, FRI commitment)</li>
+        <li>Verify proofs, tamper with them to see verification fail</li>
+        <li>Build 4-ary BLAKE3 Merkle trees with membership proofs</li>
+        <li>Run the Datalog evaluator with standard policy rules</li>
+        <li>Demonstrate fold-chain attenuation (cryptographic narrowing)</li>
+      </ul>
+      <a class="demo-card__link" href="demo/">Launch Playground &#8594;</a>
+    </div>
 
-  <section>
-    <h2>Live demo results</h2>
-    <p>Every push to <code>main</code> runs the full demo suite in CI — real STARK proofs, real Datalog evaluation traces, real timing data. No simulations. This is the actual system executing 20+ authorization scenarios end-to-end.</p>
-    <p style="margin-top: var(--s4);"><a href="demos/" style="color: var(--accent); font-weight: bold; font-size: 1.1em;">View Live Demo Results &rarr;</a></p>
-    <ul style="list-style: none; padding: 0; margin-top: var(--s3); text-align: left; display: inline-block;">
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Multi-org delegation with cross-domain STARK proofs</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; IVC attenuation chains (incremental verifiable computation)</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Federation bootstrap with BFT consensus</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Privacy-preserving orderbook, escrow, atomic swaps</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; RBAC Datalog policies, token revocation, budget enforcement</li>
-      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Full timing data — proof generation and verification latencies</li>
-    </ul>
-  </section>
+    <div class="demo-card">
+      <h2 class="demo-card__title">Browser Extension Wallet</h2>
+      <p class="demo-card__desc">
+        With the pyana wallet extension installed, web pages request capability-based
+        authorization via <code>window.pyana</code>. The wallet evaluates Datalog policies
+        and generates STARK proofs locally.
+      </p>
+      <ul class="demo-card__features">
+        <li>Provision a demo token into the wallet</li>
+        <li>Request authorization at each privacy level</li>
+        <li>See exactly what the verifier learns (trusted / selective / private)</li>
+        <li>All crypto runs locally in WASM -- no server round-trip</li>
+      </ul>
+      <a class="demo-card__link" href="examples/auth-demo.html">Launch Auth Demo &#8594;</a>
+    </div>
 
-  <section>
-    <h2>CLI demo</h2>
-    <p>The <code>demo</code> and <code>demo-agent</code> crates provide a command-line demonstration of the full authorization flow:</p>
-    <pre><code># Clone and build
-git clone https://github.com/emberian/pyana
+    <div class="demo-card">
+      <h2 class="demo-card__title">Live Demo Results</h2>
+      <p class="demo-card__desc">
+        Every push to <code>main</code> runs the full demo suite in CI. Real STARK proofs,
+        real Datalog evaluation, real timing data. No simulations. 20+ authorization
+        scenarios end-to-end.
+      </p>
+      <ul class="demo-card__features">
+        <li>Multi-org delegation with cross-domain STARK proofs</li>
+        <li>IVC attenuation chains (incremental verifiable computation)</li>
+        <li>Federation bootstrap with BFT consensus</li>
+        <li>Privacy-preserving orderbook, escrow, atomic swaps</li>
+        <li>RBAC Datalog policies, token revocation, budget enforcement</li>
+        <li>Full timing data -- proof generation and verification latencies</li>
+      </ul>
+      <a class="demo-card__link" href="demos/">View Results &#8594;</a>
+    </div>
+
+    <div class="demo-card">
+      <h2 class="demo-card__title">CLI Quickstart</h2>
+      <p class="demo-card__desc">
+        Run the full authorization pipeline locally. The <code>demo</code> and
+        <code>demo-agent</code> crates demonstrate minting, attenuation, proving,
+        and multi-agent cross-silo authorization.
+      </p>
+      <pre><code>git clone https://github.com/user/pyana
 cd pyana
 cargo build --release -p demo -p demo-agent
 
-# Run the demo (mints, attenuates, proves, verifies)
+# Single-agent flow
 cargo run --release -p demo
 
-# Run the multi-agent demo (two agents, cross-silo authorization)
+# Multi-agent cross-silo
 cargo run --release -p demo-agent</code></pre>
-  </section>
-
-  <footer class="site-foot">
-    <div class="row">
-      <span>Pyana &middot; distributed object-capability authorization with ZK proofs</span>
-      <a href="https://github.com/emberian/pyana">GitHub</a>
+      <a class="demo-card__link" href="https://github.com/user/pyana" style="margin-top: var(--s4);">View Source &#8594;</a>
     </div>
-  </footer>
+
+  </div>
 </main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left">Pyana -- distributed object-capability runtime. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="index.html">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="paper.html">Paper</a>
+      <a href="https://github.com/user/pyana">GitHub</a>
+    </div>
+  </div>
+</footer>
+
 </body>
 </html>
