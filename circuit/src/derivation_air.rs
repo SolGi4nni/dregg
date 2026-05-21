@@ -61,8 +61,8 @@ use crate::poseidon2::hash_fact;
 /// Trace width for the derivation AIR.
 /// rule_id(1) + body_hashes(8) + body_membership(8) + head_pred(1) + head_terms(4) +
 /// derived_hash(1) + sub_values(8) + body_roots(8) + head_is_var(4) + head_raw_value(4) +
-/// head_sel_var(4*8=32) + eq_checks(3*4=12) + memberof_checks(3*4=12) + gte(4+31=35) + lt(4+31=35) = 173
-pub const DERIVATION_AIR_WIDTH: usize = 173;
+/// head_sel_var(4*8=32) + eq_checks(3*4=12) + memberof_checks(3*4=12) + gte(4+30=34) + lt(4+30=34) = 171
+pub const DERIVATION_AIR_WIDTH: usize = 171;
 
 /// Maximum body atoms per rule.
 pub const MAX_BODY_ATOMS: usize = 8;
@@ -79,9 +79,12 @@ pub const MAX_EQUAL_CHECKS: usize = 4;
 /// Maximum MemberOf checks per rule.
 pub const MAX_MEMBEROF_CHECKS: usize = 4;
 
-/// Number of bits for GTE range check (BabyBear has ~31-bit modulus).
-/// We use 31 bits: if the high bit (bit 30) is 0, diff < 2^30 < p/2.
-pub const GTE_DIFF_BITS: usize = 31;
+/// Number of bits for GTE range check.
+///
+/// SOUNDNESS FIX: BabyBear p = 2013265921, p/2 = 1006632960, 2^30 = 1073741824.
+/// Since 2^30 > p/2, the old value of 31 bits (checking bit 30 = 0) was UNSOUND.
+/// With 30 bits, we check bit 29 = 0, proving diff < 2^29 = 536870912 < p/2.
+pub const GTE_DIFF_BITS: usize = 30;
 
 /// Column indices.
 pub mod col {
@@ -166,7 +169,7 @@ pub mod col {
     pub const GTE_CHECK_TERM_B: usize = GTE_CHECK_START + 2; // 105
     /// GTE diff = term_a - term_b column.
     pub const GTE_CHECK_DIFF: usize = GTE_CHECK_START + 3; // 106
-    /// GTE diff bit decomposition starts here (31 bits, columns 107..137).
+    /// GTE diff bit decomposition starts here (30 bits, columns 107..136).
     pub const GTE_CHECK_DIFF_BITS_START: usize = GTE_CHECK_START + 4; // 107
 
     /// Get the column for gte_check_diff_bits[bit_idx].
@@ -187,8 +190,8 @@ pub mod col {
     pub const LT_CHECK_TERM_B: usize = LT_CHECK_START + 2; // 140
     /// LT diff = term_b - term_a - 1 column.
     pub const LT_CHECK_DIFF: usize = LT_CHECK_START + 3; // 141
-    /// LT diff bit decomposition starts here (31 bits, columns 142..172).
-    pub const LT_CHECK_DIFF_BITS_START: usize = LT_CHECK_START + 4; // 142
+    /// LT diff bit decomposition starts here (30 bits, columns 141..170).
+    pub const LT_CHECK_DIFF_BITS_START: usize = LT_CHECK_START + 4; // 141
 
     /// Get the column for lt_check_diff_bits[bit_idx].
     #[inline]
@@ -196,7 +199,7 @@ pub mod col {
         LT_CHECK_DIFF_BITS_START + bit_idx
     }
 
-    /// Total columns: LT_CHECK_DIFF_BITS_START + GTE_DIFF_BITS = 142 + 31 = 173
+    /// Total columns: LT_CHECK_DIFF_BITS_START + GTE_DIFF_BITS = 141 + 30 = 171
     pub const _TOTAL: usize = LT_CHECK_DIFF_BITS_START + GTE_DIFF_BITS;
 }
 

@@ -17,14 +17,20 @@ pyana-bridge = { path = "../bridge" }
 pyana-circuit = { path = "../circuit" }
 pyana-intent = { path = "../intent" }
 pyana-wire = { path = "../wire" }
+macaroon = { workspace = true }
 token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
 pyana-trace = { path = "../trace" }
 
+async-trait = "0.1"
+base64 = { workspace = true }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 getrandom = { workspace = true }
+hmac = { workspace = true }
+pbkdf2 = "0.12"
 postcard = { version = "1", features = ["use-std"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1", features = ["full"] }

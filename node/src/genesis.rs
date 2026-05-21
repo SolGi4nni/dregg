@@ -66,8 +66,11 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         let public_key = signing_key.verifying_key();
         let pk_hex = hex_encode(public_key.as_bytes());
 
-        // Generate a placeholder XMSS root (in a real system this would be a proper
-        // XMSS key generation, but for devnet we use a derived hash).
+        // WARNING: This XMSS root is a placeholder for devnet. In production,
+        // a real XMSS tree must be generated. See circuit/src/xmss.rs.
+        eprintln!(
+            "warning: generating placeholder XMSS root for node-{i} (not post-quantum secure)"
+        );
         let xmss_root = blake3::derive_key("pyana-devnet-xmss-root-v1", &key_bytes);
         let xmss_root_hex = hex_encode(&xmss_root);
 
@@ -84,6 +87,19 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
             eprintln!("error: failed to write {}: {e}", key_path.display());
             std::process::exit(1);
         });
+        // Issue 6: Restrict key file permissions to owner-only (0o600).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "error: failed to set permissions on {}: {e}",
+                        key_path.display()
+                    );
+                    std::process::exit(1);
+                });
+        }
 
         // Write the env file.
         let env_path = output.join(format!("node-{i}.env"));

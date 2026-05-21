@@ -22,6 +22,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 
 use pyana_sdk::{Attenuation, AuthRequest, CellId};
@@ -319,11 +320,29 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new(max_attempts: u32, window_secs: u64) -> Self {
-        Self {
+        let limiter = Self {
             state: Arc::new(Mutex::new(HashMap::new())),
             max_attempts,
             window_secs,
-        }
+        };
+
+        // Spawn a background task that prunes stale entries every 60 seconds
+        // to prevent unbounded memory growth from many unique IPs.
+        let prune_state = limiter.state.clone();
+        let prune_window = window_secs;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut map = prune_state.lock().await;
+                let now = Instant::now();
+                map.retain(|_, (_, window_start)| {
+                    now.duration_since(*window_start).as_secs() < prune_window
+                });
+            }
+        });
+
+        limiter
     }
 
     /// Returns true if the request should be allowed, false if rate-limited.
@@ -380,7 +399,8 @@ async fn require_auth(
                 .collect();
             drop(s);
 
-            if token == expected_token {
+            // Constant-time comparison to prevent timing attacks on the bearer token.
+            if token.as_bytes().ct_eq(expected_token.as_bytes()).into() {
                 Ok(next.run(req).await)
             } else {
                 Err(StatusCode::UNAUTHORIZED)
@@ -444,22 +464,44 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: middleware::Next)
 }
 
 /// Check whether an origin is allowed by our CORS policy.
+///
+/// Uses proper URL parsing to prevent bypass via domains like `localhost.evil.com`.
 fn is_origin_allowed(origin: &str) -> bool {
-    // Allow localhost on any port.
-    if origin.starts_with("http://localhost:") || origin.starts_with("http://localhost") {
+    // Allow browser extension origins (not parseable as URLs).
+    if origin.starts_with("chrome-extension://") || origin.starts_with("moz-extension://") {
         return true;
     }
-    if origin.starts_with("http://127.0.0.1:") || origin.starts_with("http://127.0.0.1") {
-        return true;
+
+    // Parse as a URL and check the host exactly.
+    // This prevents bypasses like "http://localhost.evil.com".
+    let Ok((scheme, host)) = parse_origin(origin) else {
+        return false;
+    };
+
+    if scheme != "http" && scheme != "https" {
+        return false;
     }
-    // Allow browser extension origins.
-    if origin.starts_with("chrome-extension://") {
-        return true;
+
+    matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// Minimal origin parser: extracts scheme and host from an origin string.
+/// Returns (scheme, host) without pulling in the `url` crate.
+fn parse_origin(origin: &str) -> Result<(String, String), ()> {
+    // Format: scheme "://" host [ ":" port ]
+    let rest = origin.split_once("://").ok_or(())?;
+    let scheme = rest.0.to_lowercase();
+    let authority = rest.1;
+    // Strip port if present (host is everything before the first ':' or '/')
+    let host = authority
+        .split_once(':')
+        .map(|(h, _)| h)
+        .or_else(|| authority.split_once('/').map(|(h, _)| h))
+        .unwrap_or(authority);
+    if host.is_empty() {
+        return Err(());
     }
-    if origin.starts_with("moz-extension://") {
-        return true;
-    }
-    false
+    Ok((scheme, host.to_lowercase()))
 }
 
 // =============================================================================
@@ -498,6 +540,7 @@ pub fn router(state: NodeState, enable_faucet: bool) -> Router {
         .route("/api/conditionals", get(get_pending_conditionals))
         .route("/api/receipts", get(get_receipts))
         .route("/api/tokens", get(get_tokens))
+        .route("/api/discharge", post(post_discharge))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
         .route("/pir/info", get(get_pir_info))
@@ -909,6 +952,8 @@ async fn post_wallet_unlock(
         }
         None => {
             s.passphrase_hash = Some(hash);
+            // Persist the passphrase hash to the store (same as WS unlock does).
+            let _ = s.store.set_config("passphrase_hash", &hash);
             s.unlocked = true;
             Ok(Json(UnlockResponse {
                 success: true,
@@ -987,6 +1032,8 @@ async fn post_intent(
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         s.intent_pool.insert(intent.id, intent.clone());
+        // Invalidate PIR index cache on pool mutation.
+        s.pir_index_cache = None;
     }
 
     // Broadcast to WS subscribers.
@@ -1043,8 +1090,19 @@ async fn post_fulfill_intent(
         return Err(StatusCode::FORBIDDEN);
     }
 
+    // Verify the payer_cell matches the intent's creator (ownership check).
+    // The payer must be the intent creator — prevents arbitrary payer exploitation.
     let intent = match s.intent_pool.get(&intent_id) {
-        Some(i) => i.clone(),
+        Some(i) => {
+            if i.creator.0 != payer_bytes {
+                return Ok(Json(FulfillIntentResponse {
+                    success: false,
+                    turn_hash: None,
+                    error: Some("payer_cell does not match intent creator".to_string()),
+                }));
+            }
+            i.clone()
+        }
         None => {
             return Ok(Json(FulfillIntentResponse {
                 success: false,
@@ -1223,6 +1281,14 @@ async fn post_resolve_conditional(
     State(state): State<NodeState>,
     Json(req): Json<ResolveConditionalRequest>,
 ) -> Result<Json<ResolveConditionalResponse>, StatusCode> {
+    // Require wallet to be unlocked for conditional resolution.
+    {
+        let s = state.read().await;
+        if !s.unlocked {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+
     let hash_bytes = hex_decode(&req.conditional_hash).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let proof: pyana_turn::ConditionProof =
@@ -1262,6 +1328,8 @@ async fn post_resolve_conditional(
         .iter()
         .map(|r| (r.merkle_root, r.height))
         .collect();
+    let trusted_executor_keys: Vec<[u8; 32]> =
+        s.known_federation_keys.iter().map(|k| k.0).collect();
 
     let result = pyana_turn::resolve_condition(
         &condition,
@@ -1271,7 +1339,7 @@ async fn post_resolve_conditional(
         &trusted_roots,
         pyana_turn::DEFAULT_MAX_ROOT_AGE,
         &mut s.used_proof_hashes,
-        &[], // TODO: add trusted_executor_keys to NodeState
+        &trusted_executor_keys,
     );
 
     match result {
@@ -1379,17 +1447,22 @@ async fn get_pending_conditionals(
 ///
 /// Clients need this to know the database dimensions and tag ordering before
 /// constructing a valid PIR query vector.
+///
+/// Uses a cached IntentIndex to avoid O(n) rebuilds on every request (CPU DoS fix).
 async fn get_pir_info(State(state): State<NodeState>) -> Json<PirInfoResponse> {
-    let s = state.read().await;
+    let mut s = state.write().await;
 
-    // Build the intent index from the node's local intent pool.
-    let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
-    let index = pyana_intent::pir::IntentIndex::build_from_intents(&intents);
+    // Use cached index or build and cache it.
+    if s.pir_index_cache.is_none() {
+        let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
+        s.pir_index_cache = Some(pyana_intent::pir::IntentIndex::build_from_intents(&intents));
+    }
+    let index = s.pir_index_cache.as_ref().unwrap();
 
     Json(PirInfoResponse {
         num_rows: index.num_rows(),
         row_width: index.row_width(),
-        tags: index.tags,
+        tags: index.tags.clone(),
     })
 }
 
@@ -1398,15 +1471,20 @@ async fn get_pir_info(State(state): State<NodeState>) -> Json<PirInfoResponse> {
 /// The node computes the matrix-vector product of the intent index against the
 /// query vector, returning a response that reveals nothing about which row was
 /// queried (when combined with a complementary query to a second node).
+///
+/// Uses a cached IntentIndex to avoid O(n) rebuilds on every request (CPU DoS fix).
 async fn post_pir_query(
     State(state): State<NodeState>,
     Json(req): Json<PirQueryRequest>,
 ) -> Result<Json<PirQueryResponse>, StatusCode> {
-    let s = state.read().await;
+    let mut s = state.write().await;
 
-    // Build the intent index from the node's local intent pool.
-    let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
-    let index = pyana_intent::pir::IntentIndex::build_from_intents(&intents);
+    // Use cached index or build and cache it.
+    if s.pir_index_cache.is_none() {
+        let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
+        s.pir_index_cache = Some(pyana_intent::pir::IntentIndex::build_from_intents(&intents));
+    }
+    let index = s.pir_index_cache.as_ref().unwrap();
 
     // Validate query vector length matches the database.
     if req.query_vector.len() != index.num_rows() {
@@ -1674,22 +1752,25 @@ async fn post_discharge(
         None => None,
     };
 
-    let s = state.read().await;
+    let mut s = state.write().await;
     if !s.unlocked {
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // Derive the discharge gateway shared key from the wallet's identity.
-    let gateway_key = s.wallet.derive_symmetric_key("pyana-discharge-gateway-v1");
+    // SECURITY: Use the persistent discharge gateway from node state.
+    // This ensures the `issued` HashSet persists across requests, providing
+    // actual replay prevention. Previously, a fresh gateway was created per
+    // request, making the replay set useless (it was dropped immediately).
+    if s.discharge_gateway.is_none() {
+        let gateway_key = s.wallet.derive_symmetric_key("pyana-discharge-gateway-v1");
+        let location = format!("pyana-node://{}", hex_encode(&s.wallet.public_key().0));
+        let mut gateway = pyana_macaroon::DischargeGateway::new(gateway_key, location);
+        // Default evaluator: require proof to prevent accidental open gateways.
+        gateway.add_evaluator(Box::new(pyana_macaroon::ProofRequiredEvaluator));
+        s.discharge_gateway = Some(gateway);
+    }
 
-    // Build the gateway on-the-fly (stateless per request for the node endpoint).
-    // For rate limiting, the node uses its own mechanisms; the gateway here is
-    // configured with AlwaysAllow — the node's auth middleware already gates access.
-    let mut gateway = pyana_macaroon::DischargeGateway::new(
-        gateway_key,
-        format!("pyana-node://{}", hex_encode(&s.wallet.public_key().0)),
-    );
-    gateway.add_evaluator(Box::new(pyana_macaroon::AlwaysAllow));
+    let gateway = s.discharge_gateway.as_ref().unwrap();
 
     let discharge_req = pyana_macaroon::DischargeRequest {
         ticket,

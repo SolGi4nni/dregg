@@ -48,6 +48,10 @@ pub struct ThresholdEncryptionKey {
 ///
 /// Each validator holds one share. t-of-n shares are needed to reconstruct
 /// the decryption key.
+///
+/// Includes a MAC computed by the dealer at key generation time. At
+/// combination time, each share's MAC is verified before interpolation,
+/// making malicious/corrupted shares detectable.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeyShare {
     /// The validator's index (1-based, as required by Shamir).
@@ -55,6 +59,11 @@ pub struct KeyShare {
     /// The share value (32 bytes — one byte per coefficient evaluation for each
     /// of the 32 secret bytes).
     pub share: [u8; 32],
+    /// BLAKE3-MAC over (share, index) keyed by the master secret.
+    /// Computed at key generation time by the dealer. At combination time,
+    /// this MAC is verified to detect corrupted or malicious shares before
+    /// interpolation (avoiding silent MAC failures on the final ciphertext).
+    pub share_mac: [u8; 32],
 }
 
 /// A decryption share produced by a validator for a specific ciphertext.
@@ -70,6 +79,9 @@ pub struct DecryptionShare {
     pub share: [u8; 32],
     /// Hash of the ciphertext this share is for (binding).
     pub ciphertext_id: [u8; 32],
+    /// BLAKE3-MAC for share integrity verification.
+    /// Verified before interpolation to detect malicious shares.
+    pub share_mac: [u8; 32],
 }
 
 /// Ciphertext produced by threshold encryption.
@@ -109,6 +121,8 @@ pub enum ThresholdDecryptError {
     CiphertextMismatch,
     /// Encryption failed (internal error).
     EncryptionFailed,
+    /// A share's MAC verification failed (malicious or corrupted share).
+    InvalidShareMac(u8),
 }
 
 impl std::fmt::Display for ThresholdDecryptError {
@@ -122,6 +136,12 @@ impl std::fmt::Display for ThresholdDecryptError {
             Self::CiphertextMismatch => write!(f, "ciphertext ID mismatch on decryption share"),
             Self::DecryptionFailed => write!(f, "decryption failed (wrong key or tampered data)"),
             Self::EncryptionFailed => write!(f, "encryption failed"),
+            Self::InvalidShareMac(i) => {
+                write!(
+                    f,
+                    "share MAC verification failed for validator {i} (malicious or corrupted share)"
+                )
+            }
         }
     }
 }
@@ -237,6 +257,34 @@ fn shamir_reconstruct_byte(shares: &[(u8, u8)]) -> u8 {
 }
 
 // =============================================================================
+// Share MAC Computation
+// =============================================================================
+
+/// Compute a BLAKE3-MAC for a key share, binding the share value to its index.
+///
+/// The MAC is keyed by the master encryption key (known only to the dealer at
+/// generation time). At combination time, the MAC is verified to detect
+/// corrupted or malicious shares before interpolation.
+fn compute_share_mac(master_key: &[u8; 32], share: &[u8; 32], index: u8) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_keyed(master_key);
+    h.update(b"pyana-share-mac-v1");
+    h.update(share);
+    h.update(&[index]);
+    *h.finalize().as_bytes()
+}
+
+/// Verify a share's MAC against the reconstructed key.
+///
+/// Called during `combine_shares` after key reconstruction to validate each
+/// share's integrity before trusting the result. Returns `true` if the MAC
+/// is valid.
+fn verify_share_mac(master_key: &[u8; 32], share: &[u8; 32], index: u8, mac: &[u8; 32]) -> bool {
+    let expected = compute_share_mac(master_key, share, index);
+    // Constant-time comparison.
+    expected == *mac
+}
+
+// =============================================================================
 // Key Generation and Distribution
 // =============================================================================
 
@@ -244,6 +292,10 @@ fn shamir_reconstruct_byte(shares: &[(u8, u8)]) -> u8 {
 ///
 /// Returns the encryption key (to be published) and n key shares (one per validator).
 /// Threshold t-of-n shares are needed to reconstruct the decryption key.
+///
+/// Each share includes a BLAKE3-MAC computed over (share, index) keyed by the
+/// master encryption key. This MAC is verified at combination time to detect
+/// malicious or corrupted shares before interpolation.
 pub fn generate_epoch_key(
     epoch_id: [u8; 32],
     threshold: u8,
@@ -271,6 +323,7 @@ pub fn generate_epoch_key(
         .map(|i| KeyShare {
             index: i + 1, // 1-based
             share: [0u8; 32],
+            share_mac: [0u8; 32],
         })
         .collect();
 
@@ -285,6 +338,11 @@ pub fn generate_epoch_key(
         for (validator_idx, &share_byte) in byte_shares.iter().enumerate() {
             shares[validator_idx].share[byte_idx] = share_byte;
         }
+    }
+
+    // Compute MACs for each share, keyed by the master encryption key.
+    for share in shares.iter_mut() {
+        share.share_mac = compute_share_mac(&encryption_key, &share.share, share.index);
     }
 
     let key = ThresholdEncryptionKey {
@@ -349,6 +407,7 @@ pub fn threshold_encrypt(
 /// Produce a decryption share for a given ciphertext.
 ///
 /// Each validator calls this with their key share to contribute to collaborative decryption.
+/// The share's MAC is included for integrity verification at combination time.
 pub fn produce_decryption_share(
     ciphertext: &ThresholdCiphertext,
     key_share: &KeyShare,
@@ -357,6 +416,7 @@ pub fn produce_decryption_share(
         validator_index: key_share.index,
         share: key_share.share,
         ciphertext_id: ciphertext.ciphertext_id(),
+        share_mac: key_share.share_mac,
     }
 }
 
@@ -413,6 +473,23 @@ pub fn combine_shares(
             .map(|s| (s.validator_index, s.share[byte_idx]))
             .collect();
         reconstructed_key[byte_idx] = shamir_reconstruct_byte(&byte_shares);
+    }
+
+    // Verify each share's MAC against the reconstructed key.
+    // This detects malicious or corrupted shares BEFORE attempting decryption,
+    // allowing identification of the specific bad share rather than just getting
+    // a generic "decryption failed" error.
+    for share in used_shares {
+        if !verify_share_mac(
+            &reconstructed_key,
+            &share.share,
+            share.validator_index,
+            &share.share_mac,
+        ) {
+            return Err(ThresholdDecryptError::InvalidShareMac(
+                share.validator_index,
+            ));
+        }
     }
 
     // Derive the ChaCha20 key from reconstructed key.
@@ -578,11 +655,16 @@ mod tests {
             .iter()
             .map(|s| produce_decryption_share(&ciphertext, s))
             .collect();
-        // Corrupt one share.
+        // Corrupt one share — the MAC verification should catch this before
+        // decryption is attempted, identifying the specific malicious share.
         bad_shares[1].share = [0xFF; 32];
 
         let result = combine_shares(&ciphertext, &bad_shares, 3);
-        assert_eq!(result, Err(ThresholdDecryptError::DecryptionFailed));
+        // With share MAC verification, corrupted shares are detected early.
+        assert!(
+            matches!(result, Err(ThresholdDecryptError::InvalidShareMac(_))),
+            "expected InvalidShareMac error, got: {result:?}"
+        );
     }
 
     #[test]

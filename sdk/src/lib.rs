@@ -42,6 +42,8 @@
 //! ```
 
 pub mod client;
+pub mod discharge;
+pub mod discovery;
 pub mod error;
 pub mod mnemonic;
 pub mod runtime;
@@ -76,6 +78,9 @@ pub use pyana_circuit::PresentationVerification;
 
 // Re-export mnemonic generation at crate root for convenience.
 pub use mnemonic::generate_mnemonic;
+
+// Re-export discharge gateway client functions.
+pub use discharge::{authorize_with_discharges, extract_third_party_tickets, obtain_discharge};
 
 // Re-export standalone verification functions.
 pub use verify::{

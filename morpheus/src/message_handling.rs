@@ -151,8 +151,24 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
                     return false;
                 }
                 let view = end_view_cert.data.incr();
-                if view >= self.view_i {
+                // Accept certificates that advance the view, but cap the maximum
+                // jump to prevent a Byzantine node from forcing an arbitrarily large
+                // view skip. The bound is f+2 views ahead, which is the maximum
+                // that could legitimately be certified during a cascade of timeouts
+                // (f+1 end-view messages form a certificate; at most f+1 concurrent
+                // cascades are plausible).
+                let max_view_jump = (self.f as i64) + 2;
+                if view > self.view_i && view.0 <= self.view_i.0 + max_view_jump {
                     self.end_view(Message::EndViewCert(end_view_cert), view, to_send);
+                } else if view.0 > self.view_i.0 + max_view_jump {
+                    tracing::warn!(
+                        target: "rejected_end_view_cert",
+                        process_id = ?self.id,
+                        cert_view = ?view,
+                        current_view = ?self.view_i,
+                        max_jump = max_view_jump,
+                        "rejecting EndViewCert: view jump exceeds maximum bound"
+                    );
                 }
             }
             Message::StartView(start_view) => {

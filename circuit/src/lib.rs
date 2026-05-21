@@ -67,6 +67,7 @@
 //! - [`constraint_prover`]: Constraint satisfaction evaluator.
 //! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
 
+pub mod babybear8;
 pub mod binding;
 pub mod body_membership;
 pub mod chunked_derivation;
@@ -92,11 +93,16 @@ pub mod arithmetic_predicate_air;
 pub mod block_transition_air;
 pub mod committed_threshold;
 pub mod compound_predicate_air;
+pub mod garbled;
+pub mod garbled_air;
 pub mod non_revocation_air;
 pub mod note_spending_air;
 pub mod predicate_air;
 pub mod predicate_program;
 pub mod relational_predicate_air;
+pub mod schnorr_air;
+pub mod schnorr_curve;
+pub mod schnorr_sig;
 pub mod stark;
 pub mod temporal_predicate_air;
 pub mod turn_validity_air;
@@ -187,4 +193,12 @@ pub use relational_predicate_air::{
 };
 pub use turn_validity_air::{
     TurnValidityAir, TurnValidityWitness, prove_turn_validity, verify_turn_validity,
+};
+
+// Schnorr signature scheme over BabyBear^8 elliptic curve.
+pub use babybear8::BabyBear8;
+pub use schnorr_curve::{CurvePoint, GENERATOR as SCHNORR_GENERATOR};
+pub use schnorr_sig::{
+    SchnorrPublicKey, SchnorrSecretKey, SchnorrSignature, compress_public_key, schnorr_keygen,
+    schnorr_sign, schnorr_verify,
 };

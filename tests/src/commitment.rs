@@ -169,6 +169,7 @@ fn empty_path_proof_rejected() {
         leaf_hash: hash_leaf(&fact.to_bytes()),
         path_indices: vec![],
         siblings: vec![],
+        bucket_siblings: vec![],
     };
 
     assert!(

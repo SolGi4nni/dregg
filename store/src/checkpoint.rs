@@ -116,63 +116,43 @@ impl PersistentStore {
     /// - Nullifiers (cumulative set)
     /// - The checkpoints themselves (always retained)
     ///
+    /// All pruning is performed within a single write transaction to ensure
+    /// atomicity. A crash between pruning roots and audit entries cannot leave
+    /// the store in a partially-pruned state.
+    ///
     /// Returns a summary of what was pruned.
     pub fn prune_before(&self, height: u64) -> Result<PruneResult> {
         let mut result = PruneResult::default();
 
-        // Prune attested roots below the checkpoint height.
-        result.roots_pruned = self.prune_attested_roots_before(height)?;
-
-        // Prune audit log entries older than the checkpoint.
-        // We use a heuristic: audit entries are roughly 1:1 with block heights,
-        // so we prune entries with sequence < height. This is approximate but safe.
-        result.audit_entries_pruned = self.prune_audit_log_before(height)?;
-
-        Ok(result)
-    }
-
-    /// Prune attested roots at heights strictly below `height`.
-    ///
-    /// Keeps the root at `height` itself (it matches the checkpoint).
-    fn prune_attested_roots_before(&self, height: u64) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
-        let mut count = 0u64;
         {
-            let mut table = write_txn.open_table(tables::ATTESTED_ROOTS)?;
-            // Collect keys to remove (cannot mutate while iterating).
-            let mut to_remove = Vec::new();
+            // Prune attested roots below the checkpoint height.
+            let mut roots_table = write_txn.open_table(tables::ATTESTED_ROOTS)?;
+            let mut roots_to_remove = Vec::new();
             {
-                let range = table.range(0..height)?;
+                let range = roots_table.range(0..height)?;
                 for entry in range {
                     let entry = entry
                         .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
-                    to_remove.push(entry.0.value());
+                    roots_to_remove.push(entry.0.value());
                 }
             }
-            for key in &to_remove {
-                table.remove(*key)?;
-                count += 1;
+            for key in &roots_to_remove {
+                roots_table.remove(*key)?;
+                result.roots_pruned += 1;
             }
-        }
-        write_txn.commit()?;
-        Ok(count)
-    }
+            drop(roots_table);
 
-    /// Prune audit log entries with sequence numbers below `max_sequence`.
-    ///
-    /// Also removes corresponding entries from the token index.
-    fn prune_audit_log_before(&self, max_sequence: u64) -> Result<u64> {
-        let write_txn = self.db.begin_write()?;
-        let mut count = 0u64;
-        {
+            // Prune audit log entries older than the checkpoint.
+            // We use a heuristic: audit entries are roughly 1:1 with block heights,
+            // so we prune entries with sequence < height. This is approximate but safe.
             let mut log_table = write_txn.open_table(tables::AUDIT_LOG)?;
             let mut idx_table = write_txn.open_table(tables::AUDIT_TOKEN_INDEX)?;
 
-            // Collect entries to remove.
             let mut to_remove = Vec::new();
             let mut index_keys_to_remove = Vec::new();
             {
-                let range = log_table.range(0..max_sequence)?;
+                let range = log_table.range(0..height)?;
                 for entry in range {
                     let entry = entry
                         .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
@@ -193,13 +173,14 @@ impl PersistentStore {
 
             for seq in &to_remove {
                 log_table.remove(*seq)?;
-                count += 1;
+                result.audit_entries_pruned += 1;
             }
             for key in &index_keys_to_remove {
                 idx_table.remove(key.as_str())?;
             }
         }
         write_txn.commit()?;
-        Ok(count)
+
+        Ok(result)
     }
 }

@@ -190,6 +190,7 @@ fn end_to_end_authorization_proof() {
         revealed_facts_commitment: BabyBear::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
+        composition_commitment: BabyBear::ZERO,
     };
 
     let presentation_air = PresentationAir::new(presentation);
@@ -278,6 +279,7 @@ fn single_step_no_attenuation() {
         revealed_facts_commitment: BabyBear::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
+        composition_commitment: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -389,6 +391,7 @@ fn long_attenuation_chain() {
         revealed_facts_commitment: BabyBear::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
+        composition_commitment: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -773,6 +776,7 @@ fn proof_size_scaling() {
             revealed_facts_commitment: BabyBear::ZERO,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
+            composition_commitment: BabyBear::ZERO,
         };
 
         let air = PresentationAir::new(presentation);

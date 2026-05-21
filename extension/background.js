@@ -22,17 +22,35 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60-second sliding window
 // ---------------------------------------------------------------------------
 
 let wasm = null;
+let wasmLoaded = false;
+let wasmLoadError = null;
 
 const wasmReady = (async () => {
   try {
     wasm = await import('./pyana_wasm.js');
     await wasm.default();
+    wasmLoaded = true;
     console.log('[pyana] WASM module loaded');
   } catch (e) {
-    console.warn('[pyana] WASM module unavailable, falling back to stubs:', e.message);
+    console.error('[pyana] WASM module failed to load:', e.message);
     wasm = null;
+    wasmLoaded = false;
+    wasmLoadError = e.message;
   }
 })();
+
+/**
+ * Require WASM to be loaded for cryptographic operations.
+ * Throws if WASM is unavailable — crypto ops MUST NOT silently degrade.
+ */
+function requireWasm(operation) {
+  if (!wasmLoaded || !wasm) {
+    throw new Error(
+      `WASM cryptographic module not loaded. Cannot perform ${operation}. ` +
+      (wasmLoadError ? `Load error: ${wasmLoadError}` : 'Module unavailable.')
+    );
+  }
+}
 
 // Queue for authorize calls that arrive before WASM is ready.
 const pendingQueue = [];
@@ -302,46 +320,15 @@ async function deriveKeypairFromMnemonic(mnemonic, passphrase) {
       console.warn('[pyana] WASM derive_keypair_from_mnemonic failed:', e.message);
     }
   }
-  // Pure JS fallback: BIP39-style PBKDF2-HMAC-SHA512 derivation.
-  // mnemonic -> seed (2048 rounds, salt = "mnemonic" + passphrase)
-  // Then use first 32 bytes as Ed25519 signing key seed.
-  const enc = new TextEncoder();
-  const mnemonicBytes = enc.encode(mnemonic.normalize('NFKD'));
-  const saltBytes = enc.encode('mnemonic' + (passphrase || '').normalize('NFKD'));
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw', mnemonicBytes, 'PBKDF2', false, ['deriveBits']
+  // WASM is required for Ed25519 keypair derivation. The Web Crypto API does not
+  // support Ed25519 point multiplication, so there is no valid JS fallback.
+  // Producing a fake public key (e.g. SHA-256 of the seed) is a security risk —
+  // it creates an invalid key that cannot sign or verify anything.
+  throw new Error(
+    'WASM cryptographic module is required for keypair derivation. ' +
+    'Ed25519 key generation cannot be performed without the native module. ' +
+    (wasmLoadError ? `WASM load error: ${wasmLoadError}` : 'Module unavailable.')
   );
-  const seedBits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: saltBytes, iterations: 2048, hash: 'SHA-512' },
-    keyMaterial,
-    512 // 64 bytes
-  );
-  const seed = new Uint8Array(seedBits);
-
-  // SLIP-10 style: use HMAC-SHA512 with key "ed25519 seed" over the PBKDF2 output
-  // to get the final Ed25519 private key (first 32 bytes) and chain code (ignored).
-  const slip10Key = enc.encode('ed25519 seed');
-  const hmacKey = await crypto.subtle.importKey(
-    'raw', slip10Key, { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']
-  );
-  const derived = await crypto.subtle.sign('HMAC', hmacKey, seed);
-  const derivedBytes = new Uint8Array(derived);
-
-  // First 32 bytes = Ed25519 private scalar (seed). The "public key" derivation
-  // requires Ed25519 point multiplication which we cannot do with Web Crypto alone.
-  // Store the 32-byte seed as secretKey; the WASM module will re-derive the full
-  // keypair on next load. For now, derive a placeholder public key via SHA-256 of
-  // the secret seed (NOT cryptographically correct Ed25519 pubkey, but deterministic).
-  const secretSeed = derivedBytes.slice(0, 32);
-  const pubHashBuf = await crypto.subtle.digest('SHA-256', secretSeed);
-  const publicKey = new Uint8Array(pubHashBuf);
-
-  return {
-    publicKey: Array.from(publicKey),
-    secretKey: Array.from(secretSeed),
-    needsReDerivation: true, // Flag: WASM should re-derive proper keypair on next load
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -739,75 +726,91 @@ async function getAllOriginPermissions() {
 // ---------------------------------------------------------------------------
 
 function evaluateDatalog(token, request) {
-  if (wasm) {
-    try {
-      const facts = token.actions.map(a => ({
-        predicate: 'grant',
-        terms: [a, token.resource || '*'],
-      }));
-      const reqJson = JSON.stringify({
-        action: request.action,
-        service: request.resource,
-      });
-      const result = wasm.evaluate_datalog(JSON.stringify(facts), reqJson);
-      return {
-        allowed: result.conclusion === 'allow',
-        trace: result.steps.map(s => `rule(${s.rule_id}) derived ${s.derived_predicate_hex}`),
-      };
-    } catch (e) {
-      console.warn('[pyana] WASM evaluate_datalog failed, using stub:', e.message);
-    }
-  }
+  requireWasm('evaluateDatalog');
 
-  // Stub fallback: checks action membership.
-  const allowed = token.actions.includes(request.action);
-  const trace = allowed
-    ? [`token(${token.id}) grants action(${request.action}) on resource(${request.resource})`]
-    : [`no matching grant for action(${request.action})`];
-  return { allowed, trace };
+  const facts = token.actions.map(a => ({
+    predicate: 'grant',
+    terms: [a, token.resource || '*'],
+  }));
+  const reqJson = JSON.stringify({
+    action: request.action,
+    service: request.resource,
+  });
+  const result = wasm.evaluate_datalog(JSON.stringify(facts), reqJson);
+  return {
+    allowed: result.conclusion === 'allow',
+    trace: result.steps.map(s => `rule(${s.rule_id}) derived ${s.derived_predicate_hex}`),
+  };
 }
 
 function generateProof(witness, mode) {
-  if (wasm) {
-    try {
-      const hash = witness.reduce((acc, b, i) => acc ^ (b << ((i % 4) * 8)), 0) >>> 0;
-      const depth = mode === 'private' ? 8 : mode === 'selective' ? 4 : 2;
-      const result = wasm.generate_stark_proof(hash, depth);
-      return new TextEncoder().encode(result.proof_json);
-    } catch (e) {
-      console.warn('[pyana] WASM generate_stark_proof failed, using stub:', e.message);
-    }
-  }
+  requireWasm('generateProof');
 
-  const size = mode === 'private' ? 256 : mode === 'selective' ? 128 : 64;
-  const proof = new Uint8Array(size);
-  crypto.getRandomValues(proof);
-  return proof;
+  const hash = witness.reduce((acc, b, i) => acc ^ (b << ((i % 4) * 8)), 0) >>> 0;
+  const depth = mode === 'private' ? 8 : mode === 'selective' ? 4 : 2;
+  const result = wasm.generate_stark_proof(hash, depth);
+  return new TextEncoder().encode(result.proof_json);
 }
 
 function verifyToken(tokenStr, rootKey, appId, action) {
-  if (wasm) {
-    try {
-      return wasm.verify_token(tokenStr, rootKey, appId, action);
-    } catch (e) {
-      console.warn('[pyana] WASM verify_token failed:', e.message);
-    }
-  }
-  return { allowed: true, policy: null, error: null };
+  requireWasm('verifyToken');
+  return wasm.verify_token(tokenStr, rootKey, appId, action);
 }
 
 function computeMerkleRoot(leaves) {
-  if (wasm) {
-    try {
-      return wasm.compute_merkle_root(JSON.stringify(leaves));
-    } catch (e) {
-      console.warn('[pyana] WASM compute_merkle_root failed:', e.message);
-    }
+  requireWasm('computeMerkleRoot');
+  return wasm.compute_merkle_root(JSON.stringify(leaves));
+}
+
+/**
+ * Resolve the private numeric value for a fact key from a token.
+ * Used by predicate proofs to get the actual attribute value.
+ * Returns a number or null if the key cannot be resolved.
+ */
+function resolvePrivateValue(token, key) {
+  // Direct numeric properties on the token.
+  const directMap = {
+    'expires': token.expiry,
+    'expiry': token.expiry,
+    'issued': token.provisioned,
+    'provisioned': token.provisioned,
+    'balance': token.balance,
+    'amount': token.amount,
+    'reputation': token.reputation,
+    'score': token.score,
+    'level': token.level,
+    'depth': token.depth,
+    'delegationDepth': token.delegationDepth,
+    'budget': token.budget,
+  };
+
+  if (key in directMap && directMap[key] != null) {
+    const val = directMap[key];
+    return typeof val === 'number' ? val : parseInt(val, 10) || null;
   }
-  return { root_hex: '0'.repeat(64), num_leaves: leaves.length };
+
+  // Check token metadata/attributes if present.
+  if (token.attributes && key in token.attributes) {
+    const val = token.attributes[key];
+    return typeof val === 'number' ? val : parseInt(val, 10) || null;
+  }
+
+  // Check token.meta (alternative metadata field).
+  if (token.meta && key in token.meta) {
+    const val = token.meta[key];
+    return typeof val === 'number' ? val : parseInt(val, 10) || null;
+  }
+
+  return null;
 }
 
 async function authorize(request) {
+  // SECURITY: Fail-closed if WASM cryptographic module is not loaded.
+  // All proof generation and policy evaluation requires WASM.
+  if (!wasmLoaded || !wasm) {
+    return { allowed: false, error: 'Cryptographic module unavailable. Cannot authorize securely.' };
+  }
+
   const wallet = await loadState();
   if (wallet.locked) {
     return { allowed: false, error: 'Wallet is locked' };
@@ -863,20 +866,70 @@ async function authorize(request) {
     result.disclosedFacts = request._disclosedFacts;
   }
 
-  // For predicate proofs, generate range proofs for each predicate fact.
+  // For predicate proofs, generate real ZK range/comparison proofs via WASM.
   if (mode === 'selective' && request._predicateFacts) {
     result.predicateProofs = request._predicateFacts.map(pf => {
-      // Generate a predicate proof (via WASM when available, stub otherwise).
-      const predicateWitness = new TextEncoder().encode(
-        JSON.stringify({ key: pf.key, predicateType: pf.predicateType, threshold: pf.threshold })
-      );
-      const predicateProof = generateProof(predicateWitness, 'selective');
-      return {
-        key: pf.key,
-        predicateType: pf.predicateType,
-        threshold: pf.threshold,
-        proof: Array.from(predicateProof),
+      // Look up the private value for this fact from the token.
+      const privateValue = resolvePrivateValue(matchingToken, pf.key);
+      if (privateValue === null) {
+        // Cannot prove: attribute value not found in token.
+        return {
+          key: pf.key,
+          predicateType: pf.predicateType,
+          threshold: pf.threshold,
+          proof: null,
+          error: `Attribute "${pf.key}" not found in token`,
+        };
+      }
+
+      // Map disclosure picker predicate types to WASM predicate types.
+      const predicateTypeMap = {
+        'gte': 'gte', '>=': 'gte',
+        'lte': 'lte', '<=': 'lte',
+        'gt': 'gt', '>': 'gt',
+        'lt': 'lt', '<': 'lt',
+        'neq': 'neq', '!=': 'neq',
       };
+      const wasmPredicateType = predicateTypeMap[pf.predicateType] || 'gte';
+      const thresholdValue = typeof pf.threshold === 'number'
+        ? pf.threshold
+        : parseInt(pf.threshold, 10) || 0;
+
+      // Compute a state root from the current receipt chain (deterministic binding).
+      const stateRootInput = wallet.receiptChain.length > 0
+        ? wallet.receiptChain[wallet.receiptChain.length - 1]
+        : '0';
+      // Use BLAKE3 hash of the state root string as a u32 field element.
+      const stateRootHash = wasm.blake3_hash(stateRootInput);
+      const stateRoot = parseInt(stateRootHash.slice(0, 8), 16) >>> 0;
+
+      try {
+        const proofResult = wasm.generate_predicate_proof(
+          wasmPredicateType,
+          privateValue >>> 0,  // Ensure u32
+          thresholdValue >>> 0,
+          pf.key,
+          stateRoot
+        );
+        return {
+          key: pf.key,
+          predicateType: pf.predicateType,
+          threshold: pf.threshold,
+          proof: proofResult.proof_json,
+          factCommitment: proofResult.fact_commitment,
+          verified: proofResult.verified,
+          proofSizeBytes: proofResult.proof_size_bytes,
+        };
+      } catch (e) {
+        // Proof generation failed (predicate not satisfiable or WASM error).
+        return {
+          key: pf.key,
+          predicateType: pf.predicateType,
+          threshold: pf.threshold,
+          proof: null,
+          error: e.message || 'Predicate proof generation failed',
+        };
+      }
     });
   }
 
@@ -1230,6 +1283,157 @@ async function offerCapability(matchSpec, options) {
 }
 
 /**
+ * Fulfill an intent from the pool using a matching token from the wallet.
+ * Calls POST /intents/fulfill on the local node to complete the fulfillment.
+ *
+ * Requires user confirmation before fulfilling.
+ */
+async function fulfillIntent(intentId, tokenId) {
+  const wallet = await loadState();
+  if (wallet.locked) {
+    return { error: 'Wallet is locked' };
+  }
+
+  // Find the intent in the local pool.
+  const entry = intentPool.get(intentId);
+  if (!entry) {
+    return { error: 'Intent not found in local pool' };
+  }
+  const intent = entry.intent;
+
+  // Check expiry.
+  if (intent.expiry <= Date.now()) {
+    intentPool.delete(intentId);
+    return { error: 'Intent has expired' };
+  }
+
+  // Find the specified token (or auto-match if tokenId is null).
+  let matchingToken;
+  if (tokenId) {
+    matchingToken = wallet.tokens.find(t => t.id === tokenId);
+    if (!matchingToken) {
+      return { error: `Token "${tokenId}" not found in wallet` };
+    }
+  } else {
+    // Auto-match: find the first token that satisfies the intent.
+    const matchResult = matchIntentLocally(intent, wallet.tokens, Date.now());
+    if (!matchResult) {
+      return { error: 'No matching token found for this intent' };
+    }
+    matchingToken = wallet.tokens.find(t => t.id === matchResult.tokenId);
+    if (!matchingToken) {
+      return { error: 'Matched token no longer available' };
+    }
+  }
+
+  // Confirm with user before fulfilling.
+  const confirmed = await showIntentConfirmation('fulfillIntent', intent.matcher, {
+    intentId,
+    tokenId: matchingToken.id,
+    intentKind: intent.kind,
+  });
+  if (!confirmed) {
+    return { error: 'User denied intent fulfillment' };
+  }
+
+  // Build the fulfillment payload for the node.
+  const fulfillmentPayload = {
+    intent_id: intentId,
+    fulfiller_token: {
+      id: matchingToken.id,
+      actions: matchingToken.actions,
+      resource: matchingToken.resource || '*',
+      expiry: matchingToken.expiry || null,
+    },
+    fulfiller_public_key: wallet.publicKey,
+    timestamp: Date.now(),
+  };
+
+  // Call the node's fulfillment endpoint.
+  try {
+    const response = await fetch('http://localhost:8420/intents/fulfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fulfillmentPayload),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      return {
+        error: `Node rejected fulfillment: HTTP ${response.status}${errorBody ? ' - ' + errorBody : ''}`,
+      };
+    }
+
+    const result = await response.json();
+
+    // Log the fulfillment.
+    wallet.log.push({
+      action: 'fulfillIntent',
+      resource: intent.matcher?.resourcePattern || '*',
+      allowed: true,
+      timestamp: Date.now(),
+      mode: 'trusted',
+      intentId,
+      tokenId: matchingToken.id,
+    });
+    await saveState();
+
+    // Remove fulfilled intent from pool.
+    intentPool.delete(intentId);
+
+    // Notify subscribers.
+    notifySubscribers('intentFulfilled', {
+      intentId,
+      tokenId: matchingToken.id,
+      result,
+    });
+
+    return {
+      fulfilled: true,
+      intentId,
+      tokenId: matchingToken.id,
+      nodeResult: result,
+    };
+  } catch (e) {
+    return {
+      error: `Failed to contact node: ${e.message}`,
+    };
+  }
+}
+
+/**
+ * Get intents that can be fulfilled by the current wallet's tokens.
+ * Returns a list of { intent, matchedToken } pairs.
+ */
+async function getFulfillableIntents() {
+  const wallet = await loadState();
+  if (wallet.locked) return [];
+
+  const now = Date.now();
+  const fulfillable = [];
+
+  for (const [, { intent }] of intentPool) {
+    if (intent.expiry <= now) continue;
+    if (intent.kind !== 'need') continue; // Can only fulfill "need" intents.
+
+    const matchResult = matchIntentLocally(intent, wallet.tokens, now);
+    if (matchResult) {
+      fulfillable.push({
+        intentId: intent.id,
+        kind: intent.kind,
+        matcher: intent.matcher,
+        expiry: intent.expiry,
+        matchedTokenId: matchResult.tokenId,
+        grantedActions: matchResult.grantedActions,
+        resource: matchResult.resource,
+      });
+    }
+  }
+
+  return fulfillable;
+}
+
+/**
  * Show a confirmation popup for intent/offer actions (Bug 5 fix).
  */
 function showIntentConfirmation(action, matchSpec, options) {
@@ -1562,6 +1766,8 @@ const POPUP_ONLY_METHODS = new Set([
   'pyana:getCapabilities',
   'pyana:listIntents',
   'pyana:offerCapability',
+  'pyana:fulfillIntent',
+  'pyana:getFulfillableIntents',
   'pyana:revoke',
   'pyana:getState',
   'pyana:getFederation',
@@ -1728,6 +1934,16 @@ async function handleMessage(message, sender) {
 
     case 'pyana:listIntents': {
       const result = listIntents(message.filter);
+      return { id: message.id, result };
+    }
+
+    case 'pyana:fulfillIntent': {
+      const result = await fulfillIntent(message.intentId, message.tokenId || null);
+      return { id: message.id, result };
+    }
+
+    case 'pyana:getFulfillableIntents': {
+      const result = await getFulfillableIntents();
       return { id: message.id, result };
     }
 

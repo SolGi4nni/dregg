@@ -31,6 +31,15 @@ pub use causal::{CausalDag, CausalError};
 // =============================================================================
 
 /// Ed25519 public key (32 bytes).
+///
+/// # Serialization
+///
+/// Uses `serde_32` which serializes as a length-prefixed byte sequence (Vec<u8>)
+/// for format compatibility. Note that this differs from `pyana_cell::NoteCommitment`
+/// which derives Serialize/Deserialize directly on its `[u8; 32]` (raw fixed array,
+/// no length prefix in postcard). Both are correct for their respective wire formats:
+/// `PublicKey` appears in variable-length structures (AttestedRoot signatures) while
+/// NoteCommitment appears in fixed-layout note trees.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PublicKey(#[serde(with = "serde_32")] pub [u8; 32]);
 
@@ -112,9 +121,29 @@ impl fmt::Debug for Signature {
 pub struct SigningKey(ed25519_dalek::SigningKey);
 
 impl SigningKey {
+    /// Create a signing key from raw 32-byte secret key material.
+    ///
+    /// # Security
+    ///
+    /// The caller is responsible for ensuring the key material is from a
+    /// trusted source and is properly zeroized after use.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        Self(ed25519_dalek::SigningKey::from_bytes(bytes))
+    }
+
     /// Derive the corresponding public key from this signing key.
     pub fn public_key(&self) -> PublicKey {
         PublicKey(self.0.verifying_key().to_bytes())
+    }
+
+    /// Return the raw 32-byte secret key material.
+    ///
+    /// # Security
+    ///
+    /// The returned bytes are sensitive. The caller must ensure they are not
+    /// leaked or persisted without appropriate protections.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
 }
 

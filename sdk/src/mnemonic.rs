@@ -237,6 +237,67 @@ pub fn derive_keypair(seed: &[u8; 64], path: &str) -> ([u8; 32], [u8; 32]) {
     (public.to_bytes(), derived)
 }
 
+/// BIP39-compatible seed derivation using PBKDF2-HMAC-SHA512.
+///
+/// This provides interoperability with the browser extension's JavaScript path,
+/// which uses standard BIP39 PBKDF2 when the WASM module is unavailable.
+/// Both paths (BLAKE3 via [`mnemonic_to_seed`] and PBKDF2 via this function)
+/// are valid but produce DIFFERENT seeds from the same mnemonic.
+///
+/// Use this function when interop with standard BIP39 wallets is required.
+///
+/// # Arguments
+///
+/// * `mnemonic` - A valid 24-word mnemonic string.
+/// * `passphrase` - An optional passphrase. Use `""` for no passphrase.
+///
+/// # Returns
+///
+/// A 64-byte seed derived via PBKDF2-HMAC-SHA512 (2048 rounds), matching
+/// the BIP39 specification exactly.
+pub fn mnemonic_to_seed_bip39_compat(
+    mnemonic: &str,
+    passphrase: &str,
+) -> Result<[u8; 64], MnemonicError> {
+    // Validate the mnemonic first (word count, word list, checksum).
+    let _ = validate_mnemonic(mnemonic)?;
+
+    // BIP39 standard: PBKDF2-HMAC-SHA512 with salt "mnemonic" + passphrase.
+    use hmac::Hmac;
+    use sha2::Sha512;
+
+    type HmacSha512 = Hmac<Sha512>;
+
+    let salt = format!("mnemonic{}", passphrase);
+    let mut seed = [0u8; 64];
+    pbkdf2::pbkdf2::<HmacSha512>(mnemonic.as_bytes(), salt.as_bytes(), 2048, &mut seed)
+        .expect("HMAC can be initialized with any key length");
+    Ok(seed)
+}
+
+/// Derive an Ed25519 keypair from a BIP39-compatible seed.
+///
+/// Combines [`mnemonic_to_seed_bip39_compat`] with [`derive_keypair`] for a single
+/// function that matches the extension's PBKDF2 path end-to-end.
+///
+/// # Arguments
+///
+/// * `mnemonic` - A valid 24-word mnemonic string.
+/// * `passphrase` - Passphrase for BIP39 seed derivation (use `""` for none).
+/// * `path` - Derivation path (e.g., `"pyana/0"`).
+///
+/// # Returns
+///
+/// A tuple of `(public_key_bytes, secret_key_bytes)`.
+pub fn derive_keypair_bip39_compat(
+    mnemonic: &str,
+    passphrase: &str,
+    path: &str,
+) -> Result<([u8; 32], [u8; 32]), MnemonicError> {
+    let seed = mnemonic_to_seed_bip39_compat(mnemonic, passphrase)?;
+    Ok(derive_keypair(&seed, path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

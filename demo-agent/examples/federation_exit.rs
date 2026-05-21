@@ -77,6 +77,7 @@ fn simulate_turn(agent: CellId, turn_number: u64, pre_state: [u8; 32]) -> TurnRe
         action_count: (turn_number as usize) + 1,
         previous_receipt_hash: None, // AgentWallet.append_receipt() fills this
         agent,
+        federation_id: [0u8; 32],
         routing_directives: Vec::new(),
         derivation_records: Vec::new(),
         executor_signature: None,

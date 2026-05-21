@@ -27,15 +27,29 @@ pub struct BudgetSlice {
     pub spent: u64,
     /// Transaction digests that consumed from this slice.
     pub debits: Vec<DebitDigest>,
+    /// Budget epoch version this slice belongs to.
+    /// Used to reject stale slices from previous epochs after a rebalance.
+    pub version: u64,
 }
 
 impl BudgetSlice {
-    /// Create a new budget slice with the given ceiling.
+    /// Create a new budget slice with the given ceiling and version.
     pub fn new(ceiling: u64) -> Self {
         BudgetSlice {
             ceiling,
             spent: 0,
             debits: Vec::new(),
+            version: 0,
+        }
+    }
+
+    /// Create a new budget slice with a specific epoch version.
+    pub fn with_version(ceiling: u64, version: u64) -> Self {
+        BudgetSlice {
+            ceiling,
+            spent: 0,
+            debits: Vec::new(),
+            version,
         }
     }
 
@@ -90,22 +104,41 @@ pub struct BudgetGate {
     pub silo_id: u32,
     /// The local budget slice for this silo.
     pub slice: BudgetSlice,
+    /// Current epoch version expected by this gate.
+    /// If the slice version doesn't match, the gate rejects (stale slice).
+    pub expected_version: u64,
 }
 
 impl BudgetGate {
     /// Create a new budget gate for a silo with the given slice.
     pub fn new(silo_id: u32, slice: BudgetSlice) -> Self {
-        BudgetGate { silo_id, slice }
+        let expected_version = slice.version;
+        BudgetGate {
+            silo_id,
+            slice,
+            expected_version,
+        }
     }
 
     /// Try to debit the turn fee from the budget slice.
     ///
     /// Returns `Ok(digest)` with the debit digest on success.
     /// Returns `Err((remaining,))` if the slice cannot cover the fee.
+    ///
+    /// Rejects the debit if the slice version doesn't match the gate's expected epoch.
     pub fn try_debit(&mut self, fee: u64, turn_hash: &[u8; 32]) -> Result<DebitDigest, u64> {
+        // Reject stale slices from a previous epoch.
+        if self.slice.version != self.expected_version {
+            return Err(0);
+        }
         let digest = Self::compute_debit_digest(turn_hash);
         self.slice.try_debit(fee, digest)?;
         Ok(digest)
+    }
+
+    /// Update the gate's expected version (called after rebalance).
+    pub fn set_expected_version(&mut self, version: u64) {
+        self.expected_version = version;
     }
 
     /// Refund a debit after turn failure (fast unlock).

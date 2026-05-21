@@ -67,14 +67,17 @@ impl PersistentStore {
         };
 
         // Check audit sequence.
+        // After pruning, the monotonic sequence counter (audit_count / next_seq) may
+        // exceed the actual number of log entries since pruned entries are removed but
+        // the counter is never decremented. The invariant is: next_seq >= len.
         let claimed_count = self.audit_count()?;
         let read_txn = self.db.begin_read()?;
         let log_table = read_txn.open_table(crate::tables::AUDIT_LOG)?;
         let actual_count = log_table.len()?;
-        if claimed_count != actual_count {
+        if claimed_count < actual_count {
             report.audit_sequence_ok = false;
             report.errors.push(format!(
-                "audit sequence counter ({claimed_count}) != actual entries ({actual_count})"
+                "audit sequence counter ({claimed_count}) < actual entries ({actual_count}): counter must be >= entry count"
             ));
         }
         drop(log_table);

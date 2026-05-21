@@ -82,6 +82,8 @@ pub enum OtError {
     InvalidSenderPublic,
     /// The receiver's public key could not be decompressed to a valid curve point.
     InvalidReceiverPublic,
+    /// The receiver's public key is a small-order point (cofactor attack).
+    InvalidReceiverPoint,
     /// Decryption of the chosen message failed (corrupted ciphertext or wrong key).
     DecryptionFailed,
 }
@@ -91,6 +93,9 @@ impl core::fmt::Display for OtError {
         match self {
             OtError::InvalidSenderPublic => write!(f, "invalid sender public key"),
             OtError::InvalidReceiverPublic => write!(f, "invalid receiver public key"),
+            OtError::InvalidReceiverPoint => {
+                write!(f, "receiver public key is a small-order point")
+            }
             OtError::DecryptionFailed => write!(f, "OT decryption failed"),
         }
     }
@@ -116,8 +121,17 @@ impl OtSender {
         m0: &[u8],
         m1: &[u8],
     ) -> Result<OtSenderPayload, OtError> {
+        use curve25519_dalek::traits::IsIdentity;
+
         let b_point = decompress_point(&receiver_msg.receiver_public)
             .ok_or(OtError::InvalidReceiverPublic)?;
+
+        // Reject small-order points to prevent cofactor attacks.
+        // A small-order point would make the DH shared secret trivially predictable,
+        // allowing an attacker to decrypt both messages regardless of their choice bit.
+        if b_point.is_identity() || b_point.is_small_order() {
+            return Err(OtError::InvalidReceiverPoint);
+        }
 
         // k0 = kdf(a * B)
         let shared0 = self.secret * b_point;

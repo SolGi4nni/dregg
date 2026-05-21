@@ -139,3 +139,37 @@ elang:
   parent:
     type: proceedings
     title: "PhD Thesis, Johns Hopkins University"
+
+yao86:
+  type: article
+  title: "How to Generate and Exchange Secrets"
+  author: ["Yao, Andrew Chi-Chih"]
+  date: 1986
+  parent:
+    type: proceedings
+    title: "IEEE Symposium on Foundations of Computer Science (FOCS)"
+
+bhr12:
+  type: article
+  title: "Foundations of Garbled Circuits"
+  author: ["Bellare, Mihir", "Hoang, Viet Tung", "Rogaway, Phillip"]
+  date: 2012
+  parent:
+    type: proceedings
+    title: "ACM Conference on Computer and Communications Security (CCS)"
+
+jawurek13:
+  type: article
+  title: "Zero-Knowledge Using Garbled Circuits: How To Prove Non-Algebraic Statements Efficiently"
+  author: ["Jawurek, Marek", "Kerschbaum, Florian", "Orlandi, Claudio"]
+  date: 2013
+  parent:
+    type: proceedings
+    title: "ACM Conference on Computer and Communications Security (CCS)"
+
+capss24:
+  type: article
+  title: "CAPSS: Signatures from Arithmetization-Oriented Permutations"
+  author: ["Aly, Abdelrahaman", "Ashur, Tomer", "Kales, Daniel", "Orsini, Emmanuela", "Schofnegger, Markus"]
+  date: 2024
+  serial-number: "IACR ePrint 2024/252"

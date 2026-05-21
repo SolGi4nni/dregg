@@ -186,6 +186,23 @@ pub struct VerifierWitness {
 ///
 /// The proof_commitment binds this verification to a specific proof, preventing
 /// the prover from verifying a different proof than claimed.
+///
+/// # WARNING: Non-functional Placeholder
+///
+/// This AIR is a placeholder/stub. It does NOT perform actual recursive STARK/SNARK
+/// verification inside the circuit. The constraints check structural validity (binary
+/// flags, section tags) but do NOT verify cryptographic operations (FRI folding,
+/// Merkle proofs, polynomial evaluations) that constitute real proof verification.
+///
+/// Real IVC/recursion requires:
+/// - A proper folding scheme (Nova, SuperNova, ProtoStar)
+/// - Recursive SNARK composition (Groth16-in-Groth16, Plonk-in-Plonk)
+/// - Accumulation schemes (Protostar, HyperNova)
+///
+/// Use `plonky3_recursion.rs` for the actual recursion implementation path.
+#[deprecated(
+    note = "RecursiveVerifierAir is a non-functional stub. It does NOT perform actual recursive verification. Use Plonky3 folding/accumulation for real IVC."
+)]
 pub struct RecursiveVerifierAir {
     /// Number of inner public inputs to carry through.
     num_inner_public_inputs: usize,

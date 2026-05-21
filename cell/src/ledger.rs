@@ -779,16 +779,36 @@ impl Ledger {
         }
 
         // Capabilities (c-list)
+        // ALL security-relevant capability fields are included: target, slot,
+        // permissions, breadstuff, and expires_at. Omitting any field would allow
+        // two capabilities with different security properties to hash identically.
         let cap_count = cell.capabilities.len() as u64;
         hasher.update(&cap_count.to_le_bytes());
         for cap in cell.capabilities.iter() {
             hasher.update(cap.target.as_bytes());
             hasher.update(&cap.slot.to_le_bytes());
+            let perm_byte = match &cap.permissions {
+                crate::permissions::AuthRequired::None => 0u8,
+                crate::permissions::AuthRequired::Signature => 1u8,
+                crate::permissions::AuthRequired::Proof => 2u8,
+                crate::permissions::AuthRequired::Either => 3u8,
+                crate::permissions::AuthRequired::Impossible => 4u8,
+            };
+            hasher.update(&[perm_byte]);
             if let Some(ref bs) = cap.breadstuff {
                 hasher.update(&[1u8]);
                 hasher.update(bs);
             } else {
                 hasher.update(&[0u8]);
+            }
+            match cap.expires_at {
+                Some(h) => {
+                    hasher.update(&[1u8]);
+                    hasher.update(&h.to_le_bytes());
+                }
+                None => {
+                    hasher.update(&[0u8]);
+                }
             }
         }
 

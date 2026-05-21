@@ -36,6 +36,11 @@ pub struct ConsensusConfig {
     pub epoch: u64,
     /// Explicit member list (public keys). Empty means legacy mode (count-only).
     pub members: Vec<PublicKey>,
+    /// Whether to require authentication (signature verification).
+    /// Default is `true`. When members are empty and this is `true`, a loud
+    /// warning is logged but messages are still accepted (legacy mode).
+    /// Set to `false` explicitly in tests to suppress the warning.
+    pub require_authentication: bool,
 }
 
 impl ConsensusConfig {
@@ -52,6 +57,7 @@ impl ConsensusConfig {
             max_faults,
             epoch: 0,
             members: Vec::new(),
+            require_authentication: true,
         }
     }
 
@@ -66,6 +72,7 @@ impl ConsensusConfig {
             max_faults,
             epoch: 0,
             members,
+            require_authentication: true,
         }
     }
 
@@ -80,6 +87,7 @@ impl ConsensusConfig {
             max_faults,
             epoch: self.epoch + 1,
             members: new_members,
+            require_authentication: self.require_authentication,
         }
     }
 
@@ -175,14 +183,18 @@ impl ReconfigurationProposal {
 }
 
 /// Tracks votes on a pending reconfiguration proposal.
+///
+/// Each vote is a (PublicKey, Signature) pair where the signature is over
+/// the proposal hash. This prevents a single node from forging votes on
+/// behalf of other members.
 #[derive(Clone, Debug)]
 pub struct ReconfigurationVotes {
     /// The proposal being voted on.
     pub proposal: ReconfigurationProposal,
     /// Hash of the proposal.
     pub proposal_hash: [u8; 32],
-    /// Public keys of members who have voted in favor.
-    pub voters: Vec<PublicKey>,
+    /// Signed votes: (public_key, signature_over_proposal_hash).
+    pub voters: Vec<(PublicKey, Signature)>,
 }
 
 // =============================================================================
@@ -433,6 +445,11 @@ impl ConsensusState {
                 // Voter ID out of range -- reject.
                 return None;
             }
+        } else if self.config.require_authentication {
+            tracing::warn!(
+                "INSECURE: accepting vote without signature verification (legacy mode — no members configured). \
+                 Production deployments MUST set explicit members via ConsensusConfig::genesis()."
+            );
         }
 
         self.collected_votes.push(vote);
@@ -528,10 +545,22 @@ impl ConsensusState {
         if block.proposer != expected_leader {
             return false;
         }
-        // Divergence detection: if both this node and the proposer are tracking
-        // state roots (non-zero), verify they agree on the pre-state.
+        // Divergence detection: if this node is tracking state roots (non-zero
+        // local_state_root), verify the proposal agrees on the pre-state.
+        // A proposal with zero pre_state_root when we have a non-zero local root
+        // is rejected — this prevents attackers from bypassing the divergence check
+        // by omitting state roots.
         let zero = [0u8; 32];
-        if self.local_state_root != zero && block.pre_state_root != zero {
+        if self.local_state_root != zero {
+            if block.pre_state_root == zero {
+                // Reject proposals with missing state roots when we are tracking state.
+                tracing::warn!(
+                    proposer = block.proposer,
+                    height = block.height,
+                    "rejecting proposal with missing state roots (local node tracks state)"
+                );
+                return false;
+            }
             if block.pre_state_root != self.local_state_root {
                 // State divergence detected! The proposer's view of the ledger
                 // differs from ours. Do not vote for this block.
@@ -556,6 +585,11 @@ impl ConsensusState {
                     return false;
                 }
             }
+        } else if self.config.require_authentication {
+            tracing::warn!(
+                "INSECURE: accepting proposal without proposer signature verification (legacy mode). \
+                 Production deployments MUST set explicit members via ConsensusConfig::genesis()."
+            );
         }
         true
     }
@@ -586,6 +620,10 @@ pub struct ConsensusOrchestrator {
     pub member_secrets: Vec<crate::threshold::MemberSecret>,
     /// Pending reconfiguration proposal and its collected votes.
     pub pending_reconfig: Option<ReconfigurationVotes>,
+    /// Epoch length in blocks. Reconfigurations are only applied at epoch boundaries
+    /// (block heights that are multiples of this value). A value of 0 means
+    /// reconfigurations are applied immediately (legacy behavior for tests).
+    pub epoch_length: u64,
 }
 
 impl ConsensusOrchestrator {
@@ -596,6 +634,21 @@ impl ConsensusOrchestrator {
             committee: None,
             member_secrets: Vec::new(),
             pending_reconfig: None,
+            epoch_length: 0,
+        }
+    }
+
+    /// Create a new orchestrator with a configured epoch length.
+    ///
+    /// When `epoch_length > 0`, pending reconfigurations are only applied at
+    /// block heights that are exact multiples of `epoch_length`.
+    pub fn new_with_epoch_length(config: ConsensusConfig, epoch_length: u64) -> Self {
+        Self {
+            config,
+            committee: None,
+            member_secrets: Vec::new(),
+            pending_reconfig: None,
+            epoch_length,
         }
     }
 
@@ -651,8 +704,10 @@ impl ConsensusOrchestrator {
         }
 
         let proposal_hash = proposal.hash();
-        // The proposer's vote counts as the first vote.
-        let voters = vec![proposal.proposer.clone()];
+        // The proposer's vote counts as the first vote. The proposer's signature
+        // over the proposal content (which includes the hash) serves as their vote.
+        let proposer_sig = proposal.signature.clone();
+        let voters = vec![(proposal.proposer.clone(), proposer_sig)];
 
         self.pending_reconfig = Some(ReconfigurationVotes {
             proposal,
@@ -666,6 +721,8 @@ impl ConsensusOrchestrator {
     /// Vote on a pending reconfiguration proposal.
     ///
     /// The voter must be a current member and must provide the correct proposal hash.
+    /// The vote is signed with the voter's signing key over the proposal hash,
+    /// binding the vote cryptographically to the voter's identity.
     pub fn vote_reconfiguration(
         &mut self,
         proposal_hash: [u8; 32],
@@ -689,11 +746,19 @@ impl ConsensusOrchestrator {
         }
 
         // Check voter hasn't already voted.
-        if reconfig.voters.contains(&voter_pubkey) {
+        if reconfig.voters.iter().any(|(pk, _)| pk == &voter_pubkey) {
             return Err(ConsensusError::AlreadyVoted);
         }
 
-        reconfig.voters.push(voter_pubkey);
+        // Sign the proposal hash with the voter's key.
+        let vote_sig = sign(voter, &proposal_hash);
+
+        // Verify the signature before accepting (defense in depth).
+        if !voter_pubkey.verify(&proposal_hash, &vote_sig) {
+            return Err(ConsensusError::VoterNotMember);
+        }
+
+        reconfig.voters.push((voter_pubkey, vote_sig));
         Ok(())
     }
 
@@ -838,8 +903,14 @@ impl ConsensusOrchestrator {
         }
 
         // After finalization, check if a pending reconfiguration has reached quorum.
-        // If so, apply it: the new config takes effect for the NEXT round.
-        if self.reconfig_has_quorum() {
+        // Reconfigurations are only applied at epoch boundaries to prevent mid-epoch
+        // membership changes that could violate safety assumptions. When epoch_length
+        // is 0 (legacy/test mode), reconfigurations are applied immediately.
+        let finalized_height = proposal.height;
+        let at_epoch_boundary = self.epoch_length == 0
+            || crate::epoch::is_epoch_boundary(finalized_height, self.epoch_length);
+
+        if self.reconfig_has_quorum() && at_epoch_boundary {
             if let Some(new_config) = self.apply_pending_reconfiguration() {
                 // Update all online nodes to use the new configuration.
                 for state in states.iter_mut() {
@@ -878,7 +949,9 @@ mod tests {
     use crate::types::{LightClientProof, generate_keypair};
 
     fn setup_nodes(n: usize) -> (ConsensusConfig, Vec<ConsensusState>) {
-        let config = ConsensusConfig::new(n);
+        let mut config = ConsensusConfig::new(n);
+        // Suppress legacy-mode warnings in tests that intentionally use no-member config.
+        config.require_authentication = false;
         let states: Vec<ConsensusState> = (0..n)
             .map(|i| {
                 let (sk, _pk) = generate_keypair();
@@ -1518,7 +1591,7 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_state_root_skips_divergence_check() {
+    fn test_zero_state_root_rejected_when_local_tracks_state() {
         let (config, mut states) = setup_nodes(4);
 
         // Leader proposes with zero state roots (legacy mode).
@@ -1537,11 +1610,37 @@ mod tests {
         let proposal = states[1].create_proposal().unwrap();
         assert_eq!(proposal.pre_state_root, [0u8; 32]); // zero = legacy
 
-        // Nodes should still accept (zero pre_state_root means no divergence check).
+        // Nodes tracking state should REJECT proposals with zero pre_state_root.
+        // This prevents attackers from bypassing divergence detection by omitting
+        // state roots.
+        let vote = states[0].vote_on_proposal(&proposal);
+        assert!(
+            vote.is_none(),
+            "nodes tracking state should reject proposals with zero pre_state_root"
+        );
+    }
+
+    #[test]
+    fn test_zero_state_root_accepted_when_local_not_tracking() {
+        let (config, mut states) = setup_nodes(4);
+
+        // Leader proposes with zero state roots (legacy mode).
+        states[1].submit_revocation(RevocationEvent {
+            token_id: "token-legacy".to_string(),
+            authority_id: 1,
+            signature: Signature([53u8; 64]),
+        });
+
+        // Other nodes also have zero local state roots (not tracking state).
+        // This is the legacy mode where no divergence detection is active.
+        let proposal = states[1].create_proposal().unwrap();
+        assert_eq!(proposal.pre_state_root, [0u8; 32]);
+
+        // Nodes NOT tracking state should accept (both sides zero).
         let vote = states[0].vote_on_proposal(&proposal);
         assert!(
             vote.is_some(),
-            "zero pre_state_root should skip divergence check"
+            "nodes not tracking state should accept proposals with zero pre_state_root"
         );
     }
 

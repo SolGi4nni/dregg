@@ -151,6 +151,14 @@ pub struct BridgePresentationProof {
     /// fact hashes. The verifier recomputes from the plaintext facts and checks equality.
     /// For fully private mode, this is `BabyBear::ZERO`.
     pub revealed_facts_commitment: BabyBear,
+    /// Composition commitment binding all sub-proofs together.
+    ///
+    /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`.
+    /// It is included as a public input in the issuer membership STARK, preventing
+    /// an attacker from mixing sub-proofs across different presentations.
+    /// The verifier recomputes this from the other sub-proofs and checks it matches
+    /// the value committed in the STARK's public inputs.
+    pub composition_commitment: BabyBear,
 }
 
 impl BridgePresentationProof {
@@ -283,6 +291,7 @@ impl BridgePresentationProof {
             validated_ivc_proof: self.validated_ivc_proof,
             verification: self.verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment: self.composition_commitment,
         }
     }
 }
@@ -320,6 +329,9 @@ pub struct WirePresentationProof {
     pub verification: PresentationVerification,
     /// Commitment to the selectively revealed facts.
     pub revealed_facts_commitment: BabyBear,
+    /// Composition commitment binding all sub-proofs together.
+    #[serde(default)]
+    pub composition_commitment: BabyBear,
 }
 
 impl BridgePresentationBuilder {
@@ -653,6 +665,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment: BabyBear::ZERO, // prove_fast has no STARK binding
         })
     }
 
@@ -705,6 +718,10 @@ impl BridgePresentationBuilder {
             .prove()
             .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
 
+        // The composition_commitment was computed in build_circuit_witness_poseidon2
+        // and is now embedded in the STARK proof's public inputs via the witness.
+        let composition_commitment = circuit_witness.composition_commitment;
+
         Ok(BridgePresentationProof {
             circuit_proof,
             real_stark_proof: Some(stark_proof),
@@ -716,6 +733,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment,
         })
     }
 
@@ -772,6 +790,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment: BabyBear::ZERO, // Linear AIR (legacy, test-only)
         })
     }
 
@@ -831,6 +850,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment: BabyBear::ZERO, // IVC path (no issuer STARK binding yet)
         })
     }
 
@@ -953,6 +973,10 @@ impl BridgePresentationBuilder {
             }
         };
 
+        // The composition_commitment was computed in build_circuit_witness_poseidon2
+        // and is now embedded in the STARK proof's public inputs via the witness.
+        let composition_commitment = circuit_witness.composition_commitment;
+
         Ok(BridgePresentationProof {
             circuit_proof,
             real_stark_proof: Some(stark_proof),
@@ -964,6 +988,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment,
         })
     }
 
@@ -1116,6 +1141,7 @@ impl BridgePresentationBuilder {
         // We need the federation_root to match the issuer_membership.expected_root
         // for the proof to verify.
         // NOTE: Legacy path uses blinding_factor=ZERO (no ring membership).
+        // NOTE: Legacy path uses composition_commitment=ZERO (no sub-proof binding).
         let witness = PresentationWitness {
             federation_root: issuer_membership.expected_root,
             request_predicate: request_pred_bb,
@@ -1127,6 +1153,7 @@ impl BridgePresentationBuilder {
             revealed_facts_commitment: self.revealed_facts_commitment,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness,
+            composition_commitment: BabyBear::ZERO,
         };
 
         Ok(witness)
@@ -1183,6 +1210,37 @@ impl BridgePresentationBuilder {
         // This ensures the tag `Poseidon2(final_root, randomness)` is different each show.
         let presentation_randomness = generate_presentation_randomness();
 
+        // Compute the presentation tag (same formula as the circuit uses).
+        let final_root = if let Some(last_fold) = fold_chain.last() {
+            last_fold.new_root
+        } else {
+            derivation_state_root
+        };
+        let presentation_tag = poseidon2::hash_2_to_1(final_root, presentation_randomness);
+
+        // Compute the fold chain commitment: Poseidon2 over all fold step roots.
+        // This summarizes the entire fold chain into a single field element.
+        let fold_chain_commitment = if fold_chain.is_empty() {
+            BabyBear::ZERO
+        } else {
+            let fold_roots: Vec<BabyBear> = fold_chain
+                .iter()
+                .flat_map(|f| [f.old_root, f.new_root])
+                .collect();
+            poseidon2::hash_many(&fold_roots)
+        };
+
+        // SECURITY: Composition commitment binds all sub-proofs together.
+        // This is included as a public input in the issuer membership STARK.
+        // If an attacker swaps ANY sub-proof (e.g., attaches a valid membership
+        // STARK from one token to a forged fold chain from another), the
+        // composition_commitment will not match, and STARK verification fails.
+        let composition_commitment = poseidon2::hash_many(&[
+            fold_chain_commitment,
+            derivation_state_root,
+            presentation_tag,
+        ]);
+
         // Assemble the presentation witness.
         let witness = PresentationWitness {
             federation_root: issuer_membership.expected_root,
@@ -1195,6 +1253,7 @@ impl BridgePresentationBuilder {
             revealed_facts_commitment: self.revealed_facts_commitment,
             blinding_factor,
             presentation_randomness,
+            composition_commitment,
         };
 
         Ok(witness)
@@ -1976,7 +2035,56 @@ pub fn verify_presentation_full(
         }
     }
 
-    // 4. Verify the real STARK proof.
+    // 4. Verify composition commitment (sub-proof binding).
+    //    If the STARK proof contains a composition_commitment (pi[3] for blinded,
+    //    pi[3] for non-blinded), verify it matches the locally recomputed value
+    //    from the fold chain and derivation sub-proofs. This prevents an attacker
+    //    from attaching a valid membership STARK from one token to a forged fold
+    //    chain from another.
+    if proof.composition_commitment != BabyBear::ZERO {
+        // Recompute the composition commitment from the sub-proof data.
+        let fold_chain_commitment = if real.fold_proofs.is_empty() {
+            BabyBear::ZERO
+        } else {
+            let fold_roots: Vec<BabyBear> = real
+                .fold_proofs
+                .iter()
+                .filter(|fp| fp.public_inputs.len() >= 2)
+                .flat_map(|fp| [fp.public_inputs[0], fp.public_inputs[1]])
+                .collect();
+            if fold_roots.is_empty() {
+                BabyBear::ZERO
+            } else {
+                poseidon2::hash_many(&fold_roots)
+            }
+        };
+        let derivation_state_root = if real.derivation_proof.public_inputs.is_empty() {
+            BabyBear::ZERO
+        } else {
+            real.derivation_proof.public_inputs[0]
+        };
+        let presentation_tag = proof.circuit_proof.public_inputs.presentation_tag;
+
+        let recomputed = poseidon2::hash_many(&[
+            fold_chain_commitment,
+            derivation_state_root,
+            presentation_tag,
+        ]);
+
+        if recomputed != proof.composition_commitment {
+            return false;
+        }
+
+        // Also verify the composition_commitment is present in the STARK's public inputs.
+        // For blinded proofs: pi = [blinded_leaf, root, action, composition_commitment]
+        // For non-blinded: pi = [leaf_hash, root, action, composition_commitment]
+        let expected_cc_idx = 3; // After blinded_leaf/leaf_hash, root, action
+        if pi.len() <= expected_cc_idx || pi[expected_cc_idx] != proof.composition_commitment {
+            return false;
+        }
+    }
+
+    // 5. Verify the real STARK proof.
     //    Dispatch based on the AIR name: blinded (ring membership) or non-blinded.
     use pyana_circuit::poseidon2_air::BlindedMerklePoseidon2StarkAir;
     use pyana_circuit::stark::StarkAir;

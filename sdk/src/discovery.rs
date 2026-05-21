@@ -15,7 +15,7 @@
 
 use pyana_circuit::field::BabyBear;
 use pyana_intent::pir::{
-    combine_pir_responses, decode_intent_ids, generate_pir_queries, PirResponse,
+    PirResponse, combine_pir_responses, decode_intent_ids, generate_pir_queries,
 };
 use serde::{Deserialize, Serialize};
 
@@ -201,12 +201,29 @@ impl<T: PirTransport> PrivateDiscoveryClient<T> {
     ///
     /// - `SdkError::Wire` if either HTTP request fails.
     /// - `SdkError::TokenNotFound` if the capability tag is not in the index.
-    pub async fn discover_intents(
-        &self,
-        capability_tag: &str,
-    ) -> Result<Vec<[u8; 32]>, SdkError> {
-        // Step 1: Get database metadata from node A.
-        let info = self.transport.get_pir_info(&self.node_a_url).await?;
+    pub async fn discover_intents(&self, capability_tag: &str) -> Result<Vec<[u8; 32]>, SdkError> {
+        // Step 1: Get database metadata from BOTH nodes.
+        // SECURITY: Fetching metadata from only one node leaks query intent to that
+        // node (it knows a PIR query is about to come from this client). Fetching
+        // from both nodes provides symmetry and allows consistency validation.
+        let (info_a, info_b) = tokio::join!(
+            self.transport.get_pir_info(&self.node_a_url),
+            self.transport.get_pir_info(&self.node_b_url),
+        );
+        let info_a = info_a?;
+        let info_b = info_b?;
+
+        // Validate consistency between the two nodes' databases.
+        // If they disagree on num_rows, the PIR protocol won't produce correct results
+        // and may leak information through dimension mismatches.
+        if info_a.num_rows != info_b.num_rows {
+            return Err(SdkError::Wire(format!(
+                "PIR database inconsistency: node A has {} rows, node B has {} rows",
+                info_a.num_rows, info_b.num_rows
+            )));
+        }
+
+        let info = info_a;
 
         if info.num_rows == 0 {
             return Ok(Vec::new());
@@ -226,7 +243,16 @@ impl<T: PirTransport> PrivateDiscoveryClient<T> {
         // Step 3: Generate complementary PIR queries.
         let (q_a, q_b) = generate_pir_queries(target_index, info.num_rows);
 
-        // Step 4: Send queries to both nodes (could be parallelized with tokio::join!).
+        // Step 4: Send queries to both nodes in parallel.
+        // Add a small random delay to reduce timing correlation between metadata
+        // fetch and the actual PIR query.
+        let delay_ms = {
+            let mut buf = [0u8; 2];
+            getrandom::fill(&mut buf).unwrap_or(());
+            u16::from_le_bytes(buf) % 50
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+
         let req_a = PirQueryRequest {
             query_vector: q_a.query_vector.iter().map(|e| e.as_u32()).collect(),
         };
@@ -296,7 +322,7 @@ impl crate::wallet::AgentWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_intent::pir::{compute_pir_response, IntentIndex, PirQuery};
+    use pyana_intent::pir::{IntentIndex, PirQuery, compute_pir_response};
     use pyana_intent::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec};
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -479,24 +505,24 @@ mod tests {
         // Verify that q_a is NOT the trivial unit vector e_5 (which would reveal
         // the query target). A random vector over BabyBear will have many non-zero
         // entries with overwhelming probability.
-        let is_unit_a = q_a.iter().enumerate().all(|(i, &v)| {
-            if i == target_idx {
-                v == 1
-            } else {
-                v == 0
-            }
-        });
-        assert!(!is_unit_a, "query to node A must not be the unit vector e_i");
+        let is_unit_a = q_a
+            .iter()
+            .enumerate()
+            .all(|(i, &v)| if i == target_idx { v == 1 } else { v == 0 });
+        assert!(
+            !is_unit_a,
+            "query to node A must not be the unit vector e_i"
+        );
 
         // Same check for node B.
-        let is_unit_b = q_b.iter().enumerate().all(|(i, &v)| {
-            if i == target_idx {
-                v == 1
-            } else {
-                v == 0
-            }
-        });
-        assert!(!is_unit_b, "query to node B must not be the unit vector e_i");
+        let is_unit_b = q_b
+            .iter()
+            .enumerate()
+            .all(|(i, &v)| if i == target_idx { v == 1 } else { v == 0 });
+        assert!(
+            !is_unit_b,
+            "query to node B must not be the unit vector e_i"
+        );
 
         // Verify that q_a + q_b = e_target_idx in BabyBear arithmetic.
         // This confirms the protocol correctness without revealing the index
@@ -510,10 +536,7 @@ mod tests {
             } else {
                 BabyBear::ZERO
             };
-            assert_eq!(
-                sum, expected,
-                "q_a[{i}] + q_b[{i}] should equal e_i[{i}]"
-            );
+            assert_eq!(sum, expected, "q_a[{i}] + q_b[{i}] should equal e_i[{i}]");
         }
     }
 

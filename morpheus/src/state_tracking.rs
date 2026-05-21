@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -73,6 +73,13 @@ pub struct StateIndex<Tr: Transaction> {
     /// Maps views to sets of unfinalized leader blocks
     /// Tracks which leader blocks are not yet finalized by view
     pub unfinalized_lead_by_view: BTreeMap<ViewNum, BTreeSet<BlockKey>>,
+
+    /// Tracks (block_type, author, slot) tuples that have been seen.
+    /// Used to detect equivocating blocks: if a process produces two different
+    /// blocks for the same (type, author, slot) tuple, the second is rejected.
+    /// This is a serde-skip field since it can be reconstructed from `blocks`.
+    #[serde(skip, default)]
+    pub seen_slots: HashSet<(BlockType, Identity, SlotNum)>,
 }
 
 impl<Tr: Transaction> StateIndex<Tr> {
@@ -96,6 +103,7 @@ impl<Tr: Transaction> StateIndex<Tr> {
             unfinalized: BTreeMap::new(),
             contains_lead_by_view: BTreeMap::new(),
             unfinalized_lead_by_view: BTreeMap::new(),
+            seen_slots: HashSet::new(),
         }
     }
 }
@@ -259,10 +267,29 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
     /// updated and specifies the set of all received messages."
     ///
     /// It will also record any QCs that are used as pointers in the block.
+    /// Rejects equivocating blocks: if a block with the same (type, author, slot)
+    /// but different content has already been recorded, the new block is dropped.
     pub fn record_block(&mut self, block: &Arc<Signed<Block<Tr>>>) {
         if self.index.blocks.contains_key(&block.data.key) {
             tracing::warn!(target: "duplicate_block", key = ?block.data.key);
             return;
+        }
+
+        // Equivocation detection: reject blocks from the same author at the same
+        // (type, slot) if we've already seen a different block for that slot.
+        // This prevents Byzantine nodes from producing multiple conflicting blocks.
+        if let Some(author) = &block.data.key.author {
+            let slot_key = (block.data.key.type_, author.clone(), block.data.key.slot);
+            if !self.index.seen_slots.insert(slot_key) {
+                tracing::warn!(
+                    target: "equivocating_block",
+                    author = ?block.data.key.author,
+                    slot = ?block.data.key.slot,
+                    block_type = ?block.data.key.type_,
+                    "rejecting equivocating block: same (type, author, slot) already seen"
+                );
+                return;
+            }
         }
 
         // max_height is needed for is_eligible_for_tr_2_vote

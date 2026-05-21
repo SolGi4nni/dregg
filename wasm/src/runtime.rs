@@ -139,7 +139,8 @@ impl PyanaRuntime {
     pub fn create_agent(&mut self, name: &str, initial_balance: u64) -> usize {
         let idx = self.agents.len();
 
-        // Derive deterministic keys from name for reproducibility.
+        // NOTE: Keys are deterministic for reproducible browser simulations.
+        // This is NOT secure for production use. Real key derivation uses Ed25519.
         let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-agent-key");
         hasher.update(name.as_bytes());
         hasher.update(&(idx as u64).to_le_bytes());

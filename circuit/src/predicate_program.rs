@@ -305,7 +305,10 @@ impl std::fmt::Display for CompileError {
             }
             Self::EmptyProgram => write!(f, "empty predicate program"),
             Self::UnsupportedNot => {
-                write!(f, "NOT can only be applied to single-AIR predicates")
+                write!(
+                    f,
+                    "NOT is not supported: requires MPC-in-the-head proof of non-satisfaction (not yet implemented). Use comparison flipping (GTE -> LT) instead."
+                )
             }
             Self::InvalidThreshold { k, n } => {
                 write!(f, "threshold k={k} is invalid for {n} predicates")
@@ -458,18 +461,22 @@ fn compile_expr(expr: &PredicateExpr) -> Result<CompiledPredicate, CompileError>
         }
 
         // ─── NOT ───
-        PredicateExpr::Not(inner) => {
-            // NOT is only supported over single-leaf predicates in the current AIR.
-            // For range predicates we can flip the comparison (GTE -> LT, etc.).
-            // For other types, we use a custom gate in a compound AIR.
-            let compiled_inner = compile_expr(inner)?;
-            match &compiled_inner {
-                CompiledPredicate::Single { .. } => Ok(CompiledPredicate::Composite {
-                    sub_proofs: vec![compiled_inner],
-                    formula: CompositeFormula::Not,
-                }),
-                _ => Err(CompileError::UnsupportedNot),
-            }
+        PredicateExpr::Not(_inner) => {
+            // SOUNDNESS FIX: NOT cannot be soundly implemented in the current proof system.
+            //
+            // The previous implementation accepted NOT(P) when the prover "failed to
+            // generate a proof for P." This is UNSOUND: a malicious prover can claim
+            // NOT(P) for ANY P by simply omitting the inner proof (producing empty
+            // sub_proofs). The verifier would then accept based on the absence of proof.
+            //
+            // Correct NOT requires either:
+            // 1. MPC-in-the-head proof of non-satisfaction
+            // 2. A proper algebraic NOT gate (requires proving the complement)
+            // 3. Flipping the comparison (GTE -> LT) at the expression level before
+            //    compilation (caller's responsibility)
+            //
+            // For now, NOT is rejected at compile time.
+            Err(CompileError::UnsupportedNot)
         }
 
         // ─── Threshold ───
@@ -1102,28 +1109,14 @@ fn prove_composite(
             }
         }
         CompositeFormula::Not => {
-            // The single sub-proof must be NOT satisfiable.
-            // NOT in ZK is tricky: we prove that we CANNOT produce a valid proof.
-            // For now, we check locally and produce a "vacuous" proof structure
-            // indicating the inner predicate fails.
-            if sub_compilations.len() != 1 {
-                return Err(ProveError::ProofGenerationFailed(
-                    "NOT requires exactly one sub-predicate".to_string(),
-                ));
-            }
-            match prove_program(&sub_compilations[0], private_state, state_root) {
-                Ok(_) => {
-                    return Err(ProveError::NotSatisfiable(
-                        "NOT: inner predicate is satisfied (should fail)".to_string(),
-                    ));
-                }
-                Err(_) => {
-                    // The inner predicate fails — NOT is satisfied.
-                    // In the current system we cannot produce a ZK proof of non-satisfaction,
-                    // so we record this as a composite with no sub-proofs.
-                    // Full support requires Phase 2 (MPC-in-the-head or NonRevocationAir).
-                }
-            }
+            // SOUNDNESS: NOT is rejected at compile time. If this code path is
+            // reached via direct construction (bypassing the compiler), refuse to
+            // produce a proof to prevent the empty-sub_proofs attack.
+            return Err(ProveError::ProofGenerationFailed(
+                "NOT is not supported: requires MPC-in-the-head proof of non-satisfaction. \
+                 Use comparison flipping (GTE -> LT) at the expression level instead."
+                    .to_string(),
+            ));
         }
     }
 
@@ -1423,8 +1416,10 @@ fn verify_composite_proof(
             verified >= *k
         }
         CompositeFormula::Not => {
-            // NOT verification: the proof must be empty (inner was not satisfiable).
-            sub_proofs.is_empty()
+            // SOUNDNESS FIX: NOT verification previously accepted empty sub_proofs,
+            // which allowed a malicious prover to claim NOT(P) for ANY P by simply
+            // omitting the proof. NOT is now always rejected.
+            false
         }
     }
 }

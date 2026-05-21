@@ -1,6 +1,6 @@
 //! Bottom-up Datalog evaluator with derivation trace recording.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::check;
 use crate::types::*;
@@ -65,6 +65,14 @@ impl Evaluator {
     /// This prevents unbounded computation from pathological rule sets.
     const MAX_EVAL_ROUNDS: usize = 1000;
 
+    /// Maximum number of substitutions generated per round.
+    /// Prevents combinatorial explosion (DoS) from pathological rule/fact sets.
+    const MAX_SUBSTITUTIONS_PER_ROUND: usize = 100_000;
+
+    /// Maximum number of facts allowed in the fact set.
+    /// Prevents unbounded memory growth from fact-set inflation attacks.
+    const MAX_FACTS: usize = 100_000;
+
     /// Evaluate an authorization request, producing a complete derivation trace.
     ///
     /// The evaluation proceeds as follows:
@@ -102,6 +110,11 @@ impl Evaluator {
             }
             steps.extend(new_steps);
             round += 1;
+
+            // Enforce maximum fact set size to prevent memory exhaustion
+            if facts.len() > Self::MAX_FACTS {
+                break;
+            }
         }
 
         // Check for allow conclusions
@@ -153,7 +166,7 @@ impl Evaluator {
     }
 
     /// Run one round of rule application, returning newly derived facts.
-    fn derive_one_round(
+    pub(crate) fn derive_one_round(
         rules: &[Rule],
         facts: &[Fact],
         fact_set: &HashSet<Fact>,
@@ -161,9 +174,12 @@ impl Evaluator {
         let mut new_steps = Vec::new();
         let mut new_facts_this_round: HashSet<Fact> = HashSet::new();
 
+        // Build predicate index for O(1) lookup by predicate symbol (Issue #5)
+        let pred_index = Self::build_predicate_index(facts);
+
         for rule in rules {
             // Find all valid substitutions for this rule's body
-            let substitutions = Self::find_all_substitutions(rule, facts);
+            let substitutions = Self::find_all_substitutions_indexed(rule, facts, &pred_index);
 
             for (subst, body_indices) in substitutions {
                 // Check constraints
@@ -202,9 +218,24 @@ impl Evaluator {
         new_steps
     }
 
-    /// Find all substitutions that satisfy all body atoms of a rule.
+    /// Build a predicate-indexed lookup table for efficient fact retrieval.
+    fn build_predicate_index(facts: &[Fact]) -> HashMap<Symbol, Vec<usize>> {
+        let mut index: HashMap<Symbol, Vec<usize>> = HashMap::new();
+        for (idx, fact) in facts.iter().enumerate() {
+            index.entry(fact.predicate).or_default().push(idx);
+        }
+        index
+    }
+
+    /// Find all substitutions that satisfy all body atoms of a rule, using predicate indexing.
     /// Returns pairs of (substitution, body_fact_indices).
-    fn find_all_substitutions(rule: &Rule, facts: &[Fact]) -> Vec<(Substitution, Vec<usize>)> {
+    ///
+    /// Enforces `MAX_SUBSTITUTIONS_PER_ROUND` to prevent combinatorial explosion.
+    fn find_all_substitutions_indexed(
+        rule: &Rule,
+        facts: &[Fact],
+        pred_index: &HashMap<Symbol, Vec<usize>>,
+    ) -> Vec<(Substitution, Vec<usize>)> {
         if rule.body.is_empty() {
             // A rule with no body always fires (unconditional).
             return vec![(Substitution::empty(), vec![])];
@@ -217,13 +248,28 @@ impl Evaluator {
         for body_atom in &rule.body {
             let mut next_candidates = Vec::new();
 
+            // Use predicate index: only consider facts with matching predicate
+            let fact_indices = match pred_index.get(&body_atom.predicate) {
+                Some(indices) => indices.as_slice(),
+                None => {
+                    // No facts with this predicate — rule cannot fire
+                    candidates = Vec::new();
+                    break;
+                }
+            };
+
             for (subst, indices) in &candidates {
-                // Try to unify this body atom with each fact
-                for (fact_idx, fact) in facts.iter().enumerate() {
+                for &fact_idx in fact_indices {
+                    let fact = &facts[fact_idx];
                     if let Some(new_subst) = Self::unify_atom_with_fact(body_atom, fact, subst) {
                         let mut new_indices = indices.clone();
                         new_indices.push(fact_idx);
                         next_candidates.push((new_subst, new_indices));
+
+                        // Enforce substitution limit (Issue #4: DoS prevention)
+                        if next_candidates.len() > Self::MAX_SUBSTITUTIONS_PER_ROUND {
+                            return next_candidates;
+                        }
                     }
                 }
             }
@@ -235,6 +281,15 @@ impl Evaluator {
         }
 
         candidates
+    }
+
+    /// Find all substitutions that satisfy all body atoms of a rule.
+    /// Returns pairs of (substitution, body_fact_indices).
+    ///
+    /// This is the non-indexed version, kept for backward compatibility with tests.
+    fn find_all_substitutions(rule: &Rule, facts: &[Fact]) -> Vec<(Substitution, Vec<usize>)> {
+        let pred_index = Self::build_predicate_index(facts);
+        Self::find_all_substitutions_indexed(rule, facts, &pred_index)
     }
 
     /// Try to unify an atom pattern with a concrete fact under the given substitution.

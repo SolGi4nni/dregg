@@ -42,8 +42,10 @@ use pyana_turn::ProofVerifier;
 ///
 /// # Timestamp Freshness
 ///
-/// When `max_proof_age_secs` is set (non-zero), the verifier also checks that the
-/// proof's timestamp (if present as the 4th public input) is within the allowed window.
+/// When `max_proof_age_secs` is set (non-zero), the verifier REQUIRES that the
+/// proof's 4th public input contains a valid timestamp within the allowed window.
+/// Proofs without a timestamp field (fewer than 4 public inputs) are rejected.
+/// This prevents a prover from stripping the timestamp to bypass freshness checks.
 /// The current time is obtained from `std::time::SystemTime::now()`.
 ///
 /// # Usage
@@ -68,8 +70,16 @@ impl StarkProofVerifier {
 
     /// Create a new STARK proof verifier with timestamp freshness enforcement.
     ///
-    /// Proofs with a timestamp older than `max_age_secs` from the current time
-    /// will be rejected. Use `DEFAULT_MAX_PROOF_AGE_SECS` (300s) for typical use.
+    /// Proofs MUST include a timestamp as the 4th public input (index 3).
+    /// Proofs without a timestamp field are rejected. Proofs with a timestamp
+    /// older than `max_age_secs` from the current time are also rejected.
+    /// Use `DEFAULT_MAX_PROOF_AGE_SECS` (300s) for typical use.
+    ///
+    /// **NOTE**: The standard `BridgePresentationBuilder::prove()` path does not
+    /// include a timestamp in the issuer membership STARK proof's public inputs
+    /// (the timestamp is only in the circuit-level `PresentationPublicInputs`).
+    /// Provers targeting verifiers with `with_max_age` must explicitly append a
+    /// Unix timestamp as pi[3] when generating the STARK proof.
     pub fn with_max_age(max_age_secs: i64) -> Self {
         Self {
             max_proof_age_secs: max_age_secs,
@@ -107,8 +117,9 @@ impl ProofVerifier for StarkProofVerifier {
         }
 
         // 3. Verify the action binding commitment.
+        // The action binding is always at pi[2] (after leaf_hash and merkle_root).
         let expected_binding = compute_action_binding(action, resource);
-        let proof_binding = pi.last().copied().unwrap_or(BabyBear::ZERO);
+        let proof_binding = pi[2];
         if proof_binding != expected_binding {
             return false;
         }
@@ -121,16 +132,21 @@ impl ProofVerifier for StarkProofVerifier {
         let mut vk_bytes = [0u8; 32];
         vk_bytes.copy_from_slice(&vk[..32]);
 
-        let expected_root = if vk_bytes[4..].iter().all(|&b| b == 0) {
-            BabyBear::new_canonical(u32::from_le_bytes([
-                vk_bytes[0],
-                vk_bytes[1],
-                vk_bytes[2],
-                vk_bytes[3],
-            ]))
-        } else {
-            crate::present::bytes_to_babybear(&vk_bytes)
-        };
+        // The VK encodes a BabyBear field element as its canonical u32 representation
+        // in the first 4 bytes (little-endian). This matches the prover's encoding
+        // (via `bb_to_bytes` / `babybear_to_bytes32`) used in BridgePresentationBuilder
+        // and the SDK. Bytes 4-31 are reserved and ignored.
+        //
+        // NOTE: `bytes_to_babybear` (Poseidon2 hash of 8 limbs) is NOT used here because
+        // it is a one-way compression function that cannot round-trip with the canonical
+        // BabyBear-to-bytes encoding. The prover stores `root.0.to_le_bytes()` in bytes
+        // 0-3, and the verifier must recover it with the inverse operation.
+        let expected_root = BabyBear::new_canonical(u32::from_le_bytes([
+            vk_bytes[0],
+            vk_bytes[1],
+            vk_bytes[2],
+            vk_bytes[3],
+        ]));
 
         let proof_root = pi[1];
         if proof_root != expected_root {
@@ -139,7 +155,14 @@ impl ProofVerifier for StarkProofVerifier {
 
         // 5. Timestamp freshness check (if configured).
         // The timestamp is the 4th public input (index 3) when present.
-        if self.max_proof_age_secs > 0 && pi.len() >= 4 {
+        // SECURITY: When freshness is required (max_proof_age_secs > 0), the proof
+        // MUST include a timestamp. Rejecting proofs without timestamps prevents a
+        // prover from stripping the timestamp to bypass freshness enforcement.
+        if self.max_proof_age_secs > 0 {
+            if pi.len() < 4 {
+                // Timestamp required but proof does not include one — reject.
+                return false;
+            }
             let proof_timestamp = pi[3].0 as i64;
             if proof_timestamp == 0 {
                 // No timestamp in proof — reject when freshness is required.
@@ -169,9 +192,21 @@ mod tests {
     use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{proof_to_bytes, prove};
 
-    /// Helper: generate a valid proof with action binding (3 public inputs).
-    /// Uses the canonical `compute_action_binding` to produce the binding commitment.
-    fn generate_bound_proof(action: &str, resource: &str) -> (Vec<u8>, Vec<BabyBear>) {
+    /// Encode a BabyBear value as a 32-byte verification key.
+    ///
+    /// The canonical VK encoding stores the BabyBear's u32 representation in the
+    /// first 4 bytes (little-endian), with remaining bytes zeroed. This is the
+    /// encoding used by the prover (BridgePresentationBuilder / SDK) and the
+    /// verifier's `new_canonical(u32_from_first_4_bytes)` extraction.
+    fn babybear_to_vk(bb: BabyBear) -> [u8; 32] {
+        let mut vk = [0u8; 32];
+        vk[..4].copy_from_slice(&bb.0.to_le_bytes());
+        vk
+    }
+
+    /// Helper: generate a valid proof with action binding (3 public inputs: leaf, root, binding).
+    /// Returns (proof_bytes, public_inputs, vk_bytes).
+    fn generate_bound_proof(action: &str, resource: &str) -> (Vec<u8>, Vec<BabyBear>, [u8; 32]) {
         let siblings = [
             [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
             [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
@@ -194,17 +229,54 @@ mod tests {
         let air = MerklePoseidon2StarkAir;
         let proof = prove(&air, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&proof);
-        (proof_bytes, public_inputs)
+
+        // Encode the Merkle root (pi[1]) as the VK using the canonical encoding.
+        let vk = babybear_to_vk(public_inputs[1]);
+
+        (proof_bytes, public_inputs, vk)
+    }
+
+    /// Helper: generate a valid proof with 4 public inputs (leaf, root, binding, timestamp).
+    /// The timestamp is included as the 4th public input for freshness-checked verifiers.
+    fn generate_bound_proof_with_timestamp(
+        action: &str,
+        resource: &str,
+        timestamp: u32,
+    ) -> (Vec<u8>, Vec<BabyBear>, [u8; 32]) {
+        let siblings = [
+            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
+            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
+            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
+            [
+                BabyBear::new(1000),
+                BabyBear::new(1100),
+                BabyBear::new(1200),
+            ],
+        ];
+        let positions: [u8; 4] = [0, 1, 2, 3];
+        let leaf_hash = BabyBear::new(12345);
+        let (trace, mut public_inputs) =
+            generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+
+        // Append the canonical action binding as third public input.
+        let binding = compute_action_binding(action, resource);
+        public_inputs.push(binding);
+
+        // Append timestamp as 4th public input.
+        public_inputs.push(BabyBear::new(timestamp));
+
+        let air = MerklePoseidon2StarkAir;
+        let proof = prove(&air, &trace, &public_inputs);
+        let proof_bytes = proof_to_bytes(&proof);
+
+        let vk = babybear_to_vk(public_inputs[1]);
+
+        (proof_bytes, public_inputs, vk)
     }
 
     #[test]
     fn test_stark_verifier_valid_proof() {
-        let (proof_bytes, public_inputs) = generate_bound_proof("read", "api/v1/users");
-
-        // The federation root is public_inputs[1] (the Merkle root).
-        let root_bb = public_inputs[1];
-        let mut vk = [0u8; 32];
-        vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
 
         let verifier = StarkProofVerifier::new();
         assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
@@ -212,28 +284,23 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_wrong_federation_root() {
-        let (proof_bytes, _public_inputs) = generate_bound_proof("read", "api/v1/users");
+        let (proof_bytes, _public_inputs, _vk) = generate_bound_proof("read", "api/v1/users");
 
         // Use a WRONG federation root.
-        let mut vk = [0u8; 32];
-        vk[..4].copy_from_slice(&99999u32.to_le_bytes());
+        let wrong_vk = babybear_to_vk(BabyBear::new(99999));
 
         let verifier = StarkProofVerifier::new();
-        assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+        assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &wrong_vk));
     }
 
     #[test]
     fn test_stark_verifier_tampered_proof() {
-        let (mut proof_bytes, public_inputs) = generate_bound_proof("read", "api/v1/users");
+        let (mut proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
 
         // Tamper with the proof.
         if proof_bytes.len() > 10 {
             proof_bytes[10] ^= 0xFF;
         }
-
-        let root_bb = public_inputs[1];
-        let mut vk = [0u8; 32];
-        vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
 
         let verifier = StarkProofVerifier::new();
         assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
@@ -249,11 +316,7 @@ mod tests {
     #[test]
     fn test_stark_verifier_wrong_action_rejected() {
         // A proof bound to (read, api/v1/users) should be rejected for (write, api/v1/users).
-        let (proof_bytes, public_inputs) = generate_bound_proof("read", "api/v1/users");
-
-        let root_bb = public_inputs[1];
-        let mut vk = [0u8; 32];
-        vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
 
         let verifier = StarkProofVerifier::new();
         assert!(!verifier.verify(&proof_bytes, "write", "api/v1/users", &vk));
@@ -262,13 +325,91 @@ mod tests {
     #[test]
     fn test_stark_verifier_wrong_resource_rejected() {
         // A proof bound to (read, api/v1/users) should be rejected for (read, api/v1/posts).
-        let (proof_bytes, public_inputs) = generate_bound_proof("read", "api/v1/users");
-
-        let root_bb = public_inputs[1];
-        let mut vk = [0u8; 32];
-        vk[..4].copy_from_slice(&root_bb.0.to_le_bytes());
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
 
         let verifier = StarkProofVerifier::new();
         assert!(!verifier.verify(&proof_bytes, "read", "api/v1/posts", &vk));
+    }
+
+    // =========================================================================
+    // Timestamp freshness enforcement tests (Fix 2)
+    // =========================================================================
+
+    #[test]
+    fn test_stark_verifier_no_max_age_accepts_without_timestamp() {
+        // A verifier with max_age=0 should accept proofs without a timestamp field.
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
+
+        let verifier = StarkProofVerifier::new(); // max_age = 0
+        assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_max_age_rejects_missing_timestamp() {
+        // SECURITY: A prover cannot strip the timestamp to bypass freshness enforcement.
+        // When max_proof_age_secs > 0, proofs without a timestamp (pi.len() < 4) are rejected.
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
+
+        let verifier = StarkProofVerifier::with_max_age(300); // 5 minutes
+        // The proof has only 3 public inputs (no timestamp) — should be rejected.
+        assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_max_age_accepts_fresh_timestamp() {
+        // A proof with a recent timestamp should be accepted.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+
+        let (proof_bytes, _public_inputs, vk) =
+            generate_bound_proof_with_timestamp("read", "api/v1/users", now);
+
+        let verifier = StarkProofVerifier::with_max_age(300);
+        assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_max_age_rejects_stale_timestamp() {
+        // A proof with a timestamp older than max_age should be rejected.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+
+        // Proof timestamp is 600 seconds in the past (max_age is 300).
+        let stale_timestamp = now.saturating_sub(600);
+        let (proof_bytes, _public_inputs, vk) =
+            generate_bound_proof_with_timestamp("read", "api/v1/users", stale_timestamp);
+
+        let verifier = StarkProofVerifier::with_max_age(300);
+        assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_max_age_rejects_zero_timestamp() {
+        // A proof with timestamp=0 is treated as "no timestamp" and rejected.
+        let (proof_bytes, _public_inputs, vk) =
+            generate_bound_proof_with_timestamp("read", "api/v1/users", 0);
+
+        let verifier = StarkProofVerifier::with_max_age(300);
+        assert!(!verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    #[test]
+    fn test_stark_verifier_vk_with_nonzero_trailing_bytes() {
+        // Regression test: VK bytes 4-31 being non-zero should NOT affect the result.
+        // This tests that the old content-dependent heuristic has been removed.
+        let (proof_bytes, public_inputs, _vk) = generate_bound_proof("read", "api/v1/users");
+
+        // Encode with non-zero bytes in positions 4-31.
+        let root_bb = public_inputs[1];
+        let mut vk_nonzero = [0xFFu8; 32];
+        vk_nonzero[..4].copy_from_slice(&root_bb.0.to_le_bytes());
+
+        let verifier = StarkProofVerifier::new();
+        // Should still verify correctly — only first 4 bytes matter.
+        assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk_nonzero));
     }
 }

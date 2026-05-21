@@ -557,6 +557,14 @@ impl AgentWallet {
         blake3::derive_key(context, &self.signing_key.to_bytes())
     }
 
+    /// Get the node's Ed25519 signing key as a `pyana_types::SigningKey`.
+    ///
+    /// Used by the gossip layer for asymmetric envelope signing. Each node
+    /// signs with its own key; peers verify using this node's public key.
+    pub fn gossip_signing_key(&self) -> pyana_types::SigningKey {
+        pyana_types::SigningKey::from_bytes(&self.signing_key.to_bytes())
+    }
+
     /// Derive a [`CellId`] for this agent in a given domain.
     ///
     /// The cell ID is deterministically derived from the agent's public key
@@ -2170,6 +2178,7 @@ mod tests {
             action_count: 1,
             previous_receipt_hash: None,
             agent,
+            federation_id: [0u8; 32],
             routing_directives: Vec::new(),
             derivation_records: Vec::new(),
             executor_signature: None,

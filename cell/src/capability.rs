@@ -99,10 +99,26 @@ impl CapabilitySet {
     ///
     /// A capability with `permissions: Impossible` is treated as revoked/frozen and
     /// does NOT count as a valid access path.
+    ///
+    /// NOTE: This method does NOT check expiration. Use `has_access_at()` when you
+    /// have a current block height available (e.g., during turn execution).
     pub fn has_access(&self, target: &CellId) -> bool {
         self.refs
             .iter()
             .any(|r| &r.target == target && r.permissions != AuthRequired::Impossible)
+    }
+
+    /// Check if this set contains any non-revoked, non-expired capability referencing
+    /// the given target at the given block height.
+    ///
+    /// A capability with `permissions: Impossible` is treated as revoked/frozen.
+    /// A capability whose `expires_at` is less than `current_height` is treated as expired.
+    pub fn has_access_at(&self, target: &CellId, current_height: u64) -> bool {
+        self.refs.iter().any(|r| {
+            &r.target == target
+                && r.permissions != AuthRequired::Impossible
+                && r.expires_at.map_or(true, |exp| current_height <= exp)
+        })
     }
 
     /// Attenuate a capability: create a new CapabilityRef with narrower permissions.

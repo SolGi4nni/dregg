@@ -616,6 +616,7 @@ fn main() {
         revealed_facts_commitment: BabyBear::ZERO, // Selective: reveal only what we choose
         blinding_factor,
         presentation_randomness,
+        composition_commitment: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation_witness);

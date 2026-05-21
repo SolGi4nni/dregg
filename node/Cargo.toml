@@ -18,8 +18,13 @@ pyana-federation = { path = "../federation" }
 pyana-sdk = { path = "../sdk" }
 pyana-intent = { path = "../intent" }
 pyana-circuit = { path = "../circuit" }
+pyana-coord = { path = "../coord" }
 pyana-net = { path = "../net" }
-macaroon = { path = "../macaroon" }
+pyana-morpheus = { path = "../morpheus" }
+hints = { path = "../hints" }
+macaroon = { workspace = true }
+ark-serialize = { workspace = true }
+ark-std = "0.5.0"
 
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
@@ -34,6 +39,8 @@ uuid = { version = "1", features = ["v4"] }
 ed25519-dalek = { version = "2", features = ["std"] }
 quinn = { version = "0.11", features = ["runtime-tokio", "rustls-ring"] }
 blake3 = "1"
+subtle = { workspace = true }
+base64 = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 zeroize = { workspace = true }
 x25519-dalek = { workspace = true }

@@ -87,6 +87,25 @@ pub fn verify_token_datalog(
         .iter()
         .any(|f| symbols.resolve(f.predicate) == Some("valid_until"));
 
+    // 2c. Extract temporal values from the factset BEFORE filtering.
+    // Since valid_until and valid_after are now reserved predicates (Issue #6),
+    // they will be filtered out by committed_facts_to_trace. We extract them here
+    // and inject them as engine-controlled facts in step 3b.
+    let mut valid_until_values: Vec<i64> = Vec::new();
+    let mut valid_after_values: Vec<i64> = Vec::new();
+    for fact in state.all_facts() {
+        if symbols.resolve(fact.predicate) == Some("valid_until") {
+            if let Some(val) = field_element_to_int(&fact.terms[0]) {
+                valid_until_values.push(val);
+            }
+        }
+        if symbols.resolve(fact.predicate) == Some("valid_after") {
+            if let Some(val) = field_element_to_int(&fact.terms[0]) {
+                valid_after_values.push(val);
+            }
+        }
+    }
+
     // 3. Convert committed facts to trace-format facts.
     // This filters out reserved predicates to prevent policy injection attacks.
     let mut trace_facts = committed_facts_to_trace(&state, &symbols);
@@ -109,6 +128,22 @@ pub fn verify_token_datalog(
         trace_facts.push(TraceFact::new(
             symbol_from_str("no_time_bound"),
             vec![Term::Int(1)],
+        ));
+    }
+
+    // 3c. Inject temporal facts as engine-controlled facts.
+    // These were extracted from the factset before filtering (step 2c) and are
+    // injected here so they CANNOT be spoofed by user-supplied facts with reserved names.
+    for val in &valid_until_values {
+        trace_facts.push(TraceFact::new(
+            symbol_from_str("valid_until"),
+            vec![Term::Int(*val)],
+        ));
+    }
+    for val in &valid_after_values {
+        trace_facts.push(TraceFact::new(
+            symbol_from_str("valid_after"),
+            vec![Term::Int(*val)],
         ));
     }
 
@@ -453,6 +488,12 @@ const RESERVED_PREDICATES: &[&str] = &[
     "no_time_bound",
     "action_allowed",
     "svc_action_allowed",
+    // Issue #6: Temporal predicates must be reserved to prevent injection attacks.
+    // A malicious prover/attenuator could inject valid_until/valid_after facts to
+    // bypass temporal constraints (e.g., inject valid_until(far_future) to extend
+    // an expired token, or omit valid_after to bypass not-before checks).
+    "valid_until",
+    "valid_after",
 ];
 
 /// Convert committed facts (FieldElement-based) to trace-format facts (Symbol-based).
@@ -865,6 +906,9 @@ pub fn pre_evaluation_deny_checks(
     let mut validity_windows: Vec<(Option<i64>, Option<i64>)> = Vec::new();
     let mut feature_globs: Vec<(Vec<String>, Vec<String>)> = Vec::new();
 
+    let mut budgets: Vec<(String, u64)> = Vec::new(); // (budget_id, limit)
+    let mut revocable_ids: Vec<String> = Vec::new();
+
     for wc in caveat_set.first_party_caveats() {
         match pyana_caveats::decode_grant(&wc) {
             Ok(pyana_caveats::PyanaGrant::Organization(id)) => orgs.push(id),
@@ -881,6 +925,13 @@ pub fn pre_evaluation_deny_checks(
             Ok(pyana_caveats::PyanaGrant::FeatureGlob { include, exclude }) => {
                 feature_globs.push((include, exclude))
             }
+            // Issue #1: Budget and revocation MUST be checked here.
+            Ok(pyana_caveats::PyanaGrant::Budget { id, limit, .. }) => {
+                budgets.push((id, limit));
+            }
+            Ok(pyana_caveats::PyanaGrant::Revocable(token_id)) => {
+                revocable_ids.push(token_id);
+            }
             Ok(pyana_caveats::PyanaGrant::Unknown(type_id, _)) => {
                 // Fail-closed: unknown caveat types MUST deny authorization.
                 return Err(TokenError::Denied(format!(
@@ -888,7 +939,7 @@ pub fn pre_evaluation_deny_checks(
                     type_id
                 )));
             }
-            // Known types handled elsewhere (App, Service, Budget, Revocable)
+            // Known types handled elsewhere (App, Service)
             Ok(_) => {}
             Err(e) => {
                 return Err(e);
@@ -1018,6 +1069,55 @@ pub fn pre_evaluation_deny_checks(
                         )));
                     }
                 }
+            }
+        }
+    }
+
+    // Issue #1 (CRITICAL): Budget enforcement — MUST run regardless of request dimensions.
+    // Previously budgets were collected but never validated here, allowing bypass
+    // via the "dimension passthrough" path in verify_token_datalog_full.
+    if !budgets.is_empty() {
+        if request.budget_states.is_empty() {
+            return Err(TokenError::Denied(
+                "budget state required for verification: token has budget caveats but no budget state was provided".into(),
+            ));
+        }
+        let request_cost = request.request_cost.unwrap_or(1);
+        for (budget_id, _limit) in &budgets {
+            match request.budget_states.get(budget_id) {
+                Some(&remaining) => {
+                    if remaining < request_cost {
+                        return Err(TokenError::Denied(format!(
+                            "budget '{}' exhausted: {} remaining, {} required",
+                            budget_id, remaining, request_cost
+                        )));
+                    }
+                }
+                None => {
+                    return Err(TokenError::Denied(format!(
+                        "budget state required for budget '{}' but not provided",
+                        budget_id
+                    )));
+                }
+            }
+        }
+    }
+
+    // Issue #1 (CRITICAL): Revocation enforcement — MUST run regardless of request dimensions.
+    // Previously revocable_ids were collected but never validated here, allowing bypass
+    // via the "dimension passthrough" path in verify_token_datalog_full.
+    if !revocable_ids.is_empty() {
+        if request.not_revoked.is_empty() {
+            return Err(TokenError::Denied(
+                "revocation state required for verification: token is revocable but no revocation proof was provided".into(),
+            ));
+        }
+        for token_id in &revocable_ids {
+            if !request.not_revoked.contains(token_id) {
+                return Err(TokenError::Denied(format!(
+                    "token '{}' has been revoked or no non-revocation proof provided",
+                    token_id
+                )));
             }
         }
     }

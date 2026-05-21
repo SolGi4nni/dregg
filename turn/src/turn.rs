@@ -137,6 +137,11 @@ pub struct TurnReceipt {
     pub action_count: usize,
     pub previous_receipt_hash: Option<[u8; 32]>,
     pub agent: CellId,
+    /// The federation that produced this receipt. Prevents cross-federation replay:
+    /// a valid receipt from federation A cannot satisfy a TurnExecuted condition
+    /// targeting federation B.
+    #[serde(default)]
+    pub federation_id: [u8; 32],
     /// Routing directives emitted by three-party introductions in this turn.
     #[serde(default)]
     pub routing_directives: Vec<RoutingDirective>,
@@ -157,7 +162,8 @@ impl TurnReceipt {
     /// Note: executor_signature is NOT included (it signs the hash, not vice versa).
     pub fn receipt_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-receipt-v1");
+        // Version-bumped to v2 when federation_id binding was added.
+        hasher.update(b"pyana-receipt-v2");
         hasher.update(&self.turn_hash);
         hasher.update(&self.forest_hash);
         hasher.update(&self.pre_state_hash);
@@ -167,6 +173,8 @@ impl TurnReceipt {
         hasher.update(&self.computrons_used.to_le_bytes());
         hasher.update(&(self.action_count as u64).to_le_bytes());
         hasher.update(self.agent.as_bytes());
+        // Federation binding: prevents cross-federation receipt replay.
+        hasher.update(&self.federation_id);
         match &self.previous_receipt_hash {
             Some(h) => {
                 hasher.update(&[1u8]);

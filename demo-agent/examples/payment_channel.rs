@@ -91,6 +91,7 @@ fn make_channel_receipt(
         action_count: 1,
         previous_receipt_hash: previous_receipt_hash,
         agent,
+        federation_id: [0u8; 32],
         routing_directives: Vec::new(),
         derivation_records: Vec::new(),
         executor_signature: None,

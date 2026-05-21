@@ -15,11 +15,12 @@
 //!
 //! This module provides the core logic, reusable without any HTTP layer.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::caveat::CaveatSet;
 use crate::caveat_3p::ThirdPartyCaveat;
@@ -159,6 +160,8 @@ pub struct RateLimitEvaluator {
     pub max_per_window: u32,
     /// Window duration in seconds.
     pub window_secs: u64,
+    /// Maximum number of tracked clients (LRU eviction when exceeded).
+    max_clients: usize,
     /// State: client_id -> (count, window_start_unix).
     state: Mutex<HashMap<String, (u32, u64)>>,
 }
@@ -169,6 +172,17 @@ impl RateLimitEvaluator {
         Self {
             max_per_window,
             window_secs,
+            max_clients: 10_000,
+            state: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Create a rate limit evaluator with a custom max clients limit.
+    pub fn with_max_clients(max_per_window: u32, window_secs: u64, max_clients: usize) -> Self {
+        Self {
+            max_per_window,
+            window_secs,
+            max_clients,
             state: Mutex::new(HashMap::new()),
         }
     }
@@ -176,33 +190,44 @@ impl RateLimitEvaluator {
 
 impl ConditionEvaluator for RateLimitEvaluator {
     fn evaluate(&self, request: &DischargeRequest) -> Result<(), String> {
-        let client_id = request
-            .client_id
-            .as_deref()
-            .unwrap_or("anonymous");
+        let client_id = request.client_id.as_deref().unwrap_or("anonymous");
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("system clock error: {e}"))?
             .as_secs();
 
-        let mut state = self.state.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        let entry = state
-            .entry(client_id.to_string())
-            .or_insert((0, now));
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| format!("lock poisoned: {e}"))?;
+
+        // Evict expired entries when the state grows too large to prevent
+        // unbounded memory growth from accumulating stale client entries.
+        if state.len() >= self.max_clients {
+            state.retain(|_, (_, window_start)| now - *window_start < self.window_secs);
+            // If still at capacity after evicting expired entries, clear all.
+            if state.len() >= self.max_clients {
+                state.clear();
+            }
+        }
+
+        let entry = state.entry(client_id.to_string()).or_insert((0, now));
 
         // Reset window if expired.
         if now - entry.1 >= self.window_secs {
             *entry = (0, now);
         }
 
-        entry.0 += 1;
-        if entry.0 > self.max_per_window {
+        // Check THEN increment to avoid off-by-one: a client at max_per_window
+        // has already used their full quota.
+        if entry.0 >= self.max_per_window {
             Err(format!(
                 "rate limit exceeded: {} discharges in {}s window (max {})",
                 entry.0, self.window_secs, self.max_per_window
             ))
         } else {
+            entry.0 += 1;
             Ok(())
         }
     }
@@ -240,9 +265,9 @@ impl ConditionEvaluator for PaymentEvaluator {
 
 /// Require a non-empty proof blob in the request.
 ///
-/// The actual proof verification is left to the caller (ZK verifier, etc.).
 /// This evaluator only checks that proof bytes are present and non-empty.
-/// For real deployments, wrap this with a verifier that checks the proof.
+/// For real deployments, use [`VerifyingProofEvaluator`] which actually
+/// verifies the proof cryptographically.
 pub struct ProofRequiredEvaluator;
 
 impl ConditionEvaluator for ProofRequiredEvaluator {
@@ -255,6 +280,63 @@ impl ConditionEvaluator for ProofRequiredEvaluator {
 
     fn name(&self) -> &str {
         "proof_required"
+    }
+}
+
+/// A proof verifier function signature.
+///
+/// Takes the raw proof bytes and the condition string (from the caveat),
+/// and returns Ok(()) if verification passes or Err(reason) if it fails.
+///
+/// Implementors should:
+/// - Deserialize the proof bytes into their proof format
+/// - Extract public inputs and verify against expected values
+/// - Call the actual cryptographic verification (e.g., STARK verify)
+pub type ProofVerifierFn =
+    Box<dyn Fn(&[u8], &DischargeRequest) -> Result<(), String> + Send + Sync>;
+
+/// Require a cryptographically valid proof in the request.
+///
+/// Unlike [`ProofRequiredEvaluator`] which only checks presence, this evaluator
+/// calls a user-provided verification function to actually verify the proof.
+/// This is the production-grade evaluator for ZK proof discharge conditions.
+///
+/// # Example
+///
+/// ```
+/// use pyana_macaroon::discharge_gateway::{VerifyingProofEvaluator, DischargeRequest};
+///
+/// let evaluator = VerifyingProofEvaluator::new(Box::new(|proof_bytes, _request| {
+///     // In production: deserialize and verify the STARK proof
+///     if proof_bytes.len() < 64 {
+///         return Err("proof too short".to_string());
+///     }
+///     // ... actual verification ...
+///     Ok(())
+/// }));
+/// ```
+pub struct VerifyingProofEvaluator {
+    verifier: ProofVerifierFn,
+}
+
+impl VerifyingProofEvaluator {
+    /// Create a new verifying proof evaluator with the given verification function.
+    pub fn new(verifier: ProofVerifierFn) -> Self {
+        Self { verifier }
+    }
+}
+
+impl ConditionEvaluator for VerifyingProofEvaluator {
+    fn evaluate(&self, request: &DischargeRequest) -> Result<(), String> {
+        match &request.proof {
+            Some(proof) if !proof.is_empty() => (self.verifier)(proof, request),
+            Some(_) => Err("proof is empty".to_string()),
+            None => Err("proof required but not provided".to_string()),
+        }
+    }
+
+    fn name(&self) -> &str {
+        "verifying_proof"
     }
 }
 
@@ -325,6 +407,10 @@ impl ConditionEvaluator for AnyOfEvaluator {
 // Discharge Gateway
 // =============================================================================
 
+/// Maximum number of entries in the replay prevention set before eviction.
+/// When exceeded, the oldest entries are removed to bound memory usage.
+const MAX_ISSUED_CACHE: usize = 100_000;
+
 /// The discharge gateway: evaluates conditions and issues discharge macaroons.
 pub struct DischargeGateway {
     /// The shared key for decrypting third-party tickets.
@@ -338,13 +424,54 @@ pub struct DischargeGateway {
     evaluators: Vec<Box<dyn ConditionEvaluator>>,
 
     /// Issued discharge ticket hashes (for replay prevention).
-    issued: Mutex<HashSet<[u8; 32]>>,
+    /// Uses a HashSet for O(1) lookup paired with a VecDeque for FIFO eviction.
+    /// When the set exceeds MAX_ISSUED_CACHE entries, the oldest entries are
+    /// removed. This bounds memory to ~3.2 MB (100K * 32 bytes) while still
+    /// catching replays within the gateway's TTL window.
+    issued: Mutex<BoundedReplaySet>,
 
     /// Discharge validity duration in seconds (default: 300 = 5 minutes).
     discharge_ttl_secs: i64,
 
     /// Counter of total discharges issued (for metrics).
     issued_count: Mutex<u64>,
+}
+
+/// Bounded replay prevention set: O(1) contains + FIFO eviction.
+struct BoundedReplaySet {
+    set: HashSet<[u8; 32]>,
+    order: VecDeque<[u8; 32]>,
+}
+
+impl BoundedReplaySet {
+    fn new() -> Self {
+        Self {
+            set: HashSet::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn contains(&self, hash: &[u8; 32]) -> bool {
+        self.set.contains(hash)
+    }
+
+    fn insert(&mut self, hash: [u8; 32]) {
+        // Evict oldest entries if at capacity.
+        while self.set.len() >= MAX_ISSUED_CACHE {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+        self.set.insert(hash);
+        self.order.push_back(hash);
+    }
+
+    fn clear(&mut self) {
+        self.set.clear();
+        self.order.clear();
+    }
 }
 
 impl DischargeGateway {
@@ -358,7 +485,7 @@ impl DischargeGateway {
             shared_key,
             location,
             evaluators: Vec::new(),
-            issued: Mutex::new(HashSet::new()),
+            issued: Mutex::new(BoundedReplaySet::new()),
             discharge_ttl_secs: 300,
             issued_count: Mutex::new(0),
         }
@@ -407,24 +534,19 @@ impl DischargeGateway {
         request: &DischargeRequest,
     ) -> Result<DischargeResponse, DischargeError> {
         // Step 1: Decrypt the ticket.
-        let wire_ticket =
-            ThirdPartyCaveat::decrypt_ticket(&request.ticket, &self.shared_key).map_err(|e| {
-                DischargeError {
-                    reason: format!("failed to decrypt ticket: {e}"),
-                    condition: "ticket_decryption".to_string(),
-                }
+        let wire_ticket = ThirdPartyCaveat::decrypt_ticket(&request.ticket, &self.shared_key)
+            .map_err(|e| DischargeError {
+                reason: format!("failed to decrypt ticket: {e}"),
+                condition: "ticket_decryption".to_string(),
             })?;
 
         // Step 2: Replay prevention — hash the ticket and check if already issued.
         let ticket_hash = crypto::hmac_sha256(&self.shared_key, &request.ticket);
         {
-            let mut issued = self
-                .issued
-                .lock()
-                .map_err(|_| DischargeError {
-                    reason: "internal lock error".to_string(),
-                    condition: "internal".to_string(),
-                })?;
+            let mut issued = self.issued.lock().map_err(|_| DischargeError {
+                reason: "internal lock error".to_string(),
+                condition: "internal".to_string(),
+            })?;
             if issued.contains(&ticket_hash) {
                 return Err(DischargeError {
                     reason: "ticket already discharged (replay detected)".to_string(),
@@ -437,10 +559,12 @@ impl DischargeGateway {
         // Step 3: Evaluate all conditions.
         let mut condition_met = String::from("none");
         for evaluator in &self.evaluators {
-            evaluator.evaluate(request).map_err(|reason| DischargeError {
-                reason,
-                condition: evaluator.name().to_string(),
-            })?;
+            evaluator
+                .evaluate(request)
+                .map_err(|reason| DischargeError {
+                    reason,
+                    condition: evaluator.name().to_string(),
+                })?;
             condition_met = evaluator.name().to_string();
         }
         if self.evaluators.is_empty() {
@@ -489,6 +613,12 @@ impl DischargeGateway {
     }
 }
 
+impl Drop for DischargeGateway {
+    fn drop(&mut self) {
+        self.shared_key.zeroize();
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -498,11 +628,7 @@ mod tests {
     use super::*;
 
     /// Helper: create a macaroon with a 3P caveat targeting our gateway.
-    fn setup_3p_macaroon(
-        root_key: &[u8; 32],
-        shared_key: &[u8; 32],
-        location: &str,
-    ) -> Macaroon {
+    fn setup_3p_macaroon(root_key: &[u8; 32], shared_key: &[u8; 32], location: &str) -> Macaroon {
         let mut mac = Macaroon::new(root_key, b"test-kid".to_vec(), "https://issuer.dev".into());
         mac.add_third_party(location, shared_key, CaveatSet::new())
             .unwrap();
@@ -895,7 +1021,11 @@ mod tests {
         let location = "https://gateway.pyana.dev";
 
         // 1. Issuer creates token with 3P caveat.
-        let mut token = Macaroon::new(&root_key, b"service-token".to_vec(), "https://service.dev".into());
+        let mut token = Macaroon::new(
+            &root_key,
+            b"service-token".to_vec(),
+            "https://service.dev".into(),
+        );
         token
             .add_third_party(location, &shared_key, CaveatSet::new())
             .unwrap();
@@ -921,6 +1051,10 @@ mod tests {
 
         // 5. Verifier checks.
         let result = token.verify(&root_key, &[discharge]);
-        assert!(result.is_ok(), "full flow verification failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "full flow verification failed: {:?}",
+            result.err()
+        );
     }
 }

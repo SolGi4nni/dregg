@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 use crate::capability::CapabilityRef;
 
@@ -34,6 +35,9 @@ pub struct SealerPublic {
 ///
 /// NOT serializable: the unsealer secret must never cross a serialization boundary.
 /// Use [`SealerPublic`] for the serializable public-key-only view.
+///
+/// The `unsealer_secret` is zeroized on drop to prevent secret key material
+/// from lingering in memory after the pair is no longer needed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealPair {
     /// Unique pair identifier: BLAKE3("pyana-seal pair-id v2", sealer_public).
@@ -42,6 +46,12 @@ pub struct SealPair {
     pub sealer_public: [u8; 32],
     /// X25519 secret key (known to unsealer holder -- used for decryption).
     pub unsealer_secret: [u8; 32],
+}
+
+impl Drop for SealPair {
+    fn drop(&mut self) {
+        self.unsealer_secret.zeroize();
+    }
 }
 
 /// A sealed capability -- opaque without the unsealer secret key.
@@ -272,7 +282,9 @@ impl SealPair {
     }
 
     fn serialize_capability(cap: &CapabilityRef) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(70);
+        let mut buf = Vec::with_capacity(80);
+        // Version 2: includes expires_at field.
+        buf.push(2u8);
         buf.extend_from_slice(cap.target.as_bytes());
         buf.extend_from_slice(&cap.slot.to_le_bytes());
         let perm_byte = match &cap.permissions {
@@ -290,20 +302,44 @@ impl SealPair {
                 buf.extend_from_slice(bs);
             }
         }
+        match cap.expires_at {
+            Some(h) => {
+                buf.push(1);
+                buf.extend_from_slice(&h.to_le_bytes());
+            }
+            None => {
+                buf.push(0);
+            }
+        }
         buf
     }
 
     fn deserialize_capability(data: &[u8]) -> Result<CapabilityRef, SealError> {
-        if data.len() < 38 {
+        if data.is_empty() {
             return Err(SealError::DeserializationFailed {
-                reason: format!("data too short: {} bytes", data.len()),
+                reason: "empty data".to_string(),
+            });
+        }
+
+        // Check version byte. Version 2 includes expires_at.
+        // Version 1 (implicit): no version prefix, starts directly with target bytes.
+        let (version, payload) = if data[0] == 2 {
+            (2u8, &data[1..])
+        } else {
+            // Legacy format (version 1): no version prefix.
+            (1u8, data)
+        };
+
+        if payload.len() < 38 {
+            return Err(SealError::DeserializationFailed {
+                reason: format!("data too short: {} bytes", payload.len()),
             });
         }
         let mut target_bytes = [0u8; 32];
-        target_bytes.copy_from_slice(&data[0..32]);
+        target_bytes.copy_from_slice(&payload[0..32]);
         let target = crate::id::CellId::from_bytes(target_bytes);
-        let slot = u32::from_le_bytes([data[32], data[33], data[34], data[35]]);
-        let permissions = match data[36] {
+        let slot = u32::from_le_bytes([payload[32], payload[33], payload[34], payload[35]]);
+        let permissions = match payload[36] {
             0 => crate::permissions::AuthRequired::None,
             1 => crate::permissions::AuthRequired::Signature,
             2 => crate::permissions::AuthRequired::Proof,
@@ -315,16 +351,22 @@ impl SealPair {
                 });
             }
         };
-        let breadstuff = match data[37] {
-            0 => None,
+        let mut offset = 37;
+        let breadstuff = match payload[offset] {
+            0 => {
+                offset += 1;
+                None
+            }
             1 => {
-                if data.len() < 70 {
+                offset += 1;
+                if payload.len() < offset + 32 {
                     return Err(SealError::DeserializationFailed {
-                        reason: format!("data too short for breadstuff: {} bytes", data.len()),
+                        reason: format!("data too short for breadstuff: {} bytes", payload.len()),
                     });
                 }
                 let mut bs = [0u8; 32];
-                bs.copy_from_slice(&data[38..70]);
+                bs.copy_from_slice(&payload[offset..offset + 32]);
+                offset += 32;
                 Some(bs)
             }
             other => {
@@ -333,12 +375,49 @@ impl SealPair {
                 });
             }
         };
+
+        // Parse expires_at (version 2 only).
+        let expires_at = if version >= 2 && offset < payload.len() {
+            match payload[offset] {
+                0 => None,
+                1 => {
+                    offset += 1;
+                    if payload.len() < offset + 8 {
+                        return Err(SealError::DeserializationFailed {
+                            reason: format!(
+                                "data too short for expires_at: {} bytes",
+                                payload.len()
+                            ),
+                        });
+                    }
+                    let h = u64::from_le_bytes([
+                        payload[offset],
+                        payload[offset + 1],
+                        payload[offset + 2],
+                        payload[offset + 3],
+                        payload[offset + 4],
+                        payload[offset + 5],
+                        payload[offset + 6],
+                        payload[offset + 7],
+                    ]);
+                    Some(h)
+                }
+                other => {
+                    return Err(SealError::DeserializationFailed {
+                        reason: format!("invalid expires_at discriminant: {other}"),
+                    });
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(CapabilityRef {
             target,
             slot,
             permissions,
             breadstuff,
-            expires_at: None,
+            expires_at,
         })
     }
 

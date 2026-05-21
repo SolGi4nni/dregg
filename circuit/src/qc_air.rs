@@ -84,6 +84,20 @@ pub const QC_AIR_WIDTH: usize = 8;
 /// Quorum Certificate AIR.
 ///
 /// Proves that a sufficient subset of validators signed a message.
+///
+/// # SOUNDNESS WARNING
+///
+/// The `sig_valid` and `merkle_valid` columns are prover-set witness bits that the
+/// AIR only constrains to be binary and equal to 1 when `included == 1`. There is NO
+/// algebraic verification of WOTS+ signatures or Merkle membership proofs inside this
+/// AIR. A malicious prover can set `sig_valid = 1` and `merkle_valid = 1` for any row
+/// without actually possessing a valid signature or Merkle proof.
+///
+/// Full algebraic WOTS+ verification would require degree-7^21 constraints (infeasible).
+/// Until a proper solution exists (e.g., recursive proof composition, lookup arguments,
+/// or a hash-based constraint system), the `StarkAir` impl on this struct should NOT be
+/// used in production. Use the constraint checker (`Air` trait) for testing only, or
+/// gate behind the `unsafe_qc_stark` feature flag.
 pub struct QuorumCertificateAir {
     /// Number of validators in the set.
     pub num_validators: usize,
@@ -213,6 +227,11 @@ impl QuorumCertificateAir {
     }
 }
 
+/// SOUNDNESS WARNING: This StarkAir implementation is UNSOUND for adversarial provers.
+/// The `sig_valid` and `merkle_valid` columns are prover-set witness bits with no
+/// algebraic verification of the underlying cryptographic operations.
+/// Gate behind `unsafe_qc_stark` feature to prevent accidental production use.
+#[cfg(feature = "unsafe_qc_stark")]
 impl StarkAir for QuorumCertificateAir {
     fn width(&self) -> usize {
         QC_AIR_WIDTH
@@ -316,6 +335,13 @@ impl StarkAir for QuorumCertificateAir {
 
 /// Prove a quorum certificate: generate the STARK proof that >= threshold
 /// weight of validators signed the message.
+///
+/// # SOUNDNESS WARNING
+///
+/// This function requires `unsafe_qc_stark` feature. The QC AIR does NOT
+/// algebraically verify signatures or Merkle proofs -- it only checks
+/// prover-set witness bits. Do NOT use in adversarial settings.
+#[cfg(feature = "unsafe_qc_stark")]
 pub fn prove_quorum_certificate(
     message: &[u8],
     signatures: &[(usize, WotsSignature)], // (validator_index, signature)
@@ -374,6 +400,11 @@ pub fn prove_quorum_certificate(
 /// 1. STARK proof is valid for the QC AIR.
 /// 2. Public inputs match the expected message hash, validator set root, and threshold.
 /// 3. The cumulative weight in the proof meets the threshold.
+///
+/// # SOUNDNESS WARNING
+///
+/// See [`prove_quorum_certificate`] for soundness limitations.
+#[cfg(feature = "unsafe_qc_stark")]
 pub fn verify_quorum_certificate(
     proof: &QcProof,
     message_hash: &[u8; 32],
@@ -418,7 +449,7 @@ pub fn verify_quorum_certificate(
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unsafe_qc_stark"))]
 mod tests {
     use super::*;
     use crate::native_signature::{wots_keygen, wots_sign};

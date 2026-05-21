@@ -274,7 +274,16 @@ impl TurnExecutor {
             &self.trusted_destination_keys,
         ) {
             crate::conditional::ConditionalResult::Resolved => {
-                self.execute(&conditional.turn, ledger)
+                let result = self.execute(&conditional.turn, ledger);
+                // On successful execution, refund the conditional deposit to the agent.
+                if let TurnResult::Committed { .. } = &result {
+                    if conditional.deposit_amount > 0 {
+                        if let Some(cell) = ledger.get_mut(&conditional.turn.agent) {
+                            cell.state.balance += conditional.deposit_amount;
+                        }
+                    }
+                }
+                result
             }
             crate::conditional::ConditionalResult::Expired => TurnResult::Expired,
             crate::conditional::ConditionalResult::Pending => TurnResult::Pending,
@@ -569,6 +578,7 @@ impl TurnExecutor {
             action_count: turn.call_forest.action_count(),
             previous_receipt_hash: turn.previous_receipt_hash,
             agent: turn.agent,
+            federation_id: self.local_federation_id,
             routing_directives: Self::collect_routing_directives(
                 &turn.call_forest,
                 &turn_hash,
@@ -689,7 +699,8 @@ impl TurnExecutor {
                 .get(parent_cell)
                 .ok_or_else(|| (TurnError::CellNotFound { id: *parent_cell }, path.clone()))?;
 
-            let has_capability = Self::has_access_including_delegation(parent, &action.target);
+            let has_capability =
+                Self::has_access_including_delegation_at(parent, &action.target, self.block_height);
 
             // Check delegation mode: if parent_delegation is None, child actions cannot
             // use the parent's capabilities to reach non-parent cells.
@@ -726,6 +737,7 @@ impl TurnExecutor {
                             ledger,
                             parent_cell,
                             &action.target,
+                            self.block_height,
                         );
                         if let Some(ancestor_id) = found_ancestor {
                             let ancestor = ledger.get(&ancestor_id).unwrap();
@@ -750,9 +762,10 @@ impl TurnExecutor {
                             }
                             // Re-check access now that the delegation snapshot is set.
                             let child_cell_ref = ledger.get(parent_cell).unwrap();
-                            if !Self::has_access_including_delegation(
+                            if !Self::has_access_including_delegation_at(
                                 child_cell_ref,
                                 &action.target,
+                                self.block_height,
                             ) {
                                 return Err((
                                     TurnError::CapabilityNotHeld {
@@ -1187,9 +1200,17 @@ impl TurnExecutor {
                 )),
             },
             AuthRequired::Proof => match &action.authorization {
-                Authorization::Proof { proof_bytes, bound_action, bound_resource } => {
-                    self.verify_zk_proof(target_cell, proof_bytes, bound_action, bound_resource, path)
-                }
+                Authorization::Proof {
+                    proof_bytes,
+                    bound_action,
+                    bound_resource,
+                } => self.verify_zk_proof(
+                    target_cell,
+                    proof_bytes,
+                    bound_action,
+                    bound_resource,
+                    path,
+                ),
                 _ => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
@@ -1203,9 +1224,17 @@ impl TurnExecutor {
                 Authorization::Signature(r, s) => {
                     self.verify_ed25519_signature(action, target_cell, r, s, path, turn_nonce)
                 }
-                Authorization::Proof { proof_bytes, bound_action, bound_resource } => {
-                    self.verify_zk_proof(target_cell, proof_bytes, bound_action, bound_resource, path)
-                }
+                Authorization::Proof {
+                    proof_bytes,
+                    bound_action,
+                    bound_resource,
+                } => self.verify_zk_proof(
+                    target_cell,
+                    proof_bytes,
+                    bound_action,
+                    bound_resource,
+                    path,
+                ),
                 Authorization::Breadstuff(token) => self.check_breadstuff(
                     ledger,
                     actor_cell_id,
@@ -1413,6 +1442,9 @@ impl TurnExecutor {
             hasher.update(&effect.hash());
         }
         hasher.update(&[action.may_delegate as u8]);
+        // Include commitment_mode to prevent an attacker from changing the mode
+        // (e.g., switching Full to Partial) and using the signature in a different context.
+        hasher.update(&[action.commitment_mode as u8]);
         // Include balance_change to prevent malleability: without this, an attacker
         // could take a signed action and modify the balance_change field to drain funds.
         match action.balance_change {
@@ -1805,8 +1837,14 @@ impl TurnExecutor {
                             // Use well-known constants for bridge-mint proofs so the
                             // verifier can distinguish them from authorization proofs.
                             // action = "bridge-mint", resource = hex(destination_federation).
-                            let dest_hex: String = dest_federation.iter().map(|b| format!("{b:02x}")).collect();
-                            if verifier.verify(proof_bytes, "bridge-mint", &dest_hex, &public_inputs) {
+                            let dest_hex: String =
+                                dest_federation.iter().map(|b| format!("{b:02x}")).collect();
+                            if verifier.verify(
+                                proof_bytes,
+                                "bridge-mint",
+                                &dest_hex,
+                                &public_inputs,
+                            ) {
                                 Ok(())
                             } else {
                                 Err("STARK spending proof verification failed".to_string())
@@ -2420,14 +2458,32 @@ impl TurnExecutor {
     }
 
     /// Check if a cell has access to a target, considering both direct capabilities
-    /// and delegated capability snapshots.
-    ///
-    /// NOTE: We do NOT check staleness here — that is the ACCEPTOR's job at
-    /// verification time, not execution time. The executor allows the action;
-    /// remote verifiers decide freshness.
+    /// and delegated capability snapshots. Does NOT check expiry (use the height-aware
+    /// version `has_access_including_delegation_at` during execution).
     fn has_access_including_delegation(cell: &Cell, target: &CellId) -> bool {
         // Direct capability
         if cell.capabilities.has_access(target) {
+            return true;
+        }
+        // Delegated capability (from snapshot)
+        if let Some(ref delegation) = cell.delegation {
+            if delegation.has_capability(target) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Height-aware check: does the cell have a non-expired capability to the target?
+    ///
+    /// Uses `has_access_at` to filter out capabilities whose `expires_at` has passed.
+    fn has_access_including_delegation_at(
+        cell: &Cell,
+        target: &CellId,
+        current_height: u64,
+    ) -> bool {
+        // Direct capability (height-aware)
+        if cell.capabilities.has_access_at(target, current_height) {
             return true;
         }
         // Delegated capability (from snapshot)
@@ -2448,6 +2504,7 @@ impl TurnExecutor {
         ledger: &Ledger,
         start_cell: &CellId,
         target: &CellId,
+        current_height: u64,
     ) -> Option<CellId> {
         let mut current_id = *start_cell;
         let max_hops = 16;
@@ -2457,7 +2514,7 @@ impl TurnExecutor {
             // Check if this cell's delegate (parent) has the capability.
             let parent_id = cell.delegate?;
             let parent_cell = ledger.get(&parent_id)?;
-            if Self::has_access_including_delegation(parent_cell, target) {
+            if Self::has_access_including_delegation_at(parent_cell, target, current_height) {
                 return Some(parent_id);
             }
             current_id = parent_id;
@@ -2481,7 +2538,11 @@ impl TurnExecutor {
             let actor_cell = ledger
                 .get(actor)
                 .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
-            if !Self::has_access_including_delegation(actor_cell, target_cell_id) {
+            if !Self::has_access_including_delegation_at(
+                actor_cell,
+                target_cell_id,
+                self.block_height,
+            ) {
                 return Err((
                     TurnError::CapabilityNotHeld {
                         actor: *actor,

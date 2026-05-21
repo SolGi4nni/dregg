@@ -65,7 +65,7 @@ use crate::poseidon2::{hash_2_to_1, hash_fact};
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Trace width for the multi-step derivation AIR.
-pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5; // 138 + 5 = 143
+pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5; // 171 + 5 = 176
 
 /// Maximum derivation steps supported.
 pub const MAX_STEPS: usize = 32;

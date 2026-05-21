@@ -26,6 +26,7 @@ token = { path = "token" }
 tokenizer = { path = "tokenizer" }
 
 ## Crates.io
+ark-serialize = { version = "0.5", features = ["derive"] }
 # NOTE: RC needed for aead 0.6 trait unification with chacha20poly1305 0.10;
 # stable aes-gcm 0.10 uses aead 0.5 which conflicts. Revisit when 0.11 stable ships.
 aes-gcm = { version = "0.11.0-rc.3" }

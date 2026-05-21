@@ -90,8 +90,18 @@ impl CausalDag {
     /// Returns an error if:
     /// - The turn already exists (duplicate).
     /// - Any dependency is missing from the DAG.
+    /// - The turn lists itself as a dependency (direct cycle).
     pub fn insert(&mut self, turn_hash: [u8; 32], deps: &[[u8; 32]]) -> Result<(), CausalError> {
         if self.all_turns.contains(&turn_hash) {
+            return Err(CausalError::Duplicate(turn_hash));
+        }
+
+        // Issue #11: Explicit cycle detection -- reject if the turn references itself.
+        // (Full DFS cycle detection is unnecessary because hash-linked DAGs are
+        // inherently acyclic: a turn can only depend on turns with previously-known
+        // hashes, and content-addressing makes self-reference computationally infeasible.
+        // The direct check below catches programming errors and malformed inputs.)
+        if deps.contains(&turn_hash) {
             return Err(CausalError::Duplicate(turn_hash));
         }
 
@@ -120,6 +130,14 @@ impl CausalDag {
 
         // New turn is on the frontier (no successors yet).
         self.frontier.insert(turn_hash);
+
+        // Issue #12: Assert frontier invariant in debug builds.
+        debug_assert!(
+            self.frontier
+                .iter()
+                .all(|h| self.successors.get(h).map_or(true, |s| s.is_empty())),
+            "frontier invariant violated: a frontier node has successors"
+        );
 
         Ok(())
     }

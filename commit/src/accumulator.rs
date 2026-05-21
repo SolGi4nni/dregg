@@ -35,7 +35,6 @@
 //! If x IS in S, (alpha - x) | Acc exactly, so remainder = 0.
 
 use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_many;
 
 // ============================================================================
 // BabyBear^4: Quartic extension field
@@ -386,17 +385,32 @@ impl PolynomialAccumulator {
         acc
     }
 
-    /// Derive alpha deterministically from a domain separator.
+    /// Derive alpha deterministically from a domain separator and set commitment.
     ///
-    /// Uses Poseidon2 hash of the domain separator elements to produce
-    /// four BabyBear elements forming the alpha challenge.
-    pub fn derive_alpha(domain: &[BabyBear]) -> BabyBear4 {
-        // Hash domain to get 4 independent elements for the extension field.
-        let h0 = hash_many(domain);
-        let h1 = hash_many(&[h0, BabyBear::new(1)]);
-        let h2 = hash_many(&[h0, BabyBear::new(2)]);
-        let h3 = hash_many(&[h0, BabyBear::new(3)]);
-        BabyBear4::new(h0, h1, h2, h3)
+    /// The set commitment (e.g. a Merkle root or hash of the set contents) is
+    /// included in the Fiat-Shamir transcript to prevent the prover from choosing
+    /// elements adversarially after seeing alpha.
+    ///
+    /// Uses BLAKE3 in XOF mode to produce 4 independent coordinates with full
+    /// entropy per coordinate (no correlation between h0..h3).
+    pub fn derive_alpha(domain: &[BabyBear], set_commitment: &[u8; 32]) -> BabyBear4 {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-commit accumulator alpha v2");
+        // Include domain elements.
+        for elem in domain {
+            hasher.update(&elem.as_u32().to_le_bytes());
+        }
+        // Include set commitment to bind alpha to the actual set contents.
+        hasher.update(set_commitment);
+        // Use XOF to produce 16 bytes (4 independent u32 coordinates).
+        let mut xof = hasher.finalize_xof();
+        let mut buf = [0u8; 16];
+        xof.fill(&mut buf);
+        BabyBear4::new(
+            BabyBear::new(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])),
+            BabyBear::new(u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]])),
+            BabyBear::new(u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])),
+            BabyBear::new(u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]])),
+        )
     }
 
     /// Insert an element into the accumulator.
@@ -564,6 +578,9 @@ impl PolynomialAccumulator {
     /// - New accumulator: Acc_new = Acc_old * (alpha - h_new)
     /// - New remainder: v_new = v_old * (element - h_new)
     /// - New quotient: w_new = (Acc_new - v_new) / (alpha - element)
+    ///
+    /// Returns `None` if `element == new_element` (the element is now a member,
+    /// so a non-membership witness is no longer valid).
     pub fn update_witness_for_insert(
         witness: &AccumulatorWitness,
         element: BabyBear,
@@ -571,6 +588,12 @@ impl PolynomialAccumulator {
         alpha: BabyBear4,
         old_accumulator: BabyBear4,
     ) -> Option<(AccumulatorWitness, BabyBear4)> {
+        // If the element being tracked is the same as the newly inserted element,
+        // it is now a member of the set and no non-membership witness exists.
+        if element == new_element {
+            return None;
+        }
+
         // New accumulator
         let new_elem_ext = BabyBear4::from_base(new_element);
         let new_factor = alpha.sub(new_elem_ext);
@@ -606,7 +629,11 @@ mod tests {
 
     /// Derive a test alpha from a simple seed.
     fn test_alpha() -> BabyBear4 {
-        PolynomialAccumulator::derive_alpha(&[BabyBear::new(0x1234), BabyBear::new(0x5678)])
+        let commitment = [0xABu8; 32]; // dummy set commitment for tests
+        PolynomialAccumulator::derive_alpha(
+            &[BabyBear::new(0x1234), BabyBear::new(0x5678)],
+            &commitment,
+        )
     }
 
     #[test]
@@ -909,17 +936,49 @@ mod tests {
     #[test]
     fn derive_alpha_deterministic() {
         let domain = [BabyBear::new(1), BabyBear::new(2), BabyBear::new(3)];
-        let a1 = PolynomialAccumulator::derive_alpha(&domain);
-        let a2 = PolynomialAccumulator::derive_alpha(&domain);
+        let commitment = [0x42u8; 32];
+        let a1 = PolynomialAccumulator::derive_alpha(&domain, &commitment);
+        let a2 = PolynomialAccumulator::derive_alpha(&domain, &commitment);
         assert_eq!(a1, a2);
     }
 
     #[test]
     fn derive_alpha_different_domains() {
+        let commitment = [0x42u8; 32];
         let d1 = [BabyBear::new(1)];
         let d2 = [BabyBear::new(2)];
-        let a1 = PolynomialAccumulator::derive_alpha(&d1);
-        let a2 = PolynomialAccumulator::derive_alpha(&d2);
+        let a1 = PolynomialAccumulator::derive_alpha(&d1, &commitment);
+        let a2 = PolynomialAccumulator::derive_alpha(&d2, &commitment);
         assert_ne!(a1, a2);
+    }
+
+    #[test]
+    fn derive_alpha_different_commitments() {
+        let domain = [BabyBear::new(1)];
+        let c1 = [0x01u8; 32];
+        let c2 = [0x02u8; 32];
+        let a1 = PolynomialAccumulator::derive_alpha(&domain, &c1);
+        let a2 = PolynomialAccumulator::derive_alpha(&domain, &c2);
+        assert_ne!(a1, a2);
+    }
+
+    #[test]
+    fn update_witness_returns_none_when_element_inserted() {
+        let alpha = test_alpha();
+        let elems: Vec<BabyBear> = (1..=5).map(|i| BabyBear::new(i * 100)).collect();
+        let acc = PolynomialAccumulator::from_set(&elems, alpha);
+
+        let absent = BabyBear::new(999);
+        let witness = acc.non_membership_witness(absent).unwrap();
+
+        // Inserting the same element should invalidate the witness.
+        let result = PolynomialAccumulator::update_witness_for_insert(
+            &witness,
+            absent,
+            absent, // inserting the element itself
+            alpha,
+            acc.accumulator_value(),
+        );
+        assert!(result.is_none());
     }
 }

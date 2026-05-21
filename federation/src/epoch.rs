@@ -145,10 +145,7 @@ impl std::fmt::Display for EpochError {
             }
             Self::InvalidAttestation => write!(f, "attestation QC is invalid"),
             Self::InvalidThreshold { members, threshold } => {
-                write!(
-                    f,
-                    "invalid threshold {threshold} for {members} members"
-                )
+                write!(f, "invalid threshold {threshold} for {members} members")
             }
         }
     }
@@ -314,12 +311,10 @@ pub fn apply_epoch_transition(
 ///
 /// Checks:
 /// 1. The attestation QC has enough votes from old-epoch validators.
-/// 2. The transition epoch numbers are sequential.
-/// 3. The new threshold is correct for the resulting member count.
-pub fn verify_epoch_transition(
-    transition: &EpochTransition,
-    old_config: &EpochConfig,
-) -> bool {
+/// 2. Each vote's Ed25519 signature is verified against the member's public key.
+/// 3. The transition epoch numbers are sequential.
+/// 4. The new threshold is correct for the resulting member count.
+pub fn verify_epoch_transition(transition: &EpochTransition, old_config: &EpochConfig) -> bool {
     // Check epoch sequencing.
     if transition.from_epoch != old_config.current_epoch {
         return false;
@@ -328,12 +323,33 @@ pub fn verify_epoch_transition(
         return false;
     }
 
-    // Verify the attestation QC has enough votes.
-    if !transition.attestation.is_valid() {
-        return false;
-    }
+    // Verify the attestation QC has enough votes (count check).
     if transition.attestation.votes.len() < old_config.threshold {
         return false;
+    }
+
+    // Verify each vote's signature against old-epoch member keys.
+    // This prevents forged attestations where votes are merely counted without
+    // verifying that the signers are actually members of the old epoch.
+    let member_keys: Vec<PublicKey> = old_config
+        .members
+        .iter()
+        .map(|v| v.public_key.clone())
+        .collect();
+    let vote_message = QuorumCertificate::vote_message(
+        &transition.attestation.block_hash,
+        transition.attestation.height,
+        transition.attestation.view,
+    );
+    for (voter_id, sig) in &transition.attestation.votes {
+        match member_keys.get(*voter_id) {
+            Some(pk) => {
+                if !pk.verify(&vote_message, sig) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
     }
 
     // Verify removed validators exist in old config.
@@ -355,9 +371,8 @@ pub fn verify_epoch_transition(
     }
 
     // Compute expected new member count and threshold.
-    let new_count =
-        old_config.members.len() + transition.added_validators.len()
-            - transition.removed_validators.len();
+    let new_count = old_config.members.len() + transition.added_validators.len()
+        - transition.removed_validators.len();
     if new_count == 0 {
         return false;
     }
@@ -633,8 +648,7 @@ mod tests {
         assert_eq!(config.threshold, 1); // (3-1)/3 + 1 = 1
 
         // Propose adding v3.
-        let transition =
-            propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
+        let transition = propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
 
         assert_eq!(transition.from_epoch, 0);
         assert_eq!(transition.to_epoch, 1);
@@ -663,24 +677,18 @@ mod tests {
         let (v2, _sk2) = make_validator(0);
         let (v3, _sk3) = make_validator(0);
 
-        let mut config = EpochConfig::genesis(
-            vec![v0.clone(), v1.clone(), v2.clone(), v3.clone()],
-            100,
-        );
+        let mut config =
+            EpochConfig::genesis(vec![v0.clone(), v1.clone(), v2.clone(), v3.clone()], 100);
         assert_eq!(config.threshold, 2); // (4-1)/3 + 1 = 2
 
         // Remove v3.
-        let transition =
-            propose_epoch_transition(&config, &[], &[v3.public_key.clone()]).unwrap();
+        let transition = propose_epoch_transition(&config, &[], &[v3.public_key.clone()]).unwrap();
 
         assert_eq!(transition.new_threshold, 1); // (3-1)/3 + 1 = 1
 
         let mut transition = transition;
         transition.attestation.threshold = config.threshold;
-        transition.attestation.votes = vec![
-            (0, Signature([0u8; 64])),
-            (1, Signature([0u8; 64])),
-        ];
+        transition.attestation.votes = vec![(0, Signature([0u8; 64])), (1, Signature([0u8; 64]))];
 
         apply_epoch_transition(&mut config, &transition).unwrap();
 
@@ -704,22 +712,28 @@ mod tests {
 
     #[test]
     fn test_epoch_transition_requires_attestation() {
-        let (v0, _) = make_validator(0);
-        let (v1, _) = make_validator(0);
-        let (v2, _) = make_validator(0);
-        let (v3, _) = make_validator(1);
+        let (v0, sk0) = make_validator(0);
+        let (v1, _sk1) = make_validator(0);
+        let (v2, _sk2) = make_validator(0);
+        let (v3, _sk3) = make_validator(1);
 
         let config = EpochConfig::genesis(vec![v0.clone(), v1.clone(), v2.clone()], 100);
 
-        let mut transition =
-            propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
+        let mut transition = propose_epoch_transition(&config, &[v3.clone()], &[]).unwrap();
 
         // Empty attestation should fail verification.
         assert!(!verify_epoch_transition(&transition, &config));
 
-        // Add enough votes to the attestation.
+        // Add a properly signed vote to the attestation.
+        // The vote message must match what QuorumCertificate::vote_message produces.
+        let vote_message = QuorumCertificate::vote_message(
+            &transition.attestation.block_hash,
+            transition.attestation.height,
+            transition.attestation.view,
+        );
+        let sig0 = sign(&sk0, &vote_message);
         transition.attestation.threshold = config.threshold;
-        transition.attestation.votes = vec![(0, Signature([0u8; 64]))];
+        transition.attestation.votes = vec![(0, sig0)];
         assert!(verify_epoch_transition(&transition, &config));
     }
 

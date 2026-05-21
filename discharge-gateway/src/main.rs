@@ -11,9 +11,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use tracing::{error, info};
 
-use discharge_gateway_service::{
-    ConditionConfig, GatewayConfig, GatewaySettings, build_gateway,
-};
+use discharge_gateway_service::{ConditionConfig, GatewayConfig, GatewaySettings, build_gateway};
 
 #[derive(Parser, Debug)]
 #[command(name = "discharge-gateway", about = "Pyana discharge macaroon gateway")]
@@ -93,10 +91,12 @@ async fn main() {
             .join(", ")
     );
 
-    let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap_or_else(|e| {
-        error!("failed to bind to {}: {e}", bind_addr);
-        std::process::exit(1);
-    });
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .unwrap_or_else(|e| {
+            error!("failed to bind to {}: {e}", bind_addr);
+            std::process::exit(1);
+        });
 
     if let Err(e) = axum::serve(listener, router).await {
         error!("server error: {e}");
@@ -123,9 +123,10 @@ fn build_config(cli: &Cli) -> Result<GatewayConfig, String> {
         Ok(config)
     } else {
         // Build config entirely from CLI flags.
-        let key_hex = cli.key_hex.clone().ok_or(
-            "either --config or --key-hex must be provided",
-        )?;
+        let key_hex = cli
+            .key_hex
+            .clone()
+            .ok_or("either --config or --key-hex must be provided")?;
         let location = cli
             .location
             .clone()
@@ -136,9 +137,7 @@ fn build_config(cli: &Cli) -> Result<GatewayConfig, String> {
             conditions.push(ConditionConfig::AlwaysAllow);
         }
         if let Some(rate) = cli.rate_limit {
-            conditions.push(ConditionConfig::RateLimit {
-                max_per_hour: rate,
-            });
+            conditions.push(ConditionConfig::RateLimit { max_per_hour: rate });
         }
 
         Ok(GatewayConfig {

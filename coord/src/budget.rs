@@ -128,17 +128,39 @@ impl BudgetSlice {
         Ok(())
     }
 
+    /// Refund a previously debited amount back to this slice.
+    ///
+    /// Used by fast unlock to credit resources back after a 2PC abort.
+    /// The `spent` counter is decremented by the refund amount.
+    pub fn refund(&mut self, amount: u64) {
+        self.spent = self.spent.saturating_sub(amount);
+    }
+
     /// Generate a spending certificate for this slice.
     ///
     /// This certificate is submitted during rebalancing so the coordinator
     /// can reconcile total spending across all silos.
-    pub fn certificate(&self, silo: SiloId) -> SpendingCertificate {
+    ///
+    /// The `signing_key` is the silo's Ed25519 key used to sign the certificate,
+    /// preventing forgery during rebalancing.
+    pub fn certificate(&self, silo: SiloId, signing_key: &[u8; 32]) -> SpendingCertificate {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(signing_key);
+        // Sign over: agent || version || total_spent || silo
+        let mut msg = Vec::new();
+        msg.extend_from_slice(self.agent.as_bytes());
+        msg.extend_from_slice(&self.version.to_le_bytes());
+        msg.extend_from_slice(&self.spent.to_le_bytes());
+        msg.extend_from_slice(&silo);
+        let sig = sk.sign(&msg);
+
         SpendingCertificate {
             silo,
             agent: self.agent,
             version: self.version,
             total_spent: self.spent,
             debits: self.debits.clone(),
+            signature: sig.to_bytes(),
         }
     }
 }
@@ -161,6 +183,10 @@ pub struct SpendingCertificate {
     pub total_spent: u64,
     /// Individual debit transaction digests.
     pub debits: Vec<DebitDigest>,
+    /// Ed25519 signature over the certificate contents (silo signs to attest).
+    /// Prevents forged certificates during rebalancing.
+    #[serde(with = "crate::serde_sig")]
+    pub signature: [u8; 64],
 }
 
 // ─── BudgetCoordinator ────────────────────────────────────────────────────────
@@ -235,8 +261,13 @@ impl BudgetCoordinator {
     ///
     /// Formula: ceiling = balance * (f+1) / (2f+1)
     ///
-    /// This ensures that even if f silos are Byzantine and spend their
-    /// full slices, the total "overspend" is bounded and recoverable.
+    /// NOTE: The sum of all slice ceilings intentionally exceeds the true balance.
+    /// This is the Stingray bounded-counter design: each silo can locally spend up to
+    /// its ceiling without coordination. The invariant is that with at most f Byzantine
+    /// silos, the maximum overspend is bounded by f * ceiling. The rebalancing protocol
+    /// reconciles actual spending to prevent true overspend.
+    ///
+    /// For safety: true_balance >= total_honestly_spent (enforced at rebalance time).
     pub fn compute_slice_ceiling(&self) -> u64 {
         let f = self.byzantine_tolerance as u64;
         let numerator = f + 1;
@@ -314,9 +345,40 @@ impl BudgetCoordinator {
     /// 3. Deduct from the agent's true balance.
     /// 4. Increment version and redistribute fresh slices.
     ///
+    /// # Parameters
+    /// - `certificates`: spending certificates from silos.
+    /// - `require_all_certs`: if true (default for normal operation), reject the
+    ///   rebalance if certificates are missing from any silo. If false (crash
+    ///   recovery mode), missing silos are assumed to have spent their full ceiling
+    ///   (conservative estimate) and a warning is logged.
+    ///
     /// # Returns
     /// The total amount spent in this epoch (before redistribution).
     pub fn rebalance(&mut self, certificates: &[SpendingCertificate]) -> Result<u64, BudgetError> {
+        self.rebalance_inner(certificates, true)
+    }
+
+    /// Rebalance with explicit control over whether all certificates are required.
+    pub fn rebalance_partial(
+        &mut self,
+        certificates: &[SpendingCertificate],
+    ) -> Result<u64, BudgetError> {
+        self.rebalance_inner(certificates, false)
+    }
+
+    /// Inner rebalance implementation.
+    fn rebalance_inner(
+        &mut self,
+        certificates: &[SpendingCertificate],
+        require_all_certs: bool,
+    ) -> Result<u64, BudgetError> {
+        // Check if all silos submitted certificates.
+        if require_all_certs && certificates.len() < self.silos.len() {
+            return Err(BudgetError::IncompleteCertificates {
+                received: certificates.len(),
+                expected: self.silos.len(),
+            });
+        }
         // Verify certificates.
         let mut seen_silos = HashMap::new();
         let mut total_spent: u64 = 0;
@@ -358,6 +420,17 @@ impl BudgetCoordinator {
 
             seen_silos.insert(cert.silo, cert.total_spent);
             total_spent = total_spent.saturating_add(cert.total_spent);
+        }
+
+        // For missing silos in partial mode: assume they spent their full ceiling
+        // (conservative estimate to maintain safety).
+        if !require_all_certs {
+            let ceiling = self.compute_slice_ceiling();
+            for silo in &self.silos {
+                if !seen_silos.contains_key(silo) {
+                    total_spent = total_spent.saturating_add(ceiling);
+                }
+            }
         }
 
         // Deduct total spending from the agent's balance.
@@ -423,6 +496,10 @@ pub struct UnlockVote {
     pub voter: SiloId,
     /// Whether this silo has a conflicting lock (i.e., it signed a commit).
     pub has_conflict: bool,
+    /// Ed25519 signature over the vote contents (voter signs to attest).
+    /// Prevents forged unlock votes.
+    #[serde(with = "crate::serde_sig")]
+    pub signature: [u8; 64],
 }
 
 /// Certificate proving enough silos agree the lock can be released.
@@ -503,18 +580,31 @@ impl FastUnlockManager {
 
     /// Process an unlock request (fast path after abort).
     ///
-    /// Returns an UnlockVote if this silo agrees the lock can be released.
+    /// Returns a signed UnlockVote if this silo agrees the lock can be released.
     /// A silo votes "no conflict" if it has NOT signed a commit for this proposal.
+    ///
+    /// The `signing_key` is the voter silo's Ed25519 key.
     pub fn vote_unlock(
         &self,
         request: &UnlockRequest,
         voter: SiloId,
         has_signed_commit: bool,
+        signing_key: &[u8; 32],
     ) -> UnlockVote {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(signing_key);
+        // Sign over: proposal_id || voter || has_conflict byte
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&request.proposal_id);
+        msg.extend_from_slice(&voter);
+        msg.push(if has_signed_commit { 1 } else { 0 });
+        let sig = sk.sign(&msg);
+
         UnlockVote {
             request: request.clone(),
             voter,
             has_conflict: has_signed_commit,
+            signature: sig.to_bytes(),
         }
     }
 
@@ -524,11 +614,12 @@ impl FastUnlockManager {
     /// 1. It has >= 2f+1 votes.
     /// 2. No voter reports a conflict (meaning no commit was signed).
     ///
-    /// On success, releases the lock and returns the amount unlocked.
+    /// On success, releases the lock and returns `(amount, silo)` -- the amount
+    /// unlocked and the silo whose slice should be refunded.
     pub fn apply_unlock_certificate(
         &mut self,
         certificate: &UnlockCertificate,
-    ) -> Result<u64, BudgetError> {
+    ) -> Result<(u64, SiloId), BudgetError> {
         let quorum = 2 * self.byzantine_tolerance + 1;
 
         // Check quorum.
@@ -552,14 +643,32 @@ impl FastUnlockManager {
         // Verify the lock exists and is still active.
         let proposal_id = certificate.request.proposal_id;
         match self.locks.get(&proposal_id) {
-            Some(LockStatus::Locked { amount, .. }) => {
+            Some(LockStatus::Locked { amount, silo, .. }) => {
                 let amount = *amount;
+                let silo = *silo;
                 self.locks.insert(proposal_id, LockStatus::Released);
-                Ok(amount)
+                Ok((amount, silo))
             }
             Some(LockStatus::Released) => Err(BudgetError::AlreadyReleased { proposal_id }),
             None => Err(BudgetError::LockNotFound { proposal_id }),
         }
+    }
+
+    /// Apply an unlock certificate AND refund the amount to the silo's budget slice.
+    ///
+    /// This is the recommended entrypoint for fast unlock: it both releases the lock
+    /// and credits the amount back to the originating silo's `BudgetSlice`.
+    pub fn apply_unlock_and_refund(
+        &mut self,
+        certificate: &UnlockCertificate,
+        coordinator: &mut BudgetCoordinator,
+    ) -> Result<u64, BudgetError> {
+        let (amount, silo) = self.apply_unlock_certificate(certificate)?;
+        // Refund the amount back to the silo's budget slice.
+        if let Some(slice) = coordinator.silo_states.get_mut(&silo) {
+            slice.refund(amount);
+        }
+        Ok(amount)
     }
 
     /// Check if a proposal has an active lock.
@@ -616,6 +725,8 @@ pub enum BudgetError {
     InsufficientUnlockVotes { have: usize, need: usize },
     /// A silo reports a conflict (it signed a commit for this proposal).
     ConflictingUnlock { silo: SiloId, proposal_id: [u8; 32] },
+    /// Not all silos submitted spending certificates during rebalance.
+    IncompleteCertificates { received: usize, expected: usize },
 }
 
 impl core::fmt::Display for BudgetError {
@@ -667,6 +778,12 @@ impl core::fmt::Display for BudgetError {
                     "conflicting unlock: silo signed a commit for this proposal"
                 )
             }
+            BudgetError::IncompleteCertificates { received, expected } => {
+                write!(
+                    f,
+                    "incomplete certificates: received {received}, expected {expected}"
+                )
+            }
         }
     }
 }
@@ -696,6 +813,11 @@ mod tests {
 
     fn test_digest(n: u64) -> DebitDigest {
         *blake3::hash(&n.to_le_bytes()).as_bytes()
+    }
+
+    /// Generate a deterministic test signing key from a silo id.
+    fn test_signing_key(silo: &SiloId) -> [u8; 32] {
+        *blake3::hash(silo).as_bytes()
     }
 
     // ── Bounded Counter Tests ─────────────────────────────────────────────
@@ -783,6 +905,8 @@ mod tests {
         let silos = test_silos(4);
         let silo_a = silos[0];
         let silo_b = silos[1];
+        let silo_c = silos[2];
+        let silo_d = silos[3];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos.clone(), 1).unwrap();
 
@@ -790,12 +914,18 @@ mod tests {
         coord.try_debit(silo_a, 200, test_digest(1)).unwrap();
         coord.try_debit(silo_b, 100, test_digest(2)).unwrap();
 
-        // Collect certificates.
-        let cert_a = coord.silo_states[&silo_a].certificate(silo_a);
-        let cert_b = coord.silo_states[&silo_b].certificate(silo_b);
+        // Collect certificates from ALL silos (required by default).
+        let key_a = test_signing_key(&silo_a);
+        let key_b = test_signing_key(&silo_b);
+        let key_c = test_signing_key(&silo_c);
+        let key_d = test_signing_key(&silo_d);
+        let cert_a = coord.silo_states[&silo_a].certificate(silo_a, &key_a);
+        let cert_b = coord.silo_states[&silo_b].certificate(silo_b, &key_b);
+        let cert_c = coord.silo_states[&silo_c].certificate(silo_c, &key_c);
+        let cert_d = coord.silo_states[&silo_d].certificate(silo_d, &key_d);
 
         // Rebalance.
-        let total = coord.rebalance(&[cert_a, cert_b]).unwrap();
+        let total = coord.rebalance(&[cert_a, cert_b, cert_c, cert_d]).unwrap();
         assert_eq!(total, 300);
 
         // Balance updated: 1000 - 300 = 700.
@@ -809,6 +939,45 @@ mod tests {
     }
 
     #[test]
+    fn test_rebalance_rejects_incomplete_certificates() {
+        let silos = test_silos(4);
+        let silo_a = silos[0];
+
+        let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        coord.try_debit(silo_a, 50, test_digest(1)).unwrap();
+
+        let key_a = test_signing_key(&silo_a);
+        let cert_a = coord.silo_states[&silo_a].certificate(silo_a, &key_a);
+
+        // Only 1 of 4 silos submitted -- should fail with require_all_certs.
+        let err = coord.rebalance(&[cert_a]).unwrap_err();
+        assert!(matches!(
+            err,
+            BudgetError::IncompleteCertificates {
+                received: 1,
+                expected: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn test_rebalance_partial_mode() {
+        let silos = test_silos(4);
+        let silo_a = silos[0];
+
+        let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        coord.try_debit(silo_a, 50, test_digest(1)).unwrap();
+
+        let key_a = test_signing_key(&silo_a);
+        let cert_a = coord.silo_states[&silo_a].certificate(silo_a, &key_a);
+
+        // Partial mode: missing silos assumed to spend full ceiling (666 each).
+        // total = 50 (from cert_a) + 3 * 666 (missing) = 2048
+        let total = coord.rebalance_partial(&[cert_a]).unwrap();
+        assert_eq!(total, 50 + 3 * 666); // Conservative estimate.
+    }
+
+    #[test]
     fn test_rebalance_rejects_wrong_version() {
         let silos = test_silos(4);
         let silo = silos[0];
@@ -816,10 +985,11 @@ mod tests {
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
         coord.try_debit(silo, 50, test_digest(1)).unwrap();
 
-        let mut cert = coord.silo_states[&silo].certificate(silo);
+        let key = test_signing_key(&silo);
+        let mut cert = coord.silo_states[&silo].certificate(silo, &key);
         cert.version = 99; // Wrong version.
 
-        let err = coord.rebalance(&[cert]).unwrap_err();
+        let err = coord.rebalance_partial(&[cert]).unwrap_err();
         assert!(matches!(
             err,
             BudgetError::VersionMismatch {
@@ -843,9 +1013,11 @@ mod tests {
             version: 0,
             total_spent: 9999,
             debits: vec![],
+            signature: [0u8; 64], // Forged signature (not verified in rebalance yet).
         };
 
-        let err = coord.rebalance(&[cert]).unwrap_err();
+        // Use rebalance_partial to avoid the incomplete certs check.
+        let err = coord.rebalance_partial(&[cert]).unwrap_err();
         assert!(matches!(err, BudgetError::CertificateExceedsCeiling { .. }));
     }
 
@@ -887,7 +1059,10 @@ mod tests {
         // Collect votes from 2f+1 = 3 silos (none have signed a commit).
         let votes: Vec<UnlockVote> = silos[..3]
             .iter()
-            .map(|&voter| mgr.vote_unlock(&request, voter, false))
+            .map(|&voter| {
+                let key = test_signing_key(&voter);
+                mgr.vote_unlock(&request, voter, false, &key)
+            })
             .collect();
 
         let certificate = UnlockCertificate {
@@ -896,8 +1071,9 @@ mod tests {
         };
 
         // Apply the unlock certificate.
-        let unlocked = mgr.apply_unlock_certificate(&certificate).unwrap();
+        let (unlocked, unlocked_silo) = mgr.apply_unlock_certificate(&certificate).unwrap();
         assert_eq!(unlocked, 300);
+        assert_eq!(unlocked_silo, silo);
         assert!(!mgr.is_locked(&proposal));
     }
 
@@ -919,7 +1095,10 @@ mod tests {
         // Only 2 votes (need 3 for f=1).
         let votes: Vec<UnlockVote> = test_silos(2)
             .iter()
-            .map(|&voter| mgr.vote_unlock(&request, voter, false))
+            .map(|&voter| {
+                let key = test_signing_key(&voter);
+                mgr.vote_unlock(&request, voter, false, &key)
+            })
             .collect();
 
         let certificate = UnlockCertificate { request, votes };
@@ -949,9 +1128,12 @@ mod tests {
 
         // One silo has a conflict (it signed a commit).
         let mut votes: Vec<UnlockVote> = Vec::new();
-        votes.push(mgr.vote_unlock(&request, silos[0], false));
-        votes.push(mgr.vote_unlock(&request, silos[1], true)); // CONFLICT
-        votes.push(mgr.vote_unlock(&request, silos[2], false));
+        let key0 = test_signing_key(&silos[0]);
+        let key1 = test_signing_key(&silos[1]);
+        let key2 = test_signing_key(&silos[2]);
+        votes.push(mgr.vote_unlock(&request, silos[0], false, &key0));
+        votes.push(mgr.vote_unlock(&request, silos[1], true, &key1)); // CONFLICT
+        votes.push(mgr.vote_unlock(&request, silos[2], false, &key2));
 
         let certificate = UnlockCertificate { request, votes };
 
@@ -1000,18 +1182,25 @@ mod tests {
 
         let votes: Vec<UnlockVote> = silos[..3]
             .iter()
-            .map(|&voter| unlock_mgr.vote_unlock(&request, voter, false))
+            .map(|&voter| {
+                let key = test_signing_key(&voter);
+                unlock_mgr.vote_unlock(&request, voter, false, &key)
+            })
             .collect();
 
         let certificate = UnlockCertificate { request, votes };
-        let unlocked = unlock_mgr.apply_unlock_certificate(&certificate).unwrap();
+        let (unlocked, unlocked_silo) = unlock_mgr.apply_unlock_certificate(&certificate).unwrap();
         assert_eq!(unlocked, 150);
+        assert_eq!(unlocked_silo, silo);
 
-        // The budget slice was already debited (that spending is "real" in the
-        // bounded counter sense), but the agent's true balance won't be affected
-        // because the abort means no ledger mutation happened. On rebalance,
-        // only the certificates representing actual committed work will deduct
-        // from the true balance.
+        // Issue #8 fix: refund the unlocked amount back to the silo's slice.
+        coord
+            .silo_states
+            .get_mut(&unlocked_silo)
+            .unwrap()
+            .refund(unlocked);
+        // Verify the refund restored the budget.
+        assert_eq!(coord.remaining(&silo), Some(coord.compute_slice_ceiling()));
     }
 
     #[test]

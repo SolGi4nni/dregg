@@ -10,7 +10,11 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
 
-use pyana_cell::Ledger;
+use pyana_cell::{CellId, Ledger};
+use pyana_coord::budget::{
+    BudgetCoordinator, BudgetError, FastUnlockManager, SiloId, SpendingCertificate,
+    UnlockCertificate, UnlockRequest, UnlockVote,
+};
 use pyana_sdk::AgentWallet;
 use pyana_store::PersistentStore;
 
@@ -79,6 +83,9 @@ pub struct NodeStateInner {
     pub used_proof_hashes: HashSet<[u8; 32]>,
     /// Known federation public keys for attested root quorum verification.
     pub known_federation_keys: Vec<pyana_types::PublicKey>,
+    /// Whether federation keys have been configured. When `false`, the node operates
+    /// in "discovery mode" and will not finalize attested roots (Issue 10).
+    pub federation_configured: bool,
     /// Maximum age (in seconds) for accepting incoming attested roots. Default: 3600.
     pub max_root_age_secs: u64,
     /// This validator's threshold decryption key share (Phase 2 turn privacy).
@@ -104,6 +111,32 @@ pub struct NodeStateInner {
     /// When true, after each finalized block the node generates a transition proof
     /// and gossips it to peers.
     pub prove_transitions: bool,
+    /// Cached PIR intent index. Invalidated on intent pool mutations.
+    /// Avoids O(n) rebuild on every PIR request (prevents CPU DoS).
+    pub pir_index_cache: Option<pyana_intent::pir::IntentIndex>,
+
+    /// Persistent discharge gateway instance for replay prevention.
+    /// SECURITY: This MUST persist across requests so the `issued` set actually
+    /// tracks previously-discharged tickets. Creating a fresh gateway per request
+    /// (the old behavior) made the replay set useless since it was dropped immediately.
+    pub discharge_gateway: Option<pyana_macaroon::DischargeGateway>,
+
+    // ─── Stingray Budget Coordination ─────────────────────────────────────────
+    /// Per-agent budget coordinators for bounded-counter resource metering.
+    /// Each agent with an active budget slice has an entry here.
+    /// The node's silo_id is derived from the node's public key.
+    pub budget_coordinators: HashMap<CellId, BudgetCoordinator>,
+    /// Fast unlock manager for releasing locked resources after 2PC aborts.
+    pub fast_unlock_manager: Option<FastUnlockManager>,
+    /// This node's silo ID (derived from public key, set at startup).
+    pub silo_id: SiloId,
+    /// Spending certificates accumulated during this epoch, awaiting submission
+    /// at the next epoch boundary for rebalancing.
+    pub pending_spending_certificates: Vec<SpendingCertificate>,
+    /// Pending unlock requests from remote nodes awaiting quorum votes.
+    pub pending_unlock_requests: Vec<UnlockRequest>,
+    /// Budget epoch version (tracks coordinator rebalance cycles).
+    pub budget_epoch: u64,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -158,6 +191,15 @@ impl NodeState {
             getrandom::fill(&mut key_bytes).map_err(|e| format!("getrandom failed: {e}"))?;
             std::fs::write(&key_path, key_bytes)
                 .map_err(|e| format!("failed to write node.key: {e}"))?;
+            // Restrict file permissions to owner-only (0o600) to prevent other
+            // users from reading the private key.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let perms = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(&key_path, perms)
+                    .map_err(|e| format!("failed to set node.key permissions: {e}"))?;
+            }
             AgentWallet::from_key_bytes(zeroize::Zeroizing::new(key_bytes))
         };
 
@@ -177,6 +219,15 @@ impl NodeState {
         let ledger = Ledger::new();
         let (events_tx, _) = broadcast::channel(4096);
 
+        // Derive the silo ID from the wallet's public key.
+        let silo_id: SiloId = *blake3::hash(wallet.public_key().as_bytes()).as_bytes();
+
+        // Issue 10: Log a warning — node starts in discovery mode with no federation keys.
+        tracing::warn!(
+            "node starting with zero federation keys — operating in discovery mode. \
+             Attested roots will NOT be finalized until federation keys are loaded."
+        );
+
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
                 wallet,
@@ -190,6 +241,7 @@ impl NodeState {
                 pending_turns: pyana_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
+                federation_configured: false,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -198,6 +250,14 @@ impl NodeState {
                 pruning_enabled: false,
                 checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
+                pir_index_cache: None,
+                discharge_gateway: None,
+                budget_coordinators: HashMap::new(),
+                fast_unlock_manager: None,
+                silo_id,
+                pending_spending_certificates: Vec::new(),
+                pending_unlock_requests: Vec::new(),
+                budget_epoch: 0,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -219,6 +279,9 @@ impl NodeState {
         let ledger = Ledger::new();
         let (events_tx, _) = broadcast::channel(4096);
 
+        // Derive the silo ID from the wallet's public key.
+        let silo_id: SiloId = *blake3::hash(wallet.public_key().as_bytes()).as_bytes();
+
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
                 wallet,
@@ -232,6 +295,7 @@ impl NodeState {
                 pending_turns: pyana_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
+                federation_configured: false,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -240,6 +304,14 @@ impl NodeState {
                 pruning_enabled: false,
                 checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
+                pir_index_cache: None,
+                discharge_gateway: None,
+                budget_coordinators: HashMap::new(),
+                fast_unlock_manager: None,
+                silo_id,
+                pending_spending_certificates: Vec::new(),
+                pending_unlock_requests: Vec::new(),
+                budget_epoch: 0,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -310,6 +382,191 @@ impl NodeState {
     pub async fn gossip(&self) -> Option<GossipHandle> {
         let g = self.gossip.read().await;
         g.clone()
+    }
+}
+
+// =============================================================================
+// Budget Coordination Methods
+// =============================================================================
+
+impl NodeStateInner {
+    /// Initialize or update a budget coordinator for an agent.
+    ///
+    /// Called when the node learns about an agent's budget allocation
+    /// (e.g., from a genesis block or epoch transition). Sets up the
+    /// bounded-counter slice for this silo.
+    pub fn init_budget_coordinator(
+        &mut self,
+        agent: CellId,
+        total_balance: u64,
+        silos: Vec<SiloId>,
+        byzantine_tolerance: usize,
+    ) -> Result<(), BudgetError> {
+        let coordinator = BudgetCoordinator::new(agent, total_balance, silos, byzantine_tolerance)?;
+        self.budget_coordinators.insert(agent, coordinator);
+
+        // Initialize fast unlock manager if not already present.
+        if self.fast_unlock_manager.is_none() {
+            let total_silos = self
+                .budget_coordinators
+                .values()
+                .next()
+                .map(|c| c.silos.len())
+                .unwrap_or(4);
+            self.fast_unlock_manager =
+                Some(FastUnlockManager::new(byzantine_tolerance, total_silos));
+        }
+
+        Ok(())
+    }
+
+    /// Try to debit from an agent's budget slice on this silo.
+    ///
+    /// This is the hot path called by the executor's budget gate: no coordination
+    /// with other silos is needed as long as the local slice has budget remaining.
+    ///
+    /// On success, records the spending certificate for later epoch submission.
+    pub fn try_budget_debit(
+        &mut self,
+        agent: &CellId,
+        amount: u64,
+        digest: [u8; 32],
+    ) -> Result<(), BudgetError> {
+        let silo_id = self.silo_id;
+        let coordinator = self
+            .budget_coordinators
+            .get_mut(agent)
+            .ok_or(BudgetError::UnknownSilo { silo: silo_id })?;
+        coordinator.try_debit(silo_id, amount, digest)
+    }
+
+    /// Collect spending certificates from all local budget coordinators.
+    ///
+    /// Called at epoch boundaries to gather this silo's spending summaries
+    /// for submission to the federation rebalancing process.
+    pub fn collect_spending_certificates(&mut self) -> Vec<SpendingCertificate> {
+        let silo_id = self.silo_id;
+        let signing_key = self.wallet.gossip_signing_key();
+        let signing_key_bytes = &signing_key.to_bytes();
+        let mut certificates = Vec::new();
+        for coordinator in self.budget_coordinators.values() {
+            if let Some(slice) = coordinator.silo_states.get(&silo_id) {
+                if slice.spent > 0 {
+                    certificates.push(slice.certificate(silo_id, signing_key_bytes));
+                }
+            }
+        }
+        certificates
+    }
+
+    /// Process received spending certificates and rebalance agent budgets.
+    ///
+    /// Called during epoch transitions when the federation has collected
+    /// certificates from all (or enough) silos. Updates balances and
+    /// redistributes slices for the new epoch.
+    ///
+    /// Returns a vector of (agent, total_spent) pairs for ledger settlement.
+    pub fn rebalance_budgets(
+        &mut self,
+        all_certificates: &[SpendingCertificate],
+    ) -> Vec<(CellId, u64)> {
+        let mut settlements = Vec::new();
+
+        // Group certificates by agent.
+        let mut by_agent: HashMap<CellId, Vec<&SpendingCertificate>> = HashMap::new();
+        for cert in all_certificates {
+            by_agent.entry(cert.agent).or_default().push(cert);
+        }
+
+        // Rebalance each agent's coordinator.
+        for (agent, certs) in by_agent {
+            if let Some(coordinator) = self.budget_coordinators.get_mut(&agent) {
+                let owned_certs: Vec<SpendingCertificate> = certs.into_iter().cloned().collect();
+                match coordinator.rebalance(&owned_certs) {
+                    Ok(total_spent) => {
+                        if total_spent > 0 {
+                            settlements.push((agent, total_spent));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            agent = %hex::encode(agent.as_bytes()),
+                            error = %e,
+                            "budget rebalance failed for agent"
+                        );
+                    }
+                }
+            }
+        }
+
+        self.budget_epoch += 1;
+        self.pending_spending_certificates.clear();
+        settlements
+    }
+
+    /// Create an unlock request for resources locked by a failed/aborted turn.
+    ///
+    /// The request is gossiped to other nodes for quorum voting.
+    pub fn create_unlock_request(
+        &self,
+        proposal_id: [u8; 32],
+        agent: CellId,
+        amount: u64,
+    ) -> UnlockRequest {
+        UnlockRequest {
+            proposal_id,
+            agent,
+            amount,
+            requester: self.silo_id,
+        }
+    }
+
+    /// Vote on an unlock request from a remote node.
+    ///
+    /// A node votes "no conflict" if it has NOT signed a commit for this proposal.
+    /// Returns the vote to be gossiped back.
+    pub fn vote_on_unlock(&self, request: &UnlockRequest) -> Option<UnlockVote> {
+        let mgr = self.fast_unlock_manager.as_ref()?;
+        // Check if we have a conflicting lock (i.e., we signed a commit for this proposal).
+        let has_conflict = mgr.is_locked(&request.proposal_id);
+        let signing_key = self.wallet.gossip_signing_key();
+        Some(mgr.vote_unlock(request, self.silo_id, has_conflict, &signing_key.to_bytes()))
+    }
+
+    /// Apply an unlock certificate that has achieved quorum.
+    ///
+    /// Releases the locked resources and refunds the budget slice.
+    pub fn apply_unlock_certificate(
+        &mut self,
+        certificate: &UnlockCertificate,
+    ) -> Result<u64, BudgetError> {
+        let mgr = self
+            .fast_unlock_manager
+            .as_mut()
+            .ok_or(BudgetError::LockNotFound {
+                proposal_id: certificate.request.proposal_id,
+            })?;
+        let (amount, _silo) = mgr.apply_unlock_certificate(certificate)?;
+        Ok(amount)
+    }
+
+    /// Load federation keys and mark the federation as configured.
+    ///
+    /// Once called with a non-empty key set, the node transitions out of
+    /// "discovery mode" and will verify attested root quorum signatures.
+    pub fn set_federation_keys(&mut self, keys: Vec<pyana_types::PublicKey>) {
+        if keys.is_empty() {
+            tracing::warn!(
+                "set_federation_keys called with empty key set — remaining in discovery mode"
+            );
+            return;
+        }
+        tracing::info!(
+            key_count = keys.len(),
+            "federation keys loaded — exiting discovery mode"
+        );
+        self.known_federation_keys = keys;
+        self.federation_configured = true;
     }
 }
 

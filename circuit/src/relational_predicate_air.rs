@@ -54,12 +54,16 @@ use crate::field::BabyBear;
 use crate::poseidon2;
 
 /// Number of bits for the range check (same as predicate_air).
-pub const RELATIONAL_DIFF_BITS: usize = 31;
+///
+/// SOUNDNESS FIX: BabyBear p = 2013265921, p/2 = 1006632960, 2^30 = 1073741824.
+/// Since 2^30 > p/2, the old value of 31 was UNSOUND. With 30 bits, the high bit
+/// is bit 29; if bit 29 = 0 then diff < 2^29 = 536870912 < p/2, proving non-negative.
+pub const RELATIONAL_DIFF_BITS: usize = 30;
 
 /// Trace width for the relational predicate AIR.
 /// value_a(1) + blinding_a(1) + value_b(1) + blinding_b(1) + diff(1)
-/// + diff_bits(31) + neq_inverse(1) + result_bit(1) = 38
-pub const RELATIONAL_AIR_WIDTH: usize = 38;
+/// + diff_bits(30) + neq_inverse(1) + result_bit(1) = 37
+pub const RELATIONAL_AIR_WIDTH: usize = 37;
 
 /// Column indices for the relational predicate AIR trace.
 pub mod col {

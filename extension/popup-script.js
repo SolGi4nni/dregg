@@ -191,5 +191,105 @@ recoverBtn.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('recovery.html') });
 });
 
+// ---------------------------------------------------------------------------
+// Intents fulfillment UI
+// ---------------------------------------------------------------------------
+
+const intentsBtn = document.getElementById('intentsBtn');
+const intentsSection = document.getElementById('intentsSection');
+const intentsContainer = document.getElementById('intentsContainer');
+
+intentsBtn.addEventListener('click', async () => {
+  if (intentsSection.style.display === 'none') {
+    intentsSection.style.display = 'block';
+    intentsBtn.textContent = 'Hide Intents';
+    await loadFulfillableIntents();
+  } else {
+    intentsSection.style.display = 'none';
+    intentsBtn.textContent = 'Fulfill Intents';
+  }
+});
+
+async function loadFulfillableIntents() {
+  const intents = await sendMessage('pyana:getFulfillableIntents');
+  if (!intents || intents.length === 0) {
+    intentsContainer.innerHTML = '<div class="empty">No fulfillable intents available</div>';
+    return;
+  }
+  intentsContainer.innerHTML = intents.map(item => {
+    const actions = item.grantedActions ? item.grantedActions.join(', ') : 'any';
+    const expiresIn = Math.max(0, Math.round((item.expiry - Date.now()) / 60000));
+    const expiresStr = expiresIn > 60 ? `${Math.round(expiresIn / 60)}h` : `${expiresIn}m`;
+    const shortId = item.intentId.slice(0, 12) + '...';
+    return `<div class="log-entry" style="display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:11px;color:#a78bfa;word-break:break-all;" title="${escapeHtml(item.intentId)}">${escapeHtml(shortId)}</div>
+        <div class="time">${escapeHtml(actions)} on ${escapeHtml(item.resource)} - expires in ${expiresStr}</div>
+      </div>
+      <button class="fulfill-btn" data-intent-id="${escapeHtml(item.intentId)}" data-token-id="${escapeHtml(item.matchedTokenId)}" style="flex-shrink:0;padding:4px 8px;font-size:11px;background:#065f46;color:#6ee7b7;border:none;border-radius:4px;cursor:pointer;">Fulfill</button>
+    </div>`;
+  }).join('');
+
+  // Attach fulfill handlers.
+  intentsContainer.querySelectorAll('.fulfill-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '...';
+      const result = await sendMessage('pyana:fulfillIntent', {
+        intentId: btn.dataset.intentId,
+        tokenId: btn.dataset.tokenId,
+      });
+      if (result && result.fulfilled) {
+        btn.textContent = 'Done';
+        btn.style.background = '#064e3b';
+        // Refresh the list after a brief delay.
+        setTimeout(() => loadFulfillableIntents(), 1000);
+      } else {
+        btn.textContent = 'Failed';
+        btn.style.background = '#7f1d1d';
+        btn.style.color = '#fca5a5';
+        btn.disabled = false;
+        setTimeout(() => {
+          btn.textContent = 'Fulfill';
+          btn.style.background = '#065f46';
+          btn.style.color = '#6ee7b7';
+        }, 3000);
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// WASM availability check
+// ---------------------------------------------------------------------------
+
+async function checkWasmStatus() {
+  // The background script sets wasmLoaded. We detect WASM issues by checking
+  // if getState works but the extension has a degraded crypto capability.
+  // Send a lightweight message to check WASM status.
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'pyana:isConnected',
+      id: 'wasm_check',
+    });
+    // If we get here, background is alive. Check for WASM error indicator
+    // by trying canAuthorize which requires WASM — if it throws, show the error.
+    const canAuth = await sendMessage('pyana:canAuthorize', {
+      request: { action: '__wasm_check__', resource: '__probe__' }
+    });
+    // If canAuthorize returns false (no token), WASM is working fine.
+    // If it returns an error about WASM, show the warning.
+    if (canAuth && canAuth.error && canAuth.error.includes('Cryptographic module')) {
+      document.getElementById('wasmError').style.display = 'block';
+    }
+  } catch (e) {
+    // Background not available or WASM issue.
+    if (e.message && e.message.includes('WASM')) {
+      document.getElementById('wasmError').style.display = 'block';
+    }
+  }
+}
+
 refresh();
 loadLog();
+checkWasmStatus();

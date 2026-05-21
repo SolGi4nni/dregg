@@ -4,19 +4,37 @@
 //! when node state changes (new roots, revocations, receipts). Clients can also
 //! send commands (subscribe, authorize) over the WebSocket.
 
+use std::net::SocketAddr;
+use std::sync::LazyLock;
+use std::time::Instant;
+
 use axum::{
     extract::{
-        State,
+        ConnectInfo, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use subtle::ConstantTimeEq;
+use tokio::sync::{Semaphore, broadcast};
 use tracing::{debug, warn};
 
 use crate::state::{NodeEvent, NodeState};
+
+/// Maximum WebSocket message size (1 MiB). Prevents OOM from oversized frames.
+const WS_MAX_MESSAGE_SIZE: usize = 1 * 1024 * 1024;
+/// Maximum WebSocket frame size (256 KiB).
+const WS_MAX_FRAME_SIZE: usize = 256 * 1024;
+
+/// Concurrency limit for detached gossip tasks spawned from intent broadcasts.
+static GOSSIP_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(16));
+
+/// Per-connection rate limiter for WS unlock attempts.
+/// Limits to 5 attempts per 60-second window per connection.
+const WS_UNLOCK_MAX_ATTEMPTS: u32 = 5;
+const WS_UNLOCK_WINDOW_SECS: u64 = 60;
 
 // =============================================================================
 // Client message types
@@ -98,8 +116,30 @@ enum ServerMessage {
 // =============================================================================
 
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
-pub async fn handle_ws(ws: WebSocketUpgrade, State(state): State<NodeState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+///
+/// Security: During initial setup (passphrase not yet set), only loopback
+/// connections are allowed to prevent remote passphrase hijacking.
+pub async fn handle_ws(
+    ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<NodeState>,
+) -> impl IntoResponse {
+    // Issue 1 (CRITICAL): During initial setup, reject non-loopback connections
+    // to prevent remote passphrase hijacking.
+    {
+        let s = state.read().await;
+        if s.passphrase_hash.is_none() && !addr.ip().is_loopback() {
+            drop(s);
+            // Return a 403 Forbidden — cannot upgrade to WS from non-local during setup.
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    // Issue 2 (HIGH): Apply max message/frame size to prevent OOM.
+    ws.max_message_size(WS_MAX_MESSAGE_SIZE)
+        .max_frame_size(WS_MAX_FRAME_SIZE)
+        .on_upgrade(move |socket| handle_socket(socket, state))
+        .into_response()
 }
 
 /// Process a single WebSocket connection.
@@ -112,6 +152,10 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
     // Track which topics this client is subscribed to.
     // Default: subscribe to everything.
     let mut subscribed_topics: Vec<Topic> = vec![Topic::Roots, Topic::Revocations, Topic::Receipts];
+
+    // Per-connection rate limiter for unlock attempts (brute-force protection).
+    let mut unlock_attempts: u32 = 0;
+    let mut unlock_window_start = Instant::now();
 
     debug!("WebSocket client connected");
 
@@ -175,16 +219,66 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                 }
                             }
                             Ok(ClientMessage::BroadcastIntent { intent }) => {
+                                // Issue 8 (MEDIUM): Reject intent broadcasts when wallet is locked.
+                                {
+                                    let s = state.read().await;
+                                    if !s.unlocked {
+                                        let resp = ServerMessage::Error {
+                                            message: "wallet is locked".to_string(),
+                                        };
+                                        let json = serde_json::to_string(&resp).unwrap();
+                                        if sender.send(Message::Text(json.into())).await.is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+
                                 // Validate and store in local intent pool.
+                                // Apply same checks as the HTTP path: validation,
+                                // content-addressed ID verification, and pool size limit.
                                 if let Ok(typed_intent) =
                                     serde_json::from_value::<pyana_intent::Intent>(intent.clone())
                                 {
                                     if pyana_intent::validation::validate_intent(&typed_intent)
                                         .is_ok()
                                     {
+                                        // Verify content-addressed ID (prevents ID spoofing).
+                                        let recomputed = pyana_intent::Intent::new(
+                                            typed_intent.kind,
+                                            typed_intent.matcher.clone(),
+                                            typed_intent.creator,
+                                            typed_intent.expiry,
+                                            typed_intent.stake_proof.clone(),
+                                        );
+                                        if recomputed.id != typed_intent.id {
+                                            let resp = ServerMessage::Error {
+                                                message: "intent ID mismatch (content-addressed)".to_string(),
+                                            };
+                                            let json = serde_json::to_string(&resp).unwrap();
+                                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
+
                                         let mut s = state.write().await;
+                                        // Enforce pool size limit (same as HTTP path).
+                                        if s.intent_pool.len() >= crate::api::MAX_NODE_INTENT_POOL {
+                                            drop(s);
+                                            let resp = ServerMessage::Error {
+                                                message: "intent pool full".to_string(),
+                                            };
+                                            let json = serde_json::to_string(&resp).unwrap();
+                                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                         s.intent_pool
                                             .insert(typed_intent.id, typed_intent.clone());
+                                        // Invalidate PIR index cache.
+                                        s.pir_index_cache = None;
                                         drop(s);
 
                                         // Broadcast to all WS subscribers as a NodeEvent.
@@ -193,17 +287,42 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                                 .unwrap_or_default(),
                                         });
                                         // Also gossip to federation peers.
+                                        // Issue 3 (HIGH): Use semaphore to bound concurrent
+                                        // gossip tasks and apply backpressure.
                                         if let Some(gossip) = state.gossip().await {
                                             let intent_clone = intent.clone();
-                                            tokio::spawn(async move {
-                                                gossip.gossip_intent(&intent_clone).await;
-                                            });
+                                            match GOSSIP_SEMAPHORE.try_acquire() {
+                                                Ok(permit) => {
+                                                    tokio::spawn(async move {
+                                                        gossip
+                                                            .gossip_intent(&intent_clone)
+                                                            .await;
+                                                        drop(permit);
+                                                    });
+                                                }
+                                                Err(_) => {
+                                                    // Backpressure: drop this gossip round.
+                                                    debug!("gossip semaphore full, dropping gossip for intent");
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                             Ok(ClientMessage::Unlock { passphrase }) => {
-                                let resp = if passphrase.is_empty() {
+                                // Rate limit unlock attempts per connection.
+                                let now = Instant::now();
+                                if now.duration_since(unlock_window_start).as_secs() >= WS_UNLOCK_WINDOW_SECS {
+                                    unlock_attempts = 0;
+                                    unlock_window_start = now;
+                                }
+                                unlock_attempts += 1;
+
+                                let resp = if unlock_attempts > WS_UNLOCK_MAX_ATTEMPTS {
+                                    ServerMessage::Error {
+                                        message: "rate limited: too many unlock attempts".to_string(),
+                                    }
+                                } else if passphrase.is_empty() {
                                     ServerMessage::UnlockResult {
                                         success: false,
                                         error: Some("passphrase must not be empty".to_string()),
@@ -217,7 +336,9 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                     );
                                     match s.passphrase_hash {
                                         Some(stored_hash) => {
-                                            if hash != stored_hash {
+                                            // Issue 7 (MEDIUM): Use constant-time comparison
+                                            // to prevent timing side-channel attacks.
+                                            if !bool::from(hash.ct_eq(&stored_hash)) {
                                                 ServerMessage::UnlockResult {
                                                     success: false,
                                                     error: Some("invalid passphrase".to_string()),

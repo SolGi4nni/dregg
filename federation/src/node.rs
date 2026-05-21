@@ -220,6 +220,15 @@ impl Federation {
                 // revocation tree. This enables divergence detection in validate_block().
                 let root = node.compute_state_root();
                 self.consensus_states[i].set_local_state_root(root);
+                // Set pending_state_roots so that any node that becomes leader
+                // will include proper state roots in its proposal. This ensures
+                // divergence detection works correctly.
+                self.consensus_states[i].pending_state_roots = Some(PendingStateRoots {
+                    pre_state_root: root,
+                    post_state_root: [0u8; 32], // computed after applying events
+                    note_tree_root: [0u8; 32],
+                    nullifier_set_root: [0u8; 32],
+                });
             }
         }
 

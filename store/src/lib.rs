@@ -269,8 +269,12 @@ impl PersistentStore {
     /// to full tree reconstruction only if the cache is missing (e.g., first call
     /// on a database created before the cache was introduced, or after corruption
     /// recovery).
+    ///
+    /// On cache miss, a write transaction is used to atomically read the current
+    /// commitments and write the computed root, preventing TOCTOU races where
+    /// another writer could append a commitment between the read and the cache write.
     pub fn note_tree_root(&self) -> Result<[u8; 32]> {
-        // Try to read the cached root first.
+        // Try to read the cached root first (fast path).
         let read_txn = self.db.begin_read()?;
         let meta_bytes = read_txn.open_table(tables::METADATA_BYTES)?;
         if let Some(guard) = meta_bytes.get(tables::META_NOTE_TREE_ROOT_CACHE)? {
@@ -284,16 +288,68 @@ impl PersistentStore {
         drop(meta_bytes);
         drop(read_txn);
 
-        // Cache miss: rebuild from scratch and persist the result.
-        let commitments = self.load_all_note_commitments()?;
+        // Cache miss: use a write transaction to atomically read commitments and
+        // persist the computed root. This prevents a TOCTOU race where another
+        // writer could append between our read and the cache write.
+        let write_txn = self.db.begin_write()?;
+
+        // Re-check the cache under the write lock (another thread may have
+        // populated it while we were waiting for the write transaction).
+        let cached_root = {
+            let meta_bytes_table = write_txn.open_table(tables::METADATA_BYTES)?;
+            let maybe_cached = meta_bytes_table.get(tables::META_NOTE_TREE_ROOT_CACHE)?;
+            match maybe_cached {
+                Some(guard) => {
+                    let cached = guard.value();
+                    if cached.len() == 32 {
+                        let mut r = [0u8; 32];
+                        r.copy_from_slice(cached);
+                        Some(r)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        };
+
+        if let Some(r) = cached_root {
+            // No changes to commit; just abort the write transaction and return.
+            return Ok(r);
+        }
+
+        // Read all commitments within this write transaction's snapshot.
+        let count = {
+            let meta = write_txn.open_table(tables::METADATA)?;
+            meta.get(tables::META_NOTE_TREE_SIZE)?
+                .map(|g| g.value())
+                .unwrap_or(0)
+        };
+
+        let mut commitments = Vec::with_capacity(count as usize);
+        {
+            let commitment_table = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
+            for pos in 0..count {
+                match commitment_table.get(pos)? {
+                    Some(guard) => {
+                        commitments.push(pyana_cell::note::NoteCommitment(*guard.value()));
+                    }
+                    None => {
+                        return Err(StoreError::Integrity(format!(
+                            "missing note commitment at position {pos}"
+                        )));
+                    }
+                }
+            }
+        }
+
         let mut tree = note_tree::NoteTree::from_commitments(commitments);
         let root = tree.root();
 
-        // Persist the computed root for future calls.
-        let write_txn = self.db.begin_write()?;
+        // Persist the computed root.
         {
-            let mut meta_bytes = write_txn.open_table(tables::METADATA_BYTES)?;
-            meta_bytes.insert(tables::META_NOTE_TREE_ROOT_CACHE, root.as_slice())?;
+            let mut meta_bytes_w = write_txn.open_table(tables::METADATA_BYTES)?;
+            meta_bytes_w.insert(tables::META_NOTE_TREE_ROOT_CACHE, root.as_slice())?;
         }
         write_txn.commit()?;
 

@@ -24,9 +24,9 @@
 //! | 0         | private_value (the attribute being proven about)       |
 //! | 1         | threshold (public comparison target)                   |
 //! | 2         | diff (computed difference for the comparison)          |
-//! | 3..33     | diff_bits[0..30] (bit decomposition of diff)           |
-//! | 34        | fact_commitment (binding to the token state)            |
-//! | 35        | neq_inverse (multiplicative inverse of diff, for NEQ)   |
+//! | 3..32     | diff_bits[0..29] (bit decomposition of diff, 30 bits)  |
+//! | 33        | fact_commitment (binding to the token state)            |
+//! | 34        | neq_inverse (multiplicative inverse of diff, for NEQ)   |
 //!
 //! # Public inputs
 //!
@@ -50,13 +50,19 @@ use crate::field::BabyBear;
 use crate::poseidon2;
 
 /// Number of bits for the range check.
-/// BabyBear has ~31-bit modulus; if the high bit (bit 30) is 0, the value is
-/// less than 2^30 < p/2, which means it represents a "small positive" number.
-pub const PREDICATE_DIFF_BITS: usize = 31;
+///
+/// SOUNDNESS NOTE: BabyBear p = 2013265921, p/2 = 1006632960, 2^30 = 1073741824.
+/// Since 2^30 > p/2, using 31 bits (checking bit 30 = 0) is UNSOUND: values in
+/// [p/2, 2^30) have bit 30 = 0 but represent "negative" field elements.
+///
+/// We use 30 bits total. The high bit is bit 29. If bit 29 = 0, diff < 2^29 = 536870912,
+/// which is safely below p/2. This restricts the proven range to values < 2^29 (~537M),
+/// which is sufficient for all practical token attribute comparisons.
+pub const PREDICATE_DIFF_BITS: usize = 30;
 
 /// Trace width for the predicate AIR.
-/// private_value(1) + threshold(1) + diff(1) + diff_bits(31) + fact_commitment(1) + neq_inverse(1) = 36
-pub const PREDICATE_AIR_WIDTH: usize = 36;
+/// private_value(1) + threshold(1) + diff(1) + diff_bits(30) + fact_commitment(1) + neq_inverse(1) = 35
+pub const PREDICATE_AIR_WIDTH: usize = 35;
 
 /// Column indices for the predicate AIR trace.
 pub mod col {
@@ -68,12 +74,12 @@ pub mod col {
     pub const THRESHOLD: usize = 1;
     /// The computed difference for the comparison.
     pub const DIFF: usize = 2;
-    /// Start of bit decomposition columns (31 bits).
+    /// Start of bit decomposition columns (30 bits).
     pub const DIFF_BITS_START: usize = 3;
     /// The fact commitment (binding to token state).
-    pub const FACT_COMMITMENT: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 34
+    pub const FACT_COMMITMENT: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 33
     /// Multiplicative inverse of diff (used only for NEQ predicate).
-    pub const NEQ_INVERSE: usize = FACT_COMMITMENT + 1; // 35
+    pub const NEQ_INVERSE: usize = FACT_COMMITMENT + 1; // 34
 
     /// Get the column for diff_bits[bit_idx].
     #[inline]

@@ -38,6 +38,7 @@ mod block_validation;
 mod crypto;
 mod invariants;
 mod message_handling;
+pub mod ordering;
 mod process;
 mod state_tracking;
 mod types;

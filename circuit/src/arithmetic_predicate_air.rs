@@ -99,7 +99,7 @@ pub enum CompareOp {
 }
 
 /// A single flattened operation in the compiled expression.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CompiledOp {
     /// Load input[index] into this slot.
     Input(usize),
@@ -127,7 +127,7 @@ pub enum CompiledOp {
 }
 
 /// A compiled arithmetic expression: flattened into a linear sequence of operations.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompiledArith {
     /// The operations in evaluation order.
     pub ops: Vec<CompiledOp>,
@@ -1572,11 +1572,262 @@ pub struct ArithmeticPredicateProof {
     pub fact_commitment: BabyBear,
     /// The STARK proof (FRI-based, cryptographically sound).
     pub stark_proof: StarkProof,
+    /// Compiled expression A ops (needed for verifier constraint reconstruction).
+    pub compiled_ops: Vec<CompiledOp>,
+    /// Result slot index for expression A.
+    pub result_slot: usize,
+    /// Compiled expression B ops (for ExprCompare predicates).
+    pub compiled_ops_b: Option<Vec<CompiledOp>>,
+    /// Result slot index for expression B (ExprCompare only).
+    pub result_slot_b: Option<usize>,
+    /// Number of private inputs (determines layout).
+    pub num_inputs: usize,
+    /// The kind of diff computation used.
+    pub diff_kind: DiffKind,
+}
+
+/// Describes how the diff column is computed, for verifier reconstruction.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DiffKind {
+    /// diff = result - threshold (GTE / InRange lower bound)
+    ResultMinusThreshold,
+    /// diff = threshold - result (LTE)
+    ThresholdMinusResult,
+    /// diff = result - threshold, must be zero (ExprEq)
+    Equality,
+    /// diff = result_a - result_b (ExprCompare GTE)
+    CompareGte,
+    /// diff = result_b - result_a (ExprCompare LTE)
+    CompareLte,
+    /// diff = result_a - result_b - 1 (ExprCompare GT)
+    CompareGt,
+    /// diff = result_b - result_a - 1 (ExprCompare LT)
+    CompareLt,
+    /// diff = result_a - result_b, must be zero (ExprCompare EQ)
+    CompareEq,
 }
 
 /// StarkAir wrapper for arithmetic predicates.
+///
+/// Contains all information needed to evaluate the full constraint set,
+/// including arithmetic operation correctness, diff computation, bit decomposition,
+/// and public input binding.
 struct ArithmeticPredicateStarkAir {
     width: usize,
+    /// Compiled ops for expression A.
+    compiled_ops: Vec<CompiledOp>,
+    /// Result slot index for expression A.
+    result_slot: usize,
+    /// Compiled ops for expression B (ExprCompare only).
+    compiled_ops_b: Option<Vec<CompiledOp>>,
+    /// Result slot index for expression B.
+    result_slot_b: Option<usize>,
+    /// Number of private inputs.
+    num_inputs: usize,
+    /// How the diff column is computed.
+    diff_kind: DiffKind,
+}
+
+impl ArithmeticPredicateStarkAir {
+    /// Reconstruct the layout from the stored parameters.
+    fn layout(&self) -> ArithLayout {
+        let ops_b = self.compiled_ops_b.as_deref();
+        ArithLayout::new(self.num_inputs, &self.compiled_ops, ops_b)
+    }
+}
+
+/// Evaluate all arithmetic operation constraints for a set of compiled ops,
+/// given the trace row and the starting column for those slots.
+/// Returns the accumulated constraint error.
+fn eval_ops_constraints(
+    ops: &[CompiledOp],
+    local: &[BabyBear],
+    slots_start: usize,
+    layout: &ArithLayout,
+    op_idx_offset: usize,
+) -> BabyBear {
+    let mut error = BabyBear::ZERO;
+    for (slot_idx, op) in ops.iter().enumerate() {
+        let col = slots_start + slot_idx;
+        let actual = local[col];
+        match op {
+            CompiledOp::Input(i) => {
+                error = error + (actual - local[*i]);
+            }
+            CompiledOp::Const(c) => {
+                error = error + (actual - *c);
+            }
+            CompiledOp::Add(a, b) => {
+                error = error + (actual - (local[slots_start + a] + local[slots_start + b]));
+            }
+            CompiledOp::Sub(a, b) => {
+                error = error + (actual - (local[slots_start + a] - local[slots_start + b]));
+            }
+            CompiledOp::Mul(a, b) => {
+                error = error + (actual - (local[slots_start + a] * local[slots_start + b]));
+            }
+            CompiledOp::Sum(indices) => {
+                let mut sum = BabyBear::ZERO;
+                for &i in indices {
+                    sum = sum + local[i];
+                }
+                error = error + (actual - sum);
+            }
+            CompiledOp::Min(indices) => {
+                // result equals at least one operand
+                let result = actual;
+                let mut product = BabyBear::ONE;
+                for &i in indices {
+                    product = product * (result - local[i]);
+                }
+                error = error + product;
+
+                // result <= each operand (via aux range check bits)
+                if let Some(aux) = layout.aux_for_op(op_idx_offset + slot_idx) {
+                    for (k, &i) in indices.iter().enumerate() {
+                        let diff = local[i] - result;
+                        let bits_start = aux.start_col + k * PREDICATE_DIFF_BITS;
+                        let mut recomposed = BabyBear::ZERO;
+                        let mut power = BabyBear::ONE;
+                        for j in 0..PREDICATE_DIFF_BITS {
+                            let bit = local[bits_start + j];
+                            recomposed = recomposed + bit * power;
+                            error = error + bit * (bit - BabyBear::ONE);
+                            power = power + power;
+                        }
+                        error = error + (recomposed - diff);
+                        error = error + local[bits_start + PREDICATE_DIFF_BITS - 1];
+                    }
+                }
+            }
+            CompiledOp::Max(indices) => {
+                // result equals at least one operand
+                let result = actual;
+                let mut product = BabyBear::ONE;
+                for &i in indices {
+                    product = product * (result - local[i]);
+                }
+                error = error + product;
+
+                // result >= each operand (via aux range check bits)
+                if let Some(aux) = layout.aux_for_op(op_idx_offset + slot_idx) {
+                    for (k, &i) in indices.iter().enumerate() {
+                        let diff = result - local[i];
+                        let bits_start = aux.start_col + k * PREDICATE_DIFF_BITS;
+                        let mut recomposed = BabyBear::ZERO;
+                        let mut power = BabyBear::ONE;
+                        for j in 0..PREDICATE_DIFF_BITS {
+                            let bit = local[bits_start + j];
+                            recomposed = recomposed + bit * power;
+                            error = error + bit * (bit - BabyBear::ONE);
+                            power = power + power;
+                        }
+                        error = error + (recomposed - diff);
+                        error = error + local[bits_start + PREDICATE_DIFF_BITS - 1];
+                    }
+                }
+            }
+            CompiledOp::Abs(a) => {
+                // result^2 = operand^2
+                let operand = local[slots_start + a];
+                error = error + (actual * actual - operand * operand);
+
+                // result is non-negative via bit decomp
+                if let Some(aux) = layout.aux_for_op(op_idx_offset + slot_idx) {
+                    let bits_start = aux.start_col;
+                    let mut recomposed = BabyBear::ZERO;
+                    let mut power = BabyBear::ONE;
+                    for j in 0..PREDICATE_DIFF_BITS {
+                        let bit = local[bits_start + j];
+                        recomposed = recomposed + bit * power;
+                        error = error + bit * (bit - BabyBear::ONE);
+                        power = power + power;
+                    }
+                    error = error + (recomposed - actual);
+                    error = error + local[bits_start + PREDICATE_DIFF_BITS - 1];
+                }
+            }
+            CompiledOp::DivFloor(a, b) => {
+                if let Some(aux) = layout.aux_for_op(op_idx_offset + slot_idx) {
+                    let remainder_col = aux.start_col;
+                    let remainder = local[remainder_col];
+                    let dividend = local[slots_start + a];
+                    let divisor = local[slots_start + b];
+                    let quotient = actual;
+
+                    // q * b + r = a
+                    error = error + (quotient * divisor + remainder - dividend);
+
+                    // remainder >= 0: bit decomposition
+                    let bits_start_r = aux.start_col + 1;
+                    let mut recomposed = BabyBear::ZERO;
+                    let mut power = BabyBear::ONE;
+                    for j in 0..PREDICATE_DIFF_BITS {
+                        let bit = local[bits_start_r + j];
+                        recomposed = recomposed + bit * power;
+                        error = error + bit * (bit - BabyBear::ONE);
+                        power = power + power;
+                    }
+                    error = error + (recomposed - remainder);
+                    error = error + local[bits_start_r + PREDICATE_DIFF_BITS - 1];
+
+                    // remainder < divisor: bit decomp of (divisor - remainder - 1)
+                    let bits_start_bound = aux.start_col + 1 + PREDICATE_DIFF_BITS;
+                    let bound_diff = divisor - remainder - BabyBear::ONE;
+                    let mut recomposed2 = BabyBear::ZERO;
+                    let mut power2 = BabyBear::ONE;
+                    for j in 0..PREDICATE_DIFF_BITS {
+                        let bit = local[bits_start_bound + j];
+                        recomposed2 = recomposed2 + bit * power2;
+                        error = error + bit * (bit - BabyBear::ONE);
+                        power2 = power2 + power2;
+                    }
+                    error = error + (recomposed2 - bound_diff);
+                    error = error + local[bits_start_bound + PREDICATE_DIFF_BITS - 1];
+                }
+            }
+            CompiledOp::Mod(a, b) => {
+                if let Some(aux) = layout.aux_for_op(op_idx_offset + slot_idx) {
+                    let quotient_col = aux.start_col;
+                    let quotient = local[quotient_col];
+                    let dividend = local[slots_start + a];
+                    let divisor = local[slots_start + b];
+                    let remainder = actual;
+
+                    // q * b + r = a
+                    error = error + (quotient * divisor + remainder - dividend);
+
+                    // result >= 0: bit decomposition
+                    let bits_start_r = aux.start_col + 1;
+                    let mut recomposed = BabyBear::ZERO;
+                    let mut power = BabyBear::ONE;
+                    for j in 0..PREDICATE_DIFF_BITS {
+                        let bit = local[bits_start_r + j];
+                        recomposed = recomposed + bit * power;
+                        error = error + bit * (bit - BabyBear::ONE);
+                        power = power + power;
+                    }
+                    error = error + (recomposed - remainder);
+                    error = error + local[bits_start_r + PREDICATE_DIFF_BITS - 1];
+
+                    // result < divisor: bit decomp of (divisor - result - 1)
+                    let bits_start_bound = aux.start_col + 1 + PREDICATE_DIFF_BITS;
+                    let bound_diff = divisor - remainder - BabyBear::ONE;
+                    let mut recomposed2 = BabyBear::ZERO;
+                    let mut power2 = BabyBear::ONE;
+                    for j in 0..PREDICATE_DIFF_BITS {
+                        let bit = local[bits_start_bound + j];
+                        recomposed2 = recomposed2 + bit * power2;
+                        error = error + bit * (bit - BabyBear::ONE);
+                        power2 = power2 + power2;
+                    }
+                    error = error + (recomposed2 - bound_diff);
+                    error = error + local[bits_start_bound + PREDICATE_DIFF_BITS - 1];
+                }
+            }
+        }
+    }
+    error
 }
 
 impl StarkAir for ArithmeticPredicateStarkAir {
@@ -1603,27 +1854,128 @@ impl StarkAir for ArithmeticPredicateStarkAir {
         public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear {
-        // Column layout (from ArithLayout):
-        // [...slots...] threshold diff diff_bits[31] fact_commitment
-        let w = self.width;
-        let fact_commitment_col = w - 1;
-        let diff_bits_start = fact_commitment_col - PREDICATE_DIFF_BITS; // = w - 32
-        let diff_col = diff_bits_start - 1; // = w - 33
-        let threshold_col = diff_col - 1; // = w - 34
+        let layout = self.layout();
+        let threshold_col = layout.threshold_col;
+        let diff_col = layout.diff_col;
+        let diff_bits_start = layout.diff_bits_start;
+        let fact_commitment_col = layout.fact_commitment_col;
 
-        let c1 = if threshold_col < local.len() && !public_inputs.is_empty() {
-            local[threshold_col] - public_inputs[0]
+        let mut result = BabyBear::ZERO;
+        let mut alpha_pow = BabyBear::ONE;
+
+        // Constraint 1: Threshold matches public input.
+        let c1 = local[threshold_col] - public_inputs[0];
+        result = result + alpha_pow * c1;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 2: Fact commitment matches public input.
+        let c2 = local[fact_commitment_col] - public_inputs[1];
+        result = result + alpha_pow * c2;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 3: Arithmetic operation correctness (expression A).
+        let c3 = eval_ops_constraints(
+            &self.compiled_ops,
+            local,
+            layout.slots_start,
+            &layout,
+            0,
+        );
+        result = result + alpha_pow * c3;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 4: Arithmetic operation correctness (expression B, ExprCompare only).
+        let c4 = if let Some(ops_b) = &self.compiled_ops_b {
+            eval_ops_constraints(
+                ops_b,
+                local,
+                layout.slots_b_start,
+                &layout,
+                layout.num_slots,
+            )
         } else {
             BabyBear::ZERO
         };
+        result = result + alpha_pow * c4;
+        alpha_pow = alpha_pow * alpha;
 
-        let c2 = if fact_commitment_col < local.len() && public_inputs.len() >= 2 {
-            local[fact_commitment_col] - public_inputs[1]
-        } else {
-            BabyBear::ZERO
+        // Constraint 5: Diff is correctly computed based on predicate type.
+        let result_a = local[layout.slots_start + self.result_slot];
+        let c5 = match &self.diff_kind {
+            DiffKind::ResultMinusThreshold => {
+                local[diff_col] - (result_a - local[threshold_col])
+            }
+            DiffKind::ThresholdMinusResult => {
+                local[diff_col] - (local[threshold_col] - result_a)
+            }
+            DiffKind::Equality => {
+                local[diff_col] - (result_a - local[threshold_col])
+            }
+            DiffKind::CompareGte => {
+                let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
+                local[diff_col] - (result_a - result_b)
+            }
+            DiffKind::CompareLte => {
+                let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
+                local[diff_col] - (result_b - result_a)
+            }
+            DiffKind::CompareGt => {
+                let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
+                local[diff_col] - (result_a - result_b - BabyBear::ONE)
+            }
+            DiffKind::CompareLt => {
+                let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
+                local[diff_col] - (result_b - result_a - BabyBear::ONE)
+            }
+            DiffKind::CompareEq => {
+                let result_b = local[layout.slots_b_start + self.result_slot_b.unwrap_or(0)];
+                local[diff_col] - (result_a - result_b)
+            }
         };
+        result = result + alpha_pow * c5;
+        alpha_pow = alpha_pow * alpha;
 
-        c1 + alpha * c2
+        // Constraint 6: Bit decomposition is correct (sum(bit_i * 2^i) = diff).
+        let is_eq = matches!(self.diff_kind, DiffKind::Equality | DiffKind::CompareEq);
+        let c6 = if is_eq {
+            // For equality predicates, diff must be zero directly.
+            local[diff_col]
+        } else {
+            let mut recomposed = BabyBear::ZERO;
+            let mut power_of_two = BabyBear::ONE;
+            for i in 0..PREDICATE_DIFF_BITS {
+                let bit = local[diff_bits_start + i];
+                recomposed = recomposed + bit * power_of_two;
+                power_of_two = power_of_two + power_of_two;
+            }
+            recomposed - local[diff_col]
+        };
+        result = result + alpha_pow * c6;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 7: All diff bits are binary (0 or 1).
+        let c7 = if is_eq {
+            BabyBear::ZERO
+        } else {
+            let mut bits_error = BabyBear::ZERO;
+            for i in 0..PREDICATE_DIFF_BITS {
+                let bit = local[diff_bits_start + i];
+                bits_error = bits_error + bit * (bit - BabyBear::ONE);
+            }
+            bits_error
+        };
+        result = result + alpha_pow * c7;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 8: High bit is zero (proves diff is non-negative, i.e., diff < 2^(BITS-1)).
+        let c8 = if is_eq {
+            BabyBear::ZERO
+        } else {
+            local[diff_bits_start + PREDICATE_DIFF_BITS - 1]
+        };
+        result = result + alpha_pow * c8;
+
+        result
     }
 
     fn boundary_constraints(
@@ -1632,6 +1984,23 @@ impl StarkAir for ArithmeticPredicateStarkAir {
         _trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         vec![]
+    }
+}
+
+/// Determine the DiffKind from a predicate.
+fn diff_kind_from_predicate(predicate: &ArithPredicate) -> DiffKind {
+    match predicate {
+        ArithPredicate::ExprGte(_, _) => DiffKind::ResultMinusThreshold,
+        ArithPredicate::ExprLte(_, _) => DiffKind::ThresholdMinusResult,
+        ArithPredicate::ExprEq(_, _) => DiffKind::Equality,
+        ArithPredicate::ExprInRange(_, _, _) => DiffKind::ResultMinusThreshold,
+        ArithPredicate::ExprCompare(_, _, op) => match op {
+            CompareOp::Gte => DiffKind::CompareGte,
+            CompareOp::Lte => DiffKind::CompareLte,
+            CompareOp::Gt => DiffKind::CompareGt,
+            CompareOp::Lt => DiffKind::CompareLt,
+            CompareOp::Eq => DiffKind::CompareEq,
+        },
     }
 }
 
@@ -1647,8 +2016,15 @@ pub fn prove_arithmetic_predicate(
     }
 
     let fact_commitment = witness.fact_commitment;
+    let num_inputs = witness.inputs.len();
+    let diff_kind = diff_kind_from_predicate(&witness.predicate);
 
     let air = ArithmeticPredicateAir::new(witness)?;
+
+    let compiled_ops = air.compiled.ops.clone();
+    let result_slot = air.compiled.result_slot;
+    let compiled_ops_b = air.compiled_b.as_ref().map(|c| c.ops.clone());
+    let result_slot_b = air.compiled_b.as_ref().map(|c| c.result_slot);
 
     // Generate trace and get public inputs.
     let (mut trace, public_inputs) = air.generate_trace();
@@ -1660,13 +2036,27 @@ pub fn prove_arithmetic_predicate(
         trace.push(trace[0].clone());
     }
 
-    let stark_air = ArithmeticPredicateStarkAir { width };
+    let stark_air = ArithmeticPredicateStarkAir {
+        width,
+        compiled_ops: compiled_ops.clone(),
+        result_slot,
+        compiled_ops_b: compiled_ops_b.clone(),
+        result_slot_b,
+        num_inputs,
+        diff_kind: diff_kind.clone(),
+    };
     let stark_proof = stark::prove(&stark_air, &trace, &public_inputs);
 
     Some(ArithmeticPredicateProof {
         threshold,
         fact_commitment,
         stark_proof,
+        compiled_ops,
+        result_slot,
+        compiled_ops_b,
+        result_slot_b,
+        num_inputs,
+        diff_kind,
     })
 }
 
@@ -1680,9 +2070,15 @@ pub fn verify_arithmetic_predicate(
         return false;
     }
     let public_inputs = vec![threshold, fact_commitment];
-    // Reconstruct the AIR with just the width from the proof.
+    // Reconstruct the AIR with ops from the proof for full constraint verification.
     let stark_air = ArithmeticPredicateStarkAir {
         width: proof.stark_proof.num_cols,
+        compiled_ops: proof.compiled_ops.clone(),
+        result_slot: proof.result_slot,
+        compiled_ops_b: proof.compiled_ops_b.clone(),
+        result_slot_b: proof.result_slot_b,
+        num_inputs: proof.num_inputs,
+        diff_kind: proof.diff_kind.clone(),
     };
     stark::verify(&stark_air, &proof.stark_proof, &public_inputs).is_ok()
 }

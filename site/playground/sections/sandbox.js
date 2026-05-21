@@ -106,20 +106,117 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
     clearOutput();
     const startTime = performance.now();
 
-    const sandboxConsole = {
-      log: (...args) => appendOutput('info', formatArgs(args)),
-      error: (...args) => appendOutput('error', formatArgs(args)),
-      warn: (...args) => appendOutput('warning', formatArgs(args)),
-      info: (...args) => appendOutput('info', formatArgs(args)),
-    };
+    // Execute user code in a sandboxed iframe (allow-scripts only, no
+    // allow-same-origin) to prevent DOM/window/document access. API calls
+    // are proxied via postMessage.
+    let sandboxFrame = document.getElementById('playground-sandbox-frame');
+    if (sandboxFrame) sandboxFrame.remove();
+
+    sandboxFrame = document.createElement('iframe');
+    sandboxFrame.id = 'playground-sandbox-frame';
+    sandboxFrame.sandbox = 'allow-scripts';
+    sandboxFrame.style.display = 'none';
+
+    const iframeHtml = `<!DOCTYPE html><html><head><script>
+      window.addEventListener('message', async (event) => {
+        if (event.data.type !== 'execute') return;
+        const code = event.data.code;
+        const console = {
+          log: (...args) => parent.postMessage({ type: 'log', level: 'info', args: args.map(a => {
+            if (a === undefined) return 'undefined';
+            if (a === null) return 'null';
+            if (typeof a === 'object') { try { return JSON.stringify(a, null, 2); } catch { return String(a); } }
+            return String(a);
+          }) }, '*'),
+          error: (...args) => parent.postMessage({ type: 'log', level: 'error', args: args.map(String) }, '*'),
+          warn: (...args) => parent.postMessage({ type: 'log', level: 'warning', args: args.map(String) }, '*'),
+          info: (...args) => parent.postMessage({ type: 'log', level: 'info', args: args.map(String) }, '*'),
+        };
+        const pyana = new Proxy({}, {
+          get(target, prop) {
+            return (...args) => {
+              parent.postMessage({ type: 'apiCall', method: prop, args: JSON.parse(JSON.stringify(args)) }, '*');
+              return new Promise((resolve, reject) => {
+                function handler(ev) {
+                  if (ev.data && ev.data.type === 'apiResult' && ev.data.callId === prop) {
+                    window.removeEventListener('message', handler);
+                    if (ev.data.error) reject(new Error(ev.data.error));
+                    else resolve(ev.data.result);
+                  }
+                }
+                window.addEventListener('message', handler);
+              });
+            };
+          }
+        });
+        try {
+          const fn = new Function('pyana', 'console', 'performance', \`return (async () => { \${code} })();\`);
+          await fn(pyana, console, performance);
+          parent.postMessage({ type: 'done' }, '*');
+        } catch (err) {
+          parent.postMessage({ type: 'error', message: err.message || String(err) }, '*');
+        }
+      });
+      parent.postMessage({ type: 'ready' }, '*');
+    <\/script></head><body></body></html>`;
+
+    sandboxFrame.srcdoc = iframeHtml;
+    document.body.appendChild(sandboxFrame);
 
     try {
-      const fn = new Function('pyana', 'console', 'performance', `return (async () => { ${code} })();`);
-      await fn(pyana, sandboxConsole, performance);
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Sandbox execution timed out (10s)'));
+        }, 10000);
+
+        function messageHandler(event) {
+          const msg = event.data;
+          if (!msg || !msg.type) return;
+
+          switch (msg.type) {
+            case 'ready':
+              sandboxFrame.contentWindow.postMessage({ type: 'execute', code }, '*');
+              break;
+            case 'log':
+              appendOutput(msg.level || 'info', (msg.args || []).join(' '));
+              break;
+            case 'apiCall':
+              try {
+                const result = pyana[msg.method](...(msg.args || []));
+                const resolved = result instanceof Promise ? result : Promise.resolve(result);
+                resolved.then(r => {
+                  sandboxFrame.contentWindow.postMessage({ type: 'apiResult', callId: msg.method, result: r }, '*');
+                }).catch(e => {
+                  sandboxFrame.contentWindow.postMessage({ type: 'apiResult', callId: msg.method, error: e.message }, '*');
+                });
+              } catch (e) {
+                sandboxFrame.contentWindow.postMessage({ type: 'apiResult', callId: msg.method, error: e.message }, '*');
+              }
+              break;
+            case 'done':
+              clearTimeout(timeout);
+              window.removeEventListener('message', messageHandler);
+              resolve();
+              break;
+            case 'error':
+              clearTimeout(timeout);
+              window.removeEventListener('message', messageHandler);
+              reject(new Error(msg.message || 'Unknown error'));
+              break;
+          }
+        }
+
+        window.addEventListener('message', messageHandler);
+      });
+
       const elapsed = (performance.now() - startTime).toFixed(1);
       appendOutput('success', `Completed in ${elapsed}ms`);
     } catch (e) {
       appendOutput('error', `Error: ${e.message || e}`);
+    } finally {
+      if (sandboxFrame && sandboxFrame.parentNode) {
+        sandboxFrame.remove();
+      }
     }
   }
 

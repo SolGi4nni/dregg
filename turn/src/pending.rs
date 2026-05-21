@@ -115,6 +115,15 @@ pub enum ResolutionEvent {
         /// The receipt from executing the turn.
         receipt: TurnReceipt,
     },
+    /// A dependent turn's condition has been met and it is ready to execute.
+    /// The node must run TurnExecutor on it and then call `resolve()` with the
+    /// real receipt (or Broken if execution fails).
+    ReadyToExecute {
+        /// The hash of the turn that is ready.
+        turn_hash: [u8; 32],
+        /// The turn that needs to be executed.
+        turn: Turn,
+    },
     /// A pending turn's promise was broken.
     Broken {
         /// The hash of the turn whose promise was broken.
@@ -256,16 +265,21 @@ impl PendingTurnRegistry {
         }
     }
 
-    /// Recursively cascade resolution to dependents whose conditions are met.
+    /// Cascade to dependents whose conditions are met: emit ReadyToExecute events.
+    ///
+    /// Unlike the old approach that fabricated fake receipts, this keeps the entry
+    /// in the registry and signals the caller (the node) to actually execute it.
+    /// The node should then call `resolve()` with the real receipt, which will
+    /// remove the entry and cascade to further dependents.
     fn cascade_resolved(
         &mut self,
         resolved_hash: [u8; 32],
         dependents: &[[u8; 32]],
-        trigger_receipt: &TurnReceipt,
+        _trigger_receipt: &TurnReceipt,
         events: &mut Vec<ResolutionEvent>,
     ) {
         for &dep_hash in dependents {
-            // Check condition without removing first.
+            // Check condition without removing.
             let should_resolve = self
                 .pending
                 .get(&dep_hash)
@@ -273,31 +287,17 @@ impl PendingTurnRegistry {
                 .unwrap_or(false);
 
             if should_resolve {
-                // Remove the entry and cascade.
-                let dep_entry = self.pending.remove(&dep_hash).unwrap();
-                let dep_receipt = TurnReceipt {
+                // The entry stays in the registry. The node is responsible for executing
+                // this turn and then calling resolve() with a real receipt (or Broken).
+                // That call will remove it from the registry and cascade to its dependents.
+                let turn = self.pending.get(&dep_hash).unwrap().turn.clone();
+                events.push(ResolutionEvent::ReadyToExecute {
                     turn_hash: dep_hash,
-                    forest_hash: dep_entry.turn.call_forest.compute_hash(),
-                    pre_state_hash: [0u8; 32],
-                    post_state_hash: [0u8; 32],
-                    timestamp: trigger_receipt.timestamp,
-                    effects_hash: [0u8; 32],
-                    computrons_used: 0,
-                    action_count: dep_entry.turn.action_count(),
-                    previous_receipt_hash: Some(resolved_hash),
-                    agent: dep_entry.turn.agent,
-                    routing_directives: vec![],
-                    derivation_records: vec![],
-                    executor_signature: None,
-                };
-                events.push(ResolutionEvent::Resolved {
-                    turn_hash: dep_hash,
-                    receipt: dep_receipt.clone(),
+                    turn,
                 });
-
-                // Recursively cascade to this dependent's own dependents.
-                let sub_dependents = dep_entry.dependents;
-                self.cascade_resolved(dep_hash, &sub_dependents, &dep_receipt, events);
+                // NOTE: We do NOT recursively cascade here. The node will execute the
+                // turn, get a real receipt, and call resolve() again, which will cascade
+                // to any further dependents at that point.
             }
         }
     }
@@ -449,6 +449,7 @@ mod tests {
             action_count: 1,
             previous_receipt_hash: None,
             agent: turn.agent,
+            federation_id: [0u8; 32],
             routing_directives: vec![],
             derivation_records: vec![],
             executor_signature: None,
@@ -575,25 +576,51 @@ mod tests {
 
         assert_eq!(registry.len(), 3);
 
-        // Resolve C → should cascade to B → should cascade to A.
+        // Resolve C → should emit Resolved for C + ReadyToExecute for B (immediate dependent).
         let receipt_c = make_receipt(&turn_c);
         let events = registry.resolve(hash_c, ResolutionOutcome::Resolved(receipt_c));
 
-        // Should have 3 resolution events: C, B, A.
+        // Should have 2 events: C resolved, B ready to execute.
+        assert_eq!(events.len(), 2, "expected 2 events, got {}", events.len());
         assert!(
-            events.len() >= 3,
-            "expected >= 3 events, got {}",
-            events.len()
+            matches!(&events[0], ResolutionEvent::Resolved { turn_hash, .. } if *turn_hash == hash_c),
+            "first event should be Resolved for C"
+        );
+        assert!(
+            matches!(&events[1], ResolutionEvent::ReadyToExecute { turn_hash, .. } if *turn_hash == hash_b),
+            "second event should be ReadyToExecute for B"
         );
 
-        // All should be Resolved events.
-        for event in &events {
-            assert!(
-                matches!(event, ResolutionEvent::Resolved { .. }),
-                "expected Resolved, got {:?}",
-                event
-            );
-        }
+        // B and A are still in the registry (B awaiting real execution, A awaiting B).
+        assert_eq!(registry.len(), 2);
+
+        // Now simulate the node executing B and resolving it with a real receipt.
+        let receipt_b = make_receipt(&turn_b);
+        let events2 = registry.resolve(hash_b, ResolutionOutcome::Resolved(receipt_b));
+
+        // Should have 2 events: B resolved, A ready to execute.
+        assert_eq!(events2.len(), 2, "expected 2 events, got {}", events2.len());
+        assert!(
+            matches!(&events2[0], ResolutionEvent::Resolved { turn_hash, .. } if *turn_hash == hash_b),
+            "first event should be Resolved for B"
+        );
+        assert!(
+            matches!(&events2[1], ResolutionEvent::ReadyToExecute { turn_hash, .. } if *turn_hash == hash_a),
+            "second event should be ReadyToExecute for A"
+        );
+
+        // A is still in registry (awaiting real execution).
+        assert_eq!(registry.len(), 1);
+
+        // Node executes A and resolves it.
+        let receipt_a = make_receipt(&turn_a);
+        let events3 = registry.resolve(hash_a, ResolutionOutcome::Resolved(receipt_a));
+
+        // Just A resolved, no further dependents.
+        assert_eq!(events3.len(), 1);
+        assert!(
+            matches!(&events3[0], ResolutionEvent::Resolved { turn_hash, .. } if *turn_hash == hash_a),
+        );
 
         // Registry should be empty now.
         assert_eq!(registry.len(), 0);
@@ -841,7 +868,8 @@ mod tests {
 
         assert_eq!(registry.len(), 5);
 
-        // Break the first turn in the chain.
+        // Break the first turn in the chain. Broken propagation IS recursive
+        // (unlike resolution which requires actual execution), so all dependents break.
         let events = registry.resolve(
             hashes[0],
             ResolutionOutcome::Broken(BrokenReason::FederationUnreachable),

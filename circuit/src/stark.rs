@@ -9,6 +9,36 @@
 //!
 //! The key property: `prove()` produces bytes that a separate `verify()` can
 //! check WITHOUT seeing the original trace/witness. A tampered trace fails.
+//!
+//! # Known Limitations and Migration Path
+//!
+//! ## Transition Constraint Evaluation
+//!
+//! This custom STARK framework evaluates "next row" constraints using `eval_points[i+1]`
+//! in the Reed-Solomon evaluation domain, NOT `eval_points[i] * omega_trace`. For AIRs
+//! that use the trace domain's cyclic structure (where the "next row" in the trace maps
+//! to `current_point * omega`), this introduces an off-by-one in the evaluation domain.
+//!
+//! **Consequence**: AIRs using only per-row constraints (no cross-row references via
+//! `next`) and boundary constraints are SOUND. AIRs relying on transition constraints
+//! that reference `next` values for acyclic computations may have subtle issues.
+//!
+//! ## Production Prover
+//!
+//! For production use, prefer the Plonky3 backend (`plonky3_prover.rs`) which uses a
+//! battle-tested proving system with proper transition constraint handling. This custom
+//! STARK is suitable for:
+//! - AIRs with per-row-only constraints (PredicateAir, CompoundPredicateAir)
+//! - AIRs with boundary constraints binding trace cells to public inputs
+//! - Testing and development
+//!
+//! ## AIR Migration Priority
+//!
+//! AIRs should migrate to Plonky3 in this order:
+//! 1. TemporalPredicateAir (uses transition constraints for accumulator/step_index)
+//! 2. MultiStepAir (uses transition constraints for step chaining)
+//! 3. MerkleStarkAir (uses chain continuity: parent[i] == current[i+1])
+//! 4. QuorumCertificateAir (uses cumulative weight transitions)
 
 use crate::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};

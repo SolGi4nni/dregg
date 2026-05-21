@@ -60,6 +60,7 @@
 
 pub mod checkpoint;
 pub mod consensus;
+pub mod epoch;
 #[cfg(feature = "morpheus")]
 pub mod morpheus_adapter;
 pub mod network;

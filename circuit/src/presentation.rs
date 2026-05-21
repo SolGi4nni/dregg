@@ -69,6 +69,21 @@ pub struct PresentationWitness {
     /// Must be freshly generated per presentation to ensure unlinkability.
     /// The final_root remains private; only the blinded tag is public.
     pub presentation_randomness: BabyBear,
+    /// Composition commitment binding all sub-proofs together (public).
+    ///
+    /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`
+    /// where:
+    /// - `fold_chain_commitment` is the Poseidon2 hash of the fold chain roots
+    /// - `derivation_state_root` is the final state root from derivation
+    /// - `presentation_tag` is the blinded tag (ties to this specific presentation)
+    ///
+    /// This value is appended as a public input to the issuer membership STARK,
+    /// cryptographically binding the STARK proof to the specific fold chain and
+    /// derivation results. Without this, an attacker could attach a valid membership
+    /// STARK from one token to a forged fold chain from another.
+    ///
+    /// When `BabyBear::ZERO`, no composition commitment is enforced (legacy proofs).
+    pub composition_commitment: BabyBear,
 }
 
 /// Public inputs for the presentation proof.
@@ -104,6 +119,16 @@ pub struct PresentationPublicInputs {
     /// chose to reveal. The verifier recomputes this from the plaintext facts and checks
     /// it matches, cryptographically binding the revealed facts to the proof.
     pub revealed_facts_commitment: BabyBear,
+    /// Composition commitment binding all sub-proofs together.
+    ///
+    /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`
+    /// and is included as a public input in the issuer membership STARK. A verifier
+    /// recomputes this from the other sub-proofs and checks it matches, ensuring
+    /// sub-proofs cannot be mixed-and-matched across presentations.
+    ///
+    /// `BabyBear::ZERO` means no composition commitment (legacy proofs).
+    #[serde(default)]
+    pub composition_commitment: BabyBear,
 }
 
 /// A complete presentation proof.
@@ -294,6 +319,7 @@ impl PresentationAir {
             timestamp: w.timestamp,
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
+            composition_commitment: w.composition_commitment,
         };
 
         // Compute total proof size
@@ -461,6 +487,7 @@ impl PresentationAir {
             timestamp: w.timestamp,
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
+            composition_commitment: w.composition_commitment,
         };
 
         Some(RealPresentationProof {
@@ -511,14 +538,25 @@ impl PresentationAir {
         //    When blinding_factor is non-zero, use the blinded (ring membership) path:
         //    public inputs become [blinded_leaf, root, action] instead of [leaf_hash, root, action].
         //    This makes presentations unlinkable (same issuer, different blinded_leaf each time).
+        let composition_opt = if w.composition_commitment != BabyBear::ZERO {
+            Some(w.composition_commitment)
+        } else {
+            None
+        };
+
         let merkle_stark_proof = if w.blinding_factor != BabyBear::ZERO {
             generate_blinded_merkle_poseidon2_stark_proof(
                 &w.issuer_membership,
                 w.blinding_factor,
                 w.request_predicate,
+                composition_opt,
             )?
         } else {
-            generate_merkle_poseidon2_stark_proof_bound(&w.issuer_membership, w.request_predicate)?
+            generate_merkle_poseidon2_stark_proof_bound(
+                &w.issuer_membership,
+                w.request_predicate,
+                composition_opt,
+            )?
         };
 
         // Compute public inputs — roots stay private, tag is public.
@@ -536,6 +574,7 @@ impl PresentationAir {
             timestamp: w.timestamp,
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
+            composition_commitment: w.composition_commitment,
         };
 
         Some(RealPresentationProof {
@@ -803,6 +842,7 @@ impl PresentationBuilder {
             issuer_membership,
             issuer_key_hash: self.issuer_key_hash,
             revealed_facts_commitment: self.revealed_facts_commitment,
+            composition_commitment: BabyBear::ZERO,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
         })
@@ -1076,6 +1116,7 @@ pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<
 pub fn generate_merkle_poseidon2_stark_proof_bound(
     witness: &MerkleWitness,
     action_commitment: BabyBear,
+    composition_commitment: Option<BabyBear>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, MerklePoseidon2StarkAir};
 
@@ -1103,6 +1144,13 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
     // This binds the proof to a specific action, preventing replay.
     public_inputs.push(action_commitment);
 
+    // Append the composition commitment if provided (sub-proof binding).
+    if let Some(cc) = composition_commitment {
+        if cc != BabyBear::ZERO {
+            public_inputs.push(cc);
+        }
+    }
+
     // Generate the STARK proof with Poseidon2 constraints
     let air = MerklePoseidon2StarkAir;
     let proof = stark::prove(&air, &trace, &public_inputs);
@@ -1129,6 +1177,7 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     witness: &MerkleWitness,
     blinding_factor: BabyBear,
     action_commitment: BabyBear,
+    composition_commitment: Option<BabyBear>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, BlindedMerklePoseidon2StarkAir};
 
@@ -1158,6 +1207,13 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
 
     // Append the action commitment as an additional public input (replay prevention).
     public_inputs.push(action_commitment);
+
+    // Append the composition commitment if provided (sub-proof binding).
+    if let Some(cc) = composition_commitment {
+        if cc != BabyBear::ZERO {
+            public_inputs.push(cc);
+        }
+    }
 
     // Generate the STARK proof with blinded Poseidon2 constraints
     let air = BlindedMerklePoseidon2StarkAir;
@@ -1318,6 +1374,7 @@ pub fn create_test_presentation() -> PresentationWitness {
         issuer_membership,
         issuer_key_hash: issuer_key,
         revealed_facts_commitment: BabyBear::ZERO,
+        composition_commitment: BabyBear::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::new(123456789),
     }

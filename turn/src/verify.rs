@@ -311,6 +311,7 @@ mod tests {
             action_count: 1,
             previous_receipt_hash,
             agent,
+            federation_id: [0u8; 32],
             routing_directives: Vec::new(),
             derivation_records: vec![],
             executor_signature: None,

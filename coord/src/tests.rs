@@ -53,6 +53,11 @@ fn zero_costs() -> ComputronCosts {
 /// A large budget that won't interfere with tests.
 const TEST_MAX_BUDGET: u64 = u64::MAX;
 
+/// Default coordinator signing key for tests.
+fn coord_signing_key() -> [u8; 32] {
+    *blake3::hash(b"coordinator-signing-key-test").as_bytes()
+}
+
 /// Create a test cell with a given public key byte and balance.
 /// Permissions are set to AuthRequired::None for all actions (permissive, for testing).
 fn make_cell(key_byte: u8, balance: u64) -> Cell {
@@ -797,6 +802,7 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
@@ -813,12 +819,13 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Try to propose again while already proposing.
         let err = coord.propose(af).unwrap_err();
@@ -838,6 +845,7 @@ mod coordinator_tests {
         // Threshold 0.
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             0,
             zero_costs(),
             TEST_MAX_BUDGET,
@@ -855,6 +863,7 @@ mod coordinator_tests {
         // Threshold 3 > 2 participants.
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             3,
             zero_costs(),
             TEST_MAX_BUDGET,
@@ -875,6 +884,7 @@ mod coordinator_tests {
         let (mut ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
@@ -882,15 +892,15 @@ mod coordinator_tests {
         );
 
         // Propose.
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Node A votes yes with real Ed25519 signature.
-        let sig_a = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig_a = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         let decision = coord.receive_vote(node_id(1), Vote::yes(sig_a)).unwrap();
         assert_eq!(decision, None); // Still pending.
 
         // Node B votes yes.
-        let sig_b = Vote::sign(&af.hash, &signing_keys[1]);
+        let sig_b = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[1]);
         let decision = coord.receive_vote(node_id(2), Vote::yes(sig_b)).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
 
@@ -911,21 +921,28 @@ mod coordinator_tests {
         let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
 
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Node A votes yes.
-        let sig_a = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig_a = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         coord.receive_vote(node_id(1), Vote::yes(sig_a)).unwrap();
 
         // Node B votes no.
         let decision = coord
-            .receive_vote(node_id(2), Vote::no("insufficient balance"))
+            .receive_vote(
+                node_id(2),
+                Vote::no(
+                    "insufficient balance",
+                    Vote::sign_no(&prop_msg.proposal_id, &af.hash, &signing_keys[1]),
+                ),
+            )
             .unwrap();
         assert_eq!(decision, Some(Decision::Abort));
 
@@ -940,16 +957,17 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af).unwrap();
+        let prop_msg = coord.propose(af).unwrap();
 
         // Unknown node votes.
         let err = coord
-            .receive_vote(node_id(99), Vote::no("who am i"))
+            .receive_vote(node_id(99), Vote::no("who am i", [0u8; 64]))
             .unwrap_err();
         assert!(matches!(err, CoordError::UnknownParticipant { .. }));
     }
@@ -959,19 +977,26 @@ mod coordinator_tests {
         let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
-        let sig = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         coord.receive_vote(node_id(1), Vote::yes(sig)).unwrap();
 
         // Try to vote again.
         let err = coord
-            .receive_vote(node_id(1), Vote::no("changed my mind"))
+            .receive_vote(
+                node_id(1),
+                Vote::no(
+                    "changed my mind",
+                    Vote::sign_no(&prop_msg.proposal_id, &af.hash, &signing_keys[0]),
+                ),
+            )
             .unwrap_err();
         assert!(matches!(err, CoordError::DuplicateVote { .. }));
     }
@@ -981,15 +1006,16 @@ mod coordinator_tests {
         let (mut ledger, _, _, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Only one vote.
-        let sig = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         coord.receive_vote(node_id(1), Vote::yes(sig)).unwrap();
 
         // Try to commit with only 1/2 votes.
@@ -1009,16 +1035,17 @@ mod coordinator_tests {
         // Only need 1 of 2 to commit.
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             1,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
 
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Single yes vote is enough.
-        let sig = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         let decision = coord.receive_vote(node_id(1), Vote::yes(sig)).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
 
@@ -1034,12 +1061,13 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af).unwrap();
+        let prop_msg = coord.propose(af).unwrap();
         assert!(matches!(coord.state, CoordinatorState::Proposing { .. }));
 
         coord.reset();
@@ -1051,12 +1079,13 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Fabricate a bad signature (all zeros).
         let bad_sig = [0u8; 64];
@@ -1071,16 +1100,17 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys,
         );
-        coord.propose(af.clone()).unwrap();
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Sign with the wrong key (node 2's key for node 1's vote).
         let (wrong_sk, _) = make_keypair(2);
-        let wrong_sig = Vote::sign(&af.hash, &wrong_sk);
+        let wrong_sig = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &wrong_sk);
         let err = coord
             .receive_vote(node_id(1), Vote::yes(wrong_sig))
             .unwrap_err();
@@ -1094,7 +1124,14 @@ mod coordinator_tests {
         let costs = ComputronCosts::default_costs();
         // The forest has 1 action, so estimated cost = action_base + effect_base = 150.
         // Set max_budget to 10 (way too low).
-        let mut coord = Coordinator::new(node_id(1), 2, costs, 10, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            coord_signing_key(),
+            2,
+            costs,
+            10,
+            participant_keys,
+        );
         let err = coord.propose(af).unwrap_err();
         assert!(matches!(err, CoordError::BudgetExceeded { .. }));
     }
@@ -1165,10 +1202,10 @@ mod participant_tests {
     #[test]
     fn participant_votes_yes_when_preconditions_met() {
         let (ledger, id_a, _, af, signing_keys, _) = setup_participant_scenario();
-        let participant =
+        let mut participant =
             Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
 
-        let vote = participant.evaluate_proposal(&af);
+        let vote = participant.evaluate_proposal(&af.hash, &af);
         assert!(vote.is_yes());
     }
 
@@ -1179,9 +1216,9 @@ mod participant_tests {
         // Drain A's balance so precondition (min_balance: 500) fails.
         ledger.get_mut(&id_a).unwrap().state.balance = 100;
 
-        let participant =
+        let mut participant =
             Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
-        let vote = participant.evaluate_proposal(&af);
+        let vote = participant.evaluate_proposal(&af.hash, &af);
         assert!(vote.is_no());
     }
 
@@ -1191,21 +1228,49 @@ mod participant_tests {
 
         // Create participant with node_id(99) which is not in the forest.
         let (sk_99, _) = make_keypair(99);
-        let participant = Participant::with_costs(id_a, node_id(99), sk_99, ledger, zero_costs());
-        let vote = participant.evaluate_proposal(&af);
+        let mut participant =
+            Participant::with_costs(id_a, node_id(99), sk_99, ledger, zero_costs());
+        let vote = participant.evaluate_proposal(&af.hash, &af);
         assert!(vote.is_no());
-        if let Vote::No { reason } = vote {
+        if let Vote::No { reason, .. } = vote {
             assert!(reason.contains("not listed as participant"));
         }
     }
 
     #[test]
     fn participant_applies_commit() {
-        let (ledger, id_a, id_b, af, signing_keys, _) = setup_participant_scenario();
+        let (ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_participant_scenario();
         let mut participant =
             Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
 
-        let receipt = participant.apply_commit(&af).unwrap();
+        // Build a mock commit message with valid QC signatures.
+        let proposal_id = af.hash; // Use forest hash as proposal_id for test.
+        let sig_1 = Vote::sign_yes(&proposal_id, &af.hash, &signing_keys[0]);
+        let sig_2 = Vote::sign_yes(&proposal_id, &af.hash, &signing_keys[1]);
+        let commit = CommitMessage {
+            proposal_id,
+            receipt: pyana_turn::TurnReceipt {
+                turn_hash: [0u8; 32],
+                forest_hash: [0u8; 32],
+                pre_state_hash: [0u8; 32],
+                post_state_hash: [0u8; 32],
+                timestamp: 0,
+                effects_hash: [0u8; 32],
+                computrons_used: 0,
+                action_count: 1,
+                previous_receipt_hash: None,
+                agent: id_a,
+                federation_id: [0u8; 32],
+                routing_directives: vec![],
+                derivation_records: vec![],
+                executor_signature: None,
+            },
+            signatures: vec![(node_id(1), sig_1), (node_id(2), sig_2)],
+        };
+
+        let receipt = participant
+            .apply_commit(&commit, &af, &participant_keys, 2)
+            .unwrap();
         assert_eq!(receipt.action_count, 1);
 
         // Verify local state updated.
@@ -1225,11 +1290,12 @@ mod participant_tests {
         );
 
         // Build valid commit message with real Ed25519 signatures.
-        let sig_1 = Vote::sign(&af.hash, &signing_keys[0]);
-        let sig_2 = Vote::sign(&af.hash, &signing_keys[1]);
+        let proposal_id = af.hash; // Use forest hash as proposal_id for test.
+        let sig_1 = Vote::sign_yes(&proposal_id, &af.hash, &signing_keys[0]);
+        let sig_2 = Vote::sign_yes(&proposal_id, &af.hash, &signing_keys[1]);
 
         let commit = CommitMessage {
-            proposal_id: [0u8; 32],
+            proposal_id,
             receipt: TurnReceipt {
                 turn_hash: [0u8; 32],
                 forest_hash: [0u8; 32],
@@ -1241,6 +1307,7 @@ mod participant_tests {
                 action_count: 1,
                 previous_receipt_hash: None,
                 agent: id_a,
+                federation_id: [0u8; 32],
                 routing_directives: vec![],
                 derivation_records: vec![],
                 executor_signature: None,
@@ -1357,34 +1424,35 @@ mod integration {
         // [2/4] Voting.
         let mut coordinator = Coordinator::new(
             node_a,
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys.clone(),
         );
-        coordinator.propose(af.clone()).unwrap();
+        let prop_msg = coordinator.propose(af.clone()).unwrap();
 
         // Node A evaluates and votes.
-        let participant_a = Participant::with_costs(
+        let mut participant_a = Participant::with_costs(
             alice_id2,
             node_a,
             signing_keys[0],
             atomic_ledger.clone(),
             zero_costs(),
         );
-        let vote_a = participant_a.evaluate_proposal(&af);
+        let vote_a = participant_a.evaluate_proposal(&prop_msg.proposal_id, &af);
         assert!(vote_a.is_yes());
         coordinator.receive_vote(node_a, vote_a).unwrap();
 
         // Node B evaluates and votes.
-        let participant_b = Participant::with_costs(
+        let mut participant_b = Participant::with_costs(
             bob_id2,
             node_b,
             signing_keys[1],
             atomic_ledger.clone(),
             zero_costs(),
         );
-        let vote_b = participant_b.evaluate_proposal(&af);
+        let vote_b = participant_b.evaluate_proposal(&prop_msg.proposal_id, &af);
         assert!(vote_b.is_yes());
         let decision = coordinator.receive_vote(node_b, vote_b).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
@@ -1444,34 +1512,35 @@ mod integration {
 
         let mut coord2 = Coordinator::new(
             node_a,
+            coord_signing_key(),
             2,
             zero_costs(),
             TEST_MAX_BUDGET,
             participant_keys.clone(),
         );
-        coord2.propose(af2.clone()).unwrap();
+        let prop_msg2 = coord2.propose(af2.clone()).unwrap();
 
         // Alice votes yes (her precondition is fine).
-        let part_a = Participant::with_costs(
+        let mut part_a = Participant::with_costs(
             alice_id3,
             node_a,
             signing_keys[0],
             fail_ledger.clone(),
             zero_costs(),
         );
-        let va = part_a.evaluate_proposal(&af2);
+        let va = part_a.evaluate_proposal(&prop_msg2.proposal_id, &af2);
         assert!(va.is_yes());
         coord2.receive_vote(node_a, va).unwrap();
 
         // Bob votes no (his min_balance precondition fails).
-        let part_b = Participant::with_costs(
+        let mut part_b = Participant::with_costs(
             bob_id3,
             node_b,
             signing_keys[1],
             fail_ledger.clone(),
             zero_costs(),
         );
-        let vb = part_b.evaluate_proposal(&af2);
+        let vb = part_b.evaluate_proposal(&prop_msg2.proposal_id, &af2);
         assert!(vb.is_no());
 
         let decision = coord2.receive_vote(node_b, vb).unwrap();
@@ -1554,14 +1623,20 @@ mod integration {
             0,
         );
 
-        let mut coord =
-            Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
-        coord.propose(af.clone()).unwrap();
+        let mut coord = Coordinator::new(
+            node_a,
+            coord_signing_key(),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // Both vote yes.
-        let sig_a = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig_a = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         coord.receive_vote(node_a, Vote::yes(sig_a)).unwrap();
-        let sig_b = Vote::sign(&af.hash, &signing_keys[1]);
+        let sig_b = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[1]);
         let decision = coord.receive_vote(node_b, Vote::yes(sig_b)).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
 
@@ -1637,16 +1712,22 @@ mod integration {
         );
 
         // Threshold 2 of 3 (majority).
-        let mut coord =
-            Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
-        coord.propose(af.clone()).unwrap();
+        let mut coord = Coordinator::new(
+            node_a,
+            coord_signing_key(),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // A votes yes.
-        let sig_a = Vote::sign(&af.hash, &signing_keys[0]);
+        let sig_a = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
         coord.receive_vote(node_a, Vote::yes(sig_a)).unwrap();
 
         // B votes yes — threshold reached!
-        let sig_b = Vote::sign(&af.hash, &signing_keys[1]);
+        let sig_b = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[1]);
         let decision = coord.receive_vote(node_b, Vote::yes(sig_b)).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
 
@@ -1672,7 +1753,7 @@ mod integration {
         let node_a = node_id(1);
         let node_b = node_id(2);
         let node_c = node_id(3);
-        let (_, participant_keys) = make_participant_keys(&[node_a, node_b, node_c]);
+        let (signing_keys, participant_keys) = make_participant_keys(&[node_a, node_b, node_c]);
 
         let mut forest = CallForest::new();
         forest.add_root(Action {
@@ -1690,12 +1771,26 @@ mod integration {
         let af = AtomicForest::new(vec![node_a, node_b, node_c], forest, vec![], id_a, 0);
 
         // Need all 3.
-        let mut coord =
-            Coordinator::new(node_a, 3, zero_costs(), TEST_MAX_BUDGET, participant_keys);
-        coord.propose(af.clone()).unwrap();
+        let mut coord = Coordinator::new(
+            node_a,
+            coord_signing_key(),
+            3,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
+        let prop_msg = coord.propose(af.clone()).unwrap();
 
         // B votes no — now max possible yes is 2, but threshold is 3.
-        let decision = coord.receive_vote(node_b, Vote::no("nope")).unwrap();
+        let decision = coord
+            .receive_vote(
+                node_b,
+                Vote::no(
+                    "nope",
+                    Vote::sign_no(&prop_msg.proposal_id, &af.hash, &signing_keys[1]),
+                ),
+            )
+            .unwrap();
         assert_eq!(decision, Some(Decision::Abort));
     }
 

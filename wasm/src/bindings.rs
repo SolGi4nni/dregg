@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 thread_local! {
-    static RUNTIMES: RefCell<Vec<PyanaRuntime>> = RefCell::new(Vec::new());
+    static RUNTIMES: RefCell<Vec<Option<PyanaRuntime>>> = RefCell::new(Vec::new());
 }
 
 fn with_runtime<F, R>(handle: usize, f: F) -> Result<R, JsError>
@@ -32,6 +32,7 @@ where
         let mut runtimes = runtimes.borrow_mut();
         let rt = runtimes
             .get_mut(handle)
+            .and_then(|slot| slot.as_mut())
             .ok_or_else(|| JsError::new("invalid runtime handle"))?;
         f(rt).map_err(|e| JsError::new(&e))
     })
@@ -45,6 +46,7 @@ where
         let runtimes = runtimes.borrow();
         let rt = runtimes
             .get(handle)
+            .and_then(|slot| slot.as_ref())
             .ok_or_else(|| JsError::new("invalid runtime handle"))?;
         f(rt).map_err(|e| JsError::new(&e))
     })
@@ -59,9 +61,31 @@ where
 pub fn create_runtime() -> usize {
     RUNTIMES.with(|runtimes| {
         let mut runtimes = runtimes.borrow_mut();
+        // Reuse a tombstone slot if available.
+        for (i, slot) in runtimes.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(PyanaRuntime::new());
+                return i;
+            }
+        }
         let handle = runtimes.len();
-        runtimes.push(PyanaRuntime::new());
+        runtimes.push(Some(PyanaRuntime::new()));
         handle
+    })
+}
+
+/// Destroy a runtime, freeing its resources. Returns true if the handle was valid.
+#[wasm_bindgen]
+pub fn destroy_runtime(handle: usize) -> bool {
+    RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        match runtimes.get_mut(handle) {
+            Some(slot @ Some(_)) => {
+                *slot = None;
+                true
+            }
+            _ => false,
+        }
     })
 }
 

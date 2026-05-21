@@ -320,7 +320,24 @@ pub fn compute_round(state: &[BabyBear; WIDTH], round_idx: usize) -> [BabyBear; 
 /// Input: 4 child hashes (each a single field element)
 /// Output: 1 parent hash (a single field element)
 ///
-/// Uses capacity elements for domain separation.
+/// # Domain Separation Scheme
+///
+/// This module uses a consistent domain separation scheme across all hash functions
+/// to prevent cross-domain collisions. The Poseidon2 state is partitioned as:
+///
+/// - **Rate region** (positions 0..3): absorbs input data
+/// - **Capacity region** (positions 4..15): domain separation tags and padding
+///
+/// Domain tags by function:
+/// - `hash_4_to_1`: position 4 = arity (4), positions 5..15 = 0
+/// - `hash_2_to_1`: position 4 = arity (2), positions 5..15 = 0
+/// - `hash_many`:   position 4 = input length, positions 5..15 = 0
+/// - `hash_fact`:   positions 0..4 = data, position 5 = 0xFACF marker, position 6 = 1 (leaf flag)
+///
+/// These tags are non-overlapping: `hash_4_to_1` and `hash_2_to_1` use arity in pos 4,
+/// `hash_many` uses length in pos 4 (which can only equal 2 or 4 if the input IS length 2/4,
+/// but the rate absorption pattern differs), and `hash_fact` uses positions 5-6 which are
+/// always zero in the other functions.
 pub fn hash_4_to_1(inputs: &[BabyBear; 4]) -> BabyBear {
     let mut state = Poseidon2State::new();
     // Rate portion: inputs[0..4]
@@ -562,5 +579,56 @@ mod tests {
         let commitment = [0xAB_u8; 32];
         let h = hash_bytes(&commitment);
         assert_ne!(h, BabyBear::ZERO);
+    }
+
+    /// Known-answer test vector for Poseidon2 permutation over BabyBear width-16.
+    ///
+    /// Input: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    /// This vector is computed from the Plonky3-compatible round constants
+    /// (RC_EXT_INIT, RC_INTERNAL, RC_EXT_FINAL) and internal diagonal (INTERNAL_DIAG)
+    /// defined in this module. Any change to these parameters will break this test,
+    /// which is the intended behavior: it catches accidental parameter drift.
+    #[test]
+    fn poseidon2_known_answer_vector() {
+        // Input: sequential field elements [0..15]
+        let mut input = [BabyBear::ZERO; WIDTH];
+        for i in 0..WIDTH {
+            input[i] = BabyBear::new(i as u32);
+        }
+        let mut state = Poseidon2State::from_elements(&input);
+        state.permute();
+
+        // Expected output (frozen from implementation with Plonky3-sourced parameters)
+        let expected: [u32; 16] = [
+            1906786279, 1737026427, 1959749225, 700325316, 1638050605, 1021608788, 1726691001,
+            1761127344, 1552405120, 417318995, 36799261, 1215172152, 614923223, 1300746575,
+            957311597, 304856115,
+        ];
+
+        for i in 0..WIDTH {
+            assert_eq!(
+                state.state[i].0, expected[i],
+                "Poseidon2 permutation output mismatch at position {i}: \
+                 got {}, expected {}",
+                state.state[i].0, expected[i]
+            );
+        }
+    }
+
+    /// Known-answer test for hash_4_to_1 compression function.
+    /// This is the core primitive used in the 4-ary Merkle tree.
+    #[test]
+    fn hash_4_to_1_known_answer() {
+        let h = hash_4_to_1(&[
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
+        ]);
+        assert_eq!(
+            h.0, 1163579196,
+            "hash_4_to_1([1,2,3,4]) known-answer mismatch: got {}, expected 1163579196",
+            h.0
+        );
     }
 }

@@ -45,6 +45,7 @@ pub mod atomic;
 pub mod budget;
 pub mod causal;
 pub mod error;
+pub mod serde_sig;
 
 #[cfg(test)]
 mod tests;

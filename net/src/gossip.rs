@@ -13,7 +13,9 @@
 //!
 //! ## Security
 //!
-//! - All gossip envelopes are signed (HMAC-blake3 with a shared network key).
+//! - All gossip envelopes are signed (Ed25519 with per-node asymmetric keys).
+//!   Each node signs with its own private key; receivers verify using the
+//!   sender's public key looked up by NodeId from the peer registry.
 //! - Message hashes are verified on receipt: `blake3(payload) == msg_hash`.
 //! - Pending IHave state is bounded to prevent memory exhaustion.
 //! - Connections are bounded by the configured `max_connections` limit.
@@ -73,6 +75,14 @@ const MAX_ANTI_ENTROPY_RESPONSE_BYTES: usize = 256 * 1024;
 
 /// Maximum number of concurrent gossip connections.
 const DEFAULT_MAX_GOSSIP_CONNECTIONS: usize = 256;
+
+/// Maximum entries in the message cache. When exceeded, oldest entries are
+/// evicted to prevent unbounded memory growth from message floods.
+const MAX_MESSAGE_CACHE_SIZE: usize = 10_000;
+
+/// Maximum number of concurrent streams per peer connection.
+/// Prevents a single peer from exhausting resources via stream flooding.
+const MAX_STREAMS_PER_PEER: usize = 64;
 
 /// A handle to a joined gossip topic.
 #[derive(Clone, Debug)]
@@ -281,7 +291,29 @@ struct GossipState {
     /// Bounded to MAX_PENDING_IHAVES entries; oldest evicted when full.
     pending_ihaves: BoundedPendingIhaves,
     /// Recently-sent message payloads (for responding to Graft requests).
+    /// Bounded to MAX_MESSAGE_CACHE_SIZE entries; oldest evicted on insert.
     message_cache: HashMap<MessageHash, CachedMessage>,
+    /// Insertion order for message cache entries (FIFO eviction).
+    message_cache_order: VecDeque<MessageHash>,
+}
+
+impl GossipState {
+    /// Insert a message into the bounded cache, evicting oldest if at capacity.
+    fn cache_insert(&mut self, hash: MessageHash, msg: CachedMessage) {
+        if self.message_cache.contains_key(&hash) {
+            return; // Already cached, no-op.
+        }
+        // Evict oldest entries until under capacity.
+        while self.message_cache.len() >= MAX_MESSAGE_CACHE_SIZE {
+            if let Some(oldest_hash) = self.message_cache_order.pop_front() {
+                self.message_cache.remove(&oldest_hash);
+            } else {
+                break;
+            }
+        }
+        self.message_cache.insert(hash, msg);
+        self.message_cache_order.push_back(hash);
+    }
 }
 
 #[derive(Clone)]
@@ -462,6 +494,22 @@ enum GossipEnvelope {
     },
 }
 
+/// Serde helper for 64-byte arrays (Ed25519 signatures).
+/// Serde only implements Serialize/Deserialize for arrays up to [T; 32].
+mod serde_sig64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error> {
+        bytes.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        v.try_into()
+            .map_err(|_| serde::de::Error::custom("expected 64 bytes for Ed25519 signature"))
+    }
+}
+
 /// A signed gossip envelope. The signature covers the serialized inner envelope
 /// and the sender's node ID, preventing forgery and ensuring message authenticity.
 ///
@@ -476,6 +524,7 @@ struct SignedEnvelope {
     /// The serialized inner GossipEnvelope (postcard-encoded).
     body: Vec<u8>,
     /// Ed25519 signature over `sender || body` using the sender's private key.
+    #[serde(with = "serde_sig64")]
     signature: [u8; 64],
 }
 
@@ -556,6 +605,7 @@ impl GossipNetwork {
             seen: BoundedSeenSet::new(SEEN_MAX_ENTRIES, SEEN_TTL),
             pending_ihaves: BoundedPendingIhaves::new(MAX_PENDING_IHAVES),
             message_cache: HashMap::new(),
+            message_cache_order: VecDeque::new(),
         }));
 
         let signing_key = Arc::new(signing_key);
@@ -691,7 +741,7 @@ impl GossipNetwork {
         {
             let mut state = self.state.write().await;
             state.seen.insert(msg_hash);
-            state.message_cache.insert(
+            state.cache_insert(
                 msg_hash,
                 CachedMessage {
                     topic_id: topic.topic_id,
@@ -979,16 +1029,39 @@ impl GossipNetwork {
                     s.peers.insert(remote_addr, conn.clone());
                 }
 
+                // Per-connection stream counter to prevent stream flooding.
+                let active_streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
                 loop {
                     let Ok(mut recv) = conn.accept_uni().await else {
                         break;
                     };
 
+                    // Enforce per-connection stream limit.
+                    let current_streams = active_streams.fetch_add(1, Ordering::SeqCst);
+                    if current_streams >= MAX_STREAMS_PER_PEER {
+                        active_streams.fetch_sub(1, Ordering::SeqCst);
+                        warn!(
+                            "Rejecting stream from {} — at per-peer limit ({})",
+                            remote_addr, MAX_STREAMS_PER_PEER
+                        );
+                        continue;
+                    }
+
                     let state = state.clone();
                     let outgoing_tx = outgoing_tx.clone();
                     let key = key.clone();
                     let peer_keys = peer_keys.clone();
+                    let streams_counter = active_streams.clone();
                     tokio::spawn(async move {
+                        // Decrement stream count when this stream handler completes.
+                        struct StreamGuard(Arc<std::sync::atomic::AtomicUsize>);
+                        impl Drop for StreamGuard {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, Ordering::SeqCst);
+                            }
+                        }
+                        let _guard = StreamGuard(streams_counter);
                         if let Ok(signed) = read_signed_envelope(&mut recv).await {
                             // Look up the sender's public key from the peer registry.
                             let sender_pk = {
@@ -1030,7 +1103,7 @@ impl GossipNetwork {
                                 remote_addr,
                                 &state,
                                 &outgoing_tx,
-                                &key,
+                                &*key,
                                 our_node_id,
                             )
                             .await;
@@ -1088,7 +1161,7 @@ impl GossipNetwork {
 
                     s.seen.insert(msg_hash);
 
-                    s.message_cache.insert(
+                    s.cache_insert(
                         msg_hash,
                         CachedMessage {
                             topic_id,
@@ -1273,7 +1346,7 @@ impl GossipNetwork {
                             false
                         } else {
                             s.seen.insert(msg_hash);
-                            s.message_cache.insert(
+                            s.cache_insert(
                                 msg_hash,
                                 CachedMessage {
                                     topic_id,
@@ -1398,6 +1471,12 @@ impl GossipNetwork {
             let now = Instant::now();
             s.message_cache
                 .retain(|_, cached| now.duration_since(cached.cached_at) < SEEN_TTL);
+            // Also prune the order queue to match retained entries.
+            // Collect retained keys first to avoid borrow conflict.
+            let retained_keys: std::collections::HashSet<[u8; 32]> =
+                s.message_cache.keys().copied().collect();
+            s.message_cache_order
+                .retain(|hash| retained_keys.contains(hash));
         }
     }
 
@@ -1593,18 +1672,19 @@ mod tests {
 
     #[test]
     fn signed_envelope_roundtrip() {
-        let key = [0xab; 32];
+        let (signing_key, public_key) = pyana_types::generate_keypair();
         let sender = [0xcd; 32];
         let envelope = GossipEnvelope::IHave {
             topic_id: [0x11; 32],
             msg_hash: [0x22; 32],
         };
 
-        let signed = SignedEnvelope::sign(&envelope, sender, &key).unwrap();
-        assert!(signed.verify(&key));
+        let signed = SignedEnvelope::sign(&envelope, sender, &signing_key).unwrap();
+        assert!(signed.verify(&public_key));
 
-        let wrong_key = [0xff; 32];
-        assert!(!signed.verify(&wrong_key));
+        // Wrong key should fail verification
+        let (_, wrong_public_key) = pyana_types::generate_keypair();
+        assert!(!signed.verify(&wrong_public_key));
 
         let decoded = signed.decode_inner().unwrap();
         match decoded {
@@ -1618,18 +1698,18 @@ mod tests {
 
     #[test]
     fn signed_envelope_tamper_detection() {
-        let key = [0xab; 32];
+        let (signing_key, public_key) = pyana_types::generate_keypair();
         let sender = [0xcd; 32];
         let envelope = GossipEnvelope::Prune {
             topic_id: [0x33; 32],
         };
 
-        let mut signed = SignedEnvelope::sign(&envelope, sender, &key).unwrap();
+        let mut signed = SignedEnvelope::sign(&envelope, sender, &signing_key).unwrap();
 
         if !signed.body.is_empty() {
             signed.body[0] ^= 0xff;
         }
-        assert!(!signed.verify(&key));
+        assert!(!signed.verify(&public_key));
     }
 
     #[test]

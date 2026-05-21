@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use pyana_cell::{CellId, Ledger, Preconditions};
 use pyana_turn::{CallForest, ComputronCosts, Turn, TurnExecutor, TurnReceipt, TurnResult};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,11 @@ impl AtomicForest {
     }
 
     /// Compute the hash of an atomic forest from its components.
+    ///
+    /// SECURITY: Hashes the FULL precondition contents (via `Preconditions::hash()`)
+    /// to prevent hash collisions where different precondition values produce
+    /// identical forest hashes. This binds the signature to the exact preconditions
+    /// agreed upon.
     fn compute_hash(
         participants: &[[u8; 32]],
         forest_hash: &[u8; 32],
@@ -71,14 +76,10 @@ impl AtomicForest {
             hasher.update(p);
         }
         hasher.update(forest_hash);
-        for (cell_id, _preconds) in preconditions {
+        for (cell_id, preconds) in preconditions {
             hasher.update(cell_id.as_bytes());
-            // Hash precondition presence (not full serialization for simplicity).
-            if _preconds.cell_state.is_some() {
-                hasher.update(&[1u8]);
-            } else {
-                hasher.update(&[0u8]);
-            }
+            // Hash the full precondition contents to prevent collision attacks.
+            hasher.update(&preconds.hash());
         }
         hasher.update(initiator.as_bytes());
         hasher.update(&fee.to_le_bytes());
@@ -123,15 +124,25 @@ impl AtomicForest {
 pub enum Vote {
     /// The participant agrees: preconditions met, ready to commit.
     Yes {
-        /// Signature over the atomic forest hash (simulated as 64 bytes).
+        /// Signature over `proposal_id || forest_hash || VOTE_YES_FLAG`.
         signature: [u8; 64],
     },
     /// The participant rejects: preconditions failed or policy violation.
     No {
         /// Human-readable reason for rejection.
         reason: String,
+        /// Signature over `proposal_id || forest_hash || VOTE_NO_FLAG`.
+        /// Prevents network adversaries from injecting fake No votes.
+        signature: [u8; 64],
     },
 }
+
+/// Flag byte included in the signing message to distinguish Yes from No votes.
+const VOTE_YES_FLAG: u8 = 0x01;
+/// Flag byte included in the signing message to distinguish No from Yes votes.
+const VOTE_NO_FLAG: u8 = 0x00;
+/// Flag byte for abort message signatures.
+const ABORT_FLAG: u8 = 0x02;
 
 impl Vote {
     /// Create a Yes vote with a signature.
@@ -139,10 +150,11 @@ impl Vote {
         Vote::Yes { signature }
     }
 
-    /// Create a No vote with a reason.
-    pub fn no(reason: impl Into<String>) -> Self {
+    /// Create a No vote with a reason and signature.
+    pub fn no(reason: impl Into<String>, signature: [u8; 64]) -> Self {
         Vote::No {
             reason: reason.into(),
+            signature,
         }
     }
 
@@ -156,19 +168,80 @@ impl Vote {
         matches!(self, Vote::No { .. })
     }
 
-    /// Create a real Ed25519 signature over the forest hash using a signing key.
+    /// Construct the signing message for a vote.
     ///
-    /// The `signing_key_bytes` are the 32-byte Ed25519 secret key seed.
-    pub fn sign(forest_hash: &[u8; 32], signing_key_bytes: &[u8; 32]) -> [u8; 64] {
-        use ed25519_dalek::{Signer, SigningKey};
+    /// The message includes `proposal_id || forest_hash || vote_flag` to prevent
+    /// replay across proposals and ensure Yes/No signatures are not interchangeable.
+    fn signing_message(proposal_id: &[u8; 32], forest_hash: &[u8; 32], flag: u8) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(65);
+        msg.extend_from_slice(proposal_id);
+        msg.extend_from_slice(forest_hash);
+        msg.push(flag);
+        msg
+    }
+
+    /// Create a real Ed25519 signature for a Yes vote.
+    ///
+    /// Signs over `proposal_id || forest_hash || VOTE_YES_FLAG` to bind the vote
+    /// to a specific proposal and prevent cross-proposal replay.
+    pub fn sign_yes(
+        proposal_id: &[u8; 32],
+        forest_hash: &[u8; 32],
+        signing_key_bytes: &[u8; 32],
+    ) -> [u8; 64] {
         let signing_key = SigningKey::from_bytes(signing_key_bytes);
-        let sig = signing_key.sign(forest_hash);
+        let msg = Self::signing_message(proposal_id, forest_hash, VOTE_YES_FLAG);
+        let sig = signing_key.sign(&msg);
         sig.to_bytes()
+    }
+
+    /// Create a real Ed25519 signature for a No vote.
+    ///
+    /// Signs over `proposal_id || forest_hash || VOTE_NO_FLAG` to prevent
+    /// network adversaries from injecting fake No votes.
+    pub fn sign_no(
+        proposal_id: &[u8; 32],
+        forest_hash: &[u8; 32],
+        signing_key_bytes: &[u8; 32],
+    ) -> [u8; 64] {
+        let signing_key = SigningKey::from_bytes(signing_key_bytes);
+        let msg = Self::signing_message(proposal_id, forest_hash, VOTE_NO_FLAG);
+        let sig = signing_key.sign(&msg);
+        sig.to_bytes()
+    }
+
+    /// Verify a Yes vote signature against the expected public key.
+    pub fn verify_yes(
+        signature: &[u8; 64],
+        proposal_id: &[u8; 32],
+        forest_hash: &[u8; 32],
+        pubkey_bytes: &[u8; 32],
+    ) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(pubkey_bytes) else {
+            return false;
+        };
+        let msg = Self::signing_message(proposal_id, forest_hash, VOTE_YES_FLAG);
+        let sig = Signature::from_bytes(signature);
+        verifying_key.verify_strict(&msg, &sig).is_ok()
+    }
+
+    /// Verify a No vote signature against the expected public key.
+    pub fn verify_no(
+        signature: &[u8; 64],
+        proposal_id: &[u8; 32],
+        forest_hash: &[u8; 32],
+        pubkey_bytes: &[u8; 32],
+    ) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(pubkey_bytes) else {
+            return false;
+        };
+        let msg = Self::signing_message(proposal_id, forest_hash, VOTE_NO_FLAG);
+        let sig = Signature::from_bytes(signature);
+        verifying_key.verify_strict(&msg, &sig).is_ok()
     }
 
     /// Derive the Ed25519 public key from a signing key (for test setup).
     pub fn public_key_from_signing_key(signing_key_bytes: &[u8; 32]) -> [u8; 32] {
-        use ed25519_dalek::SigningKey;
         let signing_key = SigningKey::from_bytes(signing_key_bytes);
         signing_key.verifying_key().to_bytes()
     }
@@ -220,6 +293,10 @@ pub struct AbortMessage {
     pub reason: String,
     /// Which participants voted No (if any).
     pub rejectors: Vec<[u8; 32]>,
+    /// Coordinator signature over `proposal_id || ABORT_FLAG`.
+    /// Prevents network adversaries from injecting fake abort messages.
+    #[serde(with = "crate::serde_sig")]
+    pub signature: [u8; 64],
 }
 
 // ─── CoordinatorState ──────────────────────────────────────────────────────────
@@ -271,6 +348,13 @@ impl CoordinatorState {
 /// 3. `commit()` — apply the forest to the ledger if Decision::Commit.
 /// 4. `abort()` — emit AbortMessage if Decision::Abort or timeout.
 /// 5. `check_timeout()` — poll for proposal timeout; returns AbortMessage if expired.
+///
+/// # Threshold Model
+///
+/// The threshold is configurable: commit requires at least `threshold` Yes votes
+/// (not necessarily all participants). For unanimous agreement, set
+/// `threshold == participants.len()`. This supports flexible quorum policies
+/// where a strict subset of participants suffices for commitment.
 #[derive(Clone, Debug)]
 pub struct Coordinator {
     /// Current state of the coordinator.
@@ -279,6 +363,9 @@ pub struct Coordinator {
     pub threshold: usize,
     /// The coordinator's node ID.
     pub node_id: [u8; 32],
+    /// The coordinator's Ed25519 signing key (32-byte seed).
+    /// Used to sign AbortMessages so participants can verify authenticity.
+    pub signing_key: [u8; 32],
     /// Cost table for computron metering.
     pub costs: ComputronCosts,
     /// Maximum computron budget for an atomic turn.
@@ -300,11 +387,13 @@ impl Coordinator {
     /// - `max_budget`: if the forest's estimated cost exceeds this, reject at propose time.
     /// - `participant_keys`: map of node_id -> Ed25519 public key bytes.
     ///   Vote signatures are verified against these keys.
+    /// - `signing_key`: the coordinator's Ed25519 signing key for signing AbortMessages.
     ///
     /// The default proposal timeout is 30 seconds. Use `with_proposal_timeout()`
     /// to override.
     pub fn new(
         node_id: [u8; 32],
+        signing_key: [u8; 32],
         threshold: usize,
         costs: ComputronCosts,
         max_budget: u64,
@@ -314,6 +403,7 @@ impl Coordinator {
             state: CoordinatorState::Idle,
             threshold,
             node_id,
+            signing_key,
             costs,
             max_budget,
             participant_keys,
@@ -382,9 +472,12 @@ impl Coordinator {
 
     /// Receive a vote from a participant.
     ///
-    /// For `Vote::Yes`, the signature is verified against the participant's
-    /// registered public key before accepting the vote. Invalid signatures
-    /// are rejected with `CoordError::InvalidVoteSignature`.
+    /// Both `Vote::Yes` and `Vote::No` signatures are verified against the
+    /// participant's registered public key before accepting the vote. Invalid
+    /// signatures are rejected with `CoordError::InvalidVoteSignature`.
+    ///
+    /// Signatures are bound to the specific `proposal_id` and `forest_hash` to
+    /// prevent cross-proposal replay attacks.
     ///
     /// Returns `Some(Decision)` when a definitive outcome is reached,
     /// or `None` if still waiting.
@@ -393,7 +486,7 @@ impl Coordinator {
         from: [u8; 32],
         vote: Vote,
     ) -> Result<Option<Decision>, CoordError> {
-        let (forest, votes, _proposal_id) = match &mut self.state {
+        let (forest, votes, proposal_id) = match &mut self.state {
             CoordinatorState::Proposing {
                 forest,
                 votes,
@@ -418,18 +511,23 @@ impl Coordinator {
             return Err(CoordError::DuplicateVote { participant: from });
         }
 
-        // CRITICAL: Verify Ed25519 signature on Yes votes.
-        if let Vote::Yes { signature } = &vote {
-            let pubkey_bytes = self
-                .participant_keys
-                .get(&from)
-                .ok_or(CoordError::UnknownParticipant { id: from })?;
-            let verifying_key = VerifyingKey::from_bytes(pubkey_bytes)
-                .map_err(|_| CoordError::InvalidVoteSignature { participant: from })?;
-            let sig = Signature::from_bytes(signature);
-            // The message being signed is the forest hash.
-            if verifying_key.verify_strict(&forest.hash, &sig).is_err() {
-                return Err(CoordError::InvalidVoteSignature { participant: from });
+        // CRITICAL: Verify Ed25519 signature on all votes (Yes and No).
+        // Signatures are bound to (proposal_id, forest_hash, vote_flag) to prevent
+        // replay across proposals and fake vote injection.
+        let pubkey_bytes = self
+            .participant_keys
+            .get(&from)
+            .ok_or(CoordError::UnknownParticipant { id: from })?;
+        match &vote {
+            Vote::Yes { signature } => {
+                if !Vote::verify_yes(signature, &proposal_id, &forest.hash, pubkey_bytes) {
+                    return Err(CoordError::InvalidVoteSignature { participant: from });
+                }
+            }
+            Vote::No { signature, .. } => {
+                if !Vote::verify_no(signature, &proposal_id, &forest.hash, pubkey_bytes) {
+                    return Err(CoordError::InvalidVoteSignature { participant: from });
+                }
             }
         }
 
@@ -535,7 +633,7 @@ impl Coordinator {
     /// Abort the current proposal.
     ///
     /// Transitions: Proposing -> Aborted.
-    /// Returns an AbortMessage to send to all participants.
+    /// Returns a signed AbortMessage to send to all participants.
     pub fn abort(&mut self, reason: impl Into<String>) -> Result<AbortMessage, CoordError> {
         let (votes, proposal_id) = match &self.state {
             CoordinatorState::Proposing {
@@ -555,10 +653,13 @@ impl Coordinator {
             .filter_map(|(id, vote)| if vote.is_no() { Some(*id) } else { None })
             .collect();
 
+        let signature = Self::sign_abort(&proposal_id, &self.signing_key);
+
         let msg = AbortMessage {
             proposal_id,
             reason: reason_str.clone(),
             rejectors,
+            signature,
         };
 
         self.state = CoordinatorState::Aborted {
@@ -567,6 +668,28 @@ impl Coordinator {
         };
 
         Ok(msg)
+    }
+
+    /// Sign an abort message: signs over `proposal_id || ABORT_FLAG`.
+    fn sign_abort(proposal_id: &[u8; 32], signing_key_bytes: &[u8; 32]) -> [u8; 64] {
+        let signing_key = SigningKey::from_bytes(signing_key_bytes);
+        let mut msg = Vec::with_capacity(33);
+        msg.extend_from_slice(proposal_id);
+        msg.push(ABORT_FLAG);
+        let sig = signing_key.sign(&msg);
+        sig.to_bytes()
+    }
+
+    /// Verify an abort message signature against the coordinator's public key.
+    pub fn verify_abort(abort_msg: &AbortMessage, coordinator_pubkey: &[u8; 32]) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(coordinator_pubkey) else {
+            return false;
+        };
+        let mut msg = Vec::with_capacity(33);
+        msg.extend_from_slice(&abort_msg.proposal_id);
+        msg.push(ABORT_FLAG);
+        let sig = Signature::from_bytes(&abort_msg.signature);
+        verifying_key.verify_strict(&msg, &sig).is_ok()
     }
 
     /// Check whether the current proposal has timed out.
@@ -603,11 +726,13 @@ impl Coordinator {
             .collect();
 
         let reason = format!("proposal timed out after {:?}", self.proposal_timeout);
+        let signature = Self::sign_abort(&proposal_id, &self.signing_key);
 
         let msg = AbortMessage {
             proposal_id,
             reason: reason.clone(),
             rejectors,
+            signature,
         };
 
         self.state = CoordinatorState::Aborted {
@@ -660,6 +785,11 @@ impl Coordinator {
 ///
 /// The participant evaluates proposals against its local ledger view
 /// and decides whether to vote Yes or No.
+///
+/// After voting Yes, the participant holds a lock until receiving a CommitMessage
+/// or until `vote_timeout` expires. If the coordinator crashes, the participant
+/// can unilaterally abort after timeout (safe because the coordinator cannot form
+/// a QC without continued lock from this participant).
 #[derive(Clone, Debug)]
 pub struct Participant {
     /// The cell ID this participant owns/controls.
@@ -672,6 +802,13 @@ pub struct Participant {
     pub ledger: Ledger,
     /// Computron cost table used for local replay.
     pub costs: ComputronCosts,
+    /// Maximum time to wait for a commit/abort after voting Yes.
+    /// After this duration, the participant may unilaterally release its lock.
+    pub vote_timeout: Duration,
+    /// Timestamp when the participant last voted Yes (for timeout detection).
+    pub voted_yes_at: Option<Instant>,
+    /// The proposal_id the participant is currently participating in.
+    pub active_proposal: Option<[u8; 32]>,
 }
 
 impl Participant {
@@ -683,6 +820,9 @@ impl Participant {
             signing_key,
             ledger,
             costs: ComputronCosts::default_costs(),
+            vote_timeout: Duration::from_secs(60),
+            voted_yes_at: None,
+            active_proposal: None,
         }
     }
 
@@ -700,7 +840,37 @@ impl Participant {
             signing_key,
             ledger,
             costs,
+            vote_timeout: Duration::from_secs(60),
+            voted_yes_at: None,
+            active_proposal: None,
         }
+    }
+
+    /// Set the vote timeout duration.
+    pub fn with_vote_timeout(mut self, timeout: Duration) -> Self {
+        self.vote_timeout = timeout;
+        self
+    }
+
+    /// Check if this participant's vote has timed out (coordinator presumed crashed).
+    ///
+    /// Returns `true` if the participant voted Yes and the timeout has elapsed,
+    /// meaning it is safe to unilaterally release the lock.
+    pub fn has_vote_timed_out(&self, now: Instant) -> bool {
+        if let Some(voted_at) = self.voted_yes_at {
+            now.duration_since(voted_at) >= self.vote_timeout
+        } else {
+            false
+        }
+    }
+
+    /// Unilaterally abort after vote timeout.
+    ///
+    /// Safe because the coordinator cannot form a QC without this participant's
+    /// continued lock. Clears the active proposal state.
+    pub fn timeout_abort(&mut self) {
+        self.voted_yes_at = None;
+        self.active_proposal = None;
     }
 
     /// Evaluate a proposed atomic forest and produce a vote.
@@ -710,17 +880,22 @@ impl Participant {
     /// 2. That its preconditions are satisfied on its local ledger.
     /// 3. That the forest structure is valid.
     ///
-    /// If all checks pass, returns Vote::Yes with a signature.
-    /// Otherwise, returns Vote::No with a reason.
-    pub fn evaluate_proposal(&self, forest: &AtomicForest) -> Vote {
+    /// If all checks pass, returns Vote::Yes with a signature bound to `proposal_id`.
+    /// Otherwise, returns Vote::No with a reason and signature.
+    ///
+    /// The `proposal_id` comes from the ProposeMessage and is included in the
+    /// signing message to bind the vote to a specific proposal (preventing replay).
+    pub fn evaluate_proposal(&mut self, proposal_id: &[u8; 32], forest: &AtomicForest) -> Vote {
         // Check we're a participant.
         if !forest.is_participant(&self.node_id) {
-            return Vote::no("not listed as participant");
+            let sig = Vote::sign_no(proposal_id, &forest.hash, &self.signing_key);
+            return Vote::no("not listed as participant", sig);
         }
 
         // Check structural validity.
         if let Err(e) = forest.validate() {
-            return Vote::no(format!("invalid forest: {e}"));
+            let sig = Vote::sign_no(proposal_id, &forest.hash, &self.signing_key);
+            return Vote::no(format!("invalid forest: {e}"), sig);
         }
 
         // Check our preconditions.
@@ -732,26 +907,64 @@ impl Participant {
                 match self.ledger.get(&self.cell_id) {
                     Some(cell) => {
                         if let Err(e) = cell_pre.evaluate(&cell.state) {
-                            return Vote::no(format!("precondition failed: {e:?}"));
+                            let sig = Vote::sign_no(proposal_id, &forest.hash, &self.signing_key);
+                            return Vote::no(format!("precondition failed: {e:?}"), sig);
                         }
                     }
                     None => {
-                        return Vote::no("our cell not found in local ledger");
+                        let sig = Vote::sign_no(proposal_id, &forest.hash, &self.signing_key);
+                        return Vote::no("our cell not found in local ledger", sig);
                     }
                 }
             }
         }
 
-        // All checks passed — sign the forest hash with our Ed25519 key.
-        let signature = Vote::sign(&forest.hash, &self.signing_key);
+        // All checks passed -- sign the vote bound to proposal_id.
+        let signature = Vote::sign_yes(proposal_id, &forest.hash, &self.signing_key);
+        self.voted_yes_at = Some(Instant::now());
+        self.active_proposal = Some(*proposal_id);
         Vote::yes(signature)
     }
 
     /// Apply a committed atomic forest to our local ledger.
     ///
     /// Called after receiving a CommitMessage from the coordinator.
+    /// Verifies the CommitMessage has valid QC signatures before applying.
     /// Replays the turn execution locally to update state.
-    pub fn apply_commit(&mut self, forest: &AtomicForest) -> Result<TurnReceipt, CoordError> {
+    ///
+    /// # Parameters
+    /// - `commit`: the CommitMessage from the coordinator (contains QC signatures).
+    /// - `forest`: the atomic forest being committed.
+    /// - `participant_keys`: map of node_id -> Ed25519 public key for QC verification.
+    /// - `threshold`: minimum number of valid signatures required in the QC.
+    pub fn apply_commit(
+        &mut self,
+        commit: &CommitMessage,
+        forest: &AtomicForest,
+        participant_keys: &HashMap<[u8; 32], [u8; 32]>,
+        threshold: usize,
+    ) -> Result<TurnReceipt, CoordError> {
+        // Verify the commit message has enough valid signatures (QC).
+        if commit.signatures.len() < threshold {
+            return Err(CoordError::ThresholdNotMet {
+                required: threshold,
+                received: commit.signatures.len(),
+            });
+        }
+
+        // Verify each signature in the QC is valid and bound to the proposal.
+        let proposal_id = &commit.proposal_id;
+        for (node_id, signature) in &commit.signatures {
+            let pubkey_bytes = participant_keys
+                .get(node_id)
+                .ok_or(CoordError::UnknownParticipant { id: *node_id })?;
+            if !Vote::verify_yes(signature, proposal_id, &forest.hash, pubkey_bytes) {
+                return Err(CoordError::InvalidVoteSignature {
+                    participant: *node_id,
+                });
+            }
+        }
+
         // Build the same turn the coordinator would have built.
         let agent_cell = self
             .ledger
@@ -777,6 +990,10 @@ impl Participant {
         let executor = TurnExecutor::new(self.costs.clone());
         let result = executor.execute(&turn, &mut self.ledger);
 
+        // Clear active proposal state on successful apply.
+        self.voted_yes_at = None;
+        self.active_proposal = None;
+
         match result {
             TurnResult::Committed { receipt, .. } => Ok(receipt),
             TurnResult::Rejected { reason, .. } => Err(CoordError::TurnExecution(reason)),
@@ -789,21 +1006,19 @@ impl Participant {
     /// Verify a commit message's signatures against the forest hash using Ed25519.
     ///
     /// `participant_keys` maps node_id -> public key bytes.
+    /// Verifies signatures are bound to the proposal_id (not just forest hash).
     pub fn verify_commit(
         &self,
         commit: &CommitMessage,
         forest: &AtomicForest,
         participant_keys: &HashMap<[u8; 32], [u8; 32]>,
     ) -> bool {
+        let proposal_id = &commit.proposal_id;
         for (node_id, signature) in &commit.signatures {
             let Some(pubkey_bytes) = participant_keys.get(node_id) else {
                 return false;
             };
-            let Ok(verifying_key) = VerifyingKey::from_bytes(pubkey_bytes) else {
-                return false;
-            };
-            let sig = Signature::from_bytes(signature);
-            if verifying_key.verify_strict(&forest.hash, &sig).is_err() {
+            if !Vote::verify_yes(signature, proposal_id, &forest.hash, pubkey_bytes) {
                 return false;
             }
         }

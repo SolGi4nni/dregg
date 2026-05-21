@@ -10,12 +10,17 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::{get, post}};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use pyana_macaroon::{
-    AlwaysAllow, AllowlistEvaluator, DischargeGateway, PaymentEvaluator, RateLimitEvaluator,
+    AllowlistEvaluator, AlwaysAllow, DischargeGateway, PaymentEvaluator, RateLimitEvaluator,
 };
 
 // =============================================================================
@@ -57,17 +62,11 @@ pub enum ConditionConfig {
     #[serde(rename = "always_allow")]
     AlwaysAllow,
     #[serde(rename = "rate_limit")]
-    RateLimit {
-        max_per_hour: u32,
-    },
+    RateLimit { max_per_hour: u32 },
     #[serde(rename = "payment")]
-    Payment {
-        min_amount: u64,
-    },
+    Payment { min_amount: u64 },
     #[serde(rename = "allowlist")]
-    Allowlist {
-        clients: Vec<String>,
-    },
+    Allowlist { clients: Vec<String> },
     #[serde(rename = "proof_required")]
     ProofRequired,
 }
@@ -201,8 +200,10 @@ fn hex_to_key(hex: &str) -> Result<[u8; 32], String> {
     }
     let mut key = [0u8; 32];
     for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        let high = nibble(chunk[0]).ok_or_else(|| format!("invalid hex char at position {}", i * 2))?;
-        let low = nibble(chunk[1]).ok_or_else(|| format!("invalid hex char at position {}", i * 2 + 1))?;
+        let high =
+            nibble(chunk[0]).ok_or_else(|| format!("invalid hex char at position {}", i * 2))?;
+        let low = nibble(chunk[1])
+            .ok_or_else(|| format!("invalid hex char at position {}", i * 2 + 1))?;
         key[i] = (high << 4) | low;
     }
     Ok(key)
@@ -278,9 +279,7 @@ async fn post_discharge(
     }
 }
 
-async fn get_conditions(
-    State(_state): State<SharedState>,
-) -> Json<ConditionsResponse> {
+async fn get_conditions(State(_state): State<SharedState>) -> Json<ConditionsResponse> {
     Json(ConditionsResponse {
         supported: vec![
             "always_allow".into(),
@@ -295,9 +294,7 @@ async fn get_conditions(
     })
 }
 
-async fn get_health(
-    State(state): State<SharedState>,
-) -> Json<HealthResponse> {
+async fn get_health(State(state): State<SharedState>) -> Json<HealthResponse> {
     let s = state.read().await;
     Json(HealthResponse {
         status: "ok".to_string(),

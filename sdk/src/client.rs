@@ -58,6 +58,12 @@ pub struct SiloClient {
     /// an attacker to choose their own "federation" by crafting a malicious token.
     /// Set to `None` until `handshake()` completes successfully.
     trusted_federation_root: Option<[u8; 32]>,
+    /// Optional pinned federation root for MITM protection.
+    ///
+    /// When set, the handshake will verify the remote's federation root matches
+    /// this value. If it doesn't match, the handshake fails with
+    /// `SdkError::FederationRootMismatch`.
+    expected_federation_root: Option<[u8; 32]>,
 }
 
 impl SiloClient {
@@ -85,6 +91,37 @@ impl SiloClient {
             wallet,
             connection: conn,
             trusted_federation_root: None,
+            expected_federation_root: None,
+        })
+    }
+
+    /// Connect to a remote silo with a pinned federation root.
+    ///
+    /// Like [`connect`](Self::connect), but verifies during [`handshake`](Self::handshake)
+    /// that the remote silo's Welcome message contains the expected federation root.
+    /// This prevents MITM attacks where an attacker injects a controlled root.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The socket address of the remote silo.
+    /// * `wallet` - A shared reference to the agent's wallet.
+    /// * `expected_root` - The expected federation root (32 bytes). The handshake
+    ///   will fail with [`SdkError::FederationRootMismatch`] if the remote root differs.
+    pub async fn connect_pinned(
+        addr: SocketAddr,
+        wallet: Arc<AgentWallet>,
+        expected_root: [u8; 32],
+    ) -> Result<Self, SdkError> {
+        let conn = PeerConnection::connect(&addr.to_string())
+            .await
+            .map_err(|e| SdkError::Wire(format!("connect failed: {e}")))?;
+
+        Ok(SiloClient {
+            address: addr,
+            wallet,
+            connection: conn,
+            trusted_federation_root: None,
+            expected_federation_root: Some(expected_root),
         })
     }
 
@@ -103,6 +140,7 @@ impl SiloClient {
             wallet,
             connection: conn,
             trusted_federation_root: None,
+            expected_federation_root: None,
         })
     }
 
@@ -142,6 +180,16 @@ impl SiloClient {
             WireMessage::Welcome {
                 federation_root, ..
             } => {
+                // SECURITY: If a pinned root was provided at connection time,
+                // verify the remote's federation root matches. This prevents MITM
+                // attacks where an attacker intercepts the TCP connection and
+                // injects a controlled federation root.
+                if let Some(expected) = self.expected_federation_root {
+                    if federation_root != expected {
+                        return Err(SdkError::FederationRootMismatch);
+                    }
+                }
+
                 // SECURITY: Store the federation root from the trusted handshake.
                 // This is the only legitimate source of the federation root -- it
                 // comes from the authenticated silo, not from attacker-controlled
@@ -206,7 +254,21 @@ impl SiloClient {
         // Serialize the STARK proof for transmission using the canonical binary format
         // (proof_to_bytes / proof_from_bytes). The wire server deserializes with
         // proof_from_bytes() which expects the PYNA header format, not postcard.
-        let proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
+        let mut proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
+
+        // SECURITY: Bind the proof to this specific wire request's nonce/timestamp.
+        // Without this binding, a captured proof could be replayed in a different
+        // wire session with a different nonce. We append a BLAKE3 binding tag that
+        // commits the proof bytes to the request's nonce and timestamp. The server
+        // must verify this binding tag to ensure the proof was generated for THIS request.
+        let binding_tag = {
+            let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-request-binding v1");
+            hasher.update(&proof_bytes);
+            hasher.update(&wire_request.nonce);
+            hasher.update(&wire_request.timestamp.to_le_bytes());
+            *hasher.finalize().as_bytes()
+        };
+        proof_bytes.extend_from_slice(&binding_tag);
 
         let msg = WireMessage::PresentToken {
             proof: proof_bytes,
@@ -225,11 +287,22 @@ impl SiloClient {
                 accepted,
                 reason,
                 request_digest,
-            } => Ok(PresentationResult {
-                accepted,
-                reason,
-                request_digest,
-            }),
+            } => {
+                // SECURITY: Verify that the response is bound to our request.
+                // Without this check, a MITM could swap responses between different
+                // requests, causing the client to accept a result meant for a
+                // different authorization request.
+                let expected_digest = wire_request.digest();
+                if request_digest != expected_digest {
+                    return Err(SdkError::DigestMismatch);
+                }
+
+                Ok(PresentationResult {
+                    accepted,
+                    reason,
+                    request_digest,
+                })
+            }
             WireMessage::Error { message, .. } => Ok(PresentationResult {
                 accepted: false,
                 reason: Some(message),

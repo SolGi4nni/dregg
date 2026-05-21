@@ -49,7 +49,8 @@ pub use caveat_3p::ThirdPartyCaveat;
 pub use discharge_gateway::{
     AllOfEvaluator, AllowlistEvaluator, AlwaysAllow, AnyOfEvaluator, ConditionEvaluator,
     DischargeError, DischargeGateway, DischargeRequest, DischargeResponse, PaymentEvaluator,
-    ProofRequiredEvaluator, RateLimitEvaluator, TimeWindowEvaluator,
+    ProofRequiredEvaluator, ProofVerifierFn, RateLimitEvaluator, TimeWindowEvaluator,
+    VerifyingProofEvaluator,
 };
 pub use error::{CaveatError, MacaroonError, MacaroonResult};
 pub use format::{decode_token, encode_token};

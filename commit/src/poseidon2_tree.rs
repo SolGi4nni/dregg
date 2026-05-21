@@ -20,8 +20,12 @@ use serde::{Deserialize, Serialize};
 /// Default tree depth (4^16 = ~4 billion leaves).
 pub const DEFAULT_DEPTH: usize = 16;
 
-/// The "empty" leaf: BabyBear::ZERO.
-pub const EMPTY_LEAF: BabyBear = BabyBear::ZERO;
+/// The "empty" leaf: a domain-separated sentinel distinct from any legitimate value.
+///
+/// Using BabyBear::ZERO would be ambiguous with a legitimate zero-valued leaf.
+/// Instead we use a fixed non-zero constant as a sentinel. This value is chosen
+/// to be unlikely to collide with real data (0xDEAD_LEAF mod p).
+pub const EMPTY_LEAF: BabyBear = BabyBear(0x0DEA_D1EF);
 
 /// Maximum depth for cached empty hashes.
 const MAX_CACHED_DEPTH: usize = 32;
@@ -58,6 +62,8 @@ fn empty_hash_at_level(level: usize) -> BabyBear {
 /// and the position (0..3) of the current element among its siblings.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Poseidon2MerkleProof {
+    /// The leaf value being proved.
+    pub leaf: BabyBear,
     /// The 3 sibling hashes at each level (leaf-to-root order).
     pub siblings: Vec<[BabyBear; 3]>,
     /// Position at each level (0..3), leaf-to-root order.
@@ -97,7 +103,18 @@ impl Poseidon2MerkleTree {
     }
 
     /// Append a leaf to the tree. Returns the position (0-indexed).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tree is at maximum capacity (4^depth leaves).
     pub fn append(&mut self, leaf: BabyBear) -> usize {
+        let max_capacity = 4usize.pow(self.depth as u32);
+        assert!(
+            self.leaves.len() < max_capacity,
+            "Poseidon2MerkleTree is full: capacity {} reached (depth {})",
+            max_capacity,
+            self.depth
+        );
         let position = self.leaves.len();
         self.leaves.push(leaf);
         self.cached_root = None;
@@ -145,6 +162,7 @@ impl Poseidon2MerkleTree {
             return None;
         }
 
+        let leaf = self.leaves[position];
         let mut siblings = Vec::with_capacity(self.depth);
         let mut positions = Vec::with_capacity(self.depth);
         let mut idx = position;
@@ -173,6 +191,7 @@ impl Poseidon2MerkleTree {
         }
 
         Some(Poseidon2MerkleProof {
+            leaf,
             siblings,
             positions,
         })
@@ -181,9 +200,14 @@ impl Poseidon2MerkleTree {
     /// Verify a membership proof.
     ///
     /// Given a root, a leaf value, and a proof, verify that the leaf is a member
-    /// of the tree with the given root.
+    /// of the tree with the given root. The leaf value must match what is stored
+    /// in the proof itself.
     pub fn verify_membership(root: BabyBear, leaf: BabyBear, proof: &Poseidon2MerkleProof) -> bool {
         if proof.siblings.len() != proof.positions.len() {
+            return false;
+        }
+        // The proof must commit to the same leaf value being verified.
+        if proof.leaf != leaf {
             return false;
         }
 

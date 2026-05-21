@@ -40,6 +40,8 @@ pub enum TransportError {
     Timeout,
     /// The channel is full (backpressure).
     ChannelFull,
+    /// Peer authentication failed during handshake.
+    AuthenticationFailed(String),
 }
 
 impl std::fmt::Display for TransportError {
@@ -51,6 +53,7 @@ impl std::fmt::Display for TransportError {
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::Timeout => write!(f, "operation timed out"),
             Self::ChannelFull => write!(f, "channel full (backpressure)"),
+            Self::AuthenticationFailed(msg) => write!(f, "authentication failed: {msg}"),
         }
     }
 }
@@ -268,6 +271,11 @@ pub struct FederationEnvelope {
 /// Maintains persistent connections to all federation peers. Messages are
 /// serialized with postcard and framed with a 4-byte LE length prefix,
 /// matching the wire crate's framing convention.
+///
+/// Includes peer authentication: on each incoming connection, the transport
+/// sends a 32-byte random challenge. The connecting peer must respond with
+/// its node_id and an Ed25519 signature over (challenge || node_id). The
+/// signature is verified against the known member public keys.
 pub struct TcpFederationTransport {
     /// This node's ID.
     node_id: usize,
@@ -280,6 +288,12 @@ pub struct TcpFederationTransport {
     /// Sender half of the inbox (held to keep the channel alive for listeners).
     #[allow(dead_code)]
     inbox_tx: mpsc::Sender<ConsensusMessage>,
+    /// Known member public keys for peer authentication (indexed by node_id).
+    /// When non-empty, incoming connections must complete a challenge-response
+    /// handshake proving they hold the private key for a known member.
+    member_keys: Arc<Vec<PublicKey>>,
+    /// This node's signing key for authenticating outgoing connections.
+    signing_key: SigningKey,
 }
 
 impl TcpFederationTransport {
@@ -293,7 +307,26 @@ impl TcpFederationTransport {
         peers: HashMap<usize, SocketAddr>,
         listen_addr: SocketAddr,
     ) -> Result<Arc<Self>, TransportError> {
+        let (sk, _pk) = generate_keypair();
+        Self::new_with_auth(node_id, peers, listen_addr, Vec::new(), sk).await
+    }
+
+    /// Create a new TCP transport with peer authentication.
+    ///
+    /// - `node_id`: This node's index in the federation.
+    /// - `peers`: Map of peer node_id -> socket address.
+    /// - `listen_addr`: The address to listen on for incoming connections.
+    /// - `member_keys`: Public keys of federation members (indexed by node_id).
+    /// - `signing_key`: This node's signing key for authenticating to peers.
+    pub async fn new_with_auth(
+        node_id: usize,
+        peers: HashMap<usize, SocketAddr>,
+        listen_addr: SocketAddr,
+        member_keys: Vec<PublicKey>,
+        signing_key: SigningKey,
+    ) -> Result<Arc<Self>, TransportError> {
         let (inbox_tx, inbox_rx) = mpsc::channel(1024);
+        let member_keys = Arc::new(member_keys);
 
         let transport = Arc::new(Self {
             node_id,
@@ -301,17 +334,21 @@ impl TcpFederationTransport {
             connections: Mutex::new(HashMap::new()),
             inbox: Mutex::new(inbox_rx),
             inbox_tx: inbox_tx.clone(),
+            member_keys: member_keys.clone(),
+            signing_key,
         });
 
         // Start the listener task.
         let listener_tx = inbox_tx;
         let listener = tokio::net::TcpListener::bind(listen_addr).await?;
+        let keys_for_listener = member_keys;
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _addr)) => {
                         let tx = listener_tx.clone();
-                        tokio::spawn(Self::handle_incoming(stream, tx));
+                        let keys = keys_for_listener.clone();
+                        tokio::spawn(Self::handle_incoming(stream, tx, keys));
                     }
                     Err(_) => break,
                 }
@@ -327,7 +364,20 @@ impl TcpFederationTransport {
         peers: HashMap<usize, SocketAddr>,
         listen_addr: SocketAddr,
     ) -> Result<(Arc<Self>, SocketAddr), TransportError> {
+        let (sk, _pk) = generate_keypair();
+        Self::new_with_addr_auth(node_id, peers, listen_addr, Vec::new(), sk).await
+    }
+
+    /// Create and return the actual bound address with peer authentication.
+    pub async fn new_with_addr_auth(
+        node_id: usize,
+        peers: HashMap<usize, SocketAddr>,
+        listen_addr: SocketAddr,
+        member_keys: Vec<PublicKey>,
+        signing_key: SigningKey,
+    ) -> Result<(Arc<Self>, SocketAddr), TransportError> {
         let (inbox_tx, inbox_rx) = mpsc::channel(1024);
+        let member_keys = Arc::new(member_keys);
 
         let listener = tokio::net::TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
@@ -338,16 +388,20 @@ impl TcpFederationTransport {
             connections: Mutex::new(HashMap::new()),
             inbox: Mutex::new(inbox_rx),
             inbox_tx: inbox_tx.clone(),
+            member_keys: member_keys.clone(),
+            signing_key,
         });
 
         // Start the listener task.
         let listener_tx = inbox_tx;
+        let keys_for_listener = member_keys;
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _addr)) => {
                         let tx = listener_tx.clone();
-                        tokio::spawn(Self::handle_incoming(stream, tx));
+                        let keys = keys_for_listener.clone();
+                        tokio::spawn(Self::handle_incoming(stream, tx, keys));
                     }
                     Err(_) => break,
                 }
@@ -357,8 +411,68 @@ impl TcpFederationTransport {
         Ok((transport, actual_addr))
     }
 
-    /// Handle an incoming TCP connection: read framed messages and push to inbox.
-    async fn handle_incoming(mut stream: TcpStream, tx: mpsc::Sender<ConsensusMessage>) {
+    /// Handle an incoming TCP connection with challenge-response authentication.
+    ///
+    /// Protocol:
+    /// 1. Server sends 32 random bytes as a challenge.
+    /// 2. Peer responds with: [node_id as u32 LE][64-byte Ed25519 signature over (challenge || node_id_bytes)].
+    /// 3. Server verifies the signature against the member's public key.
+    /// 4. If valid, the connection is accepted and message processing begins.
+    async fn handle_incoming(
+        mut stream: TcpStream,
+        tx: mpsc::Sender<ConsensusMessage>,
+        member_keys: Arc<Vec<PublicKey>>,
+    ) {
+        // If member keys are configured, perform challenge-response authentication.
+        if !member_keys.is_empty() {
+            // Step 1: Send a 32-byte random challenge.
+            let mut challenge = [0u8; 32];
+            getrandom::fill(&mut challenge).expect("getrandom failed");
+            if stream.write_all(&challenge).await.is_err() {
+                return;
+            }
+            if stream.flush().await.is_err() {
+                return;
+            }
+
+            // Step 2: Read the peer's response: [4-byte node_id LE][64-byte signature].
+            let mut response = [0u8; 68]; // 4 + 64
+            if stream.read_exact(&mut response).await.is_err() {
+                return;
+            }
+
+            let peer_node_id =
+                u32::from_le_bytes([response[0], response[1], response[2], response[3]]) as usize;
+            let mut sig_bytes = [0u8; 64];
+            sig_bytes.copy_from_slice(&response[4..68]);
+            let sig = Signature(sig_bytes);
+
+            // Step 3: Verify signature against known member key.
+            let peer_key = match member_keys.get(peer_node_id) {
+                Some(k) => k,
+                None => {
+                    tracing::warn!(peer_node_id, "rejecting connection: unknown node_id");
+                    return;
+                }
+            };
+
+            // The signed message is: challenge || node_id_bytes
+            let mut signed_msg = Vec::with_capacity(36);
+            signed_msg.extend_from_slice(&challenge);
+            signed_msg.extend_from_slice(&(peer_node_id as u32).to_le_bytes());
+
+            if !peer_key.verify(&signed_msg, &sig) {
+                tracing::warn!(
+                    peer_node_id,
+                    "rejecting connection: invalid handshake signature"
+                );
+                return;
+            }
+
+            tracing::debug!(peer_node_id, "peer authenticated successfully");
+        }
+
+        // Authenticated (or no auth configured) — process messages.
         loop {
             match Self::read_envelope(&mut stream).await {
                 Ok(envelope) => {
@@ -371,7 +485,38 @@ impl TcpFederationTransport {
         }
     }
 
+    /// Perform the client side of the challenge-response handshake.
+    ///
+    /// Called when establishing an outgoing connection to a peer that requires auth.
+    async fn authenticate_outgoing(
+        stream: &mut TcpStream,
+        node_id: usize,
+        signing_key: &SigningKey,
+    ) -> Result<(), TransportError> {
+        // Step 1: Read the 32-byte challenge from the server.
+        let mut challenge = [0u8; 32];
+        stream.read_exact(&mut challenge).await?;
+
+        // Step 2: Sign (challenge || our_node_id) and send [node_id LE][signature].
+        let mut signed_msg = Vec::with_capacity(36);
+        signed_msg.extend_from_slice(&challenge);
+        signed_msg.extend_from_slice(&(node_id as u32).to_le_bytes());
+
+        let sig = sign(signing_key, &signed_msg);
+
+        let mut response = [0u8; 68];
+        response[0..4].copy_from_slice(&(node_id as u32).to_le_bytes());
+        response[4..68].copy_from_slice(&sig.0);
+        stream.write_all(&response).await?;
+        stream.flush().await?;
+
+        Ok(())
+    }
+
     /// Get or establish a TCP connection to a peer.
+    ///
+    /// If member keys are configured, the outgoing connection performs the
+    /// client side of the challenge-response handshake before being stored.
     async fn get_connection(&self, peer_id: usize) -> Result<(), TransportError> {
         let mut conns = self.connections.lock().await;
         if conns.contains_key(&peer_id) {
@@ -381,8 +526,14 @@ impl TcpFederationTransport {
             .peers
             .get(&peer_id)
             .ok_or(TransportError::Unreachable(peer_id))?;
-        let stream = TcpStream::connect(addr).await?;
+        let mut stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true).ok();
+
+        // Authenticate if member keys are configured.
+        if !self.member_keys.is_empty() {
+            Self::authenticate_outgoing(&mut stream, self.node_id, &self.signing_key).await?;
+        }
+
         conns.insert(peer_id, stream);
         Ok(())
     }
@@ -756,7 +907,57 @@ impl NetworkConsensusNode {
                     }
                 }
                 Some(ConsensusMessage::Finalize(qc, block)) => {
-                    // Reset pacemaker -- finalization received.
+                    // Validate the QC signatures before accepting finalization.
+                    if !self.config.members.is_empty() {
+                        if qc.votes.len() < self.config.threshold {
+                            tracing::warn!("Rejected Finalize: insufficient votes in QC");
+                            continue;
+                        }
+                        let vote_message =
+                            QuorumCertificate::vote_message(&qc.block_hash, qc.height, qc.view);
+                        let mut sigs_valid = true;
+                        for (voter_id, sig) in &qc.votes {
+                            match self.config.members.get(*voter_id) {
+                                Some(pk) => {
+                                    if !pk.verify(&vote_message, sig) {
+                                        sigs_valid = false;
+                                        break;
+                                    }
+                                }
+                                None => {
+                                    sigs_valid = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !sigs_valid {
+                            tracing::warn!("Rejected Finalize: invalid QC signatures");
+                            continue;
+                        }
+                    } else if self.config.require_authentication {
+                        tracing::warn!(
+                            "INSECURE: accepting Finalize without QC signature verification \
+                             (legacy mode — no members configured)"
+                        );
+                    }
+
+                    // Verify QC block_hash matches the block.
+                    if qc.block_hash != block.block_hash {
+                        tracing::warn!("Rejected Finalize: QC/block hash mismatch");
+                        continue;
+                    }
+
+                    // Verify height alignment with current state.
+                    if block.height != self.state.current_height {
+                        tracing::warn!(
+                            expected = self.state.current_height,
+                            got = block.height,
+                            "Rejected Finalize: wrong height"
+                        );
+                        continue;
+                    }
+
+                    // Reset pacemaker -- finalization received and validated.
                     self.last_proposal_seen = std::time::Instant::now();
                     self.view_change_sent = false;
                     self.view_change_votes.clear();
@@ -782,7 +983,10 @@ impl NetworkConsensusNode {
                         true
                     };
 
-                    if valid && vc_msg.new_view == self.state.current_view + 1 {
+                    if valid
+                        && vc_msg.new_view == self.state.current_view + 1
+                        && vc_msg.height == self.state.current_height
+                    {
                         self.view_change_votes.insert(vc_msg.voter, vc_msg);
                         self.try_advance_view();
                     }

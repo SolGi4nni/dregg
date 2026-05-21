@@ -38,4 +38,12 @@ pub enum SdkError {
     /// The remote silo rejected the operation.
     #[error("silo rejected: {0}")]
     Rejected(String),
+
+    /// The response digest does not match the expected request digest (MITM detected).
+    #[error("digest mismatch: response bound to different request than sent")]
+    DigestMismatch,
+
+    /// The federation root from the remote silo does not match the expected pinned root.
+    #[error("federation root mismatch: remote root does not match pinned value")]
+    FederationRootMismatch,
 }

@@ -23,8 +23,9 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{error, info, warn};
 
-use pyana_sdk::CellId;
+use pyana_sdk::{Attenuation, CellId};
 use pyana_turn::{CallForest, Turn};
+use pyana_types::PublicKey;
 
 use crate::state::NodeState;
 
@@ -510,7 +511,7 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         Some(h) => h,
         None => return McpToolResult::error("missing required parameter: target_cell"),
     };
-    let _method = match params.get("method").and_then(|v| v.as_str()) {
+    let method = match params.get("method").and_then(|v| v.as_str()) {
         Some(m) => m,
         None => return McpToolResult::error("missing required parameter: method"),
     };
@@ -520,7 +521,7 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let agent_bytes = match hex_decode(target_cell_hex) {
+    let target_cell_bytes = match hex_decode(target_cell_hex) {
         Ok(b) => b,
         Err(_) => {
             return McpToolResult::error("invalid hex for target_cell (expected 64 hex chars)");
@@ -532,14 +533,34 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         return McpToolResult::error("wallet is locked; unlock first");
     }
 
-    // Build a minimal turn targeting the cell.
+    // SECURITY: Use the wallet's own cell ID as the turn agent (not caller-supplied).
+    // The target_cell identifies which cell the action targets, not who is submitting.
+    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
+    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
+
+    // Build an action targeting the specified cell with the given method.
+    let action = pyana_turn::Action {
+        target: target_cell_id,
+        method: pyana_turn::action::symbol(method),
+        args: vec![],
+        authorization: pyana_turn::Authorization::None,
+        preconditions: pyana_cell::Preconditions::default(),
+        effects: vec![],
+        may_delegate: pyana_turn::DelegationMode::None,
+        commitment_mode: pyana_turn::CommitmentMode::Full,
+        balance_change: None,
+    };
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+
+    let nonce = s.wallet.receipt_chain_length() as u64;
     let turn = Turn {
-        agent: CellId(agent_bytes),
-        nonce: 0, // In production, would auto-increment from receipt chain.
+        agent: agent_cell_id,
+        nonce,
         fee,
         memo,
         valid_until: None,
-        call_forest: CallForest::new(),
+        call_forest: forest,
         depends_on: vec![],
         previous_receipt_hash: None,
     };
@@ -630,20 +651,22 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     }
 
     // Build a turn with Effect::GrantCapability.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(
-        &s.wallet.public_key().0,
-        &[0u8; 32],
-    );
+    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
     let to_cell_id = pyana_cell::CellId(to_agent_bytes);
     let target_cell_id = pyana_cell::CellId(target_cell_bytes);
 
     // Parse permissions string into AuthRequired level.
     let perm_level = match permissions {
-        "none" => pyana_cell::AuthRequired::None,
-        "signature" => pyana_cell::AuthRequired::Signature,
-        "proof" => pyana_cell::AuthRequired::Proof,
-        "either" => pyana_cell::AuthRequired::Either,
-        _ => pyana_cell::AuthRequired::None,
+        "none" | "None" => pyana_cell::AuthRequired::None,
+        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
+        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
+        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        other => {
+            return McpToolResult::error(format!(
+                "invalid permission type: '{}'. Valid: none, signature, proof, either",
+                other
+            ));
+        }
     };
 
     let cap = pyana_cell::CapabilityRef {
@@ -731,10 +754,7 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
     }
 
     // Build a turn with Effect::RevokeCapability targeting the agent's own cell.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(
-        &s.wallet.public_key().0,
-        &[0u8; 32],
-    );
+    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
 
     let effect = pyana_turn::Effect::RevokeCapability {
         cell: agent_cell_id,
@@ -895,10 +915,7 @@ async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> McpToolResult
 
     // Derive payer (intent creator) and recipient (this agent) cell IDs.
     let payer_cell = pyana_sdk::CellId(intent.creator.0);
-    let recipient_cell = pyana_sdk::CellId::derive_raw(
-        &s.wallet.public_key().0,
-        &[0u8; 32],
-    );
+    let recipient_cell = pyana_sdk::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
 
     // Get current height.
     let current_height = s
@@ -986,11 +1003,23 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         None => return McpToolResult::error("missing required parameter: to_agent"),
     };
 
-    if hex_decode(to_agent_hex).is_err() {
-        return McpToolResult::error("invalid hex for to_agent (expected 64 hex chars)");
-    }
+    let to_agent_bytes = match hex_decode(to_agent_hex) {
+        Ok(b) => b,
+        Err(_) => return McpToolResult::error("invalid hex for to_agent (expected 64 hex chars)"),
+    };
 
-    let s = state.read().await;
+    // Parse optional restrictions into an Attenuation.
+    let restrictions: Attenuation = params
+        .get("restrictions")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    let max_staleness = params
+        .get("max_staleness")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1000);
+
+    let mut s = state.write().await;
     if !s.unlocked {
         return McpToolResult::error("wallet is locked; unlock first");
     }
@@ -1004,13 +1033,93 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         ));
     }
 
-    let token = &tokens[capability];
-    McpToolResult::json(&serde_json::json!({
-        "delegated": true,
-        "from_token": token.id,
-        "to_agent": to_agent_hex,
-        "note": "Delegation submitted. The delegatee can now use the bounded sub-capability."
-    }))
+    // Perform the token-level delegation (attenuate + produce DelegatedToken).
+    let token = tokens[capability].clone();
+    let to_pubkey = PublicKey(to_agent_bytes);
+    let delegated = match s.wallet.delegate(&token, &to_pubkey, &restrictions) {
+        Ok(d) => d,
+        Err(e) => return McpToolResult::error(format!("delegation failed: {e}")),
+    };
+
+    // Build a turn with Effect::GrantCapability to record the delegation on-ledger.
+    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
+    let to_cell_id = pyana_cell::CellId(to_agent_bytes);
+
+    let cap = pyana_cell::CapabilityRef {
+        target: agent_cell_id,
+        slot: capability as u32,
+        permissions: pyana_cell::AuthRequired::Signature,
+        breadstuff: None,
+        expires_at: restrictions.not_after.map(|t| t as u64),
+    };
+
+    let effect = pyana_turn::Effect::GrantCapability {
+        from: agent_cell_id,
+        to: to_cell_id,
+        cap,
+    };
+
+    let nonce = s.wallet.receipt_chain_length() as u64;
+    let turn = Turn {
+        agent: agent_cell_id,
+        nonce,
+        fee: 0,
+        memo: Some(format!(
+            "delegate capability slot {} to {}",
+            capability, to_agent_hex
+        )),
+        valid_until: None,
+        call_forest: build_forest_with_effects(agent_cell_id, vec![effect]),
+        depends_on: vec![],
+        previous_receipt_hash: None,
+    };
+
+    let signed = s.wallet.sign_turn(&turn);
+    let turn_hash = hex_encode(&turn.hash());
+
+    // Execute locally.
+    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let exec_result = executor.execute(&turn, &mut s.ledger);
+
+    match exec_result {
+        pyana_turn::TurnResult::Committed { receipt, .. } => {
+            s.wallet.append_receipt(receipt);
+
+            let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
+            drop(s);
+
+            state.emit(crate::state::NodeEvent::Receipt {
+                hash: turn_hash.clone(),
+            });
+
+            if let Some(gossip) = state.gossip().await {
+                let hash = signed.turn.hash();
+                tokio::spawn(async move {
+                    gossip.gossip_turn(hash, turn_data).await;
+                });
+            }
+
+            McpToolResult::json(&serde_json::json!({
+                "delegated": true,
+                "from_token": delegated.id,
+                "to_agent": to_agent_hex,
+                "turn_hash": turn_hash,
+                "max_staleness": max_staleness,
+                "token_bytes": delegated.token_bytes,
+            }))
+        }
+        pyana_turn::TurnResult::Rejected { reason, .. } => {
+            drop(s);
+            McpToolResult::json(&serde_json::json!({
+                "delegated": false,
+                "error": format!("turn rejected: {reason}"),
+            }))
+        }
+        _ => {
+            drop(s);
+            McpToolResult::error("delegation turn did not commit")
+        }
+    }
 }
 
 async fn tool_check_capabilities(state: &NodeState) -> McpToolResult {
@@ -1138,10 +1247,7 @@ async fn tool_seal_data(params: &Value, state: &NodeState) -> McpToolResult {
     let shared = ephemeral_secret.diffie_hellman(&recipient_public);
 
     // Derive encryption key via BLAKE3 KDF (don't use raw DH output directly).
-    let enc_key = blake3::derive_key(
-        "pyana-mcp-seal-data-v1",
-        shared.as_bytes(),
-    );
+    let enc_key = blake3::derive_key("pyana-mcp-seal-data-v1", shared.as_bytes());
 
     // Generate random nonce.
     let mut nonce_bytes = [0u8; 12];
@@ -1200,21 +1306,16 @@ async fn tool_unseal_data(params: &Value, state: &NodeState) -> McpToolResult {
     let nonce_bytes: [u8; 12] = sealed_bytes[32..44].try_into().unwrap();
     let ciphertext = &sealed_bytes[44..];
 
-    // Derive the wallet's X25519 secret from its Ed25519 signing key.
-    // Use BLAKE3 KDF to convert the Ed25519 key to an X25519-compatible secret.
-    let wallet_secret_bytes = blake3::derive_key(
-        "pyana-mcp-unseal-x25519-v1",
-        &s.wallet.public_key().0,
-    );
+    // Derive the wallet's X25519 secret from its Ed25519 signing key (private material).
+    // SECURITY: Must use private key material here — deriving from the public key would
+    // allow anyone to compute the same secret and decrypt sealed data.
+    let wallet_secret_bytes = s.wallet.derive_symmetric_key("pyana-mcp-seal-x25519-v1");
     let wallet_secret = x25519_dalek::StaticSecret::from(wallet_secret_bytes);
     let ephemeral_public = x25519_dalek::PublicKey::from(ephemeral_public_bytes);
     let shared = wallet_secret.diffie_hellman(&ephemeral_public);
 
     // Derive decryption key the same way as sealing.
-    let dec_key = blake3::derive_key(
-        "pyana-mcp-seal-data-v1",
-        shared.as_bytes(),
-    );
+    let dec_key = blake3::derive_key("pyana-mcp-seal-data-v1", shared.as_bytes());
 
     // Decrypt with ChaCha20-Poly1305.
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::Aead};
@@ -1283,10 +1384,7 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         .unwrap_or(0);
 
     // Build a turn with Effect::BridgeLock to initiate the two-phase bridge protocol.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(
-        &s.wallet.public_key().0,
-        &[0u8; 32],
-    );
+    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
 
     let effect = pyana_turn::Effect::BridgeLock {
         nullifier,

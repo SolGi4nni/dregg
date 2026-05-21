@@ -364,6 +364,12 @@ impl CausalLedger {
     }
 }
 
+// TODO(#13): Add tests for CausalLedger concurrent turn conflict detection.
+// TODO(#14): Add tests for CausalLedger recovery after node crash (partial DAG replay).
+// TODO(#15): Add documentation for cross-layer interaction between causal ordering
+//            and the atomic 2PC protocol (how CausalTurn dependencies interact with
+//            AtomicForest preconditions).
+
 impl Default for CausalLedger {
     fn default() -> Self {
         Self::new()

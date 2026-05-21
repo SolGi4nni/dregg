@@ -26,8 +26,8 @@
 //! | 1            | state_root (the state root at this step)            |
 //! | 2            | predicate_value (the attribute value at this step)  |
 //! | 3            | diff (predicate_value - threshold)                  |
-//! | 4..34        | diff_bits[0..30] (31-bit decomposition of diff)     |
-//! | 35           | accumulator (running count of steps held)           |
+//! | 4..33        | diff_bits[0..29] (30-bit decomposition of diff)     |
+//! | 34           | accumulator (running count of steps held)           |
 //!
 //! # Public Inputs
 //!
@@ -59,8 +59,8 @@ use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Trace width for the temporal predicate AIR.
-/// step_index(1) + state_root(1) + predicate_value(1) + diff(1) + diff_bits(31) + accumulator(1) = 36
-pub const TEMPORAL_PREDICATE_WIDTH: usize = 36;
+/// step_index(1) + state_root(1) + predicate_value(1) + diff(1) + diff_bits(30) + accumulator(1) = 35
+pub const TEMPORAL_PREDICATE_WIDTH: usize = 35;
 
 /// Column indices.
 pub mod col {
@@ -74,10 +74,10 @@ pub mod col {
     pub const PREDICATE_VALUE: usize = 2;
     /// The computed difference: predicate_value - threshold.
     pub const DIFF: usize = 3;
-    /// Start of bit decomposition columns (31 bits).
+    /// Start of bit decomposition columns (30 bits).
     pub const DIFF_BITS_START: usize = 4;
     /// The running accumulator (count of steps where predicate held).
-    pub const ACCUMULATOR: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 35
+    pub const ACCUMULATOR: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 34
 
     /// Get the column index for diff_bits[bit_idx].
     #[inline]

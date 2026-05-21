@@ -47,12 +47,16 @@ use crate::poseidon2;
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Number of bits for the range check (same as PredicateAir).
-pub const COMMITTED_DIFF_BITS: usize = 31;
+///
+/// SOUNDNESS FIX: BabyBear p = 2013265921, p/2 = 1006632960, 2^30 = 1073741824.
+/// Since 2^30 > p/2, the old value of 31 was UNSOUND. With 30 bits, the high bit
+/// is bit 29; if bit 29 = 0 then diff < 2^29 = 536870912 < p/2, proving non-negative.
+pub const COMMITTED_DIFF_BITS: usize = 30;
 
 /// Trace width for the committed-threshold AIR.
-/// private_value(1) + threshold(1) + blinding(1) + diff(1) + diff_bits(31) +
-/// threshold_commitment(1) + fact_commitment(1) + poseidon2_result(1) = 38
-pub const COMMITTED_THRESHOLD_AIR_WIDTH: usize = 38;
+/// private_value(1) + threshold(1) + blinding(1) + diff(1) + diff_bits(30) +
+/// threshold_commitment(1) + fact_commitment(1) + poseidon2_result(1) = 37
+pub const COMMITTED_THRESHOLD_AIR_WIDTH: usize = 37;
 
 /// Column indices for the committed-threshold AIR trace.
 pub mod col {
@@ -716,9 +720,10 @@ mod tests {
 
     #[test]
     fn test_large_value_scenario() {
-        // Boundary: value at the edge of BabyBear's "small positive" range.
-        // 2^30 - 1 = 1073741823 (max representable diff with high_bit=0)
-        let value = BabyBear::new(1_073_741_823);
+        // Boundary: value at the edge of the "small positive" range.
+        // With COMMITTED_DIFF_BITS=30, the max representable diff with high_bit=0 is:
+        // 2^29 - 1 = 536870911 (SOUNDNESS FIX: reduced from 2^30-1 to be safely < p/2)
+        let value = BabyBear::new(536_870_911);
         let threshold = BabyBear::new(0);
         let blinding = BabyBear::new(42);
         let fact_commitment = test_fact_commitment(value);

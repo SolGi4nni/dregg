@@ -367,10 +367,19 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
                         return Err(BlockValidationError::InvalidJustificationSignature);
                     }
 
-                    if !just.iter().all(|j| {
-                        block.one.data.compare_qc(&j.data.qc.data) != std::cmp::Ordering::Less
-                    }) {
-                        return Err(BlockValidationError::JustificationQcLessThanOneQc);
+                    // Enforce maximal QC rule: block.one must be >= the maximum QC
+                    // from all justification messages. This ensures the leader uses
+                    // the strongest available QC and cannot suppress progress by
+                    // choosing a weaker one.
+                    let max_justification_qc = just
+                        .iter()
+                        .map(|j| &j.data.qc)
+                        .max_by(|a, b| a.data.compare_qc(&b.data));
+
+                    if let Some(max_qc) = max_justification_qc {
+                        if block.one.data.compare_qc(&max_qc.data) == std::cmp::Ordering::Less {
+                            return Err(BlockValidationError::JustificationQcLessThanOneQc);
+                        }
                     }
                 }
             }

@@ -396,7 +396,11 @@ impl Action {
                 hasher.update(r);
                 hasher.update(s);
             }
-            Authorization::Proof { proof_bytes, bound_action, bound_resource } => {
+            Authorization::Proof {
+                proof_bytes,
+                bound_action,
+                bound_resource,
+            } => {
                 hasher.update(&[1u8]);
                 hasher.update(proof_bytes);
                 hasher.update(bound_action.as_bytes());
