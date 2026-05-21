@@ -4,7 +4,7 @@
 
 use crate::field::BabyBear;
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
-use crate::mock_prover::{Air, Constraint, MockProver};
+use crate::constraint_prover::{Air, Constraint, ConstraintProver};
 use crate::poseidon2::{hash_fact, hash_many};
 
 pub const FOLD_AIR_WIDTH: usize = 12;
@@ -40,7 +40,7 @@ impl RemovedFact {
             return None;
         }
         let air = MerkleAir::new(proof.clone());
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         if !result.is_valid() {
             return None;
         }
@@ -392,7 +392,7 @@ mod tests {
     fn fold_air_valid_single_removal() {
         let witness = create_test_fold(1, 0);
         let air = FoldAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Fold AIR should verify: {:?}",
@@ -404,7 +404,7 @@ mod tests {
     fn fold_air_valid_multiple_removals() {
         let witness = create_test_fold(3, 2);
         let air = FoldAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Fold AIR should verify: {:?}",
@@ -421,7 +421,7 @@ mod tests {
             num_added_checks: 3,
         };
         let air = FoldAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Fold AIR (checks only) should verify: {:?}",
@@ -438,7 +438,7 @@ mod tests {
             num_added_checks: 0,
         };
         let air = FoldAir::new(witness);
-        assert!(!MockProver::verify(&air).is_valid());
+        assert!(!ConstraintProver::verify(&air).is_valid());
     }
 
     #[test]
@@ -454,7 +454,7 @@ mod tests {
             num_added_checks: 0,
         };
         assert!(
-            !MockProver::verify(&FoldAir::new(witness)).is_valid(),
+            !ConstraintProver::verify(&FoldAir::new(witness)).is_valid(),
             "Missing membership proof should fail"
         );
     }
@@ -476,7 +476,7 @@ mod tests {
             num_added_checks: 0,
         };
         assert!(
-            !MockProver::verify(&FoldAir::new(witness)).is_valid(),
+            !ConstraintProver::verify(&FoldAir::new(witness)).is_valid(),
             "Wrong root should fail"
         );
     }
@@ -498,7 +498,7 @@ mod tests {
             num_added_checks: 0,
         };
         assert!(
-            !MockProver::verify(&FoldAir::new(witness)).is_valid(),
+            !ConstraintProver::verify(&FoldAir::new(witness)).is_valid(),
             "Forged proof should fail"
         );
     }

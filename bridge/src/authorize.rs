@@ -69,10 +69,17 @@ pub fn authorize_with_trace(
     }
 
     // Convert committed facts to trace-format facts.
-    let mut trace_facts = committed_facts_to_trace(state, symbols);
+    let trace_facts = committed_facts_to_trace(state, symbols);
 
-    // Inject budget and revocation state facts from the request.
-    trace_facts.extend(budget_revocation_facts(request));
+    // SECURITY: Budget and revocation state MUST NOT come from the requester.
+    // The `budget_states` and `not_revoked` fields on AuthRequest are self-asserted
+    // by the party requesting authorization — trusting them allows an attacker to
+    // claim unlimited budget and non-revocation without proof.
+    //
+    // The correct approach: budget and revocation status must be proven via separate
+    // Merkle membership proofs against a committed state tree. The infrastructure
+    // for this exists in pyana-circuit (NonRevocationAir, IVC budget tracking).
+    // Until the caller provides attested proofs, we do NOT inject these facts.
 
     // Convert the AuthRequest to a TraceRequest.
     let trace_request = auth_request_to_trace(request)?;
@@ -227,13 +234,20 @@ fn auth_request_to_trace(request: &AuthRequest) -> Result<TraceRequest, AuthErro
 
 /// Emit budget and revocation state as trace facts from the AuthRequest.
 ///
-/// These facts are injected alongside the committed token facts so that
-/// the Datalog rules can enforce budget and revocation locally.
+/// **DEPRECATED / INSECURE**: These facts come from requester self-assertion and
+/// provide NO security guarantee. An attacker can claim unlimited budget or
+/// non-revocation without proof. Budget and revocation must instead be proven via
+/// Merkle membership proofs against a committed state tree.
+///
+/// This function is retained only for backward compatibility with tests that
+/// exercise the Datalog evaluation path in isolation. Production code MUST NOT
+/// call this.
 ///
 /// Emits:
 /// - `budget_remaining(budget_id, amount)` for each entry in `budget_states`
 /// - `request_cost(cost)` if `request_cost` is Some
 /// - `not_revoked(token_id)` for each entry in `not_revoked`
+#[deprecated(note = "Self-asserted budget/revocation facts are not trustworthy. Use Merkle membership proofs.")]
 pub fn budget_revocation_facts(request: &AuthRequest) -> Vec<TraceFact> {
     let mut facts = Vec::new();
 

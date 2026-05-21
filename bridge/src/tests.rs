@@ -6,7 +6,7 @@
 
 use pyana_circuit::fold_air::FoldAir;
 use pyana_circuit::merkle_air::MerkleAir;
-use pyana_circuit::{BabyBear, MockProver, PresentationVerification};
+use pyana_circuit::{BabyBear, ConstraintProver, PresentationVerification};
 use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use pyana_trace::{Conclusion, symbol_from_str};
@@ -191,7 +191,7 @@ fn test_end_to_end_macaroon_to_zk_proof() {
     }
 
     // Standalone verification.
-    assert!(verify_presentation(&proof));
+    assert!(verify_presentation(&proof, &proof.federation_root));
 
     println!(
         "End-to-end proof generated successfully: {} (chain length: {})",
@@ -384,7 +384,7 @@ fn test_circuit_fold_proofs() {
 
     for (i, witness) in witnesses.iter().enumerate() {
         let air = FoldAir::new(witness.clone());
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Fold AIR #{} should verify: {:?}",

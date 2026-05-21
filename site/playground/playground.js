@@ -108,8 +108,21 @@ function setupNavigation() {
       sections.forEach(s => s.classList.remove('active'));
       item.classList.add('active');
       document.getElementById(`section-${sectionId}`).classList.add('active');
+      history.replaceState(null, '', `#${sectionId}`);
     });
   });
+
+  // Handle hash-based navigation on load
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const target = document.querySelector(`[data-section="${hash}"]`);
+    if (target) {
+      items.forEach(i => i.classList.remove('active'));
+      sections.forEach(s => s.classList.remove('active'));
+      target.classList.add('active');
+      document.getElementById(`section-${hash}`).classList.add('active');
+    }
+  }
 }
 
 export function navigateTo(sectionId) {
@@ -120,6 +133,7 @@ export function navigateTo(sectionId) {
   const target = document.querySelector(`[data-section="${sectionId}"]`);
   if (target) target.classList.add('active');
   document.getElementById(`section-${sectionId}`).classList.add('active');
+  history.replaceState(null, '', `#${sectionId}`);
 }
 
 // ============================================================================

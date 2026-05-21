@@ -59,6 +59,8 @@
 //! - [`node`]: Federation node implementation
 
 pub mod consensus;
+#[cfg(feature = "morpheus")]
+pub mod morpheus_adapter;
 pub mod network;
 pub mod node;
 pub mod revocation;

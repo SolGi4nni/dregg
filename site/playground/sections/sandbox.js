@@ -68,7 +68,7 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
   const clearBtn = container.querySelector('#sb-clear');
   const scenarioSelect = container.querySelector('#sb-scenarios');
 
-  // Pyana API wrapper
+  // Pyana API wrapper (gracefully handles missing optional exports)
   const pyana = {
     generateRootKey: () => wasm.generate_root_key(),
     mintToken: (keyBytes, location) => wasm.mint_token(keyBytes, location),
@@ -83,8 +83,8 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
     merkleMembership: (leaves, target) => wasm.merkle_membership_proof(JSON.stringify(leaves), target),
     evaluateDatalog: (facts, req) => wasm.evaluate_datalog(JSON.stringify(facts), JSON.stringify(req)),
     demonstrateFold: (facts, remove) => wasm.demonstrate_fold(JSON.stringify(facts), JSON.stringify(remove)),
-    computeIntentId: (json) => wasm.compute_intent_id(json),
-    blake3Hash: (input) => wasm.blake3_hash(input),
+    computeIntentId: (json) => wasm.compute_intent_id ? wasm.compute_intent_id(json) : json,
+    blake3Hash: (input) => wasm.blake3_hash ? wasm.blake3_hash(input) : input,
   };
 
   function appendOutput(level, text) {

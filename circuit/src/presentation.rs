@@ -23,7 +23,7 @@ use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
 use crate::ivc::{FoldDelta, IvcPresentationProof, prove_ivc};
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
-use crate::mock_prover::{Air, Constraint, MockProof, MockProver};
+use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::multi_step_air;
 use crate::poseidon2::hash_fact;
 use crate::stark::{self, MerkleStarkAir, StarkProof};
@@ -68,11 +68,11 @@ pub struct PresentationProof {
     /// The public inputs.
     pub public_inputs: PresentationPublicInputs,
     /// Proof of the fold chain (sequential STARK proofs).
-    pub fold_proofs: Vec<MockProof>,
+    pub fold_proofs: Vec<ConstraintProof>,
     /// Proof of the final derivation.
-    pub derivation_proof: MockProof,
+    pub derivation_proof: ConstraintProof,
     /// Proof of issuer membership in federation.
-    pub issuer_membership_proof: MockProof,
+    pub issuer_membership_proof: ConstraintProof,
     /// Total proof size in bytes.
     pub total_proof_size_bytes: usize,
 }
@@ -175,29 +175,29 @@ impl PresentationAir {
         let mut fold_proofs = Vec::new();
         for fold_witness in &w.fold_chain {
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = MockProver::verify(&fold_air);
+            let result = ConstraintProver::verify(&fold_air);
             if !result.is_valid() {
                 return None;
             }
-            let proof = MockProof::generate(&fold_air)?;
+            let proof = ConstraintProof::generate(&fold_air)?;
             fold_proofs.push(proof);
         }
 
         // 2. Prove the derivation
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let deriv_result = MockProver::verify(&derivation_air);
+        let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
-        let derivation_proof = MockProof::generate(&derivation_air)?;
+        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // 3. Prove issuer membership
         let issuer_air = MerkleAir::new(w.issuer_membership.clone());
-        let issuer_result = MockProver::verify(&issuer_air);
+        let issuer_result = ConstraintProver::verify(&issuer_air);
         if !issuer_result.is_valid() {
             return None;
         }
-        let issuer_membership_proof = MockProof::generate(&issuer_air)?;
+        let issuer_membership_proof = ConstraintProof::generate(&issuer_air)?;
 
         // Compute public inputs
         let initial_root = if let Some(first_fold) = w.fold_chain.first() {
@@ -263,19 +263,19 @@ impl PresentationAir {
 
         // 2. Prove the derivation
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let deriv_result = MockProver::verify(&derivation_air);
+        let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
-        let derivation_proof = MockProof::generate(&derivation_air)?;
+        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // 3. Prove issuer membership
         let issuer_air = MerkleAir::new(w.issuer_membership.clone());
-        let issuer_result = MockProver::verify(&issuer_air);
+        let issuer_result = ConstraintProver::verify(&issuer_air);
         if !issuer_result.is_valid() {
             return None;
         }
-        let issuer_membership_proof = MockProof::generate(&issuer_air)?;
+        let issuer_membership_proof = ConstraintProof::generate(&issuer_air)?;
 
         Some(IvcPresentationProof {
             ivc_proof,
@@ -307,17 +307,17 @@ impl PresentationAir {
 
         // Derivation
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        if !MockProver::verify(&derivation_air).is_valid() {
+        if !ConstraintProver::verify(&derivation_air).is_valid() {
             return None;
         }
-        let derivation_proof = MockProof::generate(&derivation_air)?;
+        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // Issuer membership
         let issuer_air = MerkleAir::new(w.issuer_membership.clone());
-        if !MockProver::verify(&issuer_air).is_valid() {
+        if !ConstraintProver::verify(&issuer_air).is_valid() {
             return None;
         }
-        let issuer_membership_proof = MockProof::generate(&issuer_air)?;
+        let issuer_membership_proof = ConstraintProof::generate(&issuer_air)?;
 
         Some(IvcPresentationProof {
             ivc_proof,
@@ -344,21 +344,21 @@ impl PresentationAir {
         let mut fold_proofs = Vec::new();
         for fold_witness in &w.fold_chain {
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = MockProver::verify(&fold_air);
+            let result = ConstraintProver::verify(&fold_air);
             if !result.is_valid() {
                 return None;
             }
-            let proof = MockProof::generate(&fold_air)?;
+            let proof = ConstraintProof::generate(&fold_air)?;
             fold_proofs.push(proof);
         }
 
         // 2. Prove the derivation (constraint-checked — derivation traces are 1-2 rows)
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let deriv_result = MockProver::verify(&derivation_air);
+        let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
-        let derivation_proof = MockProof::generate(&derivation_air)?;
+        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // 3. Prove issuer membership with REAL STARK proof.
         // The STARK uses MerkleStarkAir (algebraic binding constraint) rather
@@ -414,21 +414,21 @@ impl PresentationAir {
         let mut fold_proofs = Vec::new();
         for fold_witness in &w.fold_chain {
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = MockProver::verify(&fold_air);
+            let result = ConstraintProver::verify(&fold_air);
             if !result.is_valid() {
                 return None;
             }
-            let proof = MockProof::generate(&fold_air)?;
+            let proof = ConstraintProof::generate(&fold_air)?;
             fold_proofs.push(proof);
         }
 
         // 2. Prove the derivation (constraint-checked path)
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let deriv_result = MockProver::verify(&derivation_air);
+        let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
-        let derivation_proof = MockProof::generate(&derivation_air)?;
+        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // 3. Prove issuer membership with REAL STARK + Poseidon2 hashing.
         //    This uses MerklePoseidon2StarkAir (collision-resistant) instead of
@@ -483,7 +483,7 @@ impl PresentationAir {
 
             // Verify fold AIR
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = MockProver::verify(&fold_air);
+            let result = ConstraintProver::verify(&fold_air);
             if !result.is_valid() {
                 return PresentationVerification::InvalidFoldProof { index: i };
             }
@@ -496,14 +496,14 @@ impl PresentationAir {
             return PresentationVerification::DerivationRootMismatch;
         }
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let result = MockProver::verify(&derivation_air);
+        let result = ConstraintProver::verify(&derivation_air);
         if !result.is_valid() {
             return PresentationVerification::InvalidDerivation;
         }
 
         // Verify issuer membership
         let issuer_air = MerkleAir::new(w.issuer_membership.clone());
-        let result = MockProver::verify(&issuer_air);
+        let result = ConstraintProver::verify(&issuer_air);
         if !result.is_valid() {
             return PresentationVerification::InvalidIssuerProof;
         }
@@ -597,7 +597,7 @@ impl Air for PresentationAir {
 #[derive(Clone, Debug)]
 pub struct AuthorizationProof {
     /// The mock proof (or STARK proof in future).
-    pub proof: MockProof,
+    pub proof: ConstraintProof,
     /// The conclusion: true = ALLOW, false = DENY.
     pub conclusion_is_allow: bool,
     /// Number of derivation steps in the proof.
@@ -732,9 +732,9 @@ pub struct RealPresentationProof {
     /// The public inputs.
     pub public_inputs: PresentationPublicInputs,
     /// Mock proofs of the fold chain (TODO: upgrade to real STARK once traces grow).
-    pub fold_proofs: Vec<MockProof>,
+    pub fold_proofs: Vec<ConstraintProof>,
     /// Mock proof of the derivation (TODO: upgrade to real STARK).
-    pub derivation_proof: MockProof,
+    pub derivation_proof: ConstraintProof,
     /// Real STARK proof of issuer membership in the federation.
     pub issuer_membership_stark_proof: StarkProof,
 }
@@ -1155,7 +1155,7 @@ mod tests {
         // Verify sub-components individually
         for (i, fold) in witness.fold_chain.iter().enumerate() {
             let fold_air = FoldAir::new(fold.clone());
-            let result = MockProver::verify(&fold_air);
+            let result = ConstraintProver::verify(&fold_air);
             assert!(
                 result.is_valid(),
                 "Fold {i} failed: {:?}",
@@ -1164,7 +1164,7 @@ mod tests {
         }
 
         let deriv_air = DerivationAir::new(witness.derivation.clone());
-        let result = MockProver::verify(&deriv_air);
+        let result = ConstraintProver::verify(&deriv_air);
         assert!(
             result.is_valid(),
             "Derivation failed: {:?}",
@@ -1172,7 +1172,7 @@ mod tests {
         );
 
         let issuer_air = MerkleAir::new(witness.issuer_membership.clone());
-        let result = MockProver::verify(&issuer_air);
+        let result = ConstraintProver::verify(&issuer_air);
         assert!(
             result.is_valid(),
             "Issuer membership failed: {:?}",

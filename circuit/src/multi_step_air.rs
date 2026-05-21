@@ -60,7 +60,7 @@ use crate::derivation_air::{
     MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS, col as dcol,
 };
 use crate::field::BabyBear;
-use crate::mock_prover::{Air, Constraint};
+use crate::constraint_prover::{Air, Constraint};
 use crate::poseidon2::{hash_2_to_1, hash_fact};
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
@@ -1174,8 +1174,8 @@ impl StarkAir for MultiStepStarkAir {
 
 /// Generate the trace for a multi-step authorization witness, padded to a power of two.
 ///
-/// This extracts the trace generation logic so it can be used by both the MockProver
-/// and the real STARK prover.
+/// This extracts the trace generation logic so it can be used by both the constraint
+/// prover and the real STARK prover.
 pub fn generate_multi_step_trace(
     witness: &MultiStepWitness,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
@@ -1261,7 +1261,7 @@ pub fn verify_authorization_stark(
 mod tests {
     use super::*;
     use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use crate::mock_prover::MockProver;
+    use crate::constraint_prover::ConstraintProver;
 
     /// Helper: create a derivation step that derives a fact with the given predicate.
     fn make_step(
@@ -1339,7 +1339,7 @@ mod tests {
         let witness = build_multi_step_witness(state_root, BabyBear::new(42), vec![step]);
 
         let air = MultiStepDerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Single-step multi-step AIR should verify: {:?}",
@@ -1383,7 +1383,7 @@ mod tests {
         let witness = build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2]);
 
         let air = MultiStepDerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Two-step derivation should verify: {:?}",
@@ -1457,7 +1457,7 @@ mod tests {
         let tampered = TamperedAir {
             inner: MultiStepDerivationAir::new(witness),
         };
-        let result = MockProver::verify(&tampered);
+        let result = ConstraintProver::verify(&tampered);
         assert!(
             !result.is_valid(),
             "Claiming ALLOW when final step doesn't derive it should fail"
@@ -1539,7 +1539,7 @@ mod tests {
         let broken = BrokenChainAir {
             inner: MultiStepDerivationAir::new(witness),
         };
-        let result = MockProver::verify(&broken);
+        let result = ConstraintProver::verify(&broken);
         assert!(
             !result.is_valid(),
             "Broken accumulated hash chain should fail verification"
@@ -1682,7 +1682,7 @@ mod tests {
         assert_eq!(witness.conclusion(), BabyBear::ONE, "Should conclude ALLOW");
 
         let air = MultiStepDerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Real policy 3-step derivation should verify: {:?}",
@@ -1757,7 +1757,7 @@ mod tests {
 
         // Use max_steps=4 to add 3 padding rows
         let air = MultiStepDerivationAir::with_max_steps(witness, 4);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Padded multi-step AIR should verify: {:?}",
@@ -2250,7 +2250,7 @@ mod tests {
 
         // Verify with mock prover
         let air = MultiStepDerivationAir::new(witness.clone());
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "6-body-atom rule should verify (impossible under old MAX_BODY_ATOMS=4): {:?}",

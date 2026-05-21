@@ -70,7 +70,16 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
     for wc in &caveats {
         let grant = match pyana_caveats::decode_grant(wc) {
             Ok(g) => g,
-            Err(_) => continue, // Skip malformed caveats.
+            Err(_) => {
+                // SECURITY: Unknown/malformed caveats DENY by default (fail-closed).
+                // An unrecognized caveat could be a critical security restriction
+                // that this version cannot enforce; skipping it would silently grant
+                // more access than intended.
+                //
+                // Return a maximally restrictive fact set: empty means no authorization
+                // can succeed against this token.
+                return (FactSet::new(), symbols);
+            }
         };
 
         let facts = grant_to_facts(&grant, &mut symbols);
@@ -119,13 +128,20 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
         }
 
         PyanaGrant::ValidityWindow {
-            not_before: _,
+            not_before,
             not_after,
         } => {
-            // We commit the expiration as a `valid_until` fact.
-            // The not_before is a runtime check that doesn't need commitment
-            // (it's ephemeral — once the window opens, it's always valid).
+            // SECURITY: Both bounds of the validity window MUST be committed to
+            // the ZK proof. If `not_before` is not committed, a token meant for
+            // future use can be exercised early without the circuit detecting it.
+            // The Datalog rules enforce: request_time >= valid_after AND
+            // request_time <= valid_until.
             let mut facts = Vec::new();
+            if let Some(nb) = not_before {
+                let pred = symbols.intern("valid_after");
+                let ts_fe = FieldElement::from_i64(*nb);
+                facts.push(Fact::unary(pred, ts_fe));
+            }
             if let Some(na) = not_after {
                 let pred = symbols.intern("valid_until");
                 let ts_fe = FieldElement::from_i64(*na);
@@ -188,8 +204,12 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
         }
 
         PyanaGrant::Unknown(_, _) => {
-            // Unknown caveats are not committed — they're opaque.
-            vec![]
+            // SECURITY: Unknown caveats produce a poison fact that prevents
+            // authorization. This is fail-closed: if we can't understand a caveat,
+            // we assume it's maximally restrictive. An empty vec would silently
+            // skip the restriction, potentially granting unintended access.
+            let pred = symbols.intern("__unsupported_caveat_deny");
+            vec![Fact::unary(pred, FieldElement::from_u64(0))]
         }
     }
 }
@@ -248,7 +268,10 @@ pub fn macaroon_to_factset_secure(token: &MacaroonToken) -> (FactSet, SymbolTabl
     for wc in &caveats {
         let grant = match pyana_caveats::decode_grant(wc) {
             Ok(g) => g,
-            Err(_) => continue,
+            Err(_) => {
+                // SECURITY: Unknown/malformed caveats DENY (fail-closed).
+                return (FactSet::new(), symbols);
+            }
         };
 
         let facts = grant_to_facts_secure(&grant, &mut symbols);

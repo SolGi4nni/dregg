@@ -77,6 +77,10 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
         tracing::debug!(target: "try_vote", z = z, block = ?block, target = ?target);
         let author = block.author.clone().expect("not voting for genesis block");
 
+        // Per paper Section 5: "voted_i(z, x, s, p_j)" - dedup key is (z-level, block type,
+        // slot, author) WITHOUT view. This is correct: the paper guarantees that a correct
+        // process never votes for conflicting blocks regardless of view, because the 1-QC
+        // chain ensures consistency across views (see Theorem 6.2).
         if !self
             .voted_i
             .contains(&(z, block.type_, block.slot, author.clone()))

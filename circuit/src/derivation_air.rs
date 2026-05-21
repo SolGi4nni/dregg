@@ -55,7 +55,7 @@
 //! 18. GTE high bit is 0 (diff < 2^30 < p/2, meaning a >= b)
 
 use crate::field::BabyBear;
-use crate::mock_prover::{Air, Constraint};
+use crate::constraint_prover::{Air, Constraint};
 use crate::poseidon2::hash_fact;
 
 /// Trace width for the derivation AIR.
@@ -838,13 +838,13 @@ pub fn create_test_derivation() -> DerivationWitness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock_prover::MockProver;
+    use crate::constraint_prover::ConstraintProver;
 
     #[test]
     fn derivation_air_valid() {
         let witness = create_test_derivation();
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Derivation AIR should verify: {:?}",
@@ -858,7 +858,7 @@ mod tests {
         // Tamper with derived predicate (hash will be wrong)
         witness.derived_predicate = BabyBear::new(999);
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         // The trace generator recomputes hash from the (tampered) predicate,
         // so the trace is internally consistent.
         assert!(result.is_valid());
@@ -869,7 +869,7 @@ mod tests {
         let mut witness = create_test_derivation();
         witness.body_fact_hashes = vec![]; // no body facts
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid());
     }
 
@@ -905,7 +905,7 @@ mod tests {
             witness,
             tampered_root: BabyBear::new(99999),
         };
-        let result = MockProver::verify(&tampered);
+        let result = ConstraintProver::verify(&tampered);
         assert!(!result.is_valid());
     }
 
@@ -933,7 +933,7 @@ mod tests {
         // This should verify successfully.
         let witness = create_test_derivation();
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Correct substitution should verify: {:?}",
@@ -954,7 +954,7 @@ mod tests {
         // the hash constraint would fail first. The point is that the SUBSTITUTION
         // constraint catches the mismatch between the rule pattern and derived fact.
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             !result.is_valid(),
             "Wrong substitution should fail verification"
@@ -1017,7 +1017,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Constant head term should pass: {:?}",
@@ -1070,7 +1070,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             !result.is_valid(),
             "Wrong constant in derived fact should fail"
@@ -1129,7 +1129,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Equal check with matching values should pass: {:?}",
@@ -1189,7 +1189,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             !result.is_valid(),
             "Equal check with non-matching values should fail"
@@ -1256,7 +1256,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Equal check var==const with matching values should pass: {:?}",
@@ -1316,7 +1316,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "MemberOf check with matching hashes should pass: {:?}",
@@ -1375,7 +1375,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             !result.is_valid(),
             "MemberOf check with non-matching hashes should fail"
@@ -1443,7 +1443,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "GTE check 50 >= 10 should pass: {:?}",
@@ -1501,7 +1501,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid(), "GTE check 5 >= 10 should fail");
         // The high bit constraint should catch this
         let has_gte_violation = result
@@ -1572,7 +1572,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Budget scenario (50>=10, action matches) should pass: {:?}",
@@ -1628,7 +1628,7 @@ mod tests {
         };
 
         let air = DerivationAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "GTE check 10 >= 10 should pass: {:?}",

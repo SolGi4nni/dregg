@@ -99,7 +99,7 @@ export function initCrossfed(wasm) {
     const lockData = `bridge:${amount}:${Date.now()}`;
     let intentId;
     try {
-      intentId = wasm.compute_intent_id(lockData);
+      intentId = wasm.compute_intent_id ? wasm.compute_intent_id(lockData) : localHash(lockData);
     } catch {
       intentId = localHash(lockData);
     }

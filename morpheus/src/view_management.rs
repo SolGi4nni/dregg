@@ -41,6 +41,7 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
 
         self.view_i = new_view;
         self.view_entry_time = self.current_time;
+        self.sent_end_view = false;
         self.phase_i.insert(new_view, Phase::High);
 
         // View changed, we need to re-evaluate pending votes
@@ -104,7 +105,10 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
                 });
 
             if let Some(qc) = maximal_unfinalized {
-                if !self.complained_qcs.insert(qc.clone()) {
+                // Per paper lines 56-57: "Send q to lead(view_i) if not previously sent"
+                // HashSet::insert returns true when the value is NEW (first insertion).
+                // We send the complaint on first occurrence only.
+                if self.complained_qcs.insert(qc.clone()) {
                     self.send_msg(
                         to_send,
                         (Message::QC(qc.clone()), Some(self.lead(self.view_i))),
@@ -113,8 +117,14 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
             }
         }
 
-        // Second timeout - 12Δ, send end-view message
-        if time_in_view >= self.delta * END_VIEW_TIMEOUT && !self.index.unfinalized.is_empty() {
+        // Second timeout - 12Δ, send end-view message (once per view)
+        // Per paper lines 58-59: "Send the end-view message (view_i) signed by p_i to all processes"
+        // We send at most once per view to avoid flooding the network.
+        if time_in_view >= self.delta * END_VIEW_TIMEOUT
+            && !self.index.unfinalized.is_empty()
+            && !self.sent_end_view
+        {
+            self.sent_end_view = true;
             self.send_msg(
                 to_send,
                 (

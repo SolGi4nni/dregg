@@ -29,14 +29,27 @@
     <p>See pyana in action. Generate real STARK proofs in the browser, interact with the wallet extension, view CI-generated results from the live federation, or run the CLI locally.</p>
   </div>
 
+  <!-- Primary CTA: Unified Playground -->
+  <div class="demo-card" style="border-color: var(--accent); border-width: 2px; margin-bottom: var(--s6); padding: var(--s6);">
+    <h2 class="demo-card__title" style="font-size: 1.5rem;">Interactive Playground</h2>
+    <p class="demo-card__desc" style="font-size: 1rem;">
+      The unified playground presents everything pyana can do in a single guided experience.
+      Mint tokens, generate STARK proofs, build Merkle trees, evaluate Datalog policies,
+      transfer private notes, delegate capabilities, and bridge across federations &mdash;
+      all running client-side in WebAssembly. No server, no backend, no trust assumptions.
+    </p>
+    <a class="btn btn--primary" href="playground/" style="display:inline-flex;align-items:center;gap:8px;font-size:0.95rem;padding:14px 28px;margin-top:var(--s4);">
+      Launch Playground &#8594;
+    </a>
+  </div>
+
   <div class="demo-cards">
 
     <div class="demo-card">
-      <h2 class="demo-card__title">WASM Playground</h2>
+      <h2 class="demo-card__title">WASM Explorer</h2>
       <p class="demo-card__desc">
-        The interactive playground compiles pyana's <code>circuit</code>, <code>token</code>,
-        <code>commit</code>, and <code>trace</code> crates to WebAssembly and runs everything
-        client-side. No server, no backend.
+        The classic explorer interface with state tree, action builder, and proof viewer.
+        A more compact view of the core token and proof operations.
       </p>
       <ul class="demo-card__features">
         <li>Mint a root macaroon and attenuate it with caveats</li>
@@ -46,7 +59,7 @@
         <li>Run the Datalog evaluator with standard policy rules</li>
         <li>Demonstrate fold-chain attenuation (cryptographic narrowing)</li>
       </ul>
-      <a class="demo-card__link" href="demo/">Launch Playground &#8594;</a>
+      <a class="demo-card__link" href="demo/">Launch Explorer &#8594;</a>
     </div>
 
     <div class="demo-card">
@@ -84,7 +97,7 @@
     </div>
 
     <div class="demo-card">
-      <h2 class="demo-card__title">Live Sandbox</h2>
+      <h2 class="demo-card__title">Code Sandbox</h2>
       <p class="demo-card__desc">
         Write and execute JavaScript that calls the pyana WASM API directly. A code
         editor with pre-built scenarios, live console output, timing data, and
@@ -97,7 +110,8 @@
         <li>Admin mode: connect with root key for privileged operations</li>
         <li>Real-time output console with timing information</li>
       </ul>
-      <a class="demo-card__link" href="sandbox/">Launch Sandbox &#8594;</a>
+      <a class="demo-card__link" href="playground/#sandbox">Sandbox in Playground &#8594;</a>
+      <a class="demo-card__link" href="sandbox/" style="margin-left: var(--s4);">Standalone &#8594;</a>
     </div>
 
     <div class="demo-card">

@@ -7,6 +7,7 @@ edition = "2024"
 pyana-commit = { path = "../commit" }
 pyana-turn = { path = "../turn" }
 pyana-types = { path = "../types" }
+pyana-morpheus = { path = "../morpheus", optional = true }
 hints = { path = "../hints" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
@@ -34,6 +35,9 @@ path = "src/bin/node.rs"
 [[bench]]
 name = "consensus_bench"
 harness = false
+
+[features]
+morpheus = ["dep:pyana-morpheus"]
 
 [lints]
 workspace = true

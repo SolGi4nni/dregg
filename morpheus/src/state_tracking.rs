@@ -333,13 +333,16 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
     /// Implemented as a BFS on the points-to graph combined with a direct
     /// observation check.
     pub fn observes(&self, root: VoteData, needle: &VoteData) -> bool {
-        let mut observed = false;
+        let mut visited = BTreeSet::new();
         let mut to_visit: VecDeque<VoteData> = vec![root].into();
         while !to_visit.is_empty() {
             let node = to_visit.pop_front().unwrap();
+            // Skip already-visited nodes to avoid exponential traversal on diamond DAGs
+            if !visited.insert(node.for_which.clone()) {
+                continue;
+            }
             if self.directly_observes(&node, needle) {
-                observed = true;
-                break;
+                return true;
             }
             if let Some(block) = self.index.blocks.get(&node.for_which) {
                 for prev in &block.data.prev {
@@ -349,7 +352,7 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
                 tracing::warn!("Block not found for {:?}", node.for_which);
             }
         }
-        observed
+        false
     }
 
     /// Determines if one QC directly observes another (without transitivity)

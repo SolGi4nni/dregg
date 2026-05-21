@@ -481,7 +481,7 @@ fn main() {
         let proof = builder.prove(&req);
         match proof {
             Ok(presentation) => {
-                let valid = verify_presentation(&presentation);
+                let valid = verify_presentation(&presentation, &presentation.federation_root);
                 let stark_ok = presentation
                     .verify_issuer_stark()
                     .map(|r| r.is_ok())

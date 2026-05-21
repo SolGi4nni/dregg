@@ -229,7 +229,7 @@ fn main() {
     println!();
 
     // Verify the presentation proof
-    let is_valid = verify_presentation(&presentation);
+    let is_valid = verify_presentation(&presentation, &presentation.federation_root);
     println!(
         "  Presentation valid: {} [{}]",
         is_valid,

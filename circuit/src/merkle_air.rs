@@ -21,7 +21,7 @@
 //! 5. First row's current = leaf hash (public input)
 
 use crate::field::BabyBear;
-use crate::mock_prover::{Air, Constraint};
+use crate::constraint_prover::{Air, Constraint};
 use crate::poseidon2::hash_4_to_1;
 
 /// The tree depth (number of levels from leaf to root).
@@ -224,14 +224,14 @@ pub fn create_test_witness(leaf_hash: BabyBear, depth: usize) -> MerkleWitness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock_prover::MockProver;
+    use crate::constraint_prover::ConstraintProver;
 
     #[test]
     fn merkle_air_valid_proof() {
         let leaf = BabyBear::new(12345);
         let witness = create_test_witness(leaf, TREE_DEPTH);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "Merkle AIR should verify: {:?}",
@@ -246,7 +246,7 @@ mod tests {
         // Tamper with expected root
         witness.expected_root = BabyBear::new(99999);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid());
     }
 
@@ -257,7 +257,7 @@ mod tests {
         // Tamper with leaf hash (but keep levels the same)
         witness.leaf_hash = BabyBear::new(99999);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(!result.is_valid());
     }
 
@@ -268,7 +268,7 @@ mod tests {
         // Tamper with a sibling at level 5
         witness.levels[5].siblings[0] = BabyBear::new(999999);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         // This should fail because the parent hashes won't chain correctly
         assert!(!result.is_valid());
     }
@@ -280,7 +280,7 @@ mod tests {
         // Set an invalid position
         witness.levels[2].position = 5; // only 0-3 are valid
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         // Should fail: position_valid constraint catches out-of-range position,
         // and chain_continuity fails because compute_parent returns ZERO for invalid pos.
         assert!(!result.is_valid());
@@ -297,7 +297,7 @@ mod tests {
         let leaf = BabyBear::new(7777);
         let witness = create_test_witness(leaf, 4);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(result.is_valid());
     }
 }

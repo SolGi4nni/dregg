@@ -98,6 +98,11 @@ pub struct MorpheusProcess<Tr: Transaction> {
     pub genesis_qc: FinishedQC,
     pub ready_transactions: Vec<Tr>,
 
+    /// Whether we've already sent an EndView message for the current view.
+    /// Reset on view change. Prevents flooding the network with duplicate EndView
+    /// messages once the 12-delta timeout fires.
+    pub sent_end_view: bool,
+
     pub pending_votes: BTreeMap<ViewNum, PendingVotes>,
 }
 
@@ -172,6 +177,7 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
             genesis: genesis_block,
             genesis_qc: genesis_qc.clone(),
             ready_transactions: Vec::new(),
+            sent_end_view: false,
             pending_votes: BTreeMap::new(),
         }
     }

@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "wasm/**"
+      - "crates/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -22,6 +24,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: wasm-pack build wasm --target web --out-dir ../site/demo/pkg
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

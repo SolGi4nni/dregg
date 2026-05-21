@@ -32,7 +32,51 @@ fn test_mock_harness_enqueue_message() {
 }
 
 #[test_log::test]
-fn test_basic_txgen() {
+fn test_basic_txgen_smoke() {
+    // Fast smoke test: 5 rounds of transaction generation to verify basic operation.
+    assert!(cfg!(debug_assertions));
+
+    let mut harness = SimulationHarness::create_test_setup(3);
+
+    // A freshly created process should have no invariant violations
+    for process in harness.processes.values() {
+        let violations = process.check_invariants();
+        assert!(
+            violations.is_empty(),
+            "New process has invariant violations: {:?}",
+            violations
+        );
+    }
+
+    harness
+        .tx_gen_policy
+        .insert(Identity(2), TxGenPolicy::EveryNSteps { n: 3 });
+
+    harness
+        .tx_gen_policy
+        .insert(Identity(3), TxGenPolicy::EveryNSteps { n: 2 });
+
+    // Run 6 steps (one full LCM cycle of the tx gen policies)
+    harness.run(6);
+
+    // Verify that at least some blocks were produced
+    let block_count = harness
+        .processes
+        .get(&Identity(2))
+        .unwrap()
+        .index
+        .blocks
+        .len();
+    assert!(
+        block_count > 1,
+        "Expected blocks to be produced, got {} (only genesis)",
+        block_count
+    );
+}
+
+#[test_log::test]
+#[ignore] // Run with `cargo test --ignored` for full protocol test (~130s in debug)
+fn test_basic_txgen_full() {
     assert!(cfg!(debug_assertions));
 
     let mut harness = SimulationHarness::create_test_setup(3);

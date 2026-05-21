@@ -27,8 +27,8 @@
 //!
 //! # Design Notes
 //!
-//! In mock mode, recursion is implemented as a HASH CHAIN with constraint
-//! checking. Each step:
+//! Without the real recursion backend, the IVC is implemented as a HASH CHAIN
+//! with constraint checking. Each step:
 //! 1. Checks the fold constraints (valid removal, root transition)
 //! 2. Extends the accumulated hash: `new_hash = Poseidon2(old_hash || new_root || step_count)`
 //! 3. The final verification checks the accumulated hash against a recomputation
@@ -41,9 +41,6 @@
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
-// Backward-compat alias used internally.
-use crate::constraint_prover::ConstraintProof as MockProof;
-use crate::constraint_prover::ConstraintProver as MockProver;
 use crate::poseidon2::hash_many;
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
@@ -76,9 +73,9 @@ pub struct AccumulatedProof {
     /// Running Poseidon2 hash chain over all prior states.
     /// This commits to the entire history without storing it.
     pub accumulated_hash: BabyBear,
-    /// The mock proof of the most recent fold step.
+    /// The constraint proof of the most recent fold step.
     /// In real IVC this would be the recursive proof covering all prior steps.
-    pub proof: MockProof,
+    pub proof: ConstraintProof,
     /// Commitment to the execution trace (binds the proof to actual computation).
     pub trace_commitment: [u8; 32],
 }
@@ -95,8 +92,8 @@ pub struct IvcProof {
     pub step_count: u32,
     /// The accumulated hash committing to the entire chain history.
     pub accumulated_hash: BabyBear,
-    /// The constant-size mock proof (covers all steps). Retained for backward compat.
-    pub proof: MockProof,
+    /// The constant-size constraint proof (covers all steps).
+    pub proof: ConstraintProof,
     /// Commitment to the IVC AIR execution trace.
     /// Binds the proof to actual fold computations and prevents forgery.
     pub trace_commitment: [u8; 32],
@@ -111,7 +108,7 @@ impl IvcProof {
     /// Get the proof size in bytes.
     ///
     /// If a real STARK proof is present, returns its serialized size.
-    /// Otherwise returns the simulated mock proof size.
+    /// Otherwise returns the estimated proof size from constraint checking.
     pub fn proof_size_bytes(&self) -> usize {
         if let Some(ref sp) = self.stark_proof {
             stark::proof_to_bytes(sp).len()
@@ -260,7 +257,7 @@ impl IvcAir {
             .iter()
             .map(|delta| {
                 let fold_air = FoldAir::new(delta.fold.clone());
-                MockProver::verify(&fold_air).is_valid()
+                ConstraintProver::verify(&fold_air).is_valid()
             })
             .collect()
     }
@@ -596,7 +593,7 @@ pub fn generate_state_transition_trace(
 
 /// Generate a real STARK proof for the IVC state transition hash chain.
 ///
-/// This replaces the MockProof path: it produces a cryptographic STARK proof
+/// This replaces the ConstraintProof path: it produces a cryptographic STARK proof
 /// that the Poseidon2 hash chain from `initial_root` through all `new_roots`
 /// is correctly accumulated.
 pub fn prove_ivc_stark(
@@ -670,7 +667,7 @@ pub fn prove_ivc(initial_root: BabyBear, deltas: Vec<FoldDelta>) -> Option<IvcPr
     // verification and public input extraction (avoids 2x trace generation).
     let ivc_air = IvcAir::new(initial_root, deltas);
     let (trace, public_inputs) = ivc_air.generate_trace();
-    let result = MockProver::verify_trace(&ivc_air, &trace, &public_inputs);
+    let result = ConstraintProver::verify_trace(&ivc_air, &trace, &public_inputs);
     if !result.is_valid() {
         return None;
     }
@@ -683,7 +680,7 @@ pub fn prove_ivc(initial_root: BabyBear, deltas: Vec<FoldDelta>) -> Option<IvcPr
     // Generate the real STARK proof for the hash chain.
     let (stark_proof, _) = prove_ivc_stark(initial_root, &new_roots);
 
-    let proof = MockProof {
+    let proof = ConstraintProof {
         num_rows: step_count as usize,
         num_cols: IVC_AIR_WIDTH,
         num_public_inputs: 4,
@@ -748,7 +745,7 @@ pub fn fold_and_accumulate(prev: &AccumulatedProof, delta: &FoldDelta) -> Option
     // Generate the fold trace once and reuse for verification and proof construction.
     let fold_air = FoldAir::new(delta.fold.clone());
     let (fold_trace, fold_public_inputs) = fold_air.generate_trace();
-    let result = MockProver::verify_trace(&fold_air, &fold_trace, &fold_public_inputs);
+    let result = ConstraintProver::verify_trace(&fold_air, &fold_trace, &fold_public_inputs);
     if !result.is_valid() {
         return None;
     }
@@ -778,7 +775,7 @@ pub fn fold_and_accumulate(prev: &AccumulatedProof, delta: &FoldDelta) -> Option
     let fri_queries = security_bits / 2;
     let simulated_proof_size_bytes =
         num_cols * log_rows * fri_queries * 4 + fold_public_inputs.len() * 4 + 32;
-    let proof = MockProof {
+    let proof = ConstraintProof {
         num_rows,
         num_cols,
         num_public_inputs: fold_public_inputs.len(),
@@ -811,7 +808,7 @@ pub fn initial_accumulation(initial_root: BabyBear) -> AccumulatedProof {
     let accumulated_hash = initial_accumulated_hash(initial_root);
 
     // Create a trivial proof (no constraints to check for the base case)
-    let proof = MockProof {
+    let proof = ConstraintProof {
         num_rows: 0,
         num_cols: 0,
         num_public_inputs: 1,
@@ -851,7 +848,7 @@ pub fn finalize_ivc(
         proof
     });
 
-    let proof = MockProof {
+    let proof = ConstraintProof {
         num_rows: 1,
         num_cols: IVC_AIR_WIDTH,
         num_public_inputs: 4,
@@ -1027,9 +1024,9 @@ pub struct IvcPresentationProof {
     /// The IVC proof covering the entire fold chain (constant size).
     pub ivc_proof: IvcProof,
     /// Proof of the final derivation (authorization from final state).
-    pub derivation_proof: MockProof,
+    pub derivation_proof: ConstraintProof,
     /// Proof of issuer membership in federation.
-    pub issuer_membership_proof: MockProof,
+    pub issuer_membership_proof: ConstraintProof,
     /// The federation root of trust.
     pub federation_root: BabyBear,
     /// The request predicate being authorized.
@@ -1917,7 +1914,7 @@ mod tests {
             IvcVerification::Valid
         );
 
-        // The AIR path produces a proof via MockProof::generate (trace-based digest).
+        // The AIR path produces a proof via ConstraintProof::generate (trace-based digest).
         // It uses the AIR constraint system for soundness rather than our custom digest.
         // Verify the AIR proof is internally consistent:
         assert_eq!(proof_air.proof.public_inputs[0], initial_root);
@@ -1997,13 +1994,13 @@ mod tests {
         };
 
         let derivation_air = DerivationAir::new(derivation);
-        let derivation_proof = MockProof::generate(&derivation_air).unwrap();
+        let derivation_proof = ConstraintProof::generate(&derivation_air).unwrap();
 
         // Create issuer membership
         let issuer_witness = create_test_witness(BabyBear::new(5555), 8);
         let federation_root = issuer_witness.expected_root;
         let issuer_air = MerkleAir::new(issuer_witness);
-        let issuer_proof = MockProof::generate(&issuer_air).unwrap();
+        let issuer_proof = ConstraintProof::generate(&issuer_air).unwrap();
 
         // Assemble IVC presentation proof
         let presentation = IvcPresentationProof {
@@ -2066,7 +2063,7 @@ mod tests {
         let (initial_root, deltas) = create_test_chain(3);
         let air = IvcAir::new(initial_root, deltas);
 
-        let result = MockProver::verify(&air);
+        let result = ConstraintProver::verify(&air);
         assert!(
             result.is_valid(),
             "IVC AIR should verify: {:?}",
@@ -2111,7 +2108,7 @@ mod tests {
         let tampered = TamperedIvcAir {
             inner: IvcAir::new(initial_root, deltas),
         };
-        let result = MockProver::verify(&tampered);
+        let result = ConstraintProver::verify(&tampered);
         assert!(!result.is_valid(), "Tampered hash chain should fail");
 
         // Should have hash_chain_correct or hash_chain_continuity violation
