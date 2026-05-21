@@ -274,6 +274,28 @@ pub fn verify_fulfillment(
         }
     }
 
+    // Issue #7: Validate that granted_actions is a SUBSET of the intent's spec.actions.
+    // The fulfiller shouldn't be able to claim more actions than the intent requested.
+    // In Private/Selective mode the fulfiller is not trusted, so this prevents
+    // a malicious fulfiller from escalating privileges.
+    if fulfillment.mode == VerificationMode::Private
+        || fulfillment.mode == VerificationMode::Selective
+    {
+        if !intent_actions.is_empty() {
+            for granted in &fulfillment.granted_actions {
+                if granted != "*"
+                    && !intent_actions.contains(granted)
+                    && !intent_actions.iter().any(|a| a == "*")
+                {
+                    return Err(FulfillmentError::ActionsMismatch(format!(
+                        "granted action '{}' not in intent's requested actions (privilege escalation)",
+                        granted
+                    )));
+                }
+            }
+        }
+    }
+
     // 3. Check granted_resource matches the intent's resource_pattern
     if let Some(pattern) = &intent.matcher.resource_pattern {
         if !resource_matches(&fulfillment.granted_resource, pattern) {
@@ -453,18 +475,11 @@ fn compute_expiry(
 }
 
 /// Check if a granted resource covers a required resource pattern.
+///
+/// Issue #10: Delegates to the shared `matcher::resource_matches` to ensure
+/// consistent matching logic between the matcher and fulfillment verification.
 fn resource_matches(granted: &str, required: &str) -> bool {
-    if granted == "*" || granted == required {
-        return true;
-    }
-    // Wildcard prefix matching: "documents/*" covers "documents/reports/*"
-    if granted.ends_with("/*") {
-        let prefix = &granted[..granted.len() - 2];
-        if required.starts_with(prefix) {
-            return true;
-        }
-    }
-    false
+    crate::matcher::resource_matches(granted, required)
 }
 
 // ============================================================================
@@ -554,6 +569,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![body_hash],

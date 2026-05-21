@@ -20,8 +20,21 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::capability::CapabilityRef;
 
-/// A matched sealer/unsealer pair. Created together, used separately.
+/// The public half of a seal pair. Safe to serialize and share.
+/// Contains only the information needed to seal (encrypt) capabilities.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealerPublic {
+    /// Unique pair identifier: BLAKE3("pyana-seal pair-id v2", sealer_public).
+    pub id: [u8; 32],
+    /// X25519 public key (used for encryption).
+    pub sealer_public: [u8; 32],
+}
+
+/// A matched sealer/unsealer pair. Created together, used separately.
+///
+/// NOT serializable: the unsealer secret must never cross a serialization boundary.
+/// Use [`SealerPublic`] for the serializable public-key-only view.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealPair {
     /// Unique pair identifier: BLAKE3("pyana-seal pair-id v2", sealer_public).
     pub id: [u8; 32],
@@ -76,7 +89,23 @@ impl core::fmt::Display for SealError {
 
 impl std::error::Error for SealError {}
 
+impl SealerPublic {
+    /// Create a SealerPublic from a public key.
+    pub fn from_public(sealer_public: [u8; 32]) -> Self {
+        let id = SealPair::compute_pair_id(&sealer_public);
+        SealerPublic { id, sealer_public }
+    }
+}
+
 impl SealPair {
+    /// Extract the serializable public-key-only view of this pair.
+    pub fn public(&self) -> SealerPublic {
+        SealerPublic {
+            id: self.id,
+            sealer_public: self.sealer_public,
+        }
+    }
+
     pub fn generate() -> Self {
         let mut secret_bytes = [0u8; 32];
         getrandom::fill(&mut secret_bytes).expect("getrandom failed");

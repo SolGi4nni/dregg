@@ -210,12 +210,8 @@ impl AgentRuntime {
     /// A [`TurnReceipt`] proving the turn was committed, or an error if
     /// execution was rejected.
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
-        let nonce = {
-            let mut n = self.nonce.lock().unwrap();
-            let current = *n;
-            *n += 1;
-            current
-        };
+        // LOCK ORDER: ledger → nonce → wallet (canonical order to prevent deadlock).
+        // We acquire ledger first, then nonce, then wallet for signing/receipts.
 
         // Build the action without authorization first to compute the signing message.
         let action_unsigned = Action {
@@ -231,6 +227,7 @@ impl AgentRuntime {
         };
 
         // Compute the signing message and sign with the wallet's key (read lock).
+        // We sign before acquiring the ledger lock since signing is pure.
         let message = TurnExecutor::compute_signing_message(&action_unsigned);
         let sig = self.wallet.read().unwrap_or_else(|e| e.into_inner()).sign_bytes(&message);
 
@@ -244,6 +241,24 @@ impl AgentRuntime {
         let mut forest = CallForest::new();
         forest.add_root(action_signed);
 
+        // Acquire ledger lock first (canonical order: ledger → nonce → wallet).
+        let mut ledger = self.ledger.lock().unwrap();
+
+        let nonce = {
+            let mut n = self.nonce.lock().unwrap();
+            let current = *n;
+            *n += 1;
+            current
+        };
+
+        // Bind this turn to the receipt chain: read the latest receipt hash from the wallet.
+        let previous_receipt_hash = self
+            .wallet
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .receipt_head()
+            .map(|r| r.receipt_hash());
+
         let turn = Turn {
             agent: self.cell_id,
             nonce,
@@ -251,18 +266,18 @@ impl AgentRuntime {
             fee: 10_000,
             memo: None,
             valid_until: None,
-            previous_receipt_hash: None,
+            previous_receipt_hash,
             depends_on: Vec::new(),
         };
 
         // Execute against the local ledger.
-        let mut ledger = self.ledger.lock().unwrap();
         let result = self.executor.execute(&turn, &mut ledger);
 
         match result {
             TurnResult::Committed { receipt, .. } => {
+                // Release ledger lock before taking wallet write lock.
+                drop(ledger);
                 // Append the receipt to the wallet's chain (write lock).
-                drop(ledger); // release ledger lock before taking wallet write lock
                 self.wallet.write().unwrap_or_else(|e| e.into_inner()).append_receipt(receipt.clone());
                 Ok(receipt)
             }
@@ -277,17 +292,20 @@ impl AgentRuntime {
     /// Use this when you need full control over the turn structure (multiple
     /// root actions, child actions, custom authorization, etc.)
     pub fn execute_turn(&self, turn: &Turn) -> Result<TurnReceipt, SdkError> {
+        // LOCK ORDER: ledger → nonce → wallet (canonical order to prevent deadlock).
         let mut ledger = self.ledger.lock().unwrap();
         let result = self.executor.execute(turn, &mut ledger);
 
         match result {
             TurnResult::Committed { receipt, .. } => {
-                // Advance our nonce to match.
-                let mut n = self.nonce.lock().unwrap();
-                if turn.nonce >= *n {
-                    *n = turn.nonce + 1;
+                // Advance our nonce to match (nonce lock after ledger = canonical order).
+                {
+                    let mut n = self.nonce.lock().unwrap();
+                    if turn.nonce >= *n {
+                        *n = turn.nonce + 1;
+                    }
                 }
-                drop(n);
+                // Release ledger lock before taking wallet write lock.
                 drop(ledger);
                 // Append the receipt to the wallet's chain (write lock).
                 self.wallet.write().unwrap_or_else(|e| e.into_inner()).append_receipt(receipt.clone());

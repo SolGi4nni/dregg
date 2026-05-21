@@ -11,7 +11,7 @@
 //! finalizes a block of revocations, all nodes apply the same set of
 //! revocations to their local trees, ensuring they converge on the same root.
 
-use crate::consensus::{ConsensusConfig, ConsensusOrchestrator, ConsensusState};
+use crate::consensus::{ConsensusConfig, ConsensusOrchestrator, ConsensusState, PendingStateRoots};
 use crate::revocation::{RevocationTree, RevocationVerifier};
 use crate::types::*;
 
@@ -92,6 +92,12 @@ impl FederationNode {
     pub fn apply_finalized_block(&mut self, block: &RevocationBlock) {
         let token_ids: Vec<String> = block.events.iter().map(|e| e.token_id.clone()).collect();
         self.revocation_tree.revoke_batch(&token_ids);
+    }
+
+    /// Compute the current state root (revocation tree Merkle root).
+    /// This is the pre-state root before any new events are applied.
+    pub fn compute_state_root(&mut self) -> [u8; 32] {
+        self.revocation_tree.root()
     }
 
     /// Update the attested root after consensus finalization.
@@ -206,10 +212,14 @@ impl Federation {
     /// Run a consensus round and apply the result to all nodes.
     /// Returns the finalized block and QC, or None if consensus failed.
     pub fn run_consensus_round(&mut self) -> Option<(RevocationBlock, QuorumCertificate)> {
-        // Sync online status.
-        for (i, node) in self.nodes.iter().enumerate() {
+        // Sync online status and local state roots for divergence detection.
+        for (i, node) in self.nodes.iter_mut().enumerate() {
             if i < self.consensus_states.len() {
                 self.consensus_states[i].set_online(node.is_online);
+                // Update the consensus state's local_state_root from the node's
+                // revocation tree. This enables divergence detection in validate_block().
+                let root = node.compute_state_root();
+                self.consensus_states[i].set_local_state_root(root);
             }
         }
 
@@ -233,6 +243,94 @@ impl Federation {
 
         self.finalized_history.push((block.clone(), qc.clone()));
         Some((block, qc))
+    }
+
+    /// Run a consensus round with state root commitments.
+    ///
+    /// This variant computes pre/post state roots for the proposing node,
+    /// enabling divergence detection and light client verification.
+    pub fn run_consensus_round_with_state_roots(
+        &mut self,
+    ) -> Option<(RevocationBlock, QuorumCertificate, LightClientProof)> {
+        // Sync online status and local state roots for divergence detection.
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            if i < self.consensus_states.len() {
+                self.consensus_states[i].set_online(node.is_online);
+                let root = node.compute_state_root();
+                self.consensus_states[i].set_local_state_root(root);
+            }
+        }
+
+        // Determine leader and compute pre_state_root from the leader's tree.
+        let view = self.consensus_states.iter().find(|s| s.is_online)?.current_view;
+        let leader_id = self.config.leader_for_view(view);
+        if leader_id >= self.nodes.len() || !self.nodes[leader_id].is_online {
+            // Fall back to standard round if leader identification fails.
+            return self
+                .run_consensus_round()
+                .map(|(b, qc)| {
+                    let proof = LightClientProof::from_block(&b, &qc);
+                    (b, qc, proof)
+                });
+        }
+
+        let pre_state_root = self.nodes[leader_id].compute_state_root();
+
+        // Simulate what events will be included: gather all pending events
+        // and apply them to a clone of the leader's tree to get post_state_root.
+        let pending_events: Vec<RevocationEvent> = self
+            .consensus_states
+            .iter()
+            .filter(|s| s.is_online)
+            .flat_map(|s| s.pending_events.clone())
+            .collect();
+
+        let mut tree_clone = self.nodes[leader_id].revocation_tree.clone();
+        let token_ids: Vec<String> = pending_events.iter().map(|e| e.token_id.clone()).collect();
+        tree_clone.revoke_batch(&token_ids);
+        let post_state_root = tree_clone.root();
+
+        // Note tree and nullifier set roots are not managed by the federation
+        // revocation tree directly -- they come from the store layer. For now,
+        // we use zero roots (the node crate can override these when it has store access).
+        let note_tree_root = [0u8; 32];
+        let nullifier_set_root = [0u8; 32];
+
+        // Inject state roots into the leader's consensus state for proposal creation.
+        // We do this by temporarily overriding the create_proposal path.
+        // Actually, we need to use the orchestrator which calls create_proposal internally.
+        // The cleanest approach: set state roots on the consensus state, then let
+        // run_round use them. Let's add support for that.
+
+        // Store the state roots on the leader's consensus state for the orchestrator.
+        self.consensus_states[leader_id].pending_state_roots = Some(PendingStateRoots {
+            pre_state_root,
+            post_state_root,
+            note_tree_root,
+            nullifier_set_root,
+        });
+
+        // Run the consensus round.
+        let result = self.orchestrator.run_round(&mut self.consensus_states)?;
+        let (block, qc) = result;
+
+        // Apply the finalized block to all online nodes.
+        let identities = self.node_identities();
+        for node in &mut self.nodes {
+            if node.is_online {
+                node.apply_finalized_block(&block);
+                node.update_attested_root(&qc, &identities);
+            }
+        }
+
+        // Keep Federation.config in sync if the orchestrator applied a reconfig.
+        if self.config.epoch != self.orchestrator.config.epoch {
+            self.config = self.orchestrator.config.clone();
+        }
+
+        let proof = LightClientProof::from_block(&block, &qc);
+        self.finalized_history.push((block.clone(), qc.clone()));
+        Some((block, qc, proof))
     }
 
     /// Mint a token at a specific node.

@@ -6,7 +6,6 @@ const SESSION_NONCE = crypto.randomUUID();
 
 // Methods that any page origin can call without prior approval.
 const UNRESTRICTED_METHODS = new Set([
-  'pyana:authorize',
   'pyana:isConnected',
   'pyana:canAuthorize',
   'pyana:subscribe',
@@ -14,6 +13,7 @@ const UNRESTRICTED_METHODS = new Set([
 
 // Methods that require the origin to be in the user-approved allowlist.
 const RESTRICTED_METHODS = new Set([
+  'pyana:authorize',
   'pyana:provision',
   'pyana:postIntent',
   'pyana:offerCapability',
@@ -31,13 +31,22 @@ script.dataset.pyanaNonce = SESSION_NONCE;
 script.onload = () => script.remove();
 
 /**
- * Check if the current page origin is in the user-approved allowlist.
+ * Check if the current page origin is allowed for a specific method.
  */
-async function isOriginAllowed(origin) {
+async function isOriginAllowed(origin, method) {
   try {
     const stored = await chrome.storage.local.get('pyana_allowed_origins');
-    const allowlist = stored.pyana_allowed_origins || [];
-    return allowlist.includes(origin);
+    const allowlist = stored.pyana_allowed_origins || {};
+    // Handle legacy array format.
+    if (Array.isArray(allowlist)) {
+      return allowlist.includes(origin);
+    }
+    const entry = allowlist[origin];
+    if (!entry) return false;
+    // Check expiry.
+    if (entry.expires && entry.expires < Date.now()) return false;
+    // Check method.
+    return entry.methods.includes('*') || entry.methods.includes(method);
   } catch {
     return false;
   }
@@ -68,11 +77,11 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
   const origin = window.location.origin;
   const messageType = detail.type;
 
-  // Check if this method is allowed for this origin.
+  // Check if this method is allowed for this origin (per-method allowlist).
   if (RESTRICTED_METHODS.has(messageType)) {
-    const allowed = await isOriginAllowed(origin);
+    const allowed = await isOriginAllowed(origin, messageType);
     if (!allowed) {
-      // Request permission from the user.
+      // Request permission from the user for this specific method.
       const granted = await requestOriginPermission(origin, messageType);
       if (!granted) {
         window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {

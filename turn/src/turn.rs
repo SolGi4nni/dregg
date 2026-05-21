@@ -40,6 +40,21 @@ impl Turn {
         if let Some(valid_until) = self.valid_until {
             hasher.update(&valid_until.to_le_bytes());
         }
+        // Include depends_on to prevent dependency malleability.
+        hasher.update(&(self.depends_on.len() as u64).to_le_bytes());
+        for dep in &self.depends_on {
+            hasher.update(dep);
+        }
+        // Include previous_receipt_hash to bind to causal ordering.
+        match &self.previous_receipt_hash {
+            Some(h) => {
+                hasher.update(&[1u8]);
+                hasher.update(h);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
         *hasher.finalize().as_bytes()
     }
 

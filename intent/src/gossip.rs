@@ -15,6 +15,8 @@
 //! - Gossip-received intents MUST have a valid stake commitment
 //! - All intents are validated against size limits before storage
 //! - Per-creator rate limiting prevents spam floods
+//! - Global rate limiting prevents Sybil floods
+//! - Epoch-scoped nullifiers limit stake to K uses per epoch (anti-Sybil)
 //! - Commit-reveal protocol prevents fulfillment frontrunning
 
 use std::collections::{HashMap, HashSet};
@@ -22,9 +24,12 @@ use std::collections::{HashMap, HashSet};
 use pyana_circuit::field::BabyBear;
 
 use crate::fulfillment::Fulfillment;
-use crate::matcher::{match_intent, HeldCapability, MatchResult};
+use crate::matcher::{HeldCapability, MatchResult, match_intent};
 use crate::validation::{self, ValidationError};
-use crate::{CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof};
+use crate::{
+    CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof,
+    compute_stake_nullifier, current_epoch, MAX_STAKE_USES_PER_EPOCH,
+};
 
 /// Maximum intents allowed per creator per minute.
 pub const MAX_INTENTS_PER_CREATOR_PER_MINUTE: usize = 10;
@@ -57,7 +62,7 @@ pub enum ReceiveError {
     MissingStake,
     /// The stake proof failed Merkle verification against the known note tree root.
     InvalidStakeProof,
-    /// The stake commitment has already been used by another intent (nullifier).
+    /// The stake has exhausted all K uses in this epoch (epoch-scoped nullifier).
     StakeAlreadyUsed,
     /// The creator has exceeded the rate limit.
     RateLimited {
@@ -86,7 +91,11 @@ impl std::fmt::Display for ReceiveError {
                 )
             }
             Self::StakeAlreadyUsed => {
-                write!(f, "stake commitment has already been used (nullifier)")
+                write!(
+                    f,
+                    "stake exhausted: all {} uses consumed in this epoch",
+                    crate::MAX_STAKE_USES_PER_EPOCH
+                )
             }
             Self::RateLimited {
                 creator,
@@ -224,9 +233,14 @@ pub struct IntentPool {
     /// The latest attested Poseidon2 note tree root from the federation.
     /// Stake proofs are verified against this root.
     known_note_root: BabyBear,
-    /// Nullifier set: stake commitments that have already been used.
-    /// Prevents reuse of the same stake for multiple intents.
-    used_stake_commitments: HashSet<[u8; 32]>,
+    /// Epoch-scoped nullifier set: maps stake nullifiers to used status.
+    ///
+    /// Each note commitment gets `MAX_STAKE_USES_PER_EPOCH` uses per epoch.
+    /// The nullifier is `Poseidon2(commitment, epoch, counter)` for counter in [0, K-1].
+    /// Different epochs produce different nullifiers (unlinkable for privacy).
+    used_stake_nullifiers: HashSet<[u8; 32]>,
+    /// The current block height, used to determine epoch for nullifier computation.
+    current_block_height: u64,
     /// Set of intent IDs that have been fulfilled (replay protection).
     fulfilled_intents: HashSet<[u8; 32]>,
 }
@@ -254,7 +268,8 @@ impl IntentPool {
             global_rate: (0, 0),
             pending_commitments: HashMap::new(),
             known_note_root,
-            used_stake_commitments: HashSet::new(),
+            used_stake_nullifiers: HashSet::new(),
+            current_block_height: 0,
             fulfilled_intents: HashSet::new(),
         }
     }
@@ -267,6 +282,31 @@ impl IntentPool {
     /// Get the current known note tree root.
     pub fn known_note_root(&self) -> BabyBear {
         self.known_note_root
+    }
+
+    /// Update the current block height.
+    ///
+    /// When the epoch advances (block_height crosses an epoch boundary), old nullifiers
+    /// from previous epochs are automatically pruned since they are no longer relevant.
+    pub fn update_block_height(&mut self, block_height: u64) {
+        let old_epoch = current_epoch(self.current_block_height);
+        let new_epoch = current_epoch(block_height);
+        self.current_block_height = block_height;
+
+        // When epoch advances, clear all nullifiers (they are epoch-scoped)
+        if new_epoch > old_epoch {
+            self.used_stake_nullifiers.clear();
+        }
+    }
+
+    /// Get the current block height.
+    pub fn current_block_height(&self) -> u64 {
+        self.current_block_height
+    }
+
+    /// Get the current epoch.
+    pub fn current_epoch(&self) -> u64 {
+        current_epoch(self.current_block_height)
     }
 
     /// Update the wallet's held capabilities (call when tokens change).
@@ -296,7 +336,7 @@ impl IntentPool {
             intent.id,
             StoredIntent {
                 intent: intent.clone(),
-                arrived_at: 0, // own intents arrive at time 0 (not evictable by arrival)
+                arrived_at: 0, // own intents use time 0
             },
         );
         Ok(intent)
@@ -310,7 +350,8 @@ impl IntentPool {
     /// This is the hardened entry point that enforces:
     /// - Stake requirement (gossip intents must have valid stake)
     /// - Size validation (reject oversized intents)
-    /// - Rate limiting (per-creator flood protection)
+    /// - Rate limiting (per-creator and global flood protection)
+    /// - Nullifier tracking (no stake reuse)
     pub fn receive_intent(&mut self, intent: Intent, now: u64) -> Option<Match> {
         self.receive_intent_checked(intent, now, true)
             .ok()
@@ -341,7 +382,12 @@ impl IntentPool {
             return Err(ReceiveError::Duplicate);
         }
 
-        // --- HARDENING: Validate intent fields (Fix 2) ---
+        // Don't accept intents that have already been fulfilled (replay protection, issue #13)
+        if self.fulfilled_intents.contains(&intent.id) {
+            return Err(ReceiveError::AlreadyFulfilled);
+        }
+
+        // --- HARDENING: Validate intent fields ---
         validation::validate_intent(&intent).map_err(ReceiveError::Invalid)?;
 
         // --- HARDENING: Require valid stake proof for gossip ---
@@ -353,40 +399,78 @@ impl IntentPool {
                     if !crate::verify_stake(stake_proof, self.known_note_root) {
                         return Err(ReceiveError::InvalidStakeProof);
                     }
-                    // Check minimum stake value policy
-                    if self.config.minimum_stake_value > 0
-                        && stake_proof.minimum_value < self.config.minimum_stake_value
-                    {
-                        return Err(ReceiveError::InsufficientStakeValue {
-                            claimed: stake_proof.minimum_value,
-                            minimum: self.config.minimum_stake_value,
-                        });
+                    // Epoch-scoped nullifier check: each note gets K uses per epoch.
+                    // Try counter 0..K-1 -- if ALL nullifiers for this epoch are used, reject.
+                    let epoch = current_epoch(self.current_block_height);
+                    let all_used = (0..MAX_STAKE_USES_PER_EPOCH).all(|counter| {
+                        let nullifier = compute_stake_nullifier(
+                            &stake_proof.commitment.0,
+                            epoch,
+                            counter,
+                        );
+                        self.used_stake_nullifiers.contains(&nullifier)
+                    });
+                    if all_used {
+                        return Err(ReceiveError::StakeAlreadyUsed);
                     }
+                    // NOTE (issue #2): stake_proof.minimum_value is NOT checked for
+                    // policy enforcement. The value cannot be verified without opening
+                    // the commitment, so using it for access control is security theater.
+                    // It is retained for informational/display purposes only.
                 }
             }
         }
 
-        // --- HARDENING: Rate limiting per creator (Fix 6) ---
+        // --- HARDENING: Global rate limit (issue #4) ---
+        if let Err(e) = self.check_global_rate_limit(now) {
+            return Err(e);
+        }
+
+        // --- HARDENING: Rate limiting per creator (secondary check) ---
         if let Err(e) = self.check_rate_limit(&intent.creator, now) {
             return Err(e);
         }
 
-        // Enforce pool size limit (drop oldest if full)
+        // Enforce pool size limit (evict by arrival time, oldest first, issue #9)
         if self.intents.len() >= self.config.max_intents {
             self.gc(now);
-            // If still full after GC, drop the oldest
+            // If still full after GC, drop the oldest by arrival time
             if self.intents.len() >= self.config.max_intents {
-                if let Some(oldest_id) = self.find_oldest_intent() {
+                if let Some(oldest_id) = self.find_oldest_by_arrival() {
                     self.intents.remove(&oldest_id);
                 }
             }
         }
 
-        // Store the intent
-        self.intents.insert(intent.id, intent.clone());
+        // Record stake nullifier for the next available counter in this epoch
+        if let Some(stake_proof) = &intent.stake_proof {
+            let epoch = current_epoch(self.current_block_height);
+            // Find the first unused counter and insert its nullifier
+            for counter in 0..MAX_STAKE_USES_PER_EPOCH {
+                let nullifier = compute_stake_nullifier(
+                    &stake_proof.commitment.0,
+                    epoch,
+                    counter,
+                );
+                if !self.used_stake_nullifiers.contains(&nullifier) {
+                    self.used_stake_nullifiers.insert(nullifier);
+                    break;
+                }
+            }
+        }
+
+        // Store the intent with arrival time
+        self.intents.insert(
+            intent.id,
+            StoredIntent {
+                intent: intent.clone(),
+                arrived_at: now,
+            },
+        );
 
         // Record for rate limiting
         self.record_intent_from_creator(&intent.creator, now);
+        self.record_global_intent(now);
 
         // Auto-match if enabled
         if self.config.auto_match {
@@ -424,15 +508,18 @@ impl IntentPool {
         self.receive_intent_checked(intent, now, false)
     }
 
+    /// Mark an intent as fulfilled. Subsequent attempts to re-submit or re-fulfill
+    /// this intent will be rejected with `AlreadyFulfilled`.
+    pub fn mark_fulfilled(&mut self, intent_id: [u8; 32]) {
+        self.fulfilled_intents.insert(intent_id);
+        // Remove from active pool
+        self.intents.remove(&intent_id);
+    }
+
     /// Run garbage collection: remove expired intents and clean auxiliary structures.
-    ///
-    /// In addition to removing expired intents from the primary map, this also cleans:
-    /// - `our_intent_ids`: removes IDs whose intents have been GC'd
-    /// - `pending_matches`: removes matches whose intent has been GC'd
-    /// - `recent_by_creator`: removes entries whose rate-limit window has expired
-    /// - `pending_commitments`: removes commitments older than `MAX_COMMITMENT_AGE_SECS`
     pub fn gc(&mut self, now: u64) {
-        self.intents.retain(|_, intent| !intent.is_expired(now));
+        self.intents
+            .retain(|_, stored| !stored.intent.is_expired(now));
 
         // Clean our_intent_ids: remove IDs no longer in the pool
         self.our_intent_ids
@@ -457,7 +544,8 @@ impl IntentPool {
     pub fn active_intents(&self, now: u64) -> Vec<&Intent> {
         self.intents
             .values()
-            .filter(|i| !i.is_expired(now))
+            .filter(|s| !s.intent.is_expired(now))
+            .map(|s| &s.intent)
             .collect()
     }
 
@@ -496,12 +584,10 @@ impl IntentPool {
 
     /// Get a specific intent by ID.
     pub fn get_intent(&self, id: &[u8; 32]) -> Option<&Intent> {
-        self.intents.get(id)
+        self.intents.get(id).map(|s| &s.intent)
     }
 
     /// Re-evaluate all pool intents against current held tokens.
-    ///
-    /// Useful after wallet state changes (new tokens provisioned, etc.)
     pub fn rematch_all(&mut self, now: u64) -> Vec<Match> {
         let mut matches = Vec::new();
         let intent_ids: Vec<[u8; 32]> = self.intents.keys().copied().collect();
@@ -510,9 +596,9 @@ impl IntentPool {
             if self.our_intent_ids.contains(&id) {
                 continue;
             }
-            if let Some(intent) = self.intents.get(&id) {
+            if let Some(stored) = self.intents.get(&id) {
                 let result = match_intent(
-                    intent,
+                    &stored.intent,
                     &self.held_tokens,
                     self.our_commitment,
                     crate::VerificationMode::Trusted,
@@ -528,28 +614,19 @@ impl IntentPool {
     }
 
     // -----------------------------------------------------------------------
-    // Commit-Reveal Protocol (Fix 3: anti-frontrunning)
+    // Commit-Reveal Protocol (anti-frontrunning)
     // -----------------------------------------------------------------------
 
     /// Phase 1: Commit to fulfilling an intent.
-    ///
-    /// Creates a blinded commitment that hides which fulfillment will be revealed.
-    /// The commitment is stored locally and should be broadcast to the network.
-    /// First valid commitment wins priority.
-    ///
-    /// Returns `(nonce, commitment)`. The caller MUST retain the nonce to later
-    /// construct a valid [`FulfillmentReveal`].
     pub fn commit_to_fulfill(
         &mut self,
         intent_id: [u8; 32],
         fulfillment: &Fulfillment,
         now: u64,
-    ) -> ([u8; 32], FulfillmentCommitment) {
-        // Generate random nonce
+    ) -> FulfillmentCommitment {
         let mut nonce = [0u8; 32];
         crate::getrandom(&mut nonce);
 
-        // Compute blinded commitment: BLAKE3(serialized_fulfillment || nonce)
         let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-commit-v1");
         hasher.update(&intent_id);
         hasher.update(&fulfillment.fulfiller.0);
@@ -566,35 +643,24 @@ impl IntentPool {
             timestamp: now,
         };
 
-        // Store the pending commitment (keyed by commitment hash for reveal lookup)
         let commitment_key = Self::hash_commitment(&commitment);
         self.pending_commitments
             .insert(commitment_key, commitment.clone());
 
-        (nonce, commitment)
+        commitment
     }
 
     /// Phase 2: Reveal a previously committed fulfillment.
-    ///
-    /// The reveal must match a stored commitment. The nonce proves this reveal
-    /// corresponds to the earlier blinded commitment.
-    ///
-    /// Returns `Ok(())` if the reveal is valid, `Err` if:
-    /// - No matching commitment exists
-    /// - The reveal window hasn't opened yet
-    /// - The nonce doesn't match the commitment
     pub fn reveal_fulfillment(
         &mut self,
         reveal: &FulfillmentReveal,
         now: u64,
     ) -> Result<(), CommitRevealError> {
-        // Look up the commitment
         let commitment = self
             .pending_commitments
             .get(&reveal.commitment_hash)
             .ok_or(CommitRevealError::NoCommitment)?;
 
-        // Check that the reveal window has elapsed
         let elapsed = now.saturating_sub(commitment.timestamp);
         if elapsed < COMMIT_REVEAL_WINDOW_SECS {
             return Err(CommitRevealError::TooEarly {
@@ -602,7 +668,6 @@ impl IntentPool {
             });
         }
 
-        // Verify the nonce matches the commitment
         let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-commit-v1");
         hasher.update(&commitment.intent_id);
         hasher.update(&reveal.fulfillment.fulfiller.0);
@@ -617,8 +682,11 @@ impl IntentPool {
             return Err(CommitRevealError::NonceMismatch);
         }
 
-        // Remove the commitment (fulfilled)
+        let intent_id = commitment.intent_id;
         self.pending_commitments.remove(&reveal.commitment_hash);
+
+        // Mark the intent as fulfilled (replay protection, issue #13)
+        self.mark_fulfilled(intent_id);
 
         Ok(())
     }
@@ -645,30 +713,40 @@ impl IntentPool {
     }
 
     // -----------------------------------------------------------------------
-    // Rate limiting (Fix 6)
+    // Rate limiting
     // -----------------------------------------------------------------------
 
-    /// Check if a creator is within their rate limit.
     fn check_rate_limit(&self, creator: &CommitmentId, now: u64) -> Result<(), ReceiveError> {
         if let Some(&(window_start, count)) = self.recent_by_creator.get(creator) {
-            // Check if we're still in the same window
-            if now.saturating_sub(window_start) < RATE_LIMIT_WINDOW_SECS {
-                if count >= MAX_INTENTS_PER_CREATOR_PER_MINUTE {
-                    return Err(ReceiveError::RateLimited {
-                        creator: *creator,
-                        count,
-                        max: MAX_INTENTS_PER_CREATOR_PER_MINUTE,
-                    });
-                }
+            if now.saturating_sub(window_start) < RATE_LIMIT_WINDOW_SECS
+                && count >= MAX_INTENTS_PER_CREATOR_PER_MINUTE
+            {
+                return Err(ReceiveError::RateLimited {
+                    creator: *creator,
+                    count,
+                    max: MAX_INTENTS_PER_CREATOR_PER_MINUTE,
+                });
             }
         }
         Ok(())
     }
 
-    /// Record an intent from a creator for rate-limiting purposes.
+    /// Check global rate limit (issue #4: prevents Sybil floods regardless of identity).
+    fn check_global_rate_limit(&self, now: u64) -> Result<(), ReceiveError> {
+        let (window_start, count) = self.global_rate;
+        if now.saturating_sub(window_start) < RATE_LIMIT_WINDOW_SECS
+            && count >= MAX_GLOBAL_INTENTS_PER_WINDOW
+        {
+            return Err(ReceiveError::GlobalRateLimited {
+                count,
+                max: MAX_GLOBAL_INTENTS_PER_WINDOW,
+            });
+        }
+        Ok(())
+    }
+
     fn record_intent_from_creator(&mut self, creator: &CommitmentId, now: u64) {
         let entry = self.recent_by_creator.entry(*creator).or_insert((now, 0));
-        // Reset window if it's expired
         if now.saturating_sub(entry.0) >= RATE_LIMIT_WINDOW_SECS {
             *entry = (now, 1);
         } else {
@@ -676,11 +754,18 @@ impl IntentPool {
         }
     }
 
+    fn record_global_intent(&mut self, now: u64) {
+        if now.saturating_sub(self.global_rate.0) >= RATE_LIMIT_WINDOW_SECS {
+            self.global_rate = (now, 1);
+        } else {
+            self.global_rate.1 += 1;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
 
-    /// Check if a match should be auto-fulfilled based on policy.
     fn should_auto_fulfill(&self, intent: &Intent) -> bool {
         match &self.auto_fulfill {
             AutoFulfillPolicy::Never => false,
@@ -699,11 +784,11 @@ impl IntentPool {
         }
     }
 
-    /// Find the oldest intent by expiry (for eviction).
-    fn find_oldest_intent(&self) -> Option<[u8; 32]> {
+    /// Find the oldest intent by ARRIVAL TIME (issue #9).
+    fn find_oldest_by_arrival(&self) -> Option<[u8; 32]> {
         self.intents
             .iter()
-            .min_by_key(|(_, i)| i.expiry)
+            .min_by_key(|(_, s)| s.arrived_at)
             .map(|(id, _)| *id)
     }
 }
@@ -742,54 +827,41 @@ mod tests {
     use super::*;
     use crate::matcher::Sensitivity;
     use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec, StakeProof};
-    use pyana_commit::{commitment_to_field, Poseidon2MerkleTree};
+    use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
 
-    /// Build a test Poseidon2 tree and return the root along with a valid stake proof
-    /// for note commitment [0xDE; 32].
     fn build_test_tree() -> (BabyBear, StakeProof) {
         let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
         let mut tree = Poseidon2MerkleTree::with_depth(4);
-
-        // Insert some other notes
         for i in 0..5u8 {
             let mut c = [0u8; 32];
             c[0] = i;
             c[1] = 0xAA;
             tree.append(commitment_to_field(&c));
         }
-
-        // Insert the target commitment
         let leaf = commitment_to_field(&commitment.0);
         let pos = tree.append(leaf);
-
-        // More notes
         for i in 10..15u8 {
             let mut c = [0u8; 32];
             c[0] = i;
             c[1] = 0xBB;
             tree.append(commitment_to_field(&c));
         }
-
         let root = tree.root();
         let merkle_proof = tree.prove_membership(pos).unwrap();
-
         let stake_proof = StakeProof {
             commitment,
             merkle_root: root,
             merkle_proof,
             minimum_value: 100,
         };
-
         (root, stake_proof)
     }
 
-    /// A valid stake proof for testing gossip-received intents.
     fn valid_stake() -> Option<StakeProof> {
         let (_root, proof) = build_test_tree();
         Some(proof)
     }
 
-    /// Return the known root that matches valid_stake().
     fn test_known_root() -> BabyBear {
         let (root, _proof) = build_test_tree();
         root
@@ -829,16 +901,13 @@ mod tests {
     fn test_broadcast_adds_to_pool() {
         let mut pool = test_pool();
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
-        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, None);
+        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, None).unwrap();
         assert_eq!(pool.len(), 1);
         assert!(pool.get_intent(&intent.id).is_some());
     }
@@ -847,25 +916,14 @@ mod tests {
     fn test_receive_triggers_matching() {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read", "write"], "*")]);
-
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]), // different creator
-            9999,
-            valid_stake(),
-        );
-
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, valid_stake());
         let result = pool.receive_intent(intent, 100);
         assert!(result.is_some());
     }
@@ -874,20 +932,14 @@ mod tests {
     fn test_own_intents_not_matched() {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
-
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
-        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, valid_stake());
-
-        // Now "receive" it as if from gossip -- should be ignored
+        let intent = pool.broadcast_intent(IntentKind::Need, spec, 9999, valid_stake()).unwrap();
         let result = pool.receive_intent(intent, 100);
         assert!(result.is_none());
     }
@@ -895,8 +947,6 @@ mod tests {
     #[test]
     fn test_expired_intent_rejected() {
         let mut pool = test_pool();
-        pool.update_held_tokens(vec![test_token(&["read"], "*")]);
-
         let spec = MatchSpec {
             actions: vec![],
             constraints: vec![],
@@ -904,22 +954,14 @@ mod tests {
             resource_pattern: None,
             compound: None,
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x33; 32]),
-            50, // expires at t=50
-            valid_stake(),
-        );
-
-        let result = pool.receive_intent(intent, 100); // now=100, expired
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x33; 32]), 50, valid_stake());
+        let result = pool.receive_intent(intent, 100);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_gc_removes_expired() {
         let mut pool = test_pool();
-
         let spec = MatchSpec {
             actions: vec![],
             constraints: vec![],
@@ -927,23 +969,12 @@ mod tests {
             resource_pattern: None,
             compound: None,
         };
-
-        // Add intent that expires at t=200
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec.clone(),
-            CommitmentId([0x44; 32]),
-            200,
-            None,
-        );
-        pool.intents.insert(intent.id, intent);
-
-        // Add intent that expires at t=500
+        let intent = Intent::new(IntentKind::Need, spec.clone(), CommitmentId([0x44; 32]), 200, None);
+        pool.intents.insert(intent.id, StoredIntent { intent, arrived_at: 50 });
         let intent2 = Intent::new(IntentKind::Need, spec, CommitmentId([0x55; 32]), 500, None);
-        pool.intents.insert(intent2.id, intent2);
-
+        pool.intents.insert(intent2.id, StoredIntent { intent: intent2, arrived_at: 60 });
         assert_eq!(pool.len(), 2);
-        pool.gc(300); // t=300: first expired, second still valid
+        pool.gc(300);
         assert_eq!(pool.len(), 1);
     }
 
@@ -951,29 +982,16 @@ mod tests {
     fn test_duplicate_intent_ignored() {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
-
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x66; 32]),
-            9999,
-            valid_stake(),
-        );
-
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x66; 32]), 9999, valid_stake());
         let r1 = pool.receive_intent(intent.clone(), 100);
         assert!(r1.is_some());
-
-        // Receiving same intent again should return None (duplicate)
         let r2 = pool.receive_intent(intent, 100);
         assert!(r2.is_none());
     }
@@ -981,30 +999,19 @@ mod tests {
     #[test]
     fn test_rematch_all() {
         let mut pool = test_pool();
-        // Initially no tokens
         pool.update_held_tokens(vec![]);
-
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x77; 32]), 9999, None);
-        pool.intents.insert(intent.id, intent);
-
-        // No matches yet (no tokens)
+        pool.intents.insert(intent.id, StoredIntent { intent, arrived_at: 50 });
         let matches = pool.rematch_all(100);
         assert!(matches.is_empty());
-
-        // Now add a token
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
-
-        // Rematch should find it
         let matches = pool.rematch_all(100);
         assert_eq!(matches.len(), 1);
     }
@@ -1014,95 +1021,50 @@ mod tests {
         let root = test_known_root();
         let mut pool = IntentPool::new(
             CommitmentId([0x11; 32]),
-            IntentPoolConfig {
-                max_intents: 3,
-                gc_interval_secs: 60,
-                auto_match: false,
-                minimum_stake_value: 0,
-            },
+            IntentPoolConfig { max_intents: 3, gc_interval_secs: 60, auto_match: false, minimum_stake_value: 0 },
             AutoFulfillPolicy::Never,
             root,
         );
-
         for i in 0..5u8 {
             let spec = MatchSpec {
-                actions: vec![ActionPattern {
-                    action: Some(format!("action_{i}")),
-                    resource: None,
-                }],
+                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
                 constraints: vec![],
                 min_budget: None,
                 resource_pattern: None,
                 compound: None,
             };
-            let intent = Intent::new(
-                IntentKind::Need,
-                spec,
-                CommitmentId([i + 0x80; 32]),
-                (1000 + i as u64) * 10,
-                valid_stake(),
-            );
-            pool.receive_intent(intent, 100);
+            let intent = Intent::new(IntentKind::Need, spec, CommitmentId([i + 0x80; 32]), (1000 + i as u64) * 10, valid_stake());
+            pool.receive_intent(intent, 100 + i as u64);
         }
-
-        // Pool should not exceed max_intents
         assert!(pool.len() <= 3);
     }
 
     #[test]
     fn test_active_intents_filters_expired() {
         let mut pool = test_pool();
-
-        let spec1 = MatchSpec {
-            actions: vec![],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
-        };
-        let i1 = Intent::new(
-            IntentKind::Need,
-            spec1.clone(),
-            CommitmentId([0xA0; 32]),
-            200,
-            None,
-        );
+        let spec1 = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None };
+        let i1 = Intent::new(IntentKind::Need, spec1.clone(), CommitmentId([0xA0; 32]), 200, None);
         let i2 = Intent::new(IntentKind::Need, spec1, CommitmentId([0xB0; 32]), 500, None);
-
-        pool.intents.insert(i1.id, i1);
-        pool.intents.insert(i2.id, i2);
-
+        pool.intents.insert(i1.id, StoredIntent { intent: i1, arrived_at: 50 });
+        pool.intents.insert(i2.id, StoredIntent { intent: i2, arrived_at: 60 });
         let active = pool.active_intents(300);
         assert_eq!(active.len(), 1);
     }
-
-    // -----------------------------------------------------------------------
-    // New hardening tests
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_gossip_rejects_intent_without_stake() {
         let mut pool = test_pool();
         pool.update_held_tokens(vec![test_token(&["read"], "*")]);
-
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("read".into()),
-                resource: None,
-            }],
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
             constraints: vec![],
             min_budget: None,
             resource_pattern: None,
             compound: None,
         };
-        // Intent with no stake
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
-
-        // Gossip path (require_stake=true) should reject
         let result = pool.receive_intent_checked(intent.clone(), 100, true);
         assert_eq!(result, Err(ReceiveError::MissingStake));
-
-        // Local path (require_stake=false) should accept
         let result = pool.receive_local_intent(intent, 100);
         assert!(result.is_ok());
     }
@@ -1110,147 +1072,165 @@ mod tests {
     #[test]
     fn test_gossip_rejects_invalid_stake_proof() {
         let mut pool = test_pool();
-
-        let spec = MatchSpec {
-            actions: vec![],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
-        };
-        // Intent with a fake stake proof (random commitment not in the tree)
+        let spec = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None };
         let fake_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
         let (_root, mut real_proof) = build_test_tree();
-        // Tamper: use a commitment that doesn't match the proof
         real_proof.commitment = fake_commitment;
-
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]),
-            9999,
-            Some(real_proof),
-        );
-
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, Some(real_proof));
         let result = pool.receive_intent_checked(intent, 100, true);
         assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
     }
 
     #[test]
     fn test_gossip_rejects_wrong_root() {
-        // Pool expects one root, but stake proof has a different root
-        let (real_root, stake_proof) = build_test_tree();
-
-        // Create a pool with a DIFFERENT known root
+        let (_real_root, stake_proof) = build_test_tree();
         let wrong_root = BabyBear::new(0xBAD_CAFE);
         let mut pool = IntentPool::new(
             CommitmentId([0x11; 32]),
-            IntentPoolConfig {
-                max_intents: 100,
-                gc_interval_secs: 60,
-                auto_match: false,
-                minimum_stake_value: 0,
-            },
+            IntentPoolConfig { max_intents: 100, gc_interval_secs: 60, auto_match: false, minimum_stake_value: 0 },
             AutoFulfillPolicy::Never,
             wrong_root,
         );
-
-        let spec = MatchSpec {
-            actions: vec![],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
-        };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]),
-            9999,
-            Some(stake_proof),
-        );
-
+        let spec = MatchSpec { actions: vec![], constraints: vec![], min_budget: None, resource_pattern: None, compound: None };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, Some(stake_proof));
         let result = pool.receive_intent_checked(intent, 100, true);
         assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
     }
 
     #[test]
-    fn test_gossip_rejects_insufficient_stake_value() {
-        let (root, mut stake_proof) = build_test_tree();
-        stake_proof.minimum_value = 50; // below minimum
+    fn test_stake_accepted_k_times_per_epoch() {
+        let mut pool = test_pool();
+        // Same stake can be used MAX_STAKE_USES_PER_EPOCH times in one epoch
+        for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
+            let spec = MatchSpec {
+                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
+                constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+            };
+            let intent = Intent::new(
+                IntentKind::Need, spec, CommitmentId([0x22 + i as u8; 32]), 9999, valid_stake(),
+            );
+            let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
+            assert!(result.is_ok(), "intent {i} should succeed (K={} uses per epoch)", crate::MAX_STAKE_USES_PER_EPOCH);
+        }
 
-        let mut pool = IntentPool::new(
-            CommitmentId([0x11; 32]),
-            IntentPoolConfig {
-                max_intents: 100,
-                gc_interval_secs: 60,
-                auto_match: false,
-                minimum_stake_value: 100, // require at least 100
-            },
-            AutoFulfillPolicy::Never,
-            root,
+        // The (K+1)th use in the same epoch should be rejected
+        let spec_overflow = MatchSpec {
+            actions: vec![ActionPattern { action: Some("overflow".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+        };
+        let intent_overflow = Intent::new(
+            IntentKind::Need, spec_overflow, CommitmentId([0x99; 32]), 9999, valid_stake(),
         );
+        let result = pool.receive_intent_checked(intent_overflow, 110, true);
+        assert_eq!(result, Err(ReceiveError::StakeAlreadyUsed));
+    }
+
+    #[test]
+    fn test_stake_refreshes_in_new_epoch() {
+        let mut pool = test_pool();
+        // Use all K slots in epoch 0
+        for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
+            let spec = MatchSpec {
+                actions: vec![ActionPattern { action: Some(format!("e0_action_{i}")), resource: None }],
+                constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+            };
+            let intent = Intent::new(
+                IntentKind::Need, spec, CommitmentId([0x30 + i as u8; 32]), 9999, valid_stake(),
+            );
+            let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
+            assert!(result.is_ok(), "epoch 0, use {i} should succeed");
+        }
+
+        // Advance to a new epoch (block height crosses epoch boundary)
+        pool.update_block_height(crate::EPOCH_DURATION_BLOCKS);
+
+        // Same stake should be accepted again in the new epoch
+        let spec_new_epoch = MatchSpec {
+            actions: vec![ActionPattern { action: Some("new_epoch_action".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+        };
+        let intent_new_epoch = Intent::new(
+            IntentKind::Need, spec_new_epoch, CommitmentId([0xEE; 32]), 99999, valid_stake(),
+        );
+        let result = pool.receive_intent_checked(intent_new_epoch, crate::EPOCH_DURATION_BLOCKS + 1, true);
+        assert!(result.is_ok(), "same stake should work in new epoch");
+    }
+
+    #[test]
+    fn test_different_commitments_independent_tracking() {
+        let mut pool = test_pool();
+        // Use all K slots for one commitment
+        for i in 0..crate::MAX_STAKE_USES_PER_EPOCH {
+            let spec = MatchSpec {
+                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
+                constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+            };
+            let intent = Intent::new(
+                IntentKind::Need, spec, CommitmentId([0x22 + i as u8; 32]), 9999, valid_stake(),
+            );
+            let result = pool.receive_intent_checked(intent, 100 + i as u64, true);
+            assert!(result.is_ok());
+        }
+
+        // A different commitment should still work (build a different stake proof)
+        let different_commitment = pyana_cell::NoteCommitment([0xAB; 32]);
+        let mut tree = pyana_commit::Poseidon2MerkleTree::with_depth(4);
+        for i in 0..5u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xAA;
+            tree.append(pyana_commit::commitment_to_field(&c));
+        }
+        let leaf = pyana_commit::commitment_to_field(&different_commitment.0);
+        let pos = tree.append(leaf);
+        for i in 10..15u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xBB;
+            tree.append(pyana_commit::commitment_to_field(&c));
+        }
+        let root = tree.root();
+        let merkle_proof = tree.prove_membership(pos).unwrap();
+        let diff_stake = StakeProof {
+            commitment: different_commitment,
+            merkle_root: root,
+            merkle_proof,
+            minimum_value: 100,
+        };
+
+        // Update pool root to match new tree
+        pool.update_known_note_root(root);
 
         let spec = MatchSpec {
-            actions: vec![],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
+            actions: vec![ActionPattern { action: Some("diff_commitment".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
         };
         let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]),
-            9999,
-            Some(stake_proof),
+            IntentKind::Need, spec, CommitmentId([0xDD; 32]), 9999, Some(diff_stake),
         );
-
-        let result = pool.receive_intent_checked(intent, 100, true);
-        assert_eq!(
-            result,
-            Err(ReceiveError::InsufficientStakeValue {
-                claimed: 50,
-                minimum: 100
-            })
-        );
+        let result = pool.receive_intent_checked(intent, 200, true);
+        assert!(result.is_ok(), "different commitment should be independent");
     }
 
     #[test]
     fn test_rate_limiting() {
         let mut pool = test_pool();
         let creator = CommitmentId([0x99; 32]);
-
-        // Post MAX_INTENTS_PER_CREATOR_PER_MINUTE intents (should all succeed)
         for i in 0..MAX_INTENTS_PER_CREATOR_PER_MINUTE {
             let spec = MatchSpec {
-                actions: vec![ActionPattern {
-                    action: Some(format!("action_{i}")),
-                    resource: None,
-                }],
-                constraints: vec![],
-                min_budget: None,
-                resource_pattern: None,
-                compound: None,
+                actions: vec![ActionPattern { action: Some(format!("action_{i}")), resource: None }],
+                constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
-            let result = pool.receive_intent_checked(intent, 100, true);
+            let result = pool.receive_intent_checked(intent, 100, false);
             assert!(result.is_ok(), "intent {i} should succeed");
         }
-
-        // The next one should be rate-limited
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("action_overflow".into()),
-                resource: None,
-            }],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
+            actions: vec![ActionPattern { action: Some("action_overflow".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
-        let result = pool.receive_intent_checked(intent, 100, true);
+        let result = pool.receive_intent_checked(intent, 100, false);
         assert!(matches!(result, Err(ReceiveError::RateLimited { .. })));
     }
 
@@ -1258,64 +1238,29 @@ mod tests {
     fn test_rate_limit_resets_after_window() {
         let mut pool = test_pool();
         let creator = CommitmentId([0xAA; 32]);
-
-        // Fill up the rate limit at t=100
         for i in 0..MAX_INTENTS_PER_CREATOR_PER_MINUTE {
             let spec = MatchSpec {
-                actions: vec![ActionPattern {
-                    action: Some(format!("a_{i}")),
-                    resource: None,
-                }],
-                constraints: vec![],
-                min_budget: None,
-                resource_pattern: None,
-                compound: None,
+                actions: vec![ActionPattern { action: Some(format!("a_{i}")), resource: None }],
+                constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
-            pool.receive_intent_checked(intent, 100, true).unwrap();
+            pool.receive_intent_checked(intent, 100, false).unwrap();
         }
-
-        // After the window expires (t=161), should be able to post again
         let spec = MatchSpec {
-            actions: vec![ActionPattern {
-                action: Some("new_window".into()),
-                resource: None,
-            }],
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
+            actions: vec![ActionPattern { action: Some("new_window".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
-        let result = pool.receive_intent_checked(intent, 161, true);
+        let result = pool.receive_intent_checked(intent, 161, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validation_rejects_oversized_intent() {
         let mut pool = test_pool();
-
-        // Create intent with too many actions
-        let actions: Vec<ActionPattern> = (0..65)
-            .map(|i| ActionPattern {
-                action: Some(format!("act_{i}")),
-                resource: None,
-            })
-            .collect();
-        let spec = MatchSpec {
-            actions,
-            constraints: vec![],
-            min_budget: None,
-            resource_pattern: None,
-            compound: None,
-        };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]),
-            9999,
-            valid_stake(),
-        );
+        let actions: Vec<ActionPattern> = (0..65).map(|i| ActionPattern { action: Some(format!("act_{i}")), resource: None }).collect();
+        let spec = MatchSpec { actions, constraints: vec![], min_budget: None, resource_pattern: None, compound: None };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, valid_stake());
         let result = pool.receive_intent_checked(intent, 100, true);
         assert!(matches!(result, Err(ReceiveError::Invalid(_))));
     }
@@ -1323,7 +1268,6 @@ mod tests {
     #[test]
     fn test_commit_reveal_happy_path() {
         let mut pool = test_pool();
-
         let fulfillment = crate::fulfillment::Fulfillment {
             intent_id: [0x01; 32],
             fulfiller: CommitmentId([0xBB; 32]),
@@ -1334,34 +1278,21 @@ mod tests {
             granted_resource: "docs/*".into(),
             expiry: Some(5000),
         };
-
-        // Phase 1: Commit
-        let (_nonce, commitment) = pool.commit_to_fulfill([0x01; 32], &fulfillment, 100);
+        let commitment = pool.commit_to_fulfill([0x01; 32], &fulfillment, 100);
         assert!(pool.has_commitment_for(&[0x01; 32]));
         assert_eq!(pool.pending_commitment_count(), 1);
-
-        // Phase 2: Reveal (too early -- should fail)
         let commitment_hash = IntentPool::hash_commitment(&commitment);
-        let reveal = FulfillmentReveal {
-            commitment_hash,
-            fulfillment: fulfillment.clone(),
-            nonce: [0xFF; 32], // wrong nonce
-        };
-        let result = pool.reveal_fulfillment(&reveal, 102); // only 2 seconds elapsed
+        let reveal = FulfillmentReveal { commitment_hash, fulfillment: fulfillment.clone(), nonce: [0xFF; 32] };
+        let result = pool.reveal_fulfillment(&reveal, 102);
         assert_eq!(result, Err(CommitRevealError::TooEarly { remaining: 3 }));
-
-        // Phase 2: Reveal (wrong nonce -- should fail even after window)
         let result = pool.reveal_fulfillment(&reveal, 106);
         assert_eq!(result, Err(CommitRevealError::NonceMismatch));
-
-        // The commitment is still pending (wrong nonce doesn't consume it)
         assert_eq!(pool.pending_commitment_count(), 1);
     }
 
     #[test]
     fn test_commit_reveal_no_commitment() {
         let mut pool = test_pool();
-
         let fulfillment = crate::fulfillment::Fulfillment {
             intent_id: [0x01; 32],
             fulfiller: CommitmentId([0xBB; 32]),
@@ -1372,14 +1303,24 @@ mod tests {
             granted_resource: "docs/*".into(),
             expiry: Some(5000),
         };
-
-        let reveal = FulfillmentReveal {
-            commitment_hash: [0xFF; 32], // no such commitment
-            fulfillment,
-            nonce: [0x00; 32],
-        };
-
+        let reveal = FulfillmentReveal { commitment_hash: [0xFF; 32], fulfillment, nonce: [0x00; 32] };
         let result = pool.reveal_fulfillment(&reveal, 200);
         assert_eq!(result, Err(CommitRevealError::NoCommitment));
+    }
+
+    #[test]
+    fn test_fulfilled_intent_rejected_on_resubmit() {
+        let mut pool = test_pool();
+        let spec = MatchSpec {
+            actions: vec![ActionPattern { action: Some("read".into()), resource: None }],
+            constraints: vec![], min_budget: None, resource_pattern: None, compound: None,
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
+        let intent_id = intent.id;
+        let result = pool.receive_local_intent(intent.clone(), 100);
+        assert!(result.is_ok());
+        pool.mark_fulfilled(intent_id);
+        let result = pool.receive_local_intent(intent, 101);
+        assert_eq!(result, Err(ReceiveError::AlreadyFulfilled));
     }
 }

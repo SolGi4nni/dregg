@@ -38,16 +38,21 @@ pub struct MerkleProof {
 /// A non-membership proof: proves a key is absent from the tree.
 ///
 /// This works by showing the two adjacent leaves that bracket the absent key,
-/// together with their membership proofs. If the tree is empty or the key would
-/// be first/last, one of the adjacents may be None.
+/// together with their membership proofs and their positions in the sorted
+/// leaf ordering. The verifier checks that the positions are adjacent
+/// (right_pos == left_pos + 1) to prevent an attacker from choosing
+/// non-adjacent neighbors to falsely prove non-membership of a key that
+/// IS in the tree.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NonMembershipProof {
     /// The key being proved absent.
     pub absent_key: [u8; 32],
-    /// The leaf just before the absent key (if any).
-    pub left_neighbor: Option<([u8; 32], MerkleProof)>,
-    /// The leaf just after the absent key (if any).
-    pub right_neighbor: Option<([u8; 32], MerkleProof)>,
+    /// The leaf just before the absent key (if any), with its sorted position.
+    pub left_neighbor: Option<(u64, [u8; 32], MerkleProof)>,
+    /// The leaf just after the absent key (if any), with its sorted position.
+    pub right_neighbor: Option<(u64, [u8; 32], MerkleProof)>,
+    /// Total number of leaves in the tree at proof generation time.
+    pub tree_size: u64,
 }
 
 /// Witness that all other facts survived (unchanged) through an attenuation.
@@ -206,25 +211,29 @@ impl MerkleTree {
             return None;
         }
 
-        // Find left and right neighbors by full hash (lexicographic order).
+        // Find left and right neighbors by full hash (lexicographic order),
+        // along with their positions in the sorted leaf set.
         let left_neighbor = self
             .leaves
             .range(..*leaf_hash)
             .next_back()
             .map(|(&hash, _)| {
+                let position = self.leaves.range(..=hash).count() as u64 - 1;
                 let proof = self.membership_proof_hash(&hash).unwrap();
-                (hash, proof)
+                (position, hash, proof)
             });
 
         let right_neighbor = self.leaves.range(*leaf_hash..).next().map(|(&hash, _)| {
+            let position = self.leaves.range(..=hash).count() as u64 - 1;
             let proof = self.membership_proof_hash(&hash).unwrap();
-            (hash, proof)
+            (position, hash, proof)
         });
 
         Some(NonMembershipProof {
             absent_key: *leaf_hash,
             left_neighbor,
             right_neighbor,
+            tree_size: self.leaves.len() as u64,
         })
     }
 
@@ -258,15 +267,26 @@ impl MerkleTree {
     }
 
     /// Verify a non-membership proof against a given root.
+    ///
+    /// Checks:
+    /// 1. Both neighbors (if present) have valid membership proofs against the root.
+    /// 2. Left < absent_key < right (lexicographic ordering).
+    /// 3. Left and right are adjacent in the sorted leaf set (right_pos == left_pos + 1),
+    ///    preventing an attacker from choosing non-adjacent leaves to falsely prove
+    ///    non-membership of a key that IS in the tree.
     pub fn verify_non_membership(root: &[u8; 32], proof: &NonMembershipProof) -> bool {
         // At least one neighbor must exist (unless tree is empty and root is empty root).
         let empty_root = empty_hash_at_depth(TREE_DEPTH);
         if proof.left_neighbor.is_none() && proof.right_neighbor.is_none() {
-            return *root == empty_root;
+            // Empty tree: the root must be the canonical empty root and tree_size must be 0.
+            return *root == empty_root && proof.tree_size == 0;
         }
 
+        let mut left_pos: Option<u64> = None;
+        let mut right_pos: Option<u64> = None;
+
         // Verify each neighbor's membership proof.
-        if let Some((ref left_hash, ref mp)) = proof.left_neighbor {
+        if let Some((pos, ref left_hash, ref mp)) = proof.left_neighbor {
             if !Self::verify_membership(root, mp) {
                 return false;
             }
@@ -275,14 +295,13 @@ impl MerkleTree {
                 return false;
             }
             // Left neighbor's FULL hash must be lexicographically less than the absent key.
-            // Using the full 32-byte hash prevents collision attacks that were possible
-            // with the previous 4-byte path_key comparison.
             if *left_hash >= proof.absent_key {
                 return false;
             }
+            left_pos = Some(pos);
         }
 
-        if let Some((ref right_hash, ref mp)) = proof.right_neighbor {
+        if let Some((pos, ref right_hash, ref mp)) = proof.right_neighbor {
             if !Self::verify_membership(root, mp) {
                 return false;
             }
@@ -294,11 +313,39 @@ impl MerkleTree {
             if *right_hash <= proof.absent_key {
                 return false;
             }
+            right_pos = Some(pos);
         }
 
         // Verify adjacency: left and right must be immediate neighbors in the
-        // sorted leaf set. With full-hash comparison above, there is no gap for
-        // collision-based forgeries.
+        // sorted leaf ordering. This prevents an attacker from proving non-membership
+        // of an element that IS in the tree by choosing non-adjacent neighbors.
+        match (left_pos, right_pos) {
+            (Some(l), Some(r)) => {
+                // Both neighbors present: they must be adjacent (no leaves between them).
+                if r != l + 1 {
+                    return false;
+                }
+            }
+            (None, Some(r)) => {
+                // No left neighbor: the right neighbor must be at position 0
+                // (the absent key would be before all leaves).
+                if r != 0 {
+                    return false;
+                }
+            }
+            (Some(l), None) => {
+                // No right neighbor: the left neighbor must be the last leaf
+                // (the absent key would be after all leaves).
+                if proof.tree_size == 0 || l != proof.tree_size - 1 {
+                    return false;
+                }
+            }
+            (None, None) => {
+                // Already handled above (empty tree case).
+                unreachable!()
+            }
+        }
+
         true
     }
 
@@ -318,7 +365,7 @@ impl MerkleTree {
             // Leaf level: find all leaves at this tree position.
             let leaves_at_pos: Vec<&[u8; 32]> = self.leaves_at_path_key(prefix);
             return match leaves_at_pos.len() {
-                0 => EMPTY_LEAF,
+                0 => *EMPTY_LEAF,
                 1 => *leaves_at_pos[0],
                 _ => {
                     // Multiple leaves at the same tree position: hash them together

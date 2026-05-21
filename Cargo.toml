@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "relay", "intent", "net"]
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net"]
 exclude = ["chain", "chain/program"]
 
 [workspace.package]
@@ -43,6 +43,7 @@ scalable_cuckoo_filter = { version = "0.5", features = ["serde_support"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1" }
 sha2 = { version = "0.10" }
+subtle = { version = "2" }
 tempfile = { version = "3" }
 thiserror = { version = "2" }
 x25519-dalek = { version = "2", features = ["static_secrets"] }

@@ -6,10 +6,17 @@ const logContainer = document.getElementById('logContainer');
 const lockBtn = document.getElementById('lockBtn');
 const backupBtn = document.getElementById('backupBtn');
 const recoverBtn = document.getElementById('recoverBtn');
+const managePermsBtn = document.getElementById('managePermsBtn');
 const passphraseSection = document.getElementById('passphraseSection');
 const passphraseInput = document.getElementById('passphraseInput');
+const passphraseSetupSection = document.getElementById('passphraseSetupSection');
+const newPassphraseInput = document.getElementById('newPassphraseInput');
+const confirmPassphraseInput = document.getElementById('confirmPassphraseInput');
+const setPassphraseBtn = document.getElementById('setPassphraseBtn');
 const mnemonicDisplay = document.getElementById('mnemonicDisplay');
 const mnemonicWarning = document.getElementById('mnemonicWarning');
+const permissionsSection = document.getElementById('permissionsSection');
+const permissionsContainer = document.getElementById('permissionsContainer');
 
 async function sendMessage(type, extra) {
   const id = `popup_${Date.now()}`;
@@ -26,9 +33,11 @@ async function refresh() {
     lockBtn.textContent = 'Unlock Wallet';
     lockBtn.classList.add('locked');
     passphraseSection.classList.remove('hidden');
+    passphraseSetupSection.classList.add('hidden');
     backupBtn.style.display = 'none';
     mnemonicDisplay.style.display = 'none';
     mnemonicWarning.style.display = 'none';
+    permissionsSection.style.display = 'none';
   } else {
     statusDot.classList.remove('locked');
     statusText.textContent = 'Connected';
@@ -36,6 +45,12 @@ async function refresh() {
     lockBtn.classList.remove('locked');
     passphraseSection.classList.add('hidden');
     backupBtn.style.display = state.hasMnemonic ? 'block' : 'none';
+    // Show passphrase setup prompt if needed.
+    if (state.needsPassphraseSetup) {
+      passphraseSetupSection.classList.remove('hidden');
+    } else {
+      passphraseSetupSection.classList.add('hidden');
+    }
   }
   tokenCount.textContent = String(state.tokenCount);
   chainLength.textContent = String(state.chainLength);
@@ -76,17 +91,72 @@ lockBtn.addEventListener('click', async () => {
     passphraseInput.style.borderColor = '';
     passphraseInput.placeholder = 'Enter passphrase to unlock';
   } else {
-    // If no passphrase is set yet, prompt for one before locking.
-    if (!state.hasPassphrase) {
-      const passphrase = prompt('Set a passphrase to protect your wallet (leave empty for no encryption):');
-      if (passphrase !== null && passphrase.length > 0) {
-        await sendMessage('pyana:setPassphrase', { passphrase });
-      }
-    }
     await sendMessage('pyana:lock');
   }
   await refresh();
 });
+
+// Passphrase setup handler (for new wallets).
+setPassphraseBtn.addEventListener('click', async () => {
+  const newPass = newPassphraseInput.value;
+  const confirmPass = confirmPassphraseInput.value;
+  if (!newPass) {
+    newPassphraseInput.style.borderColor = '#f87171';
+    newPassphraseInput.placeholder = 'Passphrase is required';
+    return;
+  }
+  if (newPass !== confirmPass) {
+    confirmPassphraseInput.style.borderColor = '#f87171';
+    confirmPassphraseInput.value = '';
+    confirmPassphraseInput.placeholder = 'Passphrases do not match';
+    return;
+  }
+  await sendMessage('pyana:setPassphrase', { passphrase: newPass });
+  newPassphraseInput.value = '';
+  confirmPassphraseInput.value = '';
+  newPassphraseInput.style.borderColor = '';
+  confirmPassphraseInput.style.borderColor = '';
+  passphraseSetupSection.classList.add('hidden');
+  await refresh();
+});
+
+// Manage permissions.
+managePermsBtn.addEventListener('click', async () => {
+  if (permissionsSection.style.display === 'none') {
+    permissionsSection.style.display = 'block';
+    managePermsBtn.textContent = 'Hide Permissions';
+    await loadPermissions();
+  } else {
+    permissionsSection.style.display = 'none';
+    managePermsBtn.textContent = 'Manage Permissions';
+  }
+});
+
+async function loadPermissions() {
+  const perms = await sendMessage('pyana:getOriginPermissions');
+  if (!perms || perms.length === 0) {
+    permissionsContainer.innerHTML = '<div class="empty">No origins approved</div>';
+    return;
+  }
+  permissionsContainer.innerHTML = perms.map(p => {
+    const expiresIn = p.expiresIn ? Math.round(p.expiresIn / 60000) : 0;
+    const expiresStr = expiresIn > 60 ? `${Math.round(expiresIn / 60)}h` : `${expiresIn}m`;
+    return `<div class="log-entry" style="display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:11px;color:#fbbf24;word-break:break-all;">${escapeHtml(p.origin)}</div>
+        <div class="time">${escapeHtml(p.methods.join(', '))} - expires in ${expiresStr}</div>
+      </div>
+      <button class="revoke-btn" data-origin="${escapeHtml(p.origin)}" style="flex-shrink:0;padding:4px 8px;font-size:11px;background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;cursor:pointer;">Revoke</button>
+    </div>`;
+  }).join('');
+  // Attach revoke handlers.
+  permissionsContainer.querySelectorAll('.revoke-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await sendMessage('pyana:revokeOriginPermission', { origin: btn.dataset.origin });
+      await loadPermissions();
+    });
+  });
+}
 
 backupBtn.addEventListener('click', async () => {
   const state = await sendMessage('pyana:getState');

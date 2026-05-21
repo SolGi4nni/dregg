@@ -221,28 +221,34 @@ impl RevocationChannelSet {
 
     /// Check if a channel is active (not tripped). Returns:
     /// - `Ok(true)` if the channel exists and is active.
-    /// - `Ok(false)` if the channel exists and is tripped.
-    /// - `Err(ChannelNotFound)` if the channel does not exist.
+    /// - `Ok(false)` if the channel exists and is tripped, OR if the channel is unknown.
+    ///
+    /// Fail-closed: unknown channels are treated as revoked. This prevents an attacker
+    /// from bypassing revocation by referencing a channel_id that was never registered.
     pub fn is_channel_active(
         &self,
         channel_id: &ChannelId,
     ) -> Result<bool, RevocationChannelError> {
         match self.channels.get(channel_id) {
             Some(ch) => Ok(ch.is_active()),
-            None => Err(RevocationChannelError::ChannelNotFound {
-                channel_id: *channel_id,
-            }),
+            None => Ok(false), // Fail-closed: unknown channels are treated as revoked.
         }
     }
 
     /// Check if a capability gated by `channel_id` can be exercised.
     ///
     /// This is the main query the executor uses. It checks:
-    /// 1. Does the channel exist?
+    /// 1. Does the channel exist? If not, exercise is DENIED (fail-closed).
     /// 2. Is the channel active (not tripped)?
     /// 3. Is the staleness window still valid (if `last_checked_at` and `max_staleness` provided)?
     ///
     /// Returns `Ok(())` if the capability may be exercised, or an error describing why not.
+    ///
+    /// # Fail-closed semantics
+    ///
+    /// Unknown channels are treated as revoked. This prevents an attacker from
+    /// bypassing revocation by referencing a channel_id that was never registered
+    /// or has been garbage-collected.
     pub fn check_exercise_permitted(
         &self,
         channel_id: &ChannelId,
@@ -250,12 +256,16 @@ impl RevocationChannelSet {
         last_checked_at: u64,
         max_staleness: u64,
     ) -> Result<(), RevocationChannelError> {
-        let channel =
-            self.channels
-                .get(channel_id)
-                .ok_or(RevocationChannelError::ChannelNotFound {
+        let channel = match self.channels.get(channel_id) {
+            Some(ch) => ch,
+            None => {
+                // Fail-closed: unknown channel = revoked.
+                return Err(RevocationChannelError::ChannelTripped {
                     channel_id: *channel_id,
-                })?;
+                    tripped_at: 0,
+                });
+            }
+        };
 
         match &channel.state {
             ChannelState::Active => {
@@ -629,7 +639,8 @@ mod tests {
     }
 
     #[test]
-    fn test_check_exercise_channel_not_found() {
+    fn test_check_exercise_channel_not_found_is_denied() {
+        // Fail-closed: unknown channels are treated as revoked (ChannelTripped).
         let set = RevocationChannelSet::new();
         let fake_id = [0xDDu8; 32];
 
@@ -637,8 +648,18 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            RevocationChannelError::ChannelNotFound { .. }
+            RevocationChannelError::ChannelTripped { .. }
         ));
+    }
+
+    #[test]
+    fn test_is_channel_active_unknown_returns_false() {
+        // Fail-closed: unknown channels report as inactive (not active).
+        let set = RevocationChannelSet::new();
+        let fake_id = [0xDDu8; 32];
+
+        let result = set.is_channel_active(&fake_id);
+        assert_eq!(result, Ok(false));
     }
 
     #[test]

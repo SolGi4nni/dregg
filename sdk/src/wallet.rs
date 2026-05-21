@@ -83,20 +83,42 @@ pub enum AuthorizationPresentation {
     },
 
     /// Selective disclosure: chosen facts revealed, remainder proven in ZK.
+    ///
+    /// The `revealed_facts_commitment` cryptographically binds the revealed facts
+    /// to the STARK proof. The verifier MUST recompute this commitment from
+    /// `revealed_facts` and check it matches before trusting the revealed data.
     Selective {
         /// The facts the prover chose to reveal (subset of the evaluation).
         revealed_facts: Vec<TraceFact>,
         /// The STARK proof covering the full derivation (serialized bytes).
         proof: Vec<u8>,
-        /// Whether authorization was granted.
+        /// Whether authorization was granted (informational only).
+        ///
+        /// SECURITY: This field is self-reported by the prover and MUST NOT be
+        /// trusted for authorization decisions without independent verification.
+        /// Verifiers MUST re-derive the conclusion from the STARK proof's public
+        /// inputs or from the proven facts. This field exists only for UX/logging.
         conclusion: bool,
+        /// Poseidon2 commitment over the revealed fact hashes.
+        ///
+        /// This value is embedded as a public input in the STARK proof. The verifier
+        /// recomputes it from `revealed_facts` using
+        /// [`pyana_bridge::compute_revealed_facts_commitment`] and confirms it matches.
+        /// A mismatch means the prover lied about which facts were part of the derivation.
+        revealed_facts_commitment: BabyBear,
     },
 
     /// Fully private: verifier learns only the conclusion.
     Private {
         /// The STARK proof covering the full derivation (serialized bytes).
         proof: Vec<u8>,
-        /// Whether authorization was granted (the single bit of information).
+        /// Whether authorization was granted (informational only).
+        ///
+        /// SECURITY: This field is self-reported by the prover and MUST NOT be
+        /// trusted for authorization decisions without independent verification.
+        /// The verifier MUST rely solely on the STARK proof's public inputs to
+        /// determine the authorization conclusion. This field exists only for
+        /// UX/logging purposes.
         conclusion: bool,
     },
 }
@@ -395,6 +417,21 @@ impl AgentWallet {
     /// Get this agent's public key (identity).
     pub fn public_key(&self) -> PublicKey {
         self.public_key
+    }
+
+    /// Derive a purpose-specific symmetric key from this wallet's signing key.
+    ///
+    /// Uses BLAKE3's key derivation mode with the given context string to
+    /// produce a 32-byte key that is deterministic for this wallet but
+    /// unique per context. This is used, for example, to derive the gossip
+    /// envelope signing key for federation communication.
+    ///
+    /// # Security
+    ///
+    /// The derived key is a deterministic function of the signing key and
+    /// context. Different context strings produce independent keys.
+    pub fn derive_symmetric_key(&self, context: &str) -> [u8; 32] {
+        blake3::derive_key(context, &self.signing_key.to_bytes())
     }
 
     /// Derive a [`CellId`] for this agent in a given domain.
@@ -805,7 +842,12 @@ impl AgentWallet {
         })
     }
 
-    /// Selective disclosure: STARK proof with chosen facts revealed.
+    /// Selective disclosure: STARK proof with chosen facts cryptographically committed.
+    ///
+    /// The revealed facts are bound to the proof via a Poseidon2 commitment included
+    /// as a public input. The verifier recomputes the commitment from the plaintext
+    /// facts and checks it matches the proof, ensuring the prover cannot lie about
+    /// which facts were derived during evaluation.
     fn authorize_selective(
         &self,
         token: &HeldToken,
@@ -834,15 +876,20 @@ impl AgentWallet {
             .filter_map(|idx| all_facts.get(idx.0).cloned())
             .collect();
 
-        // Step 3: Generate STARK proof via the bridge (full derivation,
-        // with revealed facts as public inputs for the verifier).
-        let bridge_proof = self.prove_authorization(token, request)?;
+        // Step 3: Compute the Poseidon2 commitment over the revealed facts.
+        // This cryptographically binds the revealed facts to the STARK proof.
+        let commitment =
+            pyana_bridge::compute_revealed_facts_commitment(&revealed_facts);
+
+        // Step 4: Generate STARK proof via the bridge with the commitment as a public input.
+        let bridge_proof = self.prove_authorization_selective(token, request, commitment)?;
         let proof = Self::serialize_proof(&bridge_proof);
 
         Ok(AuthorizationPresentation::Selective {
             revealed_facts,
             proof,
             conclusion,
+            revealed_facts_commitment: commitment,
         })
     }
 
@@ -985,6 +1032,48 @@ impl AgentWallet {
         Ok(proof)
     }
 
+    /// Generate a STARK presentation proof with a revealed facts commitment.
+    ///
+    /// This is the internal implementation for selective disclosure mode. It generates
+    /// the same STARK proof as `prove_authorization`, but includes the `commitment`
+    /// as a public input that binds the revealed facts to the proof.
+    ///
+    /// The verifier extracts the commitment from the proof's public inputs and
+    /// recomputes it from the plaintext revealed facts to verify integrity.
+    fn prove_authorization_selective(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+        commitment: BabyBear,
+    ) -> Result<BridgePresentationProof, SdkError> {
+        if !token.can_mint() {
+            return Err(SdkError::MissingKey(
+                "attenuated tokens cannot generate federation membership proofs; \
+                 use the root token holder to prove, or present the attenuated chain directly"
+                    .into(),
+            ));
+        }
+
+        let issuer_key = *token.root_key();
+        let federation_root_bb = Self::compute_federation_root_bb(&issuer_key);
+        let federation_root = Self::bb_to_bytes(federation_root_bb);
+
+        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+            issuer_key,
+            federation_root,
+            federation_root_bb,
+        );
+
+        // Set the revealed facts commitment before proving.
+        builder.set_revealed_facts_commitment(commitment);
+
+        let actual_token = token.decode()?;
+        builder.set_root_token(actual_token);
+
+        let proof = builder.prove(request)?;
+        Ok(proof)
+    }
+
     /// Generate a presentation proof for a held token.
     ///
     /// This produces a real STARK proof suitable for verification across trust
@@ -1046,6 +1135,86 @@ impl AgentWallet {
         }
 
         let proof = builder.prove(request)?;
+        Ok(proof)
+    }
+
+    // =========================================================================
+    // Predicate Proofs
+    // =========================================================================
+
+    /// Prove a predicate about a private token attribute.
+    ///
+    /// This generates a zero-knowledge proof that a specific attribute of a held
+    /// token satisfies a predicate (e.g., "balance >= 1000", "valid_until >= T")
+    /// without revealing the exact value.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token containing the attribute.
+    /// * `attribute` - The attribute name (e.g., "valid_until", "balance", "reputation").
+    ///   This is hashed to a field element and used to look up the fact in the token state.
+    /// * `attribute_value` - The actual (private) value of the attribute.
+    /// * `predicate` - The predicate to prove (e.g., `Predicate::Gte(1000)`).
+    ///
+    /// # Returns
+    ///
+    /// A `BridgePredicateProof` that can be verified by anyone knowing the fact commitment,
+    /// or an error if the predicate cannot be proven (statement is false or token is invalid).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pyana_sdk::AgentWallet;
+    /// use pyana_bridge::Predicate;
+    ///
+    /// let wallet = AgentWallet::new();
+    /// # let token = todo!();
+    /// // Prove: my balance >= 1000 (without revealing the actual balance)
+    /// let proof = wallet.prove_predicate(
+    ///     &token,
+    ///     "balance",
+    ///     5000, // actual balance (private)
+    ///     Predicate::Gte(1000),
+    /// ).unwrap();
+    /// ```
+    pub fn prove_predicate(
+        &self,
+        token: &HeldToken,
+        attribute: &str,
+        attribute_value: u32,
+        predicate: pyana_bridge::Predicate,
+    ) -> Result<pyana_bridge::BridgePredicateProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+
+        // Compute the fact hash for the attribute.
+        // The fact is modeled as: predicate=hash(attribute_name), terms=[value, 0, 0].
+        let attr_bytes = blake3::hash(attribute.as_bytes());
+        let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
+        let value_bb = BabyBear::new(attribute_value);
+        let fact_hash = poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
+
+        // Compute a state root from the token's issuer key (deterministic for testing).
+        // In production, this would come from the committed Merkle tree of the token state.
+        let issuer_key = token.root_key();
+        let state_root = Self::bytes_to_babybear(issuer_key);
+
+        // Generate the predicate proof via the bridge.
+        let proof = pyana_bridge::prove_predicate_for_fact(
+            attribute_value,
+            fact_hash,
+            state_root,
+            &predicate,
+        )
+        .ok_or_else(|| {
+            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                format!(
+                    "predicate proof generation failed: the statement '{attribute}' {:?} is not satisfiable for value {attribute_value}",
+                    predicate
+                ),
+            ))
+        })?;
+
         Ok(proof)
     }
 

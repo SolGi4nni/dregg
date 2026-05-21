@@ -258,6 +258,7 @@ pub fn fulfill_obligation(
     trusted_roots: &[TrustedRoot],
     max_root_age: u64,
     used_proof_hashes: &mut HashSet<[u8; 32]>,
+    trusted_executor_keys: &[[u8; 32]],
 ) -> Result<ObligationOutcome, ObligationError> {
     // Check deadline.
     if current_height > obligation.deadline_height {
@@ -277,6 +278,7 @@ pub fn fulfill_obligation(
         trusted_roots,
         max_root_age,
         used_proof_hashes,
+        trusted_executor_keys,
     );
 
     match result {
@@ -348,7 +350,7 @@ mod tests {
         // Fulfill with valid proof before deadline.
         let proof = ConditionProof::Preimage(preimage);
         let mut nullifiers = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut nullifiers);
+        let result = fulfill_obligation(&obligation, &proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut nullifiers, &[]);
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ObligationOutcome::Fulfilled { .. }));
     }
@@ -382,7 +384,7 @@ mod tests {
         // Try to fulfill after deadline.
         let proof = ConditionProof::Preimage(preimage);
         let mut n = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 101, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = fulfill_obligation(&obligation, &proof, 101, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -419,7 +421,7 @@ mod tests {
         // Present wrong preimage.
         let wrong_proof = ConditionProof::Preimage([99u8; 32]);
         let mut n2 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &wrong_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n2);
+        let result = fulfill_obligation(&obligation, &wrong_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -428,7 +430,7 @@ mod tests {
 
         // Obligation is still pending — can still be fulfilled with correct proof.
         let correct_proof = ConditionProof::Preimage(preimage);
-        let result = fulfill_obligation(&obligation, &correct_proof, 60, &[], DEFAULT_MAX_ROOT_AGE, &mut n2);
+        let result = fulfill_obligation(&obligation, &correct_proof, 60, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
         assert!(result.is_ok());
     }
 
@@ -472,7 +474,7 @@ mod tests {
 
         let trusted: Vec<TrustedRoot> = vec![(fed_root, 100u64)];
         let mut n3 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &proof, 150, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n3);
+        let result = fulfill_obligation(&obligation, &proof, 150, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n3, &[]);
         assert!(result.is_ok());
     }
 
@@ -524,7 +526,7 @@ mod tests {
         };
 
         let mut n4 = HashSet::new();
-        let result = fulfill_obligation(&obligation, &wrong_type_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n4);
+        let result = fulfill_obligation(&obligation, &wrong_type_proof, 50, &[], DEFAULT_MAX_ROOT_AGE, &mut n4, &[]);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),

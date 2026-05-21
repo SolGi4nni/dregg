@@ -20,6 +20,39 @@ use crate::types::*;
 /// This does NOT verify completeness (that no other conclusion was possible),
 /// only soundness (that the claimed derivation is valid).
 pub fn verify_trace(facts: &[Fact], rules: &[Rule], trace: &AuthorizationTrace) -> bool {
+    let allow_pred = predicates::allow();
+    let deny_pred = predicates::deny();
+
+    // SECURITY: Reject traces where allow/deny conclusions appear in base facts.
+    // Base facts should only contain input facts (capabilities, request properties, etc.),
+    // never conclusions. A malicious prover could inject allow(...) as a base fact to
+    // bypass all policy rules.
+    for fact in facts {
+        if fact.predicate == allow_pred || fact.predicate == deny_pred {
+            return false;
+        }
+    }
+
+    // SECURITY: Fail-closed revocation check.
+    // If any `revocable(T)` fact appears in base facts, there MUST be a corresponding
+    // `not_revoked(T)` fact. Without this, a malicious prover can omit `revoked(T)` to
+    // silently bypass revocation. The verifier MUST also independently check revocation
+    // status outside the trace (via RevocationChannelSet), but this provides defense-in-depth.
+    let revocable_pred = crate::symbol_from_str("revocable");
+    let not_revoked_pred = crate::symbol_from_str("not_revoked");
+    for fact in facts {
+        if fact.predicate == revocable_pred {
+            // For each revocable(T), require not_revoked(T) in base facts
+            let token_term = &fact.terms;
+            let has_not_revoked = facts.iter().any(|f| {
+                f.predicate == not_revoked_pred && f.terms == *token_term
+            });
+            if !has_not_revoked {
+                return false;
+            }
+        }
+    }
+
     // Build up the fact set as we verify each step
     let mut known_facts: Vec<Fact> = facts.to_vec();
 

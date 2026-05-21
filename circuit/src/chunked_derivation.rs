@@ -407,6 +407,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![body_hash],

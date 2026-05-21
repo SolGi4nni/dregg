@@ -20,6 +20,7 @@ use pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
 use pyana_circuit::stark;
 use serde::{Deserialize, Serialize};
 
+use crate::error::TurnError;
 use crate::turn::{Turn, TurnReceipt};
 
 /// A trusted root entry: the root hash and the height at which it was attested.
@@ -30,6 +31,22 @@ pub const DEFAULT_MAX_ROOT_AGE: u64 = 500;
 
 /// Maximum number of blocks into the future a conditional turn deadline may be set.
 pub const MAX_CONDITIONAL_DEADLINE: u64 = 1000;
+
+/// Base deposit (in computrons) required for any conditional turn submission.
+pub const BASE_CONDITIONAL_DEPOSIT: u64 = 500;
+
+/// Additional deposit (in computrons) charged per block until the timeout height.
+pub const PER_BLOCK_DEPOSIT: u64 = 10;
+
+/// Compute the required deposit for a conditional turn based on its timeout duration.
+///
+/// Deposit = BASE_CONDITIONAL_DEPOSIT + PER_BLOCK_DEPOSIT * blocks_until_timeout.
+/// Uses saturating subtraction so that a timeout_height <= current_height yields
+/// just the base deposit (the turn would expire immediately anyway).
+pub fn compute_conditional_deposit(timeout_height: u64, current_height: u64) -> u64 {
+    let blocks = timeout_height.saturating_sub(current_height);
+    BASE_CONDITIONAL_DEPOSIT + PER_BLOCK_DEPOSIT * blocks
+}
 
 /// A condition that must be satisfied before a turn executes.
 ///
@@ -78,6 +95,10 @@ pub struct ConditionalTurn {
     pub timeout_height: u64,
     /// The block height at which this conditional turn was submitted.
     pub submitted_at: u64,
+    /// The reservation deposit deducted at submission time.
+    /// Refunded on successful resolution; burned (not refunded) on timeout.
+    #[serde(default)]
+    pub deposit_amount: u64,
 }
 
 impl ConditionalTurn {
@@ -164,6 +185,10 @@ pub enum ConditionProof {
 ///
 /// Checks timeout, proof nullifier (reuse prevention), proof type matching,
 /// AIR name verification, root freshness, and constraint satisfaction.
+///
+/// For `TurnExecuted` conditions, `trusted_executor_keys` is used to verify
+/// the receipt's `executor_signature`. If the receipt lacks a valid signature
+/// from a known executor, the condition is rejected (prevents fabricated receipts).
 pub fn resolve_condition(
     condition: &ProofCondition,
     proof: &ConditionProof,
@@ -172,6 +197,7 @@ pub fn resolve_condition(
     trusted_roots: &[TrustedRoot],
     max_root_age: u64,
     used_proof_hashes: &mut HashSet<[u8; 32]>,
+    trusted_executor_keys: &[[u8; 32]],
 ) -> ConditionalResult {
     if current_height > timeout_height {
         return ConditionalResult::Expired;
@@ -183,7 +209,7 @@ pub fn resolve_condition(
         return ConditionalResult::InvalidProof("proof already used".to_string());
     }
 
-    let result = resolve_inner(condition, proof, current_height, trusted_roots, max_root_age);
+    let result = resolve_inner(condition, proof, current_height, trusted_roots, max_root_age, trusted_executor_keys);
 
     if result == ConditionalResult::Resolved {
         used_proof_hashes.insert(proof_hash);
@@ -228,6 +254,7 @@ fn resolve_inner(
     current_height: u64,
     trusted_roots: &[TrustedRoot],
     max_root_age: u64,
+    trusted_executor_keys: &[[u8; 32]],
 ) -> ConditionalResult {
     match (condition, proof) {
         (ProofCondition::HashPreimage { hash }, ConditionProof::Preimage(preimage)) => {
@@ -398,13 +425,55 @@ fn resolve_inner(
         }
 
         (ProofCondition::TurnExecuted { turn_hash }, ConditionProof::Receipt(receipt)) => {
-            if receipt.turn_hash == *turn_hash {
-                ConditionalResult::Resolved
-            } else {
-                ConditionalResult::InvalidProof(format!(
+            if receipt.turn_hash != *turn_hash {
+                return ConditionalResult::InvalidProof(format!(
                     "receipt turn_hash mismatch: expected {:02x}{:02x}..., got {:02x}{:02x}...",
                     turn_hash[0], turn_hash[1], receipt.turn_hash[0], receipt.turn_hash[1],
-                ))
+                ));
+            }
+
+            // Verify the receipt's executor_signature against trusted executor keys.
+            // Without this check, anyone could fabricate a receipt with a matching turn_hash.
+            let Some(ref sig_bytes) = receipt.executor_signature else {
+                return ConditionalResult::InvalidProof(
+                    "receipt has no executor_signature (cannot verify authenticity)".to_string(),
+                );
+            };
+
+            if sig_bytes.len() != 64 {
+                return ConditionalResult::InvalidProof(format!(
+                    "executor_signature has invalid length: {} (expected 64)",
+                    sig_bytes.len(),
+                ));
+            }
+
+            if trusted_executor_keys.is_empty() {
+                return ConditionalResult::InvalidProof(
+                    "no trusted executor keys configured to verify receipt".to_string(),
+                );
+            }
+
+            // The executor signs the receipt hash (not the turn hash).
+            let receipt_hash = receipt.receipt_hash();
+            let mut sig_arr = [0u8; 64];
+            sig_arr.copy_from_slice(sig_bytes);
+            let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
+
+            let verified = trusted_executor_keys.iter().any(|key_bytes| {
+                if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(key_bytes) {
+                    use ed25519_dalek::Verifier;
+                    vk.verify_strict(&receipt_hash, &signature).is_ok()
+                } else {
+                    false
+                }
+            });
+
+            if verified {
+                ConditionalResult::Resolved
+            } else {
+                ConditionalResult::InvalidProof(
+                    "receipt executor_signature not verified by any trusted executor key".to_string(),
+                )
             }
         }
 
@@ -416,23 +485,48 @@ fn resolve_inner(
 
 /// Validate a ConditionalTurn at submission time.
 ///
-/// Checks that the deadline is not too far in the future and fee > 0.
+/// Checks that:
+/// 1. The deadline is not too far in the future.
+/// 2. The fee covers the required reservation deposit (`BASE_CONDITIONAL_DEPOSIT + PER_BLOCK_DEPOSIT * blocks`).
+///
+/// The deposit prevents free griefing: submitters lock computrons proportional to
+/// how long their conditional occupies the pending pool. The deposit is refunded on
+/// successful resolution and burned on timeout expiry.
 pub fn validate_conditional_submission(
     conditional: &ConditionalTurn,
     current_height: u64,
-) -> Result<(), String> {
+) -> Result<(), TurnError> {
     if conditional.timeout_height > current_height + MAX_CONDITIONAL_DEADLINE {
-        return Err(format!(
-            "deadline too far in the future: timeout_height {} exceeds current_height {} + max {}",
-            conditional.timeout_height, current_height, MAX_CONDITIONAL_DEADLINE
-        ));
+        return Err(TurnError::PreconditionFailed {
+            description: format!(
+                "deadline too far in the future: timeout_height {} exceeds current_height {} + max {}",
+                conditional.timeout_height, current_height, MAX_CONDITIONAL_DEADLINE
+            ),
+        });
     }
-    if conditional.turn.fee == 0 {
-        return Err(
-            "conditional turn requires fee > 0 to prevent storage DoS".to_string(),
-        );
+    let required_deposit = compute_conditional_deposit(conditional.timeout_height, current_height);
+    if conditional.turn.fee < required_deposit {
+        return Err(TurnError::InsufficientConditionalDeposit {
+            required: required_deposit,
+            provided: conditional.turn.fee,
+        });
     }
     Ok(())
+}
+
+/// Compute the refund amount when a conditional turn is successfully resolved.
+///
+/// Returns the deposit amount that should be credited back to the submitter's cell.
+pub fn refund_conditional_deposit(conditional: &ConditionalTurn) -> u64 {
+    conditional.deposit_amount
+}
+
+/// Determine the outcome when a conditional turn expires (times out).
+///
+/// The deposit is burned (not refunded) — it was already deducted at submission time,
+/// so this function simply returns 0 to indicate no refund.
+pub fn burn_conditional_deposit(_conditional: &ConditionalTurn) -> u64 {
+    0
 }
 
 #[cfg(test)]
@@ -472,7 +566,7 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -483,7 +577,7 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage([99u8; 32]);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -494,7 +588,7 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(result, ConditionalResult::Expired);
     }
 
@@ -515,7 +609,7 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -534,7 +628,7 @@ mod tests {
             air_name: "transfer_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -554,7 +648,7 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -572,7 +666,7 @@ mod tests {
             air_name: "pyana-merkle-poseidon2-v1".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(result, ConditionalResult::Resolved);
     }
 
@@ -589,12 +683,50 @@ mod tests {
             air_name: "compute_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
     #[test]
     fn test_turn_executed_resolved() {
+        use ed25519_dalek::{SigningKey, Signer};
+
+        let turn_hash = [0xAB; 32];
+        let condition = ProofCondition::TurnExecuted { turn_hash };
+
+        // Generate an executor signing key and sign the receipt.
+        let executor_key = SigningKey::from_bytes(&[0x42; 32]);
+        let executor_pub = executor_key.verifying_key().to_bytes();
+
+        let mut receipt = TurnReceipt {
+            turn_hash,
+            forest_hash: [0u8; 32],
+            pre_state_hash: [0u8; 32],
+            post_state_hash: [0u8; 32],
+            timestamp: 1000,
+            effects_hash: [0u8; 32],
+            computrons_used: 500,
+            action_count: 1,
+            previous_receipt_hash: None,
+            agent: pyana_cell::CellId([0u8; 32]),
+            routing_directives: vec![],
+            derivation_records: vec![],
+            executor_signature: None,
+        };
+        // Sign the receipt hash with the executor key.
+        let receipt_hash = receipt.receipt_hash();
+        let sig = executor_key.sign(&receipt_hash);
+        receipt.executor_signature = Some(sig.to_bytes().to_vec());
+
+        let proof = ConditionProof::Receipt(receipt);
+        let mut n = nullifiers();
+        let trusted_keys: &[[u8; 32]] = &[executor_pub];
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, trusted_keys);
+        assert_eq!(result, ConditionalResult::Resolved);
+    }
+
+    #[test]
+    fn test_turn_executed_rejects_unsigned_receipt() {
         let turn_hash = [0xAB; 32];
         let condition = ProofCondition::TurnExecuted { turn_hash };
         let receipt = TurnReceipt {
@@ -614,8 +746,8 @@ mod tests {
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
-        assert_eq!(result, ConditionalResult::Resolved);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
+        assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("no executor_signature")));
     }
 
     #[test]
@@ -639,7 +771,7 @@ mod tests {
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -653,7 +785,7 @@ mod tests {
             air_name: "x".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(_)));
     }
 
@@ -675,6 +807,7 @@ mod tests {
             condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
             timeout_height: 100,
             submitted_at: 50,
+            deposit_amount: 0,
         };
         assert_eq!(ct.hash(), ct.hash());
     }
@@ -686,9 +819,9 @@ mod tests {
         let condition = ProofCondition::HashPreimage { hash };
         let proof = ConditionProof::Preimage(preimage);
         let mut n = nullifiers();
-        let r1 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let r1 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(r1, ConditionalResult::Resolved);
-        let r2 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let r2 = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert_eq!(r2, ConditionalResult::InvalidProof("proof already used".to_string()));
     }
 
@@ -709,7 +842,7 @@ mod tests {
         let trusted = vec![(fed_root, 10u64)];
         let mut n = nullifiers();
         // current=1000, root_height=10, max_age=50 -> age=990 > 50
-        let result = resolve_condition(&condition, &proof, 1000, 2000, &trusted, 50, &mut n);
+        let result = resolve_condition(&condition, &proof, 1000, 2000, &trusted, 50, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("too old")));
     }
 
@@ -729,7 +862,7 @@ mod tests {
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
     }
 
@@ -746,7 +879,7 @@ mod tests {
             air_name: "other_air".to_string(),
         };
         let mut n = nullifiers();
-        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n);
+        let result = resolve_condition(&condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n, &[]);
         assert!(matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")));
     }
 
@@ -768,6 +901,7 @@ mod tests {
             condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
             timeout_height: 5000,
             submitted_at: 10,
+            deposit_amount: 0,
         };
         assert!(validate_conditional_submission(&ct, 10).is_err());
     }
@@ -790,6 +924,7 @@ mod tests {
             condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
             timeout_height: 100,
             submitted_at: 10,
+            deposit_amount: 0,
         };
         assert!(validate_conditional_submission(&ct, 10).is_err());
     }
@@ -797,11 +932,13 @@ mod tests {
     #[test]
     fn test_validate_ok() {
         use crate::forest::CallForest;
+        // timeout_height=100, current_height=10, blocks=90
+        // required deposit = 500 + 10*90 = 1400
         let turn = Turn {
             agent: pyana_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
-            fee: 100,
+            fee: 1400,
             memo: None,
             valid_until: None,
             previous_receipt_hash: None,
@@ -812,6 +949,7 @@ mod tests {
             condition: ProofCondition::HashPreimage { hash: [0xAA; 32] },
             timeout_height: 100,
             submitted_at: 10,
+            deposit_amount: 1400,
         };
         assert!(validate_conditional_submission(&ct, 10).is_ok());
     }
@@ -857,13 +995,13 @@ mod tests {
 
         // First resolution succeeds.
         let r1 = resolve_condition(
-            &condition_1, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition_1, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert_eq!(r1, ConditionalResult::Resolved);
 
         // Second resolution with THE SAME proof must FAIL — replay attack caught.
         let r2 = resolve_condition(
-            &condition_2, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition_2, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert_eq!(
             r2,
@@ -897,7 +1035,7 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("air name mismatch")),
@@ -932,7 +1070,7 @@ mod tests {
         // Current height 1000, root at height 5, max_root_age 500.
         // Age = 1000 - 5 = 995 > 500.
         let result = resolve_condition(
-            &condition, &proof, 1000, 2000, &trusted, 500, &mut used,
+            &condition, &proof, 1000, 2000, &trusted, 500, &mut used, &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("too old")),
@@ -957,7 +1095,7 @@ mod tests {
 
         // At exactly timeout_height (100): should still resolve (not expired).
         let at_deadline = resolve_condition(
-            &condition, &proof, 100, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 100, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert_eq!(
             at_deadline,
@@ -977,7 +1115,7 @@ mod tests {
 
         // At timeout_height + 1: must be expired.
         let past_deadline = resolve_condition(
-            &condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 101, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert_eq!(
             past_deadline,
@@ -1013,7 +1151,7 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("not in trusted set")),
@@ -1045,7 +1183,7 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
@@ -1070,7 +1208,7 @@ mod tests {
 
         let mut used = nullifiers();
         let result = resolve_condition(
-            &condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 10, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         assert!(
             matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("empty")),
@@ -1106,12 +1244,141 @@ mod tests {
         let mut used = nullifiers();
         // This should not panic or OOM. The STARK verifier rejects it as malformed.
         let result = resolve_condition(
-            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used,
+            &condition, &proof, 60, 100, &trusted, DEFAULT_MAX_ROOT_AGE, &mut used, &[],
         );
         // The garbage bytes will fail deserialization, returning InvalidProof.
         assert!(
             matches!(result, ConditionalResult::InvalidProof(_)),
             "huge garbage proof must be rejected: got {:?}", result
         );
+    }
+
+    // ========================================================================
+    // Reservation deposit tests
+    // ========================================================================
+
+    #[test]
+    fn test_deposit_computation() {
+        // timeout_height=110, current_height=100 => 10 blocks => 500 + 10*10 = 600
+        assert_eq!(compute_conditional_deposit(110, 100), 600);
+        // timeout_height=100, current_height=100 => 0 blocks => 500
+        assert_eq!(compute_conditional_deposit(100, 100), 500);
+        // timeout_height=1100, current_height=100 => 1000 blocks => 500 + 10*1000 = 10500
+        assert_eq!(compute_conditional_deposit(1100, 100), 10500);
+        // saturating: timeout < current => 0 blocks => base only
+        assert_eq!(compute_conditional_deposit(50, 100), 500);
+    }
+
+    #[test]
+    fn test_deposit_short_timeout_cheap() {
+        // 1 block timeout: deposit = 500 + 10*1 = 510
+        assert_eq!(compute_conditional_deposit(101, 100), 510);
+    }
+
+    #[test]
+    fn test_deposit_long_timeout_expensive() {
+        // 1000 block timeout: deposit = 500 + 10*1000 = 10500
+        assert_eq!(compute_conditional_deposit(1100, 100), 10500);
+    }
+
+    #[test]
+    fn test_conditional_with_sufficient_deposit_accepted() {
+        use crate::forest::CallForest;
+        // timeout_height=110, current_height=100 => deposit = 600
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 600,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xBB; 32] },
+            timeout_height: 110,
+            submitted_at: 100,
+            deposit_amount: 600,
+        };
+        assert!(validate_conditional_submission(&ct, 100).is_ok());
+    }
+
+    #[test]
+    fn test_conditional_with_insufficient_deposit_rejected() {
+        use crate::forest::CallForest;
+        use crate::error::TurnError;
+        // timeout_height=110, current_height=100 => deposit = 600, but fee = 500
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 500,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xBB; 32] },
+            timeout_height: 110,
+            submitted_at: 100,
+            deposit_amount: 0,
+        };
+        let err = validate_conditional_submission(&ct, 100).unwrap_err();
+        assert!(
+            matches!(err, TurnError::InsufficientConditionalDeposit { required: 600, provided: 500 }),
+            "expected InsufficientConditionalDeposit, got: {:?}", err,
+        );
+    }
+
+    #[test]
+    fn test_resolved_conditional_deposit_refunded() {
+        use crate::forest::CallForest;
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 1400,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xCC; 32] },
+            timeout_height: 100,
+            submitted_at: 10,
+            deposit_amount: 1400,
+        };
+        // On successful resolution, the full deposit is refunded.
+        assert_eq!(refund_conditional_deposit(&ct), 1400);
+    }
+
+    #[test]
+    fn test_expired_conditional_deposit_burned() {
+        use crate::forest::CallForest;
+        let turn = Turn {
+            agent: pyana_cell::CellId([1u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 1400,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        };
+        let ct = ConditionalTurn {
+            turn,
+            condition: ProofCondition::HashPreimage { hash: [0xDD; 32] },
+            timeout_height: 100,
+            submitted_at: 10,
+            deposit_amount: 1400,
+        };
+        // On expiry, the deposit is burned (returns 0 — no refund).
+        assert_eq!(burn_conditional_deposit(&ct), 0);
     }
 }

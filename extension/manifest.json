@@ -18,7 +18,9 @@
       "page.js",
       "pyana_wasm_bg.wasm",
       "pyana_wasm.js",
-      "bip39_english.txt"
+      "bip39_english.txt",
+      "disclosure-picker.html",
+      "disclosure-picker.js"
     ],
     "matches": ["<all_urls>"]
   }],

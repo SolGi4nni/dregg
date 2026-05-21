@@ -12,6 +12,7 @@ serde = { version = "1", features = ["derive"] }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std", "zeroize"] }
 getrandom = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }

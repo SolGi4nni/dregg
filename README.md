@@ -74,7 +74,7 @@ All three modes work offline. No federation liveness required -- proof + atteste
 │  Gossip broadcast · local Datalog matching · STARK fulfillment proofs   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                       Node / Network Layer                               │
-│  pyana-node (federation daemon) · pyana-relay (QUIC relay)              │
+│  pyana-node (federation daemon, HTTP API, consensus, gossip)            │
 │  TCP wire protocol · postcard framing · STARK verification on receive   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                       Federation Layer                                   │
@@ -108,7 +108,7 @@ All three modes work offline. No federation liveness required -- proof + atteste
 
 ## Workspace
 
-26 crates (~97k LOC Rust, 1200+ tests):
+25 crates (~96k LOC Rust, 1200+ tests):
 
 | Crate | Purpose |
 |-------|---------|
@@ -133,7 +133,6 @@ All three modes work offline. No federation liveness required -- proof + atteste
 | `sdk` | Agent SDK: wallet, runtime, verification modes |
 | `wasm` | Browser WASM bindings (12 exported functions) |
 | `node` | Federation node daemon -- consensus participant, localhost API |
-| `relay` | Lightweight QUIC relay -- attested roots, peer connection relay, root token minting |
 | `intent` | Distributed intent engine -- gossip broadcast, local matching, STARK fulfillment |
 | `demo` | CLI demos |
 | `demo-agent` | End-to-end scenarios (full token-to-STARK-to-turn-execution pipeline) |
@@ -189,8 +188,7 @@ The federation runs on GitHub Actions as persistent scheduled workflows:
 | `federation-node-1.yml` | Every 5 hours | Consensus participant, state persistence via artifacts |
 | `federation-node-2.yml` | Every 5 hours | Consensus participant |
 | `federation-node-3.yml` | Every 5 hours | Consensus participant |
-| `intent-service.yml` | Every 5 hours (offset) | Intent pool gossip relay |
-| `relay.yml` | Continuous | QUIC relay for peer connections |
+| `intent-service.yml` | Every 5 hours (offset) | Intent pool gossip node |
 
 State persists across runs via GitHub Actions artifacts. The federation produces attested roots (threshold-signed Merkle roots over the nullifier set) that any offline verifier can use as freshness anchors.
 
@@ -232,7 +230,7 @@ What works today:
 
 What is in progress:
 - Recursive proof aggregation uses hash-chain accumulation, not true STARK-in-STARK (proof size grows with chain length)
-- Gossip layer is one-hop (QUIC relay exists, but no authenticated multi-hop delivery)
+- Gossip layer is one-hop (no authenticated multi-hop delivery yet)
 - Dual Merkle systems (BLAKE3 fast path vs Poseidon2 ZK path) not yet unified
 - Federation consensus messages don't yet flow over the wire protocol (currently in-process channels)
 

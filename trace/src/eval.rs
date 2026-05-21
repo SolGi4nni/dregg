@@ -1,5 +1,7 @@
 //! Bottom-up Datalog evaluator with derivation trace recording.
 
+use std::collections::HashSet;
+
 use crate::check;
 use crate::types::*;
 
@@ -81,18 +83,22 @@ impl Evaluator {
         // Inject request facts
         Self::inject_request_facts(&mut facts, request);
 
+        // HashSet for O(1) membership testing (prevents DoS via fact-set inflation)
+        let mut fact_set: HashSet<Fact> = facts.iter().cloned().collect();
+
         // Bottom-up evaluation to fixpoint (bounded)
         let mut round = 0;
         loop {
             if round >= Self::MAX_EVAL_ROUNDS {
                 break;
             }
-            let new_steps = Self::derive_one_round(&self.rules, &facts);
+            let new_steps = Self::derive_one_round(&self.rules, &facts, &fact_set);
             if new_steps.is_empty() {
                 break;
             }
             for step in &new_steps {
                 facts.push(step.derived_fact.clone());
+                fact_set.insert(step.derived_fact.clone());
             }
             steps.extend(new_steps);
             round += 1;
@@ -147,8 +153,9 @@ impl Evaluator {
     }
 
     /// Run one round of rule application, returning newly derived facts.
-    fn derive_one_round(rules: &[Rule], facts: &[Fact]) -> Vec<DerivationStep> {
+    fn derive_one_round(rules: &[Rule], facts: &[Fact], fact_set: &HashSet<Fact>) -> Vec<DerivationStep> {
         let mut new_steps = Vec::new();
+        let mut new_facts_this_round: HashSet<Fact> = HashSet::new();
 
         for rule in rules {
             // Find all valid substitutions for this rule's body
@@ -173,12 +180,11 @@ impl Evaluator {
                     terms: derived_atom.terms,
                 };
 
-                // Only add if this fact is new
-                if !facts.contains(&derived_fact)
-                    && !new_steps
-                        .iter()
-                        .any(|s: &DerivationStep| s.derived_fact == derived_fact)
+                // Only add if this fact is new (O(1) HashSet lookup instead of O(n) Vec scan)
+                if !fact_set.contains(&derived_fact)
+                    && !new_facts_this_round.contains(&derived_fact)
                 {
+                    new_facts_this_round.insert(derived_fact.clone());
                     new_steps.push(DerivationStep {
                         rule_id: rule.id,
                         substitution: subst,

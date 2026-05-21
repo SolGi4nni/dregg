@@ -9,10 +9,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteError, Nullifier};
 
+/// A Merkle membership proof for a single nullifier in the set.
+///
+/// This proves that a specific nullifier exists at a given position in the
+/// Merkle tree built over all nullifiers. Used as part of non-membership proofs
+/// to demonstrate that neighbor elements are genuinely in the set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MerkleMembershipProof {
+    /// The nullifier whose membership is being proved.
+    pub element: Nullifier,
+    /// Index of the element in the sorted nullifier list.
+    pub index: usize,
+    /// Sibling hashes along the path from the leaf to the root (bottom-up).
+    pub siblings: Vec<[u8; 32]>,
+}
+
 /// A non-membership proof: demonstrates that a nullifier is NOT in the set.
 ///
 /// Uses adjacent-neighbor technique: shows two consecutive nullifiers in the
-/// sorted set that bracket the absent value, plus their Merkle proofs.
+/// sorted set that bracket the absent value, plus Merkle membership proofs for
+/// each neighbor (proving they ARE in the set).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NonMembershipProof {
     /// The nullifier being proved absent.
@@ -21,6 +37,10 @@ pub struct NonMembershipProof {
     pub left_neighbor: Option<Nullifier>,
     /// The nullifier just after the absent one (if any).
     pub right_neighbor: Option<Nullifier>,
+    /// Merkle membership proof for the left neighbor (if present).
+    pub left_membership_proof: Option<MerkleMembershipProof>,
+    /// Merkle membership proof for the right neighbor (if present).
+    pub right_membership_proof: Option<MerkleMembershipProof>,
     /// Root of the nullifier tree at the time of proof generation.
     pub root: [u8; 32],
 }
@@ -87,35 +107,148 @@ impl NullifierSet {
                 } else {
                     None
                 };
+                let left_membership_proof = if idx > 0 {
+                    Some(self.prove_membership(idx - 1))
+                } else {
+                    None
+                };
+                let right_membership_proof = if idx < self.nullifiers.len() {
+                    Some(self.prove_membership(idx))
+                } else {
+                    None
+                };
                 Some(NonMembershipProof {
                     absent: *nullifier,
                     left_neighbor,
                     right_neighbor,
+                    left_membership_proof,
+                    right_membership_proof,
                     root: self.root(),
                 })
             }
         }
     }
 
-    /// Current root of the nullifier set (Merkle commitment over all nullifiers).
-    /// Uses a simple sequential hash for now; will be upgraded to a proper
-    /// Merkle tree when integrated with the STARK proof layer.
+    /// Generate a Merkle membership proof for the element at the given index.
+    ///
+    /// The Merkle tree is built over the sorted list of nullifier hashes as leaves.
+    /// Each leaf is: BLAKE3("pyana-nullifier-leaf v1", nullifier).
+    /// Internal nodes are: BLAKE3("pyana-nullifier-node v1", left || right).
+    fn prove_membership(&self, index: usize) -> MerkleMembershipProof {
+        let leaves: Vec<[u8; 32]> = self
+            .nullifiers
+            .iter()
+            .map(|n| Self::leaf_hash(&n.0))
+            .collect();
+        let siblings = Self::merkle_path(&leaves, index);
+        MerkleMembershipProof {
+            element: self.nullifiers[index],
+            index,
+            siblings,
+        }
+    }
+
+    /// Hash a leaf node.
+    fn leaf_hash(data: &[u8; 32]) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-leaf v1");
+        hasher.update(data);
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Hash two children into a parent node.
+    fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-node v1");
+        hasher.update(left);
+        hasher.update(right);
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Compute the Merkle path (sibling hashes from leaf to root) for a given index.
+    fn merkle_path(leaves: &[[u8; 32]], index: usize) -> Vec<[u8; 32]> {
+        if leaves.len() <= 1 {
+            return vec![];
+        }
+        let mut siblings = Vec::new();
+        let mut current_level = leaves.to_vec();
+        let mut idx = index;
+
+        while current_level.len() > 1 {
+            // Pad to even length with a zero hash.
+            if current_level.len() % 2 != 0 {
+                current_level.push([0u8; 32]);
+            }
+            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+            siblings.push(current_level[sibling_idx]);
+
+            // Build next level.
+            let mut next_level = Vec::with_capacity(current_level.len() / 2);
+            for chunk in current_level.chunks(2) {
+                next_level.push(Self::node_hash(&chunk[0], &chunk[1]));
+            }
+            current_level = next_level;
+            idx /= 2;
+        }
+        siblings
+    }
+
+    /// Compute the Merkle root from leaves.
+    fn merkle_root_from_leaves(leaves: &[[u8; 32]]) -> [u8; 32] {
+        if leaves.is_empty() {
+            return [0u8; 32];
+        }
+        let mut current_level = leaves.to_vec();
+        while current_level.len() > 1 {
+            if current_level.len() % 2 != 0 {
+                current_level.push([0u8; 32]);
+            }
+            let mut next_level = Vec::with_capacity(current_level.len() / 2);
+            for chunk in current_level.chunks(2) {
+                next_level.push(Self::node_hash(&chunk[0], &chunk[1]));
+            }
+            current_level = next_level;
+        }
+        current_level[0]
+    }
+
+    /// Verify a Merkle membership proof against a given root.
+    fn verify_membership_proof(proof: &MerkleMembershipProof, root: &[u8; 32]) -> bool {
+        let mut current = Self::leaf_hash(&proof.element.0);
+        let mut idx = proof.index;
+        for sibling in &proof.siblings {
+            if idx % 2 == 0 {
+                current = Self::node_hash(&current, sibling);
+            } else {
+                current = Self::node_hash(sibling, &current);
+            }
+            idx /= 2;
+        }
+        current == *root
+    }
+
+    /// Current root of the nullifier set (Merkle tree root over all nullifier hashes).
+    ///
+    /// Leaves are domain-separated hashes of each nullifier. Internal nodes hash
+    /// their two children. This produces a proper Merkle tree that supports
+    /// membership proofs for non-membership verification.
     pub fn root(&self) -> [u8; 32] {
         if self.nullifiers.is_empty() {
             return [0u8; 32];
         }
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-set root v1");
-        for n in &self.nullifiers {
-            hasher.update(&n.0);
-        }
-        *hasher.finalize().as_bytes()
+        let leaves: Vec<[u8; 32]> = self
+            .nullifiers
+            .iter()
+            .map(|n| Self::leaf_hash(&n.0))
+            .collect();
+        Self::merkle_root_from_leaves(&leaves)
     }
 
     /// Verify a non-membership proof against the current root.
     ///
-    /// This is a simplified verification that checks:
+    /// This verifies:
     /// 1. The proof's root matches the given root.
     /// 2. The neighbors (if present) are properly ordered around the absent value.
+    /// 3. The neighbors are actually IN the set (via Merkle membership proofs).
+    /// 4. The neighbors are adjacent (no element between them).
     pub fn verify_non_membership(proof: &NonMembershipProof, root: &[u8; 32]) -> bool {
         if proof.root != *root {
             return false;
@@ -129,6 +262,45 @@ impl NullifierSet {
         }
         if let Some(right) = &proof.right_neighbor {
             if right.0 <= proof.absent.0 {
+                return false;
+            }
+        }
+
+        // Verify the left neighbor's Merkle membership proof.
+        if let Some(left) = &proof.left_neighbor {
+            match &proof.left_membership_proof {
+                Some(membership_proof) => {
+                    if membership_proof.element != *left {
+                        return false;
+                    }
+                    if !Self::verify_membership_proof(membership_proof, root) {
+                        return false;
+                    }
+                }
+                None => return false, // Left neighbor claimed but no membership proof
+            }
+        }
+
+        // Verify the right neighbor's Merkle membership proof.
+        if let Some(right) = &proof.right_neighbor {
+            match &proof.right_membership_proof {
+                Some(membership_proof) => {
+                    if membership_proof.element != *right {
+                        return false;
+                    }
+                    if !Self::verify_membership_proof(membership_proof, root) {
+                        return false;
+                    }
+                }
+                None => return false, // Right neighbor claimed but no membership proof
+            }
+        }
+
+        // Verify adjacency: left and right neighbors must be at consecutive indices.
+        if let (Some(left_proof), Some(right_proof)) =
+            (&proof.left_membership_proof, &proof.right_membership_proof)
+        {
+            if right_proof.index != left_proof.index + 1 {
                 return false;
             }
         }

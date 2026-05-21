@@ -852,6 +852,10 @@ mod tests {
             prev_hash: [0; 32],
             block_hash: [0xFF; 32],
             proposer_signature: None,
+            pre_state_root: [0; 32],
+            post_state_root: [0; 32],
+            note_tree_root: [0; 32],
+            nullifier_set_root: [0; 32],
         };
 
         transports[0].broadcast_proposal(&block).await.unwrap();

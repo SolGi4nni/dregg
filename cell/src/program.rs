@@ -203,7 +203,15 @@ fn evaluate_constraint(
                     return Err(ProgramError::InvalidFieldIndex { index: idx });
                 }
                 let field_val = field_to_u64(&new_state.fields[idx as usize]);
-                sum = sum.saturating_add(field_val);
+                sum = sum.checked_add(field_val).ok_or_else(|| {
+                    ProgramError::ConstraintViolated {
+                        constraint: constraint.clone(),
+                        description: format!(
+                            "overflow computing sum of fields {:?}: u64 addition overflowed",
+                            indices
+                        ),
+                    }
+                })?;
             }
             let expected = field_to_u64(value);
             if sum != expected {

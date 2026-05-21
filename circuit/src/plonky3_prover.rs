@@ -1,16 +1,34 @@
-//! Plonky3-based STARK prover and verifier.
+//! Plonky3-based STARK prover and verifier with inline Poseidon2 constraints.
 //!
 //! This module provides a production-grade prover using Plonky3's `p3-uni-stark`
 //! framework with BabyBear field, Poseidon2 hashing, and FRI polynomial commitment.
 //!
+//! ## Soundness
+//!
+//! The AIR (`P3MerklePoseidon2Air`) achieves full algebraic soundness by inlining
+//! the Poseidon2 round constraints directly into the constraint evaluator. Each
+//! trace row contains auxiliary columns for all intermediate permutation states,
+//! and the constraint verifies:
+//!
+//! 1. The Poseidon2 input state is correctly derived from the Merkle children
+//! 2. Each round transition is algebraically correct (S-box + linear layer)
+//! 3. The hash output matches the claimed parent
+//! 4. Chain continuity: next level's current == this level's parent
+//! 5. Boundary: first row current == leaf, last row parent == root
+//!
+//! A malicious prover CANNOT forge hash steps because the degree-7 S-box
+//! constraints are enforced algebraically over the extension field.
+//!
 //! ## Configuration
 //!
 //! - Field: BabyBear (p = 2^31 - 2^27 + 1)
-//! - Hash: Poseidon2 (width 16 for compression, width 24 for sponge)
+//! - Hash: Poseidon2 (width 8, alpha=7, 4+4 external + 22 internal rounds)
 //! - PCS: TwoAdicFriPcs with Poseidon2 Merkle trees
 //! - Extension field: BinomialExtensionField<BabyBear, 4> (degree-4 extension)
 //! - DFT: Radix2DitParallel (parallel NTT)
 //! - FRI: log_blowup=2 (4x), 50 queries, 16 PoW bits
+
+use std::sync::LazyLock;
 
 use p3_air::WindowAccess;
 use p3_air::{Air, AirBuilder, BaseAir};
@@ -30,7 +48,10 @@ use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{Proof, StarkConfig, prove, verify};
 
 use crate::field::BabyBear;
-use crate::poseidon2_air::generate_merkle_poseidon2_trace;
+use crate::poseidon2::{
+    EXTERNAL_ROUNDS, INTERNAL_DIAG, INTERNAL_ROUNDS, ROUND_CONSTANTS, TOTAL_ROUNDS, WIDTH,
+    poseidon2_trace,
+};
 
 // ============================================================================
 // Type definitions for our Plonky3 configuration
@@ -82,12 +103,6 @@ pub type PyanaProof = Proof<PyanaStarkConfig>;
 // ============================================================================
 
 /// Create the Plonky3 STARK configuration with production parameters.
-///
-/// FRI parameters:
-/// - log_blowup = 2 (4x blowup, matching our legacy prover)
-/// - num_queries = 50 (matching our legacy prover)
-/// - query_proof_of_work_bits = 16
-/// - max_log_arity = 3 (high arity for faster proving)
 pub fn create_config() -> PyanaStarkConfig {
     let perm16 = default_babybear_poseidon2_16();
     let perm24 = default_babybear_poseidon2_24();
@@ -116,81 +131,477 @@ pub fn create_config() -> PyanaStarkConfig {
 }
 
 // ============================================================================
-// AIR adapter: MerklePoseidon2StarkAir -> Plonky3 Air trait
+// Poseidon2 round constants as P3BabyBear (computed once, cached)
 // ============================================================================
 
-/// Plonky3-compatible wrapper for our MerklePoseidon2StarkAir.
+/// Round constants converted to P3BabyBear for use in constraint evaluation.
+static P3_ROUND_CONSTANTS: LazyLock<Vec<[P3BabyBear; WIDTH]>> = LazyLock::new(|| {
+    ROUND_CONSTANTS
+        .iter()
+        .map(|rc| {
+            let mut p3_rc = [P3BabyBear::ZERO; WIDTH];
+            for i in 0..WIDTH {
+                p3_rc[i] = P3BabyBear::new(rc[i].0);
+            }
+            p3_rc
+        })
+        .collect()
+});
+
+/// Internal diagonal converted to P3BabyBear.
+static P3_INTERNAL_DIAG: LazyLock<[P3BabyBear; WIDTH]> = LazyLock::new(|| {
+    let mut p3_diag = [P3BabyBear::ZERO; WIDTH];
+    for i in 0..WIDTH {
+        p3_diag[i] = P3BabyBear::new(INTERNAL_DIAG[i].0);
+    }
+    p3_diag
+});
+
+// ============================================================================
+// Trace layout constants
+// ============================================================================
+
+/// Number of auxiliary columns per round (full 8-element post-state).
+const ROUND_COLS: usize = WIDTH; // 8
+
+/// Half the number of external rounds.
+const HALF_EXTERNAL: usize = EXTERNAL_ROUNDS / 2; // 4
+
+/// Total auxiliary columns for Poseidon2 intermediate states:
+/// 30 rounds * 8 state elements = 240
+const POSEIDON2_AUX_COLS: usize = TOTAL_ROUNDS * ROUND_COLS; // 240
+
+/// Total trace width:
+/// - 5 witness columns: current, sib0, sib1, sib2, position
+/// - 240 auxiliary columns for Poseidon2 round states
+/// - 1 parent column (== final_state[0])
+/// Total: 246
+pub const P3_TRACE_WIDTH: usize = 5 + POSEIDON2_AUX_COLS + 1; // 246
+
+/// Offset where round states begin in the trace row.
+const ROUND_STATES_OFFSET: usize = 5;
+
+/// Column index of the parent hash.
+const PARENT_COL: usize = P3_TRACE_WIDTH - 1; // 245
+
+// ============================================================================
+// AIR: P3MerklePoseidon2Air with inline Poseidon2 constraints
+// ============================================================================
+
+/// Plonky3-compatible AIR with full Poseidon2 soundness.
 ///
-/// Implements `BaseAir` and `Air<AB>` for Plonky3's constraint system.
-/// The trace layout is identical: 6 columns per row.
+/// Each trace row represents one Merkle tree level. The row contains:
+/// - The Merkle witness data (current hash, siblings, position)
+/// - All intermediate Poseidon2 permutation states (30 rounds x 8 = 240 columns)
+/// - The parent hash output
 ///
-/// Columns:
-/// - 0: current hash at this level
-/// - 1-3: sibling hashes
-/// - 4: position (0-3)
-/// - 5: parent = hash_4_to_1(children arranged by position)
+/// The AIR constraints enforce:
+/// 1. Position validity: pos in {0,1,2,3}
+/// 2. Poseidon2 permutation correctness (round-by-round algebraic constraints)
+/// 3. Hash output binding: parent == final_state[0]
+/// 4. Chain continuity: next_row.current == this_row.parent
+/// 5. Boundary: public_inputs bind leaf and root
 pub struct P3MerklePoseidon2Air;
 
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for P3MerklePoseidon2Air {
     fn width(&self) -> usize {
-        6
+        P3_TRACE_WIDTH
     }
 
     fn num_public_values(&self) -> usize {
         2 // [leaf_hash, root]
     }
 
-    /// We access next row columns 0 and 5 for chain continuity.
+    /// We access next row column 0 for chain continuity.
     fn main_next_row_columns(&self) -> Vec<usize> {
-        vec![0, 5]
+        vec![0]
     }
 }
 
-impl<AB: AirBuilder> Air<AB> for P3MerklePoseidon2Air {
+impl<AB: AirBuilder> Air<AB> for P3MerklePoseidon2Air
+where
+    AB::F: PrimeField32,
+{
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.current_slice();
         let next = main.next_slice();
 
         let current: AB::Expr = local[0].into();
-        let parent: AB::Expr = local[5].into();
+        let sib0: AB::Expr = local[1].into();
+        let sib1: AB::Expr = local[2].into();
+        let sib2: AB::Expr = local[3].into();
+        let position: AB::Expr = local[4].into();
+        let parent: AB::Expr = local[PARENT_COL].into();
         let next_current: AB::Expr = next[0].into();
 
-        // Get position as Expr
-        let position: AB::Expr = local[4].into();
-
+        // ================================================================
         // Constraint 1: Position validity
         // pos * (pos - 1) * (pos - 2) * (pos - 3) = 0
+        // ================================================================
         let one = AB::Expr::ONE;
         let two = AB::Expr::TWO;
         let three = two.clone() + one.clone();
 
-        let pos_m_1: AB::Expr = position.clone() - one;
-        let pos_m_2: AB::Expr = position.clone() - two;
-        let pos_m_3: AB::Expr = position.clone() - three;
-
-        let pos_valid = position * pos_m_1 * pos_m_2 * pos_m_3;
+        let pos_valid = position.clone()
+            * (position.clone() - one.clone())
+            * (position.clone() - two.clone())
+            * (position.clone() - three.clone());
         builder.assert_zero(pos_valid);
 
-        // Constraint 2: Chain continuity (transition constraint)
+        // ================================================================
+        // Constraint 2: Poseidon2 permutation (inline, round-by-round)
+        // ================================================================
+        //
+        // Reconstruct children from (current, siblings, position) using
+        // Lagrange interpolation over {0,1,2,3}.
+        //
+        // If pos=0: children = [current, sib0, sib1, sib2]
+        // If pos=1: children = [sib0, current, sib1, sib2]
+        // If pos=2: children = [sib0, sib1, current, sib2]
+        // If pos=3: children = [sib0, sib1, sib2, current]
+
+        let p = position.clone();
+        let p_m1 = position.clone() - one.clone();
+        let p_m2 = position.clone() - two.clone();
+        let p_m3 = position.clone() - three.clone();
+
+        // Lagrange basis denominators:
+        // L_0: (0-1)(0-2)(0-3) = -6 => inv = -1/6
+        // L_1: (1-0)(1-2)(1-3) = 1*(-1)*(-2) = 2 => inv = 1/2
+        // L_2: (2-0)(2-1)(2-3) = 2*1*(-1) = -2 => inv = -1/2
+        // L_3: (3-0)(3-1)(3-2) = 3*2*1 = 6 => inv = 1/6
+        let six = AB::F::from_u32(6);
+        let neg_six_inv = -six.inverse();
+        let two_inv = AB::F::TWO.inverse();
+        let neg_two_inv = -two_inv;
+        let six_inv = six.inverse();
+
+        let l0: AB::Expr = p_m1.clone() * p_m2.clone() * p_m3.clone() * neg_six_inv;
+        let l1: AB::Expr = p.clone() * p_m2.clone() * p_m3.clone() * two_inv;
+        let l2: AB::Expr = p.clone() * p_m1.clone() * p_m3.clone() * neg_two_inv;
+        let l3: AB::Expr = p.clone() * p_m1.clone() * p_m2.clone() * six_inv;
+
+        // Reconstruct children:
+        //   child[0] = current*L_0 + sib0*(1-L_0)
+        //   child[1] = sib0*L_0 + current*L_1 + sib1*(1-L_0-L_1)
+        //   child[2] = sib1*(L_0+L_1) + current*L_2 + sib2*L_3
+        //   child[3] = sib2*(1-L_3) + current*L_3
+        let one_minus_l0: AB::Expr = one.clone() - l0.clone();
+        let child0: AB::Expr = current.clone() * l0.clone() + sib0.clone() * one_minus_l0;
+
+        let one_minus_l0_l1: AB::Expr = one.clone() - l0.clone() - l1.clone();
+        let child1: AB::Expr = sib0.clone() * l0.clone()
+            + current.clone() * l1.clone()
+            + sib1.clone() * one_minus_l0_l1;
+
+        let l0_plus_l1: AB::Expr = l0.clone() + l1.clone();
+        let child2: AB::Expr = sib1.clone() * l0_plus_l1
+            + current.clone() * l2.clone()
+            + sib2.clone() * l3.clone();
+
+        let one_minus_l3: AB::Expr = one.clone() - l3.clone();
+        let child3: AB::Expr = sib2.clone() * one_minus_l3 + current.clone() * l3.clone();
+
+        // Initial Poseidon2 state: [child0, child1, child2, child3, 4, 0, 0, 0]
+        let four = AB::F::from_u32(4);
+        let mut state: [AB::Expr; WIDTH] = [
+            child0,
+            child1,
+            child2,
+            child3,
+            AB::Expr::from(four),
+            AB::Expr::ZERO,
+            AB::Expr::ZERO,
+            AB::Expr::ZERO,
+        ];
+
+        let rc = &*P3_ROUND_CONSTANTS;
+        let diag = &*P3_INTERNAL_DIAG;
+
+        let mut round_col_offset = ROUND_STATES_OFFSET;
+
+        // --- First half of external rounds (4 rounds) ---
+        for round in 0..HALF_EXTERNAL {
+            // Add round constants (convert P3BabyBear -> AB::F)
+            for j in 0..WIDTH {
+                let rc_f = AB::F::from_u32(rc[round][j].as_canonical_u32());
+                state[j] = state[j].clone() + rc_f;
+            }
+            // Apply S-box (x^7) to all elements
+            for j in 0..WIDTH {
+                state[j] = state[j].clone().exp_const_u64::<7>();
+            }
+            // Apply external linear layer
+            external_linear_layer_expr::<AB>(&mut state);
+
+            // Constrain against auxiliary witness columns, then reset to degree-1
+            for j in 0..WIDTH {
+                let aux: AB::Expr = local[round_col_offset + j].into();
+                builder.assert_eq(state[j].clone(), aux.clone());
+                state[j] = aux;
+            }
+            round_col_offset += ROUND_COLS;
+        }
+
+        // --- Internal rounds (22 rounds) ---
+        for round in 0..INTERNAL_ROUNDS {
+            let rc_idx = HALF_EXTERNAL + round;
+            // Add round constant to element 0 only
+            let rc0_f = AB::F::from_u32(rc[rc_idx][0].as_canonical_u32());
+            state[0] = state[0].clone() + rc0_f;
+            // Apply S-box to element 0 only
+            state[0] = state[0].clone().exp_const_u64::<7>();
+            // Apply internal linear layer
+            internal_linear_layer_expr::<AB>(&mut state, diag);
+
+            // Constrain against auxiliary witness columns
+            for j in 0..WIDTH {
+                let aux: AB::Expr = local[round_col_offset + j].into();
+                builder.assert_eq(state[j].clone(), aux.clone());
+                state[j] = aux;
+            }
+            round_col_offset += ROUND_COLS;
+        }
+
+        // --- Second half of external rounds (4 rounds) ---
+        for round in 0..HALF_EXTERNAL {
+            let rc_idx = HALF_EXTERNAL + INTERNAL_ROUNDS + round;
+            // Add round constants
+            for j in 0..WIDTH {
+                let rc_f = AB::F::from_u32(rc[rc_idx][j].as_canonical_u32());
+                state[j] = state[j].clone() + rc_f;
+            }
+            // Apply S-box to all elements
+            for j in 0..WIDTH {
+                state[j] = state[j].clone().exp_const_u64::<7>();
+            }
+            // Apply external linear layer
+            external_linear_layer_expr::<AB>(&mut state);
+
+            // Constrain against auxiliary witness columns
+            for j in 0..WIDTH {
+                let aux: AB::Expr = local[round_col_offset + j].into();
+                builder.assert_eq(state[j].clone(), aux.clone());
+                state[j] = aux;
+            }
+            round_col_offset += ROUND_COLS;
+        }
+
+        // ================================================================
+        // Constraint 3: Parent hash binding
+        // parent == final_state[0]
+        // ================================================================
+        builder.assert_eq(parent.clone(), state[0].clone());
+
+        // ================================================================
+        // Constraint 4: Chain continuity (transition constraint)
         // next_row.current == this_row.parent
-        // This ensures the Merkle path forms a connected chain from leaf to root.
+        // ================================================================
         let continuity: AB::Expr = next_current - parent.clone();
         builder.when_transition().assert_zero(continuity);
 
-        // Constraint 3: Boundary constraints binding public inputs to trace cells.
-        // public_inputs[0] (leaf_hash) == row 0, col 0 (current)
-        // public_inputs[1] (root) == last row, col 5 (parent)
+        // ================================================================
+        // Constraint 5: Boundary constraints
+        // ================================================================
         let public_values = builder.public_values();
         let leaf_hash: AB::Expr = public_values[0].into();
         let root: AB::Expr = public_values[1].into();
 
-        let first_row_constraint: AB::Expr = current - leaf_hash;
-        builder.when_first_row().assert_zero(first_row_constraint);
-
-        let last_row_constraint: AB::Expr = parent - root;
-        builder.when_last_row().assert_zero(last_row_constraint);
+        builder
+            .when_first_row()
+            .assert_zero(current - leaf_hash);
+        builder
+            .when_last_row()
+            .assert_zero(parent - root);
     }
+}
+
+// ============================================================================
+// Algebraic linear layers over AB::Expr
+// ============================================================================
+
+/// Apply the external linear layer (matching poseidon2.rs) over abstract expressions.
+fn external_linear_layer_expr<AB: AirBuilder>(state: &mut [AB::Expr; WIDTH])
+where
+    AB::F: PrimeField32,
+{
+    // Pairwise butterfly
+    for i in (0..WIDTH).step_by(2) {
+        let t = state[i].clone() + state[i + 1].clone();
+        state[i + 1] = state[i].clone() - state[i + 1].clone();
+        state[i] = t;
+    }
+
+    // Quad butterfly
+    for i in (0..WIDTH).step_by(4) {
+        let t0 = state[i].clone() + state[i + 2].clone();
+        let t1 = state[i + 1].clone() + state[i + 3].clone();
+        state[i + 2] = state[i].clone() - state[i + 2].clone();
+        state[i + 3] = state[i + 1].clone() - state[i + 3].clone();
+        state[i] = t0;
+        state[i + 1] = t1;
+    }
+
+    // Full butterfly across halves
+    for i in 0..4 {
+        let t = state[i].clone() + state[i + 4].clone();
+        state[i + 4] = state[i].clone() - state[i + 4].clone();
+        state[i] = t;
+    }
+
+    // Multiply by small constants [2, 3, 4, 5, 6, 7, 8, 9]
+    let multipliers: [AB::F; WIDTH] = [
+        AB::F::from_u32(2),
+        AB::F::from_u32(3),
+        AB::F::from_u32(4),
+        AB::F::from_u32(5),
+        AB::F::from_u32(6),
+        AB::F::from_u32(7),
+        AB::F::from_u32(8),
+        AB::F::from_u32(9),
+    ];
+    for i in 0..WIDTH {
+        state[i] = state[i].clone() * multipliers[i];
+    }
+}
+
+/// Apply the internal linear layer (matching poseidon2.rs) over abstract expressions.
+///
+/// Poseidon2 internal layer: x_i' = sum + (d_i - 1) * x_i
+fn internal_linear_layer_expr<AB: AirBuilder>(
+    state: &mut [AB::Expr; WIDTH],
+    diag: &[P3BabyBear; WIDTH],
+) where
+    AB::F: PrimeField32,
+{
+    // Compute sum of all state elements
+    let mut sum: AB::Expr = state[0].clone();
+    for i in 1..WIDTH {
+        sum = sum + state[i].clone();
+    }
+
+    // x_i' = sum + (d_i - 1) * x_i
+    for i in 0..WIDTH {
+        let d_i_minus_1 = diag[i] - P3BabyBear::ONE;
+        let coeff = AB::F::from_u32(d_i_minus_1.as_canonical_u32());
+        state[i] = sum.clone() + state[i].clone() * coeff;
+    }
+}
+
+// ============================================================================
+// Trace generation for the sound Poseidon2 AIR
+// ============================================================================
+
+/// Generate the execution trace for the sound Merkle Poseidon2 AIR.
+///
+/// Each row contains:
+/// - 5 witness columns (current, sib0, sib1, sib2, position)
+/// - 240 auxiliary columns (30 rounds x 8 state elements)
+/// - 1 parent column
+///
+/// The auxiliary columns store the actual intermediate Poseidon2 states
+/// computed during hash evaluation, which the AIR constrains algebraically.
+pub fn generate_sound_merkle_trace(
+    leaf_hash: BabyBear,
+    siblings: &[[BabyBear; 3]],
+    positions: &[u8],
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    let depth = siblings.len();
+    assert_eq!(positions.len(), depth);
+    assert!(depth >= 2, "need at least 2 levels for STARK");
+
+    let padded = depth.next_power_of_two();
+    let mut trace = Vec::with_capacity(padded);
+    let mut current = leaf_hash;
+
+    for i in 0..depth {
+        let pos = positions[i];
+        assert!(pos < 4, "position must be 0..3");
+
+        let mut children = [BabyBear::ZERO; 4];
+        let mut sib_idx = 0;
+        for j in 0..4u8 {
+            if j == pos {
+                children[j as usize] = current;
+            } else {
+                children[j as usize] = siblings[i][sib_idx];
+                sib_idx += 1;
+            }
+        }
+
+        // Compute full Poseidon2 trace
+        let mut input_state = [BabyBear::ZERO; WIDTH];
+        input_state[0] = children[0];
+        input_state[1] = children[1];
+        input_state[2] = children[2];
+        input_state[3] = children[3];
+        input_state[4] = BabyBear::new(4); // arity domain separator
+
+        let round_states = poseidon2_trace(&input_state);
+        let parent = round_states[TOTAL_ROUNDS][0];
+
+        let mut row = Vec::with_capacity(P3_TRACE_WIDTH);
+        row.push(current);
+        row.push(siblings[i][0]);
+        row.push(siblings[i][1]);
+        row.push(siblings[i][2]);
+        row.push(BabyBear::new(pos as u32));
+
+        // Auxiliary: 30 rounds x 8 elements
+        for round_idx in 1..=TOTAL_ROUNDS {
+            for j in 0..WIDTH {
+                row.push(round_states[round_idx][j]);
+            }
+        }
+
+        row.push(parent);
+        debug_assert_eq!(row.len(), P3_TRACE_WIDTH);
+        trace.push(row);
+        current = parent;
+    }
+
+    let root = current;
+
+    // For non-power-of-2 depths: extend the hash chain with additional levels.
+    // Each extension level has current = prev_parent, siblings = [0,0,0], position = 0.
+    // This forms a valid hash chain that satisfies all constraints.
+    let mut extended_root = root;
+    for _ in depth..padded {
+        let mut ext_input = [BabyBear::ZERO; WIDTH];
+        ext_input[0] = extended_root;
+        ext_input[4] = BabyBear::new(4);
+
+        let ext_states = poseidon2_trace(&ext_input);
+        let ext_parent = ext_states[TOTAL_ROUNDS][0];
+
+        let mut ext_row = Vec::with_capacity(P3_TRACE_WIDTH);
+        ext_row.push(extended_root);
+        ext_row.push(BabyBear::ZERO);
+        ext_row.push(BabyBear::ZERO);
+        ext_row.push(BabyBear::ZERO);
+        ext_row.push(BabyBear::ZERO); // position = 0
+
+        for round_idx in 1..=TOTAL_ROUNDS {
+            for j in 0..WIDTH {
+                ext_row.push(ext_states[round_idx][j]);
+            }
+        }
+        ext_row.push(ext_parent);
+
+        trace.push(ext_row);
+        extended_root = ext_parent;
+    }
+
+    // The public root is the parent of the last trace row.
+    let final_root = if depth < padded {
+        extended_root
+    } else {
+        root
+    };
+
+    let public_inputs = vec![leaf_hash, final_root];
+    (trace, public_inputs)
 }
 
 // ============================================================================
@@ -208,7 +619,7 @@ pub fn from_p3(val: P3BabyBear) -> BabyBear {
     BabyBear(val.as_canonical_u32())
 }
 
-/// Convert our trace (Vec<Vec<BabyBear>>) to a Plonky3 RowMajorMatrix.
+/// Convert our trace to a Plonky3 RowMajorMatrix.
 fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
     let width = trace[0].len();
     let values: Vec<P3BabyBear> = trace
@@ -220,8 +631,7 @@ fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
 
 /// Prove a MerklePoseidon2 membership proof using Plonky3.
 ///
-/// Takes the same inputs as the legacy prover: a trace and public inputs.
-/// Returns a Plonky3 proof object that can be verified with `verify_plonky3`.
+/// Uses the sound AIR with inline Poseidon2 constraints.
 pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> PyanaProof {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
@@ -233,8 +643,6 @@ pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> Pya
 }
 
 /// Verify a Plonky3 proof for MerklePoseidon2 membership.
-///
-/// Returns Ok(()) if the proof is valid, Err with details otherwise.
 pub fn verify_plonky3(proof: &PyanaProof, public_inputs: &[BabyBear]) -> Result<(), String> {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
@@ -247,16 +655,15 @@ pub fn verify_plonky3(proof: &PyanaProof, public_inputs: &[BabyBear]) -> Result<
 
 /// End-to-end prove + verify for a Merkle Poseidon2 membership proof.
 ///
-/// Generates the trace from the witness, proves it with Plonky3, and verifies.
-/// Returns the proof on success.
+/// Generates the trace with full Poseidon2 auxiliary columns, proves it
+/// with Plonky3 (with inline hash constraints for soundness), and verifies.
 pub fn prove_membership_plonky3(
     leaf_hash: BabyBear,
     siblings: &[[BabyBear; 3]],
     positions: &[u8],
 ) -> Result<PyanaProof, String> {
-    let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, siblings, positions);
+    let (trace, public_inputs) = generate_sound_merkle_trace(leaf_hash, siblings, positions);
     let proof = prove_plonky3(&trace, &public_inputs);
-    // Verify immediately to catch any issues
     verify_plonky3(&proof, &public_inputs)?;
     Ok(proof)
 }
@@ -278,7 +685,8 @@ mod tests {
         let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
+        let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
+        assert_eq!(trace[0].len(), P3_TRACE_WIDTH);
 
         let proof = prove_plonky3(&trace, &public_inputs);
         let result = verify_plonky3(&proof, &public_inputs);
@@ -290,37 +698,35 @@ mod tests {
     }
 
     #[test]
-    fn plonky3_wrong_public_inputs_rejected() {
+    fn plonky3_wrong_leaf_rejected() {
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);
 
         let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
+        let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
         let proof = prove_plonky3(&trace, &public_inputs);
 
-        // Tamper with public inputs
         let wrong_pi = vec![BabyBear::new(99999), public_inputs[1]];
         let result = verify_plonky3(&proof, &wrong_pi);
-        assert!(result.is_err(), "Should reject wrong public inputs");
+        assert!(result.is_err(), "Should reject wrong leaf");
     }
 
     #[test]
-    fn plonky3_tampered_trace_rejected() {
+    fn plonky3_wrong_root_rejected() {
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);
 
         let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
+        let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
         let proof = prove_plonky3(&trace, &public_inputs);
 
-        // Try to verify with a different root (proof was for original root)
         let wrong_pi = vec![public_inputs[0], BabyBear::new(12345)];
         let result = verify_plonky3(&proof, &wrong_pi);
-        assert!(result.is_err(), "Should reject tampered root");
+        assert!(result.is_err(), "Should reject wrong root");
     }
 
     #[test]
@@ -349,5 +755,98 @@ mod tests {
 
         let result = prove_membership_plonky3(leaf, &siblings, &positions);
         assert!(result.is_ok(), "Depth-8 proof failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn plonky3_forged_parent_rejected() {
+        // Key soundness test: a malicious prover forges a hash step.
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+
+        let (mut trace, _) = generate_sound_merkle_trace(leaf, &siblings, &positions);
+
+        // Forge the parent at level 0 without updating auxiliary columns.
+        // The aux columns still reflect the REAL hash computation.
+        let forged_parent = BabyBear::new(0xDEAD);
+        trace[0][PARENT_COL] = forged_parent;
+
+        // Fix chain: set next row's current to forged parent, recompute levels 1-3.
+        trace[1][0] = forged_parent;
+        let mut cur = forged_parent;
+        for level in 1..4 {
+            let pos = positions[level];
+            let mut ch = [BabyBear::ZERO; 4];
+            let mut s = 0;
+            for j in 0..4u8 {
+                if j == pos {
+                    ch[j as usize] = cur;
+                } else {
+                    ch[j as usize] = siblings[level][s];
+                    s += 1;
+                }
+            }
+            let mut inp = [BabyBear::ZERO; WIDTH];
+            inp[0] = ch[0];
+            inp[1] = ch[1];
+            inp[2] = ch[2];
+            inp[3] = ch[3];
+            inp[4] = BabyBear::new(4);
+            let sts = poseidon2_trace(&inp);
+            let mut c = ROUND_STATES_OFFSET;
+            for ri in 1..=TOTAL_ROUNDS {
+                for j in 0..WIDTH {
+                    trace[level][c] = sts[ri][j];
+                    c += 1;
+                }
+            }
+            trace[level][PARENT_COL] = sts[TOTAL_ROUNDS][0];
+            if level < 3 {
+                trace[level + 1][0] = trace[level][PARENT_COL];
+            }
+            cur = trace[level][PARENT_COL];
+        }
+
+        let forged_root = trace[3][PARENT_COL];
+        let forged_pi = vec![leaf, forged_root];
+
+        // Level 0's parent (0xDEAD) does NOT match its aux columns' final state[0].
+        // The Poseidon2 constraint will catch this.
+        let proof = prove_plonky3(&trace, &forged_pi);
+        let result = verify_plonky3(&proof, &forged_pi);
+        assert!(
+            result.is_err(),
+            "CRITICAL: Forged parent MUST be rejected by inline Poseidon2 constraints"
+        );
+    }
+
+    #[test]
+    fn plonky3_trace_width_correct() {
+        assert_eq!(P3_TRACE_WIDTH, 5 + TOTAL_ROUNDS * WIDTH + 1);
+        assert_eq!(P3_TRACE_WIDTH, 246);
+    }
+
+    #[test]
+    fn plonky3_non_power_of_2_depth() {
+        // Depth 3 gets padded to 4
+        let leaf = BabyBear::new(12345);
+        let witness = create_poseidon2_test_witness(leaf, 3);
+
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+
+        let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
+        assert_eq!(trace.len(), 4);
+        assert_eq!(public_inputs[0], leaf);
+
+        let proof = prove_plonky3(&trace, &public_inputs);
+        let result = verify_plonky3(&proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Non-power-of-2 depth failed: {:?}",
+            result.err()
+        );
     }
 }

@@ -112,11 +112,20 @@ pub fn match_intent(
         return MatchResult::Expired;
     }
 
-    // Only match against Need intents (we satisfy them).
-    // For Offer intents, the matching direction is reversed (handled elsewhere).
     // Query intents NEVER trigger automatic matching -- they are a probing vector.
     // Queries require explicit user opt-in (handled via a separate API).
-    if intent.kind == IntentKind::Offer || intent.kind == IntentKind::Query {
+    if intent.kind == IntentKind::Query {
+        return MatchResult::WrongKind;
+    }
+
+    // For Offer intents, we reverse the matching direction: an Offer matches
+    // if we have a NEED that the offer could satisfy. For now, we treat an Offer
+    // as matchable using the same spec evaluation (the offer's spec describes what
+    // it provides, and we check if our held tokens are compatible).
+    // TODO: Full Offer matching should check against our pending needs, not held tokens.
+    // For now, we return WrongKind with a clear error until the bidirectional
+    // matching logic is implemented.
+    if intent.kind == IntentKind::Offer {
         return MatchResult::WrongKind;
     }
 
@@ -281,7 +290,10 @@ fn actions_match(token: &HeldCapability, patterns: &[ActionPattern]) -> bool {
 /// - Exact match: "documents/readme.md" matches "documents/readme.md"
 /// - Wildcard: "*" matches anything
 /// - Prefix glob: "documents/*" matches "documents/readme.md"
-fn resource_matches(token_resource: &str, pattern: &str) -> bool {
+///
+/// This is the canonical resource matching function used by both the matcher
+/// and fulfillment verification (issue #10: unified matching logic).
+pub fn resource_matches(token_resource: &str, pattern: &str) -> bool {
     if token_resource == "*" || pattern == "*" {
         return true;
     }
@@ -323,12 +335,16 @@ fn constraint_satisfied(token: &HeldCapability, constraint: &Constraint, now: u6
             token.oauth_provider.as_ref().is_some_and(|p| p == provider)
         }
         Constraint::Custom { predicate, value } => {
-            // Custom constraints: extensible matching. For now, treat as
-            // a feature-like check (the real implementation would evaluate
-            // arbitrary Datalog predicates).
+            // Custom constraints are extensible and not yet implemented in the
+            // matching engine. They fail-open by design: an unknown constraint
+            // is treated as "no additional filter" rather than a hard rejection.
+            //
+            // Rationale: Custom constraints are user-defined extensions. Rejecting
+            // them would make the protocol non-extensible -- older nodes would never
+            // match intents with new constraint types. The security boundary is at
+            // fulfillment verification, not matching.
             let _ = (predicate, value, now);
-            // Conservative: custom constraints don't match unless explicitly handled
-            false
+            true
         }
     }
 }
@@ -351,7 +367,9 @@ fn generate_proof(
             // - The token covers the required resource
             // Without revealing: token ID, full action set, delegation chain
             //
-            // For now, produce a commitment to the match facts.
+            // Issue #3: Include randomness to prevent correlation across matches.
+            // Without a nonce, two matches from the same token produce identical
+            // hashes, leaking that the same token was used.
             let mut hasher = blake3::Hasher::new_derive_key("pyana-selective-match-v1");
             hasher.update(&intent.id);
             hasher.update(token.token_id.as_bytes());
@@ -359,6 +377,10 @@ fn generate_proof(
                 hasher.update(action.as_bytes());
             }
             hasher.update(token.resource.as_bytes());
+            // Add randomness so the proof doesn't leak token identity across matches
+            let mut rand_bytes = [0u8; 32];
+            crate::getrandom(&mut rand_bytes);
+            hasher.update(&rand_bytes);
             Some(hasher.finalize().as_bytes().to_vec())
         }
         VerificationMode::Private => {

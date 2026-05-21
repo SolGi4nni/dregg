@@ -317,7 +317,13 @@ impl SiloClient {
     ///
     /// The new Merkle root and height after revocation, or an error.
     pub async fn submit_revocation(&mut self, token_id: &str) -> Result<([u8; 32], u64), SdkError> {
-        let sig = self.wallet.sign_bytes(token_id.as_bytes());
+        // SECURITY: Domain-separated signature prevents cross-protocol replay.
+        // Without the prefix, a signature over a token_id could be replayed in
+        // a different context (e.g., as a message signature or turn signature).
+        let mut revoke_msg = Vec::with_capacity(b"pyana-revoke-v1:".len() + token_id.len());
+        revoke_msg.extend_from_slice(b"pyana-revoke-v1:");
+        revoke_msg.extend_from_slice(token_id.as_bytes());
+        let sig = self.wallet.sign_bytes(&revoke_msg);
 
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).expect("getrandom failed");

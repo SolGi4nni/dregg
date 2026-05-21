@@ -260,7 +260,7 @@ fn non_membership_proof_with_tampered_neighbors() {
 
     // Tamper with a neighbor's proof
     let mut tampered = nm_proof.clone();
-    if let Some((_, ref mut proof)) = tampered.left_neighbor {
+    if let Some((_, _, ref mut proof)) = tampered.left_neighbor {
         if let Some(sibs) = proof.siblings.first_mut() {
             sibs[0] = [0xBB; 32];
         }

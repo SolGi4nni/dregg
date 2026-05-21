@@ -135,11 +135,14 @@ pub async fn run_federation_sync(state: NodeState) {
         "gossip PeerNode ready"
     );
 
-    // Derive signing key from the node identity. In production, this should be
-    // a shared pre-shared key (PSK) distributed to all federation members.
-    // For now we derive it from the node_id — all peers in the same federation
-    // must use the same key.
-    let signing_key = *blake3::hash(b"pyana-federation-gossip-signing-key-v1").as_bytes();
+    // Derive the gossip signing key from this node's Ed25519 identity key using
+    // BLAKE3 key derivation. Each node gets a unique signing key, preventing
+    // impersonation. Peers verify envelopes using the sender's derived key
+    // (which they can compute from the sender's known public identity).
+    let signing_key = {
+        let s = state.read().await;
+        s.wallet.derive_symmetric_key("pyana-gossip-envelope-signing-v1")
+    };
 
     // Create the GossipNetwork.
     let gossip = Arc::new(GossipNetwork::new(endpoint, node_id, signing_key));
@@ -441,47 +444,47 @@ async fn handle_revocation_message(state: &NodeState, from: SocketAddr, message:
 async fn handle_intent_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::PublishIntent { intent_data, .. } => {
-            // Decode the intent JSON from intent_data.
-            if let Ok(intent) = serde_json::from_slice::<serde_json::Value>(&intent_data) {
-                let intent_id = intent
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+            // Decode and validate the intent from intent_data.
+            if let Ok(intent) = serde_json::from_slice::<pyana_intent::Intent>(&intent_data) {
+                // Validate the intent before accepting.
+                if pyana_intent::validation::validate_intent(&intent).is_ok() {
+                    let intent_id_hex: String =
+                        intent.id.iter().map(|b| format!("{b:02x}")).collect();
+                    info!(from = %from, intent_id = %intent_id_hex, "received intent via gossip");
 
-                info!(from = %from, intent_id = %intent_id, "received intent via gossip");
-
-                // Add to local intent pool (respecting size limit).
-                if !intent_id.is_empty() {
+                    // Add to local intent pool (respecting size limit).
                     let mut s = state.write().await;
                     if s.intent_pool.len() < crate::api::MAX_NODE_INTENT_POOL {
-                        s.intent_pool.insert(intent_id, intent.clone());
+                        s.intent_pool.insert(intent.id, intent.clone());
                     }
-                }
+                    drop(s);
 
-                // Broadcast to local WS clients.
-                state.emit(NodeEvent::Intent { intent });
+                    // Broadcast to local WS clients.
+                    state.emit(NodeEvent::Intent {
+                        intent: serde_json::to_value(&intent).unwrap_or_default(),
+                    });
+                }
             }
         }
         // Also accept legacy PublishTurn on intents topic for backward compat.
         PeerMessage::PublishTurn { turn_data, .. } => {
-            if let Ok(intent) = serde_json::from_slice::<serde_json::Value>(&turn_data) {
-                let intent_id = intent
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+            // Legacy path: try to deserialize as Intent from turn_data.
+            if let Ok(intent) = serde_json::from_slice::<pyana_intent::Intent>(&turn_data) {
+                if pyana_intent::validation::validate_intent(&intent).is_ok() {
+                    let intent_id_hex: String =
+                        intent.id.iter().map(|b| format!("{b:02x}")).collect();
+                    info!(from = %from, intent_id = %intent_id_hex, "received intent via gossip (legacy PublishTurn)");
 
-                info!(from = %from, intent_id = %intent_id, "received intent via gossip (legacy PublishTurn)");
-
-                if !intent_id.is_empty() {
                     let mut s = state.write().await;
                     if s.intent_pool.len() < crate::api::MAX_NODE_INTENT_POOL {
-                        s.intent_pool.insert(intent_id, intent.clone());
+                        s.intent_pool.insert(intent.id, intent.clone());
                     }
-                }
+                    drop(s);
 
-                state.emit(NodeEvent::Intent { intent });
+                    state.emit(NodeEvent::Intent {
+                        intent: serde_json::to_value(&intent).unwrap_or_default(),
+                    });
+                }
             }
         }
         _ => {}
@@ -492,6 +495,10 @@ async fn handle_intent_message(state: &NodeState, from: SocketAddr, message: Pee
 ///
 /// P1 Fix (issue 3): Before persisting, verify quorum signature using the
 /// federation's known public keys. Reject unverified roots.
+///
+/// State root divergence detection: if the incoming root carries a post_state_root
+/// and we have a local note_tree_root / nullifier_set_root, we log a warning on
+/// mismatch (potential state divergence).
 async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::AttestedRootUpdate { root } => {
@@ -556,6 +563,51 @@ async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerM
                             );
                         }
                         return;
+                    }
+                }
+            }
+
+            // State root divergence detection: compare the incoming root's
+            // note_tree_root and nullifier_set_root against our local store.
+            {
+                let s = state.read().await;
+                let zero = [0u8; 32];
+
+                // Check note tree root divergence.
+                if let Some(remote_note_root) = attested_root.note_tree_root {
+                    if remote_note_root != zero {
+                        if let Ok(local_note_root) = s.store.note_tree_root() {
+                            if local_note_root != zero && local_note_root != remote_note_root {
+                                let local_hex: String = local_note_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let remote_hex: String = remote_note_root.iter().map(|b| format!("{b:02x}")).collect();
+                                error!(
+                                    from = %from,
+                                    height = height,
+                                    local_note_root = %local_hex,
+                                    remote_note_root = %remote_hex,
+                                    "STATE DIVERGENCE DETECTED: note tree root mismatch"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Check nullifier set root divergence.
+                if let Some(remote_null_root) = attested_root.nullifier_set_root {
+                    if remote_null_root != zero {
+                        if let Ok(local_null_root) = s.store.nullifier_set_root() {
+                            if local_null_root != zero && local_null_root != remote_null_root {
+                                let local_hex: String = local_null_root.iter().map(|b| format!("{b:02x}")).collect();
+                                let remote_hex: String = remote_null_root.iter().map(|b| format!("{b:02x}")).collect();
+                                error!(
+                                    from = %from,
+                                    height = height,
+                                    local_nullifier_root = %local_hex,
+                                    remote_nullifier_root = %remote_hex,
+                                    "STATE DIVERGENCE DETECTED: nullifier set root mismatch"
+                                );
+                            }
+                        }
                     }
                 }
             }

@@ -388,20 +388,19 @@ impl PersistentStore {
     /// Store a proof hash (used in conditional turn resolution) to prevent replay.
     ///
     /// Returns Ok(true) if newly inserted, Ok(false) if already present.
+    ///
+    /// The check-and-insert is performed atomically within a single write
+    /// transaction to prevent TOCTOU races where two concurrent calls could
+    /// both pass the existence check.
     pub fn insert_proof_hash(&self, hash: &[u8; 32]) -> Result<bool> {
         // We reuse METADATA_BYTES with a "proof_hash:" prefix key.
         let key = format!("proof_hash:{}", hex_encode_bytes(hash));
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(tables::METADATA_BYTES)?;
-        if table.get(key.as_str())?.is_some() {
-            return Ok(false);
-        }
-        drop(table);
-        drop(read_txn);
-
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(tables::METADATA_BYTES)?;
+            if table.get(key.as_str())?.is_some() {
+                return Ok(false);
+            }
             table.insert(key.as_str(), &[1u8] as &[u8])?;
         }
         write_txn.commit()?;

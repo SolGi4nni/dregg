@@ -426,6 +426,19 @@ mod tests {
 
         // Connect a client and request the attested root.
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
+
+        // Must send Hello first (P0-2: handshake enforcement).
+        client
+            .send(WireMessage::Hello {
+                node_id: [0x33; 32],
+                node_name: "federation-test-client".to_string(),
+                protocol_version: crate::message::PROTOCOL_VERSION,
+                capabilities: vec![],
+            })
+            .await
+            .unwrap();
+        let _welcome = client.recv().await.unwrap();
+
         client.send(WireMessage::RequestAttestedRoot).await.unwrap();
 
         let response = client.recv().await.unwrap();

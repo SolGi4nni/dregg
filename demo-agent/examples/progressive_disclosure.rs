@@ -176,6 +176,7 @@ fn main() {
             revealed_facts,
             proof,
             conclusion,
+            ..
         }) => {
             println!(
                 "  [RESULT: {}]\n",

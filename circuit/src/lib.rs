@@ -89,7 +89,9 @@ pub mod presentation;
 
 pub mod non_revocation_air;
 pub mod note_spending_air;
+pub mod predicate_air;
 pub mod stark;
+pub mod turn_validity_air;
 
 #[cfg(feature = "plonky3")]
 pub mod plonky3_prover;
@@ -148,3 +150,10 @@ pub use presentation::{
     PresentationWitness, RealPresentationProof, prove_authorization,
 };
 pub use binding::compute_action_binding;
+pub use predicate_air::{
+    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
+    prove_in_range, prove_predicate, verify_in_range, verify_predicate,
+};
+pub use turn_validity_air::{
+    TurnValidityAir, TurnValidityWitness, prove_turn_validity, verify_turn_validity,
+};

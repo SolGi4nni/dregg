@@ -1582,6 +1582,7 @@ mod tests {
                 rhs_is_var: true,
                 rhs_value: BabyBear::new(1), // Y = request_cost
             }),
+            lt_check: None,
         };
 
         let body_fact = hash_fact(owns_pred, &[budget, cost, BabyBear::ZERO]);
@@ -1640,6 +1641,7 @@ mod tests {
                 rhs_is_var: true,
                 rhs_value: BabyBear::new(1), // Y = request_cost
             }),
+            lt_check: None,
         };
 
         let body_fact = hash_fact(owns_pred, &[budget, cost, BabyBear::ZERO]);
@@ -1711,6 +1713,7 @@ mod tests {
                 rhs_is_var: true,
                 rhs_value: BabyBear::new(2), // request_cost
             }),
+            lt_check: None,
         };
 
         let body_fact = hash_fact(budget_pred, &[action_hash, budget, cost]);
@@ -1767,6 +1770,7 @@ mod tests {
                 rhs_is_var: true,
                 rhs_value: BabyBear::new(1),
             }),
+            lt_check: None,
         };
 
         let body_fact = hash_fact(owns_pred, &[val, val, BabyBear::ZERO]);

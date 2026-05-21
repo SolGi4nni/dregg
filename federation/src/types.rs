@@ -72,16 +72,61 @@ pub struct RevocationBlock {
     /// If `None`, the block is unsigned (legacy/test mode).
     #[serde(default)]
     pub proposer_signature: Option<Signature>,
+    /// Merkle root of the ledger state BEFORE applying this block's events.
+    /// Used for divergence detection: validators check that the proposer's
+    /// pre_state_root matches their own local state before voting.
+    #[serde(default)]
+    pub pre_state_root: [u8; 32],
+    /// Merkle root of the ledger state AFTER applying this block's events.
+    /// Light clients can verify state transitions using this commitment.
+    #[serde(default)]
+    pub post_state_root: [u8; 32],
+    /// Note tree root after this block's events have been applied.
+    #[serde(default)]
+    pub note_tree_root: [u8; 32],
+    /// Nullifier set root after this block's events have been applied.
+    #[serde(default)]
+    pub nullifier_set_root: [u8; 32],
 }
 
 impl RevocationBlock {
     /// Compute the block hash from its contents.
+    ///
+    /// State root fields are included in the hash when non-zero (i.e., when
+    /// the block was produced by a state-root-aware proposer). This maintains
+    /// backward compatibility: blocks produced by older code with zeroed state
+    /// roots hash identically to before.
     pub fn compute_hash(
         height: u64,
         view: u64,
         proposer: usize,
         events: &[RevocationEvent],
         prev_hash: &[u8; 32],
+    ) -> [u8; 32] {
+        Self::compute_hash_with_state_roots(
+            height,
+            view,
+            proposer,
+            events,
+            prev_hash,
+            &[0u8; 32],
+            &[0u8; 32],
+            &[0u8; 32],
+            &[0u8; 32],
+        )
+    }
+
+    /// Compute the block hash including state root commitments.
+    pub fn compute_hash_with_state_roots(
+        height: u64,
+        view: u64,
+        proposer: usize,
+        events: &[RevocationEvent],
+        prev_hash: &[u8; 32],
+        pre_state_root: &[u8; 32],
+        post_state_root: &[u8; 32],
+        note_tree_root: &[u8; 32],
+        nullifier_set_root: &[u8; 32],
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_derive_key("pyana-federation block v1");
         hasher.update(&height.to_le_bytes());
@@ -92,6 +137,21 @@ impl RevocationBlock {
             hasher.update(event.token_id.as_bytes());
             hasher.update(&(event.authority_id as u64).to_le_bytes());
             hasher.update(&event.signature.0);
+        }
+        // Include state roots in hash only when they are non-zero.
+        // This ensures backward compatibility with blocks produced before
+        // state root commitments were introduced.
+        let zero = [0u8; 32];
+        if pre_state_root != &zero
+            || post_state_root != &zero
+            || note_tree_root != &zero
+            || nullifier_set_root != &zero
+        {
+            hasher.update(b"state-roots-v1");
+            hasher.update(pre_state_root);
+            hasher.update(post_state_root);
+            hasher.update(note_tree_root);
+            hasher.update(nullifier_set_root);
         }
         *hasher.finalize().as_bytes()
     }
@@ -296,6 +356,63 @@ pub struct RevocationProof {
     pub attested_root: AttestedRoot,
     /// The non-membership proof from the Merkle tree.
     pub non_membership: pyana_commit::NonMembershipProof,
+}
+
+// =============================================================================
+// Light Client Proof
+// =============================================================================
+
+/// A proof that enables external parties to verify "the federation attests state
+/// root X at height H" without running a full node.
+///
+/// Contains the block hash, the attested post-state root, and the quorum
+/// certificate proving that a supermajority of federation nodes agreed on this
+/// state transition.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightClientProof {
+    /// The hash of the block whose state transition is attested.
+    pub block_hash: [u8; 32],
+    /// The post-state root attested by the federation at this block.
+    pub post_state_root: [u8; 32],
+    /// The note tree root at this block height.
+    pub note_tree_root: [u8; 32],
+    /// The nullifier set root at this block height.
+    pub nullifier_set_root: [u8; 32],
+    /// The block height.
+    pub height: u64,
+    /// The quorum certificate proving supermajority agreement.
+    pub qc: QuorumCertificate,
+}
+
+impl LightClientProof {
+    /// Construct a light client proof from a finalized block and its QC.
+    pub fn from_block(block: &RevocationBlock, qc: &QuorumCertificate) -> Self {
+        Self {
+            block_hash: block.block_hash,
+            post_state_root: block.post_state_root,
+            note_tree_root: block.note_tree_root,
+            nullifier_set_root: block.nullifier_set_root,
+            height: block.height,
+            qc: qc.clone(),
+        }
+    }
+
+    /// Verify this proof against a set of known federation node identities.
+    ///
+    /// Checks that the QC contains enough valid signatures to meet the
+    /// threshold requirement.
+    pub fn verify(&self, nodes: &[NodeIdentity]) -> bool {
+        // QC must reference the same block hash.
+        if self.qc.block_hash != self.block_hash {
+            return false;
+        }
+        // QC must be at the same height.
+        if self.qc.height != self.height {
+            return false;
+        }
+        // Verify the quorum signatures.
+        self.qc.is_valid_with_keys(nodes)
+    }
 }
 
 // =============================================================================

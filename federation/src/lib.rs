@@ -70,7 +70,7 @@ pub mod types;
 
 // Re-export primary types.
 pub use consensus::{
-    ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState,
+    ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, PendingStateRoots,
     ReconfigurationProposal, ReconfigurationVotes,
 };
 pub use node::{Federation, FederationNode};
@@ -83,7 +83,8 @@ pub use transport::{
     TcpFederationTransport, TransportError,
 };
 pub use types::{
-    AttestedRoot, ConsensusMessage, NodeIdentity, PublicKey, QuorumCertificate, RevocationBlock,
-    RevocationEvent, RevocationProof, Signature, SigningKey, Token, ViewChangeMessage, Vote,
-    generate_keypair, sign, verify, verify_attested_root_with_committee, verify_via_receipt_chain,
+    AttestedRoot, ConsensusMessage, LightClientProof, NodeIdentity, PublicKey,
+    QuorumCertificate, RevocationBlock, RevocationEvent, RevocationProof, Signature, SigningKey,
+    Token, ViewChangeMessage, Vote, generate_keypair, sign, verify,
+    verify_attested_root_with_committee, verify_via_receipt_chain,
 };

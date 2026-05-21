@@ -1,13 +1,25 @@
-//! pyana-wasm: Interactive browser playground for pyana token primitives.
+//! pyana-wasm: Interactive browser playground for the pyana distributed system.
 //!
-//! Exposes token minting, attenuation, verification, STARK proof generation,
-//! Merkle tree operations, and Datalog evaluation to JavaScript via wasm-bindgen.
+//! Exposes:
+//! - Token minting, attenuation, verification (macaroon backend)
+//! - STARK proof generation and verification
+//! - Merkle tree operations
+//! - Datalog authorization evaluation
+//! - **Full runtime simulation**: cells, turns, capabilities, notes, federations, intents
+//!
+//! The `PyanaRuntime` (in `runtime` module) provides a complete virtualized distributed
+//! system running in the browser. Users can create federations, agents, execute turns,
+//! exercise capabilities, bridge notes, and match intents -- all in WASM.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 // Import the AuthToken trait to bring its methods into scope.
 use pyana_token::AuthToken;
+
+// Full runtime simulation modules.
+pub mod runtime;
+pub mod bindings;
 
 // ============================================================================
 // Token operations (Macaroon backend)

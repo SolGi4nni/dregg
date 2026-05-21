@@ -40,6 +40,8 @@ pub mod budget_gate;
 pub mod builder;
 pub mod composer;
 pub mod conditional;
+pub mod conflict;
+pub mod encrypted;
 pub mod error;
 pub mod eventual;
 pub mod executor;
@@ -57,11 +59,12 @@ mod tests;
 pub use action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, Event};
 pub use budget_gate::{BudgetGate, BudgetSlice};
 pub use builder::{ActionBuilder, TurnBuilder};
-pub use composer::{ComposeError, SignedFragment, TurnComposer};
+pub use composer::{ComposeError, ComposedTurn, SignedFragment, TurnComposer};
 pub use conditional::{
-    ConditionProof, ConditionalResult, ConditionalTurn, DEFAULT_MAX_ROOT_AGE,
-    MAX_CONDITIONAL_DEADLINE, ProofCondition, TrustedRoot, compute_proof_hash,
-    resolve_condition, validate_conditional_submission,
+    BASE_CONDITIONAL_DEPOSIT, ConditionProof, ConditionalResult, ConditionalTurn,
+    DEFAULT_MAX_ROOT_AGE, MAX_CONDITIONAL_DEADLINE, PER_BLOCK_DEPOSIT, ProofCondition,
+    TrustedRoot, burn_conditional_deposit, compute_conditional_deposit, compute_proof_hash,
+    refund_conditional_deposit, resolve_condition, validate_conditional_submission,
 };
 pub use obligation::{
     MAX_OBLIGATION_DEADLINE, ObligationError, ObligationOutcome, ProofObligation, check_expiry,
@@ -80,4 +83,9 @@ pub use turn::{Turn, TurnReceipt, TurnResult};
 pub use verify::{
     VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,
     verify_receipt_chain_with_keys, verify_receipt_extends,
+};
+pub use conflict::{ConflictSet, build_conflict_set, extract_access_sets};
+pub use encrypted::{
+    ConflictBucket, EncryptedTurn, EncryptedTurnError, TurnOrdering, TurnValidityProof,
+    TurnValidityPublicInputs, order_encrypted_turns,
 };

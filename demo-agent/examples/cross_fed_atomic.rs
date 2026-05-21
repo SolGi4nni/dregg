@@ -23,6 +23,7 @@ use pyana_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
+    compute_conditional_deposit,
 };
 
 /// Create permissions that allow all operations without authorization.
@@ -152,6 +153,7 @@ fn main() {
         },
         timeout_height,
         submitted_at: current_height,
+        deposit_amount: compute_conditional_deposit(timeout_height, current_height),
     };
 
     // Bob's conditional: execute IFF Alice's turn was executed
@@ -162,6 +164,7 @@ fn main() {
         },
         timeout_height,
         submitted_at: current_height,
+        deposit_amount: compute_conditional_deposit(timeout_height, current_height),
     };
 
     println!(
@@ -270,6 +273,7 @@ fn main() {
         condition: ProofCondition::HashPreimage { hash: secret_hash },
         timeout_height: 80,
         submitted_at: 50,
+        deposit_amount: compute_conditional_deposit(80, 50),
     };
 
     println!("  Charlie's conditional: transfer 200 to Dave IFF preimage revealed");
@@ -348,6 +352,7 @@ fn main() {
         },
         timeout_height: 80,
         submitted_at: 50,
+        deposit_amount: compute_conditional_deposit(80, 50),
     };
 
     let correct_proof = ConditionProof::Preimage(secret);
@@ -399,13 +404,13 @@ fn main() {
 
     let trusted_roots = vec![(fed_root, 50u64)];
     let mut nullifiers = HashSet::new();
-    let result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &trusted_roots, DEFAULT_MAX_ROOT_AGE, &mut nullifiers);
+    let result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &trusted_roots, DEFAULT_MAX_ROOT_AGE, &mut nullifiers, &[]);
     assert_eq!(result, ConditionalResult::Resolved);
     println!("  RemoteProof condition resolved with valid STARK proof");
     println!("    Federation root: {}", short_hex(&fed_root));
     println!("    Conclusion: ALLOW (1)");
         let mut n2 = HashSet::new();
-    let untrusted_result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n2);
+    let untrusted_result = pyana_turn::resolve_condition(&condition, &stark_proof, 60, 100, &[], DEFAULT_MAX_ROOT_AGE, &mut n2, &[]);
     assert!(matches!(
         untrusted_result,
         ConditionalResult::InvalidProof(_)

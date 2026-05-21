@@ -17,10 +17,12 @@
 
 pub mod causal;
 
+use std::collections::HashSet;
 use std::fmt;
 
 use ed25519_dalek::Verifier;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 pub use causal::{CausalDag, CausalError};
 
@@ -132,6 +134,7 @@ pub fn generate_keypair() -> (SigningKey, PublicKey) {
     let mut key_bytes = [0u8; 32];
     getrandom::fill(&mut key_bytes).expect("getrandom failed");
     let sk = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+    key_bytes.zeroize();
     let vk = sk.verifying_key();
     (SigningKey(sk), PublicKey(vk.to_bytes()))
 }
@@ -189,16 +192,30 @@ pub struct AttestedRoot {
 impl AttestedRoot {
     /// Check if this root has sufficient signatures (count-only check, no crypto).
     ///
-    /// Use `is_valid()` for full cryptographic verification.
+    /// **STRUCTURAL VALIDATION ONLY.** This performs no cryptographic verification.
+    /// For Ed25519 signatures it checks count >= threshold. For a ThresholdQC it
+    /// checks minimum byte length (>= 48 bytes for BLS12-381 G1 compressed point).
+    /// Full cryptographic BLS verification of ThresholdQC requires the `hints`
+    /// crate and is performed at a higher layer.
     ///
-    /// If a threshold QC is present, it must contain at least 48 bytes
-    /// (minimum BLS12-381 G1 compressed point size) to be considered valid.
+    /// Use `is_valid()` for Ed25519 cryptographic verification against known keys.
     pub fn has_quorum(&self) -> bool {
         if let Some(ref qc) = self.threshold_qc {
             // A ThresholdQC must be non-empty and meet minimum BLS12-381 G1 size.
             return qc.0.len() >= 48;
         }
         self.quorum_signatures.len() >= self.threshold
+    }
+
+    /// Alias for [`has_quorum`](Self::has_quorum) that makes the non-cryptographic
+    /// nature of the check explicit in calling code.
+    ///
+    /// **STRUCTURAL VALIDATION ONLY.** This checks signature count and QC byte
+    /// length but does NOT perform any cryptographic verification. Full BLS
+    /// verification of ThresholdQC requires the `hints` crate and is done at a
+    /// higher layer.
+    pub fn is_structurally_valid(&self) -> bool {
+        self.has_quorum()
     }
 
     /// Verify that this attested root has sufficient valid signatures.
@@ -208,10 +225,15 @@ impl AttestedRoot {
     /// `known_keys` and each signature must be cryptographically valid over the
     /// canonical signing message.
     ///
-    /// A threshold QC, if present, must be non-empty (>= 48 bytes for BLS12-381
-    /// G1 compressed). It is still considered to require separate BLS verification
-    /// at a higher layer; the `has_quorum()` size check is a necessary but not
-    /// sufficient condition.
+    /// Duplicate signers are rejected: if the same public key appears more than
+    /// once in `quorum_signatures`, only the first occurrence counts toward the
+    /// threshold. This prevents replay of a single valid (key, signature) pair
+    /// to satisfy quorum.
+    ///
+    /// **NOTE on ThresholdQC:** If a threshold QC is present, this method performs
+    /// STRUCTURAL validation only (>= 48 bytes for BLS12-381 G1 compressed). Full
+    /// cryptographic BLS verification of the aggregate signature requires the
+    /// `hints` crate and is done at a higher layer.
     pub fn is_valid(&self, known_keys: &[PublicKey]) -> bool {
         if let Some(ref qc) = self.threshold_qc {
             // ThresholdQC must be non-empty and at least BLS12-381 G1 size.
@@ -223,6 +245,8 @@ impl AttestedRoot {
             return false;
         }
         let message = self.signing_message();
+        let mut seen_signers: HashSet<[u8; 32]> = HashSet::new();
+        let mut valid_count = 0usize;
         for (pubkey, sig) in &self.quorum_signatures {
             if !known_keys.contains(pubkey) {
                 return false;
@@ -230,8 +254,13 @@ impl AttestedRoot {
             if !pubkey.verify(&message, sig) {
                 return false;
             }
+            // Only count unique signers toward the threshold.
+            if seen_signers.insert(pubkey.0) {
+                valid_count += 1;
+            }
         }
-        true
+        // Require that the number of UNIQUE valid signers meets the threshold.
+        valid_count >= self.threshold
     }
 
     /// Alias for [`is_valid`](Self::is_valid) for API compatibility with the
@@ -241,15 +270,34 @@ impl AttestedRoot {
     }
 
     /// Compute the canonical message that quorum members sign.
+    ///
+    /// Each optional field is encoded with a tag byte prefix:
+    /// - `0x00` for `None`
+    /// - `0x01` followed by the 32-byte value for `Some`
+    ///
+    /// This ensures unambiguous encoding: `note_tree_root = Some(X), nullifier_set_root = None`
+    /// produces a different message than `note_tree_root = None, nullifier_set_root = Some(X)`.
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
         msg.extend_from_slice(b"pyana-attested-root-v1");
         msg.extend_from_slice(&self.merkle_root);
-        if let Some(ref note_root) = self.note_tree_root {
-            msg.extend_from_slice(note_root);
+        match self.note_tree_root {
+            Some(ref note_root) => {
+                msg.push(0x01);
+                msg.extend_from_slice(note_root);
+            }
+            None => {
+                msg.push(0x00);
+            }
         }
-        if let Some(ref nullifier_root) = self.nullifier_set_root {
-            msg.extend_from_slice(nullifier_root);
+        match self.nullifier_set_root {
+            Some(ref nullifier_root) => {
+                msg.push(0x01);
+                msg.extend_from_slice(nullifier_root);
+            }
+            None => {
+                msg.push(0x00);
+            }
         }
         msg.extend_from_slice(&self.height.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
@@ -259,10 +307,16 @@ impl AttestedRoot {
     /// Verify that this attested root is valid AND recent enough.
     ///
     /// Combines cryptographic verification with a freshness check:
+    /// - Negative timestamps are rejected (invalid state)
     /// - Signatures must be valid against `known_keys`
     /// - The root must not be older than `max_age_secs`
     /// - The root's timestamp must not be more than 60s in the future (clock skew tolerance)
     pub fn is_valid_at(&self, known_keys: &[PublicKey], now: u64, max_age_secs: u64) -> bool {
+        // Reject negative timestamps: they are invalid and would wrap to huge
+        // u64 values when cast, bypassing the staleness check.
+        if self.timestamp < 0 {
+            return false;
+        }
         if !self.is_valid(known_keys) {
             return false;
         }
@@ -320,7 +374,7 @@ pub struct RevocationEvent {
 }
 
 /// Cell identity (32 bytes, derived from public key + domain).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CellId(pub [u8; 32]);
 
 impl CellId {

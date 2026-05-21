@@ -69,11 +69,12 @@ impl Preconditions {
     /// Compute a deterministic hash of these preconditions for inclusion in signing messages.
     ///
     /// Uses BLAKE3 over a canonical byte representation. Empty (default) preconditions
-    /// hash to all-zeros for efficiency (no hashing needed for the common case).
+    /// use a domain-separated constant (not all-zeros) to prevent confusion with
+    /// uninitialized data or hash collisions with other all-zero values.
     pub fn hash(&self) -> [u8; 32] {
-        // Fast path: default (empty) preconditions are represented as zero hash.
+        // Domain-separated constant for empty preconditions.
         if self.cell_state.is_none() && self.network.is_none() && self.valid_while.is_none() {
-            return [0u8; 32];
+            return blake3::derive_key("pyana-empty-preconditions-v1", b"");
         }
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"preconditions-v1");

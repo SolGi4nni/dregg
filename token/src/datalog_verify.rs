@@ -14,7 +14,7 @@
 //! This replaces the imperative `verify_caveats` function as the canonical
 //! authorization evaluator.
 
-use pyana_commit::{FieldElement, SymbolTable, TokenState};
+use pyana_commit::{Fact, FieldElement, SymbolTable, TokenState};
 use pyana_trace::{
     AuthorizationRequest as TraceRequest, AuthorizationTrace, Conclusion, Evaluator,
     Fact as TraceFact, Rule, Term, symbol_from_str,
@@ -51,7 +51,7 @@ pub fn verify_token_datalog(
     request: &AuthRequest,
 ) -> Result<DatalogVerifyResult, TokenError> {
     // 1. Decode caveats to FactSet + SymbolTable
-    let (factset, symbols) = caveat_set_to_factset(caveat_set);
+    let (factset, mut symbols) = caveat_set_to_factset(caveat_set);
 
     // 2. Build TokenState from FactSet
     let mut state = TokenState::new();
@@ -63,6 +63,28 @@ pub fn verify_token_datalog(
         return Err(TokenError::Denied(
             "token state is empty (no facts to evaluate)".into(),
         ));
+    }
+
+    // 2b. If the token has NO app/service dimension facts but DOES have
+    // non-dimensional caveats (time, user, org, machine, etc.), inject
+    // `unrestricted(1)` so the unrestricted rule can fire. Without this,
+    // tokens with only time/user caveats would produce no matching allow rule.
+    let has_app_facts = state.all_facts().iter().any(|f| {
+        symbols.resolve(f.predicate) == Some("app")
+    });
+    let has_service_facts = state.all_facts().iter().any(|f| {
+        symbols.resolve(f.predicate) == Some("service")
+    });
+    let has_unrestricted_fact = state.all_facts().iter().any(|f| {
+        symbols.resolve(f.predicate) == Some("unrestricted")
+    });
+
+    if !has_app_facts && !has_service_facts && !has_unrestricted_fact {
+        // Token has facts (non-empty) but none are app/service dimensional.
+        // Inject unrestricted(1) so the unrestricted rule can fire.
+        let pred = symbols.intern("unrestricted");
+        let fact = Fact::unary(pred, FieldElement::from_u64(1));
+        state.add_fact(fact);
     }
 
     // 3. Convert committed facts to trace-format facts
@@ -794,7 +816,18 @@ pub fn pre_evaluation_deny_checks(
             Ok(pyana_caveats::PyanaGrant::FeatureGlob { include, exclude }) => {
                 feature_globs.push((include, exclude))
             }
-            _ => {}
+            Ok(pyana_caveats::PyanaGrant::Unknown(type_id, _)) => {
+                // Fail-closed: unknown caveat types MUST deny authorization.
+                return Err(TokenError::Denied(format!(
+                    "unknown caveat type {} cannot be verified (fail-closed)",
+                    type_id
+                )));
+            }
+            // Known types handled elsewhere (App, Service, Budget, Revocable)
+            Ok(_) => {}
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 

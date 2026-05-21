@@ -273,7 +273,7 @@ fn permissions_for_action() {
 fn capability_set_grant_and_lookup() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
-    let slot = caps.grant(target, AuthRequired::Signature);
+    let slot = caps.grant(target, AuthRequired::Signature).unwrap();
     assert_eq!(slot, 0);
 
     let cap = caps.lookup(slot).unwrap();
@@ -288,8 +288,8 @@ fn capability_set_grant_increments_slots() {
     let t1 = CellId::derive_raw(&test_key(1), &test_token(1));
     let t2 = CellId::derive_raw(&test_key(2), &test_token(1));
 
-    let s1 = caps.grant(t1, AuthRequired::None);
-    let s2 = caps.grant(t2, AuthRequired::Proof);
+    let s1 = caps.grant(t1, AuthRequired::None).unwrap();
+    let s2 = caps.grant(t2, AuthRequired::Proof).unwrap();
     assert_eq!(s1, 0);
     assert_eq!(s2, 1);
     assert_eq!(caps.len(), 2);
@@ -299,7 +299,7 @@ fn capability_set_grant_increments_slots() {
 fn capability_set_revoke() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
-    let slot = caps.grant(target, AuthRequired::None);
+    let slot = caps.grant(target, AuthRequired::None).unwrap();
 
     assert!(caps.revoke(slot));
     assert!(caps.lookup(slot).is_none());
@@ -327,7 +327,7 @@ fn capability_set_has_access() {
 fn capability_set_attenuate_valid() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
-    let slot = caps.grant(target, AuthRequired::Either);
+    let slot = caps.grant(target, AuthRequired::Either).unwrap();
 
     // Attenuate from Either -> Signature (narrower).
     let attenuated = caps.attenuate(slot, AuthRequired::Signature);
@@ -341,7 +341,7 @@ fn capability_set_attenuate_valid() {
 fn capability_set_attenuate_to_impossible() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
-    let slot = caps.grant(target, AuthRequired::Signature);
+    let slot = caps.grant(target, AuthRequired::Signature).unwrap();
 
     // Attenuate to Impossible (always valid - most restrictive).
     let attenuated = caps.attenuate(slot, AuthRequired::Impossible);
@@ -353,7 +353,7 @@ fn capability_set_attenuate_to_impossible() {
 fn capability_set_attenuate_invalid_widening() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
-    let slot = caps.grant(target, AuthRequired::Signature);
+    let slot = caps.grant(target, AuthRequired::Signature).unwrap();
 
     // Can't widen from Signature to Either.
     let result = caps.attenuate(slot, AuthRequired::Either);
@@ -375,7 +375,7 @@ fn capability_set_with_breadstuff() {
     let mut caps = CapabilitySet::new();
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
     let breadstuff = [0xBB; 32];
-    let slot = caps.grant_with_breadstuff(target, AuthRequired::Proof, Some(breadstuff));
+    let slot = caps.grant_with_breadstuff(target, AuthRequired::Proof, Some(breadstuff)).unwrap();
 
     let cap = caps.lookup(slot).unwrap();
     assert_eq!(cap.breadstuff, Some(breadstuff));
@@ -1459,9 +1459,9 @@ fn scenario_multiple_grants_same_target() {
     let target = CellId::derive_raw(&test_key(1), &test_token(1));
 
     // Grant multiple capabilities to the same target with different perms.
-    let s1 = caps.grant(target, AuthRequired::None);
-    let s2 = caps.grant(target, AuthRequired::Signature);
-    let s3 = caps.grant(target, AuthRequired::Proof);
+    let s1 = caps.grant(target, AuthRequired::None).unwrap();
+    let s2 = caps.grant(target, AuthRequired::Signature).unwrap();
+    let s3 = caps.grant(target, AuthRequired::Proof).unwrap();
 
     assert_eq!(caps.len(), 3);
     assert_ne!(s1, s2);

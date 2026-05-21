@@ -109,6 +109,10 @@ pub enum TurnError {
     /// A conditional turn's condition was not satisfied by the presented proof.
     ConditionNotMet(String),
 
+    /// The fee provided for a conditional turn is less than the required reservation deposit.
+    /// Deposit = BASE_CONDITIONAL_DEPOSIT + PER_BLOCK_DEPOSIT * blocks_until_timeout.
+    InsufficientConditionalDeposit { required: u64, provided: u64 },
+
     /// A BridgeMint effect failed verification (untrusted root, invalid proof,
     /// or double-bridge attempt).
     BridgeMintFailed { reason: String },
@@ -270,6 +274,12 @@ impl core::fmt::Display for TurnError {
             }
             TurnError::ConditionNotMet(reason) => {
                 write!(f, "conditional turn condition not met: {reason}")
+            }
+            TurnError::InsufficientConditionalDeposit { required, provided } => {
+                write!(
+                    f,
+                    "insufficient conditional deposit: required {required}, provided {provided}"
+                )
             }
             TurnError::BridgeMintFailed { reason } => {
                 write!(f, "bridge mint failed: {reason}")

@@ -141,6 +141,7 @@ fn end_to_end_authorization_proof() {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
+            lt_check: None,
         },
         state_root: final_root,
         body_fact_hashes: vec![h_owns_f1, h_read_f1],
@@ -186,6 +187,9 @@ fn end_to_end_authorization_proof() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: issuer_key,
+        revealed_facts_commitment: BabyBear::ZERO,
+        blinding_factor: BabyBear::ZERO,
+        presentation_randomness: BabyBear::ZERO,
     };
 
     let presentation_air = PresentationAir::new(presentation);
@@ -200,8 +204,7 @@ fn end_to_end_authorization_proof() {
     println!("\n--- Proof Statistics ---");
     println!("  Fold proofs: {}", proof.fold_proofs.len());
     println!("  Total proof size: {}", proof.proof_size_display());
-    println!("  Initial root: {}", proof.public_inputs.initial_root);
-    println!("  Final root: {}", proof.public_inputs.final_root);
+    println!("  Presentation tag: {}", proof.public_inputs.presentation_tag);
     println!("  Federation root: {}", proof.public_inputs.federation_root);
     println!("  Timestamp: {}", proof.public_inputs.timestamp);
 
@@ -246,6 +249,7 @@ fn single_step_no_attenuation() {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
+            lt_check: None,
         },
         state_root,
         body_fact_hashes: vec![hash_fact(
@@ -268,6 +272,9 @@ fn single_step_no_attenuation() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: BabyBear::new(9999),
+        revealed_facts_commitment: BabyBear::ZERO,
+        blinding_factor: BabyBear::ZERO,
+        presentation_randomness: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -351,6 +358,7 @@ fn long_attenuation_chain() {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
+            lt_check: None,
         },
         state_root: final_root,
         body_fact_hashes: vec![body_hash],
@@ -370,6 +378,9 @@ fn long_attenuation_chain() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: BabyBear::new(5555),
+        revealed_facts_commitment: BabyBear::ZERO,
+        blinding_factor: BabyBear::ZERO,
+        presentation_randomness: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -726,6 +737,7 @@ fn proof_size_scaling() {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root: final_root,
             body_fact_hashes: vec![body_hash],
@@ -745,6 +757,9 @@ fn proof_size_scaling() {
             derivation,
             issuer_membership: issuer_witness,
             issuer_key_hash: BabyBear::new(5555),
+            revealed_facts_commitment: BabyBear::ZERO,
+            blinding_factor: BabyBear::ZERO,
+            presentation_randomness: BabyBear::ZERO,
         };
 
         let air = PresentationAir::new(presentation);

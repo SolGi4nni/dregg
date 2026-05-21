@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::field::FieldElement;
+use crate::hash::hash_leaf;
 
 /// A fact: predicate + up to 3 terms (unused slots are `FieldElement::ZERO`).
 ///
@@ -109,10 +110,14 @@ impl Fact {
         }
     }
 
-    /// Compute the leaf hash of this fact (BLAKE3 of serialized bytes).
+    /// Compute the leaf hash of this fact using the domain-separated leaf hash.
+    ///
+    /// Uses `hash::hash_leaf()` (domain: "pyana-commit leaf v1") to ensure
+    /// consistency with the Merkle tree's leaf hashing and prevent
+    /// domain-confusion attacks between leaf and node hashes.
     pub fn leaf_hash(&self) -> [u8; 32] {
         let bytes = self.to_bytes();
-        *blake3::hash(&bytes).as_bytes()
+        hash_leaf(&bytes)
     }
 
     /// The arity of this fact (number of non-zero terms).

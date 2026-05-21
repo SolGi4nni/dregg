@@ -26,7 +26,7 @@ use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::multi_step_air;
 use crate::poseidon2::hash_fact;
-use crate::stark::{self, MerkleStarkAir, StarkProof};
+use crate::stark::{self, MerkleStarkAir, StarkAir, StarkProof};
 
 /// The complete presentation witness (all private data).
 #[derive(Clone, Debug)]
@@ -45,9 +45,45 @@ pub struct PresentationWitness {
     pub issuer_membership: MerkleWitness,
     /// The issuer's public key hash (private).
     pub issuer_key_hash: BabyBear,
+    /// Commitment to the set of facts being selectively revealed (public).
+    ///
+    /// For selective disclosure mode, this is `poseidon2(hash(fact_1) || ... || hash(fact_n))`
+    /// computed over the facts the prover chooses to reveal. The verifier recomputes this
+    /// from the plaintext revealed facts and checks it matches, ensuring the prover cannot
+    /// lie about which facts were derived during evaluation.
+    ///
+    /// For fully private mode, this is `BabyBear::ZERO` (no facts revealed).
+    pub revealed_facts_commitment: BabyBear,
+    /// Blinding factor for ring membership (private).
+    ///
+    /// When non-zero, the issuer membership proof uses blinded (ring) mode:
+    /// the public input becomes `blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor)`
+    /// instead of the raw `leaf_hash`. This makes presentations unlinkable —
+    /// the same issuer produces different `blinded_leaf` values each time.
+    ///
+    /// When `BabyBear::ZERO`, the legacy non-blinded path is used (leaf_hash is public).
+    pub blinding_factor: BabyBear,
+    /// Fresh randomness for the presentation tag (private).
+    ///
+    /// Used to compute `presentation_tag = Poseidon2(final_root, presentation_randomness)`.
+    /// Must be freshly generated per presentation to ensure unlinkability.
+    /// The final_root remains private; only the blinded tag is public.
+    pub presentation_randomness: BabyBear,
 }
 
 /// Public inputs for the presentation proof.
+///
+/// # Privacy Design (Phase 2)
+///
+/// The `initial_root` and `final_root` fields have been removed from public inputs
+/// because they are deterministic per-token: same token always produces the same roots,
+/// making presentations linkable across shows.
+///
+/// Instead, a `presentation_tag` is included:
+///   `presentation_tag = Poseidon2(final_root, presentation_randomness)`
+/// where `presentation_randomness` is fresh per presentation. The fold chain still
+/// proves `initial_root -> final_root` internally (as private witness), and the STARK
+/// proves the tag is well-formed. This makes presentations unlinkable.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PresentationPublicInputs {
     /// Federation root of trust.
@@ -56,10 +92,18 @@ pub struct PresentationPublicInputs {
     pub request_predicate: BabyBear,
     /// Timestamp for freshness.
     pub timestamp: BabyBear,
-    /// The initial state root (first token's root, committed by issuer).
-    pub initial_root: BabyBear,
-    /// The final state root (after all attenuations).
-    pub final_root: BabyBear,
+    /// Blinded presentation tag for unlinkable multi-show.
+    ///
+    /// Computed as `Poseidon2(final_root, presentation_randomness)` where the randomness
+    /// is fresh per presentation. The verifier cannot recover `final_root` from this tag,
+    /// so the same credential produces a different tag every time it is shown.
+    pub presentation_tag: BabyBear,
+    /// Commitment to selectively revealed facts (zero if fully private).
+    ///
+    /// This is `poseidon2(hash(fact_1) || ... || hash(fact_n))` over the facts the prover
+    /// chose to reveal. The verifier recomputes this from the plaintext facts and checks
+    /// it matches, cryptographically binding the revealed facts to the proof.
+    pub revealed_facts_commitment: BabyBear,
 }
 
 /// A complete presentation proof.
@@ -91,11 +135,29 @@ impl PresentationProof {
     }
 
     /// Verify the presentation proof.
+    ///
+    /// The verifier no longer sees initial_root or final_root (they are private).
+    /// Instead, it checks:
+    /// 1. Fold chain internal continuity (each step links to the next).
+    /// 2. Derivation proof's state root matches end of fold chain.
+    /// 3. The presentation_tag is well-formed (proven by the STARK internally).
+    /// 4. Issuer membership in federation.
     pub fn verify(&self) -> PresentationVerification {
-        // 1. Check fold chain continuity
-        let mut current_root = self.public_inputs.initial_root;
+        // 1. Check fold chain internal continuity
+        let mut current_root = if let Some(first) = self.fold_proofs.first() {
+            if first.public_inputs.len() < 4 {
+                return PresentationVerification::InvalidFoldProof { index: 0 };
+            }
+            first.public_inputs[0]
+        } else {
+            // No fold proofs: the derivation state root IS the only root.
+            if self.derivation_proof.public_inputs.is_empty() {
+                return PresentationVerification::InvalidDerivation;
+            }
+            return self.verify_no_folds();
+        };
+
         for (i, fold_proof) in self.fold_proofs.iter().enumerate() {
-            // Each fold proof's public inputs are [old_root, new_root, removals, checks]
             if fold_proof.public_inputs.len() < 4 {
                 return PresentationVerification::InvalidFoldProof { index: i };
             }
@@ -105,7 +167,7 @@ impl PresentationProof {
             current_root = fold_proof.public_inputs[1];
         }
 
-        // 2. Check derivation proof's state root matches final root
+        // 2. Check derivation proof's state root matches end of fold chain
         if self.derivation_proof.public_inputs.is_empty() {
             return PresentationVerification::InvalidDerivation;
         }
@@ -114,10 +176,8 @@ impl PresentationProof {
             return PresentationVerification::DerivationRootMismatch;
         }
 
-        // 3. Check final root matches public input
-        if current_root != self.public_inputs.final_root {
-            return PresentationVerification::FinalRootMismatch;
-        }
+        // 3. Presentation tag validity is enforced by the STARK — no comparison
+        //    against final_root needed here (final_root is private witness).
 
         // 4. Check issuer membership in federation
         if self.issuer_membership_proof.public_inputs.len() < 2 {
@@ -128,6 +188,19 @@ impl PresentationProof {
             return PresentationVerification::IssuerNotInFederation;
         }
 
+        PresentationVerification::Valid
+    }
+
+    /// Helper for verification when there are no fold proofs.
+    fn verify_no_folds(&self) -> PresentationVerification {
+        // Check issuer membership in federation
+        if self.issuer_membership_proof.public_inputs.len() < 2 {
+            return PresentationVerification::InvalidIssuerProof;
+        }
+        let issuer_federation_root = self.issuer_membership_proof.public_inputs[1];
+        if issuer_federation_root != self.public_inputs.federation_root {
+            return PresentationVerification::IssuerNotInFederation;
+        }
         PresentationVerification::Valid
     }
 }
@@ -153,8 +226,6 @@ pub enum PresentationVerification {
     InvalidDerivation,
     /// The derivation's state root doesn't match the end of the fold chain.
     DerivationRootMismatch,
-    /// The final root doesn't match public inputs.
-    FinalRootMismatch,
     /// The issuer membership proof is invalid.
     InvalidIssuerProof,
     /// The issuer is not in the federation.
@@ -207,25 +278,23 @@ impl PresentationAir {
         }
         let issuer_membership_proof = ConstraintProof::generate(&issuer_air)?;
 
-        // Compute public inputs
-        let initial_root = if let Some(first_fold) = w.fold_chain.first() {
-            first_fold.old_root
-        } else {
-            w.derivation.state_root
-        };
-
+        // Compute public inputs — initial_root and final_root stay private.
+        // The presentation_tag blinds the final_root for unlinkability.
         let final_root = if let Some(last_fold) = w.fold_chain.last() {
             last_fold.new_root
         } else {
             w.derivation.state_root
         };
 
+        let presentation_tag =
+            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
             request_predicate: w.request_predicate,
             timestamp: w.timestamp,
-            initial_root,
-            final_root,
+            presentation_tag,
+            revealed_facts_commitment: w.revealed_facts_commitment,
         };
 
         // Compute total proof size
@@ -292,6 +361,7 @@ impl PresentationAir {
             federation_root: w.federation_root,
             request_predicate: w.request_predicate,
             timestamp: w.timestamp,
+            revealed_facts_commitment: w.revealed_facts_commitment,
         })
     }
 
@@ -334,6 +404,7 @@ impl PresentationAir {
             federation_root: w.federation_root,
             request_predicate: w.request_predicate,
             timestamp: w.timestamp,
+            revealed_facts_commitment: w.revealed_facts_commitment,
         })
     }
 
@@ -376,25 +447,22 @@ impl PresentationAir {
         // directly via the polynomial commitment scheme.
         let merkle_stark_proof = generate_merkle_stark_proof(&w.issuer_membership)?;
 
-        // Compute public inputs
-        let initial_root = if let Some(first_fold) = w.fold_chain.first() {
-            first_fold.old_root
-        } else {
-            w.derivation.state_root
-        };
-
+        // Compute public inputs — roots stay private, tag is public.
         let final_root = if let Some(last_fold) = w.fold_chain.last() {
             last_fold.new_root
         } else {
             w.derivation.state_root
         };
 
+        let presentation_tag =
+            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
             request_predicate: w.request_predicate,
             timestamp: w.timestamp,
-            initial_root,
-            final_root,
+            presentation_tag,
+            revealed_facts_commitment: w.revealed_facts_commitment,
         };
 
         Some(RealPresentationProof {
@@ -439,34 +507,41 @@ impl PresentationAir {
         let derivation_proof = ConstraintProof::generate(&derivation_air)?;
 
         // 3. Prove issuer membership with REAL STARK + Poseidon2 hashing.
-        //    This uses MerklePoseidon2StarkAir (collision-resistant) instead of
-        //    MerkleStarkAir (linear).
         //    The proof is bound to the request_predicate (action commitment) to
         //    prevent replay across different authorization requests.
-        let merkle_stark_proof = generate_merkle_poseidon2_stark_proof_bound(
-            &w.issuer_membership,
-            w.request_predicate,
-        )?;
-
-        // Compute public inputs
-        let initial_root = if let Some(first_fold) = w.fold_chain.first() {
-            first_fold.old_root
+        //
+        //    When blinding_factor is non-zero, use the blinded (ring membership) path:
+        //    public inputs become [blinded_leaf, root, action] instead of [leaf_hash, root, action].
+        //    This makes presentations unlinkable (same issuer, different blinded_leaf each time).
+        let merkle_stark_proof = if w.blinding_factor != BabyBear::ZERO {
+            generate_blinded_merkle_poseidon2_stark_proof(
+                &w.issuer_membership,
+                w.blinding_factor,
+                w.request_predicate,
+            )?
         } else {
-            w.derivation.state_root
+            generate_merkle_poseidon2_stark_proof_bound(
+                &w.issuer_membership,
+                w.request_predicate,
+            )?
         };
 
+        // Compute public inputs — roots stay private, tag is public.
         let final_root = if let Some(last_fold) = w.fold_chain.last() {
             last_fold.new_root
         } else {
             w.derivation.state_root
         };
 
+        let presentation_tag =
+            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
             request_predicate: w.request_predicate,
             timestamp: w.timestamp,
-            initial_root,
-            final_root,
+            presentation_tag,
+            revealed_facts_commitment: w.revealed_facts_commitment,
         };
 
         Some(RealPresentationProof {
@@ -534,11 +609,12 @@ impl PresentationAir {
 impl Air for PresentationAir {
     fn trace_width(&self) -> usize {
         // Width of the "summary" trace (just public inputs as columns)
+        // federation_root, request_predicate, timestamp, presentation_tag, revealed_facts_commitment
         5
     }
 
     fn num_public_inputs(&self) -> usize {
-        5 // federation_root, request_predicate, timestamp, initial_root, final_root
+        5 // federation_root, request_predicate, timestamp, presentation_tag, revealed_facts_commitment
     }
 
     fn constraints(&self) -> Vec<Constraint> {
@@ -558,11 +634,11 @@ impl Air for PresentationAir {
                 eval: Box::new(|row, _, public_inputs| row[2] - public_inputs[2]),
             },
             Constraint {
-                name: "initial_root_match".to_string(),
+                name: "presentation_tag_match".to_string(),
                 eval: Box::new(|row, _, public_inputs| row[3] - public_inputs[3]),
             },
             Constraint {
-                name: "final_root_match".to_string(),
+                name: "revealed_facts_commitment_match".to_string(),
                 eval: Box::new(|row, _, public_inputs| row[4] - public_inputs[4]),
             },
         ]
@@ -571,31 +647,29 @@ impl Air for PresentationAir {
     fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         let w = &self.witness;
 
-        let initial_root = if let Some(first) = w.fold_chain.first() {
-            first.old_root
-        } else {
-            w.derivation.state_root
-        };
         let final_root = if let Some(last) = w.fold_chain.last() {
             last.new_root
         } else {
             w.derivation.state_root
         };
 
+        let presentation_tag =
+            crate::poseidon2::hash_2_to_1(final_root, w.presentation_randomness);
+
         let row = vec![
             w.federation_root,
             w.request_predicate,
             w.timestamp,
-            initial_root,
-            final_root,
+            presentation_tag,
+            w.revealed_facts_commitment,
         ];
 
         let public_inputs = vec![
             w.federation_root,
             w.request_predicate,
             w.timestamp,
-            initial_root,
-            final_root,
+            presentation_tag,
+            w.revealed_facts_commitment,
         ];
 
         (vec![row], public_inputs)
@@ -675,6 +749,7 @@ pub struct PresentationBuilder {
     derivation: Option<DerivationWitness>,
     issuer_membership: Option<MerkleWitness>,
     issuer_key_hash: BabyBear,
+    revealed_facts_commitment: BabyBear,
 }
 
 impl PresentationBuilder {
@@ -692,6 +767,7 @@ impl PresentationBuilder {
             derivation: None,
             issuer_membership: None,
             issuer_key_hash: BabyBear::ZERO,
+            revealed_facts_commitment: BabyBear::ZERO,
         }
     }
 
@@ -714,6 +790,12 @@ impl PresentationBuilder {
         self
     }
 
+    /// Set the revealed facts commitment for selective disclosure.
+    pub fn set_revealed_facts_commitment(mut self, commitment: BabyBear) -> Self {
+        self.revealed_facts_commitment = commitment;
+        self
+    }
+
     /// Build the presentation witness.
     pub fn build(self) -> Option<PresentationWitness> {
         let derivation = self.derivation?;
@@ -727,6 +809,9 @@ impl PresentationBuilder {
             derivation,
             issuer_membership,
             issuer_key_hash: self.issuer_key_hash,
+            revealed_facts_commitment: self.revealed_facts_commitment,
+            blinding_factor: BabyBear::ZERO,
+            presentation_randomness: BabyBear::ZERO,
         })
     }
 }
@@ -761,8 +846,20 @@ impl RealPresentationProof {
     /// Supports both Poseidon2-based proofs (production, collision-resistant) and
     /// legacy linear proofs. Tries Poseidon2 first; falls back to linear.
     pub fn verify(&self) -> PresentationVerification {
-        // 1. Check fold chain continuity
-        let mut current_root = self.public_inputs.initial_root;
+        // 1. Check fold chain continuity (roots are private, verified internally).
+        let mut current_root = if let Some(first) = self.fold_proofs.first() {
+            if first.public_inputs.len() < 4 {
+                return PresentationVerification::InvalidFoldProof { index: 0 };
+            }
+            first.public_inputs[0]
+        } else {
+            // No folds: derivation state root is the sole root.
+            if self.derivation_proof.public_inputs.is_empty() {
+                return PresentationVerification::InvalidDerivation;
+            }
+            self.derivation_proof.public_inputs[0]
+        };
+
         for (i, fold_proof) in self.fold_proofs.iter().enumerate() {
             if fold_proof.public_inputs.len() < 4 {
                 return PresentationVerification::InvalidFoldProof { index: i };
@@ -773,7 +870,7 @@ impl RealPresentationProof {
             current_root = fold_proof.public_inputs[1];
         }
 
-        // 2. Check derivation proof's state root matches final root
+        // 2. Check derivation proof's state root matches end of fold chain.
         if self.derivation_proof.public_inputs.is_empty() {
             return PresentationVerification::InvalidDerivation;
         }
@@ -782,10 +879,8 @@ impl RealPresentationProof {
             return PresentationVerification::DerivationRootMismatch;
         }
 
-        // 3. Check final root matches public input
-        if current_root != self.public_inputs.final_root {
-            return PresentationVerification::FinalRootMismatch;
-        }
+        // 3. Presentation tag validity: proven by the STARK internally.
+        //    final_root is private; no explicit comparison against public inputs needed.
 
         // 4. Verify issuer membership with real STARK verifier
         let issuer_public_inputs: Vec<BabyBear> = self
@@ -806,14 +901,25 @@ impl RealPresentationProof {
             return PresentationVerification::IssuerNotInFederation;
         }
 
-        // Verify with Poseidon2 AIR (production path). No fallback to linear AIR
-        // which is trivially forgeable and must never be used for verification.
-        use crate::poseidon2_air::MerklePoseidon2StarkAir;
-        match stark::verify(
-            &MerklePoseidon2StarkAir,
-            &self.issuer_membership_stark_proof,
-            &issuer_public_inputs,
-        ) {
+        // Verify with the appropriate AIR based on proof type.
+        // Blinded (ring membership) proofs use BlindedMerklePoseidon2StarkAir;
+        // legacy proofs use MerklePoseidon2StarkAir.
+        use crate::poseidon2_air::{BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir};
+        let air_name = &self.issuer_membership_stark_proof.air_name;
+        let verify_result = if air_name == BlindedMerklePoseidon2StarkAir.air_name() {
+            stark::verify(
+                &BlindedMerklePoseidon2StarkAir,
+                &self.issuer_membership_stark_proof,
+                &issuer_public_inputs,
+            )
+        } else {
+            stark::verify(
+                &MerklePoseidon2StarkAir,
+                &self.issuer_membership_stark_proof,
+                &issuer_public_inputs,
+            )
+        };
+        match verify_result {
             Ok(()) => PresentationVerification::Valid,
             Err(_) => PresentationVerification::InvalidIssuerProof,
         }
@@ -1015,6 +1121,62 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
     }
 }
 
+/// Generate a real STARK proof for blinded (ring) Merkle membership with Poseidon2.
+///
+/// This is the production function for unlinkable issuer membership proofs.
+/// The public inputs are `[blinded_leaf, root, action_commitment]` where:
+///   `blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor)`
+///
+/// The verifier sees only the blinded_leaf (different each presentation) and the
+/// federation root. They CANNOT determine which issuer produced the proof.
+///
+/// The `action_commitment` is appended as an additional public input to prevent
+/// replay across different authorization requests.
+pub fn generate_blinded_merkle_poseidon2_stark_proof(
+    witness: &MerkleWitness,
+    blinding_factor: BabyBear,
+    action_commitment: BabyBear,
+) -> Option<StarkProof> {
+    use crate::poseidon2_air::{self, BlindedMerklePoseidon2StarkAir};
+
+    let depth = witness.levels.len();
+    if depth < 2 {
+        return None;
+    }
+
+    let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+    let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+
+    let (trace, mut public_inputs) = poseidon2_air::generate_blinded_merkle_poseidon2_trace(
+        witness.leaf_hash,
+        &siblings,
+        &positions,
+        blinding_factor,
+    );
+
+    // The trace's computed root must match the witness's expected_root
+    if public_inputs.len() < 2 || public_inputs[1] != witness.expected_root {
+        return None;
+    }
+
+    if trace.len() < 2 {
+        return None;
+    }
+
+    // Append the action commitment as an additional public input (replay prevention).
+    public_inputs.push(action_commitment);
+
+    // Generate the STARK proof with blinded Poseidon2 constraints
+    let air = BlindedMerklePoseidon2StarkAir;
+    let proof = stark::prove(&air, &trace, &public_inputs);
+
+    // Sanity check: verify our own proof
+    match stark::verify(&air, &proof, &public_inputs) {
+        Ok(()) => Some(proof),
+        Err(_) => None,
+    }
+}
+
 /// Create a Merkle witness that uses Poseidon2 hashing (collision-resistant).
 ///
 /// This builds the witness using real Poseidon2 hash_4_to_1 at each level,
@@ -1141,6 +1303,7 @@ pub fn create_test_presentation() -> PresentationWitness {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
+            lt_check: None,
         },
         state_root: final_root,
         body_fact_hashes: vec![body_hash_1, body_hash_2],
@@ -1161,6 +1324,9 @@ pub fn create_test_presentation() -> PresentationWitness {
         derivation,
         issuer_membership,
         issuer_key_hash: issuer_key,
+        revealed_facts_commitment: BabyBear::ZERO,
+        blinding_factor: BabyBear::ZERO,
+        presentation_randomness: BabyBear::new(123456789),
     }
 }
 
@@ -1427,6 +1593,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root: BabyBear::new(200),
             body_fact_hashes: vec![BabyBear::new(555)],

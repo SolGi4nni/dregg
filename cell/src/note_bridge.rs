@@ -332,13 +332,14 @@ pub struct BridgeReceipt {
 impl BridgeReceipt {
     /// Compute the message that the destination federation signs.
     ///
-    /// The signed message is: BLAKE3(nullifier || destination_federation || mint_height_le_bytes).
+    /// Uses domain-separated BLAKE3 to prevent cross-protocol signature confusion.
+    /// The signed message is: BLAKE3_derive_key("pyana-bridge-receipt-v1", nullifier || destination_federation || mint_height_le_bytes).
     pub fn signing_message(
         nullifier: &[u8; 32],
         destination_federation: &[u8; 32],
         mint_height: u64,
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-bridge-receipt-v1");
         hasher.update(nullifier);
         hasher.update(destination_federation);
         hasher.update(&mint_height.to_le_bytes());

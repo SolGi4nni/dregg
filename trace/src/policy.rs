@@ -500,6 +500,20 @@ fn budget_revocation_rules() -> Vec<Rule> {
             checks: vec![],
         },
         // Rule 31: deny :- revocable(T), revoked(T)
+        //
+        // IMPORTANT: This rule alone does NOT provide sound revocation enforcement.
+        // It only fires when a `revoked(T)` fact is explicitly present. A malicious
+        // prover who omits `revoked(T)` from the base facts will bypass this rule.
+        //
+        // Revocation is enforced OUTSIDE the Datalog trace by the verifier:
+        // after trace verification succeeds, the verifier independently queries
+        // the revocation set (RevocationChannelSet) to confirm the token is not
+        // revoked. This matches the architecture where the executor holds the
+        // authoritative revocation state.
+        //
+        // The `verify_trace` function emits a warning (returns false) if
+        // `revocable(T)` appears in base facts without a corresponding
+        // `not_revoked(T)`, enforcing fail-closed semantics within the trace.
         Rule {
             id: rule_ids::REVOCATION_DENY,
             head: Atom {

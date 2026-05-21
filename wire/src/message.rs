@@ -327,6 +327,10 @@ pub mod error_codes {
     pub const REQUEST_EXPIRED: u32 = 6;
     /// A cryptographic signature failed verification.
     pub const INVALID_SIGNATURE: u32 = 7;
+    /// A Hello handshake is required before sending other messages.
+    pub const HANDSHAKE_REQUIRED: u32 = 8;
+    /// The server is at connection capacity.
+    pub const CONNECTION_LIMIT: u32 = 9;
     /// Internal server error.
     pub const INTERNAL_ERROR: u32 = 100;
 }

@@ -44,7 +44,7 @@ pub use note_bridge::{
     PendingBridgeSet, PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge,
     initiate_bridge, verify_bridge_receipt, verify_portable_note,
 };
-pub use nullifier_set::{NonMembershipProof, NullifierSet};
+pub use nullifier_set::{MerkleMembershipProof, NonMembershipProof, NullifierSet};
 pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
 pub use preconditions::{
     CellStatePrecondition, EvalContext, NetworkPrecondition, Preconditions, TimeRange,
@@ -53,7 +53,7 @@ pub use program::{CellProgram, ProgramError, StateConstraint};
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,
 };
-pub use seal::{SealError, SealPair, SealedBox, test_seal_pair};
+pub use seal::{SealError, SealPair, SealedBox, SealerPublic, test_seal_pair};
 pub use state::{
     CellState, FIELD_ZERO, FieldElement, FieldVisibility, PublicFieldView, STATE_SLOTS,
 };

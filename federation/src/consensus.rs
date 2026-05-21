@@ -220,6 +220,28 @@ pub struct ConsensusState {
     pub epoch: u64,
     /// Pending reconfiguration proposal and its votes.
     pub pending_reconfig: Option<ReconfigurationVotes>,
+    /// The local state root (revocation tree Merkle root) for this node.
+    /// Used for divergence detection: when a proposal arrives, validators
+    /// check that the block's `pre_state_root` matches this value.
+    /// A zero value means state roots are not being tracked (legacy mode).
+    pub local_state_root: [u8; 32],
+    /// State roots to include in the next proposal created by this node.
+    /// Set by the caller before `create_proposal()` is invoked.
+    /// Consumed (taken) when a proposal is created.
+    pub pending_state_roots: Option<PendingStateRoots>,
+}
+
+/// State roots to be committed in a block proposal.
+#[derive(Clone, Debug)]
+pub struct PendingStateRoots {
+    /// Merkle root of the ledger BEFORE applying this block's events.
+    pub pre_state_root: [u8; 32],
+    /// Merkle root of the ledger AFTER applying events.
+    pub post_state_root: [u8; 32],
+    /// Note tree root after this block.
+    pub note_tree_root: [u8; 32],
+    /// Nullifier set root after this block.
+    pub nullifier_set_root: [u8; 32],
 }
 
 impl ConsensusState {
@@ -244,7 +266,18 @@ impl ConsensusState {
             finalized_blocks: Vec::new(),
             epoch,
             pending_reconfig: None,
+            local_state_root: [0u8; 32],
+            pending_state_roots: None,
         }
+    }
+
+    /// Set the local state root for divergence detection.
+    ///
+    /// This should be called whenever the node's revocation tree changes
+    /// (after applying a finalized block) so that subsequent proposals
+    /// can be validated against it.
+    pub fn set_local_state_root(&mut self, root: [u8; 32]) {
+        self.local_state_root = root;
     }
 
     /// Whether this node is the leader for the current view.
@@ -262,18 +295,54 @@ impl ConsensusState {
     ///
     /// The proposal is signed with this node's signing key, proving the proposer's
     /// identity. Recipients verify this signature before accepting the proposal.
+    ///
+    /// If `pending_state_roots` is set, those roots are included in the block.
+    /// Otherwise, zero roots are used (legacy/backward-compatible mode).
     pub fn create_proposal(&mut self) -> Option<RevocationBlock> {
+        let roots = self.pending_state_roots.take().unwrap_or(PendingStateRoots {
+            pre_state_root: [0u8; 32],
+            post_state_root: [0u8; 32],
+            note_tree_root: [0u8; 32],
+            nullifier_set_root: [0u8; 32],
+        });
+        self.create_proposal_with_state_roots(
+            roots.pre_state_root,
+            roots.post_state_root,
+            roots.note_tree_root,
+            roots.nullifier_set_root,
+        )
+    }
+
+    /// As leader: create a proposal block from pending events with state root
+    /// commitments for divergence detection and light client verification.
+    ///
+    /// # Parameters
+    /// - `pre_state_root`: Merkle root of the ledger BEFORE applying this block's events
+    /// - `post_state_root`: Merkle root of the ledger AFTER applying events
+    /// - `note_tree_root`: Note tree root after this block
+    /// - `nullifier_set_root`: Nullifier set root after this block
+    pub fn create_proposal_with_state_roots(
+        &mut self,
+        pre_state_root: [u8; 32],
+        post_state_root: [u8; 32],
+        note_tree_root: [u8; 32],
+        nullifier_set_root: [u8; 32],
+    ) -> Option<RevocationBlock> {
         if !self.is_leader() || self.pending_events.is_empty() {
             return None;
         }
 
         let events = std::mem::take(&mut self.pending_events);
-        let block_hash = RevocationBlock::compute_hash(
+        let block_hash = RevocationBlock::compute_hash_with_state_roots(
             self.current_height,
             self.current_view,
             self.node_id,
             &events,
             &self.last_finalized_hash,
+            &pre_state_root,
+            &post_state_root,
+            &note_tree_root,
+            &nullifier_set_root,
         );
 
         // Sign the block hash to prove proposer identity.
@@ -287,6 +356,10 @@ impl ConsensusState {
             prev_hash: self.last_finalized_hash,
             block_hash,
             proposer_signature: Some(proposer_signature),
+            pre_state_root,
+            post_state_root,
+            note_tree_root,
+            nullifier_set_root,
         };
 
         self.current_proposal = Some(block.clone());
@@ -409,10 +482,11 @@ impl ConsensusState {
     ///
     /// Verifies:
     /// - Height, view, and prev_hash match local state
-    /// - Block hash is correctly computed
+    /// - Block hash is correctly computed (including state roots)
     /// - Block has at least one event
     /// - The proposer is the expected leader for this view
     /// - The proposer's signature over block_hash is valid (if members are configured)
+    /// - The block's pre_state_root matches our local state root (divergence detection)
     fn validate_block(&self, block: &RevocationBlock) -> bool {
         // Check height.
         if block.height != self.current_height {
@@ -426,13 +500,17 @@ impl ConsensusState {
         if block.prev_hash != self.last_finalized_hash {
             return false;
         }
-        // Verify the block hash.
-        let expected_hash = RevocationBlock::compute_hash(
+        // Verify the block hash (including state roots).
+        let expected_hash = RevocationBlock::compute_hash_with_state_roots(
             block.height,
             block.view,
             block.proposer,
             &block.events,
             &block.prev_hash,
+            &block.pre_state_root,
+            &block.post_state_root,
+            &block.note_tree_root,
+            &block.nullifier_set_root,
         );
         if block.block_hash != expected_hash {
             return false;
@@ -445,6 +523,16 @@ impl ConsensusState {
         let expected_leader = self.config.leader_for_view(block.view);
         if block.proposer != expected_leader {
             return false;
+        }
+        // Divergence detection: if both this node and the proposer are tracking
+        // state roots (non-zero), verify they agree on the pre-state.
+        let zero = [0u8; 32];
+        if self.local_state_root != zero && block.pre_state_root != zero {
+            if block.pre_state_root != self.local_state_root {
+                // State divergence detected! The proposer's view of the ledger
+                // differs from ours. Do not vote for this block.
+                return false;
+            }
         }
         // Verify the proposer's signature over the block hash.
         // This prevents any node from impersonating the leader.
@@ -783,7 +871,7 @@ fn compute_genesis_hash(config: &ConsensusConfig) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::generate_keypair;
+    use crate::types::{LightClientProof, generate_keypair};
 
     fn setup_nodes(n: usize) -> (ConsensusConfig, Vec<ConsensusState>) {
         let config = ConsensusConfig::new(n);
@@ -1287,5 +1375,250 @@ mod tests {
 
         // With 4 nodes, threshold is 3. Should have at least 3 votes.
         assert!(qc.votes.len() >= 3);
+    }
+
+    // =========================================================================
+    // State root commitment tests
+    // =========================================================================
+
+    #[test]
+    fn test_state_root_included_in_proposal() {
+        let (config, mut states) = setup_nodes(4);
+
+        // Set pending state roots on the leader (view=1, leader=node 1).
+        let pre_root = [1u8; 32];
+        let post_root = [2u8; 32];
+        let note_root = [3u8; 32];
+        let null_root = [4u8; 32];
+
+        states[1].pending_state_roots = Some(PendingStateRoots {
+            pre_state_root: pre_root,
+            post_state_root: post_root,
+            note_tree_root: note_root,
+            nullifier_set_root: null_root,
+        });
+
+        // Submit an event to the leader.
+        states[1].submit_revocation(RevocationEvent {
+            token_id: "token-state-root".to_string(),
+            authority_id: 1,
+            signature: Signature([50u8; 64]),
+        });
+
+        // Create proposal.
+        let proposal = states[1].create_proposal();
+        assert!(proposal.is_some());
+
+        let block = proposal.unwrap();
+        assert_eq!(block.pre_state_root, pre_root);
+        assert_eq!(block.post_state_root, post_root);
+        assert_eq!(block.note_tree_root, note_root);
+        assert_eq!(block.nullifier_set_root, null_root);
+
+        // Verify the hash includes the state roots.
+        let expected_hash = RevocationBlock::compute_hash_with_state_roots(
+            block.height,
+            block.view,
+            block.proposer,
+            &block.events,
+            &block.prev_hash,
+            &pre_root,
+            &post_root,
+            &note_root,
+            &null_root,
+        );
+        assert_eq!(block.block_hash, expected_hash);
+    }
+
+    #[test]
+    fn test_matching_state_roots_pass_validation() {
+        let (config, mut states) = setup_nodes(4);
+
+        // All nodes have the same local state root.
+        let shared_root = [42u8; 32];
+        for state in states.iter_mut() {
+            state.set_local_state_root(shared_root);
+        }
+
+        // Leader (node 1 for view=1) proposes with matching pre_state_root.
+        states[1].pending_state_roots = Some(PendingStateRoots {
+            pre_state_root: shared_root,
+            post_state_root: [99u8; 32],
+            note_tree_root: [0u8; 32],
+            nullifier_set_root: [0u8; 32],
+        });
+
+        states[1].submit_revocation(RevocationEvent {
+            token_id: "token-match".to_string(),
+            authority_id: 1,
+            signature: Signature([51u8; 64]),
+        });
+
+        let proposal = states[1].create_proposal().unwrap();
+
+        // Other nodes should accept this proposal (pre_state_root matches).
+        let vote = states[0].vote_on_proposal(&proposal);
+        assert!(vote.is_some(), "node 0 should vote for block with matching state root");
+
+        let vote2 = states[2].vote_on_proposal(&proposal);
+        assert!(vote2.is_some(), "node 2 should vote for block with matching state root");
+    }
+
+    #[test]
+    fn test_diverged_state_root_rejected() {
+        let (config, mut states) = setup_nodes(4);
+
+        // Leader has one state root.
+        let leader_root = [10u8; 32];
+        states[1].set_local_state_root(leader_root);
+        states[1].pending_state_roots = Some(PendingStateRoots {
+            pre_state_root: leader_root,
+            post_state_root: [99u8; 32],
+            note_tree_root: [0u8; 32],
+            nullifier_set_root: [0u8; 32],
+        });
+
+        // Other nodes have a DIFFERENT state root (diverged state).
+        let diverged_root = [20u8; 32];
+        states[0].set_local_state_root(diverged_root);
+        states[2].set_local_state_root(diverged_root);
+        states[3].set_local_state_root(diverged_root);
+
+        states[1].submit_revocation(RevocationEvent {
+            token_id: "token-diverge".to_string(),
+            authority_id: 1,
+            signature: Signature([52u8; 64]),
+        });
+
+        let proposal = states[1].create_proposal().unwrap();
+        assert_eq!(proposal.pre_state_root, leader_root);
+
+        // Nodes with a different local state root should REJECT this proposal.
+        let vote = states[0].vote_on_proposal(&proposal);
+        assert!(vote.is_none(), "node 0 should reject block with mismatched state root");
+
+        let vote2 = states[2].vote_on_proposal(&proposal);
+        assert!(vote2.is_none(), "node 2 should reject block with mismatched state root");
+    }
+
+    #[test]
+    fn test_zero_state_root_skips_divergence_check() {
+        let (config, mut states) = setup_nodes(4);
+
+        // Leader proposes with zero state roots (legacy mode).
+        states[1].submit_revocation(RevocationEvent {
+            token_id: "token-legacy".to_string(),
+            authority_id: 1,
+            signature: Signature([53u8; 64]),
+        });
+
+        // Other nodes have non-zero local state roots.
+        let local_root = [77u8; 32];
+        states[0].set_local_state_root(local_root);
+        states[2].set_local_state_root(local_root);
+        states[3].set_local_state_root(local_root);
+
+        let proposal = states[1].create_proposal().unwrap();
+        assert_eq!(proposal.pre_state_root, [0u8; 32]); // zero = legacy
+
+        // Nodes should still accept (zero pre_state_root means no divergence check).
+        let vote = states[0].vote_on_proposal(&proposal);
+        assert!(vote.is_some(), "zero pre_state_root should skip divergence check");
+    }
+
+    #[test]
+    fn test_same_events_produce_same_post_state_root() {
+        // Simulate two nodes applying the same events and verifying they
+        // produce matching post_state_roots.
+        use crate::revocation::RevocationTree;
+
+        let mut tree_a = RevocationTree::new();
+        let mut tree_b = RevocationTree::new();
+
+        // Both nodes apply the same revocations in the same order.
+        let token_ids = vec![
+            "token-1".to_string(),
+            "token-2".to_string(),
+            "token-3".to_string(),
+        ];
+
+        tree_a.revoke_batch(&token_ids);
+        tree_b.revoke_batch(&token_ids);
+
+        let root_a = tree_a.root();
+        let root_b = tree_b.root();
+
+        assert_eq!(root_a, root_b, "same events should produce matching state roots");
+        assert_ne!(root_a, [0u8; 32], "roots should be non-zero after revocations");
+    }
+
+    #[test]
+    fn test_light_client_proof_construction() {
+        let (config, mut states) = setup_nodes(4);
+        let mut orchestrator = ConsensusOrchestrator::new(config);
+
+        // Set state roots on the leader.
+        let pre_root = [11u8; 32];
+        let post_root = [22u8; 32];
+        let note_root = [33u8; 32];
+        let null_root = [44u8; 32];
+
+        // View=1, leader=node 1.
+        states[1].pending_state_roots = Some(PendingStateRoots {
+            pre_state_root: pre_root,
+            post_state_root: post_root,
+            note_tree_root: note_root,
+            nullifier_set_root: null_root,
+        });
+
+        states[0].submit_revocation(RevocationEvent {
+            token_id: "token-lcp".to_string(),
+            authority_id: 0,
+            signature: Signature([60u8; 64]),
+        });
+
+        let result = orchestrator.run_round(&mut states);
+        assert!(result.is_some());
+
+        let (block, qc) = result.unwrap();
+
+        // Construct a light client proof.
+        let proof = LightClientProof::from_block(&block, &qc);
+        assert_eq!(proof.post_state_root, post_root);
+        assert_eq!(proof.note_tree_root, note_root);
+        assert_eq!(proof.nullifier_set_root, null_root);
+        assert_eq!(proof.block_hash, block.block_hash);
+        assert_eq!(proof.height, block.height);
+        assert!(proof.qc.is_valid());
+    }
+
+    #[test]
+    fn test_backward_compatible_hash() {
+        // Verify that a block with zero state roots produces the same hash
+        // as the legacy compute_hash (no state roots).
+        let events = vec![RevocationEvent {
+            token_id: "compat-test".to_string(),
+            authority_id: 0,
+            signature: Signature([70u8; 64]),
+        }];
+        let prev_hash = [0u8; 32];
+
+        let legacy_hash = RevocationBlock::compute_hash(1, 1, 0, &events, &prev_hash);
+        let new_hash = RevocationBlock::compute_hash_with_state_roots(
+            1,
+            1,
+            0,
+            &events,
+            &prev_hash,
+            &[0u8; 32],
+            &[0u8; 32],
+            &[0u8; 32],
+            &[0u8; 32],
+        );
+
+        assert_eq!(
+            legacy_hash, new_hash,
+            "zero state roots should produce identical hash to legacy"
+        );
     }
 }

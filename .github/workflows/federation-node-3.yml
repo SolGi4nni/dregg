@@ -57,12 +57,13 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build pyana-relay
-        run: cargo build --release -p pyana-relay
+      - name: Build pyana-node
+        run: cargo build --release -p pyana-node
 
       - name: Load node identity
         run: |
-          echo "${{ secrets.PYANA_NODE_3_KEY }}" > "$STATE_DIR/node_key.hex"
+          mkdir -p "$STATE_DIR"
+          echo -n "${{ secrets.PYANA_NODE_3_KEY }}" | xxd -r -p > "$STATE_DIR/node.key"
           echo "Node 3 identity loaded"
 
       - name: Resolve peers
@@ -70,7 +71,7 @@ jobs:
         run: |
           PEERS=""
           if [ -f /tmp/discovery/discovery.json ]; then
-            PEERS=$(jq -r '.federation[] | select(.role != "node-3") | .node_id' /tmp/discovery/discovery.json 2>/dev/null | paste -sd, -)
+            PEERS=$(jq -r '.federation[] | select(.role != "node-3") | .addr' /tmp/discovery/discovery.json 2>/dev/null | paste -sd, -)
           fi
           echo "peer_list=$PEERS" >> "$GITHUB_OUTPUT"
           echo "Resolved peers: $PEERS"
@@ -81,12 +82,11 @@ jobs:
           PYANA_NODE_KEY: ${{ secrets.PYANA_NODE_3_KEY }}
           RUST_LOG: info
         run: |
-          # Start the relay in background
-          ./target/release/pyana-relay \
-            --state-dir "$STATE_DIR" \
-            --discovery-file "$STATE_DIR/discovery.json" \
-            --peers "${{ steps.peers.outputs.peer_list }}" \
-            --node-role node-3 &
+          # Start the node in background
+          ./target/release/pyana-node run \
+            --data-dir "$STATE_DIR" \
+            --port 8420 \
+            --federation-peers "${{ steps.peers.outputs.peer_list }}" &
           NODE_PID=$!
 
           echo "Node started with PID $NODE_PID"

@@ -30,17 +30,20 @@ pub fn hash_node(children: &[[u8; 32]; 4]) -> [u8; 32] {
 /// `depth` 0 = leaf level (empty leaf), depth 1 = one level above leaves, etc.
 pub fn empty_hash(depth: usize) -> [u8; 32] {
     if depth == 0 {
-        return EMPTY_LEAF;
+        return *EMPTY_LEAF;
     }
     let child = empty_hash(depth - 1);
     hash_node(&[child, child, child, child])
 }
 
-/// Precomputed empty leaf hash: H_leaf("").
-pub const EMPTY_LEAF: [u8; 32] = {
-    // We need a const value here. Use all-zeros as the canonical empty leaf.
-    [0u8; 32]
-};
+/// Precomputed empty leaf hash: domain-separated hash of empty input.
+///
+/// This MUST be the output of `hash_leaf(b"")` to ensure domain separation
+/// from internal node hashes. Using raw `[0u8; 32]` would create a collision
+/// risk where an empty leaf could be confused with a node hash output.
+///
+/// We use `LazyLock` because `blake3::Hasher::new_derive_key` is not `const fn`.
+pub static EMPTY_LEAF: LazyLock<[u8; 32]> = LazyLock::new(|| hash_leaf(b""));
 
 /// Maximum depth for cached empty hashes (covers the 16-level tree with margin).
 const MAX_CACHED_DEPTH: usize = 32;
@@ -48,7 +51,7 @@ const MAX_CACHED_DEPTH: usize = 32;
 /// Precomputed empty hashes at each depth, computed once.
 static EMPTY_HASHES: LazyLock<Vec<[u8; 32]>> = LazyLock::new(|| {
     let mut hashes = Vec::with_capacity(MAX_CACHED_DEPTH + 1);
-    hashes.push(EMPTY_LEAF);
+    hashes.push(*EMPTY_LEAF);
     for i in 1..=MAX_CACHED_DEPTH {
         let prev = hashes[i - 1];
         hashes.push(hash_node(&[prev, prev, prev, prev]));
@@ -95,10 +98,11 @@ mod tests {
     #[test]
     fn empty_hash_consistency() {
         let h0 = empty_hash_at_depth(0);
-        assert_eq!(h0, EMPTY_LEAF);
+        assert_eq!(h0, *EMPTY_LEAF);
 
         let h1 = empty_hash_at_depth(1);
-        assert_eq!(h1, hash_node(&[EMPTY_LEAF; 4]));
+        let el = *EMPTY_LEAF;
+        assert_eq!(h1, hash_node(&[el, el, el, el]));
 
         let h2 = empty_hash_at_depth(2);
         assert_eq!(h2, hash_node(&[h1, h1, h1, h1]));

@@ -24,6 +24,11 @@ macaroon = { path = "../macaroon" }
 pyana-trace = { path = "../trace" }
 pyana-commit = { path = "../commit" }
 pyana-circuit = { path = "../circuit", default-features = false, features = ["mock"] }
+pyana-cell = { path = "../cell" }
+pyana-turn = { path = "../turn" }
+pyana-coord = { path = "../coord" }
+pyana-intent = { path = "../intent" }
+pyana-types = { path = "../types" }
 
 # Token crate without biscuit (biscuit-auth has complex deps)
 token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }

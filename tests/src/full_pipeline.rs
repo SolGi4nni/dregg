@@ -37,7 +37,7 @@ use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use pyana_turn::{
     ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn, DelegationMode, Effect,
     ProofCondition, TrustedRoot, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
-    resolve_condition,
+    compute_conditional_deposit, resolve_condition,
 };
 
 // =============================================================================
@@ -318,6 +318,7 @@ fn test_full_authorization_with_body_membership() {
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
+            lt_check: None,
         },
         state_root: real_state_root,
         body_fact_hashes: vec![body_fact_hash],
@@ -688,6 +689,7 @@ fn test_full_cross_federation_conditional_swap() {
         },
         timeout_height: 100, // expires at height 100
         submitted_at: 10,    // submitted at height 10
+        deposit_amount: compute_conditional_deposit(100, 10),
     };
 
     // --- Step 3: Bob presents receipt as ConditionProof to Fed A ---
@@ -704,6 +706,7 @@ fn test_full_cross_federation_conditional_swap() {
         &trusted_roots,
         500,
         &mut used_proofs,
+        &[],
     );
 
     assert_eq!(
@@ -742,6 +745,7 @@ fn test_full_cross_federation_conditional_swap() {
         },
         timeout_height: 100,
         submitted_at: 10,
+        deposit_amount: compute_conditional_deposit(100, 10),
     };
 
     // At height 101 (past timeout), the conditional expires
@@ -753,6 +757,7 @@ fn test_full_cross_federation_conditional_swap() {
         &trusted_roots,
         500,
         &mut used_proofs,
+        &[],
     );
     assert_eq!(
         expired_resolution,

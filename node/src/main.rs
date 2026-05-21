@@ -8,6 +8,7 @@
 
 mod api;
 mod federation_sync;
+mod mcp;
 mod state;
 mod ws;
 
@@ -54,6 +55,20 @@ enum Command {
         #[arg(long, default_value = "8420")]
         port: u16,
     },
+
+    /// Run as an MCP (Model Context Protocol) server over stdio.
+    ///
+    /// Reads JSON-RPC from stdin and writes responses to stdout.
+    /// Used by AI assistants (Claude, GPT, etc.) to interact with the node.
+    Mcp {
+        /// Data directory for persistent state.
+        #[arg(long, default_value = "~/.pyana")]
+        data_dir: String,
+
+        /// Federation peer addresses (host:port), comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        federation_peers: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +91,10 @@ async fn main() {
         } => run_node(port, federation_peers, &data_dir).await,
         Command::Init { data_dir } => init_node(&data_dir),
         Command::Status { port } => check_status(port).await,
+        Command::Mcp {
+            data_dir,
+            federation_peers,
+        } => run_mcp(&data_dir, federation_peers).await,
     }
 }
 
@@ -198,6 +217,29 @@ fn expand_path(path: &str) -> PathBuf {
 /// Get the home directory.
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Run the MCP server: initialize node state and serve over stdio.
+async fn run_mcp(data_dir: &str, peers: Vec<String>) {
+    let data_path = expand_path(data_dir);
+
+    if !data_path.exists() {
+        error!(
+            "data directory does not exist: {}. Run `pyana-node init` first.",
+            data_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    let node_state = match state::NodeState::new(&data_path, peers) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("failed to initialize node state: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    mcp::run_stdio(node_state).await;
 }
 
 /// P2 Fix 8: Wait for Ctrl-C (SIGINT) to trigger graceful shutdown.

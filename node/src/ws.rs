@@ -175,26 +175,31 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                 }
                             }
                             Ok(ClientMessage::BroadcastIntent { intent }) => {
-                                // Store in local intent pool.
-                                let intent_id = intent
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                if !intent_id.is_empty() {
-                                    let mut s = state.write().await;
-                                    s.intent_pool.insert(intent_id, intent.clone());
-                                }
-                                // Broadcast to all WS subscribers as a NodeEvent.
-                                state.emit(NodeEvent::Intent {
-                                    intent: intent.clone(),
-                                });
-                                // Also gossip to federation peers.
-                                if let Some(gossip) = state.gossip().await {
-                                    let intent_clone = intent.clone();
-                                    tokio::spawn(async move {
-                                        gossip.gossip_intent(&intent_clone).await;
-                                    });
+                                // Validate and store in local intent pool.
+                                if let Ok(typed_intent) =
+                                    serde_json::from_value::<pyana_intent::Intent>(intent.clone())
+                                {
+                                    if pyana_intent::validation::validate_intent(&typed_intent)
+                                        .is_ok()
+                                    {
+                                        let mut s = state.write().await;
+                                        s.intent_pool
+                                            .insert(typed_intent.id, typed_intent.clone());
+                                        drop(s);
+
+                                        // Broadcast to all WS subscribers as a NodeEvent.
+                                        state.emit(NodeEvent::Intent {
+                                            intent: serde_json::to_value(&typed_intent)
+                                                .unwrap_or_default(),
+                                        });
+                                        // Also gossip to federation peers.
+                                        if let Some(gossip) = state.gossip().await {
+                                            let intent_clone = intent.clone();
+                                            tokio::spawn(async move {
+                                                gossip.gossip_intent(&intent_clone).await;
+                                            });
+                                        }
+                                    }
                                 }
                             }
                             Ok(ClientMessage::Unlock { passphrase }) => {

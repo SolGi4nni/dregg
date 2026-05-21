@@ -92,8 +92,16 @@ const pyana = {
    * Request authorization for an action on a resource.
    * The wallet evaluates internally and produces a ZK proof if allowed.
    *
-   * @param {{action: string, resource: string, mode?: 'trusted'|'private'|'selective'}} request
-   * @returns {Promise<{allowed: boolean, proof?: number[], facts?: string[], error?: string}>}
+   * The user will be shown a disclosure picker to choose their privacy level:
+   * - "full" (trusted): The verifier sees the full token.
+   * - "selective": The user chooses which facts to reveal.
+   * - "private" (zero-knowledge): Only allow/deny is shared.
+   *
+   * The site CANNOT force a disclosure level — the user always has the final choice.
+   *
+   * @param {{action: string, resource: string, requestedDisclosure?: Array<{key: string}>}} request
+   *   - requestedDisclosure: Optional hint for which facts the site needs. The user can decline.
+   * @returns {Promise<{allowed: boolean, proof?: number[], facts?: string[], mode?: string, disclosedFacts?: string[], error?: string}>}
    */
   authorize(request) {
     return sendMessage('pyana:authorize', { request });

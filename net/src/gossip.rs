@@ -24,6 +24,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use quinn::{Connection, Endpoint, RecvStream};
@@ -1280,6 +1281,10 @@ impl GossipNetwork {
         state: Arc<RwLock<GossipState>>,
         outgoing_tx: mpsc::UnboundedSender<OutgoingGossip>,
     ) {
+        /// Monotonic counter for round-robin peer selection in anti-entropy.
+        /// Using AtomicU64 avoids the need for mutable state in the loop.
+        static ROUND_COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut interval = tokio::time::interval(ANTI_ENTROPY_INTERVAL);
         loop {
             interval.tick().await;
@@ -1298,11 +1303,13 @@ impl GossipNetwork {
                 s.seen.hashes_capped(MAX_ANTI_ENTROPY_HASHES)
             };
 
+            let round = ROUND_COUNTER.fetch_add(1, Ordering::Relaxed);
+
             for (topic_id, peers) in topics_and_peers {
                 if peers.is_empty() {
                     continue;
                 }
-                let idx = (Instant::now().elapsed().subsec_nanos() as usize) % peers.len();
+                let idx = (round as usize) % peers.len();
                 let target = peers[idx];
 
                 let _ = outgoing_tx.send(OutgoingGossip::AntiEntropy {

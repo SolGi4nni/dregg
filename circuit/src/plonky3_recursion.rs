@@ -293,15 +293,15 @@ pub fn compress_tree(inputs: Vec<RecursionInput>) -> Result<RecursiveProof, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plonky3_prover::prove_plonky3;
-    use crate::poseidon2_air::{create_poseidon2_test_witness, generate_merkle_poseidon2_trace};
+    use crate::plonky3_prover::{generate_sound_merkle_trace, prove_plonky3};
+    use crate::poseidon2_air::create_poseidon2_test_witness;
 
     fn make_test_proof(leaf_val: u32) -> RecursionInput {
         let leaf = BabyBear::new(leaf_val);
         let witness = create_poseidon2_test_witness(leaf, 4);
         let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
-        let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
+        let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
         let proof = prove_plonky3(&trace, &public_inputs);
         RecursionInput {
             proof,

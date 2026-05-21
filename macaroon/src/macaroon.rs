@@ -236,9 +236,9 @@ impl Macaroon {
             let encoded = wire_caveat.encode();
 
             if wire_caveat.caveat_type == CAV_BIND_TO_PARENT {
-                // Check the binding
+                // Check the binding (constant-time comparison of full 32-byte hash)
                 let expected_hash = crypto::binding_hash(expected_parent_tail);
-                if wire_caveat.body.len() >= 16 && wire_caveat.body[..16] == expected_hash {
+                if crypto::binding_hash_eq(&wire_caveat.body, &expected_hash) {
                     found_binding = true;
                 } else {
                     return Err(MacaroonError::DischargeUnbound);
@@ -259,10 +259,10 @@ impl Macaroon {
             return Err(MacaroonError::SignatureInvalid);
         }
 
-        if !found_binding && !self.caveats.is_empty() {
-            // Enforce binding: a discharge with caveats but no binding caveat
-            // could be replayed with a less-attenuated root macaroon. Reject
-            // unbound discharges that carry caveats (fail-closed).
+        if !found_binding {
+            // Enforce binding: ALL discharges must be bound to the parent.
+            // An unbound discharge (even with zero caveats) could be replayed
+            // with a less-attenuated root macaroon. Reject unconditionally (fail-closed).
             return Err(MacaroonError::DischargeUnbound);
         }
 
@@ -274,8 +274,8 @@ impl Macaroon {
     /// Bind a discharge macaroon to this root macaroon.
     ///
     /// Adds a `BindToParentToken` caveat to the discharge containing
-    /// `SHA256(root_tail)[0..16]`. This prevents the discharge from
-    /// being replayed with a less-attenuated version of the root.
+    /// the full `SHA256(root_tail)` (32 bytes). This prevents the discharge
+    /// from being replayed with a less-attenuated version of the root.
     pub fn bind_discharge(&self, discharge: &mut Macaroon) {
         let hash = crypto::binding_hash(&self.tail);
         let wire = WireCaveat::new(CAV_BIND_TO_PARENT, hash.to_vec());
@@ -510,8 +510,9 @@ mod tests {
     }
 
     #[test]
-    fn test_unbound_discharge_works_when_empty() {
-        // A discharge with no caveats doesn't need binding (the key IS the binding)
+    fn test_unbound_discharge_rejected_even_when_empty() {
+        // ALL discharges must be bound, even empty ones. An unbound discharge
+        // could be replayed with a less-attenuated root macaroon.
         let root_key = crypto::random_key();
         let shared_key = crypto::random_key();
 
@@ -529,7 +530,31 @@ mod tests {
         let discharge =
             create_discharge(tp.ticket.clone(), &dk, "https://auth.pyana.dev".into(), &[]);
 
-        // Should still verify — the discharge key itself serves as binding
+        // Must be rejected — unbound discharges are never allowed
+        assert!(mac.verify(&root_key, &[discharge]).is_err());
+    }
+
+    #[test]
+    fn test_bound_empty_discharge_succeeds() {
+        // A properly bound empty discharge should still verify.
+        let root_key = crypto::random_key();
+        let shared_key = crypto::random_key();
+
+        let mut mac = Macaroon::new(&root_key, b"kid-1".to_vec(), "https://pyana.dev".into());
+        mac.add_third_party("https://auth.pyana.dev", &shared_key, CaveatSet::new())
+            .unwrap();
+
+        let tp_caveats = mac.caveats.third_party_caveats();
+        let tp = ThirdPartyCaveat::decode_body(&tp_caveats[0].body).unwrap();
+        let wire_ticket = ThirdPartyCaveat::decrypt_ticket(&tp.ticket, &shared_key).unwrap();
+        let mut dk = [0u8; 32];
+        dk.copy_from_slice(&wire_ticket.discharge_key);
+
+        let mut discharge =
+            create_discharge(tp.ticket.clone(), &dk, "https://auth.pyana.dev".into(), &[]);
+
+        // Bind the discharge to the root — this should make it valid
+        mac.bind_discharge(&mut discharge);
         mac.verify(&root_key, &[discharge]).unwrap();
     }
 }

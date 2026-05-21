@@ -5,6 +5,12 @@
 
 use crate::{Constraint, Intent};
 
+/// Maximum recursion depth for compound specs.
+pub const MAX_COMPOUND_DEPTH: usize = 3;
+
+/// Maximum total sub-specs in a compound intent.
+pub const MAX_COMPOUND_SPECS: usize = 10;
+
 /// Maximum number of action patterns per intent.
 pub const MAX_ACTIONS: usize = 64;
 
@@ -32,6 +38,10 @@ pub enum ValidationError {
     ResourcePatternTooLong { len: usize, max: usize },
     /// A constraint string value exceeds the maximum length.
     ConstraintStringTooLong { len: usize, max: usize },
+    /// Compound spec nesting exceeds the maximum depth.
+    CompoundTooDeep { depth: usize, max: usize },
+    /// Too many total sub-specs in compound intent.
+    TooManyCompoundSpecs { count: usize, max: usize },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -54,6 +64,12 @@ impl std::fmt::Display for ValidationError {
             }
             Self::ConstraintStringTooLong { len, max } => {
                 write!(f, "constraint string too long: {len} exceeds max {max}")
+            }
+            Self::CompoundTooDeep { depth, max } => {
+                write!(f, "compound spec too deep: depth {depth} exceeds max {max}")
+            }
+            Self::TooManyCompoundSpecs { count, max } => {
+                write!(f, "too many compound sub-specs: {count} exceeds max {max}")
             }
         }
     }
@@ -125,6 +141,33 @@ pub fn validate_intent(intent: &Intent) -> Result<(), ValidationError> {
         }
     }
 
+    // Check compound spec limits (issue #6: recursion limit)
+    if let Some(compound) = &spec.compound {
+        validate_compound_depth(compound, 1)?;
+    }
+
+    Ok(())
+}
+
+/// Recursively validate compound spec depth and total count.
+fn validate_compound_depth(specs: &[crate::MatchSpec], current_depth: usize) -> Result<(), ValidationError> {
+    if current_depth > MAX_COMPOUND_DEPTH {
+        return Err(ValidationError::CompoundTooDeep {
+            depth: current_depth,
+            max: MAX_COMPOUND_DEPTH,
+        });
+    }
+    if specs.len() > MAX_COMPOUND_SPECS {
+        return Err(ValidationError::TooManyCompoundSpecs {
+            count: specs.len(),
+            max: MAX_COMPOUND_SPECS,
+        });
+    }
+    for sub_spec in specs {
+        if let Some(nested) = &sub_spec.compound {
+            validate_compound_depth(nested, current_depth + 1)?;
+        }
+    }
     Ok(())
 }
 

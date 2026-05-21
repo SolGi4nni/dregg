@@ -18,7 +18,7 @@
 //! Matcher:     composes both + adds deposit actions → single atomic turn
 //! ```
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use pyana_cell::CellId;
 
 use crate::action::{Action, CommitmentMode};
@@ -228,7 +228,10 @@ impl TurnComposer {
     /// 2. Checks that the total `balance_change` excess sums to zero.
     /// 3. Assembles a CallForest with all actions (fragments first, then settlements).
     /// 4. Returns the complete Turn ready for executor application.
-    pub fn compose(self) -> Result<Turn, ComposeError> {
+    ///
+    /// The composed turn does NOT yet have a `coordinator_signature`. The caller
+    /// (coordinator) must sign the turn hash and attach it via `ComposedTurn::sign()`.
+    pub fn compose(self) -> Result<ComposedTurn, ComposeError> {
         if self.fragments.is_empty() && self.settlement_actions.is_empty() {
             return Err(ComposeError::EmptyComposition);
         }
@@ -244,21 +247,21 @@ impl TurnComposer {
         // Settlement actions after.
         all_actions.extend(self.settlement_actions.iter().cloned());
 
-        // Phase 2: Build the forest so we can compute its root hash.
+        // Phase 2: Build the forest.
         let mut forest = CallForest::new();
         for action in &all_actions {
             forest.add_root(action.clone());
         }
-        let forest_root_hash = forest.hash();
 
         // Phase 3: Verify fragment signatures against partial commitment messages.
+        // Partial signers commit to their own action content + position only (not forest root).
+        // The forest root binding is provided by the coordinator_signature on the composed turn.
         let mut position = 0usize;
         for (frag_idx, fragment) in self.fragments.iter().enumerate() {
             for (action_idx, action) in fragment.actions.iter().enumerate() {
                 let signing_message = TurnExecutor::compute_partial_signing_message(
                     action,
                     position,
-                    &forest_root_hash,
                 );
 
                 // Verify the signature.
@@ -304,6 +307,50 @@ impl TurnComposer {
             previous_receipt_hash: None,
         };
 
-        Ok(turn)
+        Ok(ComposedTurn {
+            turn,
+            coordinator_signature: None,
+        })
+    }
+}
+
+/// A composed turn with an optional coordinator signature.
+///
+/// The coordinator signature binds the forest root hash to the composed turn,
+/// solving the chicken-and-egg problem: partial signers commit only to their own
+/// action content + position, then the coordinator signs the entire assembled turn
+/// (including the forest root) to provide the top-level binding.
+#[derive(Clone, Debug)]
+pub struct ComposedTurn {
+    /// The assembled turn containing all fragment actions and settlement actions.
+    pub turn: Turn,
+    /// Ed25519 signature from the coordinator over the turn hash.
+    /// This binds the forest structure to the coordinator's identity.
+    pub coordinator_signature: Option<[u8; 64]>,
+}
+
+impl ComposedTurn {
+    /// Sign the composed turn with the coordinator's signing key.
+    ///
+    /// The coordinator signs the turn hash (which includes the forest root),
+    /// binding all partial signers' contributions to the final forest structure.
+    pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) {
+        let turn_hash = self.turn.hash();
+        let signature = signing_key.sign(&turn_hash);
+        self.coordinator_signature = Some(signature.to_bytes());
+    }
+
+    /// Verify the coordinator signature against a known public key.
+    pub fn verify_coordinator_signature(&self, public_key: &[u8; 32]) -> bool {
+        let Some(sig_bytes) = &self.coordinator_signature else {
+            return false;
+        };
+        let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+            return false;
+        };
+        let signature = Signature::from_bytes(sig_bytes);
+        let turn_hash = self.turn.hash();
+        use ed25519_dalek::Verifier;
+        verifying_key.verify_strict(&turn_hash, &signature).is_ok()
     }
 }

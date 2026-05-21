@@ -98,29 +98,21 @@ impl core::fmt::Display for NoteError {
 impl std::error::Error for NoteError {}
 
 impl Note {
-    /// Create a new note with random blinding and a unique creation nonce.
+    /// Create a new note with cryptographically random blinding and a unique creation nonce.
+    ///
+    /// The randomness field is filled with OS randomness via `getrandom` to ensure
+    /// the blinding factor is cryptographically unpredictable. The creation_nonce is
+    /// derived from the randomness for domain separation. Two calls at the same
+    /// nanosecond will produce distinct notes.
     pub fn new(owner: [u8; 32], fields: [u64; 8]) -> Self {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-            .to_le_bytes();
-
-        // Derive randomness.
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-note randomness v1");
-        hasher.update(&owner);
-        for f in &fields {
-            hasher.update(&f.to_le_bytes());
-        }
-        hasher.update(&timestamp);
+        // Use OS randomness for the blinding factor — MUST be cryptographically random.
         let mut randomness = [0u8; 32];
-        randomness.copy_from_slice(hasher.finalize().as_bytes());
+        getrandom::fill(&mut randomness).expect("getrandom failed");
 
-        // Derive creation_nonce (independent domain separation).
+        // Derive creation_nonce from randomness (independent domain separation).
         let mut nonce_hasher = blake3::Hasher::new_derive_key("pyana-note creation-nonce v1");
         nonce_hasher.update(&owner);
         nonce_hasher.update(&randomness);
-        nonce_hasher.update(&timestamp);
         let mut creation_nonce = [0u8; 32];
         creation_nonce.copy_from_slice(nonce_hasher.finalize().as_bytes());
 

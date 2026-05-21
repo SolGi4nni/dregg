@@ -467,15 +467,232 @@ pub fn generate_merkle_poseidon2_trace(
     }
 
     let root = current;
-    // Padding: repeat the last real row so that boundary constraints (last row col 5 = root)
-    // remain valid regardless of padding. The hash constraint is also satisfied since the
-    // row is an exact copy of a valid row.
-    let last_row = trace.last().unwrap().clone();
+    // Padding for non-power-of-2 depths: use identity rows [root, 0, 0, 0, 0, root].
+    // Position=0 satisfies position validity. col[0]=col[5]=root satisfies chain
+    // continuity (next[0]=root==local[5]=root) and boundary (last row col 5 = root).
+    // Note: these rows do NOT satisfy the hash constraint (hash_4_to_1([root,0,0,0])!=root)
+    // so the custom STARK AIR (MerklePoseidon2StarkAir) cannot be used with non-power-of-2
+    // depth traces. The Plonky3 AIR (P3MerklePoseidon2Air) works correctly with this padding.
     for _ in depth..padded {
-        trace.push(last_row.clone());
+        trace.push(vec![
+            root,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            root,
+        ]);
     }
 
     let public_inputs = vec![leaf_hash, root];
+    (trace, public_inputs)
+}
+
+// ============================================================================
+// BlindedMerklePoseidon2StarkAir: ring membership (unlinkable issuer proof)
+// ============================================================================
+
+/// Blinded Merkle membership AIR using Poseidon2 hashing.
+///
+/// This AIR proves "I know a leaf that is in the tree" WITHOUT revealing which
+/// leaf. The public inputs are `[blinded_leaf, root]` where:
+///   `blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor)`
+///
+/// Since the blinding_factor is fresh random per presentation, the same issuer
+/// produces different `blinded_leaf` values each time (unlinkable).
+///
+/// Trace layout (width = 8):
+/// - col 0: current hash at this level (starts as real leaf_hash)
+/// - col 1-3: sibling hashes
+/// - col 4: position (0-3)
+/// - col 5: parent = hash_4_to_1(children arranged by position)
+/// - col 6: blinding_factor (real value at row 0, zero on other rows)
+/// - col 7: hash_2_to_1(col[0], col[6]) — equals blinded_leaf at row 0
+///
+/// Constraints (evaluated uniformly on every row):
+/// 1. Position validity: pos*(pos-1)*(pos-2)*(pos-3) = 0
+/// 2. Hash binding: parent == hash_4_to_1(children)
+/// 3. Blinding binding: col[7] == hash_2_to_1(col[0], col[6])
+///
+/// Boundary constraints:
+/// - Row 0, col 7 = public_inputs[0] (blinded_leaf)
+/// - Last row, col 5 = public_inputs[1] (root)
+///
+/// NOTE: Row 0 col 0 is NOT publicly bound — the leaf_hash remains private.
+pub struct BlindedMerklePoseidon2StarkAir;
+
+impl StarkAir for BlindedMerklePoseidon2StarkAir {
+    fn width(&self) -> usize {
+        8
+    }
+
+    fn constraint_degree(&self) -> usize {
+        7
+    }
+
+    fn air_name(&self) -> &'static str {
+        "pyana-blinded-merkle-poseidon2-v1"
+    }
+
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        _public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let current = local[0];
+        let sib0 = local[1];
+        let sib1 = local[2];
+        let sib2 = local[3];
+        let position = local[4];
+        let parent = local[5];
+        let blinding = local[6];
+        let blinded = local[7];
+
+        // 1. Position validity (same as MerklePoseidon2StarkAir)
+        let c_pos = position
+            * (position - BabyBear::ONE)
+            * (position - BabyBear::new(2))
+            * (position - BabyBear::new(3));
+
+        // 2. Hash binding via Lagrange interpolation on position (same as before)
+        let p = position;
+        let p_m1 = p - BabyBear::ONE;
+        let p_m2 = p - BabyBear::new(2);
+        let p_m3 = p - BabyBear::new(3);
+
+        let inv_neg6 = -BabyBear::new(6).inverse().unwrap();
+        let inv_2 = BabyBear::new(2).inverse().unwrap();
+        let inv_neg2 = -inv_2;
+        let inv_6 = BabyBear::new(6).inverse().unwrap();
+
+        let l0 = p_m1 * p_m2 * p_m3 * inv_neg6;
+        let l1 = p * p_m2 * p_m3 * inv_2;
+        let l2 = p * p_m1 * p_m3 * inv_neg2;
+        let l3 = p * p_m1 * p_m2 * inv_6;
+
+        let child0 = current * l0 + sib0 * (BabyBear::ONE - l0);
+        let child1 = sib0 * l0 + current * l1 + sib1 * (l2 + l3);
+        let child2 = sib1 * (l0 + l1) + current * l2 + sib2 * l3;
+        let child3 = sib2 * (BabyBear::ONE - l3) + current * l3;
+
+        let expected_parent = hash_4_to_1(&[child0, child1, child2, child3]);
+        let c_hash = parent - expected_parent;
+
+        // 3. Blinding binding: col[7] must equal hash_2_to_1(col[0], col[6])
+        use crate::poseidon2::hash_2_to_1;
+        let expected_blinded = hash_2_to_1(current, blinding);
+        let c_blind = blinded - expected_blinded;
+
+        // Combine all constraints with random linear combination
+        c_pos + alpha * c_hash + alpha * alpha * c_blind
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 2 {
+            // Row 0, col 7 (blinded) = public_inputs[0] (blinded_leaf)
+            // NOTE: col 0 (leaf_hash) is NOT bound — it is private!
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: 7,
+                value: public_inputs[0],
+            });
+            // Last row, col 5 (parent) = public_inputs[1] (root)
+            constraints.push(BoundaryConstraint {
+                row: trace_len - 1,
+                col: 5,
+                value: public_inputs[1],
+            });
+        }
+        constraints
+    }
+}
+
+/// Generate the trace for a blinded Merkle membership proof using Poseidon2 hashing.
+///
+/// The trace proves membership of `leaf_hash` in the tree with the given `root`,
+/// but the public inputs are `[blinded_leaf, root]` where:
+///   `blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor)`
+///
+/// This makes the proof unlinkable: the same issuer produces different
+/// `blinded_leaf` values each time (fresh `blinding_factor` per presentation).
+pub fn generate_blinded_merkle_poseidon2_trace(
+    leaf_hash: BabyBear,
+    siblings: &[[BabyBear; 3]],
+    positions: &[u8],
+    blinding_factor: BabyBear,
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    use crate::poseidon2::hash_2_to_1;
+
+    let depth = siblings.len();
+    assert_eq!(positions.len(), depth);
+    assert!(depth >= 2, "need at least 2 levels for STARK");
+
+    let padded = depth.next_power_of_two();
+    let mut trace = Vec::with_capacity(padded);
+    let mut current = leaf_hash;
+
+    for i in 0..depth {
+        let pos = positions[i];
+        assert!(pos < 4, "position must be 0..3");
+
+        let mut children = [BabyBear::ZERO; 4];
+        let mut sib_idx = 0;
+        for j in 0..4u8 {
+            if j == pos {
+                children[j as usize] = current;
+            } else {
+                children[j as usize] = siblings[i][sib_idx];
+                sib_idx += 1;
+            }
+        }
+
+        let parent = hash_4_to_1(&children);
+
+        // Col 6: blinding_factor (only meaningful at row 0, zero elsewhere)
+        // Col 7: hash_2_to_1(current, blinding) — must hold on every row
+        let row_blinding = if i == 0 { blinding_factor } else { BabyBear::ZERO };
+        let row_blinded = hash_2_to_1(current, row_blinding);
+
+        trace.push(vec![
+            current,
+            siblings[i][0],
+            siblings[i][1],
+            siblings[i][2],
+            BabyBear::new(pos as u32),
+            parent,
+            row_blinding,
+            row_blinded,
+        ]);
+        current = parent;
+    }
+
+    let root = current;
+    // Padding: same as non-blinded but with cols 6-7 for blinding constraint satisfaction
+    for _ in depth..padded {
+        let pad_blinded = hash_2_to_1(root, BabyBear::ZERO);
+        trace.push(vec![
+            root,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            root,
+            BabyBear::ZERO,
+            pad_blinded,
+        ]);
+    }
+
+    // Public inputs: [blinded_leaf, root]
+    // blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor)
+    let blinded_leaf = hash_2_to_1(leaf_hash, blinding_factor);
+    let public_inputs = vec![blinded_leaf, root];
     (trace, public_inputs)
 }
 
@@ -939,5 +1156,203 @@ mod tests {
             result.is_err(),
             "CRITICAL: Proof with forged hash MUST be rejected"
         );
+    }
+
+    // ========================================================================
+    // BlindedMerklePoseidon2StarkAir tests (ring membership / unlinkability)
+    // ========================================================================
+
+    #[test]
+    fn blinded_merkle_trace_generation() {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(123456789);
+
+        let (trace, pi) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        // Trace should be power-of-2 rows, width 8
+        assert!(trace.len().is_power_of_two());
+        assert_eq!(trace[0].len(), 8);
+
+        // Public inputs: [blinded_leaf, root]
+        assert_eq!(pi.len(), 2);
+        let expected_blinded = crate::poseidon2::hash_2_to_1(leaf, blinding);
+        assert_eq!(pi[0], expected_blinded);
+        assert_eq!(pi[1], witness.expected_root);
+
+        // Row 0 col 7 = blinded_leaf (matches public input)
+        assert_eq!(trace[0][7], pi[0]);
+    }
+
+    #[test]
+    fn blinded_merkle_stark_prove_verify() {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(987654321);
+
+        let (trace, public_inputs) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+        let proof = stark::prove(&air, &trace, &public_inputs);
+        let result = stark::verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Blinded Merkle STARK verification failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn blinded_merkle_unlinkability() {
+        // Same issuer, two different blinding factors => different blinded_leaf
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+
+        let blinding_1 = BabyBear::new(111111);
+        let blinding_2 = BabyBear::new(222222);
+
+        let (_, pi_1) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding_1);
+        let (_, pi_2) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding_2);
+
+        // Same root (same federation)
+        assert_eq!(pi_1[1], pi_2[1]);
+        // Different blinded_leaf (unlinkable!)
+        assert_ne!(
+            pi_1[0], pi_2[0],
+            "Same issuer with different blinding must produce different blinded_leaf"
+        );
+    }
+
+    #[test]
+    fn blinded_merkle_wrong_root_fails() {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(555555);
+
+        let (trace, public_inputs) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+        let proof = stark::prove(&air, &trace, &public_inputs);
+
+        // Tamper: wrong root
+        let wrong_pi = vec![public_inputs[0], BabyBear::new(99999)];
+        let result = stark::verify(&air, &proof, &wrong_pi);
+        assert!(result.is_err(), "Should reject wrong federation root");
+    }
+
+    #[test]
+    fn blinded_merkle_wrong_blinded_leaf_fails() {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(555555);
+
+        let (trace, public_inputs) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+        let proof = stark::prove(&air, &trace, &public_inputs);
+
+        // Tamper: wrong blinded_leaf
+        let wrong_pi = vec![BabyBear::new(77777), public_inputs[1]];
+        let result = stark::verify(&air, &proof, &wrong_pi);
+        assert!(result.is_err(), "Should reject wrong blinded_leaf");
+    }
+
+    #[test]
+    fn blinded_merkle_depth_8_works() {
+        let leaf = BabyBear::new(7777);
+        let witness = create_poseidon2_test_witness(leaf, 8);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(314159);
+
+        let (trace, public_inputs) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+        let proof = stark::prove(&air, &trace, &public_inputs);
+        let result = stark::verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Blinded depth-8 should verify: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn blinded_merkle_constraint_zero_on_valid() {
+        let leaf = BabyBear::new(42424242);
+        let witness = create_poseidon2_test_witness(leaf, 4);
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        let blinding = BabyBear::new(271828);
+
+        let (trace, public_inputs) =
+            generate_blinded_merkle_poseidon2_trace(leaf, &siblings, &positions, blinding);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+        let alpha = BabyBear::new(42);
+
+        for i in 0..trace.len() {
+            let next_idx = if i + 1 < trace.len() { i + 1 } else { 0 };
+            let c = air.eval_constraints(&trace[i], &trace[next_idx], &public_inputs, alpha);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "Blinded constraint non-zero at row {}: c = {}",
+                i,
+                c.0
+            );
+        }
+    }
+
+    #[test]
+    fn blinded_merkle_different_issuers_same_root_both_verify() {
+        // Two different issuers in the same federation tree
+        let leaf_a = BabyBear::new(11111111);
+        let leaf_b = BabyBear::new(22222222);
+
+        // Build separate witnesses (different leaves, different paths, same-depth tree)
+        let witness_a = create_poseidon2_test_witness(leaf_a, 4);
+        let witness_b = create_poseidon2_test_witness(leaf_b, 4);
+
+        let siblings_a: Vec<[BabyBear; 3]> = witness_a.levels.iter().map(|l| l.siblings).collect();
+        let positions_a: Vec<u8> = witness_a.levels.iter().map(|l| l.position).collect();
+        let siblings_b: Vec<[BabyBear; 3]> = witness_b.levels.iter().map(|l| l.siblings).collect();
+        let positions_b: Vec<u8> = witness_b.levels.iter().map(|l| l.position).collect();
+
+        let blinding_a = BabyBear::new(333);
+        let blinding_b = BabyBear::new(444);
+
+        let (trace_a, pi_a) =
+            generate_blinded_merkle_poseidon2_trace(leaf_a, &siblings_a, &positions_a, blinding_a);
+        let (trace_b, pi_b) =
+            generate_blinded_merkle_poseidon2_trace(leaf_b, &siblings_b, &positions_b, blinding_b);
+
+        let air = BlindedMerklePoseidon2StarkAir;
+
+        let proof_a = stark::prove(&air, &trace_a, &pi_a);
+        let proof_b = stark::prove(&air, &trace_b, &pi_b);
+
+        assert!(stark::verify(&air, &proof_a, &pi_a).is_ok());
+        assert!(stark::verify(&air, &proof_b, &pi_b).is_ok());
+
+        // Different roots (different test witnesses), different blinded_leafs
+        assert_ne!(pi_a[0], pi_b[0]);
     }
 }

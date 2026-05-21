@@ -124,7 +124,7 @@ fn default_executor() -> TurnExecutor {
 struct AlwaysAcceptVerifier;
 
 impl ProofVerifier for AlwaysAcceptVerifier {
-    fn verify(&self, _proof: &[u8], _public_inputs: &[u8], _vk: &[u8]) -> bool {
+    fn verify(&self, _proof: &[u8], _action: &str, _resource: &str, _vk: &[u8]) -> bool {
         true
     }
 }
@@ -133,7 +133,7 @@ impl ProofVerifier for AlwaysAcceptVerifier {
 struct AlwaysRejectVerifier;
 
 impl ProofVerifier for AlwaysRejectVerifier {
-    fn verify(&self, _proof: &[u8], _public_inputs: &[u8], _vk: &[u8]) -> bool {
+    fn verify(&self, _proof: &[u8], _action: &str, _resource: &str, _vk: &[u8]) -> bool {
         false
     }
 }
@@ -1423,7 +1423,8 @@ fn test_revoke_capability() {
     let mut target_with_cap = target;
     let slot = target_with_cap
         .capabilities
-        .grant(other_id, AuthRequired::None);
+        .grant(other_id, AuthRequired::None)
+        .unwrap();
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target_with_cap).unwrap();
@@ -2506,10 +2507,9 @@ fn test_grant_capability_attenuation_succeeds() {
 fn sign_partial_action(
     action: &Action,
     position: usize,
-    forest_root_hash: &[u8; 32],
     signing_key: &SigningKey,
 ) -> [u8; 64] {
-    let message = TurnExecutor::compute_partial_signing_message(action, position, forest_root_hash);
+    let message = TurnExecutor::compute_partial_signing_message(action, position);
     let sig = signing_key.sign(&message);
     sig.to_bytes()
 }
@@ -2540,16 +2540,14 @@ fn test_partial_commitment_signature_valid() {
         balance_change: Some(-100),
     };
 
-    // Simulate a forest root hash (in reality computed from the assembled forest).
-    let forest_root_hash = [0xAA; 32];
     let position = 0;
 
     // Sign.
-    let sig_bytes = sign_partial_action(&action, position, &forest_root_hash, &kp.signing_key);
+    let sig_bytes = sign_partial_action(&action, position, &kp.signing_key);
 
     // Verify manually.
     let message =
-        TurnExecutor::compute_partial_signing_message(&action, position, &forest_root_hash);
+        TurnExecutor::compute_partial_signing_message(&action, position);
     let verifying_key: VerifyingKey = (&kp.signing_key).into();
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     assert!(verifying_key.verify(&message, &signature).is_ok());
@@ -2582,28 +2580,21 @@ fn test_partial_commitment_independent_of_other_actions() {
         balance_change: Some(-50),
     };
 
-    // Build a forest with just this action to get a root hash.
-    let mut forest1 = CallForest::new();
-    forest1.add_root(action.clone());
-    let hash1 = forest1.hash();
+    // Sign the action at position 0 (partial commitment = action hash + position only).
+    let sig = sign_partial_action(&action, 0, &kp.signing_key);
 
-    // Sign with that forest's root hash.
-    let sig = sign_partial_action(&action, 0, &hash1, &kp.signing_key);
-
-    // The signing message only depends on action.hash(), position, and forest_root.
-    // If we build a DIFFERENT forest (adding another action), the root hash changes
-    // and the signature would need to be for THAT root hash.
-    // But importantly, the signing message does NOT include the other action's content.
-    let message = TurnExecutor::compute_partial_signing_message(&action, 0, &hash1);
+    // The signing message only depends on action.hash() and position.
+    // If we build a DIFFERENT forest (adding another action), the signature remains valid
+    // because partial signers do NOT commit to the forest root.
+    // The coordinator_signature on the composed turn provides the forest root binding.
+    let message = TurnExecutor::compute_partial_signing_message(&action, 0);
     let verifying_key: VerifyingKey = (&kp.signing_key).into();
     let signature = ed25519_dalek::Signature::from_bytes(&sig);
     assert!(verifying_key.verify(&message, &signature).is_ok());
 
-    // Verify that a full-commitment approach WOULD include other actions:
-    // The full signing message only depends on the action's own content
-    // (target, method, args, effects, delegation), not the turn structure.
-    // But the key difference is that partial commitment includes forest_root_hash,
-    // which binds to the structure that the COMPOSER determines.
+    // Verify that a full-commitment approach produces a DIFFERENT message:
+    // The full signing message depends on the action's own content
+    // (target, method, args, effects, delegation) but NOT position.
     let full_message = TurnExecutor::compute_signing_message(&action);
     // Full message is different from partial message (different hash construction).
     assert_ne!(full_message, message);
@@ -2724,20 +2715,11 @@ fn test_compose_two_party_swap() {
         balance_change: Some(100),
     };
 
-    // Build the forest to compute root hash (needed for partial signing).
-    // Order: alice_action, bob_action, settle_alice, settle_bob
-    let mut preview_forest = CallForest::new();
-    preview_forest.add_root(alice_action.clone());
-    preview_forest.add_root(bob_action.clone());
-    preview_forest.add_root(settle_alice.clone());
-    preview_forest.add_root(settle_bob.clone());
-    let forest_root_hash = preview_forest.hash();
-
-    // Alice signs her action at position 0.
-    let alice_sig = sign_partial_action(&alice_action, 0, &forest_root_hash, &alice_kp.signing_key);
+    // Alice signs her action at position 0 (partial: action hash + position only).
+    let alice_sig = sign_partial_action(&alice_action, 0, &alice_kp.signing_key);
 
     // Bob signs his action at position 1.
-    let bob_sig = sign_partial_action(&bob_action, 1, &forest_root_hash, &bob_kp.signing_key);
+    let bob_sig = sign_partial_action(&bob_action, 1, &bob_kp.signing_key);
 
     // Compose.
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
@@ -2758,12 +2740,12 @@ fn test_compose_two_party_swap() {
     composer.add_settlement_action(settle_alice);
     composer.add_settlement_action(settle_bob);
 
-    let turn = composer.compose().unwrap();
+    let composed = composer.compose().unwrap();
 
     // Verify turn structure.
-    assert_eq!(turn.agent, matcher_cell);
-    assert_eq!(turn.fee, 1000);
-    assert_eq!(turn.call_forest.action_count(), 4);
+    assert_eq!(composed.turn.agent, matcher_cell);
+    assert_eq!(composed.turn.fee, 1000);
+    assert_eq!(composed.turn.call_forest.action_count(), 4);
 }
 
 // =============================================================================
@@ -2803,14 +2785,8 @@ fn test_compose_rejects_invalid_signature() {
         balance_change: Some(100),
     };
 
-    // Build forest to get root hash.
-    let mut preview_forest = CallForest::new();
-    preview_forest.add_root(alice_action.clone());
-    preview_forest.add_root(settle.clone());
-    let forest_root_hash = preview_forest.hash();
-
     // Sign with the WRONG key (not Alice's).
-    let wrong_sig = sign_partial_action(&alice_action, 0, &forest_root_hash, &wrong_kp.signing_key);
+    let wrong_sig = sign_partial_action(&alice_action, 0, &wrong_kp.signing_key);
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
     composer
@@ -2862,12 +2838,7 @@ fn test_compose_validates_excess_balance() {
         balance_change: Some(-100),
     };
 
-    // Build forest for root hash (only the withdrawal, no deposit).
-    let mut preview_forest = CallForest::new();
-    preview_forest.add_root(alice_action.clone());
-    let forest_root_hash = preview_forest.hash();
-
-    let alice_sig = sign_partial_action(&alice_action, 0, &forest_root_hash, &alice_kp.signing_key);
+    let alice_sig = sign_partial_action(&alice_action, 0, &alice_kp.signing_key);
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
     composer
@@ -5126,7 +5097,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
 
     let (target, _) = make_open_cell(10, 0);
     let target_id = target.id;
-    let slot = parent.capabilities.grant(target_id, AuthRequired::None);
+    let slot = parent.capabilities.grant(target_id, AuthRequired::None).unwrap();
 
     ledger.insert_cell(parent).unwrap();
     ledger.insert_cell(target).unwrap();
@@ -5396,4 +5367,219 @@ fn test_exercise_via_capability_slot_not_found() {
         }
         _ => panic!("expected Rejected, got {:?}", result),
     }
+}
+
+// =============================================================================
+// Tests: Fee distribution (50% proposer / 30% treasury / 20% burned)
+// =============================================================================
+
+#[test]
+fn test_fee_distribution_basic() {
+    // Setup: agent with 10000, proposer and treasury cells with 0.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let (proposer, _) = make_open_cell(2, 0);
+    let (treasury, _) = make_open_cell(3, 0);
+    let agent_id = agent.id;
+    let proposer_id = proposer.id;
+    let treasury_id = treasury.id;
+
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(proposer).unwrap();
+    ledger.insert_cell(treasury).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(proposer_id);
+    executor.set_treasury_cell(treasury_id);
+
+    // Turn with fee=1000: proposer gets 500, treasury gets 300, 200 burned.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance, 10000 - 1000); // fee deducted
+
+    let proposer_cell = ledger.get(&proposer_id).unwrap();
+    assert_eq!(proposer_cell.state.balance, 500); // 50% of 1000
+
+    let treasury_cell = ledger.get(&treasury_id).unwrap();
+    assert_eq!(treasury_cell.state.balance, 300); // 30% of 1000
+
+    // Total burned = 1000 - 500 - 300 = 200 (20%)
+}
+
+#[test]
+fn test_fee_distribution_minimum_fee() {
+    // Fee=1: integer division means proposer gets 0, treasury gets 0, all burned.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let (proposer, _) = make_open_cell(2, 0);
+    let (treasury, _) = make_open_cell(3, 0);
+    let agent_id = agent.id;
+    let proposer_id = proposer.id;
+    let treasury_id = treasury.id;
+
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(proposer).unwrap();
+    ledger.insert_cell(treasury).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(proposer_id);
+    executor.set_treasury_cell(treasury_id);
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance, 10000 - 1);
+
+    // fee/2 = 0, fee*3/10 = 0: both get nothing.
+    let proposer_cell = ledger.get(&proposer_id).unwrap();
+    assert_eq!(proposer_cell.state.balance, 0);
+
+    let treasury_cell = ledger.get(&treasury_id).unwrap();
+    assert_eq!(treasury_cell.state.balance, 0);
+}
+
+#[test]
+fn test_fee_distribution_no_proposer_all_burned() {
+    // Backward compat: no proposer/treasury configured -> 100% burned.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    let executor = zero_cost_executor(); // no proposer/treasury set
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance, 10000 - 1000);
+    // No other cells received anything (total supply decreased by 1000).
+}
+
+#[test]
+fn test_fee_distribution_proposer_only() {
+    // Only proposer configured, no treasury -> proposer gets 50%, rest burned.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let (proposer, _) = make_open_cell(2, 0);
+    let agent_id = agent.id;
+    let proposer_id = proposer.id;
+
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(proposer).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(proposer_id);
+    // treasury_cell left as None
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    let proposer_cell = ledger.get(&proposer_id).unwrap();
+    assert_eq!(proposer_cell.state.balance, 500); // 50%
+    // Treasury share (300) is burned since no treasury is set.
+}
+
+#[test]
+fn test_fee_distribution_missing_proposer_cell_in_ledger() {
+    // Proposer cell configured but not in ledger -> share is burned gracefully.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    let nonexistent_proposer = CellId::from_bytes([0xDE; 32]);
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(nonexistent_proposer);
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Agent still pays the full fee.
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance, 10000 - 1000);
+    // Proposer share is burned (cell doesn't exist).
+}
+
+#[test]
+fn test_fee_distribution_not_on_failure() {
+    // If the turn fails (Phase 2 rejection), no fee distribution occurs.
+    // The fee is still deducted (anti-DoS), but proposer/treasury get nothing.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let (proposer, _) = make_open_cell(2, 0);
+    let (treasury, _) = make_open_cell(3, 0);
+    let agent_id = agent.id;
+    let proposer_id = proposer.id;
+    let treasury_id = treasury.id;
+
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(proposer).unwrap();
+    ledger.insert_cell(treasury).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(proposer_id);
+    executor.set_treasury_cell(treasury_id);
+
+    // Create a turn that targets a non-existent cell (will fail in Phase 2).
+    let nonexistent = CellId::from_bytes([0xFF; 32]);
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(nonexistent, "fail");
+        action.set_field(nonexistent, 0, [1u8; 32]);
+    }
+    let turn = builder.fee(1000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    // Fee still deducted from agent (anti-DoS).
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance, 10000 - 1000);
+
+    // Proposer and treasury get NOTHING on failure.
+    let proposer_cell = ledger.get(&proposer_id).unwrap();
+    assert_eq!(proposer_cell.state.balance, 0);
+
+    let treasury_cell = ledger.get(&treasury_id).unwrap();
+    assert_eq!(treasury_cell.state.balance, 0);
 }

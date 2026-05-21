@@ -67,7 +67,8 @@ pub mod prelude {
         PROTOCOL_VERSION, PublicKey, Signature, ThresholdQC, WireMessage, error_codes,
     };
     pub use crate::server::{
-        NonceCache, ProofVerifier, SiloConfig, SiloServer, SiloState, StarkVerifier,
+        NonceCache, ProofVerifier, SiloConfig, SiloServer, SiloState, StarkVerifier, TlsConfig,
+        revocation_signing_message,
     };
 
     #[cfg(any(test, feature = "dev"))]

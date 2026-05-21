@@ -77,5 +77,8 @@ pub use pyana_circuit::PresentationVerification;
 // Re-export mnemonic generation at crate root for convenience.
 pub use mnemonic::generate_mnemonic;
 
-// Re-export standalone verification function.
-pub use verify::verify_authorization_proof;
+// Re-export standalone verification functions.
+pub use verify::{
+    verify_authorization_proof, verify_selective_disclosure, verify_selective_presentation,
+    verify_validated_ivc_proof,
+};

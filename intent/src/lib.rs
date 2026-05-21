@@ -280,8 +280,12 @@ impl Intent {
     }
 
     /// Check if this intent has expired.
+    ///
+    /// An intent is expired when `now >= expiry` (i.e., exactly-at-expiry counts
+    /// as expired). This avoids fence-post issues where `expiry == now` would
+    /// allow processing of an intent that should no longer be valid.
     pub fn is_expired(&self, now: u64) -> bool {
-        now > self.expiry
+        now >= self.expiry
     }
 }
 
@@ -296,6 +300,67 @@ pub struct Match {
     pub proof: Option<Vec<u8>>,
     /// How much was revealed in the proof.
     pub mode: VerificationMode,
+}
+
+// ---------------------------------------------------------------------------
+// Epoch-scoped stake nullifiers (anti-Sybil)
+// ---------------------------------------------------------------------------
+
+/// Number of blocks per epoch for stake nullifier scoping.
+///
+/// Each note commitment gets `MAX_STAKE_USES_PER_EPOCH` uses per epoch.
+/// Different epochs produce different nullifiers, making cross-epoch uses
+/// unlinkable for privacy.
+pub const EPOCH_DURATION_BLOCKS: u64 = 1000;
+
+/// Maximum number of times a single note commitment can be used as stake
+/// within one epoch. After K uses, the stake is exhausted until the next epoch.
+pub const MAX_STAKE_USES_PER_EPOCH: u32 = 5;
+
+/// Compute the current epoch from the block height.
+pub fn current_epoch(block_height: u64) -> u64 {
+    block_height / EPOCH_DURATION_BLOCKS
+}
+
+/// Compute a stake nullifier for a given note commitment, epoch, and use counter.
+///
+/// The nullifier is: `Poseidon2(commitment_field_elements || epoch_elements || counter_element)`
+///
+/// Privacy properties:
+/// - Different epochs produce different nullifiers (unlinkable across epochs)
+/// - Within an epoch, the K uses are distinguishable but not linkable to other epochs
+/// - The nullifier does not reveal the underlying note value
+pub fn compute_stake_nullifier(commitment: &[u8; 32], epoch: u64, counter: u32) -> [u8; 32] {
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::poseidon2::hash_many;
+
+    // Encode commitment as 8 field elements
+    let commitment_elements = BabyBear::encode_hash(commitment);
+
+    // Encode epoch as 2 field elements (high/low 32 bits)
+    let epoch_lo = BabyBear::new((epoch & 0x7FFF_FFFF) as u32);
+    let epoch_hi = BabyBear::new(((epoch >> 31) & 0x7FFF_FFFF) as u32);
+
+    // Encode counter as 1 field element
+    let counter_elem = BabyBear::new(counter);
+
+    // Concatenate all elements and hash
+    let mut elements = Vec::with_capacity(11);
+    elements.extend_from_slice(&commitment_elements);
+    elements.push(epoch_lo);
+    elements.push(epoch_hi);
+    elements.push(counter_elem);
+
+    // Hash to get a single field element, then expand to 32 bytes deterministically
+    // We use a domain-separated BLAKE3 hash of the Poseidon2 output to get 32 bytes
+    let poseidon_output = hash_many(&elements);
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-stake-nullifier-v1");
+    hasher.update(&poseidon_output.as_u32().to_le_bytes());
+    // Include raw inputs in the BLAKE3 for collision resistance in the 32-byte domain
+    hasher.update(commitment);
+    hasher.update(&epoch.to_le_bytes());
+    hasher.update(&counter.to_le_bytes());
+    *hasher.finalize().as_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +474,9 @@ mod tests {
         let creator = CommitmentId([0xCC; 32]);
         let intent = Intent::new(IntentKind::Need, spec, creator, 1000, None);
         assert!(!intent.is_expired(500));
-        assert!(!intent.is_expired(1000));
+        assert!(!intent.is_expired(999));
+        // Issue #8: exactly-at-expiry is now expired (fence-post fix)
+        assert!(intent.is_expired(1000));
         assert!(intent.is_expired(1001));
     }
 
@@ -507,5 +574,51 @@ mod tests {
 
         let req_none = StakeRequirement::None;
         assert!(!req_none.has_valid_stake(root));
+    }
+
+    #[test]
+    fn current_epoch_computation() {
+        assert_eq!(current_epoch(0), 0);
+        assert_eq!(current_epoch(999), 0);
+        assert_eq!(current_epoch(1000), 1);
+        assert_eq!(current_epoch(1001), 1);
+        assert_eq!(current_epoch(2000), 2);
+        assert_eq!(current_epoch(5999), 5);
+    }
+
+    #[test]
+    fn stake_nullifier_deterministic() {
+        let commitment = [0xDE; 32];
+        let n1 = compute_stake_nullifier(&commitment, 0, 0);
+        let n2 = compute_stake_nullifier(&commitment, 0, 0);
+        assert_eq!(n1, n2);
+    }
+
+    #[test]
+    fn stake_nullifier_varies_by_epoch() {
+        let commitment = [0xDE; 32];
+        let n_epoch0 = compute_stake_nullifier(&commitment, 0, 0);
+        let n_epoch1 = compute_stake_nullifier(&commitment, 1, 0);
+        assert_ne!(n_epoch0, n_epoch1, "different epochs should produce different nullifiers");
+    }
+
+    #[test]
+    fn stake_nullifier_varies_by_counter() {
+        let commitment = [0xDE; 32];
+        let n0 = compute_stake_nullifier(&commitment, 5, 0);
+        let n1 = compute_stake_nullifier(&commitment, 5, 1);
+        let n2 = compute_stake_nullifier(&commitment, 5, 2);
+        assert_ne!(n0, n1);
+        assert_ne!(n1, n2);
+        assert_ne!(n0, n2);
+    }
+
+    #[test]
+    fn stake_nullifier_varies_by_commitment() {
+        let c1 = [0xAA; 32];
+        let c2 = [0xBB; 32];
+        let n1 = compute_stake_nullifier(&c1, 0, 0);
+        let n2 = compute_stake_nullifier(&c2, 0, 0);
+        assert_ne!(n1, n2, "different commitments should produce different nullifiers");
     }
 }

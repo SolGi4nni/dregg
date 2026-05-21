@@ -28,12 +28,11 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 }
 
 /// Constant-time comparison of two 32-byte values.
+///
+/// Uses `subtle::ConstantTimeEq` to prevent timing side-channels.
 pub fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
-    let mut acc: u8 = 0;
-    for i in 0..32 {
-        acc |= a[i] ^ b[i];
-    }
-    acc == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 /// Generate cryptographically random bytes.
@@ -92,13 +91,22 @@ pub fn unseal(key: &[u8; 32], sealed: &[u8]) -> Result<Vec<u8>, MacaroonError> {
 /// Used to bind discharge macaroons to a specific root macaroon,
 /// preventing replay with less-attenuated versions of the root.
 ///
-/// Returns the first 16 bytes of SHA-256(tail).
-pub fn binding_hash(tail: &[u8; 32]) -> [u8; 16] {
+/// Returns the full 32 bytes of SHA-256(tail).
+pub fn binding_hash(tail: &[u8; 32]) -> [u8; 32] {
     use sha2::Digest;
     let hash = sha2::Sha256::digest(tail);
-    let mut result = [0u8; 16];
-    result.copy_from_slice(&hash[..16]);
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&hash[..32]);
     result
+}
+
+/// Constant-time comparison of two binding hashes (32-byte values).
+pub fn binding_hash_eq(a: &[u8], b: &[u8; 32]) -> bool {
+    use subtle::ConstantTimeEq;
+    if a.len() < 32 {
+        return false;
+    }
+    a[..32].ct_eq(b.as_slice()).into()
 }
 
 #[cfg(test)]
@@ -170,6 +178,6 @@ mod tests {
         let h1 = binding_hash(&tail);
         let h2 = binding_hash(&tail);
         assert_eq!(h1, h2);
-        assert_eq!(h1.len(), 16);
+        assert_eq!(h1.len(), 32);
     }
 }

@@ -56,18 +56,21 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build pyana-relay
-        run: cargo build --release -p pyana-relay
+      - name: Build pyana-node
+        run: cargo build --release -p pyana-node
 
-      - name: Prepare state directory
-        run: mkdir -p "$STATE_DIR"
+      - name: Load node identity
+        run: |
+          mkdir -p "$STATE_DIR"
+          echo -n "${{ secrets.PYANA_NODE_1_KEY }}" | xxd -r -p > "$STATE_DIR/node.key"
+          echo "Intent service identity loaded"
 
       - name: Resolve federation peers
         id: peers
         run: |
           PEERS=""
           if [ -f /tmp/discovery/discovery.json ]; then
-            PEERS=$(jq -r '.federation[].node_id' /tmp/discovery/discovery.json 2>/dev/null | paste -sd, -)
+            PEERS=$(jq -r '.federation[].addr' /tmp/discovery/discovery.json 2>/dev/null | paste -sd, -)
           fi
           echo "peer_list=$PEERS" >> "$GITHUB_OUTPUT"
           echo "Resolved federation peers: $PEERS"
@@ -78,13 +81,11 @@ jobs:
           PYANA_NODE_KEY: ${{ secrets.PYANA_NODE_1_KEY }}
           RUST_LOG: info
         run: |
-          # Start the relay in intent-service mode
-          ./target/release/pyana-relay \
-            --state-dir "$STATE_DIR" \
-            --discovery-file "$STATE_DIR/discovery.json" \
-            --peers "${{ steps.peers.outputs.peer_list }}" \
-            --node-role intent-service \
-            --intent-pool &
+          # Start the node in background (intent service uses the same binary)
+          ./target/release/pyana-node run \
+            --data-dir "$STATE_DIR" \
+            --port 8421 \
+            --federation-peers "${{ steps.peers.outputs.peer_list }}" &
           NODE_PID=$!
 
           echo "Intent service started with PID $NODE_PID"

@@ -25,7 +25,6 @@ The system implements E-style distributed object semantics (promise pipelining, 
 +-------------------------------------------------------------------------+
 |                    Node / Network Layer                                   |
 |  pyana-node (federation daemon, localhost API)                           |
-|  pyana-relay (QUIC relay, attested roots, peer connection)              |
 |  pyana-net (Quinn QUIC, Plumtree gossip, topic-based dissemination)     |
 |  wire (TCP postcard framing, STARK verification on receive)             |
 +-------------------------------------------------------------------------+
@@ -309,7 +308,7 @@ The commitment layer maintains parallel Merkle trees: BLAKE3 for fast operationa
 
 ### Quinn QUIC (pyana-net)
 
-All inter-silo communication uses QUIC via Quinn with multiplexed streams and 0-RTT resumption. The relay crate provides a lightweight QUIC relay for peer connection brokering and attested root distribution.
+All inter-silo communication uses QUIC via Quinn with multiplexed streams and 0-RTT resumption. The pyana-net crate handles peer connection brokering and attested root distribution directly within the node.
 
 ### Plumtree Gossip
 
@@ -439,7 +438,6 @@ Each silo holds a local budget slice: `slice(i) = balance * (f+1) / (2f+1)`. Deb
 | `wire` | 4.6k | TCP wire protocol, postcard framing, federation bridge, multi-node demo |
 | `net` | 3.2k | Quinn QUIC transport, Plumtree gossip, topic-based dissemination |
 | `node` | 1.6k | Federation node daemon: consensus participant, localhost HTTP/WS API |
-| `relay` | 1.0k | Lightweight QUIC relay: attested root distribution, peer connection broker |
 | `intent` | 3.9k | Distributed intent engine: gossip broadcast, local Datalog matching, commit-reveal, STARK fulfillment |
 | `store` | 3.2k | redb persistence, note commitment tree, nullifier set |
 | `audit` | 2.4k | Usage logging, consistency proofs, budget enforcement |

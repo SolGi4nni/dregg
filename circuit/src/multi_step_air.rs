@@ -469,6 +469,69 @@ impl Air for MultiStepDerivationAir {
                     active * gte_active * high_bit
                 }),
             },
+            // Constraint 18b: LT check active flag is binary (when active).
+            Constraint {
+                name: "lt_check_active_binary".to_string(),
+                eval: Box::new(|row, _, _| {
+                    let active = row[col::IS_ACTIVE];
+                    let lt_active = row[dcol::LT_CHECK_ACTIVE];
+                    active * lt_active * (lt_active - BabyBear::ONE)
+                }),
+            },
+            // Constraint 18c: LT diff consistency (when active).
+            // lt_active * (diff - (term_b - term_a - 1)) = 0
+            Constraint {
+                name: "lt_check_diff_correct".to_string(),
+                eval: Box::new(|row, _, _| {
+                    let active = row[col::IS_ACTIVE];
+                    let lt_active = row[dcol::LT_CHECK_ACTIVE];
+                    let term_a = row[dcol::LT_CHECK_TERM_A];
+                    let term_b = row[dcol::LT_CHECK_TERM_B];
+                    let diff = row[dcol::LT_CHECK_DIFF];
+                    active * lt_active * (diff - (term_b - term_a - BabyBear::ONE))
+                }),
+            },
+            // Constraint 18d: LT bit decomposition (when active).
+            Constraint {
+                name: "lt_check_bit_decomposition".to_string(),
+                eval: Box::new(|row, _, _| {
+                    let active = row[col::IS_ACTIVE];
+                    let lt_active = row[dcol::LT_CHECK_ACTIVE];
+                    let diff = row[dcol::LT_CHECK_DIFF];
+                    let mut recomposed = BabyBear::ZERO;
+                    let mut power_of_two = BabyBear::ONE;
+                    for i in 0..GTE_DIFF_BITS {
+                        let bit = row[dcol::lt_diff_bit(i)];
+                        recomposed = recomposed + bit * power_of_two;
+                        power_of_two = power_of_two + power_of_two;
+                    }
+                    active * lt_active * (recomposed - diff)
+                }),
+            },
+            // Constraint 18e: LT bits are binary (when active).
+            Constraint {
+                name: "lt_check_bits_binary".to_string(),
+                eval: Box::new(|row, _, _| {
+                    let active = row[col::IS_ACTIVE];
+                    let lt_active = row[dcol::LT_CHECK_ACTIVE];
+                    let mut result = BabyBear::ZERO;
+                    for i in 0..GTE_DIFF_BITS {
+                        let bit = row[dcol::lt_diff_bit(i)];
+                        result = result + bit * (bit - BabyBear::ONE);
+                    }
+                    active * lt_active * result
+                }),
+            },
+            // Constraint 18f: LT high bit is zero (when active).
+            Constraint {
+                name: "lt_check_high_bit_zero".to_string(),
+                eval: Box::new(|row, _, _| {
+                    let active = row[col::IS_ACTIVE];
+                    let lt_active = row[dcol::LT_CHECK_ACTIVE];
+                    let high_bit = row[dcol::lt_diff_bit(GTE_DIFF_BITS - 1)];
+                    active * lt_active * high_bit
+                }),
+            },
             // === Multi-step chaining constraints ===
 
             // Constraint 19: is_active is binary.
@@ -766,6 +829,45 @@ impl Air for MultiStepDerivationAir {
                     for i in 0..GTE_DIFF_BITS {
                         let bit = (diff_val >> i) & 1;
                         row[dcol::gte_diff_bit(i)] = BabyBear::new(bit);
+                    }
+                }
+
+                // LT check columns
+                if let Some(lt_check) = &step.rule.lt_check {
+                    row[dcol::LT_CHECK_ACTIVE] = BabyBear::ONE;
+
+                    let term_a = if lt_check.lhs_is_var {
+                        let idx = lt_check.lhs_value.as_u32() as usize;
+                        if idx < step.substitution.len() {
+                            step.substitution[idx]
+                        } else {
+                            BabyBear::ZERO
+                        }
+                    } else {
+                        lt_check.lhs_value
+                    };
+
+                    let term_b = if lt_check.rhs_is_var {
+                        let idx = lt_check.rhs_value.as_u32() as usize;
+                        if idx < step.substitution.len() {
+                            step.substitution[idx]
+                        } else {
+                            BabyBear::ZERO
+                        }
+                    } else {
+                        lt_check.rhs_value
+                    };
+
+                    row[dcol::LT_CHECK_TERM_A] = term_a;
+                    row[dcol::LT_CHECK_TERM_B] = term_b;
+
+                    let diff = term_b - term_a - BabyBear::ONE;
+                    row[dcol::LT_CHECK_DIFF] = diff;
+
+                    let diff_val = diff.as_u32();
+                    for i in 0..GTE_DIFF_BITS {
+                        let bit = (diff_val >> i) & 1;
+                        row[dcol::lt_diff_bit(i)] = BabyBear::new(bit);
                     }
                 }
 
@@ -1094,6 +1196,47 @@ impl StarkAir for MultiStepStarkAir {
         result = result + alpha_power * c17;
         alpha_power = alpha_power * alpha;
 
+        // --- Constraint 17b: LT check active flag binary (when active) ---
+        let lt_active = local[dcol::LT_CHECK_ACTIVE];
+        let c17b = is_active * lt_active * (lt_active - BabyBear::ONE);
+        result = result + alpha_power * c17b;
+        alpha_power = alpha_power * alpha;
+
+        // --- Constraint 17c: LT diff consistency (when active) ---
+        let lt_term_a = local[dcol::LT_CHECK_TERM_A];
+        let lt_term_b = local[dcol::LT_CHECK_TERM_B];
+        let lt_diff = local[dcol::LT_CHECK_DIFF];
+        let c17c = is_active * lt_active * (lt_diff - (lt_term_b - lt_term_a - BabyBear::ONE));
+        result = result + alpha_power * c17c;
+        alpha_power = alpha_power * alpha;
+
+        // --- Constraint 17d: LT bit decomposition (when active) ---
+        let mut lt_recomposed = BabyBear::ZERO;
+        let mut lt_power_of_two = BabyBear::ONE;
+        for i in 0..GTE_DIFF_BITS {
+            let bit = local[dcol::lt_diff_bit(i)];
+            lt_recomposed = lt_recomposed + bit * lt_power_of_two;
+            lt_power_of_two = lt_power_of_two + lt_power_of_two;
+        }
+        let c17d = is_active * lt_active * (lt_recomposed - lt_diff);
+        result = result + alpha_power * c17d;
+        alpha_power = alpha_power * alpha;
+
+        // --- Constraint 17e: LT bits binary (when active) ---
+        let mut c17e = BabyBear::ZERO;
+        for i in 0..GTE_DIFF_BITS {
+            let bit = local[dcol::lt_diff_bit(i)];
+            c17e = c17e + bit * (bit - BabyBear::ONE);
+        }
+        result = result + alpha_power * (is_active * lt_active * c17e);
+        alpha_power = alpha_power * alpha;
+
+        // --- Constraint 17f: LT high bit is zero (when active) ---
+        let lt_high_bit = local[dcol::lt_diff_bit(GTE_DIFF_BITS - 1)];
+        let c17f = is_active * lt_active * lt_high_bit;
+        result = result + alpha_power * c17f;
+        alpha_power = alpha_power * alpha;
+
         // --- Constraint 18: Final step derives ALLOW predicate ---
         // conclusion * is_final * (head_pred - ALLOW_PREDICATE) = 0
         let conclusion = public_inputs[pi::CONCLUSION];
@@ -1306,6 +1449,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![body_hash],
@@ -1603,6 +1747,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![hash_fact(has_cap_pred, &[alice, app1, read_action])],
@@ -1635,6 +1780,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![hash_fact(app_auth_pred, &[alice, app1, BabyBear::ZERO])],
@@ -1667,6 +1813,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![hash_fact(action_perm_pred, &[alice, app1, BabyBear::ZERO])],
@@ -2234,6 +2381,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root,
             body_fact_hashes: vec![

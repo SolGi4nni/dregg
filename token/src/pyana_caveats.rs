@@ -412,7 +412,15 @@ pub fn verify_caveats(
             PyanaGrant::FeatureGlob { include, exclude } => feature_globs.push((include, exclude)),
             PyanaGrant::Budget { id, limit, .. } => budgets.push((id, limit)),
             PyanaGrant::Revocable(token_id) => revocable_ids.push(token_id),
-            PyanaGrant::Unknown(_, _) => {}
+            PyanaGrant::Unknown(type_id, _) => {
+                // Fail-closed: unknown caveat types MUST deny authorization.
+                // Silently passing unknown caveats would allow privilege escalation
+                // if a new caveat type is added that this verifier doesn't understand.
+                return Err(TokenError::Denied(format!(
+                    "unknown caveat type {} cannot be verified (fail-closed)",
+                    type_id
+                )));
+            }
         }
     }
 

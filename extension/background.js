@@ -10,6 +10,12 @@ const NODE_WS_URL = 'ws://localhost:8420/ws'; // Fallback for localhost only.
 const DISCOVERY_URL = 'https://emberian.github.io/pyana/discovery.json';
 const DISCOVERY_POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PBKDF2_ITERATIONS = 600000; // OWASP recommendation for PBKDF2-SHA256
+const DISCLOSURE_PREFS_KEY = 'pyana_disclosure_prefs'; // Per-origin disclosure preferences
+const LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes auto-lock
+const ORIGIN_PERMISSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours default
+const RATE_LIMIT_MAX_CALLS = 5; // Max authorize calls per origin per window
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60-second sliding window
+const INTERNAL_KDF_SALT = 'pyana-internal-default-key-v1'; // Used when no passphrase is set
 
 // ---------------------------------------------------------------------------
 // WASM module loading
@@ -38,6 +44,60 @@ wasmReady.then(() => {
   }
   pendingQueue.length = 0;
 });
+
+// ---------------------------------------------------------------------------
+// Auto-lock timer (P2-20)
+// ---------------------------------------------------------------------------
+
+let lockTimer = null;
+
+function resetLockTimer() {
+  if (lockTimer !== null) {
+    clearTimeout(lockTimer);
+  }
+  lockTimer = setTimeout(async () => {
+    console.log('[pyana] Auto-lock triggered after inactivity');
+    await lockWallet();
+    notifySubscribers('ready', { locked: true });
+  }, LOCK_TIMEOUT_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiter for authorize calls (P2-11)
+// ---------------------------------------------------------------------------
+
+const rateLimitBuckets = new Map(); // origin -> [timestamp, ...]
+
+function checkRateLimit(origin) {
+  const now = Date.now();
+  if (!rateLimitBuckets.has(origin)) {
+    rateLimitBuckets.set(origin, []);
+  }
+  const bucket = rateLimitBuckets.get(origin);
+  // Evict expired entries.
+  while (bucket.length > 0 && bucket[0] <= now - RATE_LIMIT_WINDOW_MS) {
+    bucket.shift();
+  }
+  if (bucket.length >= RATE_LIMIT_MAX_CALLS) {
+    return false; // Rate limited.
+  }
+  bucket.push(now);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Internal encryption key (for when no passphrase is set)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive an internal encryption key. This is NOT as secure as a user passphrase
+ * but is strictly better than storing plaintext. The key is derived from a
+ * fixed salt + the extension ID, so it is unique per extension install.
+ */
+async function getInternalEncryptionKey() {
+  const material = `${INTERNAL_KDF_SALT}:${chrome.runtime.id}`;
+  return material;
+}
 
 // ---------------------------------------------------------------------------
 // Encryption helpers (PBKDF2 + AES-256-GCM via SubtleCrypto)
@@ -223,7 +283,8 @@ async function getWordlist() {
 
 /**
  * Derive an Ed25519 keypair from a mnemonic + passphrase using BLAKE3 (via WASM).
- * Falls back to a simplified derivation if WASM is unavailable.
+ * Falls back to a deterministic PBKDF2-HMAC-SHA512 derivation via Web Crypto
+ * (BIP39-compatible: mnemonic -> seed, then use first 32 bytes as Ed25519 seed).
  */
 async function deriveKeypairFromMnemonic(mnemonic, passphrase) {
   if (wasm && wasm.derive_keypair_from_mnemonic) {
@@ -234,13 +295,46 @@ async function deriveKeypairFromMnemonic(mnemonic, passphrase) {
       console.warn('[pyana] WASM derive_keypair_from_mnemonic failed:', e.message);
     }
   }
-  // Without WASM, we cannot do BLAKE3 derivation. Store mnemonic and derive
-  // on next WASM load. For now, generate random keys as placeholder.
-  const publicKey = new Uint8Array(32);
-  const secretKey = new Uint8Array(64);
-  crypto.getRandomValues(publicKey);
-  crypto.getRandomValues(secretKey);
-  return { publicKey: Array.from(publicKey), secretKey: Array.from(secretKey) };
+  // Pure JS fallback: BIP39-style PBKDF2-HMAC-SHA512 derivation.
+  // mnemonic -> seed (2048 rounds, salt = "mnemonic" + passphrase)
+  // Then use first 32 bytes as Ed25519 signing key seed.
+  const enc = new TextEncoder();
+  const mnemonicBytes = enc.encode(mnemonic.normalize('NFKD'));
+  const saltBytes = enc.encode('mnemonic' + (passphrase || '').normalize('NFKD'));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', mnemonicBytes, 'PBKDF2', false, ['deriveBits']
+  );
+  const seedBits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: saltBytes, iterations: 2048, hash: 'SHA-512' },
+    keyMaterial,
+    512 // 64 bytes
+  );
+  const seed = new Uint8Array(seedBits);
+
+  // SLIP-10 style: use HMAC-SHA512 with key "ed25519 seed" over the PBKDF2 output
+  // to get the final Ed25519 private key (first 32 bytes) and chain code (ignored).
+  const slip10Key = enc.encode('ed25519 seed');
+  const hmacKey = await crypto.subtle.importKey(
+    'raw', slip10Key, { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']
+  );
+  const derived = await crypto.subtle.sign('HMAC', hmacKey, seed);
+  const derivedBytes = new Uint8Array(derived);
+
+  // First 32 bytes = Ed25519 private scalar (seed). The "public key" derivation
+  // requires Ed25519 point multiplication which we cannot do with Web Crypto alone.
+  // Store the 32-byte seed as secretKey; the WASM module will re-derive the full
+  // keypair on next load. For now, derive a placeholder public key via SHA-256 of
+  // the secret seed (NOT cryptographically correct Ed25519 pubkey, but deterministic).
+  const secretSeed = derivedBytes.slice(0, 32);
+  const pubHashBuf = await crypto.subtle.digest('SHA-256', secretSeed);
+  const publicKey = new Uint8Array(pubHashBuf);
+
+  return {
+    publicKey: Array.from(publicKey),
+    secretKey: Array.from(secretSeed),
+    needsReDerivation: true, // Flag: WASM should re-derive proper keypair on next load
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,10 +363,26 @@ let walletPassphrase = null; // Held in memory while unlocked; cleared on lock.
 async function loadState() {
   if (state) return state;
 
-  // Try loading unencrypted state first (legacy / first-run).
+  // Try loading legacy unencrypted state and migrate it.
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   if (stored[STORAGE_KEY]) {
+    // Migrate: encrypt with internal key and remove plaintext.
     state = stored[STORAGE_KEY];
+    state.needsPassphraseSetup = true;
+    const internalKey = await getInternalEncryptionKey();
+    walletPassphrase = internalKey;
+    state.locked = false;
+    await saveState();
+    // Also migrate any plaintext mnemonic.
+    const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
+    if (mnemonicStored[MNEMONIC_KEY]?.plaintext) {
+      const encMnemonic = await encryptWithPassphrase(mnemonicStored[MNEMONIC_KEY].plaintext, internalKey);
+      await chrome.storage.local.set({ [MNEMONIC_KEY]: encMnemonic });
+    }
+    // Lock after migration — user must set passphrase.
+    state.locked = true;
+    state.secretKey = null;
+    walletPassphrase = null;
     return state;
   }
 
@@ -287,15 +397,17 @@ async function loadState() {
       receiptChain: [],
       log: [],
       hasMnemonic: encrypted[ENCRYPTED_STATE_KEY].hasMnemonic || false,
+      needsPassphraseSetup: encrypted[ENCRYPTED_STATE_KEY].needsPassphraseSetup || false,
     };
     return state;
   }
 
   // First run: generate mnemonic and create wallet.
+  // Always encrypt at rest — use internal key if no user passphrase is set.
   const mnemonic = await generateMnemonic();
   const keypair = await deriveKeypairFromMnemonic(mnemonic, '');
   state = {
-    locked: false,
+    locked: true, // Start locked — require passphrase setup before use.
     publicKey: Array.from(keypair.publicKey),
     secretKey: Array.from(keypair.secretKey),
     tokens: [],
@@ -303,11 +415,24 @@ async function loadState() {
     log: [],
     hasMnemonic: true,
     mnemonicShown: false, // Track whether user has seen the mnemonic.
+    needsPassphraseSetup: true, // Signal to popup to prompt for passphrase.
   };
+
+  // Encrypt with internal key for at-rest protection (until user sets passphrase).
+  const internalKey = await getInternalEncryptionKey();
+  walletPassphrase = internalKey;
+  state.locked = false;
   await saveState();
 
-  // Store mnemonic (unencrypted until user sets a passphrase).
-  await chrome.storage.local.set({ [MNEMONIC_KEY]: { plaintext: mnemonic } });
+  // Encrypt mnemonic with the internal key — never store plaintext.
+  const encryptedMnemonic = await encryptWithPassphrase(mnemonic, internalKey);
+  await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
+
+  // Lock immediately so user must set a passphrase on first interaction.
+  state.locked = true;
+  state.secretKey = null;
+  walletPassphrase = null;
+  state.needsPassphraseSetup = true;
 
   return state;
 }
@@ -315,8 +440,14 @@ async function loadState() {
 async function saveState() {
   if (!state) return;
 
+  if (!walletPassphrase && !state.locked) {
+    // No passphrase available and not locked — use internal key for encryption.
+    // This should not happen in normal flow, but is a safety net.
+    walletPassphrase = await getInternalEncryptionKey();
+  }
+
   if (walletPassphrase && !state.locked) {
-    // Save encrypted.
+    // Always save encrypted.
     const plaintext = JSON.stringify({
       publicKey: state.publicKey,
       secretKey: state.secretKey,
@@ -325,16 +456,18 @@ async function saveState() {
       log: state.log,
       hasMnemonic: state.hasMnemonic,
       mnemonicShown: state.mnemonicShown,
+      needsPassphraseSetup: state.needsPassphraseSetup || false,
     });
     const encrypted = await encryptWithPassphrase(plaintext, walletPassphrase);
     encrypted.publicKey = state.publicKey; // Keep public key readable for UI.
     encrypted.hasMnemonic = state.hasMnemonic;
+    encrypted.needsPassphraseSetup = state.needsPassphraseSetup || false;
     await chrome.storage.local.set({ [ENCRYPTED_STATE_KEY]: encrypted });
-    // Remove unencrypted state if it exists.
+    // Remove any legacy unencrypted state.
     await chrome.storage.local.remove(STORAGE_KEY);
-  } else {
-    // Save unencrypted (legacy mode / no passphrase set).
-    await chrome.storage.local.set({ [STORAGE_KEY]: state });
+  } else if (state.locked) {
+    // Wallet is locked; we cannot re-encrypt (no passphrase in memory).
+    // The encrypted state on disk is already correct. Do nothing.
   }
 }
 
@@ -354,6 +487,12 @@ async function lockWallet() {
   state.locked = true;
   state.secretKey = null;
   walletPassphrase = null;
+
+  // Clear the auto-lock timer.
+  if (lockTimer !== null) {
+    clearTimeout(lockTimer);
+    lockTimer = null;
+  }
 }
 
 /**
@@ -362,48 +501,75 @@ async function lockWallet() {
 async function unlockWallet(passphrase) {
   const encrypted = await chrome.storage.local.get(ENCRYPTED_STATE_KEY);
   if (!encrypted[ENCRYPTED_STATE_KEY]) {
-    // No encrypted state: legacy mode, just mark unlocked.
+    // No encrypted state: should not happen in new flow. Mark unlocked.
     if (state) state.locked = false;
     return { success: true };
   }
 
-  try {
-    const plaintext = await decryptWithPassphrase(encrypted[ENCRYPTED_STATE_KEY], passphrase);
-    const decrypted = JSON.parse(plaintext);
-    state = {
-      locked: false,
-      publicKey: decrypted.publicKey,
-      secretKey: decrypted.secretKey,
-      tokens: decrypted.tokens || [],
-      receiptChain: decrypted.receiptChain || [],
-      log: decrypted.log || [],
-      hasMnemonic: decrypted.hasMnemonic || false,
-      mnemonicShown: decrypted.mnemonicShown || false,
-    };
-    walletPassphrase = passphrase;
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: 'Invalid passphrase' };
+  // Try user-provided passphrase first.
+  const attempts = [passphrase];
+  // If the wallet needs passphrase setup, also try the internal key.
+  if (encrypted[ENCRYPTED_STATE_KEY].needsPassphraseSetup) {
+    const internalKey = await getInternalEncryptionKey();
+    attempts.push(internalKey);
   }
+
+  for (const attempt of attempts) {
+    try {
+      const plaintext = await decryptWithPassphrase(encrypted[ENCRYPTED_STATE_KEY], attempt);
+      const decrypted = JSON.parse(plaintext);
+      state = {
+        locked: false,
+        publicKey: decrypted.publicKey,
+        secretKey: decrypted.secretKey,
+        tokens: decrypted.tokens || [],
+        receiptChain: decrypted.receiptChain || [],
+        log: decrypted.log || [],
+        hasMnemonic: decrypted.hasMnemonic || false,
+        mnemonicShown: decrypted.mnemonicShown || false,
+        needsPassphraseSetup: decrypted.needsPassphraseSetup || false,
+      };
+      walletPassphrase = attempt;
+      resetLockTimer();
+      return { success: true, needsPassphraseSetup: state.needsPassphraseSetup };
+    } catch (e) {
+      // Try next attempt.
+    }
+  }
+
+  return { success: false, error: 'Invalid passphrase' };
 }
 
 /**
  * Set or change the wallet passphrase. Encrypts state and mnemonic.
  */
 async function setPassphrase(newPassphrase) {
+  const oldPassphrase = walletPassphrase;
   walletPassphrase = newPassphrase;
 
-  // Re-encrypt mnemonic if we have one.
+  // Clear the needsPassphraseSetup flag — user has set their own passphrase.
+  if (state) {
+    state.needsPassphraseSetup = false;
+  }
+
+  // Re-encrypt mnemonic with the new passphrase.
   const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
   if (mnemonicStored[MNEMONIC_KEY]) {
-    let mnemonic;
-    if (mnemonicStored[MNEMONIC_KEY].plaintext) {
-      mnemonic = mnemonicStored[MNEMONIC_KEY].plaintext;
-    } else if (walletPassphrase) {
-      // Already encrypted — skip re-encryption with same passphrase.
-      await saveState();
-      return;
+    let mnemonic = null;
+    // Try decrypting with old passphrase (or internal key).
+    const keysToTry = oldPassphrase ? [oldPassphrase] : [];
+    const internalKey = await getInternalEncryptionKey();
+    keysToTry.push(internalKey);
+
+    for (const key of keysToTry) {
+      try {
+        mnemonic = await decryptWithPassphrase(mnemonicStored[MNEMONIC_KEY], key);
+        break;
+      } catch (e) {
+        // Try next.
+      }
     }
+
     if (mnemonic) {
       const encryptedMnemonic = await encryptWithPassphrase(mnemonic, newPassphrase);
       await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
@@ -411,6 +577,7 @@ async function setPassphrase(newPassphrase) {
   }
 
   await saveState();
+  resetLockTimer();
 }
 
 /**
@@ -420,18 +587,22 @@ async function getMnemonic() {
   const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
   if (!mnemonicStored[MNEMONIC_KEY]) return null;
 
-  // Plaintext (legacy/no passphrase).
-  if (mnemonicStored[MNEMONIC_KEY].plaintext) {
-    return mnemonicStored[MNEMONIC_KEY].plaintext;
+  // Encrypted: need passphrase or internal key.
+  if (!walletPassphrase) return null;
+  const keysToTry = [walletPassphrase];
+  const internalKey = await getInternalEncryptionKey();
+  if (walletPassphrase !== internalKey) {
+    keysToTry.push(internalKey);
   }
 
-  // Encrypted: need passphrase.
-  if (!walletPassphrase) return null;
-  try {
-    return await decryptWithPassphrase(mnemonicStored[MNEMONIC_KEY], walletPassphrase);
-  } catch (e) {
-    return null;
+  for (const key of keysToTry) {
+    try {
+      return await decryptWithPassphrase(mnemonicStored[MNEMONIC_KEY], key);
+    } catch (e) {
+      // Try next.
+    }
   }
+  return null;
 }
 
 /**
@@ -453,36 +624,107 @@ async function recoverFromMnemonic(mnemonic, passphrase) {
     log: [],
     hasMnemonic: true,
     mnemonicShown: true,
+    needsPassphraseSetup: false,
   };
 
-  if (passphrase) {
-    walletPassphrase = passphrase;
-    const encryptedMnemonic = await encryptWithPassphrase(mnemonic, passphrase);
-    await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
-  } else {
-    walletPassphrase = null;
-    await chrome.storage.local.set({ [MNEMONIC_KEY]: { plaintext: mnemonic } });
+  // Always encrypt — use user passphrase if provided, otherwise internal key.
+  const encryptionKey = passphrase || await getInternalEncryptionKey();
+  walletPassphrase = encryptionKey;
+  const encryptedMnemonic = await encryptWithPassphrase(mnemonic, encryptionKey);
+  await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
+
+  if (!passphrase) {
+    state.needsPassphraseSetup = true;
   }
 
   await saveState();
+  resetLockTimer();
   return { success: true, publicKey: state.publicKey };
 }
 
 // ---------------------------------------------------------------------------
-// Origin allowlist management
+// Origin allowlist management (per-method, with expiry)
 // ---------------------------------------------------------------------------
 
+/**
+ * Get the full origin allowlist. Format:
+ * { "https://example.com": { methods: ["pyana:provision"], expires: 1716300000000 }, ... }
+ */
 async function getOriginAllowlist() {
   const stored = await chrome.storage.local.get(ALLOWED_ORIGINS_KEY);
-  return stored[ALLOWED_ORIGINS_KEY] || [];
+  const raw = stored[ALLOWED_ORIGINS_KEY] || {};
+  // Migrate from legacy array format if needed.
+  if (Array.isArray(raw)) {
+    const migrated = {};
+    for (const origin of raw) {
+      migrated[origin] = { methods: ['*'], expires: Date.now() + ORIGIN_PERMISSION_EXPIRY_MS };
+    }
+    await chrome.storage.local.set({ [ALLOWED_ORIGINS_KEY]: migrated });
+    return migrated;
+  }
+  return raw;
 }
 
-async function addOriginToAllowlist(origin) {
+/**
+ * Check if an origin is allowed for a specific method.
+ */
+async function isOriginAllowedForMethod(origin, method) {
   const allowlist = await getOriginAllowlist();
-  if (!allowlist.includes(origin)) {
-    allowlist.push(origin);
+  const entry = allowlist[origin];
+  if (!entry) return false;
+  // Check expiry.
+  if (entry.expires && entry.expires < Date.now()) {
+    // Expired — remove entry.
+    delete allowlist[origin];
     await chrome.storage.local.set({ [ALLOWED_ORIGINS_KEY]: allowlist });
+    return false;
   }
+  // Check method.
+  return entry.methods.includes('*') || entry.methods.includes(method);
+}
+
+/**
+ * Add a method permission for an origin with expiry.
+ */
+async function addOriginToAllowlist(origin, method) {
+  const allowlist = await getOriginAllowlist();
+  if (!allowlist[origin]) {
+    allowlist[origin] = { methods: [], expires: Date.now() + ORIGIN_PERMISSION_EXPIRY_MS };
+  }
+  if (!allowlist[origin].methods.includes(method)) {
+    allowlist[origin].methods.push(method);
+  }
+  // Refresh expiry on new grant.
+  allowlist[origin].expires = Date.now() + ORIGIN_PERMISSION_EXPIRY_MS;
+  await chrome.storage.local.set({ [ALLOWED_ORIGINS_KEY]: allowlist });
+}
+
+/**
+ * Revoke all permissions for an origin.
+ */
+async function revokeOriginPermissions(origin) {
+  const allowlist = await getOriginAllowlist();
+  delete allowlist[origin];
+  await chrome.storage.local.set({ [ALLOWED_ORIGINS_KEY]: allowlist });
+}
+
+/**
+ * Get all origin permissions for display in the popup.
+ */
+async function getAllOriginPermissions() {
+  const allowlist = await getOriginAllowlist();
+  const result = [];
+  const now = Date.now();
+  for (const [origin, entry] of Object.entries(allowlist)) {
+    if (entry.expires && entry.expires < now) continue; // Skip expired.
+    result.push({
+      origin,
+      methods: entry.methods,
+      expires: entry.expires,
+      expiresIn: entry.expires ? Math.max(0, entry.expires - now) : null,
+    });
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -595,16 +837,219 @@ async function authorize(request) {
     resource: request.resource,
     allowed: true,
     timestamp: Date.now(),
+    mode,
+    disclosedFacts: request._disclosedFacts || null,
   });
   await saveState();
 
-  const result = { allowed: true, proof: Array.from(proof), facts: evalResult.trace };
+  const result = { allowed: true, proof: Array.from(proof), facts: evalResult.trace, mode };
+
+  // For selective disclosure, filter facts to only those the user chose to disclose.
+  if (mode === 'selective' && request._disclosedFacts) {
+    result.facts = evalResult.trace.filter(traceEntry => {
+      // Include trace entries that reference disclosed fact keys.
+      return request._disclosedFacts.some(key =>
+        traceEntry.toLowerCase().includes(key.toLowerCase())
+      );
+    });
+    result.disclosedFacts = request._disclosedFacts;
+  }
+
+  // For zero-knowledge, strip all facts from the result.
+  if (mode === 'private') {
+    result.facts = [];
+  }
+
   notifySubscribers('authorization', {
     action: request.action,
     resource: request.resource,
     allowed: true,
+    mode,
   });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Disclosure picker — progressive disclosure UX
+// ---------------------------------------------------------------------------
+
+/**
+ * Get per-origin disclosure preferences.
+ */
+async function getDisclosurePrefs() {
+  const stored = await chrome.storage.local.get(DISCLOSURE_PREFS_KEY);
+  return stored[DISCLOSURE_PREFS_KEY] || {};
+}
+
+/**
+ * Save a disclosure preference for an origin.
+ */
+async function saveDisclosurePref(origin, level) {
+  const prefs = await getDisclosurePrefs();
+  prefs[origin] = { level, savedAt: Date.now() };
+  await chrome.storage.local.set({ [DISCLOSURE_PREFS_KEY]: prefs });
+}
+
+/**
+ * Extract disclosable facts from a token for display in the picker.
+ */
+function extractTokenFacts(token, request) {
+  const facts = [];
+
+  // Permission facts.
+  if (token.actions && token.actions.length > 0) {
+    for (const act of token.actions) {
+      facts.push({ key: 'action', value: act, category: 'permissions' });
+    }
+  }
+  if (token.resource) {
+    facts.push({ key: 'resource', value: token.resource, category: 'resource' });
+  }
+  if (token.service) {
+    facts.push({ key: 'service', value: token.service, category: 'permissions' });
+  }
+
+  // Identity facts.
+  if (token.userId || token.user) {
+    facts.push({ key: 'user', value: token.userId || token.user, category: 'identity' });
+  }
+  if (token.org || token.organization) {
+    facts.push({ key: 'organization', value: token.org || token.organization, category: 'identity' });
+  }
+  if (token.email) {
+    facts.push({ key: 'email', value: token.email, category: 'identity' });
+  }
+  if (token.issuer) {
+    facts.push({ key: 'issuer', value: token.issuer, category: 'identity' });
+  }
+
+  // Temporal facts.
+  if (token.expiry) {
+    facts.push({ key: 'expires', value: token.expiry, category: 'temporal' });
+  }
+  if (token.provisioned) {
+    facts.push({ key: 'issued', value: token.provisioned, category: 'temporal' });
+  }
+
+  // Add the action/resource from the request as context.
+  if (request.action && !facts.some(f => f.key === 'action' && f.value === request.action)) {
+    facts.push({ key: 'action', value: request.action, category: 'permissions' });
+  }
+  if (request.resource && request.resource !== '*' && !facts.some(f => f.key === 'resource' && f.value === request.resource)) {
+    facts.push({ key: 'resource', value: request.resource, category: 'resource' });
+  }
+
+  return facts;
+}
+
+/**
+ * Show the disclosure picker popup for a given authorization request.
+ * Returns the user's disclosure choice or null if denied.
+ */
+function showDisclosurePicker(origin, request, tokenFacts) {
+  return new Promise((resolve) => {
+    // Facts that are required for this action (action + resource always required).
+    const requiredFacts = tokenFacts.filter(f =>
+      f.key === 'action' || f.key === 'resource'
+    );
+
+    // Facts the site explicitly requested (from request.requestedDisclosure).
+    const siteRequested = request.requestedDisclosure || [];
+
+    const popupUrl = chrome.runtime.getURL('disclosure-picker.html') +
+      '?origin=' + encodeURIComponent(origin) +
+      '&action=' + encodeURIComponent(request.action) +
+      '&resource=' + encodeURIComponent(request.resource) +
+      '&facts=' + encodeURIComponent(JSON.stringify(tokenFacts)) +
+      '&required=' + encodeURIComponent(JSON.stringify(requiredFacts)) +
+      '&siteRequested=' + encodeURIComponent(JSON.stringify(siteRequested));
+
+    chrome.windows.create({
+      url: popupUrl,
+      type: 'popup',
+      width: 440,
+      height: 620,
+      focused: true,
+    }, (win) => {
+      const listener = (message, sender, sendResponse) => {
+        if (message.type !== 'pyana:disclosureDecision') return;
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(message);
+      };
+      chrome.runtime.onMessage.addListener(listener);
+
+      // If the popup is closed without responding, deny.
+      if (win?.id) {
+        chrome.windows.onRemoved.addListener(function onClose(closedId) {
+          if (closedId === win.id) {
+            chrome.windows.onRemoved.removeListener(onClose);
+            chrome.runtime.onMessage.removeListener(listener);
+            resolve({ authorized: false });
+          }
+        });
+      }
+    });
+  });
+}
+
+/**
+ * Authorize with disclosure — the main entry point for page-initiated authorizations.
+ * Checks for saved preferences, otherwise shows the disclosure picker.
+ */
+async function authorizeWithDisclosure(request, origin) {
+  const wallet = await loadState();
+  if (wallet.locked) {
+    return { allowed: false, error: 'Wallet is locked' };
+  }
+
+  const matchingToken = wallet.tokens.find(
+    t => t.actions.includes(request.action) &&
+         (t.resource === '*' || t.resource === request.resource) &&
+         (!t.expiry || t.expiry > Date.now())
+  );
+
+  if (!matchingToken) {
+    return { allowed: false, error: 'No capability token grants this action' };
+  }
+
+  // Check for saved disclosure preference for this origin.
+  const prefs = await getDisclosurePrefs();
+  const savedPref = prefs[origin];
+
+  let disclosureLevel;
+  let disclosedFacts = [];
+
+  if (savedPref && !request.forceDisclosurePicker) {
+    // Use saved preference.
+    disclosureLevel = savedPref.level;
+  } else {
+    // Show the disclosure picker to the user.
+    const tokenFacts = extractTokenFacts(matchingToken, request);
+    const decision = await showDisclosurePicker(origin, request, tokenFacts);
+
+    if (!decision.authorized) {
+      return { allowed: false, error: 'User denied authorization' };
+    }
+
+    disclosureLevel = decision.level;
+    disclosedFacts = decision.disclosedFacts || [];
+
+    // Save preference if user checked "remember".
+    if (decision.remember && origin) {
+      await saveDisclosurePref(origin, disclosureLevel);
+    }
+  }
+
+  // Map disclosure level to proof mode.
+  const modeMap = { full: 'trusted', selective: 'selective', private: 'private' };
+  const mode = modeMap[disclosureLevel] || 'trusted';
+
+  // Perform the actual authorization with the chosen mode.
+  return authorize({
+    ...request,
+    mode,
+    _disclosedFacts: disclosedFacts.length > 0 ? disclosedFacts : null,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -943,13 +1388,15 @@ setInterval(gcIntentPool, INTENT_GC_INTERVAL);
 
 async function getWalletState() {
   const wallet = await loadState();
+  const internalKey = await getInternalEncryptionKey();
   return {
     locked: wallet.locked,
     tokenCount: wallet.tokens.length,
     chainLength: wallet.receiptChain.length,
     hasMnemonic: wallet.hasMnemonic || false,
     mnemonicShown: wallet.mnemonicShown || false,
-    hasPassphrase: walletPassphrase !== null,
+    hasPassphrase: walletPassphrase !== null && walletPassphrase !== internalKey,
+    needsPassphraseSetup: wallet.needsPassphraseSetup || false,
   };
 }
 
@@ -1020,7 +1467,7 @@ function handleOriginPermissionRequest(origin, method) {
         chrome.runtime.onMessage.removeListener(listener);
 
         if (message.granted) {
-          await addOriginToAllowlist(origin);
+          await addOriginToAllowlist(origin, method);
           resolve({ granted: true });
         } else {
           resolve({ granted: false });
@@ -1072,12 +1519,30 @@ const POPUP_ONLY_METHODS = new Set([
   'pyana:setPassphrase',
   'pyana:getMnemonic',
   'pyana:recover',
+  'pyana:getDisclosurePrefs',
+  'pyana:clearDisclosurePref',
+  'pyana:getOriginPermissions',
+  'pyana:revokeOriginPermission',
 ]);
 
 async function handleMessage(message, sender) {
   switch (message.type) {
-    case 'pyana:authorize':
+    case 'pyana:authorize': {
+      // Page-originated authorize requests go through the disclosure picker.
+      // Popup/internal requests bypass it (they already specify a mode).
+      if (isContentScript(sender) && !message.request._skipDisclosure) {
+        const origin = message._origin || sender?.tab?.url && new URL(sender.tab.url).origin || 'unknown';
+        // Rate limit: max RATE_LIMIT_MAX_CALLS per origin per RATE_LIMIT_WINDOW_MS.
+        if (!checkRateLimit(origin)) {
+          return { id: message.id, result: { allowed: false, error: 'Rate limited. Too many authorize requests. Try again later.' } };
+        }
+        const result = await authorizeWithDisclosure(message.request, origin);
+        resetLockTimer();
+        return { id: message.id, result };
+      }
+      resetLockTimer();
       return { id: message.id, result: await authorize(message.request) };
+    }
 
     case 'pyana:isConnected':
       return { id: message.id, result: true };
@@ -1142,6 +1607,7 @@ async function handleMessage(message, sender) {
     case 'pyana:provision': {
       const tabId = sender?.tab?.id;
       const result = await provisionToken(message.tokenData, tabId);
+      resetLockTimer();
       return { id: message.id, result };
     }
 
@@ -1164,6 +1630,41 @@ async function handleMessage(message, sender) {
 
     case 'pyana:intentConfirmation':
       return { id: message.id, result: true };
+
+    case 'pyana:disclosureDecision':
+      return { id: message.id, result: true };
+
+    case 'pyana:getDisclosurePrefs': {
+      if (!isExtensionPopup(sender)) {
+        return { id: message.id, error: 'Only available from extension popup.' };
+      }
+      return { id: message.id, result: await getDisclosurePrefs() };
+    }
+
+    case 'pyana:clearDisclosurePref': {
+      if (!isExtensionPopup(sender)) {
+        return { id: message.id, error: 'Only available from extension popup.' };
+      }
+      const prefs = await getDisclosurePrefs();
+      delete prefs[message.origin];
+      await chrome.storage.local.set({ [DISCLOSURE_PREFS_KEY]: prefs });
+      return { id: message.id, result: true };
+    }
+
+    case 'pyana:getOriginPermissions': {
+      if (!isExtensionPopup(sender)) {
+        return { id: message.id, error: 'Only available from extension popup.' };
+      }
+      return { id: message.id, result: await getAllOriginPermissions() };
+    }
+
+    case 'pyana:revokeOriginPermission': {
+      if (!isExtensionPopup(sender)) {
+        return { id: message.id, error: 'Only available from extension popup.' };
+      }
+      await revokeOriginPermissions(message.origin);
+      return { id: message.id, result: true };
+    }
 
     case 'pyana:postIntent': {
       const result = await postIntent(message.matchSpec, message.options);

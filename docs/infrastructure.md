@@ -8,7 +8,7 @@ The pyana federation runs as persistent infrastructure on GitHub Actions free ru
 
 GitHub Actions scheduled workflows can run for up to 6 hours. By scheduling each node to restart every 5 hours (with a 5h45m actual runtime), there is always overlap between the dying instance and the fresh one. State is persisted between runs via artifacts.
 
-Since the relay uses QUIC (quinn), the nodes are directly reachable on their runner's ephemeral public IPs. The discovery service maintains a coordination file so nodes can find each other across restarts.
+Since the node uses QUIC (quinn via pyana-net), the nodes are directly reachable on their runner's ephemeral public IPs. The discovery service maintains a coordination file so nodes can find each other across restarts.
 
 ### Schedule Stagger Logic
 
@@ -174,7 +174,7 @@ Runners get ephemeral public IPs. If all nodes restart simultaneously, they brie
 
 ### Build failures
 
-The relay must build on ubuntu-latest with nightly Rust. Check `relay/Cargo.toml` dependencies and ensure workspace `[patch.crates-io]` entries don't conflict with the relay's out-of-workspace build.
+The node must build on ubuntu-latest with nightly Rust. Check `node/Cargo.toml` dependencies and ensure workspace `[patch.crates-io]` entries don't conflict.
 
 ## Cost
 

@@ -12,12 +12,16 @@ use crate::message::{
     AuthorizationRequest, Envelope, MAX_NONCE_CACHE_SIZE, MAX_REQUEST_AGE_SECS, PROTOCOL_VERSION,
     PublicKey, Signature, WireMessage,
 };
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
+use tokio_rustls::TlsAcceptor;
 
 // =============================================================================
 // Proof Verifier Trait
@@ -123,6 +127,22 @@ impl ProofVerifier for MinSizeVerifier {
 // Silo Configuration
 // =============================================================================
 
+/// TLS configuration for the wire server.
+#[derive(Clone, Debug, Default)]
+pub struct TlsConfig {
+    /// Path to the PEM-encoded TLS certificate chain.
+    pub cert_path: Option<PathBuf>,
+    /// Path to the PEM-encoded TLS private key.
+    pub key_path: Option<PathBuf>,
+}
+
+impl TlsConfig {
+    /// Returns true if TLS is configured (both cert and key paths are set).
+    pub fn is_configured(&self) -> bool {
+        self.cert_path.is_some() && self.key_path.is_some()
+    }
+}
+
 /// Configuration for a silo server.
 #[derive(Clone, Debug)]
 pub struct SiloConfig {
@@ -145,6 +165,9 @@ pub struct SiloConfig {
     /// Maximum age (in seconds) for request timestamps. Requests older than this
     /// are rejected as stale.
     pub max_request_age_secs: i64,
+    /// TLS configuration. When configured, the server accepts only TLS connections.
+    /// When not configured, plaintext TCP is used (with a prominent warning).
+    pub tls: TlsConfig,
 }
 
 impl SiloConfig {
@@ -165,6 +188,7 @@ impl SiloConfig {
             verifier: Arc::new(StarkVerifier),
             revocation_authorities: Vec::new(),
             max_request_age_secs: MAX_REQUEST_AGE_SECS,
+            tls: TlsConfig::default(),
         }
     }
 
@@ -180,6 +204,17 @@ impl SiloConfig {
     /// When empty (the default), any valid signature is accepted.
     pub fn with_revocation_authorities(mut self, authorities: Vec<PublicKey>) -> Self {
         self.revocation_authorities = authorities;
+        self
+    }
+
+    /// Set the TLS certificate and key paths.
+    ///
+    /// When both are set, the server will accept only TLS connections.
+    pub fn with_tls(mut self, cert_path: PathBuf, key_path: PathBuf) -> Self {
+        self.tls = TlsConfig {
+            cert_path: Some(cert_path),
+            key_path: Some(key_path),
+        };
         self
     }
 }
@@ -427,12 +462,14 @@ impl SiloState {
 ///
 /// Tracks recently seen nonces to reject duplicate messages. Uses a bounded
 /// `HashSet` with FIFO eviction when the capacity is reached.
+///
+/// Uses `VecDeque` for O(1) eviction of the oldest entry (via `pop_front()`).
 #[derive(Debug)]
 pub struct NonceCache {
     /// Set of seen nonces (as 16-byte arrays).
     seen: HashSet<[u8; 16]>,
-    /// Insertion order for FIFO eviction.
-    order: Vec<[u8; 16]>,
+    /// Insertion order for FIFO eviction (VecDeque for O(1) pop_front).
+    order: VecDeque<[u8; 16]>,
     /// Maximum capacity.
     capacity: usize,
 }
@@ -442,7 +479,7 @@ impl NonceCache {
     pub fn new(capacity: usize) -> Self {
         Self {
             seen: HashSet::with_capacity(capacity.min(1024)),
-            order: Vec::with_capacity(capacity.min(1024)),
+            order: VecDeque::with_capacity(capacity.min(1024)),
             capacity,
         }
     }
@@ -453,15 +490,14 @@ impl NonceCache {
         if self.seen.contains(nonce) {
             return false; // replay
         }
-        // Evict oldest if at capacity
+        // Evict oldest if at capacity — O(1) via VecDeque::pop_front()
         if self.order.len() >= self.capacity {
-            if let Some(oldest) = self.order.first().copied() {
+            if let Some(oldest) = self.order.pop_front() {
                 self.seen.remove(&oldest);
-                self.order.remove(0);
             }
         }
         self.seen.insert(*nonce);
-        self.order.push(*nonce);
+        self.order.push_back(*nonce);
         true // fresh
     }
 }
@@ -469,6 +505,35 @@ impl NonceCache {
 // =============================================================================
 // Silo Server
 // =============================================================================
+
+/// Connection state machine for enforcing handshake protocol.
+///
+/// Each connection starts in `AwaitingHello` and must receive a valid `Hello`
+/// message before transitioning to `Active`. Any non-Hello message received
+/// in the `AwaitingHello` state is rejected with an error.
+///
+/// The state machine is enforced structurally in `handle_connection_generic`:
+/// the first message is read with a handshake timeout, validated to be Hello,
+/// and only then does the connection enter the main message loop (Active state).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum ConnectionState {
+    /// Waiting for the initial Hello message.
+    AwaitingHello,
+    /// Handshake complete; all message types are accepted.
+    Active,
+}
+
+/// Guard that decrements the active connection counter on drop.
+struct ConnectionGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A TCP server representing one silo in the federation.
 ///
@@ -490,6 +555,10 @@ pub struct SiloServer {
     presentation_nonces: Arc<Mutex<NonceCache>>,
     /// Nonce cache for replay prevention on SubmitRevocation requests.
     revocation_nonces: Arc<Mutex<NonceCache>>,
+    /// Active connection count for enforcing max_connections.
+    active_connections: Arc<AtomicUsize>,
+    /// Optional TLS acceptor (built from config at startup).
+    tls_acceptor: Option<TlsAcceptor>,
 }
 
 /// Events logged by the server for diagnostics.
@@ -528,6 +597,15 @@ impl SiloServer {
     /// Create a new silo server.
     pub fn new(addr: SocketAddr, config: SiloConfig) -> Self {
         let member_count = config.capabilities.len() as u32 + 2; // arbitrary for demo
+        let tls_acceptor = Self::build_tls_acceptor(&config.tls);
+        if !config.tls.is_configured() {
+            eprintln!(
+                "WARNING: pyana-wire server '{}' running WITHOUT TLS. \
+                 All traffic is plaintext. Set tls_cert_path and tls_key_path \
+                 in SiloConfig for production use.",
+                config.name
+            );
+        }
         Self {
             addr,
             config: Arc::new(config),
@@ -536,11 +614,22 @@ impl SiloServer {
             revocation_handler: None,
             presentation_nonces: Arc::new(Mutex::new(NonceCache::new(MAX_NONCE_CACHE_SIZE))),
             revocation_nonces: Arc::new(Mutex::new(NonceCache::new(MAX_NONCE_CACHE_SIZE))),
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            tls_acceptor,
         }
     }
 
     /// Create a silo server with pre-initialized state.
     pub fn with_state(addr: SocketAddr, config: SiloConfig, state: SiloState) -> Self {
+        let tls_acceptor = Self::build_tls_acceptor(&config.tls);
+        if !config.tls.is_configured() {
+            eprintln!(
+                "WARNING: pyana-wire server '{}' running WITHOUT TLS. \
+                 All traffic is plaintext. Set tls_cert_path and tls_key_path \
+                 in SiloConfig for production use.",
+                config.name
+            );
+        }
         Self {
             addr,
             config: Arc::new(config),
@@ -549,7 +638,37 @@ impl SiloServer {
             revocation_handler: None,
             presentation_nonces: Arc::new(Mutex::new(NonceCache::new(MAX_NONCE_CACHE_SIZE))),
             revocation_nonces: Arc::new(Mutex::new(NonceCache::new(MAX_NONCE_CACHE_SIZE))),
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            tls_acceptor,
         }
+    }
+
+    /// Build a TLS acceptor from the TLS configuration, if configured.
+    fn build_tls_acceptor(tls: &TlsConfig) -> Option<TlsAcceptor> {
+        let (cert_path, key_path) = match (&tls.cert_path, &tls.key_path) {
+            (Some(c), Some(k)) => (c, k),
+            _ => return None,
+        };
+
+        let cert_file = std::fs::File::open(cert_path)
+            .unwrap_or_else(|e| panic!("failed to open TLS cert at {}: {e}", cert_path.display()));
+        let key_file = std::fs::File::open(key_path)
+            .unwrap_or_else(|e| panic!("failed to open TLS key at {}: {e}", key_path.display()));
+
+        let certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(cert_file))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("failed to parse TLS certificate PEM");
+
+        let key = rustls_pemfile::private_key(&mut std::io::BufReader::new(key_file))
+            .expect("failed to read TLS private key PEM")
+            .expect("no private key found in PEM file");
+
+        let server_config = tokio_rustls::rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .expect("failed to build TLS server config");
+
+        Some(TlsAcceptor::from(Arc::new(server_config)))
     }
 
     /// Set a custom revocation handler for delegating revocation logic.
@@ -589,29 +708,7 @@ impl SiloServer {
         // Update addr to reflect the actual bound address (useful for port 0)
         let _actual_addr = listener.local_addr()?;
 
-        loop {
-            let (stream, remote_addr) = listener.accept().await?;
-            let config = Arc::clone(&self.config);
-            let state = Arc::clone(&self.state);
-            let event_log = Arc::clone(&self.event_log);
-            let revocation_handler = self.revocation_handler.clone();
-            let presentation_nonces = Arc::clone(&self.presentation_nonces);
-            let revocation_nonces = Arc::clone(&self.revocation_nonces);
-
-            tokio::spawn(async move {
-                Self::handle_connection(
-                    stream,
-                    remote_addr,
-                    config,
-                    state,
-                    event_log,
-                    revocation_handler,
-                    presentation_nonces,
-                    revocation_nonces,
-                )
-                .await;
-            });
-        }
+        self.accept_loop(listener).await
     }
 
     /// Run the server and return the actual bound address.
@@ -626,32 +723,91 @@ impl SiloServer {
         let actual_addr = listener.local_addr()?;
         let _ = addr_tx.send(actual_addr);
 
+        self.accept_loop(listener).await
+    }
+
+    /// Core accept loop shared by `run` and `run_with_addr`.
+    ///
+    /// Enforces max_connections (P0-3), applies TLS (P0-1), and spawns handlers.
+    async fn accept_loop(&self, listener: TcpListener) -> Result<(), std::io::Error> {
         loop {
             let (stream, remote_addr) = listener.accept().await?;
+
+            // --- P0-3: Enforce max_connections ---
+            let current = self.active_connections.fetch_add(1, Ordering::SeqCst);
+            if current >= self.config.max_connections {
+                self.active_connections.fetch_sub(1, Ordering::SeqCst);
+                // Reject: at capacity. Drop the stream (sends RST).
+                eprintln!(
+                    "pyana-wire: rejecting connection from {remote_addr}: \
+                     at capacity ({max})",
+                    max = self.config.max_connections,
+                );
+                drop(stream);
+                continue;
+            }
+
             let config = Arc::clone(&self.config);
             let state = Arc::clone(&self.state);
             let event_log = Arc::clone(&self.event_log);
             let revocation_handler = self.revocation_handler.clone();
             let presentation_nonces = Arc::clone(&self.presentation_nonces);
             let revocation_nonces = Arc::clone(&self.revocation_nonces);
+            let conn_counter = Arc::clone(&self.active_connections);
+            let tls_acceptor = self.tls_acceptor.clone();
 
             tokio::spawn(async move {
-                Self::handle_connection(
-                    stream,
-                    remote_addr,
-                    config,
-                    state,
-                    event_log,
-                    revocation_handler,
-                    presentation_nonces,
-                    revocation_nonces,
-                )
-                .await;
+                // ConnectionGuard decrements the counter when this task exits.
+                let _guard = ConnectionGuard {
+                    counter: conn_counter,
+                };
+
+                // --- P0-1: TLS wrapping ---
+                if let Some(acceptor) = tls_acceptor {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let (reader, writer) = tokio::io::split(tls_stream);
+                            Self::handle_connection_generic(
+                                reader,
+                                writer,
+                                remote_addr,
+                                config,
+                                state,
+                                event_log,
+                                revocation_handler,
+                                presentation_nonces,
+                                revocation_nonces,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "pyana-wire: TLS handshake failed from {remote_addr}: {e}"
+                            );
+                        }
+                    }
+                } else {
+                    // Plaintext fallback (warning already emitted at construction time)
+                    let (reader, writer) = tokio::io::split(stream);
+                    Self::handle_connection_generic(
+                        reader,
+                        writer,
+                        remote_addr,
+                        config,
+                        state,
+                        event_log,
+                        revocation_handler,
+                        presentation_nonces,
+                        revocation_nonces,
+                    )
+                    .await;
+                }
             });
         }
     }
 
-    /// Handle a single connection.
+    /// Handle a single connection (legacy plaintext API, retained for tests).
+    #[allow(dead_code)]
     async fn handle_connection(
         stream: tokio::net::TcpStream,
         remote_addr: SocketAddr,
@@ -662,6 +818,40 @@ impl SiloServer {
         presentation_nonces: Arc<Mutex<NonceCache>>,
         revocation_nonces: Arc<Mutex<NonceCache>>,
     ) {
+        let (reader, writer) = tokio::io::split(stream);
+        Self::handle_connection_generic(
+            reader,
+            writer,
+            remote_addr,
+            config,
+            state,
+            event_log,
+            revocation_handler,
+            presentation_nonces,
+            revocation_nonces,
+        )
+        .await;
+    }
+
+    /// Handle a single connection over any async stream (TLS or plaintext).
+    ///
+    /// Enforces:
+    /// - P0-2: Handshake state machine (must receive Hello first)
+    /// - P0-4: Handshake timeout (first message must arrive within config.handshake_timeout)
+    async fn handle_connection_generic<R, W>(
+        mut reader: R,
+        mut writer: W,
+        remote_addr: SocketAddr,
+        config: Arc<SiloConfig>,
+        state: Arc<RwLock<SiloState>>,
+        event_log: Arc<Mutex<Vec<ServerEvent>>>,
+        revocation_handler: Option<Arc<dyn RevocationHandler>>,
+        presentation_nonces: Arc<Mutex<NonceCache>>,
+        revocation_nonces: Arc<Mutex<NonceCache>>,
+    ) where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         event_log
             .lock()
             .await
@@ -669,30 +859,109 @@ impl SiloServer {
                 remote: remote_addr,
             });
 
-        let mut conn = PeerConnection::from_stream(stream);
+        // --- P0-4: Apply handshake_timeout to the first message ---
+        let first_msg = match tokio::time::timeout(
+            config.handshake_timeout,
+            crate::codec::read_message(&mut reader),
+        )
+        .await
+        {
+            Ok(Ok(msg)) => msg,
+            Ok(Err(crate::codec::CodecError::ConnectionClosed)) => return,
+            Ok(Err(e)) => {
+                event_log.lock().await.push(ServerEvent::ConnectionError {
+                    error: format!("handshake read error: {e}"),
+                    remote: remote_addr,
+                });
+                return;
+            }
+            Err(_) => {
+                // Handshake timeout fired
+                event_log.lock().await.push(ServerEvent::ConnectionError {
+                    error: "handshake timeout".to_string(),
+                    remote: remote_addr,
+                });
+                // Try to send an error before closing
+                let err_msg = WireMessage::Error {
+                    code: crate::message::error_codes::REQUEST_EXPIRED,
+                    message: "handshake timeout".to_string(),
+                };
+                let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                return;
+            }
+        };
 
-        // Process messages until the connection closes
+        // --- P0-2: Enforce that the first message MUST be Hello ---
+        match &first_msg {
+            WireMessage::Hello { .. } => {
+                // Valid: transition to Active state
+            }
+            _ => {
+                // Invalid: reject and close
+                let err_msg = WireMessage::Error {
+                    code: crate::message::error_codes::HANDSHAKE_REQUIRED,
+                    message: "expected Hello as first message".to_string(),
+                };
+                let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                event_log.lock().await.push(ServerEvent::ConnectionError {
+                    error: "first message was not Hello".to_string(),
+                    remote: remote_addr,
+                });
+                return;
+            }
+        }
+
+        // Process the Hello message
+        if let Some(response) = Self::process_message(
+            first_msg,
+            remote_addr,
+            &config,
+            &state,
+            &event_log,
+            revocation_handler.as_deref(),
+            &presentation_nonces,
+            &revocation_nonces,
+        )
+        .await
+        {
+            if crate::codec::write_message(&mut writer, &response)
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+
+        // Process subsequent messages (connection is now Active)
         loop {
-            let msg = match conn.recv_timeout(Duration::from_secs(60)).await {
-                Ok(msg) => msg,
-                Err(ConnectionError::Closed) => break,
-                Err(ConnectionError::Timeout) => {
-                    // Send a ping to check liveness
-                    let ping = WireMessage::Ping {
-                        seq: 0,
-                        timestamp: current_timestamp(),
-                    };
-                    if conn.send(ping).await.is_err() {
-                        break;
-                    }
-                    continue;
-                }
-                Err(e) => {
+            let msg = match tokio::time::timeout(
+                Duration::from_secs(60),
+                crate::codec::read_message(&mut reader),
+            )
+            .await
+            {
+                Ok(Ok(msg)) => msg,
+                Ok(Err(crate::codec::CodecError::ConnectionClosed)) => break,
+                Ok(Err(e)) => {
                     event_log.lock().await.push(ServerEvent::ConnectionError {
                         error: e.to_string(),
                         remote: remote_addr,
                     });
                     break;
+                }
+                Err(_) => {
+                    // Idle timeout: send a ping to check liveness
+                    let ping = WireMessage::Ping {
+                        seq: 0,
+                        timestamp: current_timestamp(),
+                    };
+                    if crate::codec::write_message(&mut writer, &ping)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
                 }
             };
 
@@ -709,7 +978,10 @@ impl SiloServer {
             .await;
 
             if let Some(response) = response {
-                if conn.send(response).await.is_err() {
+                if crate::codec::write_message(&mut writer, &response)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -899,10 +1171,19 @@ impl SiloServer {
                     });
                 }
 
-                // Verify the authority's signature over the token_id before
-                // accepting the revocation. Without this, any peer could forge
-                // a revocation for an arbitrary token.
-                if !authority.verify(token_id.as_bytes(), &authority_sig) {
+                // Verify the authority's signature over blake3(token_id || nonce || timestamp).
+                // The signature MUST cover all three fields to prevent replay/substitution
+                // attacks where an attacker replays a valid signature with a different
+                // nonce or timestamp.
+                let sig_message = {
+                    let mut hasher =
+                        blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+                    hasher.update(token_id.as_bytes());
+                    hasher.update(&nonce);
+                    hasher.update(&timestamp.to_le_bytes());
+                    *hasher.finalize().as_bytes()
+                };
+                if !authority.verify(&sig_message, &authority_sig) {
                     return Some(WireMessage::Error {
                         code: crate::message::error_codes::INVALID_SIGNATURE,
                         message: "authority signature verification failed".to_string(),
@@ -1223,6 +1504,23 @@ fn current_timestamp() -> i64 {
         .unwrap_or(0)
 }
 
+/// Compute the message that a revocation authority must sign.
+///
+/// The signature covers `blake3(token_id || nonce || timestamp)` using the
+/// domain separation key `"pyana-wire revocation-sig v1"`. This ensures the
+/// signature is bound to the specific nonce and timestamp, preventing replay
+/// and substitution attacks.
+///
+/// Both the client (when constructing `SubmitRevocation`) and the server (when
+/// verifying) must use this function to compute the signing message.
+pub fn revocation_signing_message(token_id: &str, nonce: &[u8; 16], timestamp: i64) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+    hasher.update(token_id.as_bytes());
+    hasher.update(nonce);
+    hasher.update(&timestamp.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// Attempt to generate a non-membership proof for the given token.
 ///
 /// Returns `None` because the wire crate does not maintain a real revocation
@@ -1299,6 +1597,18 @@ mod tests {
 
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
 
+        // Must send Hello first (P0-2: handshake enforcement)
+        client
+            .send(WireMessage::Hello {
+                node_id: [0x22; 32],
+                node_name: "presenter-client".to_string(),
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: vec![],
+            })
+            .await
+            .unwrap();
+        let _welcome = client.recv().await.unwrap();
+
         // Present with a proof that's large enough
         let request = AuthorizationRequest::new("resource", "read", "alice");
         let msg = WireMessage::PresentToken {
@@ -1316,10 +1626,11 @@ mod tests {
             other => panic!("expected PresentationResult, got {other:?}"),
         }
 
-        // Present with a proof that's too small
+        // Present with a proof that's too small (new request to avoid nonce replay)
+        let request2 = AuthorizationRequest::new("resource", "read", "alice");
         let msg = WireMessage::PresentToken {
             proof: vec![0xab; 50],
-            request,
+            request: request2,
             federation_root,
         };
         client.send(msg).await.unwrap();
@@ -1351,20 +1662,42 @@ mod tests {
         let addr = addr_rx.await.unwrap();
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
 
+        // Must send Hello first (P0-2: handshake enforcement)
+        client
+            .send(WireMessage::Hello {
+                node_id: [0x11; 32],
+                node_name: "revoker-client".to_string(),
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: vec![],
+            })
+            .await
+            .unwrap();
+        let _welcome = client.recv().await.unwrap();
+
         // Generate a real keypair so the signature verifies.
         let (sk, pk) = pyana_types::generate_keypair();
         let token_id = "tok-revoke-me";
-        let sig = pyana_types::sign(&sk, token_id.as_bytes());
 
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).unwrap();
+        let timestamp = current_timestamp();
+
+        // Sign over blake3(token_id || nonce || timestamp) per P1-7.
+        let sig_message = {
+            let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+            hasher.update(token_id.as_bytes());
+            hasher.update(&nonce);
+            hasher.update(&timestamp.to_le_bytes());
+            *hasher.finalize().as_bytes()
+        };
+        let sig = pyana_types::sign(&sk, &sig_message);
 
         let msg = WireMessage::SubmitRevocation {
             token_id: token_id.to_string(),
             authority: pk,
             authority_sig: sig,
             nonce,
-            timestamp: current_timestamp(),
+            timestamp,
         };
         client.send(msg).await.unwrap();
 
@@ -1395,6 +1728,18 @@ mod tests {
 
         let addr = addr_rx.await.unwrap();
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
+
+        // Must send Hello first (P0-2: handshake enforcement)
+        client
+            .send(WireMessage::Hello {
+                node_id: [0x11; 32],
+                node_name: "forger-client".to_string(),
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: vec![],
+            })
+            .await
+            .unwrap();
+        let _welcome = client.recv().await.unwrap();
 
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).unwrap();

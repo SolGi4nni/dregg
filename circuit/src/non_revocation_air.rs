@@ -435,19 +435,48 @@ impl StarkAir for NonRevocationAir {
 
     fn boundary_constraints(
         &self,
-        _public_inputs: &[BabyBear],
-        _trace_len: usize,
+        public_inputs: &[BabyBear],
+        trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
-        // The NonRevocationAir proves non-membership of ancestor hashes.
-        // The revocation_root is enforced indirectly through Merkle hash chain
-        // constraints: each Merkle path must hash up to the root, and the AIR
-        // verifies hash correctness per-row. If the prover claims a different
-        // root, the hash constraints are violated on active Merkle rows.
+        let mut constraints = vec![];
+
+        if public_inputs.is_empty() || trace_len == 0 {
+            return constraints;
+        }
+
+        let revocation_root = public_inputs[pi::REVOCATION_ROOT];
+
+        // Bind revocation_root to the PARENT column at the top of each Merkle path.
+        // For ancestor 0:
+        //   - Control row is at index 0
+        //   - Left Merkle rows are at indices 1..=tree_depth
+        //   - Right Merkle rows are at indices (tree_depth+1)..=(2*tree_depth)
         //
-        // We return no boundary constraints here because:
-        // 1. Empty ancestor lists (all padding) are valid proofs
-        // 2. The root binding comes from the hash chain constraints
-        vec![]
+        // The last left Merkle row (index tree_depth) has PARENT = revocation_root.
+        // The last right Merkle row (index 2*tree_depth) also has PARENT = revocation_root.
+        //
+        // We bind BOTH to ensure the prover commits to the same root for left and
+        // right neighbor membership proofs.
+        let left_top_row = self.tree_depth;
+        let right_top_row = 2 * self.tree_depth;
+
+        if left_top_row < trace_len {
+            constraints.push(BoundaryConstraint {
+                row: left_top_row,
+                col: col::PARENT,
+                value: revocation_root,
+            });
+        }
+
+        if right_top_row < trace_len {
+            constraints.push(BoundaryConstraint {
+                row: right_top_row,
+                col: col::PARENT,
+                value: revocation_root,
+            });
+        }
+
+        constraints
     }
 }
 

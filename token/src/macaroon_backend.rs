@@ -21,6 +21,8 @@ pub struct MacaroonToken {
     root_key: Zeroizing<[u8; 32]>,
     /// Discharge macaroons for third-party caveats.
     discharges: Vec<Macaroon>,
+    /// Whether this token has been sealed (preventing further attenuation).
+    sealed: bool,
 }
 
 impl std::fmt::Debug for MacaroonToken {
@@ -29,6 +31,7 @@ impl std::fmt::Debug for MacaroonToken {
             .field("location", &self.inner.location)
             .field("caveat_count", &self.inner.caveats.len())
             .field("discharges", &self.discharges.len())
+            .field("sealed", &self.sealed)
             .finish()
     }
 }
@@ -40,6 +43,7 @@ impl MacaroonToken {
             inner,
             root_key: Zeroizing::new(root_key),
             discharges,
+            sealed: false,
         }
     }
 
@@ -50,6 +54,7 @@ impl MacaroonToken {
             inner,
             root_key: Zeroizing::new(root_key),
             discharges: Vec::new(),
+            sealed: false,
         }
     }
 
@@ -60,6 +65,7 @@ impl MacaroonToken {
             inner,
             root_key: Zeroizing::new(root_key),
             discharges: Vec::new(),
+            sealed: false,
         })
     }
 
@@ -83,6 +89,7 @@ impl MacaroonToken {
             inner,
             root_key: Zeroizing::new(root_key),
             discharges,
+            sealed: false,
         })
     }
 
@@ -147,6 +154,12 @@ impl AuthToken for MacaroonToken {
     }
 
     fn attenuate(&self, restrictions: &Attenuation) -> Result<Box<dyn AuthToken>, TokenError> {
+        if self.sealed {
+            return Err(TokenError::Denied(
+                "token is sealed and cannot be further attenuated".into(),
+            ));
+        }
+
         let wire_caveats = crate::pyana_caveats::attenuation_to_wire_caveats(restrictions);
         if wire_caveats.is_empty() {
             return Err(TokenError::Malformed(
@@ -163,6 +176,7 @@ impl AuthToken for MacaroonToken {
             inner: new_mac,
             root_key: Zeroizing::new(*self.root_key),
             discharges: self.discharges.clone(),
+            sealed: false,
         }))
     }
 
@@ -179,16 +193,18 @@ impl AuthToken for MacaroonToken {
     }
 
     fn is_attenuable(&self) -> bool {
-        true // Macaroons are always attenuable
+        !self.sealed
     }
 
     fn seal(&self) -> Result<Box<dyn AuthToken>, TokenError> {
-        // Macaroons don't have a sealing concept — they're already
-        // tamper-proof via HMAC. Return a clone.
+        // Sealing prevents further attenuation of this token.
+        // The HMAC chain remains valid for verification, but no new
+        // caveats can be added.
         Ok(Box::new(MacaroonToken {
             inner: self.inner.clone(),
             root_key: Zeroizing::new(*self.root_key),
             discharges: self.discharges.clone(),
+            sealed: true,
         }))
     }
 }

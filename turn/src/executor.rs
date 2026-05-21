@@ -127,6 +127,10 @@ pub struct TurnExecutor {
     /// Used during BridgeFinalize to validate that the receipt was signed by a
     /// legitimate destination federation.
     pub trusted_destination_keys: Vec<[u8; 32]>,
+    /// Block proposer cell (receives 50% of fees). If None, fees are 100% burned.
+    pub proposer_cell: Option<CellId>,
+    /// Federation treasury cell (receives 30% of fees). If None, that share is burned.
+    pub treasury_cell: Option<CellId>,
 }
 
 impl TurnExecutor {
@@ -143,6 +147,8 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             trusted_destination_keys: Vec::new(),
+            proposer_cell: None,
+            treasury_cell: None,
         }
     }
 
@@ -163,6 +169,8 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             trusted_destination_keys: Vec::new(),
+            proposer_cell: None,
+            treasury_cell: None,
         }
     }
 
@@ -179,6 +187,8 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             trusted_destination_keys: Vec::new(),
+            proposer_cell: None,
+            treasury_cell: None,
         }
     }
 
@@ -200,6 +210,24 @@ impl TurnExecutor {
     /// Set the current block height (used for network preconditions).
     pub fn set_block_height(&mut self, height: u64) {
         self.block_height = height;
+    }
+
+    /// Set the block proposer cell (receives 50% of fees).
+    ///
+    /// When set, 50% of each turn's fee is credited to this cell's balance
+    /// after successful execution. If the cell does not exist in the ledger at
+    /// execution time, the proposer share is burned instead.
+    pub fn set_proposer_cell(&mut self, cell_id: CellId) {
+        self.proposer_cell = Some(cell_id);
+    }
+
+    /// Set the federation treasury cell (receives 30% of fees).
+    ///
+    /// When set, 30% of each turn's fee is credited to this cell's balance
+    /// after successful execution. If the cell does not exist in the ledger at
+    /// execution time, the treasury share is burned instead.
+    pub fn set_treasury_cell(&mut self, cell_id: CellId) {
+        self.treasury_cell = Some(cell_id);
     }
 
     /// Execute a conditional turn by first resolving its condition.
@@ -234,6 +262,7 @@ impl TurnExecutor {
             trusted_roots,
             max_root_age,
             used_proof_hashes,
+            &self.trusted_destination_keys,
         ) {
             crate::conditional::ConditionalResult::Resolved => {
                 self.execute(&conditional.turn, ledger)
@@ -478,6 +507,29 @@ impl TurnExecutor {
             };
         }
 
+        // =====================================================================
+        // PHASE 3: Fee distribution (50% proposer / 30% treasury / 20% burned).
+        // Only executed after successful forest execution. If neither proposer
+        // nor treasury is configured, all fees are burned (backward compatible).
+        // =====================================================================
+        let proposer_share = turn.fee / 2; // 50%
+        let treasury_share = turn.fee * 3 / 10; // 30%
+        // burned = fee - proposer_share - treasury_share (the remaining 20%)
+
+        if let Some(proposer_id) = &self.proposer_cell {
+            if let Some(proposer) = ledger.get_mut(proposer_id) {
+                proposer.state.balance += proposer_share;
+            }
+            // If proposer cell doesn't exist in ledger, share is burned.
+        }
+
+        if let Some(treasury_id) = &self.treasury_cell {
+            if let Some(treasury) = ledger.get_mut(treasury_id) {
+                treasury.state.balance += treasury_share;
+            }
+            // If treasury cell doesn't exist in ledger, share is burned.
+        }
+
         // Phase 4: Compute receipt.
         let post_state_hash = ledger.root();
         let effects_hash = self.compute_effects_hash(&all_effects_hashes);
@@ -486,9 +538,15 @@ impl TurnExecutor {
         let turn_hash = turn.hash();
         let forest_hash = turn.call_forest.compute_hash();
 
-        // Build ledger delta from the journal and Phase 1 (fee + nonce) commitment.
-        let delta =
-            Self::compute_delta_from_journal_with_fee(&journal, ledger, &turn.agent, turn.fee);
+        // Build ledger delta from the journal, Phase 1 (fee + nonce), and Phase 3 (distribution).
+        let delta = Self::compute_delta_from_journal_with_fee(
+            &journal,
+            ledger,
+            &turn.agent,
+            turn.fee,
+            self.proposer_cell.as_ref(),
+            self.treasury_cell.as_ref(),
+        );
 
         let receipt = TurnReceipt {
             turn_hash,
@@ -924,7 +982,11 @@ impl TurnExecutor {
 
     /// Verify that the action's authorization satisfies the target cell's permission requirements.
     ///
-    /// This checks ALL required permissions for ALL effects in the action (not just the first).
+    /// This checks ALL required permissions for ALL effects in the action independently.
+    /// Each permission requirement is verified separately against the provided authorization,
+    /// avoiding the partial-order problem where Signature vs Proof are incomparable
+    /// (is_narrower_or_equal returns false in both directions for those).
+    ///
     /// For signature auth: verifies the Ed25519 signature against the cell's public key.
     /// For proof auth: delegates to the configured ProofVerifier (fail-closed if none set).
     fn verify_authorization(
@@ -938,36 +1000,37 @@ impl TurnExecutor {
         // Determine ALL required permissions for this action's effects.
         let required_actions = self.determine_required_permissions(action);
 
-        // Find the most restrictive auth requirement across all permissions.
-        let mut most_restrictive = &AuthRequired::None;
-        let mut most_restrictive_action_name = "Access";
-
-        for (perm_action, action_name) in &required_actions {
-            let auth_req = target_cell.permissions.for_action(*perm_action);
-            if !most_restrictive.is_narrower_or_equal(auth_req) {
-                most_restrictive = auth_req;
-                most_restrictive_action_name = action_name;
-            }
-        }
-
         // If no effects produced any specific permission, check general access.
         if required_actions.is_empty() {
-            most_restrictive = target_cell
+            let access_req = target_cell
                 .permissions
                 .for_action(pyana_cell::permissions::Action::Access);
-            most_restrictive_action_name = "Access";
+            self.check_single_auth_requirement(
+                action,
+                target_cell,
+                ledger,
+                actor_cell_id,
+                access_req,
+                "Access",
+                path,
+            )?;
+        } else {
+            // Check EACH permission requirement independently. This avoids the
+            // is_narrower_or_equal partial-order problem where Signature vs Proof
+            // are incomparable and the "most restrictive" finder could pick wrong.
+            for (perm_action, action_name) in &required_actions {
+                let auth_req = target_cell.permissions.for_action(*perm_action);
+                self.check_single_auth_requirement(
+                    action,
+                    target_cell,
+                    ledger,
+                    actor_cell_id,
+                    auth_req,
+                    action_name,
+                    path,
+                )?;
+            }
         }
-
-        // Now verify the authorization against the most restrictive requirement.
-        self.check_single_auth_requirement(
-            action,
-            target_cell,
-            ledger,
-            actor_cell_id,
-            most_restrictive,
-            most_restrictive_action_name,
-            path,
-        )?;
 
         // Additionally, check Receive permission on transfer destinations.
         for effect in &action.effects {
@@ -1088,6 +1151,10 @@ impl TurnExecutor {
     }
 
     /// Verify an Ed25519 signature against the target cell's public key.
+    ///
+    /// When the action uses `CommitmentMode::Partial`, the signing message is computed
+    /// via `compute_partial_signing_message` (action hash + position only). This allows
+    /// composed turns with partial signers to be verified correctly by the executor.
     fn verify_ed25519_signature(
         &self,
         action: &Action,
@@ -1096,7 +1163,17 @@ impl TurnExecutor {
         s: &[u8; 32],
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {
-        let message = Self::compute_signing_message(action);
+        use crate::action::CommitmentMode;
+
+        let message = match action.commitment_mode {
+            CommitmentMode::Partial => {
+                // For partial commitment, the signer committed to their action hash + position.
+                // The position is encoded in the path (root index).
+                let position = path.first().copied().unwrap_or(0);
+                Self::compute_partial_signing_message(action, position)
+            }
+            CommitmentMode::Full => Self::compute_signing_message(action),
+        };
 
         let mut sig_bytes = [0u8; 64];
         sig_bytes[..32].copy_from_slice(r);
@@ -1263,19 +1340,21 @@ impl TurnExecutor {
     /// The signer commits to:
     /// - The action's own content hash (what they are doing)
     /// - Their position index in the forest (where they are)
-    /// - The forest root hash (binding to the overall structure)
+    ///
+    /// The forest root is NOT included because it creates a chicken-and-egg problem:
+    /// the forest root is only computable after all fragments are assembled, but signers
+    /// need to sign before assembly. Instead, the coordinator signs the full composed
+    /// turn (including the forest root) via `coordinator_signature` on the composed Turn.
     ///
     /// This allows a party to sign their part without knowing about other actions,
     /// enabling multi-party composition (DEX fills, atomic swaps, etc.)
     pub fn compute_partial_signing_message(
         action: &Action,
         position: usize,
-        forest_root_hash: &[u8; 32],
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&action.hash());
         hasher.update(&(position as u64).to_le_bytes());
-        hasher.update(forest_root_hash);
         *hasher.finalize().as_bytes()
     }
 
@@ -1762,12 +1841,12 @@ impl TurnExecutor {
                 let cap_target = cap.target;
 
                 // Verify the target cell exists.
-                if ledger.get(&cap_target).is_none() {
-                    return Err((
+                let target_cell_ref = ledger.get(&cap_target).ok_or_else(|| {
+                    (
                         TurnError::CellNotFound { id: cap_target },
                         path.to_vec(),
-                    ));
-                }
+                    )
+                })?;
 
                 // Permission check: the capability's permissions must allow the operations.
                 // If the capability requires Impossible, reject.
@@ -1780,6 +1859,56 @@ impl TurnExecutor {
                         },
                         path.to_vec(),
                     ));
+                }
+
+                // Also check that the capability's permission level satisfies the
+                // TARGET CELL's requirements for each inner effect's operation.
+                // This prevents bypassing target cell permissions via capability exercise.
+                for inner_effect in inner_effects.iter() {
+                    let required_perm_action = match inner_effect {
+                        Effect::SetField { .. } => Some((pyana_cell::permissions::Action::SetState, "SetState")),
+                        Effect::Transfer { from, .. } if from == &cap_target => Some((pyana_cell::permissions::Action::Send, "Send")),
+                        Effect::IncrementNonce { .. } => Some((pyana_cell::permissions::Action::IncrementNonce, "IncrementNonce")),
+                        Effect::GrantCapability { .. } => Some((pyana_cell::permissions::Action::Delegate, "Delegate")),
+                        Effect::RevokeCapability { .. } => Some((pyana_cell::permissions::Action::Delegate, "Delegate")),
+                        Effect::SetPermissions { .. } => Some((pyana_cell::permissions::Action::SetPermissions, "SetPermissions")),
+                        Effect::SetVerificationKey { .. } => Some((pyana_cell::permissions::Action::SetVerificationKey, "SetVerificationKey")),
+                        _ => None,
+                    };
+
+                    if let Some((perm_action, action_name)) = required_perm_action {
+                        let target_required = target_cell_ref.permissions.for_action(perm_action);
+                        // The target cell's permission must be satisfiable by the capability's
+                        // permission level. If the target requires Impossible, always reject.
+                        // If the target requires Signature/Proof/Either but the capability only
+                        // grants None-level access, that's insufficient.
+                        if matches!(target_required, AuthRequired::Impossible) {
+                            return Err((
+                                TurnError::PermissionDenied {
+                                    cell: cap_target,
+                                    action: action_name.to_string(),
+                                    required: target_required.clone(),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                        // If the target requires auth (Signature/Proof/Either) and the
+                        // capability's permission level is weaker (None), reject.
+                        // The capability permission acts as the auth level the actor provides.
+                        if !matches!(target_required, AuthRequired::None) {
+                            // The capability must be at least as strong as what the target requires.
+                            if !cap.permissions.is_narrower_or_equal(target_required) {
+                                return Err((
+                                    TurnError::PermissionDenied {
+                                        cell: cap_target,
+                                        action: action_name.to_string(),
+                                        required: target_required.clone(),
+                                    },
+                                    path.to_vec(),
+                                ));
+                            }
+                        }
+                    }
                 }
 
                 // Execute each inner effect against the capability's target cell.
@@ -2542,16 +2671,20 @@ impl TurnExecutor {
         delta
     }
 
-    /// Compute a LedgerDelta including the Phase 1 fee + nonce commitment.
+    /// Compute a LedgerDelta including the Phase 1 fee + nonce commitment and
+    /// Phase 3 fee distribution (proposer/treasury credits).
     ///
-    /// Since Phase 1 (fee/nonce) is committed outside the journal, we need to
-    /// account for it separately in the delta. The agent's balance decreased by
-    /// `fee` and nonce incremented by 1 in addition to any journal-recorded changes.
+    /// Since Phase 1 (fee/nonce) and Phase 3 (distribution) are committed outside
+    /// the journal, we need to account for them separately in the delta. The agent's
+    /// balance decreased by `fee` and nonce incremented by 1. The proposer receives
+    /// 50% and treasury receives 30% (if configured and present in ledger).
     fn compute_delta_from_journal_with_fee(
         journal: &LedgerJournal,
         ledger: &Ledger,
         agent: &CellId,
         fee: u64,
+        proposer_cell: Option<&CellId>,
+        treasury_cell: Option<&CellId>,
     ) -> LedgerDelta {
         let mut delta = Self::compute_delta_from_journal(journal, ledger);
 
@@ -2573,6 +2706,38 @@ impl TurnExecutor {
             cell_delta.balance_change = -(fee as i64);
             cell_delta.nonce_increment = true;
             delta.updated.push((*agent, cell_delta));
+        }
+
+        // Account for fee distribution credits (Phase 3).
+        let proposer_share = fee / 2;
+        let treasury_share = fee * 3 / 10;
+
+        if let Some(proposer_id) = proposer_cell {
+            // Only include in delta if proposer exists in ledger.
+            if ledger.get(proposer_id).is_some() {
+                let proposer_in_delta = delta.updated.iter_mut().find(|(id, _)| id == proposer_id);
+                if let Some((_, cell_delta)) = proposer_in_delta {
+                    cell_delta.balance_change += proposer_share as i64;
+                } else {
+                    let mut cell_delta = CellStateDelta::empty();
+                    cell_delta.balance_change = proposer_share as i64;
+                    delta.updated.push((*proposer_id, cell_delta));
+                }
+            }
+        }
+
+        if let Some(treasury_id) = treasury_cell {
+            // Only include in delta if treasury exists in ledger.
+            if ledger.get(treasury_id).is_some() {
+                let treasury_in_delta = delta.updated.iter_mut().find(|(id, _)| id == treasury_id);
+                if let Some((_, cell_delta)) = treasury_in_delta {
+                    cell_delta.balance_change += treasury_share as i64;
+                } else {
+                    let mut cell_delta = CellStateDelta::empty();
+                    cell_delta.balance_change = treasury_share as i64;
+                    delta.updated.push((*treasury_id, cell_delta));
+                }
+            }
         }
 
         delta

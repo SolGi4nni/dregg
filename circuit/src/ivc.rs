@@ -1034,6 +1034,8 @@ pub struct IvcPresentationProof {
     pub request_predicate: BabyBear,
     /// Timestamp for freshness.
     pub timestamp: BabyBear,
+    /// Commitment to selectively revealed facts (zero if fully private).
+    pub revealed_facts_commitment: BabyBear,
 }
 
 impl IvcPresentationProof {
@@ -1986,6 +1988,7 @@ mod tests {
                 equal_checks: vec![],
                 memberof_checks: vec![],
                 gte_check: None,
+                lt_check: None,
             },
             state_root: final_root,
             body_fact_hashes: vec![body_hash],
@@ -2011,6 +2014,7 @@ mod tests {
             federation_root,
             request_predicate: BabyBear::new(999),
             timestamp: BabyBear::new(1716000000),
+            revealed_facts_commitment: BabyBear::ZERO,
         };
 
         let result = presentation.verify();

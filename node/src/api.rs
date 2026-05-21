@@ -857,11 +857,14 @@ async fn post_submit_conditional(
     let turn: pyana_turn::Turn =
         serde_json::from_value(req.turn).map_err(|_| StatusCode::BAD_REQUEST)?;
 
+    let deposit_amount =
+        pyana_turn::compute_conditional_deposit(req.timeout_height, current_height);
     let conditional = pyana_turn::ConditionalTurn {
         turn,
         condition,
         timeout_height: req.timeout_height,
         submitted_at: current_height,
+        deposit_amount,
     };
 
     if let Err(_e) = pyana_turn::validate_conditional_submission(&conditional, current_height) {
@@ -953,6 +956,7 @@ async fn post_resolve_conditional(
         &trusted_roots,
         pyana_turn::DEFAULT_MAX_ROOT_AGE,
         &mut s.used_proof_hashes,
+        &[], // TODO: add trusted_executor_keys to NodeState
     );
 
     match result {
