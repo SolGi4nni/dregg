@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandbox — Pyana</title>
+  <meta name="description" content="Interactive code sandbox for the pyana WASM API. Execute cryptographic operations live in the browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <style>
+    /* ============================================================
+       pyana sandbox — self-contained dark theme
+       ============================================================ */
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+    :root {
+      --bg:          #080c0a;
+      --surface:     #0a1610;
+      --surface-2:   #0f1f17;
+      --surface-3:   #152420;
+      --border:      rgba(232, 224, 208, 0.10);
+      --border-2:    rgba(232, 224, 208, 0.18);
+      --text:        #e8e0d0;
+      --text-dim:    #a89e8e;
+      --text-muted:  #6a6358;
+      --accent:      #5b8a5a;
+      --accent-bright: #9bb87a;
+      --lantern:     #d99a3f;
+      --danger:      #d4685c;
+      --info:        #6ba3c7;
+      --success:     #5b8a5a;
+      --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+      --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --radius: 6px;
+      color-scheme: dark;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent-bright); text-decoration: none; }
+    a:hover { color: var(--lantern); }
+
+    /* ---- HEADER ---- */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border-2);
+      flex-shrink: 0;
+      min-height: 44px;
+    }
+    .header__logo {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--bg);
+      display: grid; place-items: center;
+      font-family: var(--mono);
+      font-size: 10px; font-weight: 600;
+      flex-shrink: 0;
+    }
+    .header__title {
+      font-family: var(--mono);
+      font-size: 13px; font-weight: 600;
+      white-space: nowrap;
+    }
+    .header__title .accent { color: var(--accent-bright); }
+    .header__nav {
+      display: flex; gap: 8px; margin-left: 16px;
+    }
+    .header__nav a {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .header__nav a:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.06);
+    }
+    .header__right {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .status-badge {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+    }
+    .status-badge.ready { color: var(--success); }
+    .status-badge.error { color: var(--danger); }
+    .status-badge.loading { color: var(--lantern); }
+
+    #run-indicator {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: background 0.2s;
+    }
+    #run-indicator.active {
+      background: var(--lantern);
+      animation: pulse 0.8s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ---- MAIN LAYOUT ---- */
+    .main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+    }
+
+    /* ---- SCENARIO BAR ---- */
+    .scenario-bar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+    .scenario-bar::before {
+      content: 'Scenarios:';
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+    .scenario-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      background: transparent;
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.12s;
+    }
+    .scenario-btn:hover {
+      color: var(--text);
+      border-color: var(--border-2);
+      background: rgba(255,255,255,0.04);
+    }
+    .scenario-btn.active {
+      color: var(--accent-bright);
+      border-color: var(--accent);
+      background: rgba(91, 138, 90, 0.12);
+    }
+
+    /* ---- EDITOR PANEL ---- */
+    .editor-panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .editor-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .editor-toolbar__label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .editor-toolbar__right {
+      margin-left: auto;
+      display: flex; gap: 6px;
+    }
+    .toolbar-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 14px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .toolbar-btn.primary {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .toolbar-btn.primary:hover:not(:disabled) {
+      background: var(--accent-bright);
+    }
+    .toolbar-btn.primary:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .toolbar-btn.secondary {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+    .toolbar-btn.secondary:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.1);
+    }
+    .toolbar-hint {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-right: 8px;
+    }
+
+    /* ---- EDITOR TEXTAREA ---- */
+    .editor-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #editor {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.7;
+      padding: 16px;
+      border: none;
+      outline: none;
+      tab-size: 2;
+      overflow-y: auto;
+    }
+    #editor::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* ---- OUTPUT PANEL ---- */
+    .output-panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-left: none;
+    }
+    .output-toolbar {
+      display: flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .output-toolbar__label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    #output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .output-entry {
+      display: flex;
+      gap: 8px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      animation: fadeIn 0.15s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .output-entry.log .output-text { color: var(--text); }
+    .output-entry.error .output-text { color: var(--danger); }
+    .output-entry.warn .output-text { color: var(--lantern); }
+    .output-entry.info .output-text { color: var(--info); }
+    .output-entry.timing {
+      margin-top: 4px;
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .output-entry.timing .output-text {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .output-time {
+      color: var(--text-muted);
+      font-size: 10px;
+      flex-shrink: 0;
+      min-width: 80px;
+    }
+    .output-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ---- SIDEBAR ---- */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-left: 1px solid var(--border);
+    }
+
+    /* ---- FEDERATION STATUS ---- */
+    .sidebar-section {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-section__title {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .fed-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 0;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .fed-label { color: var(--text-dim); }
+    .fed-value { color: var(--accent-bright); }
+    .fed-value.fed-offline { color: var(--danger); }
+    .fed-value.fed-mono { font-size: 10px; }
+    .fed-nodes {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .fed-node {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 6px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.02);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    .fed-node-name { color: var(--text-dim); }
+    .fed-node-status { font-weight: 500; }
+    .fed-node-status.healthy { color: var(--success); }
+    .fed-node-status.degraded { color: var(--lantern); }
+    .fed-node-status.down { color: var(--danger); }
+
+    /* ---- ADMIN SECTION ---- */
+    .admin-connect {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .admin-connect input {
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 6px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      color: var(--text);
+      outline: none;
+    }
+    .admin-connect input:focus {
+      border-color: var(--accent);
+    }
+    .admin-connect input::placeholder {
+      color: var(--text-muted);
+    }
+    .admin-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      background: rgba(255,255,255,0.04);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .admin-btn:hover {
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .admin-btn.connected {
+      background: rgba(212, 104, 92, 0.1);
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+    .admin-status {
+      font-family: var(--mono);
+      font-size: 10px;
+      min-height: 14px;
+    }
+    .admin-status.connected { color: var(--success); }
+    .admin-status.error { color: var(--danger); }
+
+    /* ---- ADMIN ACTIONS ---- */
+    #admin-section {
+      display: none;
+    }
+    #admin-section.visible {
+      display: block;
+    }
+    .admin-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .admin-field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .admin-field label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .admin-field input,
+    .admin-field textarea {
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 5px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      color: var(--text);
+      outline: none;
+      resize: vertical;
+    }
+    .admin-field input:focus,
+    .admin-field textarea:focus {
+      border-color: var(--accent);
+    }
+    .admin-action-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 5px 10px;
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      background: rgba(91, 138, 90, 0.1);
+      color: var(--accent-bright);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .admin-action-btn:hover {
+      background: rgba(91, 138, 90, 0.2);
+      border-color: var(--accent);
+    }
+
+    /* ---- SCROLLBAR ---- */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+    /* ---- RESPONSIVE ---- */
+    @media (max-width: 900px) {
+      .main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+      }
+      .sidebar {
+        border-left: none;
+        border-top: 1px solid var(--border);
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .editor-panel {
+        border-right: none;
+      }
+    }
+    @media (max-width: 600px) {
+      .header__nav { display: none; }
+      .toolbar-hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <span class="header__logo">pi</span>
+  <span class="header__title">pyana <span class="accent">sandbox</span></span>
+  <nav class="header__nav">
+    <a href="../index.html">Home</a>
+    <a href="../demo.html">Demos</a>
+    <a href="../demo/">Playground</a>
+    <a href="../docs.html">Docs</a>
+  </nav>
+  <div class="header__right">
+    <span id="run-indicator"></span>
+    <span id="wasm-status" class="status-badge loading">loading...</span>
+  </div>
+</header>
+
+<!-- Scenario Bar -->
+<div class="scenario-bar" id="scenario-bar"></div>
+
+<!-- Main Grid -->
+<div class="main">
+
+  <!-- Editor + Output (left column) -->
+  <div style="display: flex; flex-direction: column; overflow: hidden;">
+    <!-- Editor -->
+    <div class="editor-panel" style="flex: 3;">
+      <div class="editor-toolbar">
+        <span class="editor-toolbar__label">Editor</span>
+        <div class="editor-toolbar__right">
+          <span class="toolbar-hint">Ctrl+Enter to run</span>
+          <button class="toolbar-btn secondary" id="btn-clear">Clear Output</button>
+          <button class="toolbar-btn primary" id="btn-run" disabled>Run</button>
+        </div>
+      </div>
+      <div class="editor-wrap">
+        <textarea id="editor" spellcheck="false" placeholder="// Write JavaScript that calls the pyana WASM API...&#10;// The 'pyana' object is available with all methods.&#10;&#10;const key = await pyana.generateRootKey();&#10;console.log(key);"></textarea>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="output-panel" style="flex: 2; min-height: 120px;">
+      <div class="output-toolbar">
+        <span class="output-toolbar__label">Console Output</span>
+      </div>
+      <div id="output"></div>
+    </div>
+  </div>
+
+  <!-- Sidebar (right column) -->
+  <aside class="sidebar">
+    <!-- Federation Status -->
+    <div class="sidebar-section">
+      <div class="sidebar-section__title">Federation Status</div>
+      <div id="federation-panel">
+        <div class="fed-item">
+          <span class="fed-label">Status</span>
+          <span class="fed-value fed-offline">loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Connection -->
+    <div class="sidebar-section">
+      <div class="sidebar-section__title">Connect as Admin</div>
+      <div class="admin-connect">
+        <input type="text" id="admin-key-input" placeholder="PYANA_ROOT_KEY (64 hex chars)" spellcheck="false" autocomplete="off">
+        <button class="admin-btn" id="btn-admin">Connect</button>
+        <span class="admin-status" id="admin-status"></span>
+      </div>
+    </div>
+
+    <!-- Admin Actions (visible when connected) -->
+    <div class="sidebar-section" id="admin-section">
+      <div class="sidebar-section__title">Admin Actions</div>
+      <div class="admin-actions">
+        <div class="admin-field">
+          <label>Mint for Service</label>
+          <input type="text" id="admin-mint-service" value="default" spellcheck="false">
+        </div>
+        <button class="admin-action-btn" id="btn-admin-mint">Mint Token</button>
+
+        <div style="height: 6px;"></div>
+        <button class="admin-action-btn" id="btn-admin-cells">View All Cells</button>
+
+        <div style="height: 6px;"></div>
+        <div class="admin-field">
+          <label>Submit Turn (JSON)</label>
+          <textarea id="admin-turn-data" rows="3" spellcheck="false">{"action": "commit", "data": {}}</textarea>
+        </div>
+        <button class="admin-action-btn" id="btn-admin-submit">Submit Turn</button>
+      </div>
+    </div>
+
+    <!-- API Reference -->
+    <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
+      <div class="sidebar-section__title">API Reference</div>
+      <div style="font-family: var(--mono); font-size: 10px; color: var(--text-dim); line-height: 1.8;">
+        <div><span style="color: var(--accent-bright);">pyana.generateRootKey</span>()</div>
+        <div><span style="color: var(--accent-bright);">pyana.mintToken</span>(key, loc)</div>
+        <div><span style="color: var(--accent-bright);">pyana.attenuate</span>(tok, key, svc, act, exp)</div>
+        <div><span style="color: var(--accent-bright);">pyana.verifyToken</span>(tok, key, app, act)</div>
+        <div><span style="color: var(--accent-bright);">pyana.generateStarkProof</span>(leaf, depth)</div>
+        <div><span style="color: var(--accent-bright);">pyana.verifyStarkProof</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">pyana.tamperProof</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">pyana.merkleRoot</span>(leaves[])</div>
+        <div><span style="color: var(--accent-bright);">pyana.merkleMembership</span>(leaves[], target)</div>
+        <div><span style="color: var(--accent-bright);">pyana.evaluateDatalog</span>(facts, req)</div>
+        <div><span style="color: var(--accent-bright);">pyana.demonstrateFold</span>(facts, remove)</div>
+        <div><span style="color: var(--accent-bright);">pyana.computeIntentId</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">pyana.blake3Hash</span>(input)</div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script type="module" src="sandbox.js"></script>
+</body>
+</html>
