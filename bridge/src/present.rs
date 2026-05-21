@@ -904,8 +904,8 @@ impl BridgePresentationBuilder {
                     .collect();
 
                 let pred = bytes_to_babybear(&step.derived_fact.predicate);
-                let mut terms = [BabyBear::ZERO; 3];
-                for (i, term) in step.derived_fact.terms.iter().take(3).enumerate() {
+                let mut terms = [BabyBear::ZERO; 4];
+                for (i, term) in step.derived_fact.terms.iter().take(4).enumerate() {
                     terms[i] = match term {
                         TraceTerm::Const(sym) => bytes_to_babybear(sym),
                         TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
@@ -922,7 +922,7 @@ impl BridgePresentationBuilder {
                     vec![BabyBear::new(rule_id)],
                     vec![],
                     bytes_to_babybear(&allow_sym),
-                    [BabyBear::ZERO; 3],
+                    [BabyBear::ZERO; 4],
                 )
             };
 
@@ -945,6 +945,7 @@ impl BridgePresentationBuilder {
                 (false, derived_terms[0]),
                 (false, derived_terms[1]),
                 (false, derived_terms[2]),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![],
             equal_checks: vec![],

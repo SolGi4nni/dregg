@@ -1080,6 +1080,7 @@ pub fn create_test_presentation() -> PresentationWitness {
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![],
             equal_checks: vec![],
@@ -1090,7 +1091,7 @@ pub fn create_test_presentation() -> PresentationWitness {
         body_fact_hashes: vec![body_hash_1, body_hash_2],
         substitution: vec![alice, resource],
         derived_predicate: access_pred,
-        derived_terms: [alice, resource, BabyBear::ZERO],
+        derived_terms: [alice, resource, BabyBear::ZERO, BabyBear::ZERO],
     };
 
     // Issuer membership: prove issuer key is in the federation
@@ -1365,6 +1366,7 @@ mod tests {
                     (true, BabyBear::new(0)),
                     (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![],
                 equal_checks: vec![],
@@ -1375,7 +1377,7 @@ mod tests {
             body_fact_hashes: vec![BabyBear::new(555)],
             substitution: vec![BabyBear::new(777)],
             derived_predicate: BabyBear::new(300),
-            derived_terms: [BabyBear::new(777), BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [BabyBear::new(777), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let issuer_witness = crate::merkle_air::create_test_witness(BabyBear::new(9999), 8);

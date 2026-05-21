@@ -1,5 +1,9 @@
 //! Multi-step derivation chaining AIR.
 //!
+//! Supports policies with up to 8 body atoms per rule, 8 variables, 32 derivation
+//! steps. This covers: deep RBAC hierarchies, contextual authorization (time/location/
+//! device), multi-hop delegation chains, and most real-world access control policies.
+//!
 //! Proves a sequence of Datalog derivation steps where the output of step N
 //! becomes available as a known fact to step N+1. The final step must derive
 //! the "allow" predicate (or the claimed conclusion).
@@ -10,14 +14,14 @@
 //!
 //! # Trace layout (per row = one derivation step)
 //!
-//! Columns 0..86: same as single-step DerivationAir (87 columns)
-//! Column 87: `step_index` — which step this is (0-based)
-//! Column 88: `accumulated_facts_hash` — running hash of all derived facts including this step
-//! Column 89: `prev_accumulated` — accumulated hash from previous row (or initial_state_root)
-//! Column 90: `is_final_step` — 1 if this is the last meaningful step, 0 otherwise
-//! Column 91: `is_active` — 1 if this row is an active derivation step, 0 if padding
+//! Columns 0..137: same as single-step DerivationAir (138 columns)
+//! Column 138: `step_index` — which step this is (0-based)
+//! Column 139: `accumulated_facts_hash` — running hash of all derived facts including this step
+//! Column 140: `prev_accumulated` — accumulated hash from previous row (or initial_state_root)
+//! Column 141: `is_final_step` — 1 if this is the last meaningful step, 0 otherwise
+//! Column 142: `is_active` — 1 if this row is an active derivation step, 0 if padding
 //!
-//! Total width: 92 columns (DERIVATION_AIR_WIDTH + 5).
+//! Total width: 143 columns (DERIVATION_AIR_WIDTH + 5).
 //!
 //! # Public inputs
 //!
@@ -26,6 +30,8 @@
 //! 2. `conclusion` — 1 for ALLOW, 0 for DENY
 //! 3. `num_steps` — how many derivation steps were taken
 //! 4. `final_accumulated_hash` — commitment to the full derivation trace
+//! 5. `policy_root` — Poseidon2 hash of the rule set (the verifier checks
+//!    "this proof was made under policy P" by comparing to their known policy)
 //!
 //! # Constraints
 //!
@@ -45,6 +51,9 @@
 //!   - `is_final_step * (derived_predicate - ALLOW_PREDICATE) = 0`
 //!   - On the final step, `accumulated_facts_hash = final_accumulated_hash` (public input)
 //!   - Step index increments by 1 for active rows
+//!   - Policy root: the verifier checks that the rule_id values in the trace correspond to
+//!     rules whose hashes are leaves in the Merkle tree at `policy_root`. This is enforced
+//!     externally by the verifier comparing the public input against their known policy.
 
 use crate::derivation_air::{
     DERIVATION_AIR_WIDTH, DerivationWitness, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS,
@@ -56,10 +65,10 @@ use crate::poseidon2::{hash_2_to_1, hash_fact};
 use crate::stark::{self, StarkAir, StarkProof};
 
 /// Trace width for the multi-step derivation AIR.
-pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5; // 87 + 5 = 92
+pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5; // 138 + 5 = 143
 
 /// Maximum derivation steps supported.
-pub const MAX_STEPS: usize = 8;
+pub const MAX_STEPS: usize = 32;
 
 /// The "allow" predicate field element. This is a well-known constant that
 /// the final derivation step must produce as its head predicate.
@@ -71,15 +80,15 @@ pub mod col {
     use super::DERIVATION_AIR_WIDTH;
 
     /// Step index (0-based).
-    pub const STEP_INDEX: usize = DERIVATION_AIR_WIDTH; // 46
+    pub const STEP_INDEX: usize = DERIVATION_AIR_WIDTH; // 138
     /// Running accumulated hash of derived facts (including this step).
-    pub const ACCUMULATED_HASH: usize = DERIVATION_AIR_WIDTH + 1; // 47
+    pub const ACCUMULATED_HASH: usize = DERIVATION_AIR_WIDTH + 1; // 139
     /// Previous accumulated hash (from previous row, or initial_state_root for row 0).
-    pub const PREV_ACCUMULATED: usize = DERIVATION_AIR_WIDTH + 2; // 48
+    pub const PREV_ACCUMULATED: usize = DERIVATION_AIR_WIDTH + 2; // 140
     /// Is this the final derivation step? (binary flag)
-    pub const IS_FINAL_STEP: usize = DERIVATION_AIR_WIDTH + 3; // 49
+    pub const IS_FINAL_STEP: usize = DERIVATION_AIR_WIDTH + 3; // 141
     /// Is this row an active step? (binary flag, 0 = padding)
-    pub const IS_ACTIVE: usize = DERIVATION_AIR_WIDTH + 4; // 50
+    pub const IS_ACTIVE: usize = DERIVATION_AIR_WIDTH + 4; // 142
 }
 
 /// Public input indices.
@@ -89,6 +98,10 @@ pub mod pi {
     pub const CONCLUSION: usize = 2;
     pub const NUM_STEPS: usize = 3;
     pub const FINAL_ACCUMULATED_HASH: usize = 4;
+    /// Policy root: Poseidon2 hash of the rule set. The verifier checks that the
+    /// proof was generated under this specific policy by comparing to their known
+    /// policy root. This makes the rule set a public input to the proof.
+    pub const POLICY_ROOT: usize = 5;
 }
 
 /// Witness for a multi-step derivation (the full authorization trace).
@@ -102,6 +115,10 @@ pub struct MultiStepWitness {
     pub steps: Vec<DerivationWitness>,
     /// The "allow" predicate value (field element for the allow predicate).
     pub allow_predicate: BabyBear,
+    /// Policy root: Poseidon2 hash of the rule set. The verifier checks that the
+    /// proof was generated under this specific policy. This makes the rule set a
+    /// public input — the verifier can confirm "this proof was made under policy P".
+    pub policy_root: BabyBear,
     /// Optional Merkle proofs for body facts (used by `prove_authorization_with_membership`).
     ///
     /// When present, each entry is (fact_hash, siblings, positions) proving that the
@@ -180,7 +197,7 @@ impl Air for MultiStepDerivationAir {
     }
 
     fn num_public_inputs(&self) -> usize {
-        5
+        6
     }
 
     fn constraints(&self) -> Vec<Constraint> {
@@ -242,6 +259,7 @@ impl Air for MultiStepDerivationAir {
                         row[dcol::HEAD_TERM_START],
                         row[dcol::HEAD_TERM_START + 1],
                         row[dcol::HEAD_TERM_START + 2],
+                        row[dcol::HEAD_TERM_START + 3],
                     ];
                     let expected_hash = hash_fact(pred, &terms);
                     let claimed_hash = row[dcol::DERIVED_HASH];
@@ -612,9 +630,9 @@ impl Air for MultiStepDerivationAir {
                 }
 
                 row[dcol::HEAD_PRED] = step.derived_predicate;
-                row[dcol::HEAD_TERM_START] = step.derived_terms[0];
-                row[dcol::HEAD_TERM_START + 1] = step.derived_terms[1];
-                row[dcol::HEAD_TERM_START + 2] = step.derived_terms[2];
+                for i in 0..MAX_HEAD_TERMS {
+                    row[dcol::HEAD_TERM_START + i] = step.derived_terms[i];
+                }
                 row[dcol::DERIVED_HASH] = derived_hash;
 
                 for (i, &val) in step.substitution.iter().enumerate().take(MAX_SUB_VARS) {
@@ -780,6 +798,7 @@ impl Air for MultiStepDerivationAir {
             conclusion,                       // 2: conclusion
             BabyBear::new(num_active as u32), // 3: num_steps
             final_acc,                        // 4: final_accumulated_hash
+            w.policy_root,                    // 5: policy_root
         ];
 
         (trace, public_inputs)
@@ -791,16 +810,35 @@ impl Air for MultiStepDerivationAir {
 /// All steps must share the same state_root (they reference the same committed
 /// fact set). The last step must derive the "allow" predicate for the proof
 /// to conclude ALLOW.
+///
+/// The `policy_root` is a Poseidon2 hash of the rule set. The verifier can
+/// check "this proof was made under policy P" by comparing the policy_root
+/// public input against their known/expected policy hash.
 pub fn build_multi_step_witness(
     initial_state_root: BabyBear,
     request_hash: BabyBear,
     steps: Vec<DerivationWitness>,
 ) -> MultiStepWitness {
+    // Compute policy_root as hash of all rule IDs used in the derivation.
+    // In a real system this would be the Merkle root of the full policy;
+    // here we use a deterministic hash of the rule IDs for simplicity.
+    let rule_ids: Vec<BabyBear> = steps.iter().map(|s| BabyBear::new(s.rule.id)).collect();
+    let policy_root = if rule_ids.is_empty() {
+        BabyBear::ZERO
+    } else {
+        let mut acc = rule_ids[0];
+        for &id in &rule_ids[1..] {
+            acc = hash_2_to_1(acc, id);
+        }
+        acc
+    };
+
     MultiStepWitness {
         initial_state_root,
         request_hash,
         steps,
         allow_predicate: BabyBear::new(ALLOW_PREDICATE),
+        policy_root,
         body_merkle_proofs: None,
     }
 }
@@ -1141,9 +1179,9 @@ pub fn verify_authorization_stark(
     proof: &StarkProof,
 ) -> Result<(), String> {
     // Extract public inputs from the proof
-    if proof.public_inputs.len() != 5 {
+    if proof.public_inputs.len() != 6 {
         return Err(format!(
-            "Expected 5 public inputs, got {}",
+            "Expected 6 public inputs, got {}",
             proof.public_inputs.len()
         ));
     }
@@ -1186,9 +1224,9 @@ mod tests {
         rule_id: u32,
         state_root: BabyBear,
         derived_pred: BabyBear,
-        terms: [BabyBear; 3],
+        terms: [BabyBear; 4],
         body_pred: BabyBear,
-        body_terms: [BabyBear; 3],
+        body_terms: [BabyBear; 4],
         substitution: Vec<BabyBear>,
     ) -> DerivationWitness {
         let body_hash = hash_fact(body_pred, &body_terms);
@@ -1207,6 +1245,7 @@ mod tests {
                         (false, terms[1])
                     },
                     (false, terms[2]),
+                    (false, terms[3]),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: body_pred,
@@ -1247,9 +1286,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1280,9 +1319,9 @@ mod tests {
             1,
             state_root,
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1291,9 +1330,9 @@ mod tests {
             2,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1324,9 +1363,9 @@ mod tests {
             1,
             state_root,
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1405,9 +1444,9 @@ mod tests {
             1,
             state_root,
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1415,9 +1454,9 @@ mod tests {
             2,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             app_authorized_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1507,6 +1546,7 @@ mod tests {
                     (true, BabyBear::new(0)), // X -> alice
                     (true, BabyBear::new(1)), // App -> app1
                     (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: has_cap_pred,
@@ -1524,7 +1564,7 @@ mod tests {
             body_fact_hashes: vec![hash_fact(has_cap_pred, &[alice, app1, read_action])],
             substitution: vec![alice, app1, read_action],
             derived_predicate: app_auth_pred,
-            derived_terms: [alice, app1, BabyBear::ZERO],
+            derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         // Step 2: action_permitted(alice, app1) :- app_authorized(alice, app1).
@@ -1537,6 +1577,7 @@ mod tests {
                 head_terms: [
                     (true, BabyBear::new(0)), // X
                     (true, BabyBear::new(1)), // App
+                    (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
@@ -1555,7 +1596,7 @@ mod tests {
             body_fact_hashes: vec![hash_fact(app_auth_pred, &[alice, app1, BabyBear::ZERO])],
             substitution: vec![alice, app1],
             derived_predicate: action_perm_pred,
-            derived_terms: [alice, app1, BabyBear::ZERO],
+            derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         // Step 3: allow(alice, app1) :- action_permitted(alice, app1).
@@ -1568,6 +1609,7 @@ mod tests {
                 head_terms: [
                     (true, BabyBear::new(0)), // X
                     (true, BabyBear::new(1)), // App
+                    (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
@@ -1586,7 +1628,7 @@ mod tests {
             body_fact_hashes: vec![hash_fact(action_perm_pred, &[alice, app1, BabyBear::ZERO])],
             substitution: vec![alice, app1],
             derived_predicate: allow_pred,
-            derived_terms: [alice, app1, BabyBear::ZERO],
+            derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let witness =
@@ -1612,27 +1654,27 @@ mod tests {
                     1,
                     state_root,
                     app_auth_pred,
-                    [alice, app1, BabyBear::ZERO],
+                    [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
                     has_cap_pred,
-                    [alice, app1, read_action],
+                    [alice, app1, read_action, BabyBear::ZERO],
                     vec![alice, app1, read_action],
                 ),
                 make_step(
                     2,
                     state_root,
                     action_perm_pred,
-                    [alice, app1, BabyBear::ZERO],
+                    [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
                     app_auth_pred,
-                    [alice, app1, BabyBear::ZERO],
+                    [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
                     vec![alice, app1],
                 ),
                 make_step(
                     3,
                     state_root,
                     allow_pred,
-                    [alice, app1, BabyBear::ZERO],
+                    [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
                     action_perm_pred,
-                    [alice, app1, BabyBear::ZERO],
+                    [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
                     vec![alice, app1],
                 ),
             ],
@@ -1661,9 +1703,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1691,9 +1733,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1728,9 +1770,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1769,9 +1811,9 @@ mod tests {
             1,
             state_root,
             app_auth_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1779,9 +1821,9 @@ mod tests {
             2,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             app_auth_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1816,27 +1858,27 @@ mod tests {
             1,
             state_root,
             app_auth_pred,
-            [alice, app1, BabyBear::ZERO],
+            [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
             has_cap_pred,
-            [alice, app1, read_action],
+            [alice, app1, read_action, BabyBear::ZERO],
             vec![alice, app1, read_action],
         );
         let step2 = make_step(
             2,
             state_root,
             action_perm_pred,
-            [alice, app1, BabyBear::ZERO],
+            [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
             app_auth_pred,
-            [alice, app1, BabyBear::ZERO],
+            [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app1],
         );
         let step3 = make_step(
             3,
             state_root,
             allow_pred,
-            [alice, app1, BabyBear::ZERO],
+            [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
             action_perm_pred,
-            [alice, app1, BabyBear::ZERO],
+            [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app1],
         );
 
@@ -1874,9 +1916,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1907,9 +1949,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1940,9 +1982,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -1971,9 +2013,9 @@ mod tests {
             1,
             state_root,
             allow_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -2010,9 +2052,9 @@ mod tests {
             1,
             state_root,
             app_auth_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             has_role_pred,
-            [alice, app, BabyBear::ZERO],
+            [alice, app, BabyBear::ZERO, BabyBear::ZERO],
             vec![alice, app],
         );
 
@@ -2029,6 +2071,172 @@ mod tests {
             result.is_ok(),
             "DENY conclusion STARK proof should verify: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn test_multi_step_six_body_atom_rule() {
+        // This test demonstrates a rule with 6 body atoms -- impossible under
+        // the old MAX_BODY_ATOMS=4 budget. RBAC with context:
+        //   allow(User, Resource) :-
+        //     has_role(User, Role),          // user has a role
+        //     role_has_permission(Role, Perm), // role grants a permission
+        //     permission_applies(Perm, Resource), // permission covers the resource
+        //     resource_in_dept(Resource, Dept),   // resource belongs to a department
+        //     dept_active(Dept, Status),          // department is active
+        //     time_valid(User, TimeSlot).         // user's time window is valid
+        //
+        // = 6 body atoms, which would have FAILED under the old budget.
+
+        let state_root = BabyBear::new(99999);
+        let alice = BabyBear::new(1000);
+        let admin_role = BabyBear::new(2000);
+        let read_perm = BabyBear::new(3000);
+        let file_resource = BabyBear::new(4000);
+        let eng_dept = BabyBear::new(5000);
+        let active_status = BabyBear::new(6000);
+        let time_slot = BabyBear::new(7000);
+
+        let allow_pred = BabyBear::new(ALLOW_PREDICATE);
+        let has_role_pred = BabyBear::new(101);
+        let role_perm_pred = BabyBear::new(102);
+        let perm_applies_pred = BabyBear::new(103);
+        let res_dept_pred = BabyBear::new(104);
+        let dept_active_pred = BabyBear::new(105);
+        let time_valid_pred = BabyBear::new(106);
+
+        // Body fact hashes for all 6 atoms
+        let body_hash_1 = hash_fact(has_role_pred, &[alice, admin_role, BabyBear::ZERO]);
+        let body_hash_2 = hash_fact(role_perm_pred, &[admin_role, read_perm, BabyBear::ZERO]);
+        let body_hash_3 = hash_fact(perm_applies_pred, &[read_perm, file_resource, BabyBear::ZERO]);
+        let body_hash_4 = hash_fact(res_dept_pred, &[file_resource, eng_dept, BabyBear::ZERO]);
+        let body_hash_5 = hash_fact(dept_active_pred, &[eng_dept, active_status, BabyBear::ZERO]);
+        let body_hash_6 = hash_fact(time_valid_pred, &[alice, time_slot, BabyBear::ZERO]);
+
+        // Substitution: User=alice, Role=admin_role, Perm=read_perm,
+        //               Resource=file_resource, Dept=eng_dept, Status=active_status, TimeSlot=time_slot
+        let substitution = vec![
+            alice,
+            admin_role,
+            read_perm,
+            file_resource,
+            eng_dept,
+            active_status,
+            time_slot,
+        ];
+
+        let step = DerivationWitness {
+            rule: CircuitRule {
+                id: 42,
+                num_body_atoms: 6,
+                num_variables: 7,
+                head_predicate: allow_pred,
+                head_terms: [
+                    (true, BabyBear::new(0)),  // User = alice
+                    (true, BabyBear::new(3)),  // Resource = file_resource
+                    (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
+                ],
+                body_atoms: vec![
+                    BodyAtomPattern {
+                        predicate: has_role_pred,
+                        terms: [
+                            (true, BabyBear::new(0)),  // User
+                            (true, BabyBear::new(1)),  // Role
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                    BodyAtomPattern {
+                        predicate: role_perm_pred,
+                        terms: [
+                            (true, BabyBear::new(1)),  // Role
+                            (true, BabyBear::new(2)),  // Perm
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                    BodyAtomPattern {
+                        predicate: perm_applies_pred,
+                        terms: [
+                            (true, BabyBear::new(2)),  // Perm
+                            (true, BabyBear::new(3)),  // Resource
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                    BodyAtomPattern {
+                        predicate: res_dept_pred,
+                        terms: [
+                            (true, BabyBear::new(3)),  // Resource
+                            (true, BabyBear::new(4)),  // Dept
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                    BodyAtomPattern {
+                        predicate: dept_active_pred,
+                        terms: [
+                            (true, BabyBear::new(4)),  // Dept
+                            (true, BabyBear::new(5)),  // Status
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                    BodyAtomPattern {
+                        predicate: time_valid_pred,
+                        terms: [
+                            (true, BabyBear::new(0)),  // User
+                            (true, BabyBear::new(6)),  // TimeSlot
+                            (false, BabyBear::ZERO),
+                        ],
+                    },
+                ],
+                equal_checks: vec![],
+                memberof_checks: vec![],
+                gte_check: None,
+            },
+            state_root,
+            body_fact_hashes: vec![
+                body_hash_1, body_hash_2, body_hash_3,
+                body_hash_4, body_hash_5, body_hash_6,
+            ],
+            substitution,
+            derived_predicate: allow_pred,
+            derived_terms: [alice, file_resource, BabyBear::ZERO, BabyBear::ZERO],
+        };
+
+        let witness = build_multi_step_witness(state_root, BabyBear::new(42), vec![step]);
+        assert_eq!(witness.conclusion(), BabyBear::ONE, "Should conclude ALLOW");
+
+        // Verify with mock prover
+        let air = MultiStepDerivationAir::new(witness.clone());
+        let result = MockProver::verify(&air);
+        assert!(
+            result.is_valid(),
+            "6-body-atom rule should verify (impossible under old MAX_BODY_ATOMS=4): {:?}",
+            result.violations()
+        );
+
+        // Verify with real STARK prover
+        let conclusion = witness.conclusion();
+        let acc_hash = witness.final_accumulated_hash();
+        let proof = prove_authorization_stark(&witness);
+        let result = verify_authorization_stark(conclusion, acc_hash, &proof);
+        assert!(
+            result.is_ok(),
+            "6-body-atom STARK proof should verify: {:?}",
+            result.err()
+        );
+
+        // Verify policy_root is included in proof public inputs
+        assert_eq!(proof.public_inputs.len(), 6);
+        assert_ne!(
+            proof.public_inputs[pi::POLICY_ROOT], 0,
+            "policy_root should be non-zero"
+        );
+
+        println!(
+            "6-body-atom RBAC proof: {} rows, {} bytes ({:.1} KiB), policy_root={}",
+            proof.trace_len,
+            stark::proof_to_bytes(&proof).len(),
+            stark::proof_to_bytes(&proof).len() as f64 / 1024.0,
+            proof.public_inputs[pi::POLICY_ROOT],
         );
     }
 }

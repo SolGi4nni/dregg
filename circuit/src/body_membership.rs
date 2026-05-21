@@ -364,6 +364,7 @@ mod tests {
                         (false, terms[1])
                     },
                     (false, terms[2]),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: body_pred,
@@ -385,7 +386,7 @@ mod tests {
             body_fact_hashes: vec![body_hash],
             substitution,
             derived_predicate: derived_pred,
-            derived_terms: terms,
+            derived_terms: [terms[0], terms[1], terms[2], BabyBear::ZERO],
         }
     }
 

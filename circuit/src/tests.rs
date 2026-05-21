@@ -118,6 +118,7 @@ fn end_to_end_authorization_proof() {
                 (true, BabyBear::new(0)), // X
                 (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![
                 BodyAtomPattern {
@@ -145,7 +146,7 @@ fn end_to_end_authorization_proof() {
         body_fact_hashes: vec![h_owns_f1, h_read_f1],
         substitution: vec![alice, file1], // X=alice, Y=file1
         derived_predicate: access,
-        derived_terms: [alice, file1, BabyBear::ZERO],
+        derived_terms: [alice, file1, BabyBear::ZERO, BabyBear::ZERO],
     };
 
     println!("\nDerivation: access(alice, file1) :- owns(alice, file1), can_read(alice, file1)");
@@ -232,6 +233,7 @@ fn single_step_no_attenuation() {
                 (true, BabyBear::new(0)),
                 (false, BabyBear::ZERO),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: BabyBear::new(100),
@@ -252,7 +254,7 @@ fn single_step_no_attenuation() {
         )],
         substitution: vec![alice],
         derived_predicate: pred_access,
-        derived_terms: [alice, BabyBear::ZERO, BabyBear::ZERO],
+        derived_terms: [alice, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
     };
 
     let issuer_witness = create_test_witness(BabyBear::new(9999), 8);
@@ -343,6 +345,7 @@ fn long_attenuation_chain() {
                 (true, BabyBear::new(0)),
                 (false, BabyBear::ZERO),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![],
             equal_checks: vec![],
@@ -353,7 +356,7 @@ fn long_attenuation_chain() {
         body_fact_hashes: vec![body_hash],
         substitution: vec![BabyBear::new(888)],
         derived_predicate: BabyBear::new(999),
-        derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO],
+        derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
     };
 
     let issuer_witness = create_test_witness(BabyBear::new(5555), 8);
@@ -717,6 +720,7 @@ fn proof_size_scaling() {
                     (true, BabyBear::new(0)),
                     (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![],
                 equal_checks: vec![],
@@ -727,7 +731,7 @@ fn proof_size_scaling() {
             body_fact_hashes: vec![body_hash],
             substitution: vec![BabyBear::new(888)],
             derived_predicate: BabyBear::new(999),
-            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let issuer_witness = create_test_witness(BabyBear::new(5555), 8);

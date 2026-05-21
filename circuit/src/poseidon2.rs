@@ -362,17 +362,27 @@ pub fn hash_bytes(data: &[u8]) -> BabyBear {
     hash_many(&elements)
 }
 
-/// Hash a leaf fact (predicate + 3 terms encoded as field elements) into a single digest.
-/// Each fact is 4 field elements; we hash them using the 4-to-1 function with leaf domain sep.
-pub fn hash_fact(predicate: BabyBear, terms: &[BabyBear; 3]) -> BabyBear {
+/// Hash a leaf fact (predicate + up to 4 terms encoded as field elements) into a single digest.
+/// Each fact is up to 5 field elements; we hash them using the Poseidon2 permutation with leaf domain sep.
+/// Terms beyond the provided slice are treated as zero.
+pub fn hash_fact(predicate: BabyBear, terms: &[BabyBear]) -> BabyBear {
     let mut state = Poseidon2State::new();
     state.state[0] = predicate;
-    state.state[1] = terms[0];
-    state.state[2] = terms[1];
-    state.state[3] = terms[2];
+    if terms.len() > 0 {
+        state.state[1] = terms[0];
+    }
+    if terms.len() > 1 {
+        state.state[2] = terms[1];
+    }
+    if terms.len() > 2 {
+        state.state[3] = terms[2];
+    }
+    if terms.len() > 3 {
+        state.state[4] = terms[3];
+    }
     // Leaf domain separation (different from node)
-    state.state[4] = BabyBear::new(0xFACF); // "fact" marker
-    state.state[5] = BabyBear::ONE; // leaf flag
+    state.state[5] = BabyBear::new(0xFACF); // "fact" marker
+    state.state[6] = BabyBear::ONE; // leaf flag
 
     state.permute();
     state.state[0]

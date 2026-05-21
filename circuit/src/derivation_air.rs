@@ -59,23 +59,25 @@ use crate::mock_prover::{Air, Constraint};
 use crate::poseidon2::hash_fact;
 
 /// Trace width for the derivation AIR.
-/// 46 (original) + 6 (memberof) + 35 (gte) = 87
-pub const DERIVATION_AIR_WIDTH: usize = 87;
+/// rule_id(1) + body_hashes(8) + body_membership(8) + head_pred(1) + head_terms(4) +
+/// derived_hash(1) + sub_values(8) + body_roots(8) + head_is_var(4) + head_raw_value(4) +
+/// head_sel_var(4*8=32) + eq_checks(3*4=12) + memberof_checks(3*4=12) + gte(4+31=35) = 138
+pub const DERIVATION_AIR_WIDTH: usize = 138;
 
 /// Maximum body atoms per rule.
-pub const MAX_BODY_ATOMS: usize = 4;
+pub const MAX_BODY_ATOMS: usize = 8;
 
 /// Maximum substitution variables.
-pub const MAX_SUB_VARS: usize = 4;
+pub const MAX_SUB_VARS: usize = 8;
 
 /// Maximum head terms.
-pub const MAX_HEAD_TERMS: usize = 3;
+pub const MAX_HEAD_TERMS: usize = 4;
 
 /// Maximum Equal checks per rule.
-pub const MAX_EQUAL_CHECKS: usize = 2;
+pub const MAX_EQUAL_CHECKS: usize = 4;
 
 /// Maximum MemberOf checks per rule.
-pub const MAX_MEMBEROF_CHECKS: usize = 2;
+pub const MAX_MEMBEROF_CHECKS: usize = 4;
 
 /// Number of bits for GTE range check (BabyBear has ~31-bit modulus).
 /// We use 31 bits: if the high bit (bit 30) is 0, diff < 2^30 < p/2.
@@ -84,26 +86,27 @@ pub const GTE_DIFF_BITS: usize = 31;
 /// Column indices.
 pub mod col {
     use super::{
-        GTE_DIFF_BITS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS,
+        GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS,
+        MAX_SUB_VARS,
     };
 
     pub const RULE_ID: usize = 0;
-    pub const BODY_HASH_START: usize = 1;
-    pub const BODY_MEMBERSHIP_START: usize = 5;
-    pub const HEAD_PRED: usize = 9;
-    pub const HEAD_TERM_START: usize = 10;
-    pub const DERIVED_HASH: usize = 13;
-    pub const SUB_VALUE_START: usize = 14;
-    pub const BODY_ROOT_START: usize = 18;
+    pub const BODY_HASH_START: usize = 1; // 8 columns (1..8)
+    pub const BODY_MEMBERSHIP_START: usize = BODY_HASH_START + MAX_BODY_ATOMS; // 9
+    pub const HEAD_PRED: usize = BODY_MEMBERSHIP_START + MAX_BODY_ATOMS; // 17
+    pub const HEAD_TERM_START: usize = HEAD_PRED + 1; // 18 (4 columns)
+    pub const DERIVED_HASH: usize = HEAD_TERM_START + MAX_HEAD_TERMS; // 22
+    pub const SUB_VALUE_START: usize = DERIVED_HASH + 1; // 23 (8 columns)
+    pub const BODY_ROOT_START: usize = SUB_VALUE_START + MAX_SUB_VARS; // 31 (8 columns)
 
     // --- Substitution verification columns ---
     /// head_is_var[i]: 1 if head term i is a variable reference, 0 if constant.
-    pub const HEAD_IS_VAR_START: usize = 22;
+    pub const HEAD_IS_VAR_START: usize = BODY_ROOT_START + MAX_BODY_ATOMS; // 39
     /// head_raw_value[i]: the variable index (when is_var=1) or the constant value (when is_var=0).
-    pub const HEAD_RAW_VALUE_START: usize = 25;
+    pub const HEAD_RAW_VALUE_START: usize = HEAD_IS_VAR_START + MAX_HEAD_TERMS; // 43
     /// head_sel_var[term_i][var_j]: selector for which substitution variable to use.
-    /// Layout: term 0 uses columns 28..31, term 1 uses 32..35, term 2 uses 36..39.
-    pub const HEAD_SEL_VAR_START: usize = 28;
+    /// Layout: MAX_HEAD_TERMS * MAX_SUB_VARS = 4*8 = 32 columns.
+    pub const HEAD_SEL_VAR_START: usize = HEAD_RAW_VALUE_START + MAX_HEAD_TERMS; // 47
 
     /// Get the column index for head_sel_var[term_idx][var_idx].
     #[inline]
@@ -113,7 +116,7 @@ pub mod col {
 
     // --- Equal check columns ---
     /// Each Equal check has 3 columns: (active, term_a_resolved, term_b_resolved).
-    pub const EQ_CHECK_START: usize = 28 + MAX_HEAD_TERMS * MAX_SUB_VARS; // 28 + 12 = 40
+    pub const EQ_CHECK_START: usize = HEAD_SEL_VAR_START + MAX_HEAD_TERMS * MAX_SUB_VARS; // 79
 
     /// Get the column for eq_check[check_idx].active.
     #[inline]
@@ -133,8 +136,7 @@ pub mod col {
 
     // --- MemberOf check columns ---
     /// Each MemberOf check has 3 columns: (active, term_a_resolved, term_b_resolved).
-    /// Starts after Equal checks: 40 + MAX_EQUAL_CHECKS * 3 = 46
-    pub const MEMBEROF_CHECK_START: usize = EQ_CHECK_START + MAX_EQUAL_CHECKS * 3; // 46
+    pub const MEMBEROF_CHECK_START: usize = EQ_CHECK_START + MAX_EQUAL_CHECKS * 3; // 91
 
     /// Get the column for memberof_check[check_idx].active.
     #[inline]
@@ -154,19 +156,18 @@ pub mod col {
 
     // --- GTE check columns ---
     /// GTE check layout: active, term_a, term_b, diff, diff_bits[0..30]
-    /// Starts after MemberOf checks: 46 + MAX_MEMBEROF_CHECKS * 3 = 52
-    pub const GTE_CHECK_START: usize = MEMBEROF_CHECK_START + MAX_MEMBEROF_CHECKS * 3; // 52
+    pub const GTE_CHECK_START: usize = MEMBEROF_CHECK_START + MAX_MEMBEROF_CHECKS * 3; // 103
 
     /// GTE active flag column.
-    pub const GTE_CHECK_ACTIVE: usize = GTE_CHECK_START; // 52
+    pub const GTE_CHECK_ACTIVE: usize = GTE_CHECK_START; // 103
     /// GTE term_a (the larger value) column.
-    pub const GTE_CHECK_TERM_A: usize = GTE_CHECK_START + 1; // 53
+    pub const GTE_CHECK_TERM_A: usize = GTE_CHECK_START + 1; // 104
     /// GTE term_b (the smaller value) column.
-    pub const GTE_CHECK_TERM_B: usize = GTE_CHECK_START + 2; // 54
+    pub const GTE_CHECK_TERM_B: usize = GTE_CHECK_START + 2; // 105
     /// GTE diff = term_a - term_b column.
-    pub const GTE_CHECK_DIFF: usize = GTE_CHECK_START + 3; // 55
-    /// GTE diff bit decomposition starts here (31 bits, columns 56..86).
-    pub const GTE_CHECK_DIFF_BITS_START: usize = GTE_CHECK_START + 4; // 56
+    pub const GTE_CHECK_DIFF: usize = GTE_CHECK_START + 3; // 106
+    /// GTE diff bit decomposition starts here (31 bits, columns 107..137).
+    pub const GTE_CHECK_DIFF_BITS_START: usize = GTE_CHECK_START + 4; // 107
 
     /// Get the column for gte_check_diff_bits[bit_idx].
     #[inline]
@@ -174,7 +175,7 @@ pub mod col {
         GTE_CHECK_DIFF_BITS_START + bit_idx
     }
 
-    /// Total columns: GTE_CHECK_DIFF_BITS_START + GTE_DIFF_BITS = 56 + 31 = 87
+    /// Total columns: GTE_CHECK_DIFF_BITS_START + GTE_DIFF_BITS = 107 + 31 = 138
     pub const _TOTAL: usize = GTE_CHECK_DIFF_BITS_START + GTE_DIFF_BITS;
 }
 
@@ -191,7 +192,7 @@ pub struct CircuitRule {
     pub head_predicate: BabyBear,
     /// Head term patterns: each is either a direct value or an index into substitution.
     /// Encoded as (is_variable, value_or_var_index).
-    pub head_terms: [(bool, BabyBear); 3],
+    pub head_terms: [(bool, BabyBear); 4],
     /// Body atom patterns: predicate + term patterns for each body atom.
     pub body_atoms: Vec<BodyAtomPattern>,
     /// Equal checks: each is (term_a_is_var, term_a_value, term_b_is_var, term_b_value).
@@ -273,13 +274,13 @@ pub struct DerivationWitness {
     /// The derived fact's predicate.
     pub derived_predicate: BabyBear,
     /// The derived fact's terms.
-    pub derived_terms: [BabyBear; 3],
+    pub derived_terms: [BabyBear; 4],
 }
 
 impl DerivationWitness {
     /// Compute the derived fact hash.
     pub fn derived_hash(&self) -> BabyBear {
-        hash_fact(self.derived_predicate, &self.derived_terms)
+        hash_fact(self.derived_predicate, self.derived_terms.as_slice())
     }
 
     /// Resolve a term pattern using the current substitution.
@@ -388,6 +389,7 @@ impl Air for DerivationAir {
                         row[col::HEAD_TERM_START],
                         row[col::HEAD_TERM_START + 1],
                         row[col::HEAD_TERM_START + 2],
+                        row[col::HEAD_TERM_START + 3],
                     ];
                     let expected_hash = hash_fact(pred, &terms);
                     let claimed_hash = row[col::DERIVED_HASH];
@@ -622,9 +624,9 @@ impl Air for DerivationAir {
 
         // Head (derived fact)
         row[col::HEAD_PRED] = w.derived_predicate;
-        row[col::HEAD_TERM_START] = w.derived_terms[0];
-        row[col::HEAD_TERM_START + 1] = w.derived_terms[1];
-        row[col::HEAD_TERM_START + 2] = w.derived_terms[2];
+        for i in 0..MAX_HEAD_TERMS {
+            row[col::HEAD_TERM_START + i] = w.derived_terms[i];
+        }
         row[col::DERIVED_HASH] = derived_hash;
 
         // Substitution values
@@ -794,6 +796,7 @@ pub fn create_test_derivation() -> DerivationWitness {
             (true, BabyBear::new(0)), // X
             (true, BabyBear::new(1)), // Y
             (false, BabyBear::ZERO),  // unused
+            (false, BabyBear::ZERO),  // unused
         ],
         body_atoms: vec![
             BodyAtomPattern {
@@ -828,7 +831,7 @@ pub fn create_test_derivation() -> DerivationWitness {
         body_fact_hashes: vec![body_fact_1, body_fact_2],
         substitution: vec![alice, file], // X=alice, Y=file
         derived_predicate: access_pred,
-        derived_terms: [alice, file, BabyBear::ZERO],
+        derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
     }
 }
 
@@ -970,8 +973,8 @@ mod tests {
 
     #[test]
     fn test_derivation_air_constant_head_term() {
-        // Test rule with a constant in the head: result(X, "fixed_val", Y)
-        // head_terms = [(var 0), (const 500), (var 1)]
+        // Test rule with a constant in the head: result(X, "fixed_val", Y, _)
+        // head_terms = [(var 0), (const 500), (var 1), (const 0)]
         let access_pred = BabyBear::new(300);
         let owns_pred = BabyBear::new(100);
         let alice = BabyBear::new(1000);
@@ -987,6 +990,7 @@ mod tests {
                 (true, BabyBear::new(0)), // X -> substitution[0] = alice
                 (false, fixed_val),       // constant 500
                 (true, BabyBear::new(1)), // Y -> substitution[1] = file
+                (false, BabyBear::ZERO),  // unused
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1009,7 +1013,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![alice, file],
             derived_predicate: access_pred,
-            derived_terms: [alice, fixed_val, file], // X=1000, const=500, Y=2000
+            derived_terms: [alice, fixed_val, file, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1039,6 +1043,7 @@ mod tests {
                 (true, BabyBear::new(0)),
                 (false, fixed_val), // expects constant 500
                 (true, BabyBear::new(1)),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1061,7 +1066,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![alice, file],
             derived_predicate: access_pred,
-            derived_terms: [alice, BabyBear::new(777), file], // WRONG: 777 instead of 500
+            derived_terms: [alice, BabyBear::new(777), file, BabyBear::ZERO], // WRONG: 777 instead of 500
         };
 
         let air = DerivationAir::new(witness);
@@ -1091,6 +1096,7 @@ mod tests {
                 (true, BabyBear::new(0)), // X
                 (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1119,7 +1125,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![alice, alice], // X=alice, Y=alice
             derived_predicate: access_pred,
-            derived_terms: [alice, alice, BabyBear::ZERO],
+            derived_terms: [alice, alice, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1150,6 +1156,7 @@ mod tests {
                 (true, BabyBear::new(0)), // X
                 (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1178,7 +1185,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![alice, file], // X=alice, Y=file (different!)
             derived_predicate: access_pred,
-            derived_terms: [alice, file, BabyBear::ZERO],
+            derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1216,6 +1223,7 @@ mod tests {
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1244,7 +1252,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![alice, file],
             derived_predicate: access_pred,
-            derived_terms: [alice, file, BabyBear::ZERO],
+            derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1275,6 +1283,7 @@ mod tests {
                 (true, BabyBear::new(0)), // X
                 (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1303,7 +1312,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![action_hash, action_hash],
             derived_predicate: access_pred,
-            derived_terms: [action_hash, action_hash, BabyBear::ZERO],
+            derived_terms: [action_hash, action_hash, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1333,6 +1342,7 @@ mod tests {
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1361,7 +1371,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![request_hash, allowed_hash],
             derived_predicate: access_pred,
-            derived_terms: [request_hash, allowed_hash, BabyBear::ZERO],
+            derived_terms: [request_hash, allowed_hash, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1401,6 +1411,7 @@ mod tests {
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1428,7 +1439,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![budget, cost], // X=50, Y=10
             derived_predicate: access_pred,
-            derived_terms: [budget, cost, BabyBear::ZERO],
+            derived_terms: [budget, cost, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1458,6 +1469,7 @@ mod tests {
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
                 (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1485,7 +1497,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![budget, cost], // X=5, Y=10 (5 < 10, so GTE fails)
             derived_predicate: access_pred,
-            derived_terms: [budget, cost, BabyBear::ZERO],
+            derived_terms: [budget, cost, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1522,6 +1534,7 @@ mod tests {
                 (true, BabyBear::new(0)), // action_hash
                 (true, BabyBear::new(1)), // budget_remaining
                 (true, BabyBear::new(2)), // request_cost
+                (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: budget_pred,
@@ -1555,7 +1568,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![action_hash, budget, cost],
             derived_predicate: grant_pred,
-            derived_terms: [action_hash, budget, cost],
+            derived_terms: [action_hash, budget, cost, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);
@@ -1582,6 +1595,7 @@ mod tests {
             head_terms: [
                 (true, BabyBear::new(0)),
                 (true, BabyBear::new(1)),
+                (false, BabyBear::ZERO),
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
@@ -1610,7 +1624,7 @@ mod tests {
             body_fact_hashes: vec![body_fact],
             substitution: vec![val, val], // 10 >= 10
             derived_predicate: access_pred,
-            derived_terms: [val, val, BabyBear::ZERO],
+            derived_terms: [val, val, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let air = DerivationAir::new(witness);

@@ -79,6 +79,7 @@ pub mod poseidon2;
 pub mod poseidon2_air;
 pub mod presentation;
 
+pub mod non_revocation_air;
 pub mod note_spending_air;
 pub mod stark;
 
@@ -110,6 +111,10 @@ pub use mock_prover::{Air, MockProof, MockProofResult, MockProver};
 pub use multi_step_air::{
     ALLOW_PREDICATE, MultiStepDerivationAir, MultiStepStarkAir, MultiStepWitness,
     prove_authorization_stark, verify_authorization_stark,
+};
+pub use non_revocation_air::{
+    NonMembershipWitness, NonRevocationAir, NonRevocationWitness, SortedRevocationTree,
+    prove_non_revocation, revocation_hash_to_field, verify_non_revocation,
 };
 pub use note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, prove_note_spend, verify_note_spend,

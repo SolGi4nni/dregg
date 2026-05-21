@@ -1652,6 +1652,7 @@ mod tests {
                     (true, BabyBear::new(0)),
                     (false, BabyBear::ZERO),
                     (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![],
                 equal_checks: vec![],
@@ -1662,7 +1663,7 @@ mod tests {
             body_fact_hashes: vec![body_hash],
             substitution: vec![BabyBear::new(888)],
             derived_predicate: BabyBear::new(999),
-            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO],
+            derived_terms: [BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
         };
 
         let derivation_air = DerivationAir::new(derivation);
