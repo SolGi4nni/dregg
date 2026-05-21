@@ -1242,6 +1242,7 @@ mod participant_tests {
                 previous_receipt_hash: None,
                 agent: id_a,
                 routing_directives: vec![],
+                derivation_records: vec![],
                 executor_signature: None,
             },
             signatures: vec![(node_id(1), sig_1), (node_id(2), sig_2)],

@@ -392,6 +392,10 @@ impl TurnExecutor {
             previous_receipt_hash: turn.previous_receipt_hash,
             agent: turn.agent,
             routing_directives: Self::collect_routing_directives(&turn.call_forest, &turn_hash),
+            derivation_records: Self::collect_derivation_records(
+                &turn.call_forest,
+                self.current_timestamp as u64,
+            ),
             executor_signature: None,
         };
 
@@ -2198,6 +2202,102 @@ impl TurnExecutor {
         }
         for child in &tree.children {
             Self::collect_routing_directives_tree(child, turn_hash, directives);
+        }
+    }
+
+    /// Collect all capability derivation records from the call forest.
+    ///
+    /// Scans the forest for effects that create derivation edges:
+    /// - GrantCapability: source grants to target
+    /// - Introduce: introducer grants target access to recipient
+    /// - SpawnWithDelegation: parent's c-list snapshot to child
+    /// - Unseal: sealed capability recovered to recipient
+    fn collect_derivation_records(
+        forest: &crate::forest::CallForest,
+        timestamp: u64,
+    ) -> Vec<pyana_cell::DerivationRecord> {
+        let mut records = Vec::new();
+        let mut slot_counter: u32 = 0;
+        for tree in &forest.roots {
+            Self::collect_derivation_records_tree(tree, timestamp, &mut records, &mut slot_counter);
+        }
+        records
+    }
+
+    fn collect_derivation_records_tree(
+        tree: &CallTree,
+        timestamp: u64,
+        records: &mut Vec<pyana_cell::DerivationRecord>,
+        slot_counter: &mut u32,
+    ) {
+        for effect in &tree.action.effects {
+            match effect {
+                Effect::GrantCapability { from, to, cap } => {
+                    records.push(pyana_cell::DerivationRecord {
+                        target_cell: *to,
+                        target_slot: *slot_counter,
+                        edge: pyana_cell::DerivationEdge {
+                            source_cell: *from,
+                            source_slot: cap.slot,
+                            derivation_type: pyana_cell::DerivationType::Grant,
+                        },
+                        created_at: timestamp,
+                    });
+                    *slot_counter += 1;
+                }
+                Effect::Introduce {
+                    introducer,
+                    recipient,
+                    ..
+                } => {
+                    records.push(pyana_cell::DerivationRecord {
+                        target_cell: *recipient,
+                        target_slot: *slot_counter,
+                        edge: pyana_cell::DerivationEdge {
+                            source_cell: *introducer,
+                            source_slot: 0,
+                            derivation_type: pyana_cell::DerivationType::Introduce,
+                        },
+                        created_at: timestamp,
+                    });
+                    *slot_counter += 1;
+                }
+                Effect::SpawnWithDelegation {
+                    child_public_key,
+                    child_token_id,
+                    ..
+                } => {
+                    let child_id = CellId::derive_raw(child_public_key, child_token_id);
+                    records.push(pyana_cell::DerivationRecord {
+                        target_cell: child_id,
+                        target_slot: *slot_counter,
+                        edge: pyana_cell::DerivationEdge {
+                            source_cell: tree.action.target,
+                            source_slot: 0,
+                            derivation_type: pyana_cell::DerivationType::Delegate,
+                        },
+                        created_at: timestamp,
+                    });
+                    *slot_counter += 1;
+                }
+                Effect::Unseal { recipient, .. } => {
+                    records.push(pyana_cell::DerivationRecord {
+                        target_cell: *recipient,
+                        target_slot: *slot_counter,
+                        edge: pyana_cell::DerivationEdge {
+                            source_cell: tree.action.target,
+                            source_slot: 0,
+                            derivation_type: pyana_cell::DerivationType::Unseal,
+                        },
+                        created_at: timestamp,
+                    });
+                    *slot_counter += 1;
+                }
+                _ => {}
+            }
+        }
+        for child in &tree.children {
+            Self::collect_derivation_records_tree(child, timestamp, records, slot_counter);
         }
     }
 }

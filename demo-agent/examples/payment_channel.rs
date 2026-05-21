@@ -92,6 +92,7 @@ fn make_channel_receipt(
         previous_receipt_hash: previous_receipt_hash,
         agent,
         routing_directives: Vec::new(),
+        derivation_records: Vec::new(),
         executor_signature: None,
     }
 }

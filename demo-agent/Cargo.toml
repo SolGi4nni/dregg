@@ -90,5 +90,8 @@ name = "pipeline_demo"
 [[example]]
 name = "unified_harness"
 
+[[example]]
+name = "delegation_demo"
+
 [lints]
 workspace = true

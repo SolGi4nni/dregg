@@ -940,6 +940,7 @@ mod tests {
             previous_receipt_hash: None,
             agent,
             routing_directives: Vec::new(),
+            derivation_records: Vec::new(),
             executor_signature: None,
         }
     }

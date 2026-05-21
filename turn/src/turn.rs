@@ -3,7 +3,7 @@
 //! A Turn wraps a CallForest with metadata: who initiated it, replay protection
 //! via nonce, fee payment, and optional memo/expiration.
 
-use pyana_cell::{CellId, LedgerDelta};
+use pyana_cell::{CellId, DerivationRecord, LedgerDelta};
 use serde::{Deserialize, Serialize};
 
 use crate::error::TurnError;
@@ -107,6 +107,10 @@ pub struct TurnReceipt {
     /// Routing directives emitted by three-party introductions in this turn.
     #[serde(default)]
     pub routing_directives: Vec<RoutingDirective>,
+    /// Capability derivation records emitted by Grant, Introduce, SpawnWithDelegation,
+    /// and Unseal effects in this turn. Verifiers use these to reconstruct the CDT.
+    #[serde(default)]
+    pub derivation_records: Vec<DerivationRecord>,
     /// Ed25519 signature from the executor over the receipt hash.
     /// When present, this cryptographically binds the receipt to a known executor,
     /// making the federation exit path verifiable (not just a self-reported chain).
@@ -142,6 +146,10 @@ impl TurnReceipt {
         hasher.update(&(self.routing_directives.len() as u64).to_le_bytes());
         for rd in &self.routing_directives {
             hasher.update(&rd.hash());
+        }
+        hasher.update(&(self.derivation_records.len() as u64).to_le_bytes());
+        for dr in &self.derivation_records {
+            hasher.update(&dr.hash());
         }
         *hasher.finalize().as_bytes()
     }

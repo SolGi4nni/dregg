@@ -312,6 +312,7 @@ mod tests {
             previous_receipt_hash,
             agent,
             routing_directives: Vec::new(),
+            derivation_records: vec![],
             executor_signature: None,
         }
     }

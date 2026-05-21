@@ -13,6 +13,7 @@
 pub mod capability;
 pub mod cell;
 pub mod delegation;
+pub mod derivation;
 pub mod id;
 pub mod ledger;
 pub mod note;
@@ -30,6 +31,9 @@ mod tests;
 pub use capability::{CapabilityRef, CapabilitySet, is_attenuation};
 pub use cell::{Cell, VerificationKey};
 pub use delegation::DelegatedRef;
+pub use derivation::{
+    DerivationEdge, DerivationNode, DerivationRecord, DerivationTree, DerivationType,
+};
 pub use id::CellId;
 pub use ledger::{CellStateDelta, Ledger, LedgerDelta, LedgerError, MembershipProof, Side};
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};

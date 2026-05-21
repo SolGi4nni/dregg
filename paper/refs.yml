@@ -114,3 +114,28 @@ babybear:
   author: ["Polygon Labs"]
   url: "https://docs.polygon.technology/miden/"
   date: 2024
+
+sel4:
+  type: article
+  title: "seL4: Formal Verification of an OS Kernel"
+  author: ["Klein, Gerwin", "Elphinstone, Kevin", "Heiser, Gernot", "Andronick, June", "Cock, David", "Derrin, Philip", "Elkaduwe, Dhammika", "Engelhardt, Kai", "Kolanski, Rafal", "Norrish, Michael", "Sewell, Thomas", "Tuch, Harvey", "Winwood, Simon"]
+  date: 2009
+  parent:
+    type: proceedings
+    title: "ACM Symposium on Operating Systems Principles (SOSP)"
+
+capnproto:
+  type: web
+  title: "Cap'n Proto: Capability-Based RPC Protocol"
+  author: ["Varda, Kenton"]
+  url: "https://capnproto.org/"
+  date: 2013
+
+elang:
+  type: article
+  title: "Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control"
+  author: ["Miller, Mark S."]
+  date: 2006
+  parent:
+    type: proceedings
+    title: "PhD Thesis, Johns Hopkins University"

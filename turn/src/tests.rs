@@ -4619,3 +4619,623 @@ fn test_budget_gate_none_allows_all_turns() {
     // No budget gate means no budget checking.
     assert!(executor.budget_gate.is_none());
 }
+
+// =============================================================================
+// Tests: Snapshot+Refresh Delegation
+// =============================================================================
+
+#[test]
+fn test_spawn_with_delegation_child_gets_parent_caps() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    // Give parent capabilities to target cells.
+    let (target_a, _) = make_open_cell(10, 0);
+    let (target_b, _) = make_open_cell(11, 0);
+    let (target_c, _) = make_open_cell(12, 0);
+    let target_a_id = target_a.id;
+    let target_b_id = target_b.id;
+    let target_c_id = target_c.id;
+
+    parent.capabilities.grant(target_a_id, AuthRequired::None);
+    parent.capabilities.grant(target_b_id, AuthRequired::None);
+    parent.capabilities.grant(target_c_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target_a).unwrap();
+    ledger.insert_cell(target_b).unwrap();
+    ledger.insert_cell(target_c).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    // Build turn that spawns child with delegation.
+    let action = Action {
+        target: parent_id,
+        method: symbol("spawn_delegated"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(action);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "turn should commit: {:?}", result);
+
+    // Verify the child cell was created with delegation snapshot.
+    let child = ledger.get(&child_id).expect("child should exist");
+    assert_eq!(child.delegate, Some(parent_id));
+    let delegation = child.delegation.as_ref().expect("child should have delegation");
+    assert_eq!(delegation.source, parent_id);
+    assert_eq!(delegation.snapshot.len(), 3);
+    assert_eq!(delegation.max_staleness, 300);
+    assert_eq!(delegation.refreshed_at, 1000);
+    assert_eq!(delegation.delegation_epoch, 0);
+
+    // Child can see all 3 parent capabilities.
+    assert!(delegation.has_capability(&target_a_id));
+    assert!(delegation.has_capability(&target_b_id));
+    assert!(delegation.has_capability(&target_c_id));
+}
+
+#[test]
+fn test_child_acts_via_delegated_caps() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    let (target, _) = make_open_cell(10, 0);
+    let target_id = target.id;
+    parent.capabilities.grant(target_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    // Spawn child with delegation.
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    let spawn_action = Action {
+        target: parent_id,
+        method: symbol("spawn"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn1 = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(spawn_action);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn1, &mut ledger);
+    assert!(result.is_committed());
+
+    // Now child acts on target using delegated capability.
+    ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
+
+    let value = [99u8; 32];
+    let child_action = Action {
+        target: target_id,
+        method: symbol("set_field"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn2 = Turn {
+        agent: child_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(child_action);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn2, &mut ledger);
+    assert!(result.is_committed(), "child should act via delegation: {:?}", result);
+
+    // Verify the field was set.
+    let target_cell = ledger.get(&target_id).unwrap();
+    assert_eq!(target_cell.state.fields[0], value);
+}
+
+#[test]
+fn test_refresh_delegation_updates_snapshot() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    let (target_a, _) = make_open_cell(10, 0);
+    let target_a_id = target_a.id;
+    parent.capabilities.grant(target_a_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target_a).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    // Spawn child with delegation (parent has 1 cap).
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    let spawn = Action {
+        target: parent_id,
+        method: symbol("spawn"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn1 = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(spawn);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    executor.execute(&turn1, &mut ledger);
+
+    // Parent gains a new capability.
+    let (target_b, _) = make_open_cell(11, 0);
+    let target_b_id = target_b.id;
+    ledger.insert_cell(target_b).unwrap();
+    ledger
+        .get_mut(&parent_id)
+        .unwrap()
+        .capabilities
+        .grant(target_b_id, AuthRequired::None);
+
+    // Child doesn't have target_b yet.
+    let child = ledger.get(&child_id).unwrap();
+    assert!(!child.delegation.as_ref().unwrap().has_capability(&target_b_id));
+
+    // Child refreshes delegation.
+    ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
+    executor.set_timestamp(2000);
+
+    let refresh = Action {
+        target: child_id,
+        method: symbol("refresh"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::RefreshDelegation],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn2 = Turn {
+        agent: child_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(refresh);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn2, &mut ledger);
+    assert!(result.is_committed(), "refresh should work: {:?}", result);
+
+    // Now child has target_b in snapshot.
+    let child = ledger.get(&child_id).unwrap();
+    let delegation = child.delegation.as_ref().unwrap();
+    assert!(delegation.has_capability(&target_a_id));
+    assert!(delegation.has_capability(&target_b_id));
+    assert_eq!(delegation.snapshot.len(), 2);
+    assert_eq!(delegation.refreshed_at, 2000);
+}
+
+#[test]
+fn test_revoke_delegation_bumps_epoch_and_clears_child() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    let (target, _) = make_open_cell(10, 0);
+    let target_id = target.id;
+    parent.capabilities.grant(target_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    // Spawn child.
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    let spawn = Action {
+        target: parent_id,
+        method: symbol("spawn"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn1 = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(spawn);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    executor.execute(&turn1, &mut ledger);
+
+    // Verify child has delegation.
+    assert!(ledger.get(&child_id).unwrap().delegation.is_some());
+    assert_eq!(ledger.get(&parent_id).unwrap().state.delegation_epoch, 0);
+
+    // Parent needs capability to child for RevokeDelegation effect.
+    ledger
+        .get_mut(&parent_id)
+        .unwrap()
+        .capabilities
+        .grant(child_id, AuthRequired::None);
+
+    // Parent revokes delegation.
+    let revoke = Action {
+        target: parent_id,
+        method: symbol("revoke"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::RevokeDelegation { child: child_id }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn2 = Turn {
+        agent: parent_id,
+        nonce: 1,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(revoke);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn2, &mut ledger);
+    assert!(result.is_committed(), "revoke should work: {:?}", result);
+
+    // Parent's epoch bumped.
+    assert_eq!(ledger.get(&parent_id).unwrap().state.delegation_epoch, 1);
+    // Child's delegation is cleared.
+    assert!(ledger.get(&child_id).unwrap().delegation.is_none());
+}
+
+#[test]
+fn test_parent_new_cap_invisible_until_refresh() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    let (target_a, _) = make_open_cell(10, 0);
+    let target_a_id = target_a.id;
+    parent.capabilities.grant(target_a_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target_a).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    // Spawn child.
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    let spawn = Action {
+        target: parent_id,
+        method: symbol("spawn"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn1 = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(spawn);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    executor.execute(&turn1, &mut ledger);
+
+    // Parent gains new cap to target_b.
+    let (target_b, _) = make_open_cell(11, 0);
+    let target_b_id = target_b.id;
+    ledger.insert_cell(target_b).unwrap();
+    ledger
+        .get_mut(&parent_id)
+        .unwrap()
+        .capabilities
+        .grant(target_b_id, AuthRequired::None);
+
+    // Child tries to use target_b via delegation — should fail.
+    ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
+
+    let child_action = Action {
+        target: target_b_id,
+        method: symbol("use"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn2 = Turn {
+        agent: child_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(child_action);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn2, &mut ledger);
+    assert!(
+        !result.is_committed(),
+        "child should NOT access target_b without refresh"
+    );
+}
+
+#[test]
+fn test_parent_loses_cap_child_still_has_until_refresh() {
+    let mut ledger = Ledger::new();
+    let (mut parent, _) = make_open_cell(1, 100_000);
+    let parent_id = parent.id;
+
+    let (target, _) = make_open_cell(10, 0);
+    let target_id = target.id;
+    let slot = parent.capabilities.grant(target_id, AuthRequired::None);
+
+    ledger.insert_cell(parent).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_timestamp(1000);
+
+    // Spawn child.
+    let child_pk = [42u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+
+    let spawn = Action {
+        target: parent_id,
+        method: symbol("spawn"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SpawnWithDelegation {
+            child_public_key: child_pk,
+            child_token_id: child_token,
+            max_staleness: 300,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn1 = Turn {
+        agent: parent_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(spawn);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    executor.execute(&turn1, &mut ledger);
+
+    // Parent revokes its own capability to target.
+    ledger.get_mut(&parent_id).unwrap().capabilities.revoke(slot);
+
+    // Child still has target in delegation snapshot — can still act.
+    ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
+
+    let value = [77u8; 32];
+    let child_action = Action {
+        target: target_id,
+        method: symbol("set"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn2 = Turn {
+        agent: child_id,
+        nonce: 0,
+        fee: 0,
+        call_forest: {
+            let mut f = CallForest::new();
+            f.add_root(child_action);
+            f
+        },
+        valid_until: None,
+        memo: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+    let result = executor.execute(&turn2, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "child should still use snapshot even after parent lost cap: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_is_stale_various_timestamps() {
+    use pyana_cell::DelegatedRef;
+
+    let delegation = DelegatedRef::new(
+        CellId::derive_raw(&[1u8; 32], &[0u8; 32]),
+        vec![],
+        0,
+        1000, // refreshed_at
+        300,  // max_staleness = 300s
+    );
+
+    // Not stale: within window.
+    assert!(!delegation.is_stale(1000));
+    assert!(!delegation.is_stale(1100));
+    assert!(!delegation.is_stale(1300));
+
+    // Stale: past the window.
+    assert!(delegation.is_stale(1301));
+    assert!(delegation.is_stale(2000));
+
+    // max_staleness = 0 means always stale.
+    let always_stale = DelegatedRef::new(
+        CellId::derive_raw(&[1u8; 32], &[0u8; 32]),
+        vec![],
+        0,
+        1000,
+        0,
+    );
+    assert!(always_stale.is_stale(1000));
+    assert!(always_stale.is_stale(0));
+}
