@@ -74,6 +74,10 @@ impl StarkAir for Poseidon2Air {
         7
     }
 
+    fn air_name(&self) -> &'static str {
+        "pyana-poseidon2-v1"
+    }
+
     fn has_chain_continuity(&self) -> bool {
         false
     }
@@ -199,6 +203,10 @@ impl StarkAir for MerklePoseidon2Air {
         7
     }
 
+    fn air_name(&self) -> &'static str {
+        "pyana-merkle-poseidon2-round-v1"
+    }
+
     fn has_chain_continuity(&self) -> bool {
         false
     }
@@ -281,6 +289,10 @@ impl StarkAir for MerklePoseidon2StarkAir {
 
     fn constraint_degree(&self) -> usize {
         7
+    }
+
+    fn air_name(&self) -> &'static str {
+        "pyana-merkle-poseidon2-v1"
     }
 
     fn eval_constraints(

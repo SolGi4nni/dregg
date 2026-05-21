@@ -72,7 +72,7 @@ pub enum VerificationMode {
 /// The result of an authorization presentation, parameterized by verification mode.
 ///
 /// Each variant carries exactly the information the verifier receives for that mode.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum AuthorizationPresentation {
     /// Trusted mode: full clearance and derivation trace, no proof needed.
     Trusted {
@@ -106,7 +106,7 @@ pub enum AuthorizationPresentation {
 // =============================================================================
 
 /// A token held by this wallet, along with metadata.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HeldToken {
     /// Human-readable label for this token.
     pub label: String,
@@ -128,7 +128,7 @@ impl HeldToken {
 }
 
 /// A token that has been delegated to another agent.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DelegatedToken {
     /// The held token that was attenuated and delegated.
     pub token: HeldToken,
@@ -139,7 +139,7 @@ pub struct DelegatedToken {
 }
 
 /// A turn signed by this wallet's identity, ready for submission.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SignedTurn {
     /// The original turn.
     pub turn: Turn,

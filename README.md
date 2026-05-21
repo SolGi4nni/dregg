@@ -27,23 +27,27 @@ Your agents hold unforgeable capabilities, delegate them with attenuation-only n
 ## Quick example
 
 ```rust
-use pyana_sdk::{AgentWallet, AgentRuntime};
-use pyana_token::Attenuation;
-use pyana_turn::{TurnBuilder, Effect};
+use pyana_sdk::{AgentWallet, AgentRuntime, VerificationMode};
+use pyana_token::{Attenuation, AuthRequest};
 
 // Agent spawns a sub-agent with attenuated capabilities
 let mut wallet = AgentWallet::new();
 let root = wallet.mint_token(b"secret-key-material-32-bytes!!!!", "inventory-service");
 let child_token = wallet.attenuate(&root, &Attenuation {
     services: vec![("inventory".into(), "read".into())],
-    max_ttl: Some(std::time::Duration::from_secs(3600)),
+    not_after: Some(chrono::Utc::now().timestamp() + 3600),
     ..Default::default()
 }).unwrap();
 
 // The sub-agent proves authorization to a third party
 // without revealing the delegation chain.
-let proof = wallet.present_private(&child_token, "inventory", "read").unwrap();
-// proof is a ~24 KiB STARK. The verifier learns ONE BIT: authorized or not.
+let request = AuthRequest {
+    service: Some("inventory".into()),
+    action: Some("read".into()),
+    ..Default::default()
+};
+let presentation = wallet.authorize(&child_token, &request, VerificationMode::FullyPrivate).unwrap();
+// presentation.proof is a ~24 KiB STARK. The verifier learns ONE BIT: authorized or not.
 ```
 
 ## Verification modes

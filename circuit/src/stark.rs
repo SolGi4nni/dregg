@@ -190,7 +190,6 @@ impl Transcript {
         hasher.update(domain_sep);
         Self { hasher, counter: 0 }
     }
-    #[allow(dead_code)]
     fn absorb_bytes(&mut self, data: &[u8]) {
         self.hasher.update(data);
     }
@@ -230,6 +229,17 @@ impl Transcript {
 const NUM_QUERIES: usize = 50;
 const BLOWUP: usize = 4;
 
+/// Context for STARK proof generation/verification providing temporal binding
+/// and session isolation. When provided, these values are absorbed into the
+/// Fiat-Shamir transcript to prevent proof replay across different contexts.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct StarkContext {
+    /// Optional nonce for temporal binding (e.g., session ID, random challenge).
+    pub nonce: Option<[u8; 32]>,
+    /// Optional timestamp for freshness (unix seconds).
+    pub timestamp: Option<u64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StarkProof {
     pub trace_commitment: [u8; 32],
@@ -240,6 +250,10 @@ pub struct StarkProof {
     pub public_inputs: Vec<u32>,
     pub trace_len: usize,
     pub num_cols: usize,
+    /// The AIR identity that produced this proof (for cross-AIR confusion prevention).
+    pub air_name: String,
+    /// Optional nonce for temporal binding (must match what verifier expects).
+    pub nonce: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -286,6 +300,9 @@ pub trait StarkAir {
     fn has_chain_continuity(&self) -> bool {
         true
     }
+    /// Unique name identifying this AIR for domain separation in the Fiat-Shamir transcript.
+    /// Each AIR must return a distinct name to prevent cross-AIR proof confusion.
+    fn air_name(&self) -> &'static str;
 }
 
 pub struct MerkleStarkAir;
@@ -297,6 +314,9 @@ impl StarkAir for MerkleStarkAir {
     }
     fn constraint_degree(&self) -> usize {
         4
+    }
+    fn air_name(&self) -> &'static str {
+        "pyana-merkle-v1"
     }
     fn eval_constraints(
         &self,
@@ -324,6 +344,16 @@ pub fn prove(
     air: &dyn StarkAir,
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
+) -> StarkProof {
+    prove_with_context(air, trace, public_inputs, None)
+}
+
+/// Prove with an optional context for temporal binding and session isolation.
+pub fn prove_with_context(
+    air: &dyn StarkAir,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    context: Option<&StarkContext>,
 ) -> StarkProof {
     let num_rows = trace.len();
     let num_cols = air.width();
@@ -354,6 +384,26 @@ pub fn prove(
     let trace_tree = MerkleTree::new(trace_leaves);
 
     let mut transcript = Transcript::new(b"merkle-stark");
+
+    // AIR-specific domain separation: absorb the AIR's identity and parameters
+    transcript.absorb_bytes(air.air_name().as_bytes());
+    transcript.absorb_bytes(&(num_rows as u32).to_le_bytes());
+    transcript.absorb_bytes(&(air.width() as u32).to_le_bytes());
+    transcript.absorb_bytes(&(air.constraint_degree() as u32).to_le_bytes());
+    transcript.absorb_bytes(&(BLOWUP as u32).to_le_bytes());
+    transcript.absorb_bytes(&(NUM_QUERIES as u32).to_le_bytes());
+
+    // Temporal binding: absorb optional nonce/timestamp
+    let nonce = context.and_then(|c| c.nonce);
+    if let Some(ref ctx) = context {
+        if let Some(ref n) = ctx.nonce {
+            transcript.absorb_bytes(n);
+        }
+        if let Some(ts) = ctx.timestamp {
+            transcript.absorb_bytes(&ts.to_le_bytes());
+        }
+    }
+
     transcript.absorb_hash(&trace_tree.root());
     for pi in public_inputs {
         transcript.absorb_field(*pi);
@@ -454,6 +504,8 @@ pub fn prove(
         public_inputs: public_inputs.iter().map(|v| v.0).collect(),
         trace_len: num_rows,
         num_cols,
+        air_name: air.air_name().to_string(),
+        nonce,
     }
 }
 
@@ -501,6 +553,31 @@ pub fn verify(
     proof: &StarkProof,
     public_inputs: &[BabyBear],
 ) -> Result<(), String> {
+    verify_with_context(air, proof, public_inputs, None)
+}
+
+/// Verify with an optional context for temporal binding and session isolation.
+pub fn verify_with_context(
+    air: &dyn StarkAir,
+    proof: &StarkProof,
+    public_inputs: &[BabyBear],
+    context: Option<&StarkContext>,
+) -> Result<(), String> {
+    // Verify AIR identity matches
+    if proof.air_name != air.air_name() {
+        return Err(format!(
+            "AIR identity mismatch: proof was generated for '{}', but verifying with '{}'",
+            proof.air_name,
+            air.air_name()
+        ));
+    }
+
+    // Verify nonce matches
+    let expected_nonce = context.and_then(|c| c.nonce);
+    if proof.nonce != expected_nonce {
+        return Err("Nonce mismatch: proof nonce does not match verification context".to_string());
+    }
+
     let num_cols = proof.num_cols;
     let trace_len = proof.trace_len;
     let domain_size = trace_len * BLOWUP;
@@ -511,6 +588,25 @@ pub fn verify(
     }
 
     let mut transcript = Transcript::new(b"merkle-stark");
+
+    // AIR-specific domain separation (must match prover)
+    transcript.absorb_bytes(air.air_name().as_bytes());
+    transcript.absorb_bytes(&(trace_len as u32).to_le_bytes());
+    transcript.absorb_bytes(&(air.width() as u32).to_le_bytes());
+    transcript.absorb_bytes(&(air.constraint_degree() as u32).to_le_bytes());
+    transcript.absorb_bytes(&(BLOWUP as u32).to_le_bytes());
+    transcript.absorb_bytes(&(NUM_QUERIES as u32).to_le_bytes());
+
+    // Temporal binding (must match prover)
+    if let Some(ref ctx) = context {
+        if let Some(ref n) = ctx.nonce {
+            transcript.absorb_bytes(n);
+        }
+        if let Some(ts) = ctx.timestamp {
+            transcript.absorb_bytes(&ts.to_le_bytes());
+        }
+    }
+
     transcript.absorb_hash(&proof.trace_commitment);
     for pi in public_inputs {
         transcript.absorb_field(*pi);
@@ -839,6 +935,20 @@ pub fn proof_to_bytes(proof: &StarkProof) -> Vec<u8> {
             }
         }
     }
+    // Serialize air_name
+    let name_bytes = proof.air_name.as_bytes();
+    b.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    b.extend_from_slice(name_bytes);
+    // Serialize nonce
+    match &proof.nonce {
+        Some(n) => {
+            b.push(1);
+            b.extend_from_slice(n);
+        }
+        None => {
+            b.push(0);
+        }
+    }
     b
 }
 
@@ -961,6 +1071,28 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
             fri_layers,
         });
     }
+    // Read air_name length and bytes
+    let air_name_len = ru32(&mut pos, bytes)? as usize;
+    if pos + air_name_len > bytes.len() {
+        return Err("unexpected end reading air_name".to_string());
+    }
+    let air_name = String::from_utf8(bytes[pos..pos + air_name_len].to_vec())
+        .map_err(|_| "invalid utf8 in air_name".to_string())?;
+    pos += air_name_len;
+
+    // Read nonce (1 byte flag + optional 32 bytes)
+    if pos >= bytes.len() {
+        return Err("unexpected end reading nonce flag".to_string());
+    }
+    let has_nonce = bytes[pos];
+    pos += 1;
+    let nonce = if has_nonce != 0 {
+        let n = rh(&mut pos, bytes)?;
+        Some(n)
+    } else {
+        None
+    };
+
     Ok(StarkProof {
         trace_commitment,
         constraint_commitment,
@@ -970,6 +1102,8 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
         public_inputs,
         trace_len,
         num_cols,
+        air_name,
+        nonce,
     })
 }
 
@@ -1251,5 +1385,201 @@ mod tests {
             verify(&air, &proof, &pi).is_err(),
             "corrupted FRI final poly must be rejected"
         );
+    }
+
+    // ========================================================================
+    // Domain separation and temporal binding tests
+    // ========================================================================
+
+    #[test]
+    fn cross_air_proof_rejected() {
+        // Prove with MerkleStarkAir, try to verify with a different AIR identity.
+        // This simulates cross-AIR proof confusion.
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let proof = prove(&air, &trace, &pi);
+
+        // Verify with the correct AIR works
+        assert!(verify(&air, &proof, &pi).is_ok());
+
+        // Try to verify with a different AIR (Poseidon2Air) -- should be rejected
+        // We use a wrapper struct to simulate a different AIR with the same width
+        struct FakeAir;
+        impl StarkAir for FakeAir {
+            fn width(&self) -> usize { 6 }
+            fn constraint_degree(&self) -> usize { 4 }
+            fn air_name(&self) -> &'static str { "pyana-poseidon2-v1" }
+            fn has_chain_continuity(&self) -> bool { true }
+            fn eval_constraints(
+                &self,
+                local: &[BabyBear],
+                _next: &[BabyBear],
+                _public_inputs: &[BabyBear],
+                alpha: BabyBear,
+            ) -> BabyBear {
+                let (current, sib0, sib1, sib2, position, parent) =
+                    (local[0], local[1], local[2], local[3], local[4], local[5]);
+                let c1 = parent - (current + sib0 + sib1 + sib2 + position);
+                let c2 = position
+                    * (position - BabyBear::ONE)
+                    * (position - BabyBear::new(2))
+                    * (position - BabyBear::new(3));
+                c1 + alpha * c2
+            }
+        }
+
+        let fake_air = FakeAir;
+        let result = verify(&fake_air, &proof, &pi);
+        assert!(result.is_err(), "Cross-AIR verification must be rejected");
+        assert!(
+            result.unwrap_err().contains("AIR identity mismatch"),
+            "Error must mention AIR identity mismatch"
+        );
+    }
+
+    #[test]
+    fn nonce_mismatch_rejected() {
+        // Prove with nonce A, try to verify with nonce B -- should be rejected
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+
+        let nonce_a = [1u8; 32];
+        let nonce_b = [2u8; 32];
+
+        let ctx_a = StarkContext {
+            nonce: Some(nonce_a),
+            timestamp: None,
+        };
+        let ctx_b = StarkContext {
+            nonce: Some(nonce_b),
+            timestamp: None,
+        };
+
+        let proof = prove_with_context(&air, &trace, &pi, Some(&ctx_a));
+
+        // Verify with the correct nonce works
+        assert!(verify_with_context(&air, &proof, &pi, Some(&ctx_a)).is_ok());
+
+        // Verify with a different nonce is rejected
+        let result = verify_with_context(&air, &proof, &pi, Some(&ctx_b));
+        assert!(result.is_err(), "Nonce mismatch must be rejected");
+        assert!(
+            result.unwrap_err().contains("Nonce mismatch"),
+            "Error must mention nonce mismatch"
+        );
+
+        // Verify without nonce is also rejected (proof has nonce, verifier doesn't)
+        let result = verify_with_context(&air, &proof, &pi, None);
+        assert!(result.is_err(), "Missing nonce must be rejected");
+    }
+
+    #[test]
+    fn no_nonce_backward_compatible() {
+        // Prove without nonce, verify without nonce -- should still work
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+
+        // prove() uses None context internally
+        let proof = prove(&air, &trace, &pi);
+        assert!(proof.nonce.is_none());
+        assert!(verify(&air, &proof, &pi).is_ok());
+
+        // Explicit None context also works
+        let proof2 = prove_with_context(&air, &trace, &pi, None);
+        assert!(verify_with_context(&air, &proof2, &pi, None).is_ok());
+    }
+
+    #[test]
+    fn timestamp_binding_works() {
+        // Prove with a timestamp, verify with the same timestamp -- works
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+
+        let ctx = StarkContext {
+            nonce: None,
+            timestamp: Some(1716000000),
+        };
+
+        let proof = prove_with_context(&air, &trace, &pi, Some(&ctx));
+
+        // Same context verifies
+        assert!(verify_with_context(&air, &proof, &pi, Some(&ctx)).is_ok());
+
+        // Different timestamp fails (transcript mismatch causes query index mismatch)
+        let ctx_diff = StarkContext {
+            nonce: None,
+            timestamp: Some(1716000001),
+        };
+        let result = verify_with_context(&air, &proof, &pi, Some(&ctx_diff));
+        assert!(result.is_err(), "Different timestamp must cause verification failure");
+    }
+
+    #[test]
+    fn air_name_stored_in_proof() {
+        let (trace, pi) = generate_merkle_trace(
+            42,
+            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let proof = prove(&air, &trace, &pi);
+        assert_eq!(proof.air_name, "pyana-merkle-v1");
+        assert_eq!(proof.nonce, None);
+    }
+
+    #[test]
+    fn proof_roundtrip_with_nonce() {
+        let (trace, pi) = generate_merkle_trace(
+            999,
+            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let ctx = StarkContext {
+            nonce: Some([0xAB; 32]),
+            timestamp: None,
+        };
+        let proof = prove_with_context(&air, &trace, &pi, Some(&ctx));
+        let bytes = proof_to_bytes(&proof);
+        let proof2 = proof_from_bytes(&bytes).unwrap();
+        assert_eq!(proof2.air_name, "pyana-merkle-v1");
+        assert_eq!(proof2.nonce, Some([0xAB; 32]));
+        assert!(verify_with_context(&air, &proof2, &pi, Some(&ctx)).is_ok());
     }
 }

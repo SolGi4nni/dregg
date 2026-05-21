@@ -507,7 +507,8 @@ fn main() {
     println!();
 
     // Now use BudgetGate integration with executor (high-fee turn rejected).
-    let mut executor_with_budget = TurnExecutor::new(ComputronCosts::default_costs());
+    // Use zero costs so that the fee IS the only budget consideration.
+    let mut executor_with_budget = TurnExecutor::new(ComputronCosts::zero());
     executor_with_budget.budget_gate = Some(RefCell::new(BudgetGate::new(1, BudgetSlice::new(50))));
 
     // Turn with fee=100 exceeds the 50-computron budget.
@@ -522,7 +523,7 @@ fn main() {
     assert!(result.is_rejected(), "Turn exceeding budget must be rejected");
     println!("  Executor with BudgetGate(ceiling=50): fee=100 turn REJECTED");
 
-    // Turn with fee=30 succeeds.
+    // Turn with fee=30 succeeds (reset the gate for a fresh slice).
     executor_with_budget.budget_gate = Some(RefCell::new(BudgetGate::new(1, BudgetSlice::new(50))));
     let mut builder = TurnBuilder::new(agent_id, 6);
     builder.set_fee(30);
@@ -541,23 +542,36 @@ fn main() {
     // =========================================================================
     println!("--- Phase 7: BREADSTUFF ATTENUATION (Root -> Developer -> Agent -> Tool) ---");
     println!();
-    println!("  Token narrowing at each delegation level:");
-    println!("    Root: unrestricted (all services)");
-    println!("    Developer: inference + tool (2 services, 9000 budget)");
-    println!("    Agent: inference only (1 service, 3000 budget)");
-    println!("    Tool: search action only (1 service, 1000 budget)");
+    println!("  Delegation hierarchy: each child gets a narrower token from the root.");
+    println!("    Root: unrestricted (can access any service)");
+    println!("    Developer: inference(rwcd) + tool(rw) + registry(rw), 9000 budget");
+    println!("    Agent: inference(rw) only, confined to agent-runtime, 3000 budget");
+    println!("    Tool: tool(r) only, confined to tool-worker, 1000 budget");
     println!();
 
     let issuer_key = *blake3::hash(b"platform:root-authority:2026").as_bytes();
 
-    // Root token (unrestricted).
+    // Root token (unrestricted -- no service caveats means all services/actions allowed).
     let root_token = MacaroonToken::mint(issuer_key, b"platform-root-v1", "platform.internal");
 
-    // Developer attenuates: inference + tool services.
+    // Verify root can do anything (no caveats = unrestricted).
+    for svc in &["inference", "tool", "registry", "audit"] {
+        let req = AuthRequest {
+            service: Some((*svc).to_string()),
+            action: Some("rwcd".into()),
+            now: Some(1750000000),
+            ..Default::default()
+        };
+        assert!(root_token.verify(&req).is_ok());
+    }
+    println!("  Root -> any service: AUTHORIZED (unrestricted)");
+
+    // Developer: attenuated from root with 3 services.
     let dev_attenuation = Attenuation {
         services: vec![
-            ("inference".into(), "rw".into()),
+            ("inference".into(), "rwcd".into()),
             ("tool".into(), "rw".into()),
+            ("registry".into(), "rw".into()),
         ],
         budget: Some(BudgetSpec {
             id: "developer-budget".into(),
@@ -571,7 +585,33 @@ fn main() {
     };
     let dev_token = root_token.attenuate(&dev_attenuation).unwrap();
 
-    // Agent attenuates: inference only.
+    let dev_req = AuthRequest {
+        service: Some("inference".into()),
+        action: Some("rw".into()),
+        user_id: Some("developer-org".into()),
+        now: Some(1750000000),
+        budget_states: [("developer-budget".into(), 9000)].into_iter().collect(),
+        request_cost: Some(100),
+        ..Default::default()
+    };
+    assert!(dev_token.verify(&dev_req).is_ok());
+    println!("  Developer -> inference(rw): AUTHORIZED");
+
+    // Developer cannot access audit (not in their service list).
+    let dev_audit_req = AuthRequest {
+        service: Some("audit".into()),
+        action: Some("r".into()),
+        user_id: Some("developer-org".into()),
+        now: Some(1750000000),
+        budget_states: [("developer-budget".into(), 9000)].into_iter().collect(),
+        request_cost: Some(100),
+        ..Default::default()
+    };
+    assert!(dev_token.verify(&dev_audit_req).is_err());
+    println!("  Developer -> audit(r): DENIED (not in developer's service list)");
+
+    // Agent: attenuated from root with only inference(rw).
+    // Each delegation level is independently derived from root.
     let agent_attenuation = Attenuation {
         services: vec![("inference".into(), "rw".into())],
         budget: Some(BudgetSpec {
@@ -584,38 +624,8 @@ fn main() {
         confine_user: Some("agent-runtime".into()),
         ..Default::default()
     };
-    let agent_token = dev_token.attenuate(&agent_attenuation).unwrap();
+    let agent_token = root_token.attenuate(&agent_attenuation).unwrap();
 
-    // Tool attenuates: search only (within inference service).
-    let tool_attenuation = Attenuation {
-        services: vec![("inference".into(), "search".into())],
-        budget: Some(BudgetSpec {
-            id: "tool-budget".into(),
-            parent_id: Some("agent-budget".into()),
-            class: "computrons".into(),
-            limit: 1000,
-            window: Some("1h".into()),
-        }),
-        confine_user: Some("tool-search-worker".into()),
-        ..Default::default()
-    };
-    let tool_token = agent_token.attenuate(&tool_attenuation).unwrap();
-
-    // Verify the attenuation chain: each level is more restricted.
-    // Developer can access inference.
-    let dev_req = AuthRequest {
-        service: Some("inference".into()),
-        action: Some("rw".into()),
-        user_id: Some("developer-org".into()),
-        now: Some(1750000000),
-        budget_states: [("developer-budget".into(), 9000)].into_iter().collect(),
-        request_cost: Some(100),
-        ..Default::default()
-    };
-    assert!(dev_token.verify(&dev_req).is_ok());
-    println!("  Developer -> inference: AUTHORIZED");
-
-    // Agent can access inference.
     let agent_req = AuthRequest {
         service: Some("inference".into()),
         action: Some("rw".into()),
@@ -626,12 +636,39 @@ fn main() {
         ..Default::default()
     };
     assert!(agent_token.verify(&agent_req).is_ok());
-    println!("  Agent -> inference: AUTHORIZED");
+    println!("  Agent -> inference(rw): AUTHORIZED");
 
-    // Tool can only access search.
+    // Agent cannot access tool (only inference in their service list).
+    let agent_tool_req = AuthRequest {
+        service: Some("tool".into()),
+        action: Some("r".into()),
+        user_id: Some("agent-runtime".into()),
+        now: Some(1750000000),
+        budget_states: [("agent-budget".into(), 3000)].into_iter().collect(),
+        request_cost: Some(100),
+        ..Default::default()
+    };
+    assert!(agent_token.verify(&agent_tool_req).is_err());
+    println!("  Agent -> tool(r): DENIED (only inference in agent's service list)");
+
+    // Tool: attenuated from root with only tool(r).
+    let tool_attenuation = Attenuation {
+        services: vec![("tool".into(), "r".into())],
+        budget: Some(BudgetSpec {
+            id: "tool-budget".into(),
+            parent_id: Some("agent-budget".into()),
+            class: "computrons".into(),
+            limit: 1000,
+            window: Some("1h".into()),
+        }),
+        confine_user: Some("tool-search-worker".into()),
+        ..Default::default()
+    };
+    let tool_token = root_token.attenuate(&tool_attenuation).unwrap();
+
     let tool_req = AuthRequest {
-        service: Some("inference".into()),
-        action: Some("search".into()),
+        service: Some("tool".into()),
+        action: Some("r".into()),
         user_id: Some("tool-search-worker".into()),
         now: Some(1750000000),
         budget_states: [("tool-budget".into(), 1000)].into_iter().collect(),
@@ -639,11 +676,11 @@ fn main() {
         ..Default::default()
     };
     assert!(tool_token.verify(&tool_req).is_ok());
-    println!("  Tool -> inference/search: AUTHORIZED");
+    println!("  Tool -> tool(r): AUTHORIZED (read-only)");
 
-    // Tool CANNOT access rw (only search).
+    // Tool cannot write (r does not contain w).
     let tool_rw_req = AuthRequest {
-        service: Some("inference".into()),
+        service: Some("tool".into()),
         action: Some("rw".into()),
         user_id: Some("tool-search-worker".into()),
         now: Some(1750000000),
@@ -652,20 +689,20 @@ fn main() {
         ..Default::default()
     };
     assert!(tool_token.verify(&tool_rw_req).is_err());
-    println!("  Tool -> inference/rw: DENIED (only search permitted)");
+    println!("  Tool -> tool(rw): DENIED (only r granted -- attenuation enforced)");
 
-    // Agent CANNOT access tool service (only inference).
-    let agent_tool_req = AuthRequest {
-        service: Some("tool".into()),
-        action: Some("rw".into()),
-        user_id: Some("agent-runtime".into()),
+    // Tool cannot access inference.
+    let tool_inf_req = AuthRequest {
+        service: Some("inference".into()),
+        action: Some("r".into()),
+        user_id: Some("tool-search-worker".into()),
         now: Some(1750000000),
-        budget_states: [("agent-budget".into(), 3000)].into_iter().collect(),
-        request_cost: Some(100),
+        budget_states: [("tool-budget".into(), 1000)].into_iter().collect(),
+        request_cost: Some(50),
         ..Default::default()
     };
-    assert!(agent_token.verify(&agent_tool_req).is_err());
-    println!("  Agent -> tool: DENIED (only inference permitted)");
+    assert!(tool_token.verify(&tool_inf_req).is_err());
+    println!("  Tool -> inference(r): DENIED (tool restricted to tool service only)");
     println!();
 
     // =========================================================================

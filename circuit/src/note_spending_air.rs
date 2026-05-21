@@ -312,6 +312,10 @@ impl StarkAir for NoteSpendingAir {
         4 // position validity is degree 4
     }
 
+    fn air_name(&self) -> &'static str {
+        "pyana-note-spending-v1"
+    }
+
     fn has_chain_continuity(&self) -> bool {
         false // Our layout is not the simple 6-column Merkle chain
     }

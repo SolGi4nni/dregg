@@ -19,10 +19,12 @@
 
 use std::collections::HashMap;
 
+use pyana_circuit::field::BabyBear;
+
 use crate::fulfillment::Fulfillment;
 use crate::matcher::{HeldCapability, MatchResult, match_intent};
 use crate::validation::{self, ValidationError};
-use crate::{CommitmentId, Intent, IntentKind, Match, MatchSpec};
+use crate::{CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof};
 
 /// Maximum intents allowed per creator per minute.
 pub const MAX_INTENTS_PER_CREATOR_PER_MINUTE: usize = 10;
@@ -45,8 +47,12 @@ pub enum ReceiveError {
     OwnIntent,
     /// The intent failed validation (size limits, etc.).
     Invalid(ValidationError),
-    /// The intent lacks a valid stake commitment (required for gossip).
+    /// The intent lacks a valid stake proof (required for gossip).
     MissingStake,
+    /// The stake proof failed Merkle verification against the known note tree root.
+    InvalidStakeProof,
+    /// The stake's claimed minimum value is below the pool's required minimum.
+    InsufficientStakeValue { claimed: u64, minimum: u64 },
     /// The creator has exceeded the rate limit.
     RateLimited {
         creator: CommitmentId,
@@ -62,7 +68,16 @@ impl std::fmt::Display for ReceiveError {
             Self::Duplicate => write!(f, "intent is a duplicate"),
             Self::OwnIntent => write!(f, "intent is from this wallet"),
             Self::Invalid(e) => write!(f, "validation error: {e}"),
-            Self::MissingStake => write!(f, "intent lacks valid stake commitment for gossip"),
+            Self::MissingStake => write!(f, "intent lacks stake proof for gossip"),
+            Self::InvalidStakeProof => {
+                write!(f, "stake proof failed Merkle verification against known root")
+            }
+            Self::InsufficientStakeValue { claimed, minimum } => {
+                write!(
+                    f,
+                    "stake value {claimed} is below required minimum {minimum}"
+                )
+            }
             Self::RateLimited {
                 creator,
                 count,
@@ -121,6 +136,10 @@ pub struct IntentPoolConfig {
     pub gc_interval_secs: u64,
     /// Whether to automatically match incoming intents against held tokens.
     pub auto_match: bool,
+    /// Minimum claimed stake value required for gossip propagation.
+    /// Intents with `stake_proof.minimum_value < minimum_stake_value` are rejected.
+    /// Set to 0 to disable the value check (only Merkle membership is verified).
+    pub minimum_stake_value: u64,
 }
 
 impl Default for IntentPoolConfig {
@@ -129,6 +148,7 @@ impl Default for IntentPoolConfig {
             max_intents: 10_000,
             gc_interval_secs: 60,
             auto_match: true,
+            minimum_stake_value: 0,
         }
     }
 }
@@ -170,14 +190,21 @@ pub struct IntentPool {
     recent_by_creator: HashMap<CommitmentId, (u64, usize)>,
     /// Pending fulfillment commitments (commit-reveal anti-frontrunning).
     pending_commitments: HashMap<[u8; 32], FulfillmentCommitment>,
+    /// The latest attested Poseidon2 note tree root from the federation.
+    /// Stake proofs are verified against this root.
+    known_note_root: BabyBear,
 }
 
 impl IntentPool {
     /// Create a new intent pool.
+    ///
+    /// `known_note_root`: the latest attested Poseidon2 note tree root from the
+    /// federation. Incoming gossip intents' stake proofs are verified against this root.
     pub fn new(
         our_commitment: CommitmentId,
         config: IntentPoolConfig,
         auto_fulfill: AutoFulfillPolicy,
+        known_note_root: BabyBear,
     ) -> Self {
         Self {
             intents: HashMap::new(),
@@ -189,7 +216,18 @@ impl IntentPool {
             our_intent_ids: Vec::new(),
             recent_by_creator: HashMap::new(),
             pending_commitments: HashMap::new(),
+            known_note_root,
         }
+    }
+
+    /// Update the known note tree root (when the federation attests a new root).
+    pub fn update_known_note_root(&mut self, root: BabyBear) {
+        self.known_note_root = root;
+    }
+
+    /// Get the current known note tree root.
+    pub fn known_note_root(&self) -> BabyBear {
+        self.known_note_root
     }
 
     /// Update the wallet's held capabilities (call when tokens change).
@@ -200,14 +238,15 @@ impl IntentPool {
     /// Broadcast a new intent from this wallet.
     ///
     /// Returns the intent (with computed ID) ready for gossip propagation.
+    /// `stake_proof`: a valid stake proof for gossip propagation (or None for local-only).
     pub fn broadcast_intent(
         &mut self,
         kind: IntentKind,
         matcher: MatchSpec,
         expiry: u64,
-        proof_of_stake: Option<pyana_cell::NoteCommitment>,
+        stake_proof: Option<StakeProof>,
     ) -> Intent {
-        let intent = Intent::new(kind, matcher, self.our_commitment, expiry, proof_of_stake);
+        let intent = Intent::new(kind, matcher, self.our_commitment, expiry, stake_proof);
         self.our_intent_ids.push(intent.id);
         self.intents.insert(intent.id, intent.clone());
         intent
@@ -255,9 +294,26 @@ impl IntentPool {
         // --- HARDENING: Validate intent fields (Fix 2) ---
         validation::validate_intent(&intent).map_err(ReceiveError::Invalid)?;
 
-        // --- HARDENING: Require valid stake for gossip (Fix 1) ---
-        if require_stake && !crate::verify_stake(&intent) {
-            return Err(ReceiveError::MissingStake);
+        // --- HARDENING: Require valid stake proof for gossip ---
+        if require_stake {
+            match &intent.stake_proof {
+                None => return Err(ReceiveError::MissingStake),
+                Some(stake_proof) => {
+                    // Verify the Merkle proof against the known note tree root
+                    if !crate::verify_stake(stake_proof, self.known_note_root) {
+                        return Err(ReceiveError::InvalidStakeProof);
+                    }
+                    // Check minimum stake value policy
+                    if self.config.minimum_stake_value > 0
+                        && stake_proof.minimum_value < self.config.minimum_stake_value
+                    {
+                        return Err(ReceiveError::InsufficientStakeValue {
+                            claimed: stake_proof.minimum_value,
+                            minimum: self.config.minimum_stake_value,
+                        });
+                    }
+                }
+            }
         }
 
         // --- HARDENING: Rate limiting per creator (Fix 6) ---
@@ -608,11 +664,58 @@ impl std::error::Error for CommitRevealError {}
 mod tests {
     use super::*;
     use crate::matcher::Sensitivity;
-    use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec};
+    use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec, StakeProof};
+    use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
 
-    /// A valid (non-zero) stake commitment for testing gossip-received intents.
-    fn valid_stake() -> Option<pyana_cell::NoteCommitment> {
-        Some(pyana_cell::NoteCommitment([0xDE; 32]))
+    /// Build a test Poseidon2 tree and return the root along with a valid stake proof
+    /// for note commitment [0xDE; 32].
+    fn build_test_tree() -> (BabyBear, StakeProof) {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let mut tree = Poseidon2MerkleTree::with_depth(4);
+
+        // Insert some other notes
+        for i in 0..5u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xAA;
+            tree.append(commitment_to_field(&c));
+        }
+
+        // Insert the target commitment
+        let leaf = commitment_to_field(&commitment.0);
+        let pos = tree.append(leaf);
+
+        // More notes
+        for i in 10..15u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xBB;
+            tree.append(commitment_to_field(&c));
+        }
+
+        let root = tree.root();
+        let merkle_proof = tree.prove_membership(pos).unwrap();
+
+        let stake_proof = StakeProof {
+            commitment,
+            merkle_root: root,
+            merkle_proof,
+            minimum_value: 100,
+        };
+
+        (root, stake_proof)
+    }
+
+    /// A valid stake proof for testing gossip-received intents.
+    fn valid_stake() -> Option<StakeProof> {
+        let (_root, proof) = build_test_tree();
+        Some(proof)
+    }
+
+    /// Return the known root that matches valid_stake().
+    fn test_known_root() -> BabyBear {
+        let (root, _proof) = build_test_tree();
+        root
     }
 
     fn test_pool() -> IntentPool {
@@ -622,8 +725,10 @@ mod tests {
                 max_intents: 100,
                 gc_interval_secs: 60,
                 auto_match: true,
+                minimum_stake_value: 0,
             },
             AutoFulfillPolicy::Always,
+            test_known_root(),
         )
     }
 
@@ -822,14 +927,17 @@ mod tests {
 
     #[test]
     fn test_pool_size_limit() {
+        let root = test_known_root();
         let mut pool = IntentPool::new(
             CommitmentId([0x11; 32]),
             IntentPoolConfig {
                 max_intents: 3,
                 gc_interval_secs: 60,
                 auto_match: false,
+                minimum_stake_value: 0,
             },
             AutoFulfillPolicy::Never,
+            root,
         );
 
         for i in 0..5u8 {
@@ -913,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gossip_rejects_zero_stake() {
+    fn test_gossip_rejects_invalid_stake_proof() {
         let mut pool = test_pool();
 
         let spec = MatchSpec {
@@ -922,17 +1030,100 @@ mod tests {
             min_budget: None,
             resource_pattern: None,
         };
-        // Intent with all-zero commitment (invalid)
+        // Intent with a fake stake proof (random commitment not in the tree)
+        let fake_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+        let (_root, mut real_proof) = build_test_tree();
+        // Tamper: use a commitment that doesn't match the proof
+        real_proof.commitment = fake_commitment;
+
         let intent = Intent::new(
             IntentKind::Need,
             spec,
             CommitmentId([0x22; 32]),
             9999,
-            Some(pyana_cell::NoteCommitment([0u8; 32])),
+            Some(real_proof),
         );
 
         let result = pool.receive_intent_checked(intent, 100, true);
-        assert_eq!(result, Err(ReceiveError::MissingStake));
+        assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
+    }
+
+    #[test]
+    fn test_gossip_rejects_wrong_root() {
+        // Pool expects one root, but stake proof has a different root
+        let (real_root, stake_proof) = build_test_tree();
+
+        // Create a pool with a DIFFERENT known root
+        let wrong_root = BabyBear::new(0xBAD_CAFE);
+        let mut pool = IntentPool::new(
+            CommitmentId([0x11; 32]),
+            IntentPoolConfig {
+                max_intents: 100,
+                gc_interval_secs: 60,
+                auto_match: false,
+                minimum_stake_value: 0,
+            },
+            AutoFulfillPolicy::Never,
+            wrong_root,
+        );
+
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            Some(stake_proof),
+        );
+
+        let result = pool.receive_intent_checked(intent, 100, true);
+        assert_eq!(result, Err(ReceiveError::InvalidStakeProof));
+    }
+
+    #[test]
+    fn test_gossip_rejects_insufficient_stake_value() {
+        let (root, mut stake_proof) = build_test_tree();
+        stake_proof.minimum_value = 50; // below minimum
+
+        let mut pool = IntentPool::new(
+            CommitmentId([0x11; 32]),
+            IntentPoolConfig {
+                max_intents: 100,
+                gc_interval_secs: 60,
+                auto_match: false,
+                minimum_stake_value: 100, // require at least 100
+            },
+            AutoFulfillPolicy::Never,
+            root,
+        );
+
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            Some(stake_proof),
+        );
+
+        let result = pool.receive_intent_checked(intent, 100, true);
+        assert_eq!(
+            result,
+            Err(ReceiveError::InsufficientStakeValue {
+                claimed: 50,
+                minimum: 100
+            })
+        );
     }
 
     #[test]
@@ -1040,17 +1231,13 @@ mod tests {
 
         let fulfillment = crate::fulfillment::Fulfillment {
             intent_id: [0x01; 32],
-            matched: crate::Match {
-                intent_id: [0x01; 32],
-                satisfier: CommitmentId([0xBB; 32]),
-                proof: None,
-                mode: crate::VerificationMode::Trusted,
-            },
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: crate::VerificationMode::Trusted,
             token_data: None,
+            proof: None,
             granted_actions: vec!["read".into()],
             granted_resource: "docs/*".into(),
             expiry: Some(5000),
-            fulfiller: CommitmentId([0xBB; 32]),
         };
 
         // Phase 1: Commit
@@ -1082,17 +1269,13 @@ mod tests {
 
         let fulfillment = crate::fulfillment::Fulfillment {
             intent_id: [0x01; 32],
-            matched: crate::Match {
-                intent_id: [0x01; 32],
-                satisfier: CommitmentId([0xBB; 32]),
-                proof: None,
-                mode: crate::VerificationMode::Trusted,
-            },
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: crate::VerificationMode::Trusted,
             token_data: None,
+            proof: None,
             granted_actions: vec!["read".into()],
             granted_resource: "docs/*".into(),
             expiry: Some(5000),
-            fulfiller: CommitmentId([0xBB; 32]),
         };
 
         let reveal = FulfillmentReveal {

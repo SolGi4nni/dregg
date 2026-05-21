@@ -61,54 +61,84 @@ impl CommitmentId {
     }
 }
 
+/// A cryptographic proof that a note commitment exists in the Poseidon2 note tree.
+///
+/// This proves the staker has knowledge of a real note (not just random bytes) by
+/// providing a Merkle inclusion proof against the federation's attested note tree root.
+///
+/// Privacy: This does NOT reveal the note value (that would require opening the commitment,
+/// breaking privacy). It only proves the note EXISTS in the tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StakeProof {
+    /// The note commitment being staked.
+    pub commitment: pyana_cell::NoteCommitment,
+    /// The Poseidon2 Merkle tree root that this proof is valid against.
+    pub merkle_root: pyana_circuit::field::BabyBear,
+    /// The Poseidon2 Merkle inclusion proof demonstrating the commitment is in the tree.
+    pub merkle_proof: pyana_commit::Poseidon2MerkleProof,
+    /// Claimed minimum value of the staked note (informational; cannot be verified
+    /// without opening the commitment, but allows pool policies to filter).
+    pub minimum_value: u64,
+}
+
 /// Stake requirement for intent propagation via gossip.
 ///
 /// Intents that wish to propagate over the gossip network must have a committed
 /// stake. Local-only intents (from the wallet's own page) may skip the stake
 /// requirement.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StakeRequirement {
     /// No stake required -- intent is local-only and will not be propagated via gossip.
     None,
-    /// A committed note stake, making the intent eligible for gossip propagation.
-    /// The commitment must be well-formed (non-zero, correct length).
-    Committed(pyana_cell::NoteCommitment),
+    /// A full stake proof with Merkle inclusion against the note tree.
+    Proven(StakeProof),
 }
 
 impl StakeRequirement {
-    /// Convert from the legacy `Option<NoteCommitment>` representation.
-    pub fn from_option(opt: Option<pyana_cell::NoteCommitment>) -> Self {
-        match opt {
-            Some(commitment) => Self::Committed(commitment),
-            None => Self::None,
-        }
-    }
-
-    /// Check whether this requirement includes a valid stake.
-    pub fn has_valid_stake(&self) -> bool {
+    /// Check whether this requirement includes a valid stake against a known root.
+    pub fn has_valid_stake(&self, known_root: pyana_circuit::field::BabyBear) -> bool {
         match self {
             Self::None => false,
-            Self::Committed(c) => verify_stake_commitment(c),
+            Self::Proven(proof) => verify_stake(proof, known_root),
         }
     }
 }
 
-/// Verify that a stake commitment is well-formed.
+/// Verify a stake proof against a known note tree root.
 ///
 /// Checks:
-/// - The commitment is non-zero (all-zeros would be an invalid/empty commitment)
-/// - The commitment has proper length (always true for `[u8; 32]`, but checked for semantics)
-pub fn verify_stake_commitment(commitment: &pyana_cell::NoteCommitment) -> bool {
-    // Reject all-zeros as invalid
-    commitment.0 != [0u8; 32]
+/// 1. The proof's merkle_root matches the federation's attested note tree root.
+/// 2. The note commitment's field-element representation is a valid member of the tree
+///    (via Poseidon2 Merkle proof verification).
+///
+/// This proves the staker has knowledge of a real note that EXISTS in the tree,
+/// preventing spam from entities that have never committed real state.
+pub fn verify_stake(
+    stake: &StakeProof,
+    known_root: pyana_circuit::field::BabyBear,
+) -> bool {
+    // The proof's root must match the federation's attested root
+    if stake.merkle_root != known_root {
+        return false;
+    }
+
+    // Convert the BLAKE3 note commitment to a Poseidon2 field element
+    let leaf = pyana_commit::commitment_to_field(&stake.commitment.0);
+
+    // Verify the Merkle inclusion proof
+    pyana_commit::Poseidon2MerkleTree::verify_membership(known_root, leaf, &stake.merkle_proof)
 }
 
-/// Verify that an intent has a valid stake for gossip propagation.
+/// Verify that an intent has a valid stake proof for gossip propagation.
 ///
-/// Returns true if the intent carries a non-zero, well-formed note commitment.
-pub fn verify_stake(intent: &Intent) -> bool {
-    match &intent.proof_of_stake {
-        Some(commitment) => verify_stake_commitment(commitment),
+/// Returns true if the intent carries a valid stake proof that verifies against
+/// the given known note tree root.
+pub fn verify_intent_stake(
+    intent: &Intent,
+    known_root: pyana_circuit::field::BabyBear,
+) -> bool {
+    match &intent.stake_proof {
+        Some(proof) => verify_stake(proof, known_root),
         None => false,
     }
 }
@@ -193,8 +223,9 @@ pub struct Intent {
     pub creator: CommitmentId,
     /// Unix timestamp after which this intent expires and should be GC'd.
     pub expiry: u64,
-    /// Optional stake proving seriousness (a note commitment).
-    pub proof_of_stake: Option<pyana_cell::NoteCommitment>,
+    /// Optional stake proof demonstrating note tree membership (Poseidon2 Merkle proof).
+    /// Required for gossip propagation; local intents may omit this.
+    pub stake_proof: Option<StakeProof>,
 }
 
 impl Intent {
@@ -204,7 +235,7 @@ impl Intent {
         matcher: MatchSpec,
         creator: CommitmentId,
         expiry: u64,
-        proof_of_stake: Option<pyana_cell::NoteCommitment>,
+        stake_proof: Option<StakeProof>,
     ) -> Self {
         let mut intent = Self {
             id: [0u8; 32],
@@ -212,7 +243,7 @@ impl Intent {
             matcher,
             creator,
             expiry,
-            proof_of_stake,
+            stake_proof,
         };
         intent.id = intent.compute_id();
         intent
@@ -225,13 +256,15 @@ impl Intent {
     fn compute_id(&self) -> [u8; 32] {
         // Serialize the semantically-relevant fields in a canonical order.
         // We build a struct specifically for hashing (excludes the `id` field itself).
+        // The stake_proof commitment bytes are included in the ID for binding.
         #[derive(Serialize)]
         struct IntentBody<'a> {
             kind: &'a IntentKind,
             matcher: &'a MatchSpec,
             creator: &'a CommitmentId,
             expiry: u64,
-            proof_of_stake: &'a Option<pyana_cell::NoteCommitment>,
+            /// We hash the commitment bytes from the stake proof (if present) for ID binding.
+            stake_commitment: Option<&'a [u8; 32]>,
         }
 
         let body = IntentBody {
@@ -239,11 +272,11 @@ impl Intent {
             matcher: &self.matcher,
             creator: &self.creator,
             expiry: self.expiry,
-            proof_of_stake: &self.proof_of_stake,
+            stake_commitment: self.stake_proof.as_ref().map(|sp| &sp.commitment.0),
         };
 
         let canonical = postcard::to_allocvec(&body).unwrap_or_default();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-intent-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-intent-id-v2");
         hasher.update(&canonical);
         *hasher.finalize().as_bytes()
     }
@@ -279,6 +312,46 @@ fn getrandom(buf: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyana_circuit::field::BabyBear;
+    use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
+
+    /// Helper: build a small Poseidon2 tree with some notes and return a valid StakeProof
+    /// for a given note commitment.
+    fn build_stake_proof(commitment: &pyana_cell::NoteCommitment) -> (StakeProof, BabyBear) {
+        let mut tree = Poseidon2MerkleTree::with_depth(4);
+
+        // Insert some other notes first
+        for i in 0..5u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xAA;
+            tree.append(commitment_to_field(&c));
+        }
+
+        // Insert the target commitment
+        let leaf = commitment_to_field(&commitment.0);
+        let pos = tree.append(leaf);
+
+        // Insert more after
+        for i in 10..15u8 {
+            let mut c = [0u8; 32];
+            c[0] = i;
+            c[1] = 0xBB;
+            tree.append(commitment_to_field(&c));
+        }
+
+        let root = tree.root();
+        let merkle_proof = tree.prove_membership(pos).unwrap();
+
+        let stake_proof = StakeProof {
+            commitment: *commitment,
+            merkle_root: root,
+            merkle_proof,
+            minimum_value: 100,
+        };
+
+        (stake_proof, root)
+    }
 
     #[test]
     fn intent_id_is_deterministic() {
@@ -346,5 +419,95 @@ mod tests {
 
         let c3 = CommitmentId::derive(b"other", "test-domain");
         assert_ne!(c1, c3);
+    }
+
+    #[test]
+    fn verify_stake_valid_proof() {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let (stake_proof, root) = build_stake_proof(&commitment);
+
+        // Valid proof against the correct root
+        assert!(verify_stake(&stake_proof, root));
+    }
+
+    #[test]
+    fn verify_stake_wrong_root_fails() {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let (stake_proof, _root) = build_stake_proof(&commitment);
+
+        // Wrong root should fail
+        let wrong_root = BabyBear::new(0xBAD);
+        assert!(!verify_stake(&stake_proof, wrong_root));
+    }
+
+    #[test]
+    fn verify_stake_wrong_commitment_fails() {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let (_stake_proof, root) = build_stake_proof(&commitment);
+
+        // Create a proof with a different commitment but same merkle_proof
+        // (the proof won't verify because the leaf doesn't match)
+        let wrong_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+        let bad_stake = StakeProof {
+            commitment: wrong_commitment,
+            merkle_root: root,
+            merkle_proof: _stake_proof.merkle_proof,
+            minimum_value: 100,
+        };
+        assert!(!verify_stake(&bad_stake, root));
+    }
+
+    #[test]
+    fn verify_intent_stake_with_proof() {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let (stake_proof, root) = build_stake_proof(&commitment);
+
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            9999,
+            Some(stake_proof),
+        );
+
+        assert!(verify_intent_stake(&intent, root));
+    }
+
+    #[test]
+    fn verify_intent_stake_none_fails() {
+        let spec = MatchSpec {
+            actions: vec![],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            9999,
+            None,
+        );
+
+        let root = BabyBear::new(42);
+        assert!(!verify_intent_stake(&intent, root));
+    }
+
+    #[test]
+    fn stake_requirement_has_valid_stake() {
+        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let (stake_proof, root) = build_stake_proof(&commitment);
+
+        let req = StakeRequirement::Proven(stake_proof);
+        assert!(req.has_valid_stake(root));
+
+        let req_none = StakeRequirement::None;
+        assert!(!req_none.has_valid_stake(root));
     }
 }

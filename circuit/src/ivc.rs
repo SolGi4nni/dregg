@@ -487,6 +487,10 @@ impl StarkAir for StateTransitionAir {
         7
     }
 
+    fn air_name(&self) -> &'static str {
+        "pyana-state-transition-v1"
+    }
+
     fn has_chain_continuity(&self) -> bool {
         false
     }

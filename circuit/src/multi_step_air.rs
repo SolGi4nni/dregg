@@ -865,6 +865,10 @@ impl StarkAir for MultiStepStarkAir {
         4
     }
 
+    fn air_name(&self) -> &'static str {
+        "pyana-multi-step-derivation-v1"
+    }
+
     fn has_chain_continuity(&self) -> bool {
         // Our layout is NOT the simple 6-column Merkle chain (col5=parent, col0=current).
         // We handle continuity through the accumulated hash columns.

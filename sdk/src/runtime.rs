@@ -64,6 +64,29 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Create a new agent runtime with simplified ownership.
+    ///
+    /// This is a convenience constructor that wraps the wallet in `Arc<RwLock<...>>`
+    /// internally, so callers don't need to manage the synchronization primitives
+    /// themselves.
+    ///
+    /// # Arguments
+    ///
+    /// * `wallet` - The agent's wallet (moved into the runtime).
+    /// * `domain` - The domain this agent operates in (e.g., "compute", "storage").
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pyana_sdk::{AgentWallet, AgentRuntime};
+    ///
+    /// let wallet = AgentWallet::new();
+    /// let runtime = AgentRuntime::new_simple(wallet, "my-domain");
+    /// ```
+    pub fn new_simple(wallet: AgentWallet, domain: &str) -> Self {
+        Self::new(Arc::new(RwLock::new(wallet)), domain)
+    }
+
     /// Create a new agent runtime.
     ///
     /// Initializes the local ledger with the agent's cell (funded with a default
@@ -328,6 +351,7 @@ impl AgentRuntime {
             parent: self.wallet.read().unwrap().public_key(),
             domain: self.domain.clone(),
             ledger: self.ledger.clone(),
+            nonce: Mutex::new(0),
         })
     }
 }
@@ -360,6 +384,8 @@ pub struct SubAgent {
     pub domain: String,
     /// Shared ledger with the parent.
     ledger: Arc<Mutex<Ledger>>,
+    /// Nonce counter for turn submission (incremented on each execute call).
+    nonce: Mutex<u64>,
 }
 
 impl SubAgent {
@@ -376,6 +402,13 @@ impl SubAgent {
     /// Execute effects on the shared ledger using this sub-agent's cell.
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
+
+        let nonce = {
+            let mut n = self.nonce.lock().unwrap();
+            let current = *n;
+            *n += 1;
+            current
+        };
 
         // Build unsigned action to compute signing message.
         let action_unsigned = Action {
@@ -404,7 +437,7 @@ impl SubAgent {
 
         let turn = Turn {
             agent: self.cell_id,
-            nonce: 0,
+            nonce,
             call_forest: forest,
             fee: 5_000,
             memo: None,
@@ -420,5 +453,10 @@ impl SubAgent {
             TurnResult::Committed { receipt, .. } => Ok(receipt),
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
         }
+    }
+
+    /// Get the sub-agent's current nonce.
+    pub fn nonce(&self) -> u64 {
+        *self.nonce.lock().unwrap()
     }
 }

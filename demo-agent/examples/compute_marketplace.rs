@@ -29,18 +29,14 @@
 //!   6. Atomic settlement: TurnComposer atomically settles across 6 cells
 //!   7. Dispute: rollback demonstrated when escrow conditions fail
 
-use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_cell::program::{CellProgram, StateConstraint, field_from_u64};
-use pyana_cell::state::CellState;
-use pyana_cell::{AuthRequired, CapabilityRef, Cell, CellId, Ledger, Permissions};
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use pyana_turn::action::{DelegationMode, Effect};
 use pyana_turn::budget_gate::{BudgetGate, BudgetSlice};
 use pyana_turn::builder::TurnBuilder;
 use pyana_turn::executor::{ComputronCosts, TurnExecutor};
-use pyana_turn::forest::CallForest;
-use pyana_turn::turn::{TurnReceipt, TurnResult};
-use pyana_turn::verify::verify_receipt_chain;
+use pyana_turn::turn::TurnResult;
 
 // =========================================================================
 // Helpers

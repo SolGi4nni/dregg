@@ -45,6 +45,7 @@ pub mod client;
 pub mod error;
 pub mod mnemonic;
 pub mod runtime;
+pub mod verify;
 pub mod wallet;
 pub mod wordlist;
 
@@ -67,3 +68,14 @@ pub use pyana_turn::{
     VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
 };
 pub use pyana_types::{PublicKey, Signature};
+
+// Re-export verifier types from the bridge layer for standalone proof verification.
+pub use pyana_bridge::present::{verify_presentation, BridgePresentationProof};
+pub use pyana_bridge::verifier::StarkProofVerifier;
+pub use pyana_circuit::PresentationVerification;
+
+// Re-export mnemonic generation at crate root for convenience.
+pub use mnemonic::generate_mnemonic;
+
+// Re-export standalone verification function.
+pub use verify::verify_authorization_proof;

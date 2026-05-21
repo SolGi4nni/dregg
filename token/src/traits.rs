@@ -8,7 +8,7 @@ use crate::error::TokenError;
 use crate::format::TokenFormat;
 
 /// Result of successful token verification.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TokenClearance {
     /// Which policy or caveat set matched.
     pub matched_policy: Option<String>,
@@ -34,7 +34,7 @@ pub struct TokenClearance {
 }
 
 /// A single capability granted by a token.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Capability {
     /// Resource type (e.g., "app", "service", "secret", "feature").
     pub resource_type: String,
@@ -98,7 +98,7 @@ pub struct AuthRequest {
 ///
 /// Each field, if set, adds a restriction. Restrictions can only narrow
 /// permissions, never expand them.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Attenuation {
     /// Lock to specific app(s) with action masks.
     /// Key: app ID, Value: action string (e.g., "r", "rw", "*").
@@ -136,7 +136,7 @@ pub struct Attenuation {
 ///
 /// Allows fine-grained file/resource access control using glob patterns.
 /// Include patterns grant access; exclude patterns deny it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct FeatureGlobSpec {
     /// Glob patterns to include (e.g., `src/components/**`).
     pub include: Vec<String>,
@@ -148,7 +148,7 @@ pub struct FeatureGlobSpec {
 ///
 /// The budget caveat itself always passes locally — enforcement
 /// happens at the budget counter service.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BudgetSpec {
     /// Budget identifier (e.g., `ci-bot-7:daily`).
     pub id: String,
