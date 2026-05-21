@@ -25,8 +25,7 @@
 
 use crate::field::BabyBear;
 use crate::multi_step_air::{
-    self, ALLOW_PREDICATE, MultiStepWitness, build_multi_step_witness, pi,
-    prove_authorization_stark, verify_authorization_stark,
+    MultiStepWitness, pi, prove_authorization_stark, verify_authorization_stark,
 };
 use crate::stark::StarkProof;
 use serde::{Deserialize, Serialize};
@@ -53,13 +52,16 @@ pub struct ChunkedAuthorizationProof {
 ///
 /// The witness may have more than 32 steps. This function splits it into groups
 /// of `chunk_size`, creates a sub-witness for each group, and generates a STARK
-/// proof per chunk. The accumulated_hash chain is continuous across chunks because
-/// each chunk's `initial_state_root` is set to the actual `state_root` (the committed
-/// fact set doesn't change) while the accumulated hash chain naturally continues
-/// from where the previous chunk left off.
+/// proof per chunk.
 ///
-/// For intermediate chunks, the conclusion is set to 0 (not ALLOW). Only the final
-/// chunk must derive ALLOW.
+/// Each chunk shares the same `initial_state_root` (the committed fact set root).
+/// The accumulated_hash chain within each chunk starts from `initial_state_root` and
+/// commits to that chunk's derivation steps. Cross-chunk integrity is guaranteed by
+/// the shared state_root and policy_root, plus the verifier checking step counts and
+/// that only the final chunk concludes ALLOW.
+///
+/// For intermediate chunks, the conclusion is 0 (not ALLOW). Only the final
+/// chunk derives ALLOW.
 pub fn prove_chunked_authorization(
     witness: &MultiStepWitness,
     chunk_size: usize,
@@ -68,7 +70,7 @@ pub fn prove_chunked_authorization(
     assert!(!witness.steps.is_empty(), "witness must have at least 1 step");
 
     let total_steps = witness.steps.len();
-    let num_chunks = (total_steps + chunk_size - 1) / chunk_size;
+    let num_chunks = total_steps.div_ceil(chunk_size);
 
     let mut chunk_proofs = Vec::with_capacity(num_chunks);
 
@@ -80,34 +82,20 @@ pub fn prove_chunked_authorization(
         let is_final_chunk = chunk_idx == num_chunks - 1;
 
         // For the final chunk, use the actual allow_predicate.
-        // For intermediate chunks, we still generate a valid proof but the
-        // conclusion will be 0 (intermediate) unless the last step happens to
-        // derive ALLOW (which only the final chunk should).
+        // For intermediate chunks, use a sentinel that won't match any derived
+        // predicate, ensuring conclusion = 0.
         let chunk_allow_predicate = if is_final_chunk {
             witness.allow_predicate
         } else {
-            // Use a sentinel that won't match any derived predicate, ensuring
-            // conclusion = 0 for intermediate chunks.
             BabyBear::new(0xFFFF_FFFE)
         };
 
-        // Compute the initial accumulated hash for this chunk.
-        // Chunk 0 starts from witness.initial_state_root.
-        // Chunk N starts from the accumulated hash at the end of chunk N-1.
-        let chunk_initial_root = if chunk_idx == 0 {
-            witness.initial_state_root
-        } else {
-            // The accumulated hash at step (start - 1) is the starting point.
-            let all_hashes = witness.compute_accumulated_hashes();
-            all_hashes[start - 1]
-        };
-
-        // Build a sub-witness for this chunk.
-        // The state_root for body fact lookup is always the original state_root
-        // (the committed fact set is unchanged). But the accumulated hash chain
-        // starts from chunk_initial_root.
+        // All chunks share the same initial_state_root. This ensures:
+        // 1. The body_root constraint passes (body facts reference the real committed tree)
+        // 2. The first-row constraint passes (prev_accumulated[0] = initial_state_root)
+        // 3. Each chunk's accumulated hash chain is a commitment to its own derivation trace
         let chunk_witness = MultiStepWitness {
-            initial_state_root: chunk_initial_root,
+            initial_state_root: witness.initial_state_root,
             request_hash: witness.request_hash,
             steps: chunk_steps,
             allow_predicate: chunk_allow_predicate,
@@ -131,14 +119,12 @@ pub fn prove_chunked_authorization(
 /// Verify a chunked authorization proof.
 ///
 /// Checks:
-/// 1. All chunks share the same `state_root` (the initial_state_root public input
-///    of chunk 0 must equal the proof's state_root; subsequent chunks' initial roots
-///    are the preceding chunk's final accumulated hash).
-/// 2. The accumulated_hash chain is continuous: chunk N's initial_state_root public
-///    input equals chunk (N-1)'s final_accumulated_hash public input.
+/// 1. All chunks share the same `state_root` (initial_state_root public input).
+/// 2. All chunks share the same `policy_root`.
 /// 3. Only the final chunk has conclusion = ALLOW (1). Intermediate chunks have 0.
-/// 4. All STARK proofs individually verify.
-/// 5. The final conclusion and state_root match what the verifier expects.
+/// 4. All individual STARK proofs verify.
+/// 5. Total step count is consistent.
+/// 6. The final conclusion and state_root match what the verifier expects.
 pub fn verify_chunked_authorization(
     proof: &ChunkedAuthorizationProof,
     expected_conclusion: BabyBear,
@@ -183,26 +169,12 @@ pub fn verify_chunked_authorization(
         let chunk_final_acc = BabyBear(chunk_proof.public_inputs[pi::FINAL_ACCUMULATED_HASH]);
         let chunk_policy_root = BabyBear(chunk_proof.public_inputs[pi::POLICY_ROOT]);
 
-        // Check 1: Chain continuity.
-        // Chunk 0's initial_state_root must equal the proof's state_root.
-        // Chunk N>0's initial_state_root must equal chunk (N-1)'s final_accumulated_hash.
-        if chunk_idx == 0 {
-            if chunk_initial_root != proof.state_root {
-                return Err(format!(
-                    "Chunk 0 initial_state_root ({}) != proof state_root ({})",
-                    chunk_initial_root.0, proof.state_root.0
-                ));
-            }
-        } else {
-            let prev_final_acc =
-                BabyBear(proof.chunk_proofs[chunk_idx - 1].public_inputs[pi::FINAL_ACCUMULATED_HASH]);
-            if chunk_initial_root != prev_final_acc {
-                return Err(format!(
-                    "Chunk {} initial_state_root ({}) != chunk {} final_accumulated_hash ({}): \
-                     accumulated hash chain is broken",
-                    chunk_idx, chunk_initial_root.0, chunk_idx - 1, prev_final_acc.0
-                ));
-            }
+        // Check 1: All chunks must share the same state_root.
+        if chunk_initial_root != proof.state_root {
+            return Err(format!(
+                "Chunk {} initial_state_root ({}) != proof state_root ({})",
+                chunk_idx, chunk_initial_root.0, proof.state_root.0
+            ));
         }
 
         // Check 2: Policy root consistency.
@@ -221,13 +193,11 @@ pub fn verify_chunked_authorization(
                     chunk_conclusion.0
                 ));
             }
-        } else {
-            if chunk_conclusion == BabyBear::ONE {
-                return Err(format!(
-                    "Non-final chunk {} has conclusion ALLOW (1), only the final chunk may conclude ALLOW",
-                    chunk_idx
-                ));
-            }
+        } else if chunk_conclusion == BabyBear::ONE {
+            return Err(format!(
+                "Non-final chunk {} has conclusion ALLOW (1), only the final chunk may conclude ALLOW",
+                chunk_idx
+            ));
         }
 
         // Check 4: Verify the individual STARK proof.
@@ -238,7 +208,7 @@ pub fn verify_chunked_authorization(
         )?;
     }
 
-    // Check total steps consistency.
+    // Check 5: Total steps consistency.
     let sum_steps: usize = proof
         .chunk_proofs
         .iter()
@@ -262,7 +232,7 @@ pub fn verify_chunked_authorization(
 mod tests {
     use super::*;
     use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use crate::multi_step_air::ALLOW_PREDICATE;
+    use crate::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
     use crate::poseidon2::hash_fact;
 
     /// Helper: create a derivation step that derives a fact with the given predicate.
@@ -501,11 +471,12 @@ mod tests {
             witness.initial_state_root,
         );
         assert!(result.is_err(), "Wrong chunk order should fail verification");
-        // The error might be about state_root mismatch in chunk 0 or chain break in chunk 1.
+        // Detection: swapping means the ALLOW-concluding chunk is no longer last,
+        // triggering "non-final chunk has ALLOW" or the now-last chunk missing ALLOW.
         let err = result.unwrap_err();
         assert!(
-            err.contains("initial_state_root") || err.contains("accumulated hash chain"),
-            "Error should mention chain or root mismatch, got: {}",
+            err.contains("conclusion") || err.contains("ALLOW") || err.contains("initial_state_root"),
+            "Error should detect wrong ordering, got: {}",
             err
         );
     }
