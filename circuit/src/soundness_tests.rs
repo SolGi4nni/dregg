@@ -477,7 +477,7 @@ mod note_spending_soundness {
             BabyBear::new(7777),
             BabyBear::new(1000),
             BabyBear::new(2),
-            BabyBear::new(0xCAFE),
+            test_spending_key(0xCAFE),
             4,
         );
 

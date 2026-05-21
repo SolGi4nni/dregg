@@ -572,8 +572,12 @@ use mina_curves::pasta::{Fq, Pallas, PallasParameters};
 
 /// Type aliases for Pallas proving (scalar field = Fq = Vesta base field).
 /// When we prove on Pallas, our circuit witnesses are Fq elements.
+/// These are used for the full Pasta cycle alternation (Pallas verifies Vesta proofs).
+#[allow(dead_code)]
 type PallasBaseSponge = DefaultFqSponge<PallasParameters, SpongeParams, FULL_ROUNDS>;
+#[allow(dead_code)]
 type PallasScalarSponge = DefaultFrSponge<Fq, SpongeParams, FULL_ROUNDS>;
+#[allow(dead_code)]
 type PallasOpeningProof = OpeningProof<Pallas, FULL_ROUNDS>;
 
 /// A Pickles recursive proof over the Pasta cycle.
