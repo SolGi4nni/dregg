@@ -38,7 +38,7 @@ use crate::constraint_prover::{Air, Constraint};
 use crate::field::BabyBear;
 use crate::poseidon2;
 use crate::predicate_air::PREDICATE_DIFF_BITS;
-use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, ExtElem, StarkAir, StarkProof};
 
 /// Maximum number of operations in a compiled expression.
 pub const MAX_ARITHMETIC_OPS: usize = 32;

@@ -41,7 +41,7 @@ use crate::native_signature::{
     chain_step, compute_checksum,
 };
 use crate::poseidon2;
-use crate::stark::{BoundaryConstraint, StarkAir};
+use crate::stark::{BoundaryConstraint, ExtElem, StarkAir};
 
 /// Width of the WOTS verification trace.
 pub const WOTS_AIR_WIDTH: usize = 6;

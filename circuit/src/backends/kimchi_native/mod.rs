@@ -149,7 +149,7 @@ impl KimchiNativeBackend {
         if proof.circuit_type != KimchiNativeCircuitType::Derivation {
             return Err("Expected derivation proof".into());
         }
-        if proof.public_input_bytes.len() < 64 {
+        if proof.public_input_bytes.len() < 96 {
             return Err("Malformed public inputs".into());
         }
         let rb: [u8; 32] = proof.public_input_bytes[0..32]
@@ -158,15 +158,19 @@ impl KimchiNativeBackend {
         let hb: [u8; 32] = proof.public_input_bytes[32..64]
             .try_into()
             .map_err(|_| "e")?;
+        let rh: [u8; 32] = proof.public_input_bytes[64..96]
+            .try_into()
+            .map_err(|_| "e")?;
         if bytes32_to_fp(&rb) != *esr {
             return Ok(false);
         }
         if bytes32_to_fp(&hb) != *edh {
             return Ok(false);
         }
+        let rule_hash = bytes32_to_fp(&rh);
         // Deserialize and verify with the real Kimchi verifier.
         // We rebuild a minimal derivation circuit with a template witness to get
-        // matching gate structure (public input count = 2, same gate layout).
+        // matching gate structure (public input count = 3, same gate layout).
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes)
                 .map_err(|e| format!("Proof deserialization failed: {}", e))?;
@@ -178,93 +182,92 @@ impl KimchiNativeBackend {
                 head_predicate: *edh,
                 head_terms: [(false, Fp::zero()); 4],
                 equal_checks: Vec::new(),
+                memberof_checks: Vec::new(),
                 gte_check: None,
+                lt_check: None,
             },
             state_root: *esr,
             body_fact_hashes: vec![Fp::zero()],
+            body_merkle_proofs: vec![],
             substitution: Vec::new(),
             derived_predicate: *edh,
             derived_terms: [Fp::zero(); 4],
         };
         let circuit = derivation::KimchiDerivationCircuit::new(template_witness);
         let (gates, pc) = circuit.build_circuit();
-        let public_inputs = vec![*esr, *edh];
+        let public_inputs = vec![*esr, *edh, rule_hash];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }
+    /// Prove non-membership of multiple elements in the accumulator polynomial.
+    ///
+    /// Each element gets an independent Horner evaluation + non-zero check.
+    /// This matches the STARK accumulator AIR's per-ancestor security property.
     pub fn prove_non_membership(
-        element: Fp,
+        elements: &[Fp],
         coeffs: &[Fp],
         root: Fp,
     ) -> Result<KimchiNativeProof, String> {
-        let n = coeffs.len();
-        let mut eval = Fp::zero();
-        for i in 0..n {
-            eval = eval * element + coeffs[n - 1 - i];
-        }
-        if eval == Fp::zero() {
-            return Err("Element IS in the set (accumulator evaluates to zero)".into());
-        }
-        non_membership::KimchiNonMembershipCircuit {
-            element,
-            accumulator_eval: eval,
-            accumulator_root: root,
-            accumulator_coeffs: coeffs.to_vec(),
-        }
-        .prove()
+        non_membership::KimchiNonMembershipCircuit::new(
+            elements.to_vec(),
+            coeffs.to_vec(),
+            root,
+        )?.prove()
     }
+
+    /// Verify a multi-ancestor non-membership proof.
+    ///
+    /// `expected_elements`: the elements that should be proven not-in-set.
+    /// `expected_root`: the accumulator root (hash of polynomial coefficients).
+    /// `coeffs`: the polynomial coefficients (needed to rebuild the circuit).
     pub fn verify_non_membership(
         proof: &KimchiNativeProof,
-        ee: &Fp,
-        ear: &Fp,
+        expected_elements: &[Fp],
+        expected_root: &Fp,
+        coeffs: &[Fp],
     ) -> Result<bool, String> {
         if proof.circuit_type != KimchiNativeCircuitType::NonMembership {
             return Err("Expected non-membership proof".into());
         }
-        if proof.public_input_bytes.len() < 96 {
+        let expected_bytes = 32 * non_membership::PUBLIC_INPUT_COUNT;
+        if proof.public_input_bytes.len() < expected_bytes {
             return Err("Malformed public inputs".into());
         }
-        let eb: [u8; 32] = proof.public_input_bytes[0..32]
+
+        // Parse root from proof
+        let rb: [u8; 32] = proof.public_input_bytes[0..32]
             .try_into()
-            .map_err(|_| "e")?;
-        let evb: [u8; 32] = proof.public_input_bytes[32..64]
-            .try_into()
-            .map_err(|_| "e")?;
-        let rb: [u8; 32] = proof.public_input_bytes[64..96]
-            .try_into()
-            .map_err(|_| "e")?;
-        if bytes32_to_fp(&eb) != *ee {
+            .map_err(|_| "bad root bytes")?;
+        let proof_root = bytes32_to_fp(&rb);
+        if proof_root != *expected_root {
             return Ok(false);
         }
-        if bytes32_to_fp(&rb) != *ear {
-            return Ok(false);
-        }
-        let eval = bytes32_to_fp(&evb);
-        if eval == Fp::zero() {
-            return Ok(false);
-        }
-        // Deserialize and verify with the real Kimchi verifier.
-        // Rebuild the non-membership circuit with a minimal coefficient set matching
-        // the circuit structure (polynomial degree determines gate count).
-        let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
-            rmp_serde::from_slice(&proof.proof_bytes).map_err(|e| format!("{}", e))?;
-        // We need the accumulator coefficients to rebuild the circuit.
-        // Since the public inputs include the root (hash of coefficients), we cannot
-        // reconstruct the exact circuit without the coefficients. Use a single-coefficient
-        // circuit as a structural template — the Kimchi verifier will reject if the
-        // proof was generated against a different circuit structure.
-        //
-        // NOTE: For full verification where the verifier does not have the coefficients,
-        // the coefficients must be provided out-of-band or the circuit structure must be
-        // fixed. The public `accumulator_root` binds to a specific set of coefficients.
-        let circuit = non_membership::KimchiNonMembershipCircuit {
-            element: *ee,
-            accumulator_eval: eval,
-            accumulator_root: *ear,
-            accumulator_coeffs: vec![eval], // minimal — verifier rejects on structure mismatch
+
+        // Parse num_ancestors from proof
+        let nb: [u8; 32] = proof.public_input_bytes[32..64]
+            .try_into()
+            .map_err(|_| "bad num bytes")?;
+        let num_ancestors = {
+            use ark_ff::BigInteger;
+            bytes32_to_fp(&nb).into_bigint().as_ref()[0] as usize
         };
-        let (gates, pc) = circuit.build_circuit();
-        let public_inputs = vec![*ee, eval, *ear];
-        verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
+        if num_ancestors != expected_elements.len() {
+            return Ok(false);
+        }
+
+        // Parse and verify element hashes match
+        for i in 0..num_ancestors {
+            let offset = 64 + i * 32;
+            let eb: [u8; 32] = proof.public_input_bytes[offset..offset + 32]
+                .try_into()
+                .map_err(|_| "bad element bytes")?;
+            let proof_elem = bytes32_to_fp(&eb);
+            if proof_elem != expected_elements[i] {
+                return Ok(false);
+            }
+        }
+
+        // Full Kimchi verification via circuit reconstruction
+        non_membership::KimchiNonMembershipCircuit::verify(proof, coeffs)
     }
     pub fn prove_fold(
         old_root: Fp,
@@ -647,6 +650,8 @@ impl KimchiNativeBackend {
         w: &presentation::KimchiPresentationWitness,
     ) -> Result<presentation::KimchiPresentationProof, String> {
         let proof = presentation::KimchiPresentationCircuit::new(w.clone()).prove()?;
+        let rfc = presentation::compute_revealed_facts_commitment(&w.revealed_facts);
+        let blinded_leaf = presentation::compute_blinded_leaf(w.issuer_key_hash, w.blinding_factor);
         Ok(presentation::KimchiPresentationProof {
             proof,
             federation_root: w.federation_root,
@@ -655,6 +660,10 @@ impl KimchiNativeBackend {
             verifier_nonce: w.verifier_nonce,
             composition_commitment: w.composition_commitment,
             presentation_tag: w.presentation_tag,
+            verifier_block_height: w.verifier_block_height,
+            not_after_height: w.not_after_height,
+            revealed_facts_commitment: rfc,
+            issuer_blinded_leaf: blinded_leaf,
         })
     }
     pub fn verify_presentation(
@@ -663,47 +672,33 @@ impl KimchiNativeBackend {
         if proof.proof.circuit_type != KimchiNativeCircuitType::Presentation {
             return Err("Expected presentation proof".into());
         }
-        if proof.proof.public_input_bytes.len() < 320 {
+        // PUBLIC_INPUT_COUNT * 32 = 13 * 32 = 416
+        if proof.proof.public_input_bytes.len() < 13 * 32 {
             return Err("Malformed".into());
         }
-        let pf: [u8; 32] = proof.proof.public_input_bytes[0..32]
-            .try_into()
-            .map_err(|_| "e")?;
-        let p0: [u8; 32] = proof.proof.public_input_bytes[32..64]
-            .try_into()
-            .map_err(|_| "e")?;
-        let p1: [u8; 32] = proof.proof.public_input_bytes[64..96]
-            .try_into()
-            .map_err(|_| "e")?;
-        let p2: [u8; 32] = proof.proof.public_input_bytes[96..128]
-            .try_into()
-            .map_err(|_| "e")?;
-        let p3: [u8; 32] = proof.proof.public_input_bytes[128..160]
-            .try_into()
-            .map_err(|_| "e")?;
-        let pt: [u8; 32] = proof.proof.public_input_bytes[160..192]
-            .try_into()
-            .map_err(|_| "e")?;
-        let pn: [u8; 32] = proof.proof.public_input_bytes[192..224]
-            .try_into()
-            .map_err(|_| "e")?;
-        let pc: [u8; 32] = proof.proof.public_input_bytes[224..256]
-            .try_into()
-            .map_err(|_| "e")?;
-        let pg: [u8; 32] = proof.proof.public_input_bytes[256..288]
-            .try_into()
-            .map_err(|_| "e")?;
-        let vf = bytes32_to_fp(&pf);
+        // Extract all public inputs from serialized bytes
+        let extract_fp = |start: usize| -> Result<Fp, String> {
+            let b: [u8; 32] = proof.proof.public_input_bytes[start..start + 32]
+                .try_into()
+                .map_err(|_| "e".to_string())?;
+            Ok(bytes32_to_fp(&b))
+        };
+        let vf = extract_fp(0)?;           // federation_root
         let vr = [
-            bytes32_to_fp(&p0),
-            bytes32_to_fp(&p1),
-            bytes32_to_fp(&p2),
-            bytes32_to_fp(&p3),
+            extract_fp(32)?,               // request_predicate[0]
+            extract_fp(64)?,               // request_predicate[1]
+            extract_fp(96)?,               // request_predicate[2]
+            extract_fp(128)?,              // request_predicate[3]
         ];
-        let vt = bytes32_to_fp(&pt);
-        let vn = bytes32_to_fp(&pn);
-        let vc = bytes32_to_fp(&pc);
-        let vg = bytes32_to_fp(&pg);
+        let vt = extract_fp(160)?;         // timestamp
+        let vn = extract_fp(192)?;         // verifier_nonce
+        let vc = extract_fp(224)?;         // composition_commitment
+        let vg = extract_fp(256)?;         // presentation_tag
+        let vbh = extract_fp(288)?;        // verifier_block_height
+        let vnah = extract_fp(320)?;       // not_after_height
+        let vrfc = extract_fp(352)?;       // revealed_facts_commitment
+        let vibl = extract_fp(384)?;       // issuer_blinded_leaf
+
         if vf != proof.federation_root {
             return Ok(presentation::KimchiPresentationVerification::IssuerNotInFederation);
         }
@@ -725,8 +720,23 @@ impl KimchiNativeBackend {
         if vg != proof.presentation_tag {
             return Ok(presentation::KimchiPresentationVerification::InvalidPresentationTag);
         }
+
+        // Token expiry check (verifier-side)
+        if vbh != Fp::zero() && vnah != Fp::zero() {
+            use ark_ff::BigInteger;
+            let diff = vnah - vbh;
+            let diff_u64 = diff.into_bigint().as_ref()[0];
+            let top_bit = (diff_u64 >> (GTE_DIFF_BITS - 1)) & 1;
+            if top_bit != 0 {
+                return Ok(presentation::KimchiPresentationVerification::TokenExpired);
+            }
+        }
+
         // Reconstruct public inputs and verify with real Kimchi verifier
-        let public_inputs = vec![vf, vr[0], vr[1], vr[2], vr[3], vt, vn, vc, vg, Fp::zero()];
+        let public_inputs = vec![
+            vf, vr[0], vr[1], vr[2], vr[3], vt, vn, vc, vg,
+            vbh, vnah, vrfc, vibl,
+        ];
         match presentation::KimchiPresentationCircuit::verify(
             &proof.proof.proof_bytes,
             &public_inputs,
@@ -925,13 +935,16 @@ impl DerivationBackend for KimchiNativeBackend {
             head_predicate: derived_predicate,
             head_terms,
             equal_checks: Vec::new(),
+            memberof_checks: Vec::new(),
             gte_check: None,
+            lt_check: None,
         };
 
         let witness = derivation::KimchiDerivationWitness {
             rule,
             state_root,
             body_fact_hashes,
+            body_merkle_proofs: vec![],
             substitution,
             derived_predicate,
             derived_terms,
@@ -944,7 +957,7 @@ impl DerivationBackend for KimchiNativeBackend {
         if proof.circuit_type != KimchiNativeCircuitType::Derivation {
             return Err("Expected derivation proof".into());
         }
-        if proof.public_input_bytes.len() < 64 {
+        if proof.public_input_bytes.len() < 96 {
             return Err("Malformed derivation proof public inputs".into());
         }
         let sr_bytes: [u8; 32] = proof.public_input_bytes[0..32]
@@ -1228,21 +1241,19 @@ impl AccumulatorBackend for KimchiNativeBackend {
 
     fn prove_non_membership(input: &AccumulatorInput) -> Result<Self::AccumulatorProof, String> {
         // The trait-level accumulator uses extension-field elements (4 base-field elements each).
-        // For the Kimchi native circuit, we reduce to a single Fp element and polynomial coefficients.
+        // For the Kimchi native circuit, we prove each ancestor INDEPENDENTLY via per-element
+        // Horner evaluation + non-zero check. This matches the STARK accumulator AIR's
+        // security property: each ancestor is independently proven not-in-set.
         //
-        // Map: element = hash of ancestor_hashes, coeffs derived from accumulator,
-        // root = hash of accumulator commitment.
-        //
-        // The trait provides ancestor_hashes (multiple elements to prove non-membership for).
-        // The native circuit proves ONE element at a time. We prove for the first ancestor
-        // and commit to the full set via hashing.
+        // The Pasta Fp field (254 bits) provides stronger collision resistance than
+        // BabyBear^4 (124 bits), so per-ancestor Fp evaluation is actually STRONGER
+        // than the STARK's extension-field approach.
         if input.ancestor_hashes.is_empty() {
             return Err("No ancestor hashes to prove non-membership for".into());
         }
 
-        // Combine ancestor hashes into a single element for the polynomial evaluation
-        let ancestor_fps: Vec<Fp> = input.ancestor_hashes.iter().map(|&h| Fp::from(h)).collect();
-        let element = hash_many_fp(&ancestor_fps);
+        // Each ancestor hash becomes an independent evaluation point
+        let elements: Vec<Fp> = input.ancestor_hashes.iter().map(|&h| Fp::from(h)).collect();
 
         // Build polynomial coefficients from the accumulator and alpha.
         // The accumulator [a0, a1, a2, a3] represents an extension field element.
@@ -1257,43 +1268,63 @@ impl AccumulatorBackend for KimchiNativeBackend {
         // Root is the hash commitment to the accumulator state
         let root = hash_many_fp(&coeffs);
 
-        KimchiNativeBackend::prove_non_membership(element, &coeffs, root)
+        KimchiNativeBackend::prove_non_membership(&elements, &coeffs, root)
     }
 
     fn verify_non_membership(
         proof: &Self::AccumulatorProof,
         accumulator: &[super::FieldElement; 4],
         alpha: &[super::FieldElement; 4],
-        _num_ancestors: usize,
+        num_ancestors: usize,
     ) -> Result<bool, String> {
         if proof.circuit_type != KimchiNativeCircuitType::NonMembership {
             return Err("Expected non-membership proof".into());
         }
-        if proof.public_input_bytes.len() < 96 {
+        let expected_bytes = 32 * non_membership::PUBLIC_INPUT_COUNT;
+        if proof.public_input_bytes.len() < expected_bytes {
             return Err("Malformed".into());
         }
-        let eb: [u8; 32] = proof.public_input_bytes[0..32]
-            .try_into()
-            .map_err(|_| "e")?;
-        let rb: [u8; 32] = proof.public_input_bytes[64..96]
-            .try_into()
-            .map_err(|_| "e")?;
-        let ee = bytes32_to_fp(&eb);
 
-        // Reconstruct the accumulator root from the public parameters
+        // Reconstruct the accumulator root and coefficients from the public parameters
         let coeffs: Vec<Fp> = accumulator
             .iter()
             .chain(alpha.iter())
             .map(|&v| Fp::from(v))
             .collect();
         let expected_root = hash_many_fp(&coeffs);
-        let ear = bytes32_to_fp(&rb);
 
-        if ear != expected_root {
+        // Parse root from proof and compare
+        let rb: [u8; 32] = proof.public_input_bytes[0..32]
+            .try_into()
+            .map_err(|_| "bad root bytes")?;
+        let proof_root = bytes32_to_fp(&rb);
+        if proof_root != expected_root {
             return Ok(false);
         }
 
-        KimchiNativeBackend::verify_non_membership(proof, &ee, &ear)
+        // Parse num_ancestors from proof
+        let nb: [u8; 32] = proof.public_input_bytes[32..64]
+            .try_into()
+            .map_err(|_| "bad num bytes")?;
+        let proof_num = {
+            use ark_ff::BigInteger;
+            bytes32_to_fp(&nb).into_bigint().as_ref()[0] as usize
+        };
+        if proof_num != num_ancestors {
+            return Ok(false);
+        }
+
+        // Extract elements from proof for full verification
+        let mut elements = Vec::with_capacity(num_ancestors);
+        for i in 0..num_ancestors {
+            let offset = 64 + i * 32;
+            let eb: [u8; 32] = proof.public_input_bytes[offset..offset + 32]
+                .try_into()
+                .map_err(|_| "bad element bytes")?;
+            elements.push(bytes32_to_fp(&eb));
+        }
+
+        KimchiNativeBackend::verify_non_membership(proof, &elements, &expected_root, &coeffs)
     }
 }
 
@@ -1445,6 +1476,12 @@ impl PresentationBackend for KimchiNativeBackend {
             non_revocation_eval,
             final_root,
             randomness,
+            verifier_block_height: Fp::zero(),
+            not_after_height: Fp::zero(),
+            revealed_facts: Vec::new(),
+            issuer_key_hash: issuer_leaf_fp,
+            blinding_factor: Fp::one(), // non-zero blinding for trait path
+            issuer_membership_proof: None,
         };
 
         KimchiNativeBackend::prove_presentation(&witness)
@@ -1471,6 +1508,9 @@ impl PresentationBackend for KimchiNativeBackend {
             }
             presentation::KimchiPresentationVerification::ProofInvalid => {
                 return Err("Proof invalid".into());
+            }
+            presentation::KimchiPresentationVerification::TokenExpired => {
+                return Err("Token expired".into());
             }
         }
 
@@ -1509,7 +1549,7 @@ impl PresentationBackend for KimchiNativeBackend {
                 cc
             },
             verifier_nonce: proof.verifier_nonce.into_bigint().as_ref()[0],
-            verifier_block_height: 0,
+            verifier_block_height: proof.verifier_block_height.into_bigint().as_ref()[0],
         })
     }
 
@@ -1589,7 +1629,9 @@ impl CrossStateBackend for KimchiNativeBackend {
             head_predicate,
             head_terms,
             equal_checks: Vec::new(),
+            memberof_checks: Vec::new(),
             gte_check: None,
+            lt_check: None,
         };
 
         let body_fact_hashes = intermediate_hashes.clone();
@@ -1598,6 +1640,7 @@ impl CrossStateBackend for KimchiNativeBackend {
             rule,
             state_root: composition_root,
             body_fact_hashes,
+            body_merkle_proofs: vec![],
             substitution,
             derived_predicate: head_predicate,
             derived_terms: final_derived_terms,
@@ -1610,7 +1653,7 @@ impl CrossStateBackend for KimchiNativeBackend {
         if proof.circuit_type != KimchiNativeCircuitType::Derivation {
             return Err("Expected derivation proof for cross-state".into());
         }
-        if proof.public_input_bytes.len() < 64 {
+        if proof.public_input_bytes.len() < 96 {
             return Err("Malformed cross-state proof".into());
         }
         let sr_bytes: [u8; 32] = proof.public_input_bytes[0..32]

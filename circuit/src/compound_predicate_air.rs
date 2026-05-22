@@ -37,7 +37,7 @@ use crate::field::BabyBear;
 use crate::predicate_air::{
     self, PREDICATE_AIR_WIDTH, PREDICATE_DIFF_BITS, PredicateType, PredicateWitness, col,
 };
-use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, ExtElem, StarkAir, StarkProof};
 
 /// Maximum number of sub-predicates in a compound proof.
 pub const MAX_COMPOUND_PREDICATES: usize = 8;

@@ -1,7 +1,7 @@
 use super::*;
 
 // ============================================================================
-// Pickles Recursive IVC Backend — OPERATIONAL
+// Pickles Assisted Recursion Backend — OPERATIONAL
 // ============================================================================
 //
 // Assisted recursion via `create_recursive` is OPERATIONAL — tested, sound,
@@ -15,9 +15,19 @@ use super::*;
 // - Uses the Pasta cycle: proofs are over Vesta with IPA commitments
 // - Verification calls `kimchi::verifier::verify` which batch-checks accumulators
 //
-// The standalone in-circuit IPA verifier (which would make proofs self-contained
-// without needing the batch-verify step) is in `standalone.rs` and is NOT yet
-// complete. The assisted recursion path here is the production path.
+// ## Relationship to Mina-equivalent recursion (standalone.rs)
+//
+// This module (assisted recursion) defers ALL IPA operations to the external
+// verifier, which must run full `kimchi::verifier::verify` (complete IPA batch
+// check). This is more work for the verifier but requires a simpler circuit.
+//
+// The Mina-equivalent path (standalone.rs) verifies everything in-circuit EXCEPT
+// the sg accumulator MSM. Its external verifier does only
+// `batch_dlog_accumulator_check` (one batch MSM over SRS generators) — less
+// verifier work but more complex circuit (EndoMul + CompleteAdd gates).
+//
+// Both are valid strategies. Assisted recursion is the production path today;
+// Mina-equivalent is the target for minimal external verifier work.
 
 /// A Pickles recursive proof over the Pasta cycle.
 ///

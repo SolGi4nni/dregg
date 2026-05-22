@@ -540,7 +540,7 @@ pub fn prove_poseidon_with_nonce(
         let local: Vec<BabyBear> = trace_evals.iter().map(|col| col[i]).collect();
         let next_idx = (i + blowup) % domain_size;
         let next: Vec<BabyBear> = trace_evals.iter().map(|col| col[next_idx]).collect();
-        constraint_evals.push(air.eval_constraints(&local, &next, public_inputs, alpha));
+        constraint_evals.push(air.eval_constraints(&local, &next, public_inputs, crate::stark::ExtElem::from_base(alpha)).base_elem());
     }
 
     // Compute transition quotient (same logic as stark.rs)
@@ -991,7 +991,7 @@ pub fn verify_poseidon_with_nonce(
         let last_trace_point = omega_trace.pow((trace_len - 1) as u32);
         let denom_factor = x - last_trace_point;
         let constraint_at_x =
-            air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, alpha);
+            air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, crate::stark::ExtElem::from_base(alpha)).base_elem();
 
         if z_full == BabyBear::ZERO {
             if denom_factor == BabyBear::ZERO {

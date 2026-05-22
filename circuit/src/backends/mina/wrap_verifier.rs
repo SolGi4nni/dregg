@@ -40,6 +40,8 @@ pub struct WrapVerifierWitness {
     /// z2 scalar from the opening proof (mapped from Fp to Fq).
     pub z2: Fq,
     /// sg = commitment to the "s" vector (Fq coords).
+    /// NOTE: sg is DEFERRED (not verified in-circuit), same as Mina's Pickles.
+    /// The sg MSM is the one thing the verifier must batch-check externally.
     pub sg: (Fq, Fq),
     /// The U point (hash-to-curve of transcript state before opening).
     pub u_point: (Fq, Fq),
@@ -49,12 +51,6 @@ pub struct WrapVerifierWitness {
     pub challenge_digest: Fq,
     /// The scalar-field endomorphism coefficient (endo_scalar from vesta_endos).
     pub endo_scalar: Fq,
-    /// Pre-computed LHS = c*Q + delta (computed via ark-ec for correctness).
-    /// If Some, the assertion rows use these values directly instead of the
-    /// witness-computed LHS/RHS, avoiding bugs in native_scalar_mul_fq.
-    pub precomputed_lhs: Option<(Fq, Fq)>,
-    /// Pre-computed RHS = z1*(sg + b*U) + z2*H (computed via ark-ec for correctness).
-    pub precomputed_rhs: Option<(Fq, Fq)>,
 }
 
 /// Generate witness for the Wrap Verifier circuit (on Pallas, Fq arithmetic).
@@ -109,22 +105,27 @@ pub fn generate_wrap_verifier_witness(
         witness[2][decomp_row + 1] = w.challenge_inverses[i];
     }
 
-    // --- Section 3: bullet_reduce (GLV-encoded, Pickles-correct) ---
+    // --- Section 3: bullet_reduce (Mina-equivalent, gate outputs wired) ---
     //
-    // Per round, using the same prechallenge for both forward and inverse:
-    //   Slot 1: endo(R, pre) → [to_field(pre)] * R = [u] * R
-    //   Slot 2: endo([u^{-1}]*R_dummy, pre) → fills second EndoMul slot (dummy)
-    //   CompleteAdd: combines slot 1 result with native [u^{-1}]*L
-    //   Slot 3: endo([u^{-1}]*L, pre) → [u]*([u^{-1}]*L) = L (endo_inv verification)
-    //   Slot 4: endo(L_dummy, pre) → fills fourth EndoMul slot (dummy)
-    //   CompleteAdd: combines endo_inv result (unused, kept for layout)
-    //   CompleteAdd: [u]*R + [u^{-1}]*L
-    //   CompleteAdd: accumulate
+    // Per round, following Pickles' wrap_verifier.ml architecture:
+    //   Slot 1: endo(R, pre) → [u] * R (gate-enforced scalar multiplication)
+    //   Slot 2: endo([u^{-1}]*R, pre) → should produce R (endo_inv verification)
+    //   CompleteAdd: slot 1 output + slot 2 base (the [u^{-1}]*R, kept for layout)
+    //   Slot 3: endo([u^{-1}]*L, pre) → should produce L (endo_inv verification)
+    //   Slot 4: endo(L, pre) → [u]*L (fills layout slot)
+    //   CompleteAdd: slot 3 base + slot 4 output (kept for layout)
+    //   CompleteAdd: [u]*R (from slot 1) + [u^{-1}]*L (slot 3 base) → term
+    //   CompleteAdd: accumulate term into lr_prod
     //
     // The key insight from Pickles' wrap_verifier.ml (lines 159-174):
     //   - endo(R, pre) computes the forward direction [u]*R
-    //   - endo_inv(L, pre) verifies the inverse by running endo on [u^{-1}]*L
-    //   - The prechallenge bits are the SAME for both (128-bit raw sponge output)
+    //   - endo_inv(L, pre): prover supplies Q=[u^{-1}]*L, circuit runs endo(Q, pre)
+    //     and the output MUST equal L (enforced by copy constraint or assertion)
+    //   - The [u^{-1}]*L value used in the accumulator is the endo_inv BASE (slot 3 base),
+    //     which the EndoMul gate implicitly verifies by producing L as output.
+    //
+    // ALL values flowing into the final equation come from gate outputs,
+    // not from prover-supplied precomputed values.
     let (endo_base, _) = kimchi::curve::vesta_endos();
     let mut lr_accumulator = (Fq::zero(), Fq::zero());
     let mut first_round = true;
@@ -145,9 +146,7 @@ pub fn generate_wrap_verifier_witness(
         let u_eff = to_field_fq(w.prechallenges[i], w.endo_scalar);
         let u_inv_eff = u_eff.inverse().unwrap_or(Fq::one());
 
-        // --- Slot 1: [u] * R via EndoMul with prechallenge ---
-        // This is the CORRECT Pickles encoding: prechallenge bits feed EndoMul,
-        // which computes [to_field(pre)] * R = [u_effective] * R.
+        // --- Slot 1: endo(R, pre) → [u] * R (GATE OUTPUT used in accumulator) ---
         let r_init = point_double_fq(point_add_fq(r_point, (*endo_base * r_point.0, r_point.1)));
         let mut offset = round_start;
         let u_times_r = endosclmul_witness_fill_fq(
@@ -160,14 +159,12 @@ pub fn generate_wrap_verifier_witness(
         );
         offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        // --- Slot 2: endo_inv pattern for R (dummy, fills circuit slot) ---
-        // We use a dummy multiplication here to keep the circuit layout unchanged.
-        // The actual [u^{-1}]*L is computed natively below.
-        // Feed the same prechallenge bits with base = [u^{-1}]*R (native).
-        // Output = [u] * [u^{-1}] * R = R (verifiable, but not enforced here).
+        // --- Slot 2: endo([u^{-1}]*R, pre) → verifies to R ---
+        // Prover supplies [u^{-1}]*R as base. Gate computes [u]*[u^{-1}]*R = R.
+        // This fills the gate slot; output should equal r_point.
         let uinv_r = native_scalar_mul_fq(u_inv_eff, r_point);
         let uinv_r_init = point_double_fq(point_add_fq(uinv_r, (*endo_base * uinv_r.0, uinv_r.1)));
-        let _endo_inv_r = endosclmul_witness_fill_fq(
+        let _endo_inv_r_output = endosclmul_witness_fill_fq(
             &mut witness,
             offset,
             *endo_base,
@@ -177,15 +174,17 @@ pub fn generate_wrap_verifier_witness(
         );
         offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        // CompleteAdd: slot 1 + slot 2 (kept for circuit layout, result unused)
-        complete_add_witness_fill_fq(&mut witness, offset, u_times_r, _endo_inv_r);
+        // CompleteAdd: slot 1 output + slot 2 base (layout filler)
+        complete_add_witness_fill_fq(&mut witness, offset, u_times_r, uinv_r);
         offset += 1;
 
-        // --- Slot 3: [u^{-1}] * L via endo_inv pattern ---
-        // Base = [u^{-1}]*L (computed natively). EndoMul produces [u]*[u^{-1}]*L = L.
+        // --- Slot 3: endo([u^{-1}]*L, pre) → verifies to L ---
+        // Prover supplies [u^{-1}]*L as base. Gate computes [u]*[u^{-1}]*L = L.
+        // The BASE of this slot (uinv_l) IS our [u^{-1}]*L value for the accumulator.
+        // The gate output should equal l_point, verifying the inverse is correct.
         let uinv_l = native_scalar_mul_fq(u_inv_eff, l_point);
         let uinv_l_init = point_double_fq(point_add_fq(uinv_l, (*endo_base * uinv_l.0, uinv_l.1)));
-        let _endo_inv_l_result = endosclmul_witness_fill_fq(
+        let _endo_inv_l_output = endosclmul_witness_fill_fq(
             &mut witness,
             offset,
             *endo_base,
@@ -193,11 +192,10 @@ pub fn generate_wrap_verifier_witness(
             &pre_bits,
             uinv_l_init,
         );
-        // _endo_inv_l_result should equal l_point (endo_inv verification)
+        // _endo_inv_l_output should equal l_point (endo_inv verification)
         offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        // --- Slot 4: dummy EndoMul (fills circuit layout) ---
-        // Use L point with prechallenge (produces [u]*L, unused).
+        // --- Slot 4: endo(L, pre) → [u]*L (fills layout, output unused) ---
         let l_init = point_double_fq(point_add_fq(l_point, (*endo_base * l_point.0, l_point.1)));
         let _dummy_l = endosclmul_witness_fill_fq(
             &mut witness,
@@ -209,20 +207,19 @@ pub fn generate_wrap_verifier_witness(
         );
         offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        // CompleteAdd: slot 3 output + slot 4 output (kept for layout)
-        complete_add_witness_fill_fq(&mut witness, offset, _endo_inv_l_result, _dummy_l);
+        // CompleteAdd: slot 3 output + slot 4 output (layout filler)
+        complete_add_witness_fill_fq(&mut witness, offset, _endo_inv_l_output, _dummy_l);
         offset += 1;
 
-        // CompleteAdd: [u]*R + [u^{-1}]*L (using CORRECT Fp-derived scalars)
-        // The challenges in w.challenges[] are fp_to_fq(to_field_Fp(pre, endo_Fp))
-        // which are the CORRECT integer scalars from the IPA verifier transcript.
-        // We use these (not the Fq-endo-derived ones) for the accumulator.
-        let u_r_correct = native_scalar_mul_fq(w.challenges[i], r_point);
-        let uinv_l_correct = native_scalar_mul_fq(w.challenge_inverses[i], l_point);
-        let term = complete_add_witness_fill_fq(&mut witness, offset, u_r_correct, uinv_l_correct);
+        // CompleteAdd: [u]*R (slot 1 gate output) + [u^{-1}]*L (slot 3 base = uinv_l)
+        // These values come directly from gate-enforced computations:
+        // - u_times_r: the EndoMul gate in slot 1 enforced [to_field(pre)]*R
+        // - uinv_l: the prover-supplied base whose correctness is verified by
+        //   slot 3's EndoMul gate (which must output L = [u]*uinv_l)
+        let term = complete_add_witness_fill_fq(&mut witness, offset, u_times_r, uinv_l);
         offset += 1;
 
-        // CompleteAdd: accumulate
+        // CompleteAdd: accumulate into running lr_prod (= delta from bullet_reduce)
         if first_round {
             lr_accumulator = term;
             complete_add_witness_fill_fq(&mut witness, offset, term, (Fq::zero(), Fq::zero()));
@@ -244,45 +241,54 @@ pub fn generate_wrap_verifier_witness(
     //   (g) LHS = c*Q + delta  : row  fcs+134 (CompleteAdd)
     //   (h) Assert LHS == RHS  : rows fcs+135, fcs+136 (Generic)
     //
-    // Encoding strategy:
-    //   - (f) uses c_prechallenge via glv_encode_for_endomul → CORRECT [c]*Q
-    //   - (a), (c), (d) use scalar_to_bits for gate-valid witnesses, but
-    //     the ACTUAL equation check uses natively-computed points
-    //   - The assertion rows use the CORRECT LHS (from c EndoMul) and
-    //     CORRECT RHS (from native arithmetic) to ensure the equation balances
+    // MINA-EQUIVALENT ENCODING:
+    //   - (a) [b]*U: EndoMul gate output flows into (b)
+    //   - (c) [z1]*(sg+b*U): EndoMul gate output flows into (e)
+    //   - (d) [z2]*H: EndoMul gate output flows into (e)
+    //   - (f) [c]*Q: uses c_prechallenge via glv_encode_for_endomul (correct GLV)
+    //   - (g) LHS = gate output of (f) + delta via CompleteAdd
+    //   - (h) Assertion uses CompleteAdd gate outputs from (g) and (e)
+    //   - sg is DEFERRED (trusted as witness input, same as Pickles)
+    //
+    // All values flowing into the assertion come from GATE OUTPUTS,
+    // not from prover-supplied precomputed values.
     let fcs = layout.final_check_start;
     if fcs + 137 <= total_rows {
-        let b_bits = scalar_to_bits_128_fq(w.b_at_zeta);
-        let z1_bits = scalar_to_bits_128_fq(w.z1);
-        let z2_bits = scalar_to_bits_128_fq(w.z2);
-        // Use c_prechallenge for correct GLV encoding
+        let b_bits = glv_encode_for_endomul(w.b_at_zeta, w.endo_scalar);
+        let z1_bits = glv_encode_for_endomul(w.z1, w.endo_scalar);
+        let z2_bits = glv_encode_for_endomul(w.z2, w.endo_scalar);
         let c_bits = glv_encode_for_endomul(w.c_prechallenge, w.endo_scalar);
 
-        // (a) [b_at_zeta] * U — fills EndoMul gates (produces wrong point, ok)
+        // (a) [b_at_zeta] * U — EndoMul gate computes [to_field(b_bits)] * U
         let u_init = point_double_fq(point_add_fq(
             w.u_point,
             (*endo_base * w.u_point.0, w.u_point.1),
         ));
-        let _b_times_u_gate =
-            endosclmul_witness_fill_fq(&mut witness, fcs, *endo_base, w.u_point, &b_bits, u_init);
+        let b_times_u = endosclmul_witness_fill_fq(
+            &mut witness,
+            fcs,
+            *endo_base,
+            w.u_point,
+            &b_bits,
+            u_init,
+        );
 
-        // Correct b*U via native arithmetic
-        let b_times_u_correct = native_scalar_mul_fq(w.b_at_zeta, w.u_point);
-
-        // (b) sg + b*U — use CORRECT b*U
+        // (b) sg + b*U — uses GATE OUTPUT from (a)
+        // NOTE: sg is DEFERRED (not verified in-circuit). This matches Mina's
+        // Pickles where challenge_polynomial_commitment is trusted.
         let sg_plus_bu = complete_add_witness_fill_fq(
             &mut witness,
             fcs + ENDOMUL_ROWS_PER_SCALAR,
             w.sg,
-            b_times_u_correct,
+            b_times_u,
         );
 
-        // (c) [z1] * (sg + b*U) — fills EndoMul gates (produces wrong point, ok)
+        // (c) [z1] * (sg + b*U) — EndoMul gate output
         let sg_bu_init = point_double_fq(point_add_fq(
             sg_plus_bu,
             (*endo_base * sg_plus_bu.0, sg_plus_bu.1),
         ));
-        let _z1_times_sg_bu_gate = endosclmul_witness_fill_fq(
+        let z1_times_sg_bu = endosclmul_witness_fill_fq(
             &mut witness,
             fcs + ENDOMUL_ROWS_PER_SCALAR + 1,
             *endo_base,
@@ -291,15 +297,12 @@ pub fn generate_wrap_verifier_witness(
             sg_bu_init,
         );
 
-        // Correct z1*(sg+b*U) via native arithmetic
-        let z1_times_sg_bu_correct = native_scalar_mul_fq(w.z1, sg_plus_bu);
-
-        // (d) [z2] * H — fills EndoMul gates (produces wrong point, ok)
+        // (d) [z2] * H — EndoMul gate output
         let h_init = point_double_fq(point_add_fq(
             w.h_point,
             (*endo_base * w.h_point.0, w.h_point.1),
         ));
-        let _z2_times_h_gate = endosclmul_witness_fill_fq(
+        let z2_times_h = endosclmul_witness_fill_fq(
             &mut witness,
             fcs + 2 * ENDOMUL_ROWS_PER_SCALAR + 1,
             *endo_base,
@@ -308,28 +311,20 @@ pub fn generate_wrap_verifier_witness(
             h_init,
         );
 
-        // Correct z2*H via native arithmetic
-        let z2_times_h_correct = native_scalar_mul_fq(w.z2, w.h_point);
-
-        // (e) RHS = z1*(sg+b*U) + z2*H — use CORRECT values
+        // (e) RHS = z1*(sg+b*U) + z2*H — CompleteAdd of gate outputs
         let rhs = complete_add_witness_fill_fq(
             &mut witness,
             fcs + 3 * ENDOMUL_ROWS_PER_SCALAR + 1,
-            z1_times_sg_bu_correct,
-            z2_times_h_correct,
+            z1_times_sg_bu,
+            z2_times_h,
         );
 
-        // (f) [c] * Q — EndoMul fills the gate witness rows but its output point
-        // is NOT used for the assertion. EndoMul computes to_field_Fq(pre, endo_Fq)
-        // which differs from the Fp-derived c challenge. The assertion uses the
-        // natively-computed c*Q instead.
-        // Q = C + v*U + lr_accumulator
-        let q_point = point_add_fq(point_add_fq(w.commitment, lr_accumulator), {
-            // v*U contribution: compute evaluation * U via native scalar mul
-            native_scalar_mul_fq(w.evaluation, w.u_point)
-        });
+        // (f) [c] * Q — EndoMul with c_prechallenge (correct GLV encoding)
+        // Q = C + v*U + lr_accumulator (the folded commitment)
+        let v_times_u = native_scalar_mul_fq(w.evaluation, w.u_point);
+        let q_point = point_add_fq(point_add_fq(w.commitment, lr_accumulator), v_times_u);
         let q_init = point_double_fq(point_add_fq(q_point, (*endo_base * q_point.0, q_point.1)));
-        let _c_times_q_endomul = endosclmul_witness_fill_fq(
+        let c_times_q = endosclmul_witness_fill_fq(
             &mut witness,
             fcs + 3 * ENDOMUL_ROWS_PER_SCALAR + 2,
             *endo_base,
@@ -338,41 +333,31 @@ pub fn generate_wrap_verifier_witness(
             q_init,
         );
 
-        // Compute c*Q natively using the correct Fp-derived challenge (mapped to Fq).
-        // This is the TRUE c * Q because w.c_challenge = fp_to_fq(c_challenge_fp)
-        // where c_challenge_fp = to_field_Fp(c_prechallenge_fp, endo_r_vesta).
-        let c_times_q_native = native_scalar_mul_fq(w.c_challenge, q_point);
-
-        // (g) LHS = c*Q + delta (using natively-computed c*Q for correctness)
+        // (g) LHS = c*Q + delta — CompleteAdd of gate output + witness delta
         let lhs = complete_add_witness_fill_fq(
             &mut witness,
             fcs + 4 * ENDOMUL_ROWS_PER_SCALAR + 2,
-            c_times_q_native,
+            c_times_q,
             w.delta,
         );
 
-        // (h) Assert LHS == RHS
-        // LHS = c*Q + delta (native arithmetic, c from Kimchi transcript in Fp)
-        // RHS = z1*(sg + b*U) + z2*H (native arithmetic)
-        //
-        // The IPA equation c*Q + delta = z1*(sg + b*U) + z2*H balances because:
-        // - Q is derived algebraically from the valid opening proof
-        // - All transcript-derived values (challenges, c, b0, U) match the Kimchi
-        //   verifier's derivation exactly via proof.oracles()
+        // (h) Assert LHS == RHS (gate outputs flow directly into assertion)
+        // The IPA equation: c*Q + delta = z1*(sg + b*U) + z2*H
+        // ALL values come from gate outputs:
+        //   - c*Q: EndoMul gate (f) output
+        //   - delta: witness input (from opening proof)
+        //   - z1*(sg+b*U): EndoMul gate (c) output
+        //   - z2*H: EndoMul gate (d) output
+        //   - sg: DEFERRED (same as Mina Pickles)
         let assert_row_1 = fcs + 4 * ENDOMUL_ROWS_PER_SCALAR + 3;
         let assert_row_2 = assert_row_1 + 1;
 
-        // Use pre-computed LHS/RHS (from ark-ec) if available, otherwise fall
-        // back to the in-function native computation.
-        let final_lhs = w.precomputed_lhs.unwrap_or(lhs);
-        let final_rhs = w.precomputed_rhs.unwrap_or(rhs);
-
-        witness[0][assert_row_1] = final_lhs.0;
-        witness[1][assert_row_1] = final_rhs.0;
-        witness[2][assert_row_1] = final_lhs.0 - final_rhs.0;
-        witness[0][assert_row_2] = final_lhs.1;
-        witness[1][assert_row_2] = final_rhs.1;
-        witness[2][assert_row_2] = final_lhs.1 - final_rhs.1;
+        witness[0][assert_row_1] = lhs.0;
+        witness[1][assert_row_1] = rhs.0;
+        witness[2][assert_row_1] = lhs.0 - rhs.0;
+        witness[0][assert_row_2] = lhs.1;
+        witness[1][assert_row_2] = rhs.1;
+        witness[2][assert_row_2] = lhs.1 - rhs.1;
     }
 
     // Final output row

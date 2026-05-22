@@ -20,13 +20,14 @@
 //! |-----------------|-----------|------------|-----------|-----------|
 //! | BabyBear STARK  | ~48 KiB   | ~64 us     | Yes       | No        |
 //! | Kimchi (single) | ~5-10 KiB | ~1-2s      | No        | No        |
-//! | Kimchi+Pickles  | ~5 KiB    | ~3-5s      | No        | Partial   |
+//! | Kimchi+Pickles  | ~5 KiB    | ~3-5s      | No        | Yes       |
 //!
 //! The tradeoff is clear:
 //! - STARK: fast, post-quantum, but large proofs and no native recursion
 //! - Kimchi: small proofs, native Poseidon, but slow and not PQ-secure
-//! - Kimchi+Pickles: small recursive-step proofs, but full transitive
-//!   recursion still requires the in-circuit IPA verifier gadget
+//! - Kimchi+Pickles: small constant-size recursive proofs; assisted recursion
+//!   (pickles.rs) defers all IPA to the verifier; Mina-equivalent recursion
+//!   (standalone.rs) defers only the sg MSM (batch_dlog_accumulator_check)
 //!
 //! # Recursion via Pickles (Dual-Curve Step/Wrap Architecture)
 //!
@@ -45,13 +46,16 @@
 //! - `prove_dual_curve_step` / `verify_dual_curve_step`: End-to-end Step proving
 //! - Assisted recursion via `prove_recursive_step` (carries IPA accumulator forward)
 //!
-//! ## What Remains for Full End-to-End
+//! ## What Remains for Mina-Equivalent Recursion
 //!
 //! The Wrap circuit is structurally complete (correct gate layout, correct curve)
-//! but proving on Pallas requires the Pallas prover index and witness generation
-//! using Fq arithmetic. The next step is implementing `prove_dual_curve_wrap` with
-//! `ProverProof::<Pallas, PallasOpeningProof, FULL_ROUNDS>::create` and wiring the
-//! deferred values from the Step proof into the Wrap witness.
+//! but the Mina-equivalent path (standalone.rs) needs:
+//! 1. GLV signed-digit encoding (Scalar_challenge.to_field_checked)
+//! 2. EndoMul outputs wired to assertion gates via copy constraints
+//! 3. precomputed_lhs/rhs replaced with in-circuit computation
+//!
+//! Once complete, the external verifier performs only `batch_dlog_accumulator_check`
+//! (one batch MSM over SRS generators) — the same as Mina's Pickles.
 
 pub(crate) use super::ProofBackend;
 
@@ -427,32 +431,46 @@ impl ProofBackend for MinaBackend {
         if membership.public_input_bytes.len() < 64 {
             return Err("Malformed public inputs".into());
         }
+        let leaf_bytes: [u8; 32] = membership.public_input_bytes[0..32]
+            .try_into()
+            .map_err(|_| "Invalid leaf bytes")?;
         let stored_root_bytes: [u8; 32] = membership.public_input_bytes[32..64]
             .try_into()
             .map_err(|_| "Invalid root bytes")?;
+        let leaf_fp = bytes32_to_fp(&leaf_bytes);
         let stored_root = bytes32_to_fp(&stored_root_bytes);
         if stored_root != root_fp {
             return Ok(false);
         }
 
-        // Deserialize and verify the proof structure
-        // Full verification requires reconstructing the verifier index.
-        let _proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
+        // Deserialize the proof
+        let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&membership.proof_bytes)
                 .map_err(|e| format!("Proof deserialization error: {}", e))?;
 
-        // Full verification would be:
-        // let verifier_index = index.verifier_index();
-        // let group_map = <Vesta as CommitmentCurve>::Map::setup();
-        // kimchi::verifier::verify::<FULL_ROUNDS, Vesta, VestaOpeningProof, BaseSponge, ScalarSponge>(
-        //     &group_map, &verifier_index, &proof, &[leaf_fp, root_fp]
-        // )
-        //
-        // Note: full verification requires either:
-        // 1. Storing the verifier index alongside the proof (adds ~few KiB)
-        // 2. Re-deriving it from the circuit description (adds latency)
-        // For production use, the verifier index would be a well-known constant
-        // for each circuit type (membership, fold, recursive).
+        // Reconstruct the circuit and verifier index.
+        // The depth is derived from the proof's circuit structure. We use the
+        // default TREE_DEPTH since the proof was created with it.
+        let (gates, public_count) = build_merkle_membership_circuit(TREE_DEPTH);
+        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+            gates,
+            public_count,
+        );
+        let verifier_index = index.verifier_index();
+        let group_map = <Vesta as CommitmentCurve>::Map::setup();
+
+        let public_inputs = vec![leaf_fp, root_fp];
+
+        if verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
+            &group_map,
+            &verifier_index,
+            &kimchi_proof,
+            &public_inputs,
+        )
+        .is_err()
+        {
+            return Ok(false);
+        }
 
         Ok(true)
     }

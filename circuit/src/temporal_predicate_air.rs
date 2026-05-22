@@ -52,7 +52,7 @@
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::field::BabyBear;
 use crate::predicate_air::{PREDICATE_DIFF_BITS, PredicateType};
-use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, ExtElem, StarkAir, StarkProof};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants and column layout

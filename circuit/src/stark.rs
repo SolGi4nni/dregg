@@ -32,6 +32,195 @@ use crate::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
+// Extension Field: BabyBear^4
+// ============================================================================
+
+/// Extension field element: BabyBear^4 = BabyBear[X] / (X^4 - 11).
+///
+/// Provides 124-bit security for Fiat-Shamir challenges (constraint composition alpha).
+/// Individual AIR constraints are still BabyBear values, but the random linear
+/// combination uses extension-field arithmetic, preventing an adversary from
+/// exploiting the small (31-bit) base field to find constraint-cancellation collisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExtElem(pub [BabyBear; 4]);
+
+/// The irreducible constant W for BabyBear^4: X^4 - 11.
+const EXT_W: BabyBear = BabyBear(11);
+
+impl ExtElem {
+    pub const ZERO: Self = Self([BabyBear::ZERO; 4]);
+    pub const ONE: Self = Self([
+        BabyBear::ONE,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+        BabyBear::ZERO,
+    ]);
+
+    /// Construct from 4 BabyBear components.
+    pub fn new(components: [BabyBear; 4]) -> Self {
+        Self(components)
+    }
+
+    /// Embed a base field element into the extension (constant term only).
+    pub fn from_base(x: BabyBear) -> Self {
+        Self([x, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO])
+    }
+
+    /// Check if zero.
+    pub fn is_zero(&self) -> bool {
+        self.0.iter().all(|x| *x == BabyBear::ZERO)
+    }
+
+    /// Extension field addition.
+    pub fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+        ])
+    }
+
+    /// Extension field subtraction.
+    pub fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0] - rhs.0[0],
+            self.0[1] - rhs.0[1],
+            self.0[2] - rhs.0[2],
+            self.0[3] - rhs.0[3],
+        ])
+    }
+
+    /// Extension field multiplication mod (X^4 - W).
+    pub fn mul(self, rhs: Self) -> Self {
+        let a = self.0;
+        let b = rhs.0;
+        let w = EXT_W;
+
+        let c0 = a[0] * b[0] + w * (a[1] * b[3] + a[2] * b[2] + a[3] * b[1]);
+        let c1 = a[0] * b[1] + a[1] * b[0] + w * (a[2] * b[3] + a[3] * b[2]);
+        let c2 = a[0] * b[2] + a[1] * b[1] + a[2] * b[0] + w * (a[3] * b[3]);
+        let c3 = a[0] * b[3] + a[1] * b[2] + a[2] * b[1] + a[3] * b[0];
+
+        Self([c0, c1, c2, c3])
+    }
+
+    /// Scalar multiplication: ExtElem * BabyBear (base field scalar).
+    /// More efficient than full extension multiplication when one operand is base-field.
+    pub fn scale(self, scalar: BabyBear) -> Self {
+        Self([
+            self.0[0] * scalar,
+            self.0[1] * scalar,
+            self.0[2] * scalar,
+            self.0[3] * scalar,
+        ])
+    }
+
+    /// Extract the base field component (coefficient of x^0).
+    /// For elements known to be in the base field, this returns the value.
+    pub fn base_elem(&self) -> BabyBear {
+        self.0[0]
+    }
+
+    /// Extension field inverse via Gaussian elimination.
+    pub fn inverse(self) -> Option<Self> {
+        if self.is_zero() {
+            return None;
+        }
+
+        let a = self.0;
+        let w = EXT_W;
+
+        let mut mat = [[BabyBear::ZERO; 5]; 4];
+
+        mat[0][0] = a[0];
+        mat[0][1] = w * a[3];
+        mat[0][2] = w * a[2];
+        mat[0][3] = w * a[1];
+        mat[0][4] = BabyBear::ONE;
+        mat[1][0] = a[1];
+        mat[1][1] = a[0];
+        mat[1][2] = w * a[3];
+        mat[1][3] = w * a[2];
+        mat[1][4] = BabyBear::ZERO;
+        mat[2][0] = a[2];
+        mat[2][1] = a[1];
+        mat[2][2] = a[0];
+        mat[2][3] = w * a[3];
+        mat[2][4] = BabyBear::ZERO;
+        mat[3][0] = a[3];
+        mat[3][1] = a[2];
+        mat[3][2] = a[1];
+        mat[3][3] = a[0];
+        mat[3][4] = BabyBear::ZERO;
+
+        for c in 0..4 {
+            let mut pivot_row = None;
+            for row in c..4 {
+                if mat[row][c] != BabyBear::ZERO {
+                    pivot_row = Some(row);
+                    break;
+                }
+            }
+            let pivot_row = pivot_row?;
+            if pivot_row != c {
+                mat.swap(c, pivot_row);
+            }
+
+            let inv_pivot = mat[c][c].inverse()?;
+            for j in 0..5 {
+                mat[c][j] = mat[c][j] * inv_pivot;
+            }
+
+            for row in 0..4 {
+                if row == c {
+                    continue;
+                }
+                let factor = mat[row][c];
+                for j in 0..5 {
+                    mat[row][j] = mat[row][j] - factor * mat[c][j];
+                }
+            }
+        }
+
+        Some(Self([mat[0][4], mat[1][4], mat[2][4], mat[3][4]]))
+    }
+}
+
+impl std::ops::Mul<BabyBear> for ExtElem {
+    type Output = ExtElem;
+    fn mul(self, rhs: BabyBear) -> ExtElem {
+        self.scale(rhs)
+    }
+}
+
+// ============================================================================
+// STARK Configuration
+// ============================================================================
+
+/// Configuration for the custom STARK prover/verifier.
+#[derive(Clone, Debug)]
+pub struct StarkConfig {
+    /// Number of leading zero bits required in the proof-of-work hash.
+    /// Standard practice: 20-30 bits for 128-bit security with 31-bit field.
+    /// Set to 0 to disable PoW (for tests or backward compatibility).
+    pub pow_bits: u32,
+}
+
+impl Default for StarkConfig {
+    fn default() -> Self {
+        Self { pow_bits: 20 }
+    }
+}
+
+impl StarkConfig {
+    /// Create a config with no proof-of-work (for tests and backward compat).
+    pub fn no_pow() -> Self {
+        Self { pow_bits: 0 }
+    }
+}
+
+// ============================================================================
 // Polynomial operations over BabyBear
 // ============================================================================
 
@@ -251,6 +440,14 @@ impl Transcript {
         self.hasher.update(bytes);
         result
     }
+    fn squeeze_ext_elem(&mut self) -> ExtElem {
+        ExtElem::new([
+            self.squeeze_field(),
+            self.squeeze_field(),
+            self.squeeze_field(),
+            self.squeeze_field(),
+        ])
+    }
     fn squeeze_index(&mut self, bound: usize) -> usize {
         self.counter += 1;
         let mut sh = self.hasher.clone();
@@ -266,6 +463,68 @@ impl Transcript {
         self.hasher.update(bytes);
         (val as usize) % bound
     }
+}
+
+// ============================================================================
+// Proof-of-Work (Grinding Resistance)
+// ============================================================================
+
+/// Domain separator for PoW hashing to prevent cross-protocol collisions.
+const POW_DOMAIN: &[u8] = b"pyana-stark-pow:";
+
+/// Check whether a hash has at least `bits` leading zero bits.
+fn has_leading_zeros(hash: &[u8; 32], bits: u32) -> bool {
+    if bits == 0 {
+        return true;
+    }
+    let full_bytes = (bits / 8) as usize;
+    let remaining_bits = bits % 8;
+
+    // Check full zero bytes
+    for &b in &hash[..full_bytes] {
+        if b != 0 {
+            return false;
+        }
+    }
+
+    // Check remaining bits in the next byte
+    if remaining_bits > 0 {
+        let mask = 0xFF << (8 - remaining_bits);
+        if hash[full_bytes] & mask != 0 {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Compute the PoW challenge hash: BLAKE3(POW_DOMAIN || transcript_state || nonce).
+/// The transcript state is captured by finalizing a clone of the hasher.
+fn pow_hash(transcript: &Transcript, nonce: u32) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(POW_DOMAIN);
+    // Capture the current transcript state as a digest
+    let state_digest = transcript.hasher.clone().finalize();
+    hasher.update(state_digest.as_bytes());
+    hasher.update(&nonce.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// Grind for a nonce satisfying the PoW difficulty. Returns the winning nonce.
+fn grind_pow(transcript: &Transcript, pow_bits: u32) -> u32 {
+    for nonce in 0u32.. {
+        let hash = pow_hash(transcript, nonce);
+        if has_leading_zeros(&hash, pow_bits) {
+            return nonce;
+        }
+    }
+    unreachable!()
+}
+
+/// Verify that a nonce satisfies the PoW difficulty.
+fn verify_pow(transcript: &Transcript, nonce: u32, pow_bits: u32) -> bool {
+    let hash = pow_hash(transcript, nonce);
+    has_leading_zeros(&hash, pow_bits)
 }
 
 // ============================================================================
@@ -321,6 +580,15 @@ pub struct StarkProof {
     /// Merkle paths for boundary quotient queries.
     #[serde(default)]
     pub boundary_query_paths: Vec<Vec<[u8; 32]>>,
+    /// Proof-of-work nonce for grinding resistance.
+    /// After committing trace and constraints, the prover finds a nonce such that
+    /// BLAKE3(transcript_state || nonce) has `pow_bits` leading zero bits.
+    /// This prevents an adversary from cheaply grinding Fiat-Shamir challenges.
+    #[serde(default)]
+    pub pow_nonce: u32,
+    /// Number of PoW bits this proof was generated with (for verifier to know difficulty).
+    #[serde(default)]
+    pub pow_bits: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -330,9 +598,18 @@ pub struct QueryProof {
     pub trace_path: Vec<[u8; 32]>,
     pub next_trace_values: Vec<u32>,
     pub next_trace_path: Vec<[u8; 32]>,
+    /// Reduced (base-field) quotient value committed in the Merkle tree.
+    /// This is the inner product of the ExtElem quotient with the zeta reduction vector.
     pub constraint_value: u32,
+    /// Full extension-field quotient components [c0, c1, c2, c3].
+    /// The verifier checks: constraint_value == zeta_reduce(constraint_ext)
+    /// AND constraint_ext * Z_T(x) == eval_constraints(...).
+    #[serde(default)]
+    pub constraint_ext: [u32; 4],
     pub constraint_path: Vec<[u8; 32]>,
     pub constraint_sibling_value: u32,
+    #[serde(default)]
+    pub constraint_sibling_ext: [u32; 4],
     pub constraint_sibling_pos: usize,
     pub constraint_sibling_path: Vec<[u8; 32]>,
     pub fri_layers: Vec<FriLayerQuery>,
@@ -354,6 +631,8 @@ pub struct FriLayerQuery {
 
 pub trait StarkAir {
     fn width(&self) -> usize;
+
+    /// Evaluate the combined constraint polynomial at a given trace row (base field).
     fn eval_constraints(
         &self,
         local: &[BabyBear],
@@ -361,6 +640,27 @@ pub trait StarkAir {
         public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear;
+
+    /// Evaluate constraints with extension-field alpha for 124-bit composition security.
+    ///
+    /// Default: evaluates `eval_constraints` at each of the 4 independent base-field
+    /// components of alpha. A cheating prover must satisfy C(a_i) = 0 for all 4
+    /// independently-random challenges simultaneously, giving forgery probability
+    /// at most (d/p)^4 < 2^{-124} where d = number of constraints.
+    fn eval_constraints_ext(
+        &self,
+        local: &[BabyBear],
+        next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: ExtElem,
+    ) -> ExtElem {
+        let c0 = self.eval_constraints(local, next, public_inputs, alpha.0[0]);
+        let c1 = self.eval_constraints(local, next, public_inputs, alpha.0[1]);
+        let c2 = self.eval_constraints(local, next, public_inputs, alpha.0[2]);
+        let c3 = self.eval_constraints(local, next, public_inputs, alpha.0[3]);
+        ExtElem::new([c0, c1, c2, c3])
+    }
+
     fn constraint_degree(&self) -> usize;
     /// Whether this AIR uses Merkle chain continuity (col5=parent, col0=current).
     /// Override to false for AIRs without this layout.
@@ -460,6 +760,14 @@ impl StarkAir for MerkleStarkAir {
     }
 }
 
+/// Reduce an ExtElem quotient to a single BabyBear value using a random challenge.
+/// reduction = q[0] + zeta*q[1] + zeta^2*q[2] + zeta^3*q[3]
+fn zeta_reduce(q: &ExtElem, zeta: BabyBear) -> BabyBear {
+    let z2 = zeta * zeta;
+    let z3 = z2 * zeta;
+    q.0[0] + zeta * q.0[1] + z2 * q.0[2] + z3 * q.0[3]
+}
+
 // ============================================================================
 // STARK Prover
 // ============================================================================
@@ -469,7 +777,7 @@ pub fn prove(
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
 ) -> StarkProof {
-    prove_with_context(air, trace, public_inputs, None)
+    prove_full(air, trace, public_inputs, None, &StarkConfig::no_pow())
 }
 
 /// Prove with an optional context for temporal binding and session isolation.
@@ -478,6 +786,27 @@ pub fn prove_with_context(
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
     context: Option<&StarkContext>,
+) -> StarkProof {
+    prove_full(air, trace, public_inputs, context, &StarkConfig::no_pow())
+}
+
+/// Prove with a config specifying proof-of-work difficulty and other parameters.
+pub fn prove_with_config(
+    air: &dyn StarkAir,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    config: &StarkConfig,
+) -> StarkProof {
+    prove_full(air, trace, public_inputs, None, config)
+}
+
+/// Full prove function with both context and config.
+pub fn prove_full(
+    air: &dyn StarkAir,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    context: Option<&StarkContext>,
+    config: &StarkConfig,
 ) -> StarkProof {
     let num_rows = trace.len();
     let num_cols = air.width();
@@ -538,11 +867,12 @@ pub fn prove_with_context(
     for pi in public_inputs {
         transcript.absorb_field(*pi);
     }
-    let alpha = transcript.squeeze_field();
+    // Squeeze alpha as ExtElem (4 BabyBear elements) for 124-bit constraint composition security.
+    let alpha = transcript.squeeze_ext_elem();
 
     let boundary_cs = air.boundary_constraints(public_inputs, num_rows);
 
-    let mut constraint_evals = Vec::with_capacity(domain_size);
+    let mut constraint_evals: Vec<ExtElem> = Vec::with_capacity(domain_size);
     for i in 0..domain_size {
         let local: Vec<BabyBear> = trace_evals.iter().map(|col| col[i]).collect();
         // Advancing by one TRACE step in the evaluation domain means advancing by BLOWUP
@@ -550,7 +880,7 @@ pub fn prove_with_context(
         // T(omega_eval^(i + BLOWUP)), i.e., trace_evals[col][(i + blowup) % domain_size].
         let next_idx = (i + blowup) % domain_size;
         let next: Vec<BabyBear> = trace_evals.iter().map(|col| col[next_idx]).collect();
-        constraint_evals.push(air.eval_constraints(&local, &next, public_inputs, alpha));
+        constraint_evals.push(air.eval_constraints_ext(&local, &next, public_inputs, alpha));
     }
 
     // Transition quotient: divide constraint evaluations by the transition vanishing
@@ -574,7 +904,8 @@ pub fn prove_with_context(
     // We compute (n-1)^2 mod n explicitly to avoid u32 overflow for large trace sizes.
     let exp_mod_n = ((num_rows - 1) as u64 * (num_rows - 1) as u64 % num_rows as u64) as u32;
     let z_t_at_last = BabyBear::new(num_rows as u32) * omega_trace.pow(exp_mod_n);
-    let mut quotient_evals = Vec::with_capacity(domain_size);
+    // Quotient evals are in ExtElem (extension field).
+    let mut quotient_evals: Vec<ExtElem> = Vec::with_capacity(domain_size);
     for i in 0..domain_size {
         let x = eval_points[i];
         // Z(x) = x^n - 1 (vanishes on entire trace domain)
@@ -586,26 +917,53 @@ pub fn prove_with_context(
             if denom_factor == BabyBear::ZERO {
                 // x IS the last trace point omega^(n-1). Z_T != 0 here.
                 // Compute quotient = constraint / Z_T(omega^(n-1))
-                quotient_evals.push(constraint_evals[i] * z_t_at_last.inverse().unwrap());
+                let z_inv = z_t_at_last.inverse().unwrap();
+                quotient_evals.push(constraint_evals[i].scale(z_inv));
             } else {
                 // x is on the trace domain but NOT the last point.
                 // Z_T(x) = 0 here, and constraint(x) must also be 0 (constraints
                 // hold on rows 0..n-2). The quotient is 0 by L'Hopital/continuity.
-                quotient_evals.push(BabyBear::ZERO);
+                quotient_evals.push(ExtElem::ZERO);
             }
         } else {
             // z_full != 0 means x is NOT on the trace domain, so denom_factor != 0
             let z_transition = z_full * denom_factor.inverse().unwrap();
-            quotient_evals.push(constraint_evals[i] * z_transition.inverse().unwrap());
+            let z_inv = z_transition.inverse().unwrap();
+            quotient_evals.push(constraint_evals[i].scale(z_inv));
         }
     }
 
-    let constraint_leaves: Vec<[u8; 32]> = quotient_evals.iter().map(|&v| hash_leaf(v)).collect();
+    // Squeeze a reduction challenge zeta to project ExtElem quotient to base field for FRI.
+    // Security: 31 bits per query * 80 queries >> 128 bits (birthday bound not relevant).
+    let zeta = transcript.squeeze_field();
+
+    // Reduce ExtElem quotient evaluations to BabyBear for Merkle commitment and FRI.
+    let reduced_quotient_evals: Vec<BabyBear> = quotient_evals
+        .iter()
+        .map(|q| zeta_reduce(q, zeta))
+        .collect();
+
+    let constraint_leaves: Vec<[u8; 32]> =
+        reduced_quotient_evals.iter().map(|&v| hash_leaf(v)).collect();
     let constraint_tree = MerkleTree::new(constraint_leaves);
     transcript.absorb_hash(&constraint_tree.root());
 
     let (fri_commitments, fri_trees, fri_layer_evals, fri_final_poly) =
-        fri_commit(&quotient_evals, &eval_points, &mut transcript);
+        fri_commit(&reduced_quotient_evals, &eval_points, &mut transcript);
+
+    // ====================================================================
+    // Proof-of-Work: grind for a nonce after all commitments are absorbed.
+    // An adversary who wants to influence query indices must pay 2^pow_bits
+    // work PER grinding attempt.
+    // ====================================================================
+    let pow_nonce = if config.pow_bits > 0 {
+        let nonce = grind_pow(&transcript, config.pow_bits);
+        // Absorb nonce into transcript before squeezing query indices
+        transcript.absorb_bytes(&nonce.to_le_bytes());
+        nonce
+    } else {
+        0u32
+    };
 
     let mut query_proofs = Vec::with_capacity(NUM_QUERIES);
     for _ in 0..NUM_QUERIES {
@@ -616,7 +974,13 @@ pub fn prove_with_context(
         let next_idx = (idx + blowup) % domain_size;
         let next_trace_values: Vec<u32> = trace_evals.iter().map(|col| col[next_idx].0).collect();
         let next_trace_path = trace_tree.prove(next_idx);
-        let constraint_value = quotient_evals[idx].0;
+        let constraint_value = reduced_quotient_evals[idx].0;
+        let constraint_ext = [
+            quotient_evals[idx].0[0].0,
+            quotient_evals[idx].0[1].0,
+            quotient_evals[idx].0[2].0,
+            quotient_evals[idx].0[3].0,
+        ];
         let constraint_path = constraint_tree.prove(idx);
 
         let first_half = domain_size / 2;
@@ -625,7 +989,13 @@ pub fn prove_with_context(
         } else {
             idx - first_half
         };
-        let constraint_sibling_value = quotient_evals[constraint_sibling_pos].0;
+        let constraint_sibling_value = reduced_quotient_evals[constraint_sibling_pos].0;
+        let constraint_sibling_ext = [
+            quotient_evals[constraint_sibling_pos].0[0].0,
+            quotient_evals[constraint_sibling_pos].0[1].0,
+            quotient_evals[constraint_sibling_pos].0[2].0,
+            quotient_evals[constraint_sibling_pos].0[3].0,
+        ];
         let constraint_sibling_path = constraint_tree.prove(constraint_sibling_pos);
 
         let mut fri_layers = Vec::new();
@@ -656,8 +1026,10 @@ pub fn prove_with_context(
             next_trace_values,
             next_trace_path,
             constraint_value,
+            constraint_ext,
             constraint_path,
             constraint_sibling_value,
+            constraint_sibling_ext,
             constraint_sibling_pos,
             constraint_sibling_path,
             fri_layers,
@@ -694,6 +1066,8 @@ pub fn prove_with_context(
         boundary_commitment: None,
         boundary_query_values,
         boundary_query_paths,
+        pow_nonce,
+        pow_bits: config.pow_bits,
     }
 }
 
@@ -741,7 +1115,7 @@ pub fn verify(
     proof: &StarkProof,
     public_inputs: &[BabyBear],
 ) -> Result<(), String> {
-    verify_with_context(air, proof, public_inputs, None)
+    verify_full(air, proof, public_inputs, None, &StarkConfig::no_pow())
 }
 
 /// Verify with an optional context for temporal binding and session isolation.
@@ -750,6 +1124,27 @@ pub fn verify_with_context(
     proof: &StarkProof,
     public_inputs: &[BabyBear],
     context: Option<&StarkContext>,
+) -> Result<(), String> {
+    verify_full(air, proof, public_inputs, context, &StarkConfig::no_pow())
+}
+
+/// Verify with a config specifying proof-of-work difficulty.
+pub fn verify_with_config(
+    air: &dyn StarkAir,
+    proof: &StarkProof,
+    public_inputs: &[BabyBear],
+    config: &StarkConfig,
+) -> Result<(), String> {
+    verify_full(air, proof, public_inputs, None, config)
+}
+
+/// Full verify function with both context and config.
+pub fn verify_full(
+    air: &dyn StarkAir,
+    proof: &StarkProof,
+    public_inputs: &[BabyBear],
+    context: Option<&StarkContext>,
+    config: &StarkConfig,
 ) -> Result<(), String> {
     // Verify AIR identity matches
     if proof.air_name != air.air_name() {
@@ -842,9 +1237,13 @@ pub fn verify_with_context(
     for pi in public_inputs {
         transcript.absorb_field(*pi);
     }
-    let alpha = transcript.squeeze_field();
+    // Squeeze alpha as ExtElem (4 BabyBear elements) for 124-bit constraint composition security.
+    let alpha = transcript.squeeze_ext_elem();
 
     let boundary_cs = air.boundary_constraints(public_inputs, trace_len);
+
+    // Squeeze the zeta reduction challenge (must match prover's transcript state).
+    let zeta = transcript.squeeze_field();
 
     transcript.absorb_hash(&proof.constraint_commitment);
 
@@ -881,6 +1280,29 @@ pub fn verify_with_context(
     for commitment in &proof.fri_commitments {
         fri_betas.push(transcript.squeeze_field());
         transcript.absorb_hash(commitment);
+    }
+
+    // ====================================================================
+    // Proof-of-Work verification: check nonce meets difficulty requirement.
+    // Must match prover's transcript state at this point.
+    // ====================================================================
+    if config.pow_bits > 0 {
+        // Verify the proof declares the expected difficulty
+        if proof.pow_bits != config.pow_bits {
+            return Err(format!(
+                "PoW difficulty mismatch: proof has pow_bits={}, expected {}",
+                proof.pow_bits, config.pow_bits
+            ));
+        }
+        // Verify the nonce satisfies the difficulty
+        if !verify_pow(&transcript, proof.pow_nonce, config.pow_bits) {
+            return Err(format!(
+                "Proof-of-work verification failed: nonce {} does not have {} leading zero bits",
+                proof.pow_nonce, config.pow_bits
+            ));
+        }
+        // Absorb nonce into transcript (must match prover)
+        transcript.absorb_bytes(&proof.pow_nonce.to_le_bytes());
     }
 
     // ====================================================================
@@ -1020,6 +1442,24 @@ pub fn verify_with_context(
         // rely on the algebraic constraint check below rather than spot-checking
         // evaluated values at arbitrary domain points.
 
+        // Reconstruct the full ExtElem quotient from the proof
+        let quotient_ext = ExtElem::new([
+            BabyBear::new_canonical(query.constraint_ext[0]),
+            BabyBear::new_canonical(query.constraint_ext[1]),
+            BabyBear::new_canonical(query.constraint_ext[2]),
+            BabyBear::new_canonical(query.constraint_ext[3]),
+        ]);
+
+        // Verify the zeta reduction: committed value must equal zeta_reduce(ext quotient)
+        let expected_reduced = zeta_reduce(&quotient_ext, zeta);
+        if constraint_val != expected_reduced {
+            return Err(format!(
+                "Constraint reduction mismatch at query index {idx}: \
+                 committed {} != zeta_reduce(ext) {}",
+                constraint_val.0, expected_reduced.0
+            ));
+        }
+
         let x = eval_points[idx];
         // Compute transition vanishing polynomial Z_T(x) = (x^n - 1) / (x - omega^(n-1))
         let x_n = x.pow(trace_len as u32);
@@ -1028,7 +1468,7 @@ pub fn verify_with_context(
         let last_trace_point = omega_trace.pow((trace_len - 1) as u32);
         let denom_factor = x - last_trace_point;
         let constraint_at_x =
-            air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, alpha);
+            air.eval_constraints_ext(&trace_vals, &next_trace_vals, public_inputs, alpha);
         if z_full == BabyBear::ZERO {
             if denom_factor == BabyBear::ZERO {
                 // x IS the last trace point omega^(n-1). Z_T != 0 here.
@@ -1037,8 +1477,8 @@ pub fn verify_with_context(
                 let exp_mod_n =
                     ((trace_len - 1) as u64 * (trace_len - 1) as u64 % trace_len as u64) as u32;
                 let z_t_at_last = BabyBear::new(trace_len as u32) * omega_trace.pow(exp_mod_n);
-                // Verify: quotient * Z_T == constraint
-                if constraint_val * z_t_at_last != constraint_at_x {
+                // Verify: quotient_ext * Z_T == constraint (in extension field)
+                if quotient_ext.scale(z_t_at_last) != constraint_at_x {
                     return Err(format!(
                         "Constraint consistency check failed at last trace point (query index {idx})"
                     ));
@@ -1046,12 +1486,12 @@ pub fn verify_with_context(
             } else {
                 // x is on trace domain but NOT the last point. Prover sets quotient=0.
                 // The constraint must also be zero (constraints hold on rows 0..n-2).
-                if constraint_val != BabyBear::ZERO {
+                if quotient_ext != ExtElem::ZERO {
                     return Err(format!(
                         "Constraint quotient non-zero on trace domain at query index {idx}"
                     ));
                 }
-                if constraint_at_x != BabyBear::ZERO {
+                if constraint_at_x != ExtElem::ZERO {
                     return Err(format!(
                         "Constraint non-zero on trace domain at query index {idx}"
                     ));
@@ -1061,7 +1501,8 @@ pub fn verify_with_context(
             // x is NOT on the trace domain; denom_factor is also non-zero since the
             // last trace point is on the trace domain and x is not.
             let z_transition = z_full * denom_factor.inverse().unwrap();
-            if constraint_val * z_transition != constraint_at_x {
+            // Verify: quotient_ext * Z_T == constraint (in extension field)
+            if quotient_ext.scale(z_transition) != constraint_at_x {
                 return Err(format!(
                     "Constraint consistency check failed at query index {idx}"
                 ));
@@ -1407,6 +1848,9 @@ pub fn proof_to_bytes(proof: &StarkProof) -> Vec<u8> {
             b.extend_from_slice(h);
         }
     }
+    // Serialize proof-of-work fields
+    b.extend_from_slice(&proof.pow_bits.to_le_bytes());
+    b.extend_from_slice(&proof.pow_nonce.to_le_bytes());
     b
 }
 
@@ -1539,8 +1983,10 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
             next_trace_values,
             next_trace_path,
             constraint_value,
+            constraint_ext: [0; 4],
             constraint_path,
             constraint_sibling_value,
+            constraint_sibling_ext: [0; 4],
             constraint_sibling_pos,
             constraint_sibling_path,
             fri_layers,
@@ -1615,6 +2061,15 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
         (vec![], vec![])
     };
 
+    // Read proof-of-work fields (optional for backward compat with old proofs)
+    let (pow_bits, pow_nonce) = if pos < bytes.len() {
+        let bits = ru32(&mut pos, bytes)?;
+        let nonce_val = ru32(&mut pos, bytes)?;
+        (bits, nonce_val)
+    } else {
+        (0, 0)
+    };
+
     Ok(StarkProof {
         trace_commitment,
         constraint_commitment,
@@ -1629,6 +2084,8 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
         boundary_commitment: None,
         boundary_query_values,
         boundary_query_paths,
+        pow_nonce,
+        pow_bits,
     })
 }
 
@@ -2961,5 +3418,245 @@ mod tests {
             err.contains("exceeds input bounds") || err.contains("unexpected end"),
             "Error should mention bounds or EOF, got: {err}"
         );
+    }
+
+    // ========================================================================
+    // PROOF-OF-WORK (GRINDING RESISTANCE) TESTS
+    // ========================================================================
+
+    #[test]
+    fn pow_honest_proof_verifies() {
+        // A proof generated with PoW should verify with the same config.
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let config = StarkConfig { pow_bits: 8 }; // Use 8 bits for fast test
+
+        let proof = prove_with_config(&air, &trace, &pi, &config);
+        assert_eq!(proof.pow_bits, 8);
+        // pow_nonce could be 0 if nonce=0 happens to satisfy the difficulty,
+        // but it's stored regardless.
+
+        let result = verify_with_config(&air, &proof, &pi, &config);
+        assert!(result.is_ok(), "PoW proof must verify: {:?}", result.err());
+    }
+
+    #[test]
+    fn pow_wrong_nonce_rejected() {
+        // A proof with a tampered nonce must be rejected.
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let config = StarkConfig { pow_bits: 8 };
+
+        let mut proof = prove_with_config(&air, &trace, &pi, &config);
+        // Tamper with the nonce
+        proof.pow_nonce = proof.pow_nonce.wrapping_add(1);
+
+        let result = verify_with_config(&air, &proof, &pi, &config);
+        assert!(result.is_err(), "Wrong PoW nonce must be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Proof-of-work verification failed")
+                || err.contains("Query index mismatch"),
+            "Error should mention PoW failure or query mismatch (due to transcript divergence), got: {err}"
+        );
+    }
+
+    #[test]
+    fn pow_insufficient_difficulty_rejected() {
+        // Generate proof with low difficulty, try to verify with higher difficulty.
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+
+        // Generate with 4 bits
+        let low_config = StarkConfig { pow_bits: 4 };
+        let proof = prove_with_config(&air, &trace, &pi, &low_config);
+        assert_eq!(proof.pow_bits, 4);
+
+        // Try to verify with 12 bits (higher difficulty)
+        let high_config = StarkConfig { pow_bits: 12 };
+        let result = verify_with_config(&air, &proof, &pi, &high_config);
+        assert!(
+            result.is_err(),
+            "Proof with insufficient PoW difficulty must be rejected"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("PoW difficulty mismatch"),
+            "Error should mention difficulty mismatch, got: {err}"
+        );
+    }
+
+    #[test]
+    fn pow_zero_bits_skips_verification() {
+        // With pow_bits=0, no PoW is required (backward compat).
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+
+        // prove() uses no_pow internally
+        let proof = prove(&air, &trace, &pi);
+        assert_eq!(proof.pow_bits, 0);
+        assert_eq!(proof.pow_nonce, 0);
+
+        // Verify with no_pow config works
+        assert!(verify(&air, &proof, &pi).is_ok());
+
+        // Also verify with explicit no_pow config
+        let result = verify_with_config(&air, &proof, &pi, &StarkConfig::no_pow());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn pow_grinding_performance() {
+        // Grinding 20 bits should complete in reasonable time (<10 seconds).
+        // On modern hardware, 2^20 ~ 1M BLAKE3 hashes takes ~1-5ms.
+        let mut transcript = Transcript::new(b"perf-test");
+        transcript.absorb_bytes(b"some commitment data");
+        transcript.absorb_hash(&[0xAB; 32]);
+
+        let start = std::time::Instant::now();
+        let nonce = grind_pow(&transcript, 20);
+        let elapsed = start.elapsed();
+
+        // Verify the nonce is valid
+        assert!(verify_pow(&transcript, nonce, 20));
+
+        // Performance assertion: should be well under 10 seconds
+        assert!(
+            elapsed.as_secs() < 10,
+            "Grinding 20 bits took {:?}, expected <10s",
+            elapsed
+        );
+
+        // Informational: print actual time for benchmarking
+        eprintln!("  PoW 20-bit grinding took {:?} (nonce={})", elapsed, nonce);
+    }
+
+    #[test]
+    fn pow_leading_zeros_correctness() {
+        // Verify the leading zeros check is correct.
+        let all_zeros = [0u8; 32];
+        assert!(has_leading_zeros(&all_zeros, 0));
+        assert!(has_leading_zeros(&all_zeros, 32));
+        assert!(has_leading_zeros(&all_zeros, 256));
+
+        let mut one_bit = [0u8; 32];
+        one_bit[0] = 0x80; // first bit is 1
+        assert!(has_leading_zeros(&one_bit, 0));
+        assert!(!has_leading_zeros(&one_bit, 1));
+
+        let mut after_two_bytes = [0u8; 32];
+        after_two_bytes[2] = 0x40; // bit 17 is set (0-indexed)
+        assert!(has_leading_zeros(&after_two_bytes, 16));
+        assert!(has_leading_zeros(&after_two_bytes, 17));
+        assert!(!has_leading_zeros(&after_two_bytes, 18));
+
+        let mut byte_boundary = [0u8; 32];
+        byte_boundary[1] = 0x01; // bit 15 is set
+        assert!(has_leading_zeros(&byte_boundary, 8));
+        assert!(has_leading_zeros(&byte_boundary, 15));
+        assert!(!has_leading_zeros(&byte_boundary, 16));
+    }
+
+    #[test]
+    fn pow_serialization_roundtrip() {
+        // Ensure PoW fields survive serialization/deserialization.
+        let (trace, pi) = generate_merkle_trace(
+            999,
+            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let config = StarkConfig { pow_bits: 8 };
+
+        let proof = prove_with_config(&air, &trace, &pi, &config);
+        let bytes = proof_to_bytes(&proof);
+        let proof2 = proof_from_bytes(&bytes).unwrap();
+
+        assert_eq!(proof2.pow_bits, 8);
+        assert_eq!(proof2.pow_nonce, proof.pow_nonce);
+
+        // Deserialized proof still verifies
+        let result = verify_with_config(&air, &proof2, &pi, &config);
+        assert!(
+            result.is_ok(),
+            "Deserialized PoW proof must verify: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn pow_full_config_with_context() {
+        // PoW works together with temporal binding context.
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let config = StarkConfig { pow_bits: 8 };
+        let ctx = StarkContext {
+            nonce: Some([0xCD; 32]),
+            timestamp: Some(1716000000),
+        };
+
+        let proof = prove_full(&air, &trace, &pi, Some(&ctx), &config);
+        assert_eq!(proof.pow_bits, 8);
+
+        // Verify with matching context and config
+        let result = verify_full(&air, &proof, &pi, Some(&ctx), &config);
+        assert!(
+            result.is_ok(),
+            "PoW + context proof must verify: {:?}",
+            result.err()
+        );
+
+        // Wrong context still fails
+        let bad_ctx = StarkContext {
+            nonce: Some([0xEE; 32]),
+            timestamp: None,
+        };
+        let result = verify_full(&air, &proof, &pi, Some(&bad_ctx), &config);
+        assert!(result.is_err(), "Wrong context must be rejected even with valid PoW");
     }
 }

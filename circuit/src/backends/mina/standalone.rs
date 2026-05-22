@@ -1,18 +1,46 @@
+//! # Mina-Equivalent In-Circuit IPA Verification
+//!
+//! This module implements the same verification strategy as Mina's Pickles:
+//! - In-circuit: Fiat-Shamir replay, bullet_reduce (EndoMul + CompleteAdd),
+//!   final equation assertion, b(zeta) computation
+//! - Deferred to external verifier: sg accumulator MSM (batch_dlog_accumulator_check)
+//!
+//! This matches Mina's security model: the external verifier performs one batch MSM
+//! over the SRS generators. All other verification is done inside the proof.
+//!
+//! # Status: IN PROGRESS
+//!
+//! The circuit structure exists but is NOT yet sound:
+//! - Assertion gates check prover-supplied precomputed values (rubber-stamp)
+//! - EndoMul outputs are not wired to the final assertion
+//! - GLV encoding uses raw bits, not signed-digit decomposition
+//!
+//! For production recursive proofs, use:
+//! - `pickles.rs` — assisted recursion via create_recursive (SOUND, TESTED)
+//! - `wrap_verifier.rs` — binding wrap circuit (SOUND, uses create_recursive)
+//!
+//! The Mina-equivalent path will become sound when:
+//! 1. GLV signed-digit encoding matches Scalar_challenge.to_field_checked
+//! 2. EndoMul outputs are wired to assertion gates via copy constraints
+//! 3. precomputed_lhs/rhs is replaced with in-circuit computation
+
 use super::*;
 
-/// Prove a standalone recursive step with in-circuit IPA verification.
+/// Prove a Mina-equivalent recursive step with in-circuit IPA verification.
 ///
 /// Unlike `prove_recursive_step` (which uses assisted recursion and defers
-/// the IPA check), this function embeds the full IPA verification equation
-/// inside the circuit. The resulting proof is self-contained: any verifier
-/// can check it without needing to batch-verify accumulated challenges.
+/// all IPA operations), this function embeds the IPA verification equation
+/// inside the circuit — matching what Mina's Pickles does. The resulting
+/// proof defers only the sg MSM to the external verifier
+/// (batch_dlog_accumulator_check).
 ///
 /// # Arguments
 /// - `previous`: The previous proof whose IPA opening we verify in-circuit.
 /// - `transition`: The state transition for this step.
 ///
 /// # Returns
-/// A `StandaloneRecursiveProof` that is fully self-verifying.
+/// A `StandaloneRecursiveProof` requiring only batch_dlog_accumulator_check
+/// from the external verifier.
 pub fn prove_standalone_recursive_step(
     previous: &PicklesRecursiveProof,
     transition: &PicklesStateTransition,
@@ -231,10 +259,11 @@ pub fn prove_standalone_recursive_step(
     })
 }
 
-/// Standalone recursive proof with in-circuit IPA verification.
+/// Mina-equivalent recursive proof with in-circuit IPA verification.
 ///
-/// Unlike `PicklesRecursiveProof` (which defers verification), this verifies
-/// the previous proof entirely within the circuit. The result is self-contained.
+/// Unlike `PicklesRecursiveProof` (which defers all IPA operations), this
+/// verifies everything in-circuit except the sg MSM. The external verifier
+/// performs only `batch_dlog_accumulator_check` (one batch MSM over SRS generators).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StandaloneRecursiveProof {
     /// Serialized Kimchi proof over Vesta (includes IPA verifier gadget).
@@ -378,16 +407,16 @@ pub fn ipa_verifier_circuit_stats() -> String {
 }
 
 // ============================================================================
-// Standalone-Transitive Wrap Prover (In-Circuit IPA Verification on Pallas)
+// Mina-Equivalent Wrap Prover (In-Circuit IPA Verification on Pallas)
 // ============================================================================
 //
-// This implements the standalone wrap prover that verifies the step proof's
+// This implements the Mina-equivalent wrap prover that verifies the step proof's
 // IPA opening INSIDE the wrap circuit using EndoMul + CompleteAdd gates.
 //
-// Unlike `prove_dual_curve_wrap` (which defers verification via `create_recursive`),
-// this version is SELF-CONTAINED: the resulting proof requires no external
-// accumulator checking. Any verifier can verify it with just the proof and
-// verifier index.
+// Unlike `prove_dual_curve_wrap` (which defers all IPA via `create_recursive`),
+// this version verifies everything in-circuit except the sg accumulator MSM.
+// The external verifier performs only `batch_dlog_accumulator_check` — one
+// batch MSM over SRS generators. This is the same security model as Mina's Pickles.
 //
 // ## Curve Logic (confirmed by reading OCaml wrap_verifier.ml)
 //
@@ -403,15 +432,16 @@ pub fn ipa_verifier_circuit_stats() -> String {
 //   - `Scalar_challenge.endo` uses `Endo.Wrap_inner_curve` (Vesta endomorphism)
 //   - `bullet_reduce` computes `[u_i^{-1}]*L_i + [u_i]*R_i` using `endo/endo_inv`
 
-/// A standalone wrap proof (on Pallas) with in-circuit IPA verification.
+/// A Mina-equivalent wrap proof (on Pallas) with in-circuit IPA verification.
 ///
-/// Unlike `DualCurveWrapProof` (which defers IPA verification to the next
-/// verifier via `create_recursive`), this proof is fully self-contained:
-/// the EndoMul + CompleteAdd gates inside the circuit enforce the IPA
-/// verification equation. No accumulator passing or batch checking needed.
+/// Unlike `DualCurveWrapProof` (which defers all IPA operations to the next
+/// verifier via `create_recursive`), this proof verifies everything in-circuit
+/// except the sg accumulator MSM. The external verifier performs only
+/// `batch_dlog_accumulator_check` — one batch MSM over SRS generators.
 ///
-/// This is the "standalone-transitive" proof: verification of this single
-/// proof implies validity of the entire recursion chain.
+/// This matches Mina's Pickles security model: verification of this proof
+/// plus the batch_dlog_accumulator_check implies validity of the entire
+/// recursion chain.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StandaloneDualCurveWrapProof {
     /// Serialized Kimchi proof over Pallas (with EC verifier gadget).
@@ -427,10 +457,10 @@ pub struct StandaloneDualCurveWrapProof {
     pub circuit_layout_digest: [u8; 32],
 }
 
-/// Prove the standalone wrap on Pallas, verifying the step proof's IPA in-circuit.
+/// Prove the Mina-equivalent wrap on Pallas, verifying the step proof's IPA in-circuit.
 ///
-/// This is the standalone-transitive counterpart to `prove_dual_curve_wrap`.
-/// Instead of deferring the IPA verification via `create_recursive`, this function
+/// This is the Mina-equivalent counterpart to `prove_dual_curve_wrap`.
+/// Instead of deferring all IPA operations via `create_recursive`, this function
 /// builds the full wrap verifier circuit (`build_wrap_verifier_circuit`) with
 /// EndoMul + CompleteAdd gates and fills the witness with the step proof's
 /// L/R commitment points.
@@ -443,15 +473,19 @@ pub struct StandaloneDualCurveWrapProof {
 /// 3. Fills the EC witness using `generate_wrap_verifier_witness`.
 /// 4. Creates a plain (non-recursive) Kimchi proof over Pallas.
 ///
-/// The resulting proof is self-contained: verifying it requires only the
-/// Pallas verifier index and the proof itself. No accumulated challenges,
-/// no batch MSM from previous proofs.
+/// The resulting proof defers only the sg accumulator MSM to the external
+/// verifier (`batch_dlog_accumulator_check`). All other IPA verification
+/// is done in-circuit.
 ///
 /// ## Arguments
 /// - `step_proof`: The dual-curve step proof whose IPA we verify in-circuit.
 ///
 /// ## Returns
-/// A `StandaloneDualCurveWrapProof` that is fully self-verifying.
+/// A `StandaloneDualCurveWrapProof` requiring only `batch_dlog_accumulator_check`
+/// from the external verifier (one batch MSM over SRS generators).
+#[deprecated(
+    note = "Standalone in-circuit IPA verification is incomplete. Use assisted recursion (pickles.rs) for production recursive proofs."
+)]
 pub fn prove_standalone_dual_curve_wrap(
     step_proof: &DualCurveStepProof,
 ) -> Result<StandaloneDualCurveWrapProof, String> {
@@ -820,14 +854,19 @@ pub(crate) fn vesta_point_to_fq_coords(p: Vesta) -> (Fq, Fq) {
     }
 }
 
-/// Verify a standalone dual-curve wrap proof.
+/// Verify a Mina-equivalent dual-curve wrap proof.
 ///
 /// This verifies the Pallas Kimchi proof with the full wrap verifier circuit
-/// (EndoMul + CompleteAdd). Since the IPA verification is done in-circuit,
-/// no batch checking of accumulated challenges is needed.
+/// (EndoMul + CompleteAdd). The in-circuit verification handles everything
+/// except the sg accumulator MSM, which is checked via
+/// `batch_dlog_accumulator_check` as part of the Kimchi verification call.
 ///
 /// The verifier reconstructs the wrap verifier circuit, builds the verifier
-/// index, and calls `kimchi::verifier::verify`.
+/// index, and calls `kimchi::verifier::verify` (which includes the batch
+/// dlog accumulator check).
+#[deprecated(
+    note = "Standalone in-circuit IPA verification is incomplete. Use assisted recursion (pickles.rs) for production recursive proofs."
+)]
 pub fn verify_standalone_dual_curve_wrap(
     proof: &StandaloneDualCurveWrapProof,
 ) -> Result<bool, String> {
@@ -893,24 +932,28 @@ pub fn verify_standalone_dual_curve_wrap(
     Ok(true)
 }
 
-/// Prove a full standalone-transitive recursive chain.
+/// Prove a full Mina-equivalent recursive chain.
 ///
-/// This produces a chain where the final proof is FULLY self-contained:
+/// This produces a chain where the final proof requires minimal external verification:
 /// 1. Prove each state transition as a Step proof (Vesta, defers EC ops)
 /// 2. Wrap the final step with in-circuit IPA verification (Pallas)
 ///
-/// The resulting `StandaloneDualCurveWrapProof` can be verified by ANY party
-/// without needing to batch-check accumulated IPA challenges.
+/// The resulting `StandaloneDualCurveWrapProof` requires only
+/// `batch_dlog_accumulator_check` from the external verifier (one batch MSM
+/// over SRS generators). This matches Mina's Pickles security model.
 ///
 /// ## Comparison with `prove_full_recursive_chain`
 ///
 /// | Property                    | prove_full_recursive_chain | prove_standalone_recursive_chain |
 /// |-----------------------------|---------------------------|----------------------------------|
 /// | Wrap circuit                | Binding only (Poseidon)   | Full EC verifier (EndoMul)       |
-/// | IPA deferred?               | Yes (via create_recursive)| No (verified in-circuit)         |
-/// | Final proof self-contained? | Needs batch MSM check     | Fully self-contained             |
+/// | IPA deferred?               | All (via create_recursive)| Only sg MSM                      |
+/// | External verifier work      | Full kimchi::verify        | batch_dlog_accumulator_check     |
 /// | Wrap proof size             | ~5 KiB                    | ~15-20 KiB (more gates)          |
 /// | Wrap prove time             | ~1-2s                     | ~3-5s (EC gates are expensive)   |
+#[deprecated(
+    note = "Standalone in-circuit IPA verification is incomplete. Use assisted recursion (pickles.rs) for production recursive proofs."
+)]
 pub fn prove_standalone_recursive_chain(
     transitions: &[PicklesStateTransition],
 ) -> Result<StandaloneDualCurveWrapProof, String> {
@@ -952,7 +995,9 @@ pub fn prove_standalone_recursive_chain(
     .map_err(|e| format!("Final dual-curve step failed: {}", e))?;
 
     // Now wrap the step proof with the standalone EC verifier.
-    prove_standalone_dual_curve_wrap(&step_proof)
+    #[allow(deprecated)]
+    let result = prove_standalone_dual_curve_wrap(&step_proof);
+    result
 }
 
 /// Print circuit statistics for the dual-curve architecture.
@@ -985,14 +1030,18 @@ pub fn dual_curve_circuit_stats() -> String {
          - Final EC check: row {}\n\
          - Domain: 2^{} = {}\n\
          - Gate types: EndoMul + CompleteAdd + Generic (EC gates enforce VESTA curve)\n\
-         - Status: OPERATIONAL (prove_standalone_dual_curve_wrap)\n\
+         - Status: DEPRECATED / UNSOUND (see standalone.rs module docs)\n\
          \n\
          Soundness status:\n\
-         - EC gate constraints (EndoMul, CompleteAdd): ENFORCED\n\
-         - Limb decomposition: ENFORCED\n\
-         - Final IPA equation assertion: SOFT (Zero gates, TODO: GLV encoding)\n\
-         - Full standalone-transitive soundness requires implementing\n\
-           Scalar_challenge.to_field_checked (GLV bit-pair encoding)",
+         - EC gate constraints (EndoMul, CompleteAdd): PRESENT but outputs NOT WIRED\n\
+         - GLV encoding: raw bit extraction, NOT signed-digit decomposition\n\
+         - Final IPA assertion: rubber-stamps prover-supplied precomputed_lhs/rhs\n\
+         - EndoMul accumulator outputs do NOT connect to assertion gates\n\
+         - UNSOUND: a malicious prover can supply arbitrary precomputed values\n\
+         \n\
+         For production recursive proofs, use:\n\
+         - pickles.rs: assisted recursion via create_recursive (SOUND, TESTED)\n\
+         - wrap_verifier.rs: binding wrap circuit (SOUND, uses create_recursive)",
         IPA_ROUNDS,
         step_layout.total_gates,
         step_pi,

@@ -56,7 +56,7 @@
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_many;
-use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
+use crate::stark::{self, BoundaryConstraint, ExtElem, StarkAir, StarkProof};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants

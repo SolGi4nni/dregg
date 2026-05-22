@@ -76,3 +76,14 @@ Recursive proof composition is required for:
 - **Recursive state compression** — light clients that verify federation state without replaying history.
 
 Most real deployment scenarios work with bounded-depth STARK proofs. Recursion is an optimization for scale, not a prerequisite for correctness. The system is designed to ship without it and add it later.
+
+### Recursion levels (what the external verifier must do)
+
+1. **Mina-equivalent** (target): All verification in-circuit except the `sg` MSM. External
+   verifier does only `batch_dlog_accumulator_check` — one batch MSM over SRS generators.
+2. **Assisted recursion** (operational): All IPA operations deferred. External verifier runs
+   full `kimchi::verifier::verify` including the complete IPA batch check.
+3. **Pure computation** (STARK): No recursion. Full FRI + Merkle + constraint checking.
+
+IPA fundamentally requires external MSM. There is no fully "self-verifying" IPA proof —
+the correct claim is "constant-size proof with minimal external verification."

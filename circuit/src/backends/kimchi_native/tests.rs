@@ -32,7 +32,9 @@ fn create_test_derivation_fp() -> KimchiDerivationWitness {
             (false, Fp::zero()),
         ],
         equal_checks: vec![],
+        memberof_checks: vec![],
         gte_check: None,
+        lt_check: None,
     };
     let alice = Fp::from(1000u64);
     let file = Fp::from(2000u64);
@@ -42,6 +44,7 @@ fn create_test_derivation_fp() -> KimchiDerivationWitness {
         rule,
         state_root: Fp::from(99999u64),
         body_fact_hashes: vec![bf1, bf2],
+        body_merkle_proofs: vec![],
         substitution: vec![alice, file],
         derived_predicate: Fp::from(300u64),
         derived_terms: [alice, file, Fp::zero(), Fp::zero()],
@@ -69,7 +72,7 @@ fn test_kimchi_native_witness_head_mismatch() {
 fn test_kimchi_native_derivation_circuit_build() {
     let c = KimchiDerivationCircuit::new(create_test_derivation_fp());
     let (g, pc) = c.build_circuit();
-    assert_eq!(pc, 2);
+    assert_eq!(pc, 3);
     assert!(!g.is_empty());
 }
 #[test]
@@ -114,7 +117,9 @@ fn test_kimchi_native_derivation_with_equal_check() {
             rhs_is_var: true,
             rhs_value: Fp::from(0u64),
         }],
+        memberof_checks: vec![],
         gte_check: None,
+        lt_check: None,
     };
     let alice = Fp::from(1000u64);
     let bf = hash_fact_fp(Fp::from(100u64), &[alice, alice, Fp::zero()]);
@@ -122,6 +127,7 @@ fn test_kimchi_native_derivation_with_equal_check() {
         rule,
         state_root: Fp::from(99999u64),
         body_fact_hashes: vec![bf],
+        body_merkle_proofs: vec![],
         substitution: vec![alice],
         derived_predicate: Fp::from(400u64),
         derived_terms: [alice, Fp::zero(), Fp::zero(), Fp::zero()],
@@ -146,12 +152,14 @@ fn test_kimchi_native_derivation_with_gte_check() {
             (false, Fp::zero()),
         ],
         equal_checks: vec![],
+        memberof_checks: vec![],
         gte_check: Some(KimchiGteCheck {
             lhs_is_var: true,
             lhs_value: Fp::from(1u64),
             rhs_is_var: true,
             rhs_value: Fp::from(2u64),
         }),
+        lt_check: None,
     };
     let alice = Fp::from(1000u64);
     let budget = Fp::from(100u64);
@@ -161,6 +169,7 @@ fn test_kimchi_native_derivation_with_gte_check() {
         rule,
         state_root: Fp::from(99999u64),
         body_fact_hashes: vec![bf],
+        body_merkle_proofs: vec![],
         substitution: vec![alice, budget, amount],
         derived_predicate: Fp::from(600u64),
         derived_terms: [alice, amount, Fp::zero(), Fp::zero()],
@@ -172,7 +181,7 @@ fn test_kimchi_native_derivation_with_gte_check() {
     );
 }
 #[test]
-fn test_kimchi_native_non_membership() {
+fn test_kimchi_native_non_membership_single_element() {
     // P(x) = (x-1)(x-2)(x-3) = x^3 - 6x^2 + 11x - 6
     // coeffs = [-6, 11, -6, 1] (ascending degree)
     let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
@@ -180,18 +189,46 @@ fn test_kimchi_native_non_membership() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    let proof = KimchiNativeBackend::prove_non_membership(Fp::from(5u64), &coeffs, ar).expect("ok");
-    assert!(KimchiNativeBackend::verify_non_membership(&proof, &Fp::from(5u64), &ar).expect("ok"));
+    let elements = &[Fp::from(5u64)];
+    let proof = KimchiNativeBackend::prove_non_membership(elements, &coeffs, ar).expect("ok");
+    assert!(KimchiNativeBackend::verify_non_membership(&proof, elements, &ar, &coeffs).expect("ok"));
 }
 #[test]
-fn test_kimchi_native_non_membership_verifier_check() {
-    // Verify using the full Kimchi verifier (verify_kimchi_proof) via KimchiNonMembershipCircuit::verify
+fn test_kimchi_native_non_membership_multi_ancestor() {
+    // P(x) = (x-1)(x-2)(x-3) = x^3 - 6x^2 + 11x - 6
+    // Prove non-membership for x=5, x=7, x=10 simultaneously
     let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
     let p = Vesta::sponge_params();
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    let proof = KimchiNativeBackend::prove_non_membership(Fp::from(5u64), &coeffs, ar).expect("ok");
+    let elements = &[Fp::from(5u64), Fp::from(7u64), Fp::from(10u64)];
+    let proof = KimchiNativeBackend::prove_non_membership(elements, &coeffs, ar).expect("ok");
+    assert!(KimchiNativeBackend::verify_non_membership(&proof, elements, &ar, &coeffs).expect("ok"));
+}
+#[test]
+fn test_kimchi_native_non_membership_max_ancestors() {
+    // P(x) = (x-1)(x-2)(x-3) with 8 elements (MAX_ANCESTORS)
+    let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
+    let p = Vesta::sponge_params();
+    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
+    s.absorb(&coeffs);
+    let ar = s.squeeze();
+    // All elements NOT in {1,2,3}
+    let elements: Vec<Fp> = (4..12).map(|i| Fp::from(i as u64)).collect();
+    let proof = KimchiNativeBackend::prove_non_membership(&elements, &coeffs, ar).expect("ok");
+    assert!(KimchiNativeBackend::verify_non_membership(&proof, &elements, &ar, &coeffs).expect("ok"));
+}
+#[test]
+fn test_kimchi_native_non_membership_verifier_check() {
+    // Verify using the full Kimchi verifier via KimchiNonMembershipCircuit::verify
+    let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
+    let p = Vesta::sponge_params();
+    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
+    s.absorb(&coeffs);
+    let ar = s.squeeze();
+    let elements = &[Fp::from(5u64), Fp::from(7u64)];
+    let proof = KimchiNativeBackend::prove_non_membership(elements, &coeffs, ar).expect("ok");
     assert!(KimchiNonMembershipCircuit::verify(&proof, &coeffs).expect("ok"));
 }
 #[test]
@@ -202,7 +239,22 @@ fn test_kimchi_native_membership_element_in_set_fails() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    assert!(KimchiNativeBackend::prove_non_membership(Fp::from(2u64), &coeffs, ar).is_err());
+    assert!(KimchiNativeBackend::prove_non_membership(&[Fp::from(2u64)], &coeffs, ar).is_err());
+}
+#[test]
+fn test_kimchi_native_non_membership_one_ancestor_in_set_fails() {
+    // Prove non-membership for [5, 2, 7] — x=2 IS in {1,2,3}, must fail
+    let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
+    let p = Vesta::sponge_params();
+    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
+    s.absorb(&coeffs);
+    let ar = s.squeeze();
+    let result = KimchiNativeBackend::prove_non_membership(
+        &[Fp::from(5u64), Fp::from(2u64), Fp::from(7u64)],
+        &coeffs,
+        ar,
+    );
+    assert!(result.is_err(), "Must fail when ANY ancestor is in the set");
 }
 #[test]
 fn test_kimchi_native_non_membership_element_1_in_set_fails() {
@@ -212,7 +264,7 @@ fn test_kimchi_native_non_membership_element_1_in_set_fails() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    assert!(KimchiNativeBackend::prove_non_membership(Fp::from(1u64), &coeffs, ar).is_err());
+    assert!(KimchiNativeBackend::prove_non_membership(&[Fp::from(1u64)], &coeffs, ar).is_err());
 }
 #[test]
 fn test_kimchi_native_non_membership_element_3_in_set_fails() {
@@ -222,36 +274,18 @@ fn test_kimchi_native_non_membership_element_3_in_set_fails() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    assert!(KimchiNativeBackend::prove_non_membership(Fp::from(3u64), &coeffs, ar).is_err());
+    assert!(KimchiNativeBackend::prove_non_membership(&[Fp::from(3u64)], &coeffs, ar).is_err());
 }
 #[test]
 fn test_kimchi_native_non_membership_wrong_alpha_fails() {
     // Prove non-membership with correct coefficients but wrong accumulator root
     let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
     let wrong_root = Fp::from(99999u64); // does not match hash(coeffs)
-    let result = KimchiNativeBackend::prove_non_membership(Fp::from(5u64), &coeffs, wrong_root);
+    let result = KimchiNativeBackend::prove_non_membership(&[Fp::from(5u64)], &coeffs, wrong_root);
     assert!(
         result.is_err(),
         "Proving with wrong accumulator root must fail"
     );
-}
-#[test]
-fn test_kimchi_native_non_membership_tampered_eval_fails_prover() {
-    // Try to prove with a tampered accumulator_eval that doesn't match actual polynomial evaluation
-    let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
-    let p = Vesta::sponge_params();
-    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
-    s.absorb(&coeffs);
-    let ar = s.squeeze();
-    // Directly construct circuit with wrong eval
-    let circuit = KimchiNonMembershipCircuit {
-        element: Fp::from(5u64),
-        accumulator_eval: Fp::from(999u64), // wrong! P(5) = 24, not 999
-        accumulator_root: ar,
-        accumulator_coeffs: coeffs,
-    };
-    let result = circuit.prove();
-    assert!(result.is_err(), "Tampered eval must be rejected");
 }
 #[test]
 fn test_kimchi_native_non_membership_verifier_rejects_wrong_element() {
@@ -261,9 +295,9 @@ fn test_kimchi_native_non_membership_verifier_rejects_wrong_element() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    let proof = KimchiNativeBackend::prove_non_membership(Fp::from(5u64), &coeffs, ar).expect("ok");
+    let proof = KimchiNativeBackend::prove_non_membership(&[Fp::from(5u64)], &coeffs, ar).expect("ok");
     // Verify with wrong element
-    assert!(!KimchiNativeBackend::verify_non_membership(&proof, &Fp::from(7u64), &ar).expect("ok"));
+    assert!(!KimchiNativeBackend::verify_non_membership(&proof, &[Fp::from(7u64)], &ar, &coeffs).expect("ok"));
 }
 #[test]
 fn test_kimchi_native_non_membership_verifier_rejects_wrong_root() {
@@ -273,10 +307,29 @@ fn test_kimchi_native_non_membership_verifier_rejects_wrong_root() {
     let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
     s.absorb(&coeffs);
     let ar = s.squeeze();
-    let proof = KimchiNativeBackend::prove_non_membership(Fp::from(5u64), &coeffs, ar).expect("ok");
+    let proof = KimchiNativeBackend::prove_non_membership(&[Fp::from(5u64)], &coeffs, ar).expect("ok");
     let wrong_root = Fp::from(11111u64);
     assert!(
-        !KimchiNativeBackend::verify_non_membership(&proof, &Fp::from(5u64), &wrong_root)
+        !KimchiNativeBackend::verify_non_membership(&proof, &[Fp::from(5u64)], &wrong_root, &coeffs)
+            .expect("ok")
+    );
+}
+#[test]
+fn test_kimchi_native_non_membership_verifier_rejects_wrong_count() {
+    // Prove for 2 elements, but verify claiming 1 element
+    let coeffs = vec![-Fp::from(6u64), Fp::from(11u64), -Fp::from(6u64), Fp::one()];
+    let p = Vesta::sponge_params();
+    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
+    s.absorb(&coeffs);
+    let ar = s.squeeze();
+    let proof = KimchiNativeBackend::prove_non_membership(
+        &[Fp::from(5u64), Fp::from(7u64)],
+        &coeffs,
+        ar,
+    ).expect("ok");
+    // Verify with wrong number of elements
+    assert!(
+        !KimchiNativeBackend::verify_non_membership(&proof, &[Fp::from(5u64)], &ar, &coeffs)
             .expect("ok")
     );
 }
@@ -495,6 +548,12 @@ fn test_kimchi_presentation_prove_verify() {
         non_revocation_eval: nre,
         final_root: Fp::from(88888u64),
         randomness: Fp::from(12345u64),
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
     };
     let proof = KimchiNativeBackend::prove_presentation(&w).expect("ok");
     assert_eq!(
@@ -535,6 +594,12 @@ fn test_kimchi_presentation_wrong_composition_commitment_fails() {
         non_revocation_eval: nre,
         final_root,
         randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
     };
     assert!(KimchiNativeBackend::prove_presentation(&w).is_err());
 }
@@ -573,6 +638,12 @@ fn test_kimchi_presentation_wrong_tag_different_nonce_fails() {
         non_revocation_eval: nre,
         final_root,
         randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
     };
     assert!(KimchiNativeBackend::prove_presentation(&w).is_err());
 }
@@ -608,6 +679,12 @@ fn test_kimchi_presentation_zero_composition_commitment_fails() {
         non_revocation_eval: nre,
         final_root,
         randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
     };
     assert!(KimchiNativeBackend::prove_presentation(&w).is_err());
 }
@@ -643,6 +720,12 @@ fn test_kimchi_presentation_revoked_credential_fails() {
         non_revocation_eval: Fp::zero(),
         final_root,
         randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
     };
     assert!(KimchiNativeBackend::prove_presentation(&w).is_err());
 }
@@ -1161,7 +1244,9 @@ fn test_kimchi_native_derivation_adversarial_equal_check_tampered() {
             rhs_is_var: true,
             rhs_value: Fp::from(1u64),
         }],
+        memberof_checks: Vec::new(),
         gte_check: None,
+        lt_check: None,
     };
     let alice = Fp::from(1000u64);
     let bob = Fp::from(2000u64); // different from alice!
@@ -1170,6 +1255,7 @@ fn test_kimchi_native_derivation_adversarial_equal_check_tampered() {
         rule,
         state_root: Fp::from(99999u64),
         body_fact_hashes: vec![bf],
+        body_merkle_proofs: Vec::new(),
         substitution: vec![alice, bob], // alice != bob
         derived_predicate: Fp::from(400u64),
         derived_terms: [alice, Fp::zero(), Fp::zero(), Fp::zero()],
@@ -1203,6 +1289,7 @@ fn test_kimchi_native_derivation_adversarial_gte_negative_diff() {
             (false, Fp::zero()),
         ],
         equal_checks: vec![],
+        memberof_checks: Vec::new(),
         // GTE: var[1] >= var[2], but we'll set var[1] < var[2]
         gte_check: Some(KimchiGteCheck {
             lhs_is_var: true,
@@ -1210,6 +1297,7 @@ fn test_kimchi_native_derivation_adversarial_gte_negative_diff() {
             rhs_is_var: true,
             rhs_value: Fp::from(2u64),
         }),
+        lt_check: None,
     };
     let alice = Fp::from(1000u64);
     let budget = Fp::from(30u64); // budget = 30
@@ -1219,6 +1307,7 @@ fn test_kimchi_native_derivation_adversarial_gte_negative_diff() {
         rule,
         state_root: Fp::from(99999u64),
         body_fact_hashes: vec![bf],
+        body_merkle_proofs: Vec::new(),
         substitution: vec![alice, budget, amount], // budget < amount
         derived_predicate: Fp::from(600u64),
         derived_terms: [alice, amount, Fp::zero(), Fp::zero()],
@@ -1397,5 +1486,367 @@ fn test_kimchi_native_fold_full_kimchi_verify_multiple() {
     assert!(
         verified,
         "Full Kimchi verification must pass for valid proof with 3 removals"
+    );
+}
+
+// ==================================================================================
+// Presentation circuit: token expiry tests
+// ==================================================================================
+
+/// Token expiry: valid proof when not_after_height > verifier_block_height
+#[test]
+fn test_kimchi_presentation_token_expiry_valid() {
+    let fr = Fp::from(1000000u64);
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+    let w = KimchiPresentationWitness {
+        federation_root: fr,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: Fp::from(42424242u64),
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::from(1000u64),
+        not_after_height: Fp::from(2000u64), // 2000 >= 1000: valid
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
+    };
+    let proof = KimchiNativeBackend::prove_presentation(&w).expect("ok");
+    assert_eq!(
+        KimchiNativeBackend::verify_presentation(&proof).expect("ok"),
+        KimchiPresentationVerification::Valid
+    );
+}
+
+/// Adversarial: token expired (not_after_height < verifier_block_height)
+#[test]
+fn test_kimchi_presentation_token_expired_rejected() {
+    let fr = Fp::from(1000000u64);
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+    // not_after_height=500 < verifier_block_height=1000: EXPIRED
+    let w = KimchiPresentationWitness {
+        federation_root: fr,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: Fp::from(42424242u64),
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::from(1000u64),
+        not_after_height: Fp::from(500u64), // 500 < 1000: expired
+        revealed_facts: Vec::new(),
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
+    };
+    let result = KimchiNativeBackend::prove_presentation(&w);
+    assert!(result.is_err(), "Must reject expired token");
+}
+
+// ==================================================================================
+// Presentation circuit: revealed facts commitment tests
+// ==================================================================================
+
+/// Revealed facts commitment: valid proof with selective disclosure
+#[test]
+fn test_kimchi_presentation_revealed_facts_valid() {
+    let fr = Fp::from(1000000u64);
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+    let revealed = vec![Fp::from(100u64), Fp::from(200u64), Fp::from(300u64)];
+    let w = KimchiPresentationWitness {
+        federation_root: fr,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: Fp::from(42424242u64),
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: revealed,
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
+    };
+    let proof = KimchiNativeBackend::prove_presentation(&w).expect("ok");
+    assert_eq!(
+        KimchiNativeBackend::verify_presentation(&proof).expect("ok"),
+        KimchiPresentationVerification::Valid
+    );
+}
+
+/// Adversarial: tampered revealed facts commitment.
+/// Build a valid proof, then tamper with the public input bytes for the RFC.
+/// The Kimchi verifier must reject because public inputs don't match the proof.
+#[test]
+fn test_kimchi_presentation_revealed_facts_tampered_rejected() {
+    let fr = Fp::from(1000000u64);
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+    let revealed = vec![Fp::from(100u64), Fp::from(200u64)];
+    let w = KimchiPresentationWitness {
+        federation_root: fr,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: Fp::from(42424242u64),
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: revealed,
+        issuer_key_hash: Fp::from(42424242u64),
+        blinding_factor: Fp::from(999u64),
+        issuer_membership_proof: None,
+    };
+    let mut proof = KimchiNativeBackend::prove_presentation(&w).expect("ok");
+    // Tamper with both the struct field and the serialized public input bytes
+    proof.revealed_facts_commitment = Fp::from(99999u64);
+    let tampered_rfc_bytes = fp_to_bytes32(&Fp::from(99999u64));
+    proof.proof.public_input_bytes[352..384].copy_from_slice(&tampered_rfc_bytes);
+    // The Kimchi verifier will reject because public inputs don't match the proof
+    let result = KimchiNativeBackend::verify_presentation(&proof);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        KimchiPresentationVerification::ProofInvalid,
+        "Must reject proof with tampered revealed_facts_commitment"
+    );
+}
+
+// ==================================================================================
+// Presentation circuit: issuer membership (blinded ring mode) tests
+// ==================================================================================
+
+/// Issuer membership: valid proof with full Poseidon Merkle path
+#[test]
+fn test_kimchi_presentation_issuer_membership_valid() {
+    let issuer_key = Fp::from(42424242u64);
+    let blinding = Fp::from(777u64);
+
+    // Build a federation Merkle tree containing the issuer key
+    let leaves: Vec<Fp> = vec![
+        issuer_key,
+        Fp::from(11111u64),
+        Fp::from(22222u64),
+        Fp::from(33333u64),
+    ];
+    let (federation_root, proofs) = build_fp_merkle_tree(&leaves, ISSUER_TREE_DEPTH);
+    let issuer_merkle_proof = proofs[0].clone();
+
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+
+    let w = KimchiPresentationWitness {
+        federation_root,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: issuer_key,
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: issuer_key,
+        blinding_factor: blinding,
+        issuer_membership_proof: Some(issuer_merkle_proof),
+    };
+    let proof = KimchiNativeBackend::prove_presentation(&w).expect("ok");
+    assert_eq!(
+        KimchiNativeBackend::verify_presentation(&proof).expect("ok"),
+        KimchiPresentationVerification::Valid
+    );
+}
+
+/// Adversarial: issuer NOT in federation tree (wrong leaf)
+#[test]
+fn test_kimchi_presentation_issuer_not_in_federation_rejected() {
+    let real_issuer = Fp::from(42424242u64);
+    let fake_issuer = Fp::from(99999999u64);
+    let blinding = Fp::from(777u64);
+
+    // Build a tree that does NOT contain the fake issuer
+    let leaves: Vec<Fp> = vec![
+        real_issuer,
+        Fp::from(11111u64),
+        Fp::from(22222u64),
+        Fp::from(33333u64),
+    ];
+    let (federation_root, proofs) = build_fp_merkle_tree(&leaves, ISSUER_TREE_DEPTH);
+    let mut fake_proof = proofs[0].clone();
+    // Tamper: use fake_issuer as the leaf but the real_issuer's proof path
+    fake_proof.leaf_hash = fake_issuer;
+
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+
+    let w = KimchiPresentationWitness {
+        federation_root,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: fake_issuer,
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: fake_issuer,
+        blinding_factor: blinding,
+        issuer_membership_proof: Some(fake_proof),
+    };
+    let result = KimchiNativeBackend::prove_presentation(&w);
+    assert!(result.is_err(), "Must reject issuer not in federation tree");
+}
+
+/// Adversarial: tampered blinding factor (wrong blinded leaf)
+#[test]
+fn test_kimchi_presentation_wrong_blinding_factor_rejected() {
+    let issuer_key = Fp::from(42424242u64);
+    let correct_blinding = Fp::from(777u64);
+    let wrong_blinding = Fp::from(888u64);
+
+    // Build a valid federation Merkle tree
+    let leaves: Vec<Fp> = vec![
+        issuer_key,
+        Fp::from(11111u64),
+        Fp::from(22222u64),
+        Fp::from(33333u64),
+    ];
+    let (federation_root, proofs) = build_fp_merkle_tree(&leaves, ISSUER_TREE_DEPTH);
+    let issuer_merkle_proof = proofs[0].clone();
+
+    let rp = [Fp::from(111u64), Fp::from(222u64), Fp::from(333u64), Fp::from(444u64)];
+    let ts = Fp::from(1716000000u64);
+    let vn = Fp::from(987654321u64);
+    let fch = Fp::from(55555u64);
+    let dh = Fp::from(66666u64);
+    let nre = Fp::from(77777u64);
+    let final_root = Fp::from(88888u64);
+    let randomness = Fp::from(12345u64);
+    let pt = compute_presentation_tag(final_root, randomness, vn);
+    let cc = compute_composition_commitment(fch, dh, pt);
+
+    // Create a valid proof with correct_blinding
+    let w_correct = KimchiPresentationWitness {
+        federation_root,
+        request_predicate: rp,
+        timestamp: ts,
+        verifier_nonce: vn,
+        composition_commitment: cc,
+        presentation_tag: pt,
+        issuer_membership_hash: issuer_key,
+        fold_chain_hash: fch,
+        derivation_hash: dh,
+        non_revocation_eval: nre,
+        final_root,
+        randomness,
+        verifier_block_height: Fp::zero(),
+        not_after_height: Fp::zero(),
+        revealed_facts: Vec::new(),
+        issuer_key_hash: issuer_key,
+        blinding_factor: correct_blinding,
+        issuer_membership_proof: Some(issuer_merkle_proof),
+    };
+    let mut proof = KimchiNativeBackend::prove_presentation(&w_correct).expect("ok");
+
+    // Now tamper: change issuer_blinded_leaf in the proof to correspond to wrong_blinding
+    let wrong_blinded_leaf = compute_blinded_leaf(issuer_key, wrong_blinding);
+    proof.issuer_blinded_leaf = wrong_blinded_leaf;
+    // Also tamper the serialized public input bytes at position 12 (384..416)
+    let wrong_bl_bytes = fp_to_bytes32(&wrong_blinded_leaf);
+    proof.proof.public_input_bytes[384..416].copy_from_slice(&wrong_bl_bytes);
+
+    // The Kimchi verifier will reject because the public inputs don't match the proof
+    let result = KimchiNativeBackend::verify_presentation(&proof);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        KimchiPresentationVerification::ProofInvalid,
+        "Must reject proof with tampered blinding factor"
     );
 }
