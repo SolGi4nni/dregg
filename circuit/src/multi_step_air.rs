@@ -1462,6 +1462,9 @@ mod tests {
             substitution,
             derived_predicate: derived_pred,
             derived_terms: terms,
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         }
     }
 
@@ -1760,6 +1763,9 @@ mod tests {
             substitution: vec![alice, app1, read_action],
             derived_predicate: app_auth_pred,
             derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         // Step 2: action_permitted(alice, app1) :- app_authorized(alice, app1).
@@ -1793,6 +1799,9 @@ mod tests {
             substitution: vec![alice, app1],
             derived_predicate: action_perm_pred,
             derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         // Step 3: allow(alice, app1) :- action_permitted(alice, app1).
@@ -1826,6 +1835,9 @@ mod tests {
             substitution: vec![alice, app1],
             derived_predicate: allow_pred,
             derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let witness =
@@ -2404,6 +2416,9 @@ mod tests {
             substitution,
             derived_predicate: allow_pred,
             derived_terms: [alice, file_resource, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let witness = build_multi_step_witness(state_root, BabyBear::new(42), vec![step]);

@@ -20,13 +20,13 @@
 //! |-----------------|-----------|------------|-----------|-----------|
 //! | BabyBear STARK  | ~48 KiB   | ~64 us     | Yes       | No        |
 //! | Kimchi (single) | ~5-10 KiB | ~1-2s      | No        | No        |
-//! | Kimchi+Pickles  | ~1-2 KiB  | ~3-5s      | No        | Yes       |
+//! | Kimchi+Pickles  | ~5 KiB    | ~3-5s      | No        | Partial   |
 //!
 //! The tradeoff is clear:
 //! - STARK: fast, post-quantum, but large proofs and no native recursion
 //! - Kimchi: small proofs, native Poseidon, but slow and not PQ-secure
-//! - Kimchi+Pickles: constant-size recursive proofs (the holy grail for
-//!   unbounded attenuation chains), but slowest and not PQ-secure
+//! - Kimchi+Pickles: small recursive-step proofs, but full transitive
+//!   recursion still requires the in-circuit IPA verifier gadget
 //!
 //! # Recursion via Pickles
 //!
@@ -36,12 +36,12 @@
 //! 3. Prove step N+1 on Vesta (produces a proof over Fq)
 //! 4. Verify step N+1's proof inside a Pallas circuit (operates on Fp = Fq)
 //!
-//! Each recursive step "folds" the previous proof verification into the new proof,
-//! resulting in a constant-size proof regardless of the number of steps.
-//! This is the same technique that compresses the entire Mina blockchain.
+//! Full Pickles folds previous proof verification into each new proof. This
+//! module currently supports Kimchi-verified recursive-step circuits, but the
+//! in-circuit verifier gadget is still future work.
 //!
-//! For pyana, this means an unbounded attenuation chain (arbitrary number of
-//! fold steps) can be verified with a single ~1 KiB proof.
+//! For pyana, unbounded attenuation chains require completing that verifier
+//! gadget before the final proof is standalone-transitive.
 
 use super::ProofBackend;
 
@@ -56,6 +56,7 @@ use kimchi::{
     },
     curve::KimchiCurve,
     proof::ProverProof,
+    verifier,
 };
 use mina_curves::pasta::{Fp, Vesta, VestaParameters};
 use mina_poseidon::{
@@ -554,19 +555,18 @@ impl ProofBackend for MinaBackend {
 // Pickles Recursive IVC Backend
 // ============================================================================
 //
-// This implements Pickles-style recursive proof composition over the Pasta cycle.
+// This implements the scaffold for Pickles-style recursive proof composition over
+// the Pasta cycle.
 //
 // The Pickles pattern:
-// - Each step proves a state transition AND verifies the previous proof
+// - Each step should prove a state transition AND verify the previous proof
 // - Uses the Pasta cycle: Pallas proofs are verified inside Vesta circuits
 //   and vice versa
-// - The final proof is constant-size (~1-2 KiB) regardless of chain length
+// - The final proof becomes standalone-transitive once the in-circuit verifier lands
 //
-// This is the same technique that compresses the entire Mina blockchain into
-// a single succinct proof.
+// This is the technique Mina uses to compress the chain into a single succinct proof.
 //
-// For pyana, this means an unbounded attenuation chain can be verified with
-// a single constant-size proof.
+// For pyana, that remains the target rather than the current guarantee.
 
 use mina_curves::pasta::{Fq, Pallas, PallasParameters};
 
@@ -833,17 +833,18 @@ pub fn pickles_accumulated_hash(
 ///
 /// This produces a Kimchi proof (over Vesta) that attests to:
 /// 1. The state transition from `transition.pre_state_hash` to `transition.post_state_hash`
-/// 2. The accumulated hash chain binding this step to all previous steps
+/// 2. The accumulated hash binding for this step
 /// 3. (If `previous` is Some) The binding to the previous proof's accumulated state
 ///
-/// The resulting proof is constant-size and transitively verifies the entire chain.
+/// The resulting proof is a Kimchi-verified recursive-step proof. Multi-step
+/// standalone transitivity still requires the in-circuit IPA verifier gadget.
 ///
 /// # Arguments
 /// - `previous`: The previous recursive proof (None for genesis/base case)
 /// - `transition`: The state transition to prove
 ///
 /// # Returns
-/// A new `PicklesRecursiveProof` that covers all steps up to and including this one.
+/// A new `PicklesRecursiveProof` for this step.
 pub fn prove_recursive_step(
     previous: Option<&PicklesRecursiveProof>,
     transition: &PicklesStateTransition,
@@ -936,9 +937,12 @@ pub fn prove_recursive_step(
 
 /// Verify a Pickles recursive proof.
 ///
-/// This verifies a single Kimchi proof which transitively attests to
-/// the entire IVC chain. The verifier only needs this one proof — it
-/// never needs to see intermediate proofs or the full chain history.
+/// This verifies a single Kimchi proof for one Pickles-style IVC step.
+///
+/// Soundness note: multi-step standalone verification is intentionally rejected
+/// until the recursive circuit verifies the previous proof's IPA opening
+/// in-circuit. Otherwise the final proof would only bind a claimed previous
+/// accumulator, not prove that accumulator was legitimately produced.
 ///
 /// # Verification steps:
 /// 1. Deserialize the Kimchi proof
@@ -952,12 +956,16 @@ pub fn prove_recursive_step(
 ///   from this state (for genesis verification)
 ///
 /// # Returns
-/// `Ok(true)` if the proof is valid, `Ok(false)` if verification fails
-/// cleanly, or `Err` if the proof is malformed.
+/// `Ok(true)` if the base-step proof is valid, `Ok(false)` if verification fails
+/// cleanly or a multi-step proof is presented, or `Err` if the proof is malformed.
 pub fn verify_recursive_proof(
     proof: &PicklesRecursiveProof,
     expected_initial_pre_hash: Option<&[u8; 32]>,
 ) -> Result<bool, String> {
+    if proof.num_steps > 1 {
+        return Ok(false);
+    }
+
     // Decode public inputs
     if proof.public_inputs.len() < 104 {
         return Err("Malformed public inputs: too short".into());
@@ -1013,34 +1021,40 @@ pub fn verify_recursive_proof(
         return Ok(false);
     }
 
-    // Verify the previous proof hash binding (if recursive)
-    if proof.num_steps > 1 && proof.previous_proof_hash.is_none() {
+    if prev_accumulated.is_some() {
         return Ok(false);
     }
 
-    // Deserialize and verify the Kimchi proof structure
-    let _kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
+    // Deserialize and verify the Kimchi proof against the base-step circuit.
+    let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
         rmp_serde::from_slice(&proof.proof_bytes)
             .map_err(|e| format!("Proof deserialization error: {}", e))?;
 
-    // Full Kimchi verification requires reconstructing the verifier index.
-    // In production, the verifier index would be a well-known constant for
-    // each circuit variant (base case vs recursive case).
-    //
-    // The verification call would be:
-    // ```
-    // let verifier_index = /* reconstruct from circuit description */;
-    // let group_map = <Vesta as CommitmentCurve>::Map::setup();
-    // let public_inputs = vec![pre_hash, post_hash, accumulated_hash, step_fp, ...];
-    // kimchi::verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
-    //     &group_map, &verifier_index, &_kimchi_proof, &public_inputs
-    // )?;
-    // ```
-    //
-    // TODO: Wire up full Kimchi verification once verifier index serialization
-    // is implemented. The proof structure is sound — the circuit encodes the
-    // correct constraints, and the Kimchi prover produces a valid proof against
-    // them. The verifier just needs the matching verifier index.
+    let (gates, public_count) = build_recursive_step_circuit(false);
+    let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+        gates,
+        public_count,
+    );
+    let verifier_index = index.verifier_index();
+    let group_map = <Vesta as CommitmentCurve>::Map::setup();
+
+    let public_inputs = vec![
+        pre_hash,
+        post_hash,
+        accumulated_hash,
+        Fp::from(step_count as u64),
+    ];
+
+    if verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
+        &group_map,
+        &verifier_index,
+        &kimchi_proof,
+        &public_inputs,
+    )
+    .is_err()
+    {
+        return Ok(false);
+    }
 
     Ok(true)
 }
@@ -1230,13 +1244,17 @@ mod tests {
             prev = Some(proof);
         }
 
-        // Verify only the FINAL proof — it transitively covers all 3 steps
+        // The final proof is not yet standalone-transitive because the in-circuit
+        // IPA verifier gadget is not implemented. It must fail closed for now.
         let final_proof = prev.unwrap();
         assert_eq!(final_proof.num_steps, 3);
 
         let valid = verify_recursive_proof(&final_proof, None)
             .expect("Final proof verification should not error");
-        assert!(valid, "3-step recursive proof should verify");
+        assert!(
+            !valid,
+            "multi-step standalone Pickles verification must fail closed until the verifier gadget lands"
+        );
 
         // Proof size should be constant regardless of chain length
         let proof_size = final_proof.proof_bytes.len();
@@ -1281,6 +1299,27 @@ mod tests {
         let valid = verify_recursive_proof(&proof, None)
             .expect("Verification should not error on tampered data");
         assert!(!valid, "Tampered accumulated hash should fail verification");
+    }
+
+    #[test]
+    fn test_pickles_tampered_proof_bytes_fail() {
+        let transition = PicklesStateTransition {
+            pre_state_hash: [1u8; 32],
+            post_state_hash: [2u8; 32],
+        };
+
+        let mut proof = prove_recursive_step(None, &transition).expect("Proving should succeed");
+        let byte = proof
+            .proof_bytes
+            .last_mut()
+            .expect("Kimchi proof should serialize to non-empty bytes");
+        *byte ^= 0x01;
+
+        let result = verify_recursive_proof(&proof, Some(&[1u8; 32]));
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "Tampered Kimchi proof bytes must not verify"
+        );
     }
 
     #[test]

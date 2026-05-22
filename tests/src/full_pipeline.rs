@@ -344,6 +344,9 @@ fn test_full_authorization_with_body_membership() {
         substitution: vec![alice, app1, read_perm],
         derived_predicate: allow_pred,
         derived_terms: [alice, app1, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     let witness = build_multi_step_witness(real_state_root, request_hash, vec![step]);

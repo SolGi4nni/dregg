@@ -451,6 +451,14 @@ impl BridgePresentationBuilder {
             None => return false,
         };
 
+        // SOUNDNESS: Reject delegation chains deeper than MAX_FOLD_DEPTH.
+        // The chain length includes the root step, so fold count = chain.len() - 1.
+        // After adding this attenuation it would be chain.len(), so the fold count
+        // would be chain.len(). Reject if that exceeds the limit.
+        if self.chain.len() as u32 >= pyana_circuit::MAX_FOLD_DEPTH {
+            return false;
+        }
+
         let current_state = &current_step.state;
 
         // Convert attenuation to new restriction facts.
@@ -1159,6 +1167,7 @@ impl BridgePresentationBuilder {
             blinding_factor: BabyBear::ZERO,
             presentation_randomness,
             composition_commitment: BabyBear::ZERO,
+            verifier_nonce: BabyBear::ZERO,
         };
 
         Ok(witness)
@@ -1266,6 +1275,7 @@ impl BridgePresentationBuilder {
             blinding_factor,
             presentation_randomness,
             composition_commitment,
+            verifier_nonce: BabyBear::ZERO,
         };
 
         Ok(witness)
@@ -1519,6 +1529,9 @@ impl BridgePresentationBuilder {
             substitution,
             derived_predicate: derived_pred,
             derived_terms,
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         })
     }
 
@@ -2119,6 +2132,38 @@ pub fn verify_presentation_full(
         )
         .is_ok()
     }
+}
+
+/// Verify that a proof's verifier nonce matches the expected challenge.
+///
+/// In a challenge-response protocol, the verifier issues a random nonce BEFORE
+/// the prover generates the proof. This function checks that the proof was generated
+/// for the specific challenge the verifier issued, preventing replay attacks.
+///
+/// Returns `true` if:
+/// - The proof's `verifier_nonce` matches `expected_nonce`, OR
+/// - `expected_nonce` is `BabyBear::ZERO` (nonce check disabled, non-interactive mode)
+///
+/// Returns `false` if the nonces do not match (potential replay).
+///
+/// # Security
+///
+/// Verifiers operating in challenge-response mode SHOULD:
+/// 1. Generate a fresh random nonce per session (at least 31 bits of entropy).
+/// 2. Send the nonce to the prover.
+/// 3. Call this function with the same nonce after receiving the proof.
+/// 4. Reject proofs where this returns `false`.
+pub fn verify_presentation_nonce(
+    proof: &BridgePresentationProof,
+    expected_nonce: BabyBear,
+) -> bool {
+    // Non-interactive mode: skip nonce check when expected_nonce is zero.
+    if expected_nonce == BabyBear::ZERO {
+        return true;
+    }
+
+    // The nonce is stored in the circuit proof's public inputs.
+    proof.circuit_proof.public_inputs.verifier_nonce == expected_nonce
 }
 
 /// Verify a presentation proof cryptographically (convenience wrapper).

@@ -45,11 +45,11 @@ fn format_size(bytes: usize) -> String {
 // Poseidon2-aware STARK Verifier
 // =============================================================================
 
-/// A proof verifier that tries Poseidon2 AIR first, then falls back to linear AIR.
+/// A proof verifier that accepts only Poseidon2 AIR proofs.
 ///
 /// This mirrors the verification logic in `BridgePresentationProof::verify_issuer_stark()`.
-/// Production deployments should use Poseidon2 exclusively; the linear fallback is
-/// retained only for backward compatibility with older proofs.
+/// The legacy linear AIR is intentionally excluded because it is a benchmark circuit,
+/// not a production soundness boundary.
 #[derive(Clone, Debug)]
 struct Poseidon2StarkVerifier;
 
@@ -70,23 +70,12 @@ impl ProofVerifier for Poseidon2StarkVerifier {
             _ => return Ok(false), // Proof not bound to this (action, resource)
         }
 
-        // Try Poseidon2 AIR first (production path).
-        let poseidon2_result = pyana_circuit::stark::verify(
+        // Production verification only accepts the Poseidon2 AIR.
+        match pyana_circuit::stark::verify(
             &pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir,
             &proof,
             &public_inputs,
-        );
-        if poseidon2_result.is_ok() {
-            return Ok(true);
-        }
-
-        // Fall back to linear AIR for backward compatibility.
-        let linear_result = pyana_circuit::stark::verify(
-            &pyana_circuit::stark::MerkleStarkAir,
-            &proof,
-            &public_inputs,
-        );
-        match linear_result {
+        ) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }

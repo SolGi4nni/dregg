@@ -72,16 +72,11 @@ impl ProofVerifier for StarkVerifier {
             return Ok(false); // Proof not bound to this (action, resource)
         }
 
-        // Try Poseidon2 AIR first (production path).
+        // Production verification only accepts the Poseidon2 AIR. The legacy
+        // linear AIR is a benchmark/test circuit and is intentionally not a
+        // compatibility fallback here.
         let poseidon2_air = pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
         match pyana_circuit::stark::verify(&poseidon2_air, &proof, &public_inputs) {
-            Ok(()) => return Ok(true),
-            Err(_) => {}
-        }
-
-        // Fall back to legacy linear AIR for backward compatibility.
-        let linear_air = pyana_circuit::stark::MerkleStarkAir;
-        match pyana_circuit::stark::verify(&linear_air, &proof, &public_inputs) {
             Ok(()) => Ok(true),
             Err(_reason) => Ok(false),
         }

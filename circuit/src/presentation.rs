@@ -19,9 +19,9 @@
 //! final state authorizes action X" without revealing the chain or capabilities.
 
 use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
-use crate::derivation_air::{CircuitRule, DerivationAir, DerivationWitness};
+use crate::derivation_air::{self, CircuitRule, DerivationAir, DerivationWitness};
 use crate::field::BabyBear;
-use crate::fold_air::{FoldAir, FoldWitness, RemovedFact};
+use crate::fold_air::{self, FoldAir, FoldWitness, RemovedFact};
 use crate::ivc::{FoldDelta, IvcPresentationProof, prove_ivc};
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use crate::multi_step_air;
@@ -84,6 +84,21 @@ pub struct PresentationWitness {
     ///
     /// When `BabyBear::ZERO`, no composition commitment is enforced (legacy proofs).
     pub composition_commitment: BabyBear,
+    /// Verifier-issued nonce for replay protection (public).
+    ///
+    /// The verifier provides this challenge BEFORE proof generation. The prover must
+    /// include it as a public input. During verification, the verifier checks that
+    /// the proof's nonce matches the challenge they issued.
+    ///
+    /// This makes proofs non-replayable: a proof generated for one challenge cannot
+    /// be replayed against a different challenge. The nonce also enters the Fiat-Shamir
+    /// transcript (via the presentation_tag computation) to affect the STARK's internal
+    /// randomness.
+    ///
+    /// When `BabyBear::ZERO`, no verifier nonce was provided (backward compatibility
+    /// with older provers). Verifiers SHOULD reject proofs with a zero nonce in
+    /// challenge-response protocols.
+    pub verifier_nonce: BabyBear,
 }
 
 /// Public inputs for the presentation proof.
@@ -129,6 +144,16 @@ pub struct PresentationPublicInputs {
     /// `BabyBear::ZERO` means no composition commitment (legacy proofs).
     #[serde(default)]
     pub composition_commitment: BabyBear,
+    /// Verifier-issued nonce for replay protection.
+    ///
+    /// In a challenge-response protocol, the verifier sends this nonce to the prover
+    /// BEFORE proof generation. The proof is then bound to this specific nonce.
+    /// A proof generated for nonce N cannot be replayed against a different nonce N'.
+    ///
+    /// `BabyBear::ZERO` means no verifier nonce (legacy proofs, or non-interactive mode).
+    /// Verifiers operating in challenge-response mode SHOULD reject proofs with zero nonce.
+    #[serde(default)]
+    pub verifier_nonce: BabyBear,
 }
 
 /// A complete presentation proof.
@@ -320,6 +345,7 @@ impl PresentationAir {
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
             composition_commitment: w.composition_commitment,
+            verifier_nonce: w.verifier_nonce,
         };
 
         // Compute total proof size
@@ -488,6 +514,7 @@ impl PresentationAir {
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
             composition_commitment: w.composition_commitment,
+            verifier_nonce: w.verifier_nonce,
         };
 
         Some(RealPresentationProof {
@@ -495,6 +522,8 @@ impl PresentationAir {
             fold_proofs,
             derivation_proof,
             issuer_membership_stark_proof: merkle_stark_proof,
+            fold_stark_proofs: vec![],
+            derivation_stark_proof: None,
         })
     }
 
@@ -511,8 +540,9 @@ impl PresentationAir {
     pub fn prove_stark_poseidon2(&self) -> Option<RealPresentationProof> {
         let w = &self.witness;
 
-        // 1. Prove each fold step (constraint-checked path)
+        // 1. Prove each fold step (both legacy constraint-checked AND real STARK)
         let mut fold_proofs = Vec::new();
+        let mut fold_stark_proofs = Vec::new();
         for fold_witness in &w.fold_chain {
             let fold_air = FoldAir::new(fold_witness.clone());
             let result = ConstraintProver::verify(&fold_air);
@@ -521,15 +551,23 @@ impl PresentationAir {
             }
             let proof = ConstraintProof::generate(&fold_air)?;
             fold_proofs.push(proof);
+
+            // Generate real STARK proof for this fold step
+            if let Some(stark_proof) = fold_air::prove_fold_stark(fold_witness) {
+                fold_stark_proofs.push(stark_proof);
+            }
         }
 
-        // 2. Prove the derivation (constraint-checked path)
+        // 2. Prove the derivation (both legacy constraint-checked AND real STARK)
         let derivation_air = DerivationAir::new(w.derivation.clone());
         let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
         let derivation_proof = ConstraintProof::generate(&derivation_air)?;
+
+        // Generate real STARK proof for the derivation step
+        let derivation_stark_proof = derivation_air::prove_derivation_stark(&w.derivation);
 
         // 3. Prove issuer membership with REAL STARK + Poseidon2 hashing.
         //    The proof is bound to the request_predicate (action commitment) to
@@ -575,6 +613,7 @@ impl PresentationAir {
             presentation_tag,
             revealed_facts_commitment: w.revealed_facts_commitment,
             composition_commitment: w.composition_commitment,
+            verifier_nonce: w.verifier_nonce,
         };
 
         Some(RealPresentationProof {
@@ -582,6 +621,8 @@ impl PresentationAir {
             fold_proofs,
             derivation_proof,
             issuer_membership_stark_proof: merkle_stark_proof,
+            fold_stark_proofs,
+            derivation_stark_proof,
         })
     }
 
@@ -845,6 +886,7 @@ impl PresentationBuilder {
             composition_commitment: BabyBear::ZERO,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
+            verifier_nonce: BabyBear::ZERO,
         })
     }
 }
@@ -855,19 +897,31 @@ impl PresentationBuilder {
 
 /// A presentation proof backed by real STARK proofs.
 ///
-/// The issuer membership proof uses a real STARK (FRI + Merkle commitments),
-/// providing actual cryptographic soundness. Fold and derivation proofs use
-/// constraint-checked proofs (their traces are currently too small for FRI).
+/// All three sub-circuits (fold chain, derivation, issuer membership) now use
+/// real STARK proofs with polynomial commitments and FRI. The `fold_proofs` and
+/// `derivation_proof` fields are retained for backward compatibility (legacy
+/// constraint-checked proofs); the new `fold_stark_proofs` and
+/// `derivation_stark_proof` fields carry the cryptographically sound proofs.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RealPresentationProof {
     /// The public inputs.
     pub public_inputs: PresentationPublicInputs,
-    /// Constraint-checked proofs of the fold chain.
+    /// Legacy constraint-checked proofs of the fold chain.
+    /// Retained for backward compatibility; verifiers SHOULD prefer `fold_stark_proofs`.
     pub fold_proofs: Vec<ConstraintProof>,
-    /// Constraint-checked proof of the derivation.
+    /// Legacy constraint-checked proof of the derivation.
+    /// Retained for backward compatibility; verifiers SHOULD prefer `derivation_stark_proof`.
     pub derivation_proof: ConstraintProof,
     /// Real STARK proof of issuer membership in the federation.
     pub issuer_membership_stark_proof: StarkProof,
+    /// Real STARK proofs for each fold step (cryptographically sound).
+    /// When present, these supersede `fold_proofs` for verification.
+    #[serde(default)]
+    pub fold_stark_proofs: Vec<StarkProof>,
+    /// Real STARK proof of the derivation step (cryptographically sound).
+    /// When present, this supersedes `derivation_proof` for verification.
+    #[serde(default)]
+    pub derivation_stark_proof: Option<StarkProof>,
 }
 
 impl RealPresentationProof {
@@ -934,7 +988,31 @@ impl RealPresentationProof {
             return PresentationVerification::IssuerNotInFederation;
         }
 
-        // Verify with the appropriate AIR based on proof type.
+        // 4a. Verify fold STARK proofs if present (cryptographically sound path).
+        for (i, fold_stark) in self.fold_stark_proofs.iter().enumerate() {
+            let fold_pi: Vec<BabyBear> = fold_stark
+                .public_inputs
+                .iter()
+                .map(|&v| BabyBear::new_canonical(v))
+                .collect();
+            if let Err(_) = fold_air::verify_fold_stark(fold_stark, &fold_pi) {
+                return PresentationVerification::InvalidFoldProof { index: i };
+            }
+        }
+
+        // 4b. Verify derivation STARK proof if present (cryptographically sound path).
+        if let Some(ref deriv_stark) = self.derivation_stark_proof {
+            let deriv_pi: Vec<BabyBear> = deriv_stark
+                .public_inputs
+                .iter()
+                .map(|&v| BabyBear::new_canonical(v))
+                .collect();
+            if let Err(_) = derivation_air::verify_derivation_stark(deriv_stark, &deriv_pi) {
+                return PresentationVerification::InvalidDerivation;
+            }
+        }
+
+        // 5. Verify issuer membership with the appropriate AIR based on proof type.
         // Blinded (ring membership) proofs use BlindedMerklePoseidon2StarkAir;
         // legacy proofs use MerklePoseidon2StarkAir.
         use crate::poseidon2_air::{BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir};
@@ -1359,6 +1437,9 @@ pub fn create_test_presentation() -> PresentationWitness {
         substitution: vec![alice, resource],
         derived_predicate: access_pred,
         derived_terms: [alice, resource, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     // Issuer membership: prove issuer key is in the federation
@@ -1377,6 +1458,7 @@ pub fn create_test_presentation() -> PresentationWitness {
         composition_commitment: BabyBear::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::new(123456789),
+        verifier_nonce: BabyBear::ZERO,
     }
 }
 
@@ -1655,6 +1737,9 @@ mod tests {
                 BabyBear::ZERO,
                 BabyBear::ZERO,
             ],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let issuer_witness = crate::merkle_air::create_test_witness(BabyBear::new(9999), 8);

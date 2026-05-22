@@ -249,6 +249,9 @@ fn main() {
             substitution: vec![stark_alice, stark_app],
             derived_predicate: allow_pred,
             derived_terms: [stark_alice, stark_app, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         }],
     );
 

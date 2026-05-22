@@ -10,35 +10,23 @@
 //! The key property: `prove()` produces bytes that a separate `verify()` can
 //! check WITHOUT seeing the original trace/witness. A tampered trace fails.
 //!
-//! # Known Limitations and Migration Path
+//! # Transition Constraint Evaluation
 //!
-//! ## Transition Constraint Evaluation
+//! In the Reed-Solomon evaluation domain (size = trace_len * BLOWUP), advancing by one
+//! trace step corresponds to advancing by BLOWUP evaluation domain positions. Given
+//! trace polynomial T(x), evaluating T(x * omega_trace) at evaluation point omega_eval^i
+//! yields T(omega_eval^(i + BLOWUP)) = trace_evals[col][(i + BLOWUP) % domain_size].
 //!
-//! This custom STARK framework evaluates "next row" constraints using `eval_points[i+1]`
-//! in the Reed-Solomon evaluation domain, NOT `eval_points[i] * omega_trace`. For AIRs
-//! that use the trace domain's cyclic structure (where the "next row" in the trace maps
-//! to `current_point * omega`), this introduces an off-by-one in the evaluation domain.
+//! The transition vanishing polynomial Z_T(x) = (x^n - 1) / (x - omega^(n-1)) is used
+//! as the divisor for transition constraint quotients. This polynomial vanishes on all
+//! trace rows except the last, since transition constraints (which reference "next row")
+//! are only meaningful on rows 0 through n-2.
 //!
-//! **Consequence**: AIRs using only per-row constraints (no cross-row references via
-//! `next`) and boundary constraints are SOUND. AIRs relying on transition constraints
-//! that reference `next` values for acyclic computations may have subtle issues.
-//!
-//! ## Production Prover
+//! # Production Prover
 //!
 //! For production use, prefer the Plonky3 backend (`plonky3_prover.rs`) which uses a
-//! battle-tested proving system with proper transition constraint handling. This custom
-//! STARK is suitable for:
-//! - AIRs with per-row-only constraints (PredicateAir, CompoundPredicateAir)
-//! - AIRs with boundary constraints binding trace cells to public inputs
-//! - Testing and development
-//!
-//! ## AIR Migration Priority
-//!
-//! AIRs should migrate to Plonky3 in this order:
-//! 1. TemporalPredicateAir (uses transition constraints for accumulator/step_index)
-//! 2. MultiStepAir (uses transition constraints for step chaining)
-//! 3. MerkleStarkAir (uses chain continuity: parent[i] == current[i+1])
-//! 4. QuorumCertificateAir (uses cumulative weight transitions)
+//! battle-tested proving system. This custom STARK is suitable for all AIR types
+//! including those with transition constraints.
 
 use crate::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
@@ -547,25 +535,42 @@ pub fn prove_with_context(
     let mut constraint_evals = Vec::with_capacity(domain_size);
     for i in 0..domain_size {
         let local: Vec<BabyBear> = trace_evals.iter().map(|col| col[i]).collect();
-        let next_idx = if i + 1 < domain_size { i + 1 } else { 0 };
+        // Advancing by one TRACE step in the evaluation domain means advancing by BLOWUP
+        // evaluation steps. T(x * omega_trace) at eval point omega_eval^i equals
+        // T(omega_eval^(i + BLOWUP)), i.e., trace_evals[col][(i + BLOWUP) % domain_size].
+        let next_idx = (i + BLOWUP) % domain_size;
         let next: Vec<BabyBear> = trace_evals.iter().map(|col| col[next_idx]).collect();
         constraint_evals.push(air.eval_constraints(&local, &next, public_inputs, alpha));
     }
 
-    // Transition quotient only (same as pre-boundary era).
-    // Boundary constraints are enforced via direct trace queries below.
+    // Transition quotient: divide constraint evaluations by the transition vanishing
+    // polynomial Z_T(x) = (x^n - 1) / (x - omega^(n-1)).
+    // This polynomial vanishes on all trace rows EXCEPT the last, which is correct
+    // because transition constraints (referencing "next row") don't apply at the last row.
+    // For per-row constraints that hold everywhere, the numerator also vanishes at the
+    // last row, making the quotient well-defined everywhere.
+    let omega_trace = get_root_of_unity(num_rows.trailing_zeros());
+    let last_trace_point = omega_trace.pow((num_rows - 1) as u32); // omega^(n-1)
     let mut quotient_evals = Vec::with_capacity(domain_size);
     for i in 0..domain_size {
         let x = eval_points[i];
-        let mut z = BabyBear::ONE;
-        for &tp in &trace_points {
-            z = z * (x - tp);
-        }
-        quotient_evals.push(if z == BabyBear::ZERO {
-            BabyBear::ZERO
+        // Z(x) = x^n - 1 (vanishes on entire trace domain)
+        let x_n = x.pow(num_rows as u32);
+        let z_full = x_n - BabyBear::ONE;
+        // Z_T(x) = Z(x) / (x - omega^(n-1))
+        let denom_factor = x - last_trace_point;
+        if z_full == BabyBear::ZERO {
+            // x is on the trace domain. For the last trace point, Z_T(x) = 0 but
+            // the quotient is 0/0; we set it to 0 since transition constraints are
+            // not enforced there. For other trace points, Z_T has a simple zero and
+            // the constraint should also vanish (constraint/Z_T is evaluated via
+            // L'Hopital or set to 0 for the committed polynomial approach).
+            quotient_evals.push(BabyBear::ZERO);
         } else {
-            constraint_evals[i] * z.inverse().unwrap()
-        });
+            // z_full != 0 means x is NOT on the trace domain, so denom_factor != 0
+            let z_transition = z_full * denom_factor.inverse().unwrap();
+            quotient_evals.push(constraint_evals[i] * z_transition.inverse().unwrap());
+        }
     }
 
     let constraint_leaves: Vec<[u8; 32]> = quotient_evals.iter().map(|&v| hash_leaf(v)).collect();
@@ -580,7 +585,8 @@ pub fn prove_with_context(
         let idx = transcript.squeeze_index(domain_size);
         let trace_values: Vec<u32> = trace_evals.iter().map(|col| col[idx].0).collect();
         let trace_path = trace_tree.prove(idx);
-        let next_idx = if idx + 1 < domain_size { idx + 1 } else { 0 };
+        // Next trace index advances by BLOWUP (one trace step in the eval domain)
+        let next_idx = (idx + BLOWUP) % domain_size;
         let next_trace_values: Vec<u32> = trace_evals.iter().map(|col| col[next_idx].0).collect();
         let next_trace_path = trace_tree.prove(next_idx);
         let constraint_value = quotient_evals[idx].0;
@@ -892,7 +898,8 @@ pub fn verify_with_context(
             return Err(format!("Constraint Merkle proof failed at index {idx}"));
         }
 
-        let next_idx = if idx + 1 < domain_size { idx + 1 } else { 0 };
+        // Next trace index advances by BLOWUP (one trace step in the eval domain)
+        let next_idx = (idx + BLOWUP) % domain_size;
         let next_trace_vals: Vec<BabyBear> = query
             .next_trace_values
             .iter()
@@ -919,16 +926,36 @@ pub fn verify_with_context(
         // evaluated values at arbitrary domain points.
 
         let x = eval_points[idx];
-        let mut z = BabyBear::ONE;
-        for &tp in &trace_points {
-            z = z * (x - tp);
-        }
+        // Compute transition vanishing polynomial Z_T(x) = (x^n - 1) / (x - omega^(n-1))
+        let x_n = x.pow(trace_len as u32);
+        let z_full = x_n - BabyBear::ONE;
+        let omega_trace = get_root_of_unity(trace_len.trailing_zeros());
+        let last_trace_point = omega_trace.pow((trace_len - 1) as u32);
+        let denom_factor = x - last_trace_point;
         let constraint_at_x =
             air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, alpha);
-        if constraint_val * z != constraint_at_x {
-            return Err(format!(
-                "Constraint consistency check failed at query index {idx}"
-            ));
+        if z_full == BabyBear::ZERO {
+            // x is on the trace domain. The prover sets quotient = 0 at these points.
+            // The constraint must also evaluate to zero (constraints hold on the trace).
+            if constraint_val != BabyBear::ZERO {
+                return Err(format!(
+                    "Constraint quotient non-zero on trace domain at query index {idx}"
+                ));
+            }
+            if constraint_at_x != BabyBear::ZERO {
+                return Err(format!(
+                    "Constraint non-zero on trace domain at query index {idx}"
+                ));
+            }
+        } else {
+            // x is NOT on the trace domain; denom_factor is also non-zero since the
+            // last trace point is on the trace domain and x is not.
+            let z_transition = z_full * denom_factor.inverse().unwrap();
+            if constraint_val * z_transition != constraint_at_x {
+                return Err(format!(
+                    "Constraint consistency check failed at query index {idx}"
+                ));
+            }
         }
 
         // FRI folding relation verification

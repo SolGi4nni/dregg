@@ -148,6 +148,9 @@ fn end_to_end_authorization_proof() {
         substitution: vec![alice, file1], // X=alice, Y=file1
         derived_predicate: access,
         derived_terms: [alice, file1, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     println!("\nDerivation: access(alice, file1) :- owns(alice, file1), can_read(alice, file1)");
@@ -191,6 +194,7 @@ fn end_to_end_authorization_proof() {
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
         composition_commitment: BabyBear::ZERO,
+        verifier_nonce: BabyBear::ZERO,
     };
 
     let presentation_air = PresentationAir::new(presentation);
@@ -263,6 +267,9 @@ fn single_step_no_attenuation() {
         substitution: vec![alice],
         derived_predicate: pred_access,
         derived_terms: [alice, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     let issuer_witness = create_test_witness(BabyBear::new(9999), 8);
@@ -280,6 +287,7 @@ fn single_step_no_attenuation() {
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
         composition_commitment: BabyBear::ZERO,
+        verifier_nonce: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -375,6 +383,9 @@ fn long_attenuation_chain() {
             BabyBear::ZERO,
             BabyBear::ZERO,
         ],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     let issuer_witness = create_test_witness(BabyBear::new(5555), 8);
@@ -392,6 +403,7 @@ fn long_attenuation_chain() {
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
         composition_commitment: BabyBear::ZERO,
+        verifier_nonce: BabyBear::ZERO,
     };
 
     let air = PresentationAir::new(presentation);
@@ -760,6 +772,9 @@ fn proof_size_scaling() {
                 BabyBear::ZERO,
                 BabyBear::ZERO,
             ],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let issuer_witness = create_test_witness(BabyBear::new(5555), 8);
@@ -777,6 +792,7 @@ fn proof_size_scaling() {
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
             composition_commitment: BabyBear::ZERO,
+            verifier_nonce: BabyBear::ZERO,
         };
 
         let air = PresentationAir::new(presentation);

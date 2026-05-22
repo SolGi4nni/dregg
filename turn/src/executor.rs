@@ -2896,46 +2896,63 @@ impl TurnExecutor {
         outputs: &mut std::collections::HashMap<u64, u64>,
     ) -> Result<(), (u64, u64, u64)> {
         for effect in &tree.action.effects {
-            match effect {
-                Effect::NoteSpend {
-                    value, asset_type, ..
-                } => {
-                    let entry = inputs.entry(*asset_type).or_insert(0);
-                    *entry = entry
-                        .checked_add(*value)
-                        .ok_or((*asset_type, u64::MAX, 0))?;
-                }
-                Effect::NoteCreate {
-                    value, asset_type, ..
-                } => {
-                    let entry = outputs.entry(*asset_type).or_insert(0);
-                    *entry = entry
-                        .checked_add(*value)
-                        .ok_or((*asset_type, 0, u64::MAX))?;
-                }
-                Effect::BridgeMint { portable_proof } => {
-                    // BridgeMint contributes to BOTH sides of conservation:
-                    // it's an external input (from another federation) AND creates output.
-                    // For local conservation, bridge mints are treated as matching
-                    // input+output (self-balancing) since the value comes from outside.
-                    let entry = inputs.entry(portable_proof.asset_type).or_insert(0);
-                    *entry = entry.checked_add(portable_proof.value).ok_or((
-                        portable_proof.asset_type,
-                        u64::MAX,
-                        0,
-                    ))?;
-                    let entry = outputs.entry(portable_proof.asset_type).or_insert(0);
-                    *entry = entry.checked_add(portable_proof.value).ok_or((
-                        portable_proof.asset_type,
-                        0,
-                        u64::MAX,
-                    ))?;
-                }
-                _ => {}
-            }
+            Self::collect_note_effects_from_effect(effect, inputs, outputs)?;
         }
         for child in &tree.children {
             self.collect_note_effects_tree(child, inputs, outputs)?;
+        }
+        Ok(())
+    }
+
+    /// Collect note effects from a single effect, recursing into ExerciseViaCapability.
+    fn collect_note_effects_from_effect(
+        effect: &Effect,
+        inputs: &mut std::collections::HashMap<u64, u64>,
+        outputs: &mut std::collections::HashMap<u64, u64>,
+    ) -> Result<(), (u64, u64, u64)> {
+        match effect {
+            Effect::NoteSpend {
+                value, asset_type, ..
+            } => {
+                let entry = inputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, u64::MAX, 0))?;
+            }
+            Effect::NoteCreate {
+                value, asset_type, ..
+            } => {
+                let entry = outputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, 0, u64::MAX))?;
+            }
+            Effect::BridgeMint { portable_proof } => {
+                // BridgeMint contributes to BOTH sides of conservation:
+                // it's an external input (from another federation) AND creates output.
+                // For local conservation, bridge mints are treated as matching
+                // input+output (self-balancing) since the value comes from outside.
+                let entry = inputs.entry(portable_proof.asset_type).or_insert(0);
+                *entry = entry.checked_add(portable_proof.value).ok_or((
+                    portable_proof.asset_type,
+                    u64::MAX,
+                    0,
+                ))?;
+                let entry = outputs.entry(portable_proof.asset_type).or_insert(0);
+                *entry = entry.checked_add(portable_proof.value).ok_or((
+                    portable_proof.asset_type,
+                    0,
+                    u64::MAX,
+                ))?;
+            }
+            // Recurse into ExerciseViaCapability inner effects to catch nested
+            // NoteSpend/NoteCreate that would otherwise bypass the conservation check.
+            Effect::ExerciseViaCapability { inner_effects, .. } => {
+                for inner in inner_effects {
+                    Self::collect_note_effects_from_effect(inner, inputs, outputs)?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

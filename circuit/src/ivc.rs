@@ -161,6 +161,19 @@ pub enum IvcVerification {
 // Hash Chain
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maximum delegation chain depth (fold steps).
+///
+/// This bounds the number of attenuation steps a token can undergo. A deeper chain
+/// indicates excessive delegation and should be rejected by both the prover (at proof
+/// generation time) and the verifier (at verification time). The limit prevents:
+/// 1. Unbounded proof generation cost
+/// 2. Combinatorial explosion in delegation hierarchies
+/// 3. Potential soundness degradation from very long chains
+///
+/// The value 16 allows for practical multi-level delegation (issuer -> org -> team ->
+/// user -> device -> session) while preventing pathological chains.
+pub const MAX_FOLD_DEPTH: u32 = 16;
+
 /// Domain separation tag for IVC hash accumulation.
 const IVC_DOMAIN_TAG: u32 = 0x49564300; // "IVC0" as ASCII bytes
 
@@ -775,6 +788,12 @@ pub fn prove_ivc(initial_root: BabyBear, deltas: Vec<FoldDelta>) -> Option<IvcPr
         return None;
     }
 
+    // SOUNDNESS: Reject delegation chains deeper than MAX_FOLD_DEPTH.
+    // This prevents unbounded proof generation and potential degradation.
+    if deltas.len() as u32 > MAX_FOLD_DEPTH {
+        return None;
+    }
+
     // Verify fold chain continuity
     let mut expected_root = initial_root;
     for delta in deltas.iter() {
@@ -1071,6 +1090,13 @@ pub fn verify_ivc(proof: &IvcProof, expected_initial_root: Option<BabyBear>) -> 
         return IvcVerification::EmptyChain;
     }
 
+    // SOUNDNESS: Reject delegation chains deeper than MAX_FOLD_DEPTH.
+    // A prover claiming more steps than the maximum is either malicious
+    // or operating outside protocol bounds.
+    if proof.step_count > MAX_FOLD_DEPTH {
+        return IvcVerification::ProofInvalid;
+    }
+
     // Check initial root if expected
     if let Some(expected) = expected_initial_root {
         if proof.initial_root != expected {
@@ -1271,6 +1297,32 @@ pub struct IvcBuilder {
     deltas: Vec<FoldDelta>,
 }
 
+/// Backend to use when finalizing an [`IvcBuilder`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IvcBackend {
+    /// Fast hash-chain finalization with the standard IVC proof wrapper.
+    HashChain,
+    /// AIR-backed BabyBear STARK proof for the accumulated fold chain.
+    BabyBearStark,
+    /// Experimental Pickles/Kimchi path behind the `mina` feature.
+    ///
+    /// This currently generates Kimchi proofs and accumulates transitions, but
+    /// verification does not yet run the full Kimchi verifier equation.
+    ExperimentalPickles,
+}
+
+/// Proof produced by [`IvcBuilder::finalize_with_backend`].
+#[derive(Debug)]
+pub enum IvcBackendProof {
+    /// Standard hash-chain IVC proof.
+    HashChain(IvcProof),
+    /// AIR-backed BabyBear STARK IVC proof.
+    BabyBearStark(IvcProof),
+    /// Experimental Pickles/Kimchi IVC proof.
+    #[cfg(feature = "mina")]
+    ExperimentalPickles(crate::backends::mina::PicklesRecursiveProof),
+}
+
 impl IvcBuilder {
     /// Create a new IVC builder starting from an initial root.
     pub fn new(initial_root: BabyBear) -> Self {
@@ -1323,19 +1375,58 @@ impl IvcBuilder {
         prove_ivc(self.initial_root, self.deltas.clone())
     }
 
+    /// Finalize using an explicitly selected backend.
+    ///
+    /// `HashChain` and `BabyBearStark` are available in the default build.
+    /// `ExperimentalPickles` requires the `mina` feature and is intentionally
+    /// labeled experimental until full Kimchi verifier integration lands.
+    pub fn finalize_with_backend(
+        &self,
+        backend: IvcBackend,
+    ) -> Option<Result<IvcBackendProof, String>> {
+        match backend {
+            IvcBackend::HashChain => self
+                .finalize()
+                .map(|proof| Ok(IvcBackendProof::HashChain(proof))),
+            IvcBackend::BabyBearStark => self
+                .finalize_with_air()
+                .map(|proof| Ok(IvcBackendProof::BabyBearStark(proof))),
+            IvcBackend::ExperimentalPickles => self.finalize_pickles_backend(),
+        }
+    }
+
+    #[cfg(feature = "mina")]
+    fn finalize_pickles_backend(&self) -> Option<Result<IvcBackendProof, String>> {
+        self.finalize_pickles()
+            .map(|result| result.map(IvcBackendProof::ExperimentalPickles))
+    }
+
+    #[cfg(not(feature = "mina"))]
+    fn finalize_pickles_backend(&self) -> Option<Result<IvcBackendProof, String>> {
+        if self.deltas.is_empty() {
+            None
+        } else {
+            Some(Err(
+                "ExperimentalPickles backend requires the pyana-circuit `mina` feature".to_string(),
+            ))
+        }
+    }
+
     /// Finalize using the Pickles/Kimchi recursive IVC backend.
     ///
-    /// Instead of using the BabyBear STARK, this produces a constant-size
-    /// recursive proof over the Pasta cycle (Pallas/Vesta) using Kimchi.
-    /// Each step's proof transitively verifies all prior steps, so the
-    /// final proof is ~5-10 KiB regardless of chain length.
+    /// Instead of using the BabyBear STARK, this produces a Kimchi proof chain
+    /// over the Pasta cycle (Pallas/Vesta).
     ///
     /// This is an alternative to `finalize()` / `finalize_with_air()` which
     /// use the BabyBear STARK backend. The Pickles backend trades:
     /// - Slower proving (~1-2s per step vs ~64us for STARK)
     /// - Smaller proofs (~5-10 KiB vs ~48 KiB)
-    /// - True recursion (verifier checks ONE proof, not a STARK)
+    /// - Pickles-style state accumulation
     /// - NOT post-quantum secure (relies on elliptic curve DLP)
+    ///
+    /// Soundness note: this path is experimental. The current verifier checks
+    /// proof structure and public-input consistency, but does not yet call the
+    /// full Kimchi verifier equation.
     ///
     /// Returns `None` if no steps have been added.
     /// Returns `Err` if Kimchi proving fails.
@@ -1480,6 +1571,15 @@ pub fn prove_validated_ivc(
         return Err("Cannot prove empty fold chain".to_string());
     }
 
+    // SOUNDNESS: Reject delegation chains deeper than MAX_FOLD_DEPTH.
+    if fold_witnesses.len() as u32 > MAX_FOLD_DEPTH {
+        return Err(format!(
+            "Delegation chain too deep: {} steps exceeds MAX_FOLD_DEPTH={}",
+            fold_witnesses.len(),
+            MAX_FOLD_DEPTH
+        ));
+    }
+
     // Verify chain continuity: each step's new_root == next step's old_root.
     let mut expected_root = initial_root;
     for (i, w) in fold_witnesses.iter().enumerate() {
@@ -1578,6 +1678,14 @@ pub fn prove_validated_ivc(
 pub fn verify_validated_ivc(proof: &ValidatedIvcProof) -> ValidatedIvcVerification {
     if proof.step_count == 0 {
         return ValidatedIvcVerification::EmptyChain;
+    }
+
+    // SOUNDNESS: Reject delegation chains deeper than MAX_FOLD_DEPTH.
+    if proof.step_count > MAX_FOLD_DEPTH {
+        return ValidatedIvcVerification::ChainProofInvalid(format!(
+            "Delegation chain too deep: {} steps exceeds MAX_FOLD_DEPTH={}",
+            proof.step_count, MAX_FOLD_DEPTH
+        ));
     }
 
     // Check structural consistency.
@@ -2077,6 +2185,61 @@ mod tests {
     }
 
     #[test]
+    fn ivc_builder_finalize_with_backend_selects_default_paths() {
+        let (initial_root, deltas) = create_test_chain(2);
+
+        let mut builder = IvcBuilder::new(initial_root);
+        for delta in &deltas {
+            builder.add_fold(delta.clone()).unwrap();
+        }
+
+        let hash_proof = builder
+            .finalize_with_backend(IvcBackend::HashChain)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(hash_proof, IvcBackendProof::HashChain(_)));
+
+        let stark_proof = builder
+            .finalize_with_backend(IvcBackend::BabyBearStark)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(stark_proof, IvcBackendProof::BabyBearStark(_)));
+    }
+
+    #[cfg(not(feature = "mina"))]
+    #[test]
+    fn ivc_builder_pickles_backend_requires_mina_feature() {
+        let (initial_root, deltas) = create_test_chain(1);
+
+        let mut builder = IvcBuilder::new(initial_root);
+        builder.add_fold(deltas[0].clone()).unwrap();
+
+        let err = builder
+            .finalize_with_backend(IvcBackend::ExperimentalPickles)
+            .unwrap()
+            .unwrap_err();
+        assert!(err.contains("mina"));
+    }
+
+    #[cfg(feature = "mina")]
+    #[test]
+    fn ivc_builder_finalize_with_backend_pickles() {
+        let (initial_root, deltas) = create_test_chain(1);
+
+        let mut builder = IvcBuilder::new(initial_root);
+        builder.add_fold(deltas[0].clone()).unwrap();
+
+        let proof = builder
+            .finalize_with_backend(IvcBackend::ExperimentalPickles)
+            .unwrap()
+            .unwrap();
+        match proof {
+            IvcBackendProof::ExperimentalPickles(proof) => assert_eq!(proof.num_steps, 1),
+            _ => panic!("expected Pickles proof"),
+        }
+    }
+
+    #[test]
     fn ivc_accumulated_hash_deterministic() {
         let root = BabyBear::new(42);
         let h1 = initial_accumulated_hash(root);
@@ -2151,6 +2314,9 @@ mod tests {
                 BabyBear::ZERO,
                 BabyBear::ZERO,
             ],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let derivation_air = DerivationAir::new(derivation);
@@ -2187,7 +2353,7 @@ mod tests {
         println!("\n=== IVC Real STARK Proof Size Comparison ===");
         let mut ivc_sizes = Vec::new();
 
-        for n in [1, 2, 5, 10, 20] {
+        for n in [1, 2, 5, 10, 16] {
             let (initial_root, deltas) = create_test_chain(n);
 
             let ivc_proof = prove_ivc(initial_root, deltas).unwrap();
@@ -2207,14 +2373,33 @@ mod tests {
 
         // Verify sub-linear growth: 20-step IVC vs 5-step IVC
         let (_, size_5) = ivc_sizes[2]; // index 2 is n=5
-        let (_, size_20) = ivc_sizes[4]; // index 4 is n=20
-        let ratio = size_20 as f64 / size_5 as f64;
-        println!("  Growth ratio (20-step / 5-step IVC): {ratio:.2}x");
+        let (_, size_16) = ivc_sizes[4]; // index 4 is n=16
+        let ratio = size_16 as f64 / size_5 as f64;
+        println!("  Growth ratio (16-step / 5-step IVC): {ratio:.2}x");
         // Real STARK proof size grows with log(trace_len) due to FRI.
-        // 5 steps → 8 rows, 20 steps → 32 rows. FRI adds one layer per doubling.
+        // 5 steps → 8 rows, 16 steps → 16 rows. FRI adds one layer per doubling.
         assert!(
             ratio < 4.0,
-            "IVC should provide sub-linear scaling, got {ratio:.2}x for 20-step/5-step"
+            "IVC should provide sub-linear scaling, got {ratio:.2}x for 16-step/5-step"
+        );
+    }
+
+    #[test]
+    fn ivc_rejects_chain_exceeding_max_depth() {
+        // SOUNDNESS: prove_ivc must reject chains deeper than MAX_FOLD_DEPTH.
+        let (initial_root, deltas) = create_test_chain(MAX_FOLD_DEPTH as usize + 1);
+        assert!(
+            prove_ivc(initial_root, deltas).is_none(),
+            "prove_ivc should reject chains exceeding MAX_FOLD_DEPTH={}",
+            MAX_FOLD_DEPTH
+        );
+
+        // Chains at exactly MAX_FOLD_DEPTH should succeed.
+        let (initial_root, deltas) = create_test_chain(MAX_FOLD_DEPTH as usize);
+        assert!(
+            prove_ivc(initial_root, deltas).is_some(),
+            "prove_ivc should accept chains at exactly MAX_FOLD_DEPTH={}",
+            MAX_FOLD_DEPTH
         );
     }
 

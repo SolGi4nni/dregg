@@ -134,9 +134,10 @@ pub use constraint_prover::{
 };
 pub use field::BabyBear;
 pub use ivc::{
-    FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBuilder, IvcPresentationProof, IvcProof,
-    IvcVerification, StateTransitionAir, ValidatedIvcProof, ValidatedIvcVerification, prove_ivc,
-    prove_ivc_stark, prove_validated_ivc, verify_ivc, verify_ivc_stark, verify_validated_ivc,
+    FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBackend, IvcBackendProof, IvcBuilder,
+    IvcPresentationProof, IvcProof, IvcVerification, MAX_FOLD_DEPTH, StateTransitionAir,
+    ValidatedIvcProof, ValidatedIvcVerification, prove_ivc, prove_ivc_stark,
+    prove_validated_ivc, verify_ivc, verify_ivc_stark, verify_validated_ivc,
 };
 
 // Backward-compatible aliases (hidden from docs).

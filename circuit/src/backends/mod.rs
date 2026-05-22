@@ -17,12 +17,11 @@
 //!   verifier, and the final proof is constant-size regardless of chain length.
 //!   This directly solves the "linear proof growth" problem in attenuation chains.
 //!
-//! - **Mina/Kimchi** (Plonk variant over Pasta curves with IPA): Produces ~1-2 KiB
-//!   proofs via Kimchi (a Plonk variant with custom gates) + Pickles (recursive
-//!   proof composition over the Pasta cycle of curves). This is the same proof
-//!   system that compresses the entire Mina blockchain into a single constant-size
-//!   proof. NOT post-quantum secure, but provides true recursion via IPA over
-//!   the Pallas/Vesta cycle.
+//! - **Mina/Kimchi** (Plonk variant over Pasta curves with IPA): Experimental
+//!   Pickles-style IVC over the Pasta cycle. This path generates Kimchi proofs
+//!   and verifies base-step proofs with Kimchi, but multi-step standalone
+//!   transitivity still requires the in-circuit IPA verifier gadget. NOT
+//!   post-quantum secure.
 
 #[cfg(feature = "halo2")]
 pub mod halo2;

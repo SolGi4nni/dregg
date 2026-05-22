@@ -253,6 +253,9 @@ fn make_derivation_step(
         substitution: vec![terms[0]],
         derived_predicate: pred,
         derived_terms: terms,
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     }
 }
 

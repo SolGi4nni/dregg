@@ -565,6 +565,9 @@ fn main() {
         substitution: vec![bob_val, editor_val],
         derived_predicate: allow_pred,
         derived_terms: [bob_val, editor_val, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     };
 
     let witness = build_multi_step_witness(state_root, request_hash, vec![step]);

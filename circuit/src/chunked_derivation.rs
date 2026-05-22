@@ -414,6 +414,9 @@ mod tests {
             substitution,
             derived_predicate: derived_pred,
             derived_terms: terms,
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         }
     }
 

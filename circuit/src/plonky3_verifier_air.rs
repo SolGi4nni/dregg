@@ -208,6 +208,7 @@ pub struct RecursiveVerifierAir {
     num_inner_public_inputs: usize,
 }
 
+#[allow(deprecated)]
 impl RecursiveVerifierAir {
     /// Create a new recursive verifier AIR.
     pub fn new(num_inner_public_inputs: usize) -> Self {
@@ -217,6 +218,7 @@ impl RecursiveVerifierAir {
     }
 }
 
+#[allow(deprecated)]
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for RecursiveVerifierAir {
     fn width(&self) -> usize {
         VERIFIER_AIR_WIDTH
@@ -233,6 +235,7 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for RecursiveVerifierAir {
     }
 }
 
+#[allow(deprecated)]
 impl<AB: AirBuilder> Air<AB> for RecursiveVerifierAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
@@ -716,78 +719,28 @@ impl RecursiveProver {
         (trace, public_vals)
     }
 
-    /// Verify a recursive proof (produced by this prover) using the RecursiveVerifierAir.
+    /// Verify a recursive proof produced by `prove_recursive`.
+    ///
+    /// Currently unavailable: `RecursiveVerifierAir` is a non-functional placeholder,
+    /// so accepting proofs through this API would falsely imply recursive soundness.
     pub fn verify_recursive_proof(
-        proof: &PyanaProof,
-        public_inputs: &[BabyBear],
+        _proof: &PyanaProof,
+        _public_inputs: &[BabyBear],
     ) -> Result<(), String> {
-        // The number of inner PIs is public_inputs.len() - 1 (last is the commitment)
-        let num_inner_pis = public_inputs.len().saturating_sub(1);
-        let air = RecursiveVerifierAir::new(num_inner_pis);
-        let config = create_config();
-        let p3_public: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
-        p3_uni_stark::verify(&config, &air, proof, &p3_public)
-            .map_err(|e| format!("Recursive proof verification failed: {:?}", e))
+        Err(recursive_verifier_unavailable())
     }
 
-    /// Prove recursive verification: verify a previous proof and produce a new proof
-    /// that attests to the previous proof's validity.
+    /// Prove recursive verification.
     ///
-    /// The AIR constrains that the previous proof was valid. Additional public inputs
-    /// (e.g., from a new fold step) are returned alongside but NOT part of the AIR's
-    /// constraint system — they're metadata carried forward for the caller.
-    ///
-    /// The `prev_num_inner_pis` parameter specifies how many of prev_public_inputs
-    /// are "inner" PIs (as opposed to the commitment appended by a prior recursive step).
-    /// If None, all of prev_public_inputs are treated as inner PIs (for original proofs).
+    /// Currently unavailable: the recursive verifier AIR is only a placeholder and
+    /// does not constrain a real Plonky3 verification transcript.
     pub fn prove_recursive(
         &self,
-        prev_proof: &PyanaProof,
-        prev_public_inputs: &[BabyBear],
-        additional_public_inputs: Option<&[BabyBear]>,
+        _prev_proof: &PyanaProof,
+        _prev_public_inputs: &[BabyBear],
+        _additional_public_inputs: Option<&[BabyBear]>,
     ) -> Result<RecursiveProofOutput, String> {
-        // Step 1: Verify the previous proof
-        // We try verifying as a recursive proof first (has N+1 PIs where last is commitment),
-        // then fall back to verifying as an original proof via verify_plonky3.
-        let verify_result = Self::verify_recursive_proof(prev_proof, prev_public_inputs);
-        if verify_result.is_err() {
-            // Not a recursive proof; try as original Merkle proof
-            verify_plonky3(prev_proof, prev_public_inputs)?;
-        }
-
-        // Step 2: Extract verifier witness from the previous proof
-        let witness = Self::extract_witness(prev_proof, prev_public_inputs);
-
-        // Step 3: Generate the verifier trace
-        let (verifier_trace, verifier_public_inputs) = Self::generate_verifier_trace(&witness);
-
-        // Step 4: Prove the verifier trace with Plonky3
-        // The AIR's public inputs are exactly: [inner_pi..., final_challenge_acc]
-        let air = RecursiveVerifierAir::new(prev_public_inputs.len());
-        let config = create_config();
-
-        let width = verifier_trace[0].len();
-        let values: Vec<P3BabyBear> = verifier_trace
-            .iter()
-            .flat_map(|row| row.iter().map(|&v| to_p3(v)))
-            .collect();
-        let matrix = RowMajorMatrix::new(values, width);
-
-        let p3_public: Vec<P3BabyBear> = verifier_public_inputs.iter().map(|&v| to_p3(v)).collect();
-
-        let proof = p3_uni_stark::prove(&config, &air, matrix, &p3_public);
-
-        // Step 5: Verify the recursive proof (sanity check)
-        p3_uni_stark::verify(&config, &air, &proof, &p3_public)
-            .map_err(|e| format!("Recursive proof verification failed: {:?}", e))?;
-
-        Ok(RecursiveProofOutput {
-            proof,
-            public_inputs: verifier_public_inputs,
-            extra_public_inputs: additional_public_inputs
-                .map(|pi| pi.to_vec())
-                .unwrap_or_default(),
-        })
+        Err(recursive_verifier_unavailable())
     }
 }
 
@@ -795,64 +748,19 @@ impl RecursiveProver {
 // Proof aggregation: fold N proofs into 1 via repeated recursion
 // ============================================================================
 
-/// Aggregate multiple Plonky3 proofs into a single proof via recursive verification.
+/// Aggregate multiple Plonky3 proofs into a single recursive proof.
 ///
-/// This takes N proofs (by reference, since PyanaProof is not Clone) and produces
-/// 1 proof that attests to all N being valid. The approach: verify each proof inside
-/// a new proof, chaining them sequentially.
+/// Currently unavailable because the recursive verifier AIR is not implemented.
 ///
 /// # Arguments
 /// * `proofs` - References to the proofs to aggregate (each with their public inputs)
 ///
 /// # Returns
-/// A single recursive proof output that commits to all inner proofs being valid.
+/// An error until real recursive verification is implemented.
 pub fn aggregate_proofs(
-    proofs: &[(&PyanaProof, &[BabyBear])],
+    _proofs: &[(&PyanaProof, &[BabyBear])],
 ) -> Result<RecursiveProofOutput, String> {
-    if proofs.is_empty() {
-        return Err("Cannot aggregate zero proofs".to_string());
-    }
-
-    let prover = RecursiveProver::new();
-
-    // Build a commitment to all public inputs for the aggregation
-    let all_pi_commitment = {
-        let all_pis: Vec<BabyBear> = proofs
-            .iter()
-            .flat_map(|(_, pi)| pi.iter().copied())
-            .collect();
-        hash_many(&all_pis)
-    };
-
-    // For a single proof: just recursively prove its verification
-    if proofs.len() == 1 {
-        let (first_proof, first_pi) = proofs[0];
-        let mut output = prover.prove_recursive(first_proof, first_pi, None)?;
-        output.extra_public_inputs.push(all_pi_commitment);
-        return Ok(output);
-    }
-
-    // For multiple proofs: verify each one individually and produce a recursive proof
-    // for the last one, carrying all prior commitments as extra data.
-    //
-    // Strategy: verify each proof independently (they all share the same AIR),
-    // then recursively prove the last one with all PIs aggregated as metadata.
-    for (i, &(proof, pi)) in proofs.iter().enumerate() {
-        verify_plonky3(proof, pi)
-            .map_err(|e| format!("Aggregation: proof {} verification failed: {}", i, e))?;
-    }
-
-    // Produce the recursive proof for the last proof (it transitively binds to all
-    // via the all_pi_commitment carried in extra_public_inputs).
-    let (last_proof, last_pi) = proofs.last().unwrap();
-    let mut output = prover.prove_recursive(last_proof, last_pi, None)?;
-    output.extra_public_inputs = proofs
-        .iter()
-        .flat_map(|(_, pi)| pi.iter().copied())
-        .collect();
-    output.extra_public_inputs.push(all_pi_commitment);
-
-    Ok(output)
+    Err(recursive_verifier_unavailable())
 }
 
 // ============================================================================
@@ -864,14 +772,14 @@ pub fn aggregate_proofs(
 pub enum RecursionMode {
     /// Use hash-chain accumulation (existing behavior, fast but weaker).
     HashChain,
-    /// Use true recursive STARK verification (slower proving, stronger guarantees).
+    /// Request recursive STARK verification. Currently unavailable until the
+    /// recursive verifier AIR is implemented.
     Recursive,
 }
 
-/// An IVC step proof using true recursive verification.
+/// An IVC step proof using recursive verification.
 ///
-/// Instead of just hash-chaining public inputs, this actually verifies
-/// the previous step's proof inside the current step's circuit.
+/// This output is not currently produced because recursive verification is not implemented.
 pub struct RecursiveIvcStep {
     /// The proof for this step (includes verification of all prior steps).
     pub proof: PyanaProof,
@@ -881,59 +789,24 @@ pub struct RecursiveIvcStep {
     pub step_number: u32,
 }
 
-/// Build a recursive IVC chain: each step verifies all prior steps.
+/// Build a recursive IVC chain.
 ///
-/// This is the "gold standard" for IVC: the final proof is a single STARK proof
-/// that transitively verifies the entire chain. No inner proofs need to be stored.
+/// Currently unavailable because the recursive verifier AIR is not implemented.
 ///
 /// # Arguments
 /// * `fold_proofs` - A sequence of fold-step proofs (from prove_plonky3) with their PIs
 ///
 /// # Returns
-/// The final recursive proof that covers the entire chain.
+/// An error until real recursive verification is implemented.
 pub fn build_recursive_ivc_chain(
-    fold_proofs: &[(&PyanaProof, &[BabyBear])],
+    _fold_proofs: &[(&PyanaProof, &[BabyBear])],
 ) -> Result<RecursiveIvcStep, String> {
-    if fold_proofs.is_empty() {
-        return Err("Cannot build IVC chain from zero proofs".to_string());
-    }
+    Err(recursive_verifier_unavailable())
+}
 
-    let prover = RecursiveProver::new();
-
-    // Verify all fold proofs first
-    for (i, &(proof, pi)) in fold_proofs.iter().enumerate() {
-        verify_plonky3(proof, pi)
-            .map_err(|e| format!("IVC chain: fold proof {} invalid: {}", i, e))?;
-    }
-
-    // Base case: recursively prove verification of the first fold proof
-    let (first_proof, first_pi) = fold_proofs[0];
-    let base_output = prover.prove_recursive(first_proof, first_pi, None)?;
-
-    let mut current_step = RecursiveIvcStep {
-        proof: base_output.proof,
-        public_inputs: base_output.public_inputs,
-        step_number: 1,
-    };
-
-    // Inductive case: each subsequent step verifies the CURRENT recursive proof
-    // (which transitively verified all prior steps)
-    for (i, &(_fold_proof, fold_pi)) in fold_proofs.iter().skip(1).enumerate() {
-        // Generate recursive proof that verifies current_step.proof
-        let output = prover.prove_recursive(
-            &current_step.proof,
-            &current_step.public_inputs,
-            Some(fold_pi),
-        )?;
-
-        current_step = RecursiveIvcStep {
-            proof: output.proof,
-            public_inputs: output.public_inputs,
-            step_number: (i + 2) as u32,
-        };
-    }
-
-    Ok(current_step)
+fn recursive_verifier_unavailable() -> String {
+    "recursive verification is unavailable: RecursiveVerifierAir is a non-functional placeholder"
+        .to_string()
 }
 
 // ============================================================================
@@ -1011,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn recursive_verifier_air_constraints_satisfied() {
         let (proof, pi) = make_test_proof(42424242);
         let witness = RecursiveProver::extract_witness(&proof, &pi);
@@ -1043,17 +917,8 @@ mod tests {
         let prover = RecursiveProver::new();
 
         let result = prover.prove_recursive(&proof, &pi, None);
-        assert!(
-            result.is_ok(),
-            "Recursive proving failed: {:?}",
-            result.err()
-        );
-
-        let output = result.unwrap();
-
-        // The recursive proof's public inputs should include the inner PIs + commitment
-        assert_eq!(output.public_inputs.len(), pi.len() + 1);
-        assert_eq!(&output.public_inputs[..pi.len()], &pi[..]);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unavailable"));
     }
 
     #[test]
@@ -1065,17 +930,8 @@ mod tests {
         let extra_pi = vec![BabyBear::new(111), BabyBear::new(222)];
 
         let result = prover.prove_recursive(&proof, &pi, Some(&extra_pi));
-        assert!(
-            result.is_ok(),
-            "Recursive proving with extra PI failed: {:?}",
-            result.err()
-        );
-
-        let output = result.unwrap();
-        // AIR public inputs: inner PIs + commitment (not contaminated by extra)
-        assert_eq!(output.public_inputs.len(), pi.len() + 1);
-        // Extra PIs carried separately
-        assert_eq!(output.extra_public_inputs, extra_pi);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unavailable"));
     }
 
     #[test]
@@ -1084,16 +940,8 @@ mod tests {
         let (proof2, pi2) = make_test_proof(2222);
 
         let result = aggregate_proofs(&[(&proof1, &pi1), (&proof2, &pi2)]);
-        assert!(
-            result.is_ok(),
-            "Proof aggregation failed: {:?}",
-            result.err()
-        );
-
-        let output = result.unwrap();
-        assert!(!output.public_inputs.is_empty());
-        // Extra PIs should contain all original PIs + aggregation commitment
-        assert!(!output.extra_public_inputs.is_empty());
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unavailable"));
     }
 
     #[test]
@@ -1101,11 +949,8 @@ mod tests {
         let (proof1, pi1) = make_test_proof(1111);
 
         let result = aggregate_proofs(&[(&proof1, &pi1)]);
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        // Single proof aggregation: AIR PIs = inner PIs + commitment
-        assert_eq!(output.public_inputs.len(), pi1.len() + 1);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unavailable"));
     }
 
     #[test]
@@ -1114,15 +959,8 @@ mod tests {
         let (proof2, pi2) = make_test_proof(2222);
 
         let result = build_recursive_ivc_chain(&[(&proof1, &pi1), (&proof2, &pi2)]);
-        assert!(
-            result.is_ok(),
-            "Recursive IVC chain failed: {:?}",
-            result.err()
-        );
-
-        let step = result.unwrap();
-        assert_eq!(step.step_number, 2);
-        assert!(!step.public_inputs.is_empty());
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unavailable"));
     }
 
     #[test]

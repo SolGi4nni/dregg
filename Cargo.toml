@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting"]
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "apps/bounty-board"]
 exclude = ["chain", "chain/program"]
 
 [workspace.package]
@@ -44,11 +44,12 @@ p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd73
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 
-## Plonky3-recursion (local fork updated to match p3 rev 82cfad73)
-p3-recursion = { path = "../plonky3-recursion/recursion" }
-p3-circuit = { path = "../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../plonky3-recursion/poseidon2-circuit-air" }
+## Plonky3-recursion fork updated to match p3 rev 82cfad73.
+## Keep these as git dependencies so CI does not require a sibling checkout.
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4" }
 
 ## Crates.io
 ark-serialize = { version = "0.5", features = ["derive"] }

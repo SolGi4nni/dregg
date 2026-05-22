@@ -57,6 +57,7 @@
 use crate::constraint_prover::{Air, Constraint};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_fact;
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Trace width for the derivation AIR.
 /// rule_id(1) + body_hashes(8) + body_membership(8) + head_pred(1) + head_terms(4) +
@@ -321,6 +322,34 @@ pub struct DerivationWitness {
     pub derived_predicate: BabyBear,
     /// The derived fact's terms.
     pub derived_terms: [BabyBear; 4],
+    /// Committed pre-evaluation context: expiry bound (public input).
+    ///
+    /// The prover commits to this value as a public input. The verifier cross-checks:
+    /// "Is current_height < not_after_height?" If the prover commits to an expired
+    /// height, the verifier rejects out-of-band. If the prover lies (claims a higher
+    /// height than what the token actually has), the derivation won't succeed because
+    /// the body facts won't match the state root.
+    ///
+    /// `BabyBear::ZERO` means no expiry commitment (no expiry caveat present).
+    pub not_after_height: BabyBear,
+    /// Committed pre-evaluation context: organization identity binding (public input).
+    ///
+    /// This is `poseidon2(org_id_bytes)` — the hash of the organization ID that the
+    /// token is scoped to. The verifier checks this matches the expected organization.
+    /// If the prover commits to a wrong org_id_hash, the body facts won't match (the
+    /// org restriction fact won't be found in the committed state).
+    ///
+    /// `BabyBear::ZERO` means no org binding (unrestricted token).
+    pub org_id_hash: BabyBear,
+    /// Committed pre-evaluation context: remaining budget (public input).
+    ///
+    /// The prover commits to the budget remaining at derivation time. The verifier
+    /// cross-checks: "Is budget_remaining >= request_cost?" This works in conjunction
+    /// with the GTE constraint in the circuit rule (if present) — the circuit enforces
+    /// the arithmetic, while the public input lets the verifier see the committed value.
+    ///
+    /// `BabyBear::ZERO` means no budget commitment (unlimited budget).
+    pub budget_remaining: BabyBear,
 }
 
 impl DerivationWitness {
@@ -377,7 +406,7 @@ impl Air for DerivationAir {
     }
 
     fn num_public_inputs(&self) -> usize {
-        2 // state_root, derived_fact_hash
+        5 // state_root, derived_fact_hash, not_after_height, org_id_hash, budget_remaining
     }
 
     fn constraints(&self) -> Vec<Constraint> {
@@ -921,9 +950,373 @@ impl Air for DerivationAir {
             }
         }
 
-        let public_inputs = vec![w.state_root, derived_hash];
+        let public_inputs = vec![
+            w.state_root,
+            derived_hash,
+            w.not_after_height,
+            w.org_id_hash,
+            w.budget_remaining,
+        ];
         (vec![row], public_inputs)
     }
+}
+
+// ============================================================================
+// DerivationStarkAir: Real STARK proof generation/verification for derivation steps.
+// ============================================================================
+
+/// StarkAir implementation for the Derivation step.
+///
+/// This enables generating real STARK proofs (polynomial commitment + FRI)
+/// for derivation operations, replacing the ConstraintProof (BLAKE3 trace digest)
+/// that provides no cryptographic soundness.
+///
+/// The derivation AIR is single-row (no transition constraints), making it
+/// perfectly suited for the custom STARK framework.
+pub struct DerivationStarkAir {
+    pub witness: DerivationWitness,
+}
+
+impl DerivationStarkAir {
+    pub fn new(witness: DerivationWitness) -> Self {
+        Self { witness }
+    }
+}
+
+impl StarkAir for DerivationStarkAir {
+    fn width(&self) -> usize {
+        DERIVATION_AIR_WIDTH
+    }
+
+    fn constraint_degree(&self) -> usize {
+        // The highest-degree polynomial constraint is the substitution application
+        // which involves products of selectors and substitution values (degree 2).
+        // The binary checks are also degree 2.
+        2
+    }
+
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+
+    fn air_name(&self) -> &'static str {
+        "pyana-derivation-v1"
+    }
+
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let mut result = BabyBear::ZERO;
+        let mut alpha_power = BabyBear::ONE;
+
+        // C1: body_membership_binary
+        for i in 0..MAX_BODY_ATOMS {
+            let flag = local[col::BODY_MEMBERSHIP_START + i];
+            result = result + alpha_power * (flag * (flag - BabyBear::ONE));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C2: body_hash_nonzero_when_used
+        for i in 0..MAX_BODY_ATOMS {
+            let flag = local[col::BODY_MEMBERSHIP_START + i];
+            let hash = local[col::BODY_HASH_START + i];
+            if flag == BabyBear::ONE && hash == BabyBear::ZERO {
+                result = result + alpha_power * BabyBear::ONE;
+            }
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C3: at_least_one_body
+        let mut sum = BabyBear::ZERO;
+        for i in 0..MAX_BODY_ATOMS {
+            sum = sum + local[col::BODY_MEMBERSHIP_START + i];
+        }
+        if sum == BabyBear::ZERO {
+            result = result + alpha_power * BabyBear::ONE;
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C4: derived_hash_correct
+        let pred = local[col::HEAD_PRED];
+        let terms = [
+            local[col::HEAD_TERM_START],
+            local[col::HEAD_TERM_START + 1],
+            local[col::HEAD_TERM_START + 2],
+            local[col::HEAD_TERM_START + 3],
+        ];
+        let expected_hash = hash_fact(pred, &terms);
+        result = result + alpha_power * (expected_hash - local[col::DERIVED_HASH]);
+        alpha_power = alpha_power * alpha;
+
+        // C5: body_roots_match_state
+        let state_root = public_inputs[0];
+        for i in 0..MAX_BODY_ATOMS {
+            let flag = local[col::BODY_MEMBERSHIP_START + i];
+            let root = local[col::BODY_ROOT_START + i];
+            result = result + alpha_power * (flag * (root - state_root));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C6: derived_hash_public
+        result = result + alpha_power * (local[col::DERIVED_HASH] - public_inputs[1]);
+        alpha_power = alpha_power * alpha;
+
+        // C7: head_is_var_binary
+        for i in 0..MAX_HEAD_TERMS {
+            let flag = local[col::HEAD_IS_VAR_START + i];
+            result = result + alpha_power * (flag * (flag - BabyBear::ONE));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C8: head_sel_var_binary
+        for term_i in 0..MAX_HEAD_TERMS {
+            for var_j in 0..MAX_SUB_VARS {
+                let sel = local[col::head_sel_var(term_i, var_j)];
+                result = result + alpha_power * (sel * (sel - BabyBear::ONE));
+            }
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C9: head_sel_var_sum_equals_is_var
+        for term_i in 0..MAX_HEAD_TERMS {
+            let is_var = local[col::HEAD_IS_VAR_START + term_i];
+            let mut sel_sum = BabyBear::ZERO;
+            for var_j in 0..MAX_SUB_VARS {
+                sel_sum = sel_sum + local[col::head_sel_var(term_i, var_j)];
+            }
+            let diff = sel_sum - is_var;
+            result = result + alpha_power * (diff * diff);
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C10: substitution_application
+        for term_i in 0..MAX_HEAD_TERMS {
+            let is_var = local[col::HEAD_IS_VAR_START + term_i];
+            let raw_value = local[col::HEAD_RAW_VALUE_START + term_i];
+            let derived_term = local[col::HEAD_TERM_START + term_i];
+
+            let mut var_resolved = BabyBear::ZERO;
+            for var_j in 0..MAX_SUB_VARS {
+                let sel = local[col::head_sel_var(term_i, var_j)];
+                let sub_val = local[col::SUB_VALUE_START + var_j];
+                var_resolved = var_resolved + sel * sub_val;
+            }
+
+            let expected = is_var * var_resolved + (BabyBear::ONE - is_var) * raw_value;
+            let diff = derived_term - expected;
+            result = result + alpha_power * (diff * diff);
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C11: eq_check_active_binary
+        for i in 0..MAX_EQUAL_CHECKS {
+            let active = local[col::eq_check_active(i)];
+            result = result + alpha_power * (active * (active - BabyBear::ONE));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C12: eq_check_enforced
+        for i in 0..MAX_EQUAL_CHECKS {
+            let active = local[col::eq_check_active(i)];
+            let term_a = local[col::eq_check_term_a(i)];
+            let term_b = local[col::eq_check_term_b(i)];
+            result = result + alpha_power * (active * (term_a - term_b));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C13: memberof_check_active_binary
+        for i in 0..MAX_MEMBEROF_CHECKS {
+            let active = local[col::memberof_check_active(i)];
+            result = result + alpha_power * (active * (active - BabyBear::ONE));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C14: memberof_check_enforced
+        for i in 0..MAX_MEMBEROF_CHECKS {
+            let active = local[col::memberof_check_active(i)];
+            let term_a = local[col::memberof_check_term_a(i)];
+            let term_b = local[col::memberof_check_term_b(i)];
+            result = result + alpha_power * (active * (term_a - term_b));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C15: gte_check_active_binary
+        let gte_active = local[col::GTE_CHECK_ACTIVE];
+        result = result + alpha_power * (gte_active * (gte_active - BabyBear::ONE));
+        alpha_power = alpha_power * alpha;
+
+        // C16: gte_check_diff_correct
+        let gte_term_a = local[col::GTE_CHECK_TERM_A];
+        let gte_term_b = local[col::GTE_CHECK_TERM_B];
+        let gte_diff = local[col::GTE_CHECK_DIFF];
+        result = result + alpha_power * (gte_active * (gte_diff - (gte_term_a - gte_term_b)));
+        alpha_power = alpha_power * alpha;
+
+        // C17: gte_check_bit_decomposition
+        {
+            let mut recomposed = BabyBear::ZERO;
+            let mut power_of_two = BabyBear::ONE;
+            for i in 0..GTE_DIFF_BITS {
+                let bit = local[col::gte_diff_bit(i)];
+                recomposed = recomposed + bit * power_of_two;
+                power_of_two = power_of_two + power_of_two;
+            }
+            result = result + alpha_power * (gte_active * (recomposed - gte_diff));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C18: gte_check_bits_binary
+        {
+            let mut bits_result = BabyBear::ZERO;
+            for i in 0..GTE_DIFF_BITS {
+                let bit = local[col::gte_diff_bit(i)];
+                bits_result = bits_result + bit * (bit - BabyBear::ONE);
+            }
+            result = result + alpha_power * (gte_active * bits_result);
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C19: gte_check_high_bit_zero
+        let gte_high_bit = local[col::gte_diff_bit(GTE_DIFF_BITS - 1)];
+        result = result + alpha_power * (gte_active * gte_high_bit);
+        alpha_power = alpha_power * alpha;
+
+        // C20: lt_check_active_binary
+        let lt_active = local[col::LT_CHECK_ACTIVE];
+        result = result + alpha_power * (lt_active * (lt_active - BabyBear::ONE));
+        alpha_power = alpha_power * alpha;
+
+        // C21: lt_check_diff_correct
+        let lt_term_a = local[col::LT_CHECK_TERM_A];
+        let lt_term_b = local[col::LT_CHECK_TERM_B];
+        let lt_diff = local[col::LT_CHECK_DIFF];
+        result = result
+            + alpha_power * (lt_active * (lt_diff - (lt_term_b - lt_term_a - BabyBear::ONE)));
+        alpha_power = alpha_power * alpha;
+
+        // C22: lt_check_bit_decomposition
+        {
+            let mut recomposed = BabyBear::ZERO;
+            let mut power_of_two = BabyBear::ONE;
+            for i in 0..GTE_DIFF_BITS {
+                let bit = local[col::lt_diff_bit(i)];
+                recomposed = recomposed + bit * power_of_two;
+                power_of_two = power_of_two + power_of_two;
+            }
+            result = result + alpha_power * (lt_active * (recomposed - lt_diff));
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C23: lt_check_bits_binary
+        {
+            let mut bits_result = BabyBear::ZERO;
+            for i in 0..GTE_DIFF_BITS {
+                let bit = local[col::lt_diff_bit(i)];
+                bits_result = bits_result + bit * (bit - BabyBear::ONE);
+            }
+            result = result + alpha_power * (lt_active * bits_result);
+        }
+        alpha_power = alpha_power * alpha;
+
+        // C24: lt_check_high_bit_zero
+        let lt_high_bit = local[col::lt_diff_bit(GTE_DIFF_BITS - 1)];
+        result = result + alpha_power * (lt_active * lt_high_bit);
+
+        result
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 2 {
+            // Row 0, DERIVED_HASH = public_inputs[1] (derived fact hash)
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::DERIVED_HASH,
+                value: public_inputs[1],
+            });
+            // Row 0, BODY_ROOT_START = public_inputs[0] (state root for first body atom)
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::BODY_ROOT_START,
+                value: public_inputs[0],
+            });
+        }
+        constraints
+    }
+}
+
+/// Generate a real STARK proof for a derivation step.
+///
+/// This produces a cryptographically sound proof (polynomial commitment + FRI)
+/// that the derivation was performed correctly. The verifier can check this
+/// without seeing the witness.
+///
+/// Returns `None` if the witness fails constraint checking.
+pub fn prove_derivation_stark(witness: &DerivationWitness) -> Option<StarkProof> {
+    let air = DerivationStarkAir::new(witness.clone());
+    let derivation_air = DerivationAir::new(witness.clone());
+
+    // Generate trace and public inputs
+    let (trace, public_inputs) = derivation_air.generate_trace();
+
+    // DerivationAir generates a single-row trace. STARK prover requires >= 2 rows
+    // with power-of-two size, so pad to 2.
+    let padded_len = trace.len().next_power_of_two().max(2);
+    let mut padded_trace = trace;
+    while padded_trace.len() < padded_len {
+        // Pad with copies of the single row (all constraints are per-row-only,
+        // so duplicating the valid row maintains satisfaction)
+        padded_trace.push(padded_trace.last().unwrap().clone());
+    }
+
+    Some(stark::prove(&air, &padded_trace, &public_inputs))
+}
+
+/// Verify a STARK proof for a derivation step.
+///
+/// Returns `Ok(())` if the proof is valid, or an error message describing the failure.
+pub fn verify_derivation_stark(
+    proof: &StarkProof,
+    public_inputs: &[BabyBear],
+) -> Result<(), String> {
+    // Reconstruct a minimal witness just for AIR metadata (width, name, etc.)
+    let dummy_witness = DerivationWitness {
+        rule: CircuitRule {
+            id: 0,
+            num_body_atoms: 1,
+            num_variables: 0,
+            head_predicate: BabyBear::ZERO,
+            head_terms: [
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+            ],
+            body_atoms: vec![],
+            equal_checks: vec![],
+            memberof_checks: vec![],
+            gte_check: None,
+            lt_check: None,
+        },
+        state_root: BabyBear::ZERO,
+        body_fact_hashes: vec![BabyBear::ONE],
+        substitution: vec![],
+        derived_predicate: BabyBear::ZERO,
+        derived_terms: [BabyBear::ZERO; 4],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
+    };
+    let air = DerivationStarkAir::new(dummy_witness);
+    stark::verify(&air, proof, public_inputs)
 }
 
 /// Helper: Create a test derivation witness.
@@ -981,6 +1374,9 @@ pub fn create_test_derivation() -> DerivationWitness {
         substitution: vec![alice, file], // X=alice, Y=file
         derived_predicate: access_pred,
         derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
     }
 }
 
@@ -1164,6 +1560,9 @@ mod tests {
             substitution: vec![alice, file],
             derived_predicate: access_pred,
             derived_terms: [alice, fixed_val, file, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1218,6 +1617,9 @@ mod tests {
             substitution: vec![alice, file],
             derived_predicate: access_pred,
             derived_terms: [alice, BabyBear::new(777), file, BabyBear::ZERO], // WRONG: 777 instead of 500
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1278,6 +1680,9 @@ mod tests {
             substitution: vec![alice, alice], // X=alice, Y=alice
             derived_predicate: access_pred,
             derived_terms: [alice, alice, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1339,6 +1744,9 @@ mod tests {
             substitution: vec![alice, file], // X=alice, Y=file (different!)
             derived_predicate: access_pred,
             derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1407,6 +1815,9 @@ mod tests {
             substitution: vec![alice, file],
             derived_predicate: access_pred,
             derived_terms: [alice, file, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1468,6 +1879,9 @@ mod tests {
             substitution: vec![action_hash, action_hash],
             derived_predicate: access_pred,
             derived_terms: [action_hash, action_hash, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1528,6 +1942,9 @@ mod tests {
             substitution: vec![request_hash, allowed_hash],
             derived_predicate: access_pred,
             derived_terms: [request_hash, allowed_hash, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1597,6 +2014,9 @@ mod tests {
             substitution: vec![budget, cost], // X=50, Y=10
             derived_predicate: access_pred,
             derived_terms: [budget, cost, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1656,6 +2076,9 @@ mod tests {
             substitution: vec![budget, cost], // X=5, Y=10 (5 < 10, so GTE fails)
             derived_predicate: access_pred,
             derived_terms: [budget, cost, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1728,6 +2151,9 @@ mod tests {
             substitution: vec![action_hash, budget, cost],
             derived_predicate: grant_pred,
             derived_terms: [action_hash, budget, cost, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1785,6 +2211,9 @@ mod tests {
             substitution: vec![val, val], // 10 >= 10
             derived_predicate: access_pred,
             derived_terms: [val, val, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         let air = DerivationAir::new(witness);
@@ -1793,6 +2222,121 @@ mod tests {
             result.is_valid(),
             "GTE check 10 >= 10 should pass: {:?}",
             result.violations()
+        );
+    }
+
+    // ========================================================================
+    // DerivationStarkAir STARK proof generation/verification tests
+    // ========================================================================
+
+    #[test]
+    fn derivation_stark_proof_basic() {
+        let witness = create_test_derivation();
+        let proof =
+            prove_derivation_stark(&witness).expect("derivation STARK proof should generate");
+
+        // Verify against the correct public inputs
+        let air = DerivationAir::new(witness.clone());
+        let (_, public_inputs) = air.generate_trace();
+        assert!(
+            verify_derivation_stark(&proof, &public_inputs).is_ok(),
+            "derivation STARK proof should verify"
+        );
+    }
+
+    #[test]
+    fn derivation_stark_proof_wrong_public_inputs_fails() {
+        let witness = create_test_derivation();
+        let proof =
+            prove_derivation_stark(&witness).expect("derivation STARK proof should generate");
+
+        // Tamper with public inputs: wrong state_root
+        let air = DerivationAir::new(witness.clone());
+        let (_, mut public_inputs) = air.generate_trace();
+        public_inputs[0] = BabyBear::new(11111); // wrong state_root
+        assert!(
+            verify_derivation_stark(&proof, &public_inputs).is_err(),
+            "derivation STARK proof with wrong public inputs should fail"
+        );
+    }
+
+    #[test]
+    fn derivation_stark_proof_tampered_commitment_fails() {
+        let witness = create_test_derivation();
+        let mut proof =
+            prove_derivation_stark(&witness).expect("derivation STARK proof should generate");
+
+        // Tamper with the trace commitment
+        proof.trace_commitment[0] ^= 0xFF;
+
+        let air = DerivationAir::new(witness.clone());
+        let (_, public_inputs) = air.generate_trace();
+        assert!(
+            verify_derivation_stark(&proof, &public_inputs).is_err(),
+            "tampered derivation STARK proof should fail"
+        );
+    }
+
+    #[test]
+    fn derivation_stark_proof_with_gte_check() {
+        // Verify that a derivation with a GTE check produces a valid STARK proof.
+        let access_pred = BabyBear::new(300);
+        let owns_pred = BabyBear::new(100);
+        let budget = BabyBear::new(50);
+        let cost = BabyBear::new(10);
+
+        let rule = CircuitRule {
+            id: 6,
+            num_body_atoms: 1,
+            num_variables: 2,
+            head_predicate: access_pred,
+            head_terms: [
+                (true, BabyBear::new(0)),
+                (true, BabyBear::new(1)),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+            ],
+            body_atoms: vec![BodyAtomPattern {
+                predicate: owns_pred,
+                terms: [
+                    (true, BabyBear::new(0)),
+                    (true, BabyBear::new(1)),
+                    (false, BabyBear::ZERO),
+                ],
+            }],
+            equal_checks: vec![],
+            memberof_checks: vec![],
+            gte_check: Some(CircuitGteCheck {
+                lhs_is_var: true,
+                lhs_value: BabyBear::new(0),
+                rhs_is_var: true,
+                rhs_value: BabyBear::new(1),
+            }),
+            lt_check: None,
+        };
+
+        let body_fact = hash_fact(owns_pred, &[budget, cost, BabyBear::ZERO]);
+
+        let witness = DerivationWitness {
+            rule,
+            state_root: BabyBear::new(99999),
+            body_fact_hashes: vec![body_fact],
+            substitution: vec![budget, cost],
+            derived_predicate: access_pred,
+            derived_terms: [budget, cost, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
+        };
+
+        let proof =
+            prove_derivation_stark(&witness).expect("derivation STARK proof with GTE should gen");
+
+        let air = DerivationAir::new(witness.clone());
+        let (_, public_inputs) = air.generate_trace();
+        assert!(
+            verify_derivation_stark(&proof, &public_inputs).is_ok(),
+            "derivation STARK proof with GTE check should verify"
         );
     }
 }

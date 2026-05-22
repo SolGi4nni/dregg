@@ -21,14 +21,14 @@
 use std::time::Instant;
 
 use pyana_circuit::{
+    BabyBear,
     committed_threshold::{
-        compute_threshold_commitment, generate_blinding, prove_committed_threshold,
-        verify_committed_threshold, CommittedThresholdWitness,
+        CommittedThresholdWitness, compute_threshold_commitment, generate_blinding,
+        prove_committed_threshold, verify_committed_threshold,
     },
     poseidon2,
     predicate_air::compute_fact_commitment,
     stark::proof_to_bytes,
-    BabyBear,
 };
 
 /// Simulates the on-chain credential verification flow.
@@ -98,7 +98,7 @@ fn main() {
 
     // A federation of identity providers. Alice is one of 1000 members.
     // The federation attests to members' attributes via credentials.
-    let federation_members: Vec<[u8; 32]> = (0..1000)
+    let federation_members: Vec<[u8; 32]> = (0u64..1000)
         .map(|i| blake3::derive_key("pyana-demo-member-key", &i.to_le_bytes()))
         .collect();
 

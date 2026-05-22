@@ -910,6 +910,9 @@ mod tests {
             substitution: vec![alice, app],
             derived_predicate: allow_pred,
             derived_terms: [alice, app, BabyBear::ZERO, BabyBear::ZERO],
+            not_after_height: BabyBear::ZERO,
+            org_id_hash: BabyBear::ZERO,
+            budget_remaining: BabyBear::ZERO,
         };
 
         build_multi_step_witness(state_root, BabyBear::new(42), vec![step])
