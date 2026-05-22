@@ -38,8 +38,8 @@ use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
 
 use super::{
-    verify_kimchi_proof, BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge,
-    SpongeParams, VestaOpeningProof, fp_to_bytes32, hash_many_fp,
+    BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, SpongeParams,
+    VestaOpeningProof, fp_to_bytes32, hash_many_fp, verify_kimchi_proof,
 };
 
 pub const MAX_FOLD_REMOVALS: usize = 8;
@@ -173,16 +173,10 @@ impl KimchiFoldWitness {
                 ));
             }
             if !r.membership_proof.verify() {
-                return Err(format!(
-                    "Removal {}: Merkle membership proof is invalid",
-                    i
-                ));
+                return Err(format!("Removal {}: Merkle membership proof is invalid", i));
             }
             if r.membership_proof.leaf_hash != r.fact_hash {
-                return Err(format!(
-                    "Removal {}: leaf hash does not match fact_hash",
-                    i
-                ));
+                return Err(format!("Removal {}: leaf hash does not match fact_hash", i));
             }
         }
         Ok(())
@@ -256,13 +250,9 @@ impl KimchiFoldCircuit {
                 {
                     let r = gates.len();
                     let mut c = vec![Fp::zero(); COLUMNS];
-                    c[0] = Fp::one();   // w0 (current hash going into this level)
-                    c[1] = -Fp::one();  // -w1 (what the Poseidon will receive)
-                    gates.push(CircuitGate::new(
-                        GateType::Generic,
-                        Wire::for_row(r),
-                        c,
-                    ));
+                    c[0] = Fp::one(); // w0 (current hash going into this level)
+                    c[1] = -Fp::one(); // -w1 (what the Poseidon will receive)
+                    gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
                 }
 
                 // Poseidon left: perm([ch[0], ch[1], 0]) -> h_left
@@ -511,8 +501,8 @@ impl KimchiFoldCircuit {
         >(&gm, wit, &[], &index, &mut OsRng)
         .map_err(|e| format!("Kimchi native fold prover error: {:?}", e))?;
 
-        let pb = rmp_serde::to_vec(&proof)
-            .map_err(|e| format!("Proof serialization error: {}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
 
         let nr = self.witness.removals.len();
         let rth = self.witness.root_transition_hash();
@@ -531,7 +521,10 @@ impl KimchiFoldCircuit {
     }
 
     /// Verify a fold proof using the real Kimchi verifier.
-    pub fn verify(proof: &KimchiNativeProof, witness_for_circuit: &KimchiFoldWitness) -> Result<bool, String> {
+    pub fn verify(
+        proof: &KimchiNativeProof,
+        witness_for_circuit: &KimchiFoldWitness,
+    ) -> Result<bool, String> {
         if proof.circuit_type != KimchiNativeCircuitType::Fold {
             return Err("Expected fold proof".into());
         }
@@ -539,11 +532,21 @@ impl KimchiFoldCircuit {
             return Err("Malformed public inputs".into());
         }
 
-        let ob: [u8; 32] = proof.public_input_bytes[0..32].try_into().map_err(|_| "e")?;
-        let nb: [u8; 32] = proof.public_input_bytes[32..64].try_into().map_err(|_| "e")?;
-        let _nmb: [u8; 32] = proof.public_input_bytes[64..96].try_into().map_err(|_| "e")?;
-        let rthb: [u8; 32] = proof.public_input_bytes[96..128].try_into().map_err(|_| "e")?;
-        let ccb: [u8; 32] = proof.public_input_bytes[128..160].try_into().map_err(|_| "e")?;
+        let ob: [u8; 32] = proof.public_input_bytes[0..32]
+            .try_into()
+            .map_err(|_| "e")?;
+        let nb: [u8; 32] = proof.public_input_bytes[32..64]
+            .try_into()
+            .map_err(|_| "e")?;
+        let _nmb: [u8; 32] = proof.public_input_bytes[64..96]
+            .try_into()
+            .map_err(|_| "e")?;
+        let rthb: [u8; 32] = proof.public_input_bytes[96..128]
+            .try_into()
+            .map_err(|_| "e")?;
+        let ccb: [u8; 32] = proof.public_input_bytes[128..160]
+            .try_into()
+            .map_err(|_| "e")?;
 
         let old_root = super::bytes32_to_fp(&ob);
         let new_root = super::bytes32_to_fp(&nb);
@@ -561,7 +564,13 @@ impl KimchiFoldCircuit {
         let (gates, pc) = circuit.build_circuit();
 
         // Public inputs for the verifier
-        let public_inputs = vec![old_root, new_root, num_removals, transition_hash, checks_commitment];
+        let public_inputs = vec![
+            old_root,
+            new_root,
+            num_removals,
+            transition_hash,
+            checks_commitment,
+        ];
 
         // Deserialize and verify with Kimchi
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =

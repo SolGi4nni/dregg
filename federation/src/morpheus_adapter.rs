@@ -23,10 +23,10 @@
 //! }
 //! ```
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use pyana_morpheus::test_harness::TestTransaction;
-use pyana_morpheus::{Identity, KeyBook, Message, MorpheusProcess, ViewNum};
+use pyana_morpheus::{BlockData, BlockKey, Identity, KeyBook, Message, MorpheusProcess, ViewNum};
 
 use crate::consensus::ConsensusConfig;
 use crate::types::RevocationEvent;
@@ -58,6 +58,9 @@ pub struct MorpheusAdapter {
     pending_events: Vec<RevocationEvent>,
     /// Adapter configuration.
     config: MorpheusAdapterConfig,
+    /// Tracks which finalized block keys have already been extracted into `finalized_blocks`,
+    /// so we only emit each finalized block once.
+    seen_finalized: BTreeSet<BlockKey>,
 }
 
 /// A block finalized by the morpheus consensus engine, translated into federation terms.
@@ -86,12 +89,17 @@ impl MorpheusAdapter {
         let mut process = MorpheusProcess::new(keybook, id, n, f);
         process.delta = config.delta;
 
+        // The genesis block is already in `index.finalized` at construction; seed
+        // our tracking set so we don't emit it as a "new" finalized block.
+        let seen_finalized = process.index.finalized.clone();
+
         MorpheusAdapter {
             process,
             outbox: VecDeque::new(),
             finalized_blocks: VecDeque::new(),
             pending_events: Vec::new(),
             config,
+            seen_finalized,
         }
     }
 
@@ -112,6 +120,7 @@ impl MorpheusAdapter {
         let mut to_send = Vec::new();
         let result = self.process.process_message(message, sender, &mut to_send);
         self.outbox.extend(to_send.into_iter());
+        self.collect_newly_finalized();
         result
     }
 
@@ -120,6 +129,7 @@ impl MorpheusAdapter {
         let mut to_send = Vec::new();
         self.process.check_timeouts(&mut to_send);
         self.outbox.extend(to_send.into_iter());
+        self.collect_newly_finalized();
     }
 
     /// Attempt to produce a new block if the process has pending transactions
@@ -140,6 +150,50 @@ impl MorpheusAdapter {
         let mut to_send = Vec::new();
         self.process.try_produce_blocks(&mut to_send);
         self.outbox.extend(to_send.into_iter());
+        self.collect_newly_finalized();
+    }
+
+    /// Scan `process.index.finalized` for newly finalized block keys that have not
+    /// yet been emitted, extract the corresponding block data, and push translated
+    /// `FinalizedMorpheusBlock` entries into the output queue.
+    fn collect_newly_finalized(&mut self) {
+        // Identify block keys that are in the process's finalized set but not yet seen.
+        let new_keys: Vec<BlockKey> = self
+            .process
+            .index
+            .finalized
+            .iter()
+            .filter(|key| !self.seen_finalized.contains(key))
+            .cloned()
+            .collect();
+
+        for key in new_keys {
+            self.seen_finalized.insert(key.clone());
+
+            // Extract transaction payloads from the block if it is a Tr block.
+            let events = self
+                .process
+                .index
+                .blocks
+                .get(&key)
+                .and_then(|signed_block| match &signed_block.data.data {
+                    BlockData::Tr { transactions } => {
+                        let evts: Vec<RevocationEvent> = transactions
+                            .iter()
+                            .filter_map(|tx| postcard::from_bytes(&tx.0).ok())
+                            .collect();
+                        Some(evts)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            self.finalized_blocks.push_back(FinalizedMorpheusBlock {
+                view: key.view.0,
+                height: key.height,
+                events,
+            });
+        }
     }
 
     /// Drain outbound messages that need to be sent via the federation transport.
@@ -169,5 +223,154 @@ impl MorpheusAdapter {
     /// Get the number of finalized blocks tracked by the morpheus process.
     pub fn finalized_count(&self) -> usize {
         self.process.index.finalized.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyana_morpheus::test_harness::TestTransaction;
+    use pyana_morpheus::{
+        Block, BlockData, BlockHash, BlockType, GEN_BLOCK_KEY, Signed, SlotNum, ViewNum,
+    };
+    use std::sync::Arc;
+
+    /// Helper: create a minimal adapter for testing.
+    fn make_test_adapter() -> MorpheusAdapter {
+        use pyana_morpheus::test_harness::SimulationHarness;
+        let harness = SimulationHarness::create_test_setup(4);
+        let process = harness.processes.values().next().unwrap().clone();
+        let config = MorpheusAdapterConfig {
+            federation_config: ConsensusConfig::new(4),
+            node_id: 0,
+            delta: 100,
+        };
+        let seen_finalized = process.index.finalized.clone();
+        MorpheusAdapter {
+            process,
+            outbox: VecDeque::new(),
+            finalized_blocks: VecDeque::new(),
+            pending_events: Vec::new(),
+            config,
+            seen_finalized,
+        }
+    }
+
+    #[test]
+    fn test_collect_newly_finalized_emits_new_blocks() {
+        let mut adapter = make_test_adapter();
+
+        // Initially, take_finalized should return nothing (genesis is already in seen_finalized).
+        assert!(adapter.take_finalized().is_empty());
+
+        // Simulate a finalized block by inserting a BlockKey into process.index.finalized
+        // and a corresponding block into process.index.blocks.
+        let fake_key = BlockKey {
+            type_: BlockType::Tr,
+            view: ViewNum(0),
+            height: 1,
+            author: Some(Identity(1)),
+            slot: SlotNum(0),
+            hash: Some(BlockHash(42)),
+        };
+
+        // Create a Tr block containing a serialized revocation event.
+        let event = RevocationEvent {
+            token_id: "token-42".to_string(),
+            authority_id: 0,
+            signature: crate::types::Signature([1u8; 64]),
+        };
+        let payload = postcard::to_stdvec(&event).unwrap();
+        let tx = TestTransaction(payload);
+
+        let block = Block {
+            key: fake_key.clone(),
+            prev: vec![adapter.process.genesis_qc.clone()],
+            one: adapter.process.genesis_qc.clone(),
+            data: BlockData::Tr {
+                transactions: vec![tx],
+            },
+        };
+        let signed_block = Arc::new(Signed {
+            data: block,
+            author: Identity(1),
+            signature: hints::PartialSignature::default(),
+        });
+
+        // Insert the block and mark it finalized in the morpheus index.
+        adapter
+            .process
+            .index
+            .blocks
+            .insert(fake_key.clone(), signed_block);
+        adapter.process.index.finalized.insert(fake_key.clone());
+
+        // Trigger collect_newly_finalized by calling check_timeouts (which calls it).
+        adapter.check_timeouts();
+
+        // take_finalized should now return the newly finalized block.
+        let finalized = adapter.take_finalized();
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].view, 0);
+        assert_eq!(finalized[0].height, 1);
+        assert_eq!(finalized[0].events.len(), 1);
+        assert_eq!(finalized[0].events[0].token_id, "token-42");
+
+        // Calling again returns empty.
+        assert!(adapter.take_finalized().is_empty());
+
+        // Adding the same key again should not produce duplicates.
+        adapter.check_timeouts();
+        assert!(adapter.take_finalized().is_empty());
+    }
+
+    #[test]
+    fn test_collect_newly_finalized_skips_genesis() {
+        let adapter = make_test_adapter();
+        // Genesis is in process.index.finalized but should NOT be emitted.
+        assert!(adapter.finalized_blocks.is_empty());
+    }
+
+    #[test]
+    fn test_collect_newly_finalized_leader_block_has_empty_events() {
+        let mut adapter = make_test_adapter();
+
+        let fake_key = BlockKey {
+            type_: BlockType::Lead,
+            view: ViewNum(0),
+            height: 1,
+            author: Some(Identity(1)),
+            slot: SlotNum(0),
+            hash: Some(BlockHash(99)),
+        };
+
+        let block = Block {
+            key: fake_key.clone(),
+            prev: vec![adapter.process.genesis_qc.clone()],
+            one: adapter.process.genesis_qc.clone(),
+            data: BlockData::Lead {
+                justification: vec![],
+            },
+        };
+        let signed_block = Arc::new(Signed {
+            data: block,
+            author: Identity(1),
+            signature: hints::PartialSignature::default(),
+        });
+
+        adapter
+            .process
+            .index
+            .blocks
+            .insert(fake_key.clone(), signed_block);
+        adapter.process.index.finalized.insert(fake_key.clone());
+
+        adapter.check_timeouts();
+
+        let finalized = adapter.take_finalized();
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].height, 1);
+        // Leader blocks have no transaction data, so events should be empty.
+        assert!(finalized[0].events.is_empty());
     }
 }

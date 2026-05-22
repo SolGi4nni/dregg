@@ -10,6 +10,7 @@ use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions
 use serde::{Deserialize, Serialize};
 
 use crate::conditional::{ConditionProof, ProofCondition};
+use crate::escrow::EscrowCondition;
 
 /// How much of the turn an action's signer commits to.
 ///
@@ -210,6 +211,11 @@ pub enum Effect {
         value: u64,
         /// The asset type of the note being spent.
         asset_type: u64,
+        /// The STARK spending proof (serialized). Proves:
+        /// 1. The spender knows the note's opening (preimage of the commitment)
+        /// 2. The nullifier is correctly derived from the note's secret data
+        /// 3. The note commitment exists in the note tree (Merkle membership against the root)
+        spending_proof: Vec<u8>,
     },
     /// Create a new note (add commitment to note tree).
     NoteCreate {
@@ -337,6 +343,10 @@ pub enum Effect {
         deadline_height: u64,
         /// Note commitment representing the locked stake.
         stake: NoteCommitment,
+        /// Numeric amount to lock from the obligor's cell balance as bond.
+        /// This is subtracted on creation, returned on fulfillment, or transferred
+        /// to the beneficiary on slash.
+        stake_amount: u64,
     },
     /// Fulfill a proof obligation by presenting the required proof.
     /// On success, the locked stake is returned to the obligor.
@@ -351,6 +361,36 @@ pub enum Effect {
     SlashObligation {
         /// ID of the obligation to slash.
         obligation_id: [u8; 32],
+    },
+    /// Create a conditional escrow: lock value from the sender, release to recipient
+    /// if `condition` is met, else allow refund after `timeout_height`.
+    CreateEscrow {
+        /// The escrow creator (funds source).
+        cell: CellId,
+        /// Who gets the funds if condition is met.
+        recipient: CellId,
+        /// Amount to lock in escrow.
+        amount: u64,
+        /// What must be satisfied for release.
+        condition: EscrowCondition,
+        /// Block height after which refund is allowed.
+        timeout_height: u64,
+        /// Unique identifier for this escrow.
+        escrow_id: [u8; 32],
+    },
+    /// Release an escrow by satisfying its condition.
+    /// Transfers the escrowed amount to the recipient.
+    ReleaseEscrow {
+        /// ID of the escrow to release.
+        escrow_id: [u8; 32],
+        /// Proof satisfying the condition (if condition requires one).
+        proof: Option<Vec<u8>>,
+    },
+    /// Refund an escrow after its timeout has passed.
+    /// Returns the escrowed amount to the original creator.
+    RefundEscrow {
+        /// ID of the escrow to refund.
+        escrow_id: [u8; 32],
     },
     /// Exercise a capability from the actor's c-list in one atomic step.
     ///
@@ -531,12 +571,14 @@ impl Effect {
                 note_tree_root,
                 value,
                 asset_type,
+                spending_proof,
             } => {
                 hasher.update(&[9u8]);
                 hasher.update(&nullifier.0);
                 hasher.update(note_tree_root);
                 hasher.update(&value.to_le_bytes());
                 hasher.update(&asset_type.to_le_bytes());
+                hasher.update(spending_proof);
             }
             Effect::NoteCreate {
                 commitment,
@@ -646,11 +688,13 @@ impl Effect {
                 condition,
                 deadline_height,
                 stake,
+                stake_amount,
             } => {
                 hasher.update(&[22u8]);
                 hasher.update(beneficiary.as_bytes());
                 hasher.update(&deadline_height.to_le_bytes());
                 hasher.update(&stake.0);
+                hasher.update(&stake_amount.to_le_bytes());
                 // Include condition discriminant.
                 match condition {
                     ProofCondition::HashPreimage { hash } => {
@@ -719,6 +763,52 @@ impl Effect {
                 hasher.update(&[24u8]);
                 hasher.update(obligation_id);
             }
+            Effect::CreateEscrow {
+                cell,
+                recipient,
+                amount,
+                condition,
+                timeout_height,
+                escrow_id,
+            } => {
+                hasher.update(&[29u8]);
+                hasher.update(cell.as_bytes());
+                hasher.update(recipient.as_bytes());
+                hasher.update(&amount.to_le_bytes());
+                hasher.update(&timeout_height.to_le_bytes());
+                hasher.update(escrow_id);
+                match condition {
+                    EscrowCondition::ProofPresented { verification_key } => {
+                        hasher.update(&[0u8]);
+                        hasher.update(verification_key);
+                    }
+                    EscrowCondition::SignedByAll { signers } => {
+                        hasher.update(&[1u8]);
+                        for signer in signers {
+                            hasher.update(signer);
+                        }
+                    }
+                    EscrowCondition::PredicateSatisfied { predicate_hash } => {
+                        hasher.update(&[2u8]);
+                        hasher.update(predicate_hash);
+                    }
+                }
+            }
+            Effect::ReleaseEscrow { escrow_id, proof } => {
+                hasher.update(&[30u8]);
+                hasher.update(escrow_id);
+                if let Some(p) = proof {
+                    hasher.update(&[1u8]);
+                    hasher.update(&(p.len() as u64).to_le_bytes());
+                    hasher.update(p);
+                } else {
+                    hasher.update(&[0u8]);
+                }
+            }
+            Effect::RefundEscrow { escrow_id } => {
+                hasher.update(&[31u8]);
+                hasher.update(escrow_id);
+            }
             Effect::SpawnWithDelegation {
                 child_public_key,
                 child_token_id,
@@ -764,7 +854,9 @@ impl Effect {
             Effect::SetVerificationKey { new_vk, .. } => {
                 32 + new_vk.as_ref().map_or(1, |vk| 1 + vk.data.len())
             }
-            Effect::NoteSpend { .. } => 32 + 32 + 8 + 8, // nullifier + root + value + asset_type
+            Effect::NoteSpend { spending_proof, .. } => {
+                32 + 32 + 8 + 8 + spending_proof.len() // nullifier + root + value + asset_type + proof
+            }
             Effect::NoteCreate { encrypted_note, .. } => {
                 32 + 8 + 8 + encrypted_note.len() // commitment + value + asset_type + ciphertext
             }
@@ -789,7 +881,7 @@ impl Effect {
             Effect::RefreshDelegation => 0,
             Effect::RevokeDelegation { .. } => 32,
             Effect::CreateObligation { stake, .. } => {
-                32 + 32 + 8 + stake.0.len() // beneficiary + condition + deadline + stake
+                32 + 32 + 8 + stake.0.len() + 8 // beneficiary + condition + deadline + stake + stake_amount
             }
             Effect::FulfillObligation { proof, .. } => {
                 32 + match proof {
@@ -799,6 +891,19 @@ impl Effect {
                 }
             }
             Effect::SlashObligation { .. } => 32,
+            Effect::CreateEscrow { condition, .. } => {
+                32 + 32
+                    + 8
+                    + 8
+                    + 32
+                    + match condition {
+                        EscrowCondition::ProofPresented { .. } => 32,
+                        EscrowCondition::SignedByAll { signers } => signers.len() * 32,
+                        EscrowCondition::PredicateSatisfied { .. } => 32,
+                    }
+            }
+            Effect::ReleaseEscrow { proof, .. } => 32 + proof.as_ref().map_or(0, |p| p.len()),
+            Effect::RefundEscrow { .. } => 32,
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 4 + inner_effects.iter().map(|e| e.data_bytes()).sum::<usize>()
             }

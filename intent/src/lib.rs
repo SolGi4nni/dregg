@@ -28,9 +28,11 @@
 //!
 //! This IS the progressive disclosure story applied to discovery.
 
+pub mod commit_reveal_fulfillment;
 pub mod fulfillment;
 pub mod gossip;
 pub mod matcher;
+pub mod partial_fill;
 pub mod pir;
 pub mod validation;
 
@@ -39,6 +41,32 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
+
+/// Type alias for intent identifiers (content-addressed BLAKE3 hashes).
+pub type IntentId = [u8; 32];
+
+/// Constraints governing how an intent may be partially filled.
+///
+/// For AMM/DEX scenarios, intents often need partial fills: "sell 100 tokens but
+/// accept any amount >= 10" or "buy at this price, fill as much as you can."
+///
+/// When `fill_constraints` is `None` on an intent, the intent is all-or-nothing
+/// (legacy behavior). When present, the matcher may produce partial fills.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FillConstraints {
+    /// Minimum acceptable partial fill amount. A match providing less than this
+    /// is rejected outright.
+    pub min_fill_amount: u64,
+    /// Maximum fill amount (usually == total desired quantity).
+    pub max_fill_amount: u64,
+    /// If true, the intent must be filled entirely or not at all (no partials).
+    /// This is equivalent to setting `min_fill_amount == max_fill_amount` but
+    /// is explicit for clarity and gas-efficient checking.
+    pub fill_or_kill: bool,
+    /// After a partial fill, this is set to the ID of the residual intent that
+    /// tracks the remaining unfilled quantity. `None` before first partial fill.
+    pub remaining_after_fill: Option<IntentId>,
+}
 
 /// A predicate requirement for cross-party verification.
 ///
@@ -248,6 +276,12 @@ pub struct Intent {
     /// Optional stake proof demonstrating note tree membership (Poseidon2 Merkle proof).
     /// Required for gossip propagation; local intents may omit this.
     pub stake_proof: Option<StakeProof>,
+    /// Optional partial fill constraints for AMM/DEX-style intents.
+    /// When `None`, the intent is all-or-nothing (must be fully matched).
+    /// When `Some`, the matcher may produce partial fills satisfying at least
+    /// `min_fill_amount`.
+    #[serde(default)]
+    pub fill_constraints: Option<FillConstraints>,
 }
 
 impl Intent {
@@ -266,6 +300,29 @@ impl Intent {
             creator,
             expiry,
             stake_proof,
+            fill_constraints: None,
+        };
+        intent.id = intent.compute_id();
+        intent
+    }
+
+    /// Create a new intent with fill constraints for partial fill support.
+    pub fn new_with_fill(
+        kind: IntentKind,
+        matcher: MatchSpec,
+        creator: CommitmentId,
+        expiry: u64,
+        stake_proof: Option<StakeProof>,
+        fill_constraints: FillConstraints,
+    ) -> Self {
+        let mut intent = Self {
+            id: [0u8; 32],
+            kind,
+            matcher,
+            creator,
+            expiry,
+            stake_proof,
+            fill_constraints: Some(fill_constraints),
         };
         intent.id = intent.compute_id();
         intent
@@ -287,6 +344,8 @@ impl Intent {
             expiry: u64,
             /// We hash the commitment bytes from the stake proof (if present) for ID binding.
             stake_commitment: Option<&'a [u8; 32]>,
+            /// Fill constraints are part of the identity (different fill params = different intent).
+            fill_constraints: Option<&'a FillConstraints>,
         }
 
         let body = IntentBody {
@@ -295,6 +354,7 @@ impl Intent {
             creator: &self.creator,
             expiry: self.expiry,
             stake_commitment: self.stake_proof.as_ref().map(|sp| &sp.commitment.0),
+            fill_constraints: self.fill_constraints.as_ref(),
         };
 
         let canonical = postcard::to_allocvec(&body).unwrap_or_default();

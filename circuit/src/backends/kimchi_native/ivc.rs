@@ -1,14 +1,33 @@
 //! Kimchi native IVC circuit.
+use super::{
+    BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, SpongeParams,
+    VestaOpeningProof, fp_to_bytes32, verify_kimchi_proof,
+};
 use ark_ff::{One, Zero};
 use groupmap::GroupMap;
-use kimchi::{circuits::{gate::{CircuitGate, GateType}, polynomials::poseidon::generate_witness, wires::{COLUMNS, Wire}}, curve::KimchiCurve, proof::ProverProof};
+use kimchi::{
+    circuits::{
+        gate::{CircuitGate, GateType},
+        polynomials::poseidon::generate_witness,
+        wires::{COLUMNS, Wire},
+    },
+    curve::KimchiCurve,
+    proof::ProverProof,
+};
 use mina_curves::pasta::{Fp, Vesta};
-use mina_poseidon::{constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, poseidon::{ArithmeticSponge, Sponge}};
+use mina_poseidon::{
+    constants::PlonkSpongeConstantsKimchi,
+    pasta::FULL_ROUNDS,
+    poseidon::{ArithmeticSponge, Sponge},
+};
 use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
-use super::{BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, SpongeParams, VestaOpeningProof, fp_to_bytes32, verify_kimchi_proof};
 
-#[derive(Clone, Debug)] pub struct KimchiFoldStep { pub pre_state: Fp, pub post_state: Fp }
+#[derive(Clone, Debug)]
+pub struct KimchiFoldStep {
+    pub pre_state: Fp,
+    pub post_state: Fp,
+}
 
 /// Compute the accumulated hash for an IVC chain.
 /// Step 0: Poseidon(pre_state, post_state, 1)
@@ -29,9 +48,13 @@ pub fn kimchi_ivc_accumulated_hash(steps: &[KimchiFoldStep]) -> Fp {
     hash
 }
 
-pub struct KimchiIvcCircuit { pub fold_steps: Vec<KimchiFoldStep> }
+pub struct KimchiIvcCircuit {
+    pub fold_steps: Vec<KimchiFoldStep>,
+}
 impl KimchiIvcCircuit {
-    pub fn new(fold_steps: Vec<KimchiFoldStep>) -> Self { Self { fold_steps } }
+    pub fn new(fold_steps: Vec<KimchiFoldStep>) -> Self {
+        Self { fold_steps }
+    }
 
     /// Build the IVC circuit gates.
     ///
@@ -116,10 +139,14 @@ impl KimchiIvcCircuit {
 
         // Public input rows
         let mut row = 0;
-        wit[0][row] = ir; row += 1;
-        wit[0][row] = fr; row += 1;
-        wit[0][row] = ah; row += 1;
-        wit[0][row] = Fp::from(ns); row += 1;
+        wit[0][row] = ir;
+        row += 1;
+        wit[0][row] = fr;
+        row += 1;
+        wit[0][row] = ah;
+        row += 1;
+        wit[0][row] = Fp::from(ns);
+        row += 1;
 
         let pgr = FULL_ROUNDS / 5 + 1;
         let p = Vesta::sponge_params();
@@ -180,12 +207,17 @@ impl KimchiIvcCircuit {
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(
-            &gm, wit, &[], &index, &mut OsRng,
-        ).map_err(|e| format!("Kimchi IVC prover error: {:?}", e))?;
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("IVC proof serialization error: {}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi IVC prover error: {:?}", e))?;
+        let pb = rmp_serde::to_vec(&proof)
+            .map_err(|e| format!("IVC proof serialization error: {}", e))?;
         let ir = self.fold_steps[0].pre_state;
         let fr = self.fold_steps.last().unwrap().post_state;
         let ah = kimchi_ivc_accumulated_hash(&self.fold_steps);
@@ -195,17 +227,51 @@ impl KimchiIvcCircuit {
         pib.extend_from_slice(&fp_to_bytes32(&fr));
         pib.extend_from_slice(&fp_to_bytes32(&ah));
         pib.extend_from_slice(&fp_to_bytes32(&ns));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::Ivc })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::Ivc,
+        })
     }
 
     /// Verify an IVC proof using the real Kimchi verifier.
-    pub fn verify(proof_bytes: &[u8], public_inputs: &[Fp], fold_steps: &[KimchiFoldStep]) -> Result<bool, String> {
+    pub fn verify(
+        proof_bytes: &[u8],
+        public_inputs: &[Fp],
+        fold_steps: &[KimchiFoldStep],
+    ) -> Result<bool, String> {
         let proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
-            rmp_serde::from_slice(proof_bytes).map_err(|e| format!("Deserialization error: {}", e))?;
+            rmp_serde::from_slice(proof_bytes)
+                .map_err(|e| format!("Deserialization error: {}", e))?;
         let circuit = KimchiIvcCircuit::new(fold_steps.to_vec());
         let (gates, pc) = circuit.build_circuit();
         verify_kimchi_proof(&proof, gates, public_inputs, pc)
     }
 }
 
-#[derive(Clone, Debug)] pub struct KimchiIvcProof { pub proof: KimchiNativeProof, pub initial_root: Fp, pub final_root: Fp, pub accumulated_hash: Fp, pub num_steps: u32 }
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct KimchiIvcProof {
+    pub proof: KimchiNativeProof,
+    #[serde(with = "fp_serde")]
+    pub initial_root: Fp,
+    #[serde(with = "fp_serde")]
+    pub final_root: Fp,
+    #[serde(with = "fp_serde")]
+    pub accumulated_hash: Fp,
+    pub num_steps: u32,
+}
+
+mod fp_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(fp: &Fp, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = fp_to_bytes32(fp);
+        bytes.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Fp, D::Error> {
+        let bytes = <[u8; 32]>::deserialize(d)?;
+        Ok(super::super::bytes32_to_fp(&bytes))
+    }
+}

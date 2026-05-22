@@ -452,6 +452,7 @@ mod tests {
             federation_id: [0u8; 32],
             routing_directives: vec![],
             derivation_records: vec![],
+            emitted_events: vec![],
             executor_signature: None,
         }
     }

@@ -29,6 +29,8 @@ pub mod revocation_channel;
 #[cfg(feature = "crypto")]
 pub mod seal;
 pub mod state;
+#[cfg(feature = "crypto")]
+pub mod value_commitment;
 
 #[cfg(test)]
 mod tests;
@@ -66,4 +68,9 @@ pub use revocation_channel::{
 pub use seal::{SealError, SealPair, SealedBox, SealerPublic, test_seal_pair};
 pub use state::{
     CellState, FIELD_ZERO, FieldElement, FieldVisibility, PublicFieldView, STATE_SLOTS,
+};
+#[cfg(feature = "crypto")]
+pub use value_commitment::{
+    CommittedNote, CommittedNoteOpening, ConservationError, ConservationProof, ValueCommitment,
+    ValueCommitmentBytes, prove_conservation, verify_conservation,
 };

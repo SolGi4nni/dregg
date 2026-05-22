@@ -46,7 +46,8 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Trace width for the garbled evaluation AIR.
-pub const GARBLED_EVAL_AIR_WIDTH: usize = 43;
+/// Widened: circuit_commitment and output_label_hash are now 4 elements each (WideHash).
+pub const GARBLED_EVAL_AIR_WIDTH: usize = 49;
 
 /// Column indices.
 pub mod col {
@@ -62,10 +63,10 @@ pub mod col {
     pub const TABLE_ENTRY_START: usize = 25;
     /// Decrypted output label start (8 elements).
     pub const OUTPUT_LABEL_START: usize = 33;
-    /// Circuit commitment (public input binding).
+    /// Circuit commitment start (4 elements, WideHash for 124-bit binding).
     pub const CIRCUIT_COMMITMENT: usize = 41;
-    /// Output label hash (public input binding).
-    pub const OUTPUT_LABEL_HASH: usize = 42;
+    /// Output label hash start (4 elements, WideHash for 124-bit binding).
+    pub const OUTPUT_LABEL_HASH: usize = 45;
 
     /// Get column for left label element i.
     #[inline]
@@ -109,18 +110,18 @@ pub mod col {
 pub struct GarbledEvaluationAir {
     /// Gate evaluation records (the witness).
     gate_trace: Vec<GateEvalRecord>,
-    /// Circuit commitment (public input).
-    circuit_commitment: BabyBear,
-    /// Output label hash (public input).
-    output_label_hash: BabyBear,
+    /// Circuit commitment (public input, 124-bit WideHash).
+    circuit_commitment: crate::binding::WideHash,
+    /// Output label hash (public input, 124-bit WideHash).
+    output_label_hash: crate::binding::WideHash,
 }
 
 impl GarbledEvaluationAir {
     /// Create a new garbled evaluation AIR from evaluation records.
     pub fn new(
         gate_trace: Vec<GateEvalRecord>,
-        circuit_commitment: BabyBear,
-        output_label_hash: BabyBear,
+        circuit_commitment: crate::binding::WideHash,
+        output_label_hash: crate::binding::WideHash,
     ) -> Self {
         Self {
             gate_trace,
@@ -157,17 +158,21 @@ impl StarkAir for GarbledEvaluationAir {
         let mut combined = BabyBear::ZERO;
         let mut alpha_pow = BabyBear::ONE;
 
-        // C1: circuit_commitment matches public_inputs[0]
-        let c1 = local[col::CIRCUIT_COMMITMENT] - public_inputs[0];
-        combined = combined + alpha_pow * c1;
-        alpha_pow = alpha_pow * alpha;
+        // C1-C4: circuit_commitment[0..4] matches public_inputs[0..4]
+        for i in 0..4 {
+            let c = local[col::CIRCUIT_COMMITMENT + i] - public_inputs[i];
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
 
-        // C2: output_label_hash matches public_inputs[1]
-        let c2 = local[col::OUTPUT_LABEL_HASH] - public_inputs[1];
-        combined = combined + alpha_pow * c2;
-        alpha_pow = alpha_pow * alpha;
+        // C5-C8: output_label_hash[0..4] matches public_inputs[4..8]
+        for i in 0..4 {
+            let c = local[col::OUTPUT_LABEL_HASH + i] - public_inputs[4 + i];
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
 
-        // C3: Decryption correctness: output_label = table_entry - hash_output
+        // C9-C16: Decryption correctness: output_label = table_entry - hash_output
         for i in 0..8 {
             let c = local[col::output(i)] - (local[col::table_entry(i)] - local[col::hash_out(i)]);
             combined = combined + alpha_pow * c;
@@ -183,17 +188,21 @@ impl StarkAir for GarbledEvaluationAir {
         _trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         let mut constraints = vec![];
-        if public_inputs.len() >= 2 {
-            constraints.push(BoundaryConstraint {
-                row: 0,
-                col: col::CIRCUIT_COMMITMENT,
-                value: public_inputs[0],
-            });
-            constraints.push(BoundaryConstraint {
-                row: 0,
-                col: col::OUTPUT_LABEL_HASH,
-                value: public_inputs[1],
-            });
+        if public_inputs.len() >= 8 {
+            for i in 0..4 {
+                constraints.push(BoundaryConstraint {
+                    row: 0,
+                    col: col::CIRCUIT_COMMITMENT + i,
+                    value: public_inputs[i],
+                });
+            }
+            for i in 0..4 {
+                constraints.push(BoundaryConstraint {
+                    row: 0,
+                    col: col::OUTPUT_LABEL_HASH + i,
+                    value: public_inputs[4 + i],
+                });
+            }
         }
         constraints
     }
@@ -205,75 +214,104 @@ impl Air for GarbledEvaluationAir {
     }
 
     fn num_public_inputs(&self) -> usize {
-        2 // [circuit_commitment, output_label_hash]
+        8 // [circuit_commitment[0..4], output_label_hash[0..4]]
     }
 
     fn constraints(&self) -> Vec<Constraint> {
         vec![
-            // Constraint 1: circuit_commitment matches public input.
+            // Constraints 1-4: circuit_commitment[0..4] matches public inputs.
             Constraint {
-                name: "circuit_commitment_matches_public_input".to_string(),
+                name: "circuit_commitment_0_matches_pi".to_string(),
                 eval: Box::new(|row, _, public_inputs| {
                     row[col::CIRCUIT_COMMITMENT] - public_inputs[0]
                 }),
             },
-            // Constraint 2: output_label_hash matches public input.
             Constraint {
-                name: "output_label_hash_matches_public_input".to_string(),
+                name: "circuit_commitment_1_matches_pi".to_string(),
                 eval: Box::new(|row, _, public_inputs| {
-                    row[col::OUTPUT_LABEL_HASH] - public_inputs[1]
+                    row[col::CIRCUIT_COMMITMENT + 1] - public_inputs[1]
                 }),
             },
-            // Constraint 3: Decryption correctness (element 0).
+            Constraint {
+                name: "circuit_commitment_2_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::CIRCUIT_COMMITMENT + 2] - public_inputs[2]
+                }),
+            },
+            Constraint {
+                name: "circuit_commitment_3_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::CIRCUIT_COMMITMENT + 3] - public_inputs[3]
+                }),
+            },
+            // Constraints 5-8: output_label_hash[0..4] matches public inputs.
+            Constraint {
+                name: "output_label_hash_0_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::OUTPUT_LABEL_HASH] - public_inputs[4]
+                }),
+            },
+            Constraint {
+                name: "output_label_hash_1_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::OUTPUT_LABEL_HASH + 1] - public_inputs[5]
+                }),
+            },
+            Constraint {
+                name: "output_label_hash_2_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::OUTPUT_LABEL_HASH + 2] - public_inputs[6]
+                }),
+            },
+            Constraint {
+                name: "output_label_hash_3_matches_pi".to_string(),
+                eval: Box::new(|row, _, public_inputs| {
+                    row[col::OUTPUT_LABEL_HASH + 3] - public_inputs[7]
+                }),
+            },
+            // Constraints 9-16: Decryption correctness (element 0-7).
             Constraint {
                 name: "decryption_correct_0".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(0)] - (row[col::table_entry(0)] - row[col::hash_out(0)])
                 }),
             },
-            // Constraint 4: Decryption correctness (element 1).
             Constraint {
                 name: "decryption_correct_1".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(1)] - (row[col::table_entry(1)] - row[col::hash_out(1)])
                 }),
             },
-            // Constraint 5: Decryption correctness (element 2).
             Constraint {
                 name: "decryption_correct_2".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(2)] - (row[col::table_entry(2)] - row[col::hash_out(2)])
                 }),
             },
-            // Constraint 6: Decryption correctness (element 3).
             Constraint {
                 name: "decryption_correct_3".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(3)] - (row[col::table_entry(3)] - row[col::hash_out(3)])
                 }),
             },
-            // Constraint 7: Decryption correctness (element 4).
             Constraint {
                 name: "decryption_correct_4".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(4)] - (row[col::table_entry(4)] - row[col::hash_out(4)])
                 }),
             },
-            // Constraint 8: Decryption correctness (element 5).
             Constraint {
                 name: "decryption_correct_5".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(5)] - (row[col::table_entry(5)] - row[col::hash_out(5)])
                 }),
             },
-            // Constraint 9: Decryption correctness (element 6).
             Constraint {
                 name: "decryption_correct_6".to_string(),
                 eval: Box::new(|row, _, _| {
                     row[col::output(6)] - (row[col::table_entry(6)] - row[col::hash_out(6)])
                 }),
             },
-            // Constraint 10: Decryption correctness (element 7).
             Constraint {
                 name: "decryption_correct_7".to_string(),
                 eval: Box::new(|row, _, _| {
@@ -317,9 +355,13 @@ impl Air for GarbledEvaluationAir {
                 row[col::output(i)] = record.output_label[i];
             }
 
-            // Public input bindings (constant across all rows).
-            row[col::CIRCUIT_COMMITMENT] = self.circuit_commitment;
-            row[col::OUTPUT_LABEL_HASH] = self.output_label_hash;
+            // Public input bindings (constant across all rows, 4 elements each).
+            for i in 0..4 {
+                row[col::CIRCUIT_COMMITMENT + i] = self.circuit_commitment[i];
+            }
+            for i in 0..4 {
+                row[col::OUTPUT_LABEL_HASH + i] = self.output_label_hash[i];
+            }
 
             trace.push(row);
         }
@@ -327,12 +369,22 @@ impl Air for GarbledEvaluationAir {
         // If no gates (dummy AIR for verification), produce a single dummy row.
         if trace.is_empty() {
             let mut row = vec![BabyBear::ZERO; GARBLED_EVAL_AIR_WIDTH];
-            row[col::CIRCUIT_COMMITMENT] = self.circuit_commitment;
-            row[col::OUTPUT_LABEL_HASH] = self.output_label_hash;
+            for i in 0..4 {
+                row[col::CIRCUIT_COMMITMENT + i] = self.circuit_commitment[i];
+            }
+            for i in 0..4 {
+                row[col::OUTPUT_LABEL_HASH + i] = self.output_label_hash[i];
+            }
             trace.push(row);
         }
 
-        let public_inputs = vec![self.circuit_commitment, self.output_label_hash];
+        let mut public_inputs = Vec::with_capacity(8);
+        for &elem in self.circuit_commitment.as_slice() {
+            public_inputs.push(elem);
+        }
+        for &elem in self.output_label_hash.as_slice() {
+            public_inputs.push(elem);
+        }
         (trace, public_inputs)
     }
 }
@@ -444,13 +496,19 @@ mod tests {
         // Use wrong circuit commitment.
         let air = GarbledEvaluationAir::new(
             eval.gate_trace,
-            BabyBear::new(99999), // wrong
+            crate::binding::WideHash::from_poseidon2("wrong", &[BabyBear::new(99999)]), // wrong
             output_hash,
         );
 
         // Generate trace with wrong commitment, then verify against correct public inputs.
         let (trace, _) = air.generate_trace();
-        let correct_public_inputs = vec![circuit.circuit_commitment, output_hash];
+        let mut correct_public_inputs = Vec::with_capacity(8);
+        for &elem in circuit.circuit_commitment.as_slice() {
+            correct_public_inputs.push(elem);
+        }
+        for &elem in output_hash.as_slice() {
+            correct_public_inputs.push(elem);
+        }
         let result = ConstraintProver::verify_trace(&air, &trace, &correct_public_inputs);
         assert!(!result.is_valid(), "Wrong circuit commitment should fail");
     }

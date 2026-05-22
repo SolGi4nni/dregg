@@ -465,8 +465,8 @@ pub struct PresentationInput {
     pub blinding_factor: FieldElement,
     /// Fresh randomness for the presentation tag (private).
     pub presentation_randomness: FieldElement,
-    /// Commitment to selectively revealed facts (public, 0 = fully private).
-    pub revealed_facts_commitment: FieldElement,
+    /// Commitment to selectively revealed facts (public, 4 elements for 124-bit security).
+    pub revealed_facts_commitment: [FieldElement; 4],
 }
 
 /// Output of a presentation proof verification.
@@ -478,12 +478,12 @@ pub struct PresentationOutput {
     pub request_predicate: [FieldElement; 4],
     /// Timestamp (public).
     pub timestamp: FieldElement,
-    /// Blinded presentation tag (public, different each show).
-    pub presentation_tag: FieldElement,
-    /// Revealed facts commitment (public).
-    pub revealed_facts_commitment: FieldElement,
-    /// Composition commitment binding sub-proofs (public).
-    pub composition_commitment: FieldElement,
+    /// Blinded presentation tag (public, different each show, 4 elements for 124-bit security).
+    pub presentation_tag: [FieldElement; 4],
+    /// Revealed facts commitment (public, 4 elements for 124-bit security).
+    pub revealed_facts_commitment: [FieldElement; 4],
+    /// Composition commitment binding sub-proofs (public, 4 elements for 124-bit security).
+    pub composition_commitment: [FieldElement; 4],
     /// Verifier nonce (public).
     pub verifier_nonce: FieldElement,
     /// Verifier block height (public).

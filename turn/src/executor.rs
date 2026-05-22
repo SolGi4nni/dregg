@@ -4,6 +4,7 @@
 //! verifying authorization, applying effects, and metering computrons at each step.
 //! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -20,10 +21,26 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, Authorization, DelegationMode, Effect};
 use crate::budget_gate::BudgetGate;
 use crate::error::TurnError;
+use crate::escrow::{EscrowCondition, EscrowRecord};
 use crate::forest::CallTree;
 use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;
-use crate::turn::{Turn, TurnReceipt, TurnResult};
+use crate::turn::{EmittedEvent, Turn, TurnReceipt, TurnResult};
+
+/// A record of an active obligation tracked by the executor for balance enforcement.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObligationRecord {
+    /// The obligor (who locked the stake).
+    pub obligor: CellId,
+    /// The beneficiary (who receives stake on slash).
+    pub beneficiary: CellId,
+    /// Federation height deadline.
+    pub deadline_height: u64,
+    /// Numeric stake amount locked from the obligor's balance.
+    pub stake_amount: u64,
+    /// Whether this obligation has been resolved (fulfilled or slashed).
+    pub resolved: bool,
+}
 
 /// Trait for verifying ZK proofs. Implementations provide circuit-specific verification.
 ///
@@ -142,6 +159,13 @@ pub struct TurnExecutor {
     /// delegation access checks verify that gated capabilities haven't been revoked
     /// via their associated channel.
     pub revocation_channels: Option<RevocationChannelSet>,
+    /// Active obligation records, keyed by obligation ID.
+    /// Tracks locked stakes so that FulfillObligation and SlashObligation can
+    /// enforce balance movement (return to obligor or transfer to beneficiary).
+    pub obligations: Mutex<HashMap<[u8; 32], ObligationRecord>>,
+    /// Active escrow records, keyed by escrow ID.
+    /// Tracks locked funds for conditional settlement (release to recipient or refund to creator).
+    pub escrows: Mutex<HashMap<[u8; 32], EscrowRecord>>,
 }
 
 impl TurnExecutor {
@@ -162,6 +186,8 @@ impl TurnExecutor {
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
+            obligations: Mutex::new(HashMap::new()),
+            escrows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -186,6 +212,8 @@ impl TurnExecutor {
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
+            obligations: Mutex::new(HashMap::new()),
+            escrows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -206,6 +234,8 @@ impl TurnExecutor {
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
+            obligations: Mutex::new(HashMap::new()),
+            escrows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -614,6 +644,7 @@ impl TurnExecutor {
                 &turn.call_forest,
                 self.current_timestamp as u64,
             ),
+            emitted_events: Self::collect_emitted_events(&journal),
             executor_signature: None,
         };
 
@@ -1747,10 +1778,12 @@ impl TurnExecutor {
                 Ok(())
             }
 
-            Effect::EmitEvent { cell, .. } => {
+            Effect::EmitEvent { cell, event } => {
                 if ledger.get(cell).is_none() {
                     return Err((TurnError::CellNotFound { id: *cell }, path.to_vec()));
                 }
+                // Record the event in the journal so it appears in the turn receipt.
+                journal.record_event_emitted(*cell, event.topic, event.data.clone());
                 Ok(())
             }
 
@@ -1842,6 +1875,7 @@ impl TurnExecutor {
             Effect::NoteSpend {
                 nullifier,
                 note_tree_root,
+                spending_proof,
                 ..
             } => {
                 // Validate nullifier is well-formed (non-zero).
@@ -1858,6 +1892,38 @@ impl TurnExecutor {
                     return Err((
                         TurnError::InvalidEffect {
                             reason: "null note_tree_root in NoteSpend".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Verify the ZK spending proof: proves the spender knows the note's
+                // opening, the nullifier is correctly derived, and the note commitment
+                // exists in the note tree at the given root.
+                if spending_proof.is_empty() {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "NoteSpend missing spending proof".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                let verifier = self.proof_verifier.as_ref().ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "no proof verifier configured for note spend verification"
+                                .into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                // Public inputs for the note spending STARK: nullifier || note_tree_root.
+                let mut public_inputs = Vec::with_capacity(64);
+                public_inputs.extend_from_slice(&nullifier.0);
+                public_inputs.extend_from_slice(note_tree_root);
+                if !verifier.verify(spending_proof, "note-spend", "note-tree", &public_inputs) {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "NoteSpend spending proof verification failed".into(),
                         },
                         path.to_vec(),
                     ));
@@ -2022,13 +2088,14 @@ impl TurnExecutor {
                 Ok(())
             }
 
-            // Obligation effects: validate structure and record for the obligation
-            // registry to process after the turn commits.
+            // Obligation effects: validate structure, enforce balance movement,
+            // and record for the obligation registry.
             Effect::CreateObligation {
                 beneficiary,
                 condition: _,
                 deadline_height,
                 stake,
+                stake_amount,
             } => {
                 // Validate beneficiary cell exists.
                 if ledger.get(beneficiary).is_none() {
@@ -2064,6 +2131,59 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Validate stake_amount is non-zero.
+                if *stake_amount == 0 {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation stake_amount must be non-zero".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Lock stake_amount from the obligor's (action_target's) balance.
+                let obligor_cell = ledger.get(action_target).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound { id: *action_target },
+                        path.to_vec(),
+                    )
+                })?;
+                if obligor_cell.state.balance < *stake_amount {
+                    return Err((
+                        TurnError::InsufficientBalance {
+                            cell: *action_target,
+                            required: *stake_amount,
+                            available: obligor_cell.state.balance,
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                let old_balance = obligor_cell.state.balance;
+                journal.record_set_balance(*action_target, old_balance);
+                ledger.get_mut(action_target).unwrap().state.balance -= *stake_amount;
+
+                // Derive obligation ID and store in registry.
+                let obligation_id = {
+                    let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+                    hasher.update(action_target.as_bytes());
+                    hasher.update(beneficiary.as_bytes());
+                    hasher.update(&deadline_height.to_le_bytes());
+                    hasher.update(&stake.0);
+                    *hasher.finalize().as_bytes()
+                };
+                {
+                    let mut obligations = self.obligations.lock().unwrap();
+                    obligations.insert(
+                        obligation_id,
+                        ObligationRecord {
+                            obligor: *action_target,
+                            beneficiary: *beneficiary,
+                            deadline_height: *deadline_height,
+                            stake_amount: *stake_amount,
+                            resolved: false,
+                        },
+                    );
+                }
+
                 // The actor (action_target) is the obligor.
                 journal.record_obligation_created(
                     *action_target,
@@ -2086,6 +2206,53 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Look up the obligation and return the locked stake to the obligor.
+                let record = {
+                    let obligations = self.obligations.lock().unwrap();
+                    obligations.get(obligation_id).cloned()
+                };
+                let record = record.ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "obligation not found".into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if record.resolved {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation already resolved".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Verify the deadline has not passed (fulfillment must be before deadline).
+                if self.block_height > record.deadline_height {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation deadline has passed, cannot fulfill".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Return locked stake to the obligor.
+                let obligor_cell = ledger.get(&record.obligor).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound { id: record.obligor },
+                        path.to_vec(),
+                    )
+                })?;
+                let old_balance = obligor_cell.state.balance;
+                journal.record_set_balance(record.obligor, old_balance);
+                ledger.get_mut(&record.obligor).unwrap().state.balance += record.stake_amount;
+                // Mark as resolved.
+                {
+                    let mut obligations = self.obligations.lock().unwrap();
+                    if let Some(ob) = obligations.get_mut(obligation_id) {
+                        ob.resolved = true;
+                    }
+                }
                 journal.record_obligation_fulfilled(*obligation_id);
                 Ok(())
             }
@@ -2099,7 +2266,401 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Look up the obligation and transfer the locked stake to the beneficiary.
+                let record = {
+                    let obligations = self.obligations.lock().unwrap();
+                    obligations.get(obligation_id).cloned()
+                };
+                let record = record.ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "obligation not found".into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if record.resolved {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation already resolved".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Slashing is only valid after the deadline has passed.
+                if self.block_height <= record.deadline_height {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation deadline has not passed, cannot slash".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Transfer locked stake to beneficiary.
+                let beneficiary_cell = ledger.get(&record.beneficiary).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound {
+                            id: record.beneficiary,
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                let old_ben_balance = beneficiary_cell.state.balance;
+                journal.record_set_balance(record.beneficiary, old_ben_balance);
+                ledger.get_mut(&record.beneficiary).unwrap().state.balance += record.stake_amount;
+                // Mark as resolved.
+                {
+                    let mut obligations = self.obligations.lock().unwrap();
+                    if let Some(ob) = obligations.get_mut(obligation_id) {
+                        ob.resolved = true;
+                    }
+                }
                 journal.record_obligation_slashed(*obligation_id);
+                Ok(())
+            }
+
+            // Escrow effects: conditional settlement with timeout refund.
+            Effect::CreateEscrow {
+                cell,
+                recipient,
+                amount,
+                condition,
+                timeout_height,
+                escrow_id,
+            } => {
+                // Validate recipient cell exists.
+                if ledger.get(recipient).is_none() {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow recipient cell not found".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Validate timeout is in the future.
+                if *timeout_height <= self.block_height {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow timeout_height must be in the future".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Validate amount is non-zero.
+                if *amount == 0 {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow amount must be non-zero".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Validate escrow_id is non-zero.
+                if escrow_id.iter().all(|&b| b == 0) {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow_id is null".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Check escrow_id is not already in use.
+                {
+                    let escrows = self.escrows.lock().unwrap();
+                    if escrows.contains_key(escrow_id) {
+                        return Err((
+                            TurnError::InvalidEffect {
+                                reason: "escrow_id already exists".into(),
+                            },
+                            path.to_vec(),
+                        ));
+                    }
+                }
+                // Validate the creator cell exists and has sufficient balance.
+                let creator_cell = ledger
+                    .get(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
+                if creator_cell.state.balance < *amount {
+                    return Err((
+                        TurnError::InsufficientBalance {
+                            cell: *cell,
+                            required: *amount,
+                            available: creator_cell.state.balance,
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Lock the funds: subtract from creator.
+                let old_balance = creator_cell.state.balance;
+                journal.record_set_balance(*cell, old_balance);
+                ledger.get_mut(cell).unwrap().state.balance -= *amount;
+
+                // Store escrow record.
+                {
+                    let mut escrows = self.escrows.lock().unwrap();
+                    escrows.insert(
+                        *escrow_id,
+                        EscrowRecord {
+                            creator: *cell,
+                            recipient: *recipient,
+                            amount: *amount,
+                            condition: condition.clone(),
+                            timeout_height: *timeout_height,
+                            resolved: false,
+                        },
+                    );
+                }
+
+                journal.record_escrow_created(*escrow_id, *cell, *recipient, *amount);
+                Ok(())
+            }
+
+            Effect::ReleaseEscrow { escrow_id, proof } => {
+                // Validate escrow_id is non-zero.
+                if escrow_id.iter().all(|&b| b == 0) {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "null escrow_id in ReleaseEscrow".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Look up the escrow.
+                let record = {
+                    let escrows = self.escrows.lock().unwrap();
+                    escrows.get(escrow_id).cloned()
+                };
+                let record = record.ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "escrow not found".into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if record.resolved {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow already resolved".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Verify the condition is met.
+                match &record.condition {
+                    EscrowCondition::ProofPresented { verification_key } => {
+                        let proof_bytes = proof.as_ref().ok_or_else(|| {
+                            (
+                                TurnError::InvalidEffect {
+                                    reason: "escrow release requires proof but none provided"
+                                        .into(),
+                                },
+                                path.to_vec(),
+                            )
+                        })?;
+                        if proof_bytes.is_empty() {
+                            return Err((
+                                TurnError::InvalidEffect {
+                                    reason: "escrow release proof is empty".into(),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                        // Verify the proof using the configured verifier.
+                        let verifier = self.proof_verifier.as_ref().ok_or_else(|| {
+                            (
+                                TurnError::InvalidEffect {
+                                    reason: "no proof verifier configured for escrow release"
+                                        .into(),
+                                },
+                                path.to_vec(),
+                            )
+                        })?;
+                        if !verifier.verify(
+                            proof_bytes,
+                            "escrow-release",
+                            "escrow",
+                            verification_key,
+                        ) {
+                            return Err((
+                                TurnError::InvalidEffect {
+                                    reason: "escrow release proof verification failed".into(),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                    }
+                    EscrowCondition::SignedByAll { signers } => {
+                        // The proof field must contain concatenated 64-byte Ed25519 signatures
+                        // (one per signer), each signing the escrow_id.
+                        let proof_bytes = proof.as_ref().ok_or_else(|| {
+                            (
+                                TurnError::InvalidEffect {
+                                    reason: "escrow release requires signatures but none provided"
+                                        .into(),
+                                },
+                                path.to_vec(),
+                            )
+                        })?;
+                        let expected_len = signers.len() * 64;
+                        if proof_bytes.len() != expected_len {
+                            return Err((
+                                TurnError::InvalidEffect {
+                                    reason: format!(
+                                        "escrow release expected {} signature bytes, got {}",
+                                        expected_len,
+                                        proof_bytes.len()
+                                    ),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                        // Verify each signature against the escrow_id.
+                        for (i, signer_key) in signers.iter().enumerate() {
+                            let sig_slice = &proof_bytes[i * 64..(i + 1) * 64];
+                            let mut sig_bytes = [0u8; 64];
+                            sig_bytes.copy_from_slice(sig_slice);
+                            let signature = Signature::from_bytes(&sig_bytes);
+                            let verifying_key =
+                                VerifyingKey::from_bytes(signer_key).map_err(|_| {
+                                    (
+                                        TurnError::InvalidEffect {
+                                            reason: format!(
+                                                "invalid signer public key at index {}",
+                                                i
+                                            ),
+                                        },
+                                        path.to_vec(),
+                                    )
+                                })?;
+                            use ed25519_dalek::Verifier;
+                            verifying_key.verify(escrow_id, &signature).map_err(|_| {
+                                (
+                                    TurnError::InvalidEffect {
+                                        reason: format!(
+                                            "escrow release signature verification failed for signer {}",
+                                            i
+                                        ),
+                                    },
+                                    path.to_vec(),
+                                )
+                            })?;
+                        }
+                    }
+                    EscrowCondition::PredicateSatisfied { predicate_hash } => {
+                        // For predicate conditions, the proof must contain the 32-byte
+                        // hash matching predicate_hash (simple equality check for now;
+                        // in production this would invoke the predicate evaluator).
+                        let proof_bytes = proof.as_ref().ok_or_else(|| {
+                            (
+                                TurnError::InvalidEffect {
+                                    reason:
+                                        "escrow release requires predicate proof but none provided"
+                                            .into(),
+                                },
+                                path.to_vec(),
+                            )
+                        })?;
+                        if proof_bytes.len() < 32 {
+                            return Err((
+                                TurnError::InvalidEffect {
+                                    reason: "escrow predicate proof too short".into(),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                        let provided_hash: [u8; 32] = proof_bytes[..32].try_into().unwrap();
+                        if provided_hash != *predicate_hash {
+                            return Err((
+                                TurnError::InvalidEffect {
+                                    reason: "escrow predicate hash mismatch".into(),
+                                },
+                                path.to_vec(),
+                            ));
+                        }
+                    }
+                }
+                // Condition satisfied: transfer amount to recipient.
+                let recipient_cell = ledger.get(&record.recipient).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound {
+                            id: record.recipient,
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                let old_recipient_balance = recipient_cell.state.balance;
+                journal.record_set_balance(record.recipient, old_recipient_balance);
+                ledger.get_mut(&record.recipient).unwrap().state.balance += record.amount;
+                // Mark escrow as resolved.
+                {
+                    let mut escrows = self.escrows.lock().unwrap();
+                    if let Some(esc) = escrows.get_mut(escrow_id) {
+                        esc.resolved = true;
+                    }
+                }
+                journal.record_escrow_released(*escrow_id);
+                Ok(())
+            }
+
+            Effect::RefundEscrow { escrow_id } => {
+                // Validate escrow_id is non-zero.
+                if escrow_id.iter().all(|&b| b == 0) {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "null escrow_id in RefundEscrow".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Look up the escrow.
+                let record = {
+                    let escrows = self.escrows.lock().unwrap();
+                    escrows.get(escrow_id).cloned()
+                };
+                let record = record.ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "escrow not found".into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if record.resolved {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow already resolved".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Check timeout has passed.
+                if self.block_height <= record.timeout_height {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "escrow timeout has not passed, cannot refund".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Return amount to creator.
+                let creator_cell = ledger.get(&record.creator).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound { id: record.creator },
+                        path.to_vec(),
+                    )
+                })?;
+                let old_creator_balance = creator_cell.state.balance;
+                journal.record_set_balance(record.creator, old_creator_balance);
+                ledger.get_mut(&record.creator).unwrap().state.balance += record.amount;
+                // Mark escrow as resolved.
+                {
+                    let mut escrows = self.escrows.lock().unwrap();
+                    if let Some(esc) = escrows.get_mut(escrow_id) {
+                        esc.resolved = true;
+                    }
+                }
+                journal.record_escrow_refunded(*escrow_id);
                 Ok(())
             }
 
@@ -2803,6 +3364,9 @@ impl TurnExecutor {
             Effect::BridgeLock { .. }
             | Effect::BridgeFinalize { .. }
             | Effect::BridgeCancel { .. } => self.costs.effect_base,
+            Effect::CreateEscrow { .. }
+            | Effect::ReleaseEscrow { .. }
+            | Effect::RefundEscrow { .. } => self.costs.effect_base,
         };
         base.saturating_add(extra)
             .saturating_add((effect.data_bytes() as u64).saturating_mul(self.costs.per_byte))
@@ -3052,12 +3616,16 @@ impl TurnExecutor {
                     // tracked via the cell's state.
                 }
                 JournalEntry::SetDelegation { .. } | JournalEntry::SetDelegationEpoch { .. } => {}
-                // Note/obligation entries don't affect the ledger delta directly.
+                // Note/obligation/event/escrow entries don't affect the ledger delta directly.
                 JournalEntry::NoteSpend { .. }
                 | JournalEntry::NoteCreate { .. }
                 | JournalEntry::ObligationCreated { .. }
                 | JournalEntry::ObligationFulfilled { .. }
-                | JournalEntry::ObligationSlashed { .. } => {}
+                | JournalEntry::ObligationSlashed { .. }
+                | JournalEntry::EventEmitted { .. }
+                | JournalEntry::EscrowCreated { .. }
+                | JournalEntry::EscrowReleased { .. }
+                | JournalEntry::EscrowRefunded { .. } => {}
             }
         }
 
@@ -3192,6 +3760,22 @@ impl TurnExecutor {
         hasher.update(pair_id);
         hasher.update(if is_sealer { b"sealer" } else { b"unsealer" });
         CellId::from_bytes(*hasher.finalize().as_bytes())
+    }
+
+    /// Collect emitted events from the journal for inclusion in the turn receipt.
+    fn collect_emitted_events(journal: &LedgerJournal) -> Vec<EmittedEvent> {
+        journal
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                JournalEntry::EventEmitted { cell, topic, data } => Some(EmittedEvent {
+                    cell: *cell,
+                    topic: *topic,
+                    data: data.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     fn collect_routing_directives(
@@ -3346,7 +3930,6 @@ impl TurnExecutor {
 use crate::eventual::{
     EventualRef, Pipeline, PipelineError, PipelineResult, TurnBatch, TurnOutput,
 };
-use std::collections::HashMap;
 
 /// A resolution table mapping (turn_hash, output_slot) to concrete outputs.
 pub type ResolutionTable = HashMap<([u8; 32], u32), TurnOutput>;
@@ -3555,7 +4138,10 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             | Effect::SlashObligation { .. }
             | Effect::BridgeLock { .. }
             | Effect::BridgeFinalize { .. }
-            | Effect::BridgeCancel { .. } => {}
+            | Effect::BridgeCancel { .. }
+            | Effect::CreateEscrow { .. }
+            | Effect::ReleaseEscrow { .. }
+            | Effect::RefundEscrow { .. } => {}
         }
     }
 }

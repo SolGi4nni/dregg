@@ -46,15 +46,15 @@ pub struct PresentationWitness {
     pub issuer_membership: MerkleWitness,
     /// The issuer's public key hash (private).
     pub issuer_key_hash: BabyBear,
-    /// Commitment to the set of facts being selectively revealed (public).
+    /// Commitment to the set of facts being selectively revealed (public, 124-bit).
     ///
-    /// For selective disclosure mode, this is `poseidon2(hash(fact_1) || ... || hash(fact_n))`
+    /// For selective disclosure mode, this is a WideHash over `(hash(fact_1) || ... || hash(fact_n))`
     /// computed over the facts the prover chooses to reveal. The verifier recomputes this
     /// from the plaintext revealed facts and checks it matches, ensuring the prover cannot
     /// lie about which facts were derived during evaluation.
     ///
-    /// For fully private mode, this is `BabyBear::ZERO` (no facts revealed).
-    pub revealed_facts_commitment: BabyBear,
+    /// For fully private mode, this is `WideHash::ZERO` (no facts revealed).
+    pub revealed_facts_commitment: crate::binding::WideHash,
     /// Blinding factor for ring membership (private).
     ///
     /// When non-zero, the issuer membership proof uses blinded (ring) mode:
@@ -70,21 +70,21 @@ pub struct PresentationWitness {
     /// Must be freshly generated per presentation to ensure unlinkability.
     /// The final_root remains private; only the blinded tag is public.
     pub presentation_randomness: BabyBear,
-    /// Composition commitment binding all sub-proofs together (public).
+    /// Composition commitment binding all sub-proofs together (public, 124-bit).
     ///
-    /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`
+    /// This is a WideHash over `(fold_chain_commitment, derivation_state_root, presentation_tag)`
     /// where:
     /// - `fold_chain_commitment` is the Poseidon2 hash of the fold chain roots
     /// - `derivation_state_root` is the final state root from derivation
     /// - `presentation_tag` is the blinded tag (ties to this specific presentation)
     ///
-    /// This value is appended as a public input to the issuer membership STARK,
+    /// This value is appended as public inputs to the issuer membership STARK,
     /// cryptographically binding the STARK proof to the specific fold chain and
     /// derivation results. Without this, an attacker could attach a valid membership
     /// STARK from one token to a forged fold chain from another.
     ///
-    /// When `BabyBear::ZERO`, no composition commitment is enforced (legacy proofs).
-    pub composition_commitment: BabyBear,
+    /// When `WideHash::ZERO`, no composition commitment is enforced (legacy proofs).
+    pub composition_commitment: crate::binding::WideHash,
     /// Verifier-issued nonce for replay protection (public).
     ///
     /// The verifier provides this challenge BEFORE proof generation. The prover must
@@ -140,22 +140,22 @@ pub struct PresentationPublicInputs {
     /// the randomness is fresh per presentation. The verifier cannot recover `final_root`
     /// from this tag, so the same credential produces a different tag every time it is shown.
     pub presentation_tag: BabyBear,
-    /// Commitment to selectively revealed facts (zero if fully private).
+    /// Commitment to selectively revealed facts (zero if fully private, 124-bit).
     ///
-    /// This is `poseidon2(hash(fact_1) || ... || hash(fact_n))` over the facts the prover
+    /// This is a WideHash over `(hash(fact_1) || ... || hash(fact_n))` for the facts the prover
     /// chose to reveal. The verifier recomputes this from the plaintext facts and checks
     /// it matches, cryptographically binding the revealed facts to the proof.
-    pub revealed_facts_commitment: BabyBear,
-    /// Composition commitment binding all sub-proofs together.
+    pub revealed_facts_commitment: crate::binding::WideHash,
+    /// Composition commitment binding all sub-proofs together (124-bit).
     ///
-    /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`
-    /// and is included as a public input in the issuer membership STARK. A verifier
+    /// This is a WideHash over `(fold_chain_commitment, derivation_state_root, presentation_tag)`
+    /// and is included as public inputs in the issuer membership STARK. A verifier
     /// recomputes this from the other sub-proofs and checks it matches, ensuring
     /// sub-proofs cannot be mixed-and-matched across presentations.
     ///
-    /// `BabyBear::ZERO` means no composition commitment (legacy proofs).
+    /// `WideHash::ZERO` means no composition commitment (legacy proofs).
     #[serde(default)]
-    pub composition_commitment: BabyBear,
+    pub composition_commitment: crate::binding::WideHash,
     /// Verifier-issued nonce for replay protection.
     ///
     /// In a challenge-response protocol, the verifier sends this nonce to the prover
@@ -723,7 +723,7 @@ impl PresentationAir {
         //    When blinding_factor is non-zero, use the blinded (ring membership) path:
         //    public inputs become [blinded_leaf, root, action] instead of [leaf_hash, root, action].
         //    This makes presentations unlinkable (same issuer, different blinded_leaf each time).
-        let composition_opt = if w.composition_commitment != BabyBear::ZERO {
+        let composition_opt = if !w.composition_commitment.is_zero() {
             Some(w.composition_commitment)
         } else {
             None
@@ -847,12 +847,16 @@ impl PresentationAir {
 impl Air for PresentationAir {
     fn trace_width(&self) -> usize {
         // Width of the "summary" trace (just public inputs as columns)
-        // federation_root, request_predicate[0..4], timestamp, presentation_tag, revealed_facts_commitment
-        8
+        // federation_root, request_predicate[0..4], timestamp, presentation_tag,
+        // revealed_facts_commitment[0..4]
+        // = 1 + 4 + 1 + 1 + 4 = 11
+        11
     }
 
     fn num_public_inputs(&self) -> usize {
-        8 // federation_root, request_predicate[0..4], timestamp, presentation_tag, revealed_facts_commitment
+        // federation_root, request_predicate[0..4], timestamp, presentation_tag,
+        // revealed_facts_commitment[0..4]
+        11
     }
 
     fn constraints(&self) -> Vec<Constraint> {
@@ -888,8 +892,20 @@ impl Air for PresentationAir {
                 eval: Box::new(|row, _, public_inputs| row[6] - public_inputs[6]),
             },
             Constraint {
-                name: "revealed_facts_commitment_match".to_string(),
+                name: "revealed_facts_commitment_0_match".to_string(),
                 eval: Box::new(|row, _, public_inputs| row[7] - public_inputs[7]),
+            },
+            Constraint {
+                name: "revealed_facts_commitment_1_match".to_string(),
+                eval: Box::new(|row, _, public_inputs| row[8] - public_inputs[8]),
+            },
+            Constraint {
+                name: "revealed_facts_commitment_2_match".to_string(),
+                eval: Box::new(|row, _, public_inputs| row[9] - public_inputs[9]),
+            },
+            Constraint {
+                name: "revealed_facts_commitment_3_match".to_string(),
+                eval: Box::new(|row, _, public_inputs| row[10] - public_inputs[10]),
             },
         ]
     }
@@ -914,7 +930,10 @@ impl Air for PresentationAir {
             w.request_predicate[3],
             w.timestamp,
             presentation_tag,
-            w.revealed_facts_commitment,
+            w.revealed_facts_commitment[0],
+            w.revealed_facts_commitment[1],
+            w.revealed_facts_commitment[2],
+            w.revealed_facts_commitment[3],
         ];
 
         let public_inputs = vec![
@@ -925,7 +944,10 @@ impl Air for PresentationAir {
             w.request_predicate[3],
             w.timestamp,
             presentation_tag,
-            w.revealed_facts_commitment,
+            w.revealed_facts_commitment[0],
+            w.revealed_facts_commitment[1],
+            w.revealed_facts_commitment[2],
+            w.revealed_facts_commitment[3],
         ];
 
         (vec![row], public_inputs)
@@ -1005,7 +1027,7 @@ pub struct PresentationBuilder {
     derivation: Option<DerivationWitness>,
     issuer_membership: Option<MerkleWitness>,
     issuer_key_hash: BabyBear,
-    revealed_facts_commitment: BabyBear,
+    revealed_facts_commitment: crate::binding::WideHash,
 }
 
 impl PresentationBuilder {
@@ -1023,7 +1045,7 @@ impl PresentationBuilder {
             derivation: None,
             issuer_membership: None,
             issuer_key_hash: BabyBear::ZERO,
-            revealed_facts_commitment: BabyBear::ZERO,
+            revealed_facts_commitment: crate::binding::WideHash::ZERO,
         }
     }
 
@@ -1047,7 +1069,7 @@ impl PresentationBuilder {
     }
 
     /// Set the revealed facts commitment for selective disclosure.
-    pub fn set_revealed_facts_commitment(mut self, commitment: BabyBear) -> Self {
+    pub fn set_revealed_facts_commitment(mut self, commitment: crate::binding::WideHash) -> Self {
         self.revealed_facts_commitment = commitment;
         self
     }
@@ -1066,7 +1088,7 @@ impl PresentationBuilder {
             issuer_membership,
             issuer_key_hash: self.issuer_key_hash,
             revealed_facts_commitment: self.revealed_facts_commitment,
-            composition_commitment: BabyBear::ZERO,
+            composition_commitment: crate::binding::WideHash::ZERO,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
             verifier_nonce: BabyBear::ZERO,
@@ -1126,7 +1148,7 @@ impl RealPresentationProof {
         // 0. Reject proofs with zero composition commitment.
         // A zero value means the sub-proofs are not bound together, allowing
         // an attacker to mix-and-match membership proofs from different tokens.
-        if self.public_inputs.composition_commitment == BabyBear::ZERO {
+        if self.public_inputs.composition_commitment.is_zero() {
             return PresentationVerification::MissingCompositionCommitment;
         }
 
@@ -1456,7 +1478,7 @@ pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<
 pub fn generate_merkle_poseidon2_stark_proof_bound(
     witness: &MerkleWitness,
     action_commitment: &crate::binding::ActionBinding,
-    composition_commitment: Option<BabyBear>,
+    composition_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, MerklePoseidon2StarkAir};
 
@@ -1487,10 +1509,12 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
         public_inputs.push(elem);
     }
 
-    // Append the composition commitment if provided (sub-proof binding).
+    // Append the composition commitment if provided (sub-proof binding, 4 elements).
     if let Some(cc) = composition_commitment {
-        if cc != BabyBear::ZERO {
-            public_inputs.push(cc);
+        if !cc.is_zero() {
+            for &elem in cc.as_slice() {
+                public_inputs.push(elem);
+            }
         }
     }
 
@@ -1520,7 +1544,7 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     witness: &MerkleWitness,
     blinding_factor: BabyBear,
     action_commitment: &crate::binding::ActionBinding,
-    composition_commitment: Option<BabyBear>,
+    composition_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, BlindedMerklePoseidon2StarkAir};
 
@@ -1555,10 +1579,12 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
         public_inputs.push(elem);
     }
 
-    // Append the composition commitment if provided (sub-proof binding).
+    // Append the composition commitment if provided (sub-proof binding, 4 elements).
     if let Some(cc) = composition_commitment {
-        if cc != BabyBear::ZERO {
-            public_inputs.push(cc);
+        if !cc.is_zero() {
+            for &elem in cc.as_slice() {
+                public_inputs.push(elem);
+            }
         }
     }
 
@@ -1675,7 +1701,7 @@ pub fn create_test_presentation() -> PresentationWitness {
             },
         ],
         num_added_checks: 0,
-        added_checks_commitment: BabyBear::ZERO,
+        added_checks_commitment: crate::binding::WideHash::ZERO,
     };
 
     // Derivation: proves authorization from the final state
@@ -1725,8 +1751,8 @@ pub fn create_test_presentation() -> PresentationWitness {
         derivation,
         issuer_membership,
         issuer_key_hash: issuer_key,
-        revealed_facts_commitment: BabyBear::ZERO,
-        composition_commitment: BabyBear::ZERO,
+        revealed_facts_commitment: crate::binding::WideHash::ZERO,
+        composition_commitment: crate::binding::WideHash::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::new(123456789),
         verifier_nonce: BabyBear::ZERO,
@@ -1888,7 +1914,8 @@ mod tests {
         witness.issuer_membership = poseidon2_issuer;
         witness.federation_root = witness.issuer_membership.expected_root;
         // Non-zero composition commitment required for verification
-        witness.composition_commitment = BabyBear::new(777777);
+        witness.composition_commitment =
+            crate::binding::WideHash::from_poseidon2("test-composition", &[BabyBear::new(777777)]);
 
         let air = PresentationAir::new(witness);
 
@@ -1923,7 +1950,8 @@ mod tests {
         witness.issuer_membership = stark_issuer;
         witness.federation_root = witness.issuer_membership.expected_root;
         // Non-zero composition commitment required for verification
-        witness.composition_commitment = BabyBear::new(777777);
+        witness.composition_commitment =
+            crate::binding::WideHash::from_poseidon2("test-composition", &[BabyBear::new(777777)]);
 
         let air = PresentationAir::new(witness);
         let mut proof = air.prove_stark().unwrap();
@@ -2115,7 +2143,7 @@ mod tests {
         witness.issuer_membership = stark_issuer;
         witness.federation_root = witness.issuer_membership.expected_root;
         // Explicitly leave composition_commitment at ZERO (the default)
-        witness.composition_commitment = BabyBear::ZERO;
+        witness.composition_commitment = crate::binding::WideHash::ZERO;
 
         let air = PresentationAir::new(witness);
         let proof = air.prove_stark().unwrap();

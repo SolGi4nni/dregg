@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "apps/bounty-board"]
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "apps/bounty-board", "apps/compute-exchange", "app-framework"]
 exclude = ["chain", "chain/program"]
 
 [workspace.package]
@@ -73,6 +73,7 @@ sha2 = { version = "0.10" }
 subtle = { version = "2" }
 tempfile = { version = "3" }
 thiserror = { version = "2" }
+tracing = { version = "0.1" }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["std", "derive"] }
 

@@ -28,8 +28,8 @@ use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
 
 use super::{
-    verify_kimchi_proof, BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge,
-    VestaOpeningProof, fp_to_bytes32,
+    BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, VestaOpeningProof,
+    fp_to_bytes32, verify_kimchi_proof,
 };
 
 /// Kimchi circuit for proving non-membership in an accumulator.
@@ -55,36 +55,28 @@ pub struct KimchiNonMembershipCircuit {
 impl KimchiNonMembershipCircuit {
     /// Build the constraint circuit.
     ///
+    /// Kimchi generic gate equation (first sub-gate):
+    ///   c[0]*w[0] + c[1]*w[1] + c[2]*w[2] + c[3]*(w[0]*w[1]) + c[4] = 0
+    ///
     /// Layout:
     /// - Rows 0..3: Public input rows (element, accumulator_eval, accumulator_root)
-    /// - Rows 3..3+n: Horner evaluation steps (n = number of coefficients)
-    ///   Gate equation: w0*w1 + w2 - w3 = 0
-    ///   i.e., acc_old * x + coeff - acc_new = 0
-    ///   coeffs: c3=1 (w0*w1 term), c2=1 (w2 = coeff), c[COLUMNS-1]=0, but we use
-    ///   the form: c3=1 for w0*w1, c1=1 for +w1 (coeff), c2=-1 for -w2 (acc_new)
-    ///   Actually: c0*w0 + c1*w1 + c2*w2 + c3*(w0*w1) + c4*(w0*w2) + c5 = 0
-    ///   We want: acc_old*x + coeff - acc_new = 0
-    ///   Put acc_old in w0, x in w1, so w0*w1 = acc_old*x -> c3=1
-    ///   Put coeff in w2, want +coeff -> c2=1
-    ///   Need -acc_new somewhere. We can't subtract w3 directly in a generic gate.
-    ///   Instead: put acc_new in w2 position, coeff as constant?
-    ///   No - let's use: w0=acc_old, w1=x, w2=acc_new
-    ///   Constraint: acc_old * x + coeff - acc_new = 0
-    ///   = c3*(w0*w1) + c2*w2 + c5 = 0
-    ///   where c3=1, c2=-1, c5=coeff (constant term)
-    ///   BUT c5 is baked into the gate at circuit build time, so coeff must be known then.
-    ///   That's fine since we know the coefficients at circuit build time.
+    ///   c[0]=1, all else zero. Kimchi subtracts public_input[row] automatically.
     ///
-    /// - Row 3+n: Non-zero check: remainder * inv - 1 = 0
-    ///   w0=remainder, w1=inv, c3=1, c[COLUMNS-1]=-1
+    /// - Rows 3..3+n: Horner evaluation steps (n = number of coefficients)
+    ///   w[0]=acc_old, w[1]=element, w[2]=acc_new
+    ///   Constraint: acc_old * element + coeff_i - acc_new = 0
+    ///   c[3]=1 (mul), c[2]=-1 (output), c[4]=coeff_i (constant)
+    ///
+    /// - Row 3+n: Non-zero check: remainder * remainder_inv - 1 = 0
+    ///   w[0]=remainder, w[1]=inv, c[3]=1, c[4]=-1
     ///
     /// - Row 3+n+1: Binding gate: computed_eval - public_eval = 0
-    ///   w0=computed_eval, w1=public_eval, c0=1, c1=-1
+    ///   w[0]=computed_eval, w[1]=public_eval, c[0]=1, c[1]=-1
     ///
     /// - Poseidon rows: hash(coefficients) for root binding
     ///
     /// - Final row: root binding: hash_output - public_root = 0
-    ///   w0=hash_output, w1=public_root, c0=1, c1=-1
+    ///   w[0]=hash_output, w[1]=public_root, c[0]=1, c[1]=-1
     pub fn build_circuit(&self) -> (Vec<CircuitGate<Fp>>, usize) {
         let mut gates = Vec::new();
         let pc = 3; // 3 public inputs: element, accumulator_eval, accumulator_root
@@ -109,9 +101,9 @@ impl KimchiNonMembershipCircuit {
             // Horner processes coefficients from highest degree to lowest:
             // step i uses coeff[n-1-i]
             let coeff = self.accumulator_coeffs[n - 1 - i];
-            c[3] = Fp::one();    // w[0]*w[1] = acc_old * element
-            c[2] = -Fp::one();   // -w[2] = -acc_new
-            c[4] = coeff;        // constant = coeff_i
+            c[3] = Fp::one(); // w[0]*w[1] = acc_old * element
+            c[2] = -Fp::one(); // -w[2] = -acc_new
+            c[4] = coeff; // constant = coeff_i
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -121,8 +113,8 @@ impl KimchiNonMembershipCircuit {
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            c[3] = Fp::one();    // w[0]*w[1] term
-            c[4] = -Fp::one();   // constant -1
+            c[3] = Fp::one(); // w[0]*w[1] term
+            c[4] = -Fp::one(); // constant -1
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -188,9 +180,9 @@ impl KimchiNonMembershipCircuit {
         for i in 0..n {
             let coeff = self.accumulator_coeffs[n - 1 - i];
             let acc_new = acc * self.element + coeff;
-            wit[0][row] = acc;           // acc_old
-            wit[1][row] = self.element;  // x
-            wit[2][row] = acc_new;       // acc_new
+            wit[0][row] = acc; // acc_old
+            wit[1][row] = self.element; // x
+            wit[2][row] = acc_new; // acc_new
             acc = acc_new;
             row += 1;
         }
@@ -215,9 +207,21 @@ impl KimchiNonMembershipCircuit {
         for call_idx in 0..num_poseidon_calls {
             let base = call_idx * 3;
             let inp = [
-                if base < n { self.accumulator_coeffs[base] } else { Fp::zero() },
-                if base + 1 < n { self.accumulator_coeffs[base + 1] } else { Fp::zero() },
-                if base + 2 < n { self.accumulator_coeffs[base + 2] } else { Fp::zero() },
+                if base < n {
+                    self.accumulator_coeffs[base]
+                } else {
+                    Fp::zero()
+                },
+                if base + 1 < n {
+                    self.accumulator_coeffs[base + 1]
+                } else {
+                    Fp::zero()
+                },
+                if base + 2 < n {
+                    self.accumulator_coeffs[base + 2]
+                } else {
+                    Fp::zero()
+                },
             ];
             generate_witness(row, Vesta::sponge_params(), &mut wit, inp);
             row += pgr;
@@ -288,8 +292,8 @@ impl KimchiNonMembershipCircuit {
         .map_err(|e| format!("Kimchi non-membership prover error: {:?}", e))?;
 
         // Serialize proof
-        let pb = rmp_serde::to_vec(&proof)
-            .map_err(|e| format!("Proof serialization error: {}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
 
         // Public input bytes: element || accumulator_eval || accumulator_root
         let mut pib = Vec::with_capacity(96);

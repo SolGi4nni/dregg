@@ -6,7 +6,6 @@
 //! - Payment is released atomically via conditional turns on completion.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -18,6 +17,7 @@ use axum::{
 use serde_json::json;
 use tracing::{info, warn};
 
+use pyana_app_framework::CellId;
 use pyana_bounty_board::qualification::verify_qualification;
 use pyana_bounty_board::state::BoardState;
 use pyana_bounty_board::{
@@ -26,7 +26,6 @@ use pyana_bounty_board::{
     SerializedToken, SubmitRequest, bounty_id_from_hex, bounty_id_hex, compute_bounty_id,
     qualification_label, status_label,
 };
-use pyana_types::CellId;
 
 // =============================================================================
 // Application State

@@ -183,10 +183,38 @@ impl<Tr: Transaction> MorpheusProcess<Tr> {
                 if start_view.data.qc.data.z != 1 {
                     return false;
                 }
-                self.start_views
+                let view_msgs = self
+                    .start_views
                     .entry(start_view.data.view)
-                    .or_insert(Vec::new())
-                    .push(start_view);
+                    .or_insert(Vec::new());
+                // Deduplication: reject StartView from an author that already sent
+                // one for this view. A correct process sends exactly one StartView
+                // per view, so duplicates indicate Byzantine behavior or retransmission.
+                if view_msgs
+                    .iter()
+                    .any(|existing| existing.author == start_view.author)
+                {
+                    tracing::warn!(
+                        target: "duplicate_start_view",
+                        author = ?start_view.author,
+                        view = ?start_view.data.view,
+                        "rejecting duplicate StartView from same author for this view"
+                    );
+                    return false;
+                }
+                // Capacity bound: at most n messages per view (one per process).
+                // This prevents a Byzantine node from flooding with forged identities
+                // (though signature verification already gates this).
+                if view_msgs.len() >= self.n as usize {
+                    tracing::warn!(
+                        target: "start_view_capacity",
+                        view = ?start_view.data.view,
+                        count = view_msgs.len(),
+                        "rejecting StartView: capacity bound reached for this view"
+                    );
+                    return false;
+                }
+                view_msgs.push(start_view);
             }
         }
 

@@ -68,7 +68,7 @@ fn end_to_end_authorization_proof() {
             membership_proof: Some(fold1_proofs.into_iter().next().unwrap()),
         }],
         num_added_checks: 0,
-        added_checks_commitment: BabyBear::ZERO,
+        added_checks_commitment: crate::binding::WideHash::ZERO,
     };
 
     println!("\nFold step 1: Remove can_write(alice, file2)");
@@ -193,10 +193,10 @@ fn end_to_end_authorization_proof() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: issuer_key,
-        revealed_facts_commitment: BabyBear::ZERO,
+        revealed_facts_commitment: crate::binding::WideHash::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
-        composition_commitment: BabyBear::ZERO,
+        composition_commitment: crate::binding::WideHash::ZERO,
         verifier_nonce: BabyBear::ZERO,
         verifier_block_height: BabyBear::ZERO,
     };
@@ -214,7 +214,7 @@ fn end_to_end_authorization_proof() {
     println!("  Fold proofs: {}", proof.fold_proofs.len());
     println!("  Total proof size: {}", proof.proof_size_display());
     println!(
-        "  Presentation tag: {}",
+        "  Presentation tag: {:?}",
         proof.public_inputs.presentation_tag
     );
     println!("  Federation root: {}", proof.public_inputs.federation_root);
@@ -288,10 +288,10 @@ fn single_step_no_attenuation() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: BabyBear::new(9999),
-        revealed_facts_commitment: BabyBear::ZERO,
+        revealed_facts_commitment: crate::binding::WideHash::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
-        composition_commitment: BabyBear::ZERO,
+        composition_commitment: crate::binding::WideHash::ZERO,
         verifier_nonce: BabyBear::ZERO,
         verifier_block_height: BabyBear::ZERO,
     };
@@ -407,10 +407,10 @@ fn long_attenuation_chain() {
         derivation,
         issuer_membership: issuer_witness,
         issuer_key_hash: BabyBear::new(5555),
-        revealed_facts_commitment: BabyBear::ZERO,
+        revealed_facts_commitment: crate::binding::WideHash::ZERO,
         blinding_factor: BabyBear::ZERO,
         presentation_randomness: BabyBear::ZERO,
-        composition_commitment: BabyBear::ZERO,
+        composition_commitment: crate::binding::WideHash::ZERO,
         verifier_nonce: BabyBear::ZERO,
         verifier_block_height: BabyBear::ZERO,
     };
@@ -533,7 +533,7 @@ fn fold_rejects_inconsistent_fact_hash() {
                 old_root,
                 new_root,
                 &[BabyBear::new(99999)],
-                checks_commitment,
+                &checks_commitment,
             );
             let pi = vec![
                 old_root,
@@ -541,7 +541,7 @@ fn fold_rejects_inconsistent_fact_hash() {
                 BabyBear::ONE,
                 BabyBear::ONE,
                 root_transition,
-                checks_commitment,
+                checks_commitment.to_narrow(),
             ];
             (vec![row, summary], pi)
         }
@@ -801,10 +801,10 @@ fn proof_size_scaling() {
             derivation,
             issuer_membership: issuer_witness,
             issuer_key_hash: BabyBear::new(5555),
-            revealed_facts_commitment: BabyBear::ZERO,
+            revealed_facts_commitment: crate::binding::WideHash::ZERO,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness: BabyBear::ZERO,
-            composition_commitment: BabyBear::ZERO,
+            composition_commitment: crate::binding::WideHash::ZERO,
             verifier_nonce: BabyBear::ZERO,
             verifier_block_height: BabyBear::ZERO,
         };

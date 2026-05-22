@@ -861,6 +861,7 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
                 note_tree_root: [0u8; 32],
                 value: 100,
                 asset_type: asset_a,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             Effect::NoteCreate {
                 commitment: a_recv.commitment(),
@@ -886,6 +887,7 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
                 note_tree_root: [0u8; 32],
                 value: 50,
                 asset_type: asset_b,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             Effect::NoteCreate {
                 commitment: b_recv.commitment(),

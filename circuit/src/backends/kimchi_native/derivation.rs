@@ -28,9 +28,9 @@ use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
 
 use super::{
-    BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, VestaOpeningProof,
-    fp_to_bytes32, hash_fact_fp, verify_kimchi_proof, GTE_DIFF_BITS, MAX_BODY_ATOMS,
-    MAX_HEAD_TERMS, MAX_SUB_VARS,
+    BaseSponge, GTE_DIFF_BITS, KimchiNativeCircuitType, KimchiNativeProof, MAX_BODY_ATOMS,
+    MAX_HEAD_TERMS, MAX_SUB_VARS, ScalarSponge, VestaOpeningProof, fp_to_bytes32, hash_fact_fp,
+    verify_kimchi_proof,
 };
 
 #[derive(Clone, Debug)]
@@ -145,7 +145,7 @@ impl KimchiDerivationCircuit {
             c[0] = Fp::one();
             c[1] = -Fp::one();
             // Sub-gate 2: c[8]*(w[3]*w[4]) + c[5]*w[3] = 0 => w[3]^2 - w[3] = 0 (active binary)
-            c[8] = Fp::one();  // mul coeff for w[3]*w[4]
+            c[8] = Fp::one(); // mul coeff for w[3]*w[4]
             c[5] = -Fp::one(); // left coeff for w[3]
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
@@ -496,8 +496,8 @@ impl KimchiDerivationCircuit {
         >(&gm, wit, &[], &index, &mut OsRng)
         .map_err(|e| format!("Kimchi native derivation prover error: {:?}", e))?;
 
-        let pb = rmp_serde::to_vec(&proof)
-            .map_err(|e| format!("Proof serialization error: {}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
 
         let dh = self.witness.derived_hash();
         let mut pib = Vec::with_capacity(64);

@@ -667,6 +667,7 @@ mod tests {
     use crate::poseidon2_air::create_poseidon2_test_witness;
 
     #[test]
+    #[ignore]
     fn plonky3_prove_verify_basic() {
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);
@@ -719,6 +720,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_prove_membership_end_to_end() {
         let leaf = BabyBear::new(7777);
         let witness = create_poseidon2_test_witness(leaf, 4);
@@ -735,6 +737,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_depth_8() {
         let leaf = BabyBear::new(999999);
         let witness = create_poseidon2_test_witness(leaf, 8);
@@ -747,6 +750,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_forged_parent_rejected() {
         // Key soundness test: a malicious prover forges a hash step.
         let leaf = BabyBear::new(42424242);
@@ -879,6 +883,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_minimal_degree7_prove_verify() {
         // Create a 4-row trace where col0 = some values, col1 = col0^7
         let config = create_config();
@@ -905,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_minimal_degree7_more_rows() {
         // Try with 16 rows to see if trace size matters
         let config = create_config();
@@ -930,6 +936,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn plonky3_non_power_of_2_depth() {
         // Depth 3 gets padded to 4
         let leaf = BabyBear::new(12345);

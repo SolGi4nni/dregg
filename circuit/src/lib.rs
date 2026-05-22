@@ -157,7 +157,9 @@ pub use arithmetic_predicate_air::{
     verify_arithmetic_predicate,
 };
 pub use binding::{
-    ACTION_BINDING_WIDTH, ActionBinding, compute_action_binding, compute_action_binding_narrow,
+    ACTION_BINDING_WIDTH, ActionBinding, PRESENTATION_TAG_WIDTH, PresentationTag, WideHash,
+    compute_action_binding, compute_action_binding_narrow, compute_presentation_tag,
+    compute_presentation_tag_narrow,
 };
 pub use block_transition_air::{
     BlockEvent, BlockTransitionAir, BlockTransitionProof, MerkleUpdateWitness,

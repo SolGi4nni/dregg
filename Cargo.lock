@@ -1713,6 +1713,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "compute-exchange"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "pyana-app-framework",
+ "pyana-intent",
+ "pyana-turn",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "concat-idents"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5785,6 +5801,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-app-framework"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "base64 0.22.1",
+ "blake3",
+ "http",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-intent",
+ "pyana-sdk",
+ "pyana-turn",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "pyana-audit"
 version = "0.1.0"
 dependencies = [
@@ -5799,16 +5835,11 @@ version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
  "blake3",
- "pyana-cell",
- "pyana-circuit",
- "pyana-intent",
+ "pyana-app-framework",
  "pyana-sdk",
- "pyana-store",
  "pyana-turn",
- "pyana-types",
  "serde",
  "serde_json",
- "token",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
@@ -6010,6 +6041,7 @@ dependencies = [
  "ark-std 0.5.0",
  "hints",
  "serde",
+ "serde_json",
  "serde_json_any_key",
  "test-log",
  "time",
@@ -6133,6 +6165,7 @@ name = "pyana-teasting"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "macaroon",

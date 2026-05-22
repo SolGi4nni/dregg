@@ -5,7 +5,7 @@
 //! - Predicate proof: proves "my attribute >= threshold" without revealing the exact value.
 //! - Standing proof: IVC chain proving N prior bounty completions.
 
-use pyana_circuit::PredicateType;
+use pyana_app_framework::PredicateType;
 
 use crate::QualificationRequirement;
 

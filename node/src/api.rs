@@ -406,6 +406,45 @@ pub struct AtomicVoteResponse {
     pub error: Option<String>,
 }
 
+/// Response to a proposal status query.
+#[derive(Serialize)]
+pub struct ProposalStatusResponse {
+    pub found: bool,
+    /// One of: "proposing", "committed", "aborted", "idle".
+    pub state: String,
+    /// Number of yes votes received so far.
+    pub yes_votes: usize,
+    /// Number of no votes received so far.
+    pub no_votes: usize,
+    /// Total participants required.
+    pub total_participants: usize,
+    /// Threshold needed for commit.
+    pub threshold: usize,
+    /// Seconds since proposal creation.
+    pub age_secs: u64,
+}
+
+/// Request body for a participant evaluating a proposal locally.
+#[derive(Deserialize)]
+pub struct EvaluateProposalRequest {
+    /// Hex-encoded 32-byte proposal ID from the coordinator.
+    pub proposal_id: String,
+    /// The atomic forest to evaluate (serialized, same as the coordinator's proposal).
+    pub forest: serde_json::Value,
+}
+
+/// Response to local proposal evaluation.
+#[derive(Serialize)]
+pub struct EvaluateProposalResponse {
+    /// Whether the participant would vote yes based on local state.
+    pub approve: bool,
+    /// If rejecting, the reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The Ed25519 signature over the vote (hex-encoded, 128 chars).
+    pub signature: String,
+}
+
 // =============================================================================
 // Rate Limiting (P1 Fix 4)
 // =============================================================================
@@ -693,6 +732,8 @@ pub fn router(state: NodeState, enable_faucet: bool) -> Router {
         .route("/turn/pending", get(get_pending_conditionals))
         .route("/turn/atomic", post(post_atomic_proposal))
         .route("/turn/atomic/vote", post(post_atomic_vote))
+        .route("/turn/atomic/{id}", get(get_proposal_status))
+        .route("/turn/atomic/evaluate", post(post_evaluate_proposal))
         .route("/cell/{id}", get(get_cell))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
@@ -1710,8 +1751,8 @@ async fn get_pending_conditionals(
 /// POST /turn/atomic — Submit an atomic multi-party turn proposal.
 ///
 /// The coordinator node creates a Coordinator instance, validates the proposal
-/// (budget gate, participant count, threshold), and returns a proposal_id that
-/// participants can vote on.
+/// (budget gate, participant count, threshold), persists it in the proposals map,
+/// and returns a proposal_id that participants can vote on.
 async fn post_atomic_proposal(
     State(state): State<NodeState>,
     Json(req): Json<AtomicProposalRequest>,
@@ -1756,7 +1797,11 @@ async fn post_atomic_proposal(
     );
 
     // Create the coordinator with the node's identity.
-    let s = state.write().await;
+    let mut s = state.write().await;
+
+    // Garbage-collect stale proposals before creating new ones.
+    s.expire_stale_proposals();
+
     let node_id = s.silo_id;
     let signing_key = s.wallet.gossip_signing_key().to_bytes();
     let costs = pyana_turn::ComputronCosts::default();
@@ -1776,15 +1821,37 @@ async fn post_atomic_proposal(
         participant_keys,
     );
 
+    let forest_for_storage = atomic_forest.clone();
+
     match coordinator.propose(atomic_forest) {
         Ok(propose_msg) => {
-            let proposal_id = hex_encode(&propose_msg.proposal_id);
-            // Store the coordinator in state for later vote collection.
-            // For simplicity, we store it keyed by proposal_id in the intent pool
-            // metadata (a real implementation would have a dedicated coordinators map).
+            let proposal_id = propose_msg.proposal_id;
+            let proposal_id_hex = hex_encode(&proposal_id);
+
+            // Persist the coordinator in the proposals map for later vote collection.
+            s.atomic_proposals.insert(
+                proposal_id,
+                crate::state::ActiveProposal {
+                    coordinator,
+                    created_at: std::time::Instant::now(),
+                    forest: forest_for_storage,
+                },
+            );
+
+            // Broadcast proposal to peers via gossip if available.
+            drop(s);
+            if let Some(gossip) = state.gossip().await {
+                let msg = serde_json::json!({
+                    "type": "atomic_proposal",
+                    "proposal_id": proposal_id_hex,
+                });
+                let msg_bytes = serde_json::to_vec(&msg).unwrap_or_default();
+                gossip.gossip_turn(proposal_id, msg_bytes).await;
+            }
+
             Ok(Json(AtomicProposalResponse {
                 accepted: true,
-                proposal_id: Some(proposal_id),
+                proposal_id: Some(proposal_id_hex),
                 error: None,
             }))
         }
@@ -1799,7 +1866,8 @@ async fn post_atomic_proposal(
 /// POST /turn/atomic/vote — Vote on an atomic proposal.
 ///
 /// Participants submit their vote (approve/reject) with an Ed25519 signature.
-/// When enough votes are collected, the coordinator decides to commit or abort.
+/// When enough votes are collected, the coordinator decides to commit or abort,
+/// executing the turn via TurnExecutor on commit.
 async fn post_atomic_vote(
     State(state): State<NodeState>,
     Json(req): Json<AtomicVoteRequest>,
@@ -1810,9 +1878,9 @@ async fn post_atomic_vote(
     }
     drop(s);
 
-    let _proposal_id: [u8; 32] =
+    let proposal_id: [u8; 32] =
         hex_decode(&req.proposal_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let _voter: [u8; 32] = hex_decode(&req.voter).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let voter: [u8; 32] = hex_decode(&req.voter).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let sig_bytes = hex_decode_var(&req.signature).map_err(|_| StatusCode::BAD_REQUEST)?;
     if sig_bytes.len() != 64 {
@@ -1827,19 +1895,183 @@ async fn post_atomic_vote(
         pyana_coord::Vote::no("participant rejected", signature)
     };
 
-    // In a full implementation, this would look up the stored Coordinator by proposal_id,
-    // call receive_vote(), and handle the Decision. For now, acknowledge the vote.
-    let decision_str = if vote.is_yes() {
-        None // Still pending until threshold
-    } else {
-        Some("pending".to_string())
+    let mut s = state.write().await;
+
+    // Look up the coordinator by proposal_id.
+    let active = match s.atomic_proposals.get_mut(&proposal_id) {
+        Some(p) => p,
+        None => {
+            return Ok(Json(AtomicVoteResponse {
+                accepted: false,
+                decision: None,
+                error: Some("proposal not found".to_string()),
+            }));
+        }
     };
 
-    Ok(Json(AtomicVoteResponse {
-        accepted: true,
-        decision: decision_str,
-        error: None,
+    // Feed the vote to the coordinator.
+    let decision = match active.coordinator.receive_vote(voter, vote) {
+        Ok(maybe_decision) => maybe_decision,
+        Err(e) => {
+            return Ok(Json(AtomicVoteResponse {
+                accepted: false,
+                decision: None,
+                error: Some(format!("{e}")),
+            }));
+        }
+    };
+
+    // Handle the decision.
+    match decision {
+        Some(pyana_coord::Decision::Commit) => {
+            // Execute the atomic turn against the ledger.
+            match active.coordinator.commit(&mut s.ledger) {
+                Ok(_commit_msg) => {
+                    // Remove the proposal now that it is committed.
+                    s.atomic_proposals.remove(&proposal_id);
+
+                    Ok(Json(AtomicVoteResponse {
+                        accepted: true,
+                        decision: Some("commit".to_string()),
+                        error: None,
+                    }))
+                }
+                Err(e) => {
+                    // Commit failed (e.g., turn execution error) — abort.
+                    let _ = active.coordinator.abort(format!("commit failed: {e}"));
+                    s.atomic_proposals.remove(&proposal_id);
+
+                    Ok(Json(AtomicVoteResponse {
+                        accepted: true,
+                        decision: Some("abort".to_string()),
+                        error: Some(format!("commit failed: {e}")),
+                    }))
+                }
+            }
+        }
+        Some(pyana_coord::Decision::Abort) => {
+            let _ = active
+                .coordinator
+                .abort("too many rejections — threshold unreachable");
+            s.atomic_proposals.remove(&proposal_id);
+
+            Ok(Json(AtomicVoteResponse {
+                accepted: true,
+                decision: Some("abort".to_string()),
+                error: None,
+            }))
+        }
+        Some(pyana_coord::Decision::Pending) | None => {
+            // Still waiting for more votes.
+            Ok(Json(AtomicVoteResponse {
+                accepted: true,
+                decision: None,
+                error: None,
+            }))
+        }
+    }
+}
+
+/// GET /turn/atomic/:id — Query the status of an active atomic proposal.
+///
+/// Returns vote counts, coordinator state, and age so clients can monitor
+/// progress without polling the vote endpoint.
+async fn get_proposal_status(
+    State(state): State<NodeState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ProposalStatusResponse>, StatusCode> {
+    let proposal_id: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let s = state.read().await;
+    let active = match s.atomic_proposals.get(&proposal_id) {
+        Some(p) => p,
+        None => {
+            return Ok(Json(ProposalStatusResponse {
+                found: false,
+                state: "not_found".to_string(),
+                yes_votes: 0,
+                no_votes: 0,
+                total_participants: 0,
+                threshold: 0,
+                age_secs: 0,
+            }));
+        }
+    };
+
+    let (state_name, yes_count, no_count, total) = match &active.coordinator.state {
+        pyana_coord::CoordinatorState::Idle => ("idle", 0, 0, 0),
+        pyana_coord::CoordinatorState::Proposing { forest, votes, .. } => {
+            let yes = votes.values().filter(|v| v.is_yes()).count();
+            let no = votes.values().filter(|v| v.is_no()).count();
+            ("proposing", yes, no, forest.participant_count())
+        }
+        pyana_coord::CoordinatorState::Committed { .. } => ("committed", 0, 0, 0),
+        pyana_coord::CoordinatorState::Aborted { .. } => ("aborted", 0, 0, 0),
+    };
+
+    let age_secs = std::time::Instant::now()
+        .duration_since(active.created_at)
+        .as_secs();
+
+    Ok(Json(ProposalStatusResponse {
+        found: true,
+        state: state_name.to_string(),
+        yes_votes: yes_count,
+        no_votes: no_count,
+        total_participants: total,
+        threshold: active.coordinator.threshold,
+        age_secs,
     }))
+}
+
+/// POST /turn/atomic/evaluate — Participant evaluates a proposal against local state.
+///
+/// A node that received a proposal via gossip uses this endpoint to evaluate
+/// whether it should vote yes or no, based on its local ledger and preconditions.
+/// Returns the signed vote that can then be submitted to the coordinator's
+/// `/turn/atomic/vote` endpoint.
+async fn post_evaluate_proposal(
+    State(state): State<NodeState>,
+    Json(req): Json<EvaluateProposalRequest>,
+) -> Result<Json<EvaluateProposalResponse>, StatusCode> {
+    let s = state.read().await;
+    if !s.unlocked {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    drop(s);
+
+    let proposal_id: [u8; 32] =
+        hex_decode(&req.proposal_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Deserialize the atomic forest from the request.
+    let atomic_forest: pyana_coord::AtomicForest =
+        serde_json::from_value(req.forest).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let mut s = state.write().await;
+
+    // Build a Participant from the node's local identity and ledger.
+    let node_id = s.silo_id;
+    let signing_key = s.wallet.gossip_signing_key().to_bytes();
+    let cell_id = pyana_cell::CellId(node_id);
+
+    let mut participant =
+        pyana_coord::Participant::new(cell_id, node_id, signing_key, s.ledger.clone());
+
+    // Evaluate the proposal locally.
+    let vote = participant.evaluate_proposal(&proposal_id, &atomic_forest);
+
+    match vote {
+        pyana_coord::Vote::Yes { signature } => Ok(Json(EvaluateProposalResponse {
+            approve: true,
+            reason: None,
+            signature: hex_encode_var(&signature),
+        })),
+        pyana_coord::Vote::No { reason, signature } => Ok(Json(EvaluateProposalResponse {
+            approve: false,
+            reason: Some(reason),
+            signature: hex_encode_var(&signature),
+        })),
+    }
 }
 
 // =============================================================================
@@ -2251,5 +2483,162 @@ fn nibble(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyana_coord::{AtomicForest, Coordinator, Decision, Vote};
+    use pyana_turn::ComputronCosts;
+    use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    /// Helper: create a deterministic key pair for testing.
+    fn test_key(name: &str) -> [u8; 32] {
+        *blake3::hash(format!("pyana-node-atomic-test:{name}").as_bytes()).as_bytes()
+    }
+
+    /// Helper: build a minimal AtomicForest with a single noop-like action.
+    fn make_test_forest(participants: Vec<[u8; 32]>, initiator: [u8; 32]) -> AtomicForest {
+        let cell_id = pyana_cell::CellId(initiator);
+        let mut forest = pyana_turn::CallForest::new();
+        let action = Action {
+            target: cell_id,
+            method: *blake3::hash(b"noop").as_bytes(),
+            args: vec![],
+            authorization: Authorization::None,
+            preconditions: pyana_cell::Preconditions::default(),
+            effects: vec![],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+        };
+        forest.add_root(action);
+        AtomicForest::new(participants, forest, vec![], cell_id, 0)
+    }
+
+    #[test]
+    fn test_proposal_creation_and_vote_commit() {
+        let node_a = test_key("node_a");
+        let node_b = test_key("node_b");
+
+        let pub_a = Vote::public_key_from_signing_key(&node_a);
+        let pub_b = Vote::public_key_from_signing_key(&node_b);
+
+        let participants = vec![pub_a, pub_b];
+        let forest = make_test_forest(participants.clone(), pub_a);
+
+        let mut participant_keys = HashMap::new();
+        participant_keys.insert(pub_a, pub_a);
+        participant_keys.insert(pub_b, pub_b);
+
+        let mut coordinator = Coordinator::new(
+            pub_a,
+            node_a,
+            2, // unanimous
+            ComputronCosts::default(),
+            u64::MAX,
+            participant_keys,
+        );
+
+        // Propose.
+        let propose_msg = coordinator.propose(forest.clone()).unwrap();
+        let proposal_id = propose_msg.proposal_id;
+
+        // Node A votes yes.
+        let sig_a = Vote::sign_yes(&proposal_id, &forest.hash, &node_a);
+        let vote_a = Vote::yes(sig_a);
+        let decision_a = coordinator.receive_vote(pub_a, vote_a).unwrap();
+        assert_eq!(decision_a, None); // Still pending.
+
+        // Node B votes yes.
+        let sig_b = Vote::sign_yes(&proposal_id, &forest.hash, &node_b);
+        let vote_b = Vote::yes(sig_b);
+        let decision_b = coordinator.receive_vote(pub_b, vote_b).unwrap();
+        assert_eq!(decision_b, Some(Decision::Commit)); // Quorum reached!
+    }
+
+    #[test]
+    fn test_proposal_abort_on_rejection() {
+        let node_a = test_key("node_c");
+        let node_b = test_key("node_d");
+
+        let pub_a = Vote::public_key_from_signing_key(&node_a);
+        let pub_b = Vote::public_key_from_signing_key(&node_b);
+
+        let participants = vec![pub_a, pub_b];
+        let forest = make_test_forest(participants.clone(), pub_a);
+
+        let mut participant_keys = HashMap::new();
+        participant_keys.insert(pub_a, pub_a);
+        participant_keys.insert(pub_b, pub_b);
+
+        let mut coordinator = Coordinator::new(
+            pub_a,
+            node_a,
+            2, // unanimous required
+            ComputronCosts::default(),
+            u64::MAX,
+            participant_keys,
+        );
+
+        let propose_msg = coordinator.propose(forest.clone()).unwrap();
+        let proposal_id = propose_msg.proposal_id;
+
+        // Node B votes no -- threshold becomes unreachable.
+        let sig_b = Vote::sign_no(&proposal_id, &forest.hash, &node_b);
+        let vote_b = Vote::no("testing rejection", sig_b);
+        let decision = coordinator.receive_vote(pub_b, vote_b).unwrap();
+        assert_eq!(decision, Some(Decision::Abort));
+    }
+
+    #[test]
+    fn test_proposal_expiry() {
+        use crate::state::{ActiveProposal, PROPOSAL_EXPIRY_SECS};
+
+        let node_a = test_key("node_e");
+        let pub_a = Vote::public_key_from_signing_key(&node_a);
+
+        let participants = vec![pub_a];
+        let forest = make_test_forest(participants.clone(), pub_a);
+
+        let mut participant_keys = HashMap::new();
+        participant_keys.insert(pub_a, pub_a);
+
+        let mut coordinator = Coordinator::new(
+            pub_a,
+            node_a,
+            1,
+            ComputronCosts::default(),
+            u64::MAX,
+            participant_keys,
+        );
+
+        let propose_msg = coordinator.propose(forest.clone()).unwrap();
+        let proposal_id = propose_msg.proposal_id;
+
+        // Simulate an old proposal by setting created_at in the past.
+        let mut proposals: HashMap<[u8; 32], ActiveProposal> = HashMap::new();
+        proposals.insert(
+            proposal_id,
+            ActiveProposal {
+                coordinator,
+                created_at: Instant::now() - Duration::from_secs(PROPOSAL_EXPIRY_SECS + 10),
+                forest,
+            },
+        );
+
+        // Expire stale proposals.
+        let now = Instant::now();
+        let expiry = Duration::from_secs(PROPOSAL_EXPIRY_SECS);
+        proposals.retain(|_, p| now.duration_since(p.created_at) < expiry);
+
+        assert!(proposals.is_empty(), "expired proposal should be removed");
     }
 }

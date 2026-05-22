@@ -1681,6 +1681,9 @@ impl AgentWallet {
             pyana_circuit::ArithPredicate::ExprCompare(_, expr_b, op) => {
                 pyana_circuit::ArithPredicate::ExprCompare(expression, expr_b, op)
             }
+            pyana_circuit::ArithPredicate::ExprNeq(_, value) => {
+                pyana_circuit::ArithPredicate::ExprNeq(expression, value)
+            }
         };
 
         let witness = pyana_circuit::ArithmeticPredicateWitness {
@@ -2321,6 +2324,7 @@ mod tests {
             federation_id: [0u8; 32],
             routing_directives: Vec::new(),
             derivation_records: Vec::new(),
+            emitted_events: Vec::new(),
             executor_signature: None,
         }
     }

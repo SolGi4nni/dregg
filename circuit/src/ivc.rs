@@ -1202,8 +1202,8 @@ pub struct IvcPresentationProof {
     pub request_predicate: crate::binding::ActionBinding,
     /// Timestamp for freshness.
     pub timestamp: BabyBear,
-    /// Commitment to selectively revealed facts (zero if fully private).
-    pub revealed_facts_commitment: BabyBear,
+    /// Commitment to selectively revealed facts (zero if fully private, 124-bit).
+    pub revealed_facts_commitment: crate::binding::WideHash,
 }
 
 impl IvcPresentationProof {
@@ -2343,7 +2343,7 @@ mod tests {
                 BabyBear::ZERO,
             ],
             timestamp: BabyBear::new(1716000000),
-            revealed_facts_commitment: BabyBear::ZERO,
+            revealed_facts_commitment: crate::binding::WideHash::ZERO,
         };
 
         let result = presentation.verify();

@@ -54,11 +54,13 @@
 //!
 //! - [`types`]: Core data types (AttestedRoot, RevocationProof, messages, crypto)
 //! - [`revocation`]: Revocation Merkle tree + non-membership proofs
-//! - [`consensus`]: Simplified Morpheus-shaped consensus protocol
+//! - [`consensus`]: Simplified Morpheus-shaped consensus protocol (**deprecated** — use `morpheus_adapter` instead)
 //! - [`network`]: Channel-based networking between nodes
 //! - [`node`]: Federation node implementation
 
 pub mod checkpoint;
+/// Deprecated simplified consensus. Prefer `morpheus_adapter` (feature = "morpheus").
+/// See `consensus.rs` module docs for the full migration plan.
 pub mod consensus;
 pub mod epoch;
 #[cfg(feature = "morpheus")]

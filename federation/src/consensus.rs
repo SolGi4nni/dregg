@@ -1,5 +1,43 @@
 //! Simplified Morpheus-shaped consensus protocol.
 //!
+//! # Deprecation Notice
+//!
+//! **This module is deprecated.** The real Morpheus BFT consensus lives in the
+//! `pyana-morpheus` crate (4500+ LOC, DAG-based, BLS threshold signatures).
+//! This module is a simplified Ed25519 reimplementation used as a synchronous
+//! test/simulation harness. New code should use the morpheus crate directly
+//! via `morpheus_adapter::MorpheusAdapter` (feature-gated behind `morpheus`).
+//!
+//! ## Migration path
+//!
+//! To remove this module, the following consumers must be migrated:
+//!
+//! 1. **`federation/src/node.rs`** (`Federation` struct): Replace `ConsensusState`
+//!    + `ConsensusOrchestrator` with `MorpheusAdapter` instances per node. The
+//!    `run_consensus_round()` method must become async or drive the morpheus
+//!    process via ticks + message delivery.
+//!
+//! 2. **`federation/src/transport.rs`** (`NetworkConsensusNode`): Uses
+//!    `ConsensusState` and `ConsensusConfig` for the TCP transport layer.
+//!    Replace with morpheus message types.
+//!
+//! 3. **`wire/src/federation_bridge.rs`** and **`wire/src/bin/multi_node.rs`**:
+//!    Import `ConsensusConfig` and `ConsensusState` from this module.
+//!
+//! 4. **`tests/src/byzantine.rs`**: Byzantine fault tests that use
+//!    `ConsensusOrchestrator::run_round` for synchronous assertions.
+//!
+//! 5. **`federation/tests/tcp_consensus.rs`**: TCP integration tests.
+//!
+//! 6. **`federation/src/morpheus_adapter.rs`**: Uses `ConsensusConfig` for its
+//!    `MorpheusAdapterConfig`. This should be replaced with morpheus-native config.
+//!
+//! Types to migrate: `ConsensusConfig`, `ConsensusState`, `ConsensusOrchestrator`,
+//! `PendingStateRoots`, `ReconfigurationProposal`, `ReconfigurationVotes`,
+//! `ConsensusError`.
+//!
+//! ---
+//!
 //! This implements the core semantics of the Morpheus protocol without pulling
 //! in the full BLS12-381 threshold signature machinery:
 //!
@@ -24,6 +62,9 @@ use crate::types::*;
 // =============================================================================
 
 /// Configuration for the consensus protocol.
+///
+/// **Deprecated**: Use `pyana_morpheus` configuration directly. This type will be
+/// removed once all consumers are migrated to the real Morpheus crate.
 #[derive(Clone, Debug)]
 pub struct ConsensusConfig {
     /// Total number of nodes in the federation.
@@ -202,6 +243,10 @@ pub struct ReconfigurationVotes {
 // =============================================================================
 
 /// The state of a node's consensus participation.
+///
+/// **Deprecated**: Use `morpheus_adapter::MorpheusAdapter` for real consensus.
+/// This type provides a synchronous simulation that is not suitable for production
+/// distributed deployments.
 #[derive(Clone, Debug)]
 pub struct ConsensusState {
     /// The node's ID in the federation.
@@ -608,6 +653,9 @@ impl ConsensusState {
 ///
 /// This is a synchronous orchestrator that simulates the message-passing
 /// that would happen asynchronously in a real deployment.
+///
+/// **Deprecated**: Use `morpheus_adapter::MorpheusAdapter` for production consensus.
+/// This orchestrator is only appropriate for tests and local simulation.
 pub struct ConsensusOrchestrator {
     /// The consensus configuration.
     pub config: ConsensusConfig,

@@ -2614,7 +2614,8 @@ impl PresentationBackend for Sp1Backend {
         }
 
         // Compute the presentation tag (blinded, unlinkable across shows).
-        let presentation_tag = {
+        // Now produces 4 elements (124-bit collision resistance).
+        let presentation_tag: [FieldElement; 4] = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(b"sp1-presentation-tag:");
             hasher.update(&input.issuer_leaf.to_le_bytes());
@@ -2622,11 +2623,17 @@ impl PresentationBackend for Sp1Backend {
             hasher.update(&input.blinding_factor.to_le_bytes());
             hasher.update(&input.verifier_nonce.to_le_bytes());
             let hash = *hasher.finalize().as_bytes();
-            bytes_to_field(&hash)
+            let mut tag = [0u64; 4];
+            for i in 0..4 {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&hash[i * 8..(i + 1) * 8]);
+                tag[i] = u64::from_le_bytes(buf);
+            }
+            tag
         };
 
-        // Compute the composition commitment (binds all sub-proofs together).
-        let composition_commitment = {
+        // Compute the composition commitment (binds all sub-proofs together, 4 elements).
+        let composition_commitment: [FieldElement; 4] = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(b"sp1-composition-v1:");
             hasher.update(&input.federation_root.to_le_bytes());
@@ -2635,9 +2642,18 @@ impl PresentationBackend for Sp1Backend {
             for p in &input.request_predicate {
                 hasher.update(&p.to_le_bytes());
             }
-            hasher.update(&presentation_tag.to_le_bytes());
+            for t in &presentation_tag {
+                hasher.update(&t.to_le_bytes());
+            }
             let hash = *hasher.finalize().as_bytes();
-            bytes_to_field(&hash)
+            // Derive 4 field elements from the 32-byte hash (8 bytes each).
+            let mut cc = [0u64; 4];
+            for i in 0..4 {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&hash[i * 8..(i + 1) * 8]);
+                cc[i] = u64::from_le_bytes(buf);
+            }
+            cc
         };
 
         let _ = (attenuation_steps, derivation_rule, initial_facts);
@@ -2653,8 +2669,12 @@ impl PresentationBackend for Sp1Backend {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"sp1-stub-presentation:");
         hasher.update(&input.federation_root.to_le_bytes());
-        hasher.update(&presentation_tag.to_le_bytes());
-        hasher.update(&composition_commitment.to_le_bytes());
+        for t in &presentation_tag {
+            hasher.update(&t.to_le_bytes());
+        }
+        for c in &composition_commitment {
+            hasher.update(&c.to_le_bytes());
+        }
         proof_bytes.extend_from_slice(hasher.finalize().as_bytes());
 
         // Encode request_predicate as a [u8; 32].
@@ -2666,14 +2686,23 @@ impl PresentationBackend for Sp1Backend {
         Ok(Sp1Proof {
             proof_bytes,
             public_values: vec![
-                field_to_bytes(input.federation_root),
-                req_pred_bytes,
-                field_to_bytes(input.timestamp),
-                field_to_bytes(presentation_tag),
-                field_to_bytes(input.revealed_facts_commitment),
-                field_to_bytes(composition_commitment),
-                field_to_bytes(input.verifier_nonce),
-                field_to_bytes(input.verifier_block_height),
+                field_to_bytes(input.federation_root),              // [0]
+                req_pred_bytes,                                     // [1]
+                field_to_bytes(input.timestamp),                    // [2]
+                field_to_bytes(presentation_tag[0]),                // [3]
+                field_to_bytes(presentation_tag[1]),                // [4]
+                field_to_bytes(presentation_tag[2]),                // [5]
+                field_to_bytes(presentation_tag[3]),                // [6]
+                field_to_bytes(input.revealed_facts_commitment[0]), // [7]
+                field_to_bytes(input.revealed_facts_commitment[1]), // [8]
+                field_to_bytes(input.revealed_facts_commitment[2]), // [9]
+                field_to_bytes(input.revealed_facts_commitment[3]), // [10]
+                field_to_bytes(composition_commitment[0]),          // [11]
+                field_to_bytes(composition_commitment[1]),          // [12]
+                field_to_bytes(composition_commitment[2]),          // [13]
+                field_to_bytes(composition_commitment[3]),          // [14]
+                field_to_bytes(input.verifier_nonce),               // [15]
+                field_to_bytes(input.verifier_block_height),        // [16]
             ],
             program_type: Sp1ProgramType::DatalogEvaluation,
             proof_mode: Sp1ProofMode::Core,
@@ -2690,7 +2719,7 @@ impl PresentationBackend for Sp1Backend {
         if &proof.proof_bytes[5..9] != b"PRES" {
             return Err("invalid presentation marker".into());
         }
-        if proof.public_values.len() < 8 {
+        if proof.public_values.len() < 17 {
             return Err("insufficient public values for presentation proof".into());
         }
 
@@ -2706,11 +2735,26 @@ impl PresentationBackend for Sp1Backend {
         }
 
         let timestamp = bytes_to_field(&proof.public_values[2]);
-        let presentation_tag = bytes_to_field(&proof.public_values[3]);
-        let revealed_facts_commitment = bytes_to_field(&proof.public_values[4]);
-        let composition_commitment = bytes_to_field(&proof.public_values[5]);
-        let verifier_nonce = bytes_to_field(&proof.public_values[6]);
-        let verifier_block_height = bytes_to_field(&proof.public_values[7]);
+        let presentation_tag = [
+            bytes_to_field(&proof.public_values[3]),
+            bytes_to_field(&proof.public_values[4]),
+            bytes_to_field(&proof.public_values[5]),
+            bytes_to_field(&proof.public_values[6]),
+        ];
+        let revealed_facts_commitment = [
+            bytes_to_field(&proof.public_values[7]),
+            bytes_to_field(&proof.public_values[8]),
+            bytes_to_field(&proof.public_values[9]),
+            bytes_to_field(&proof.public_values[10]),
+        ];
+        let composition_commitment = [
+            bytes_to_field(&proof.public_values[11]),
+            bytes_to_field(&proof.public_values[12]),
+            bytes_to_field(&proof.public_values[13]),
+            bytes_to_field(&proof.public_values[14]),
+        ];
+        let verifier_nonce = bytes_to_field(&proof.public_values[15]);
+        let verifier_block_height = bytes_to_field(&proof.public_values[16]);
 
         Ok(PresentationOutput {
             federation_root,

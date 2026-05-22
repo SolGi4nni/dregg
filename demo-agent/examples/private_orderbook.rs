@@ -287,6 +287,7 @@ fn main() {
                 note_tree_root: [0u8; 32],
                 value: match_price * match_quantity,
                 asset_type: asset_usdc,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             Effect::NoteCreate {
                 commitment: alice_receives_commitment,
@@ -313,6 +314,7 @@ fn main() {
                 note_tree_root: [0u8; 32],
                 value: match_quantity,
                 asset_type: asset_eth,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             Effect::NoteCreate {
                 commitment: bob_receives_commitment,

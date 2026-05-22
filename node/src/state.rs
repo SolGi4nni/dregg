@@ -7,12 +7,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::{RwLock, broadcast};
 
 use pyana_cell::{CellId, Ledger};
 use pyana_circuit::field::BabyBear;
 use pyana_commit::accumulator::{BabyBear4, PolynomialAccumulator};
+use pyana_coord::Coordinator;
 use pyana_coord::budget::{
     BudgetCoordinator, BudgetError, FastUnlockManager, SiloId, SpendingCertificate,
     UnlockCertificate, UnlockRequest, UnlockVote,
@@ -151,6 +153,12 @@ pub struct NodeStateInner {
     /// and periodically expired by the federation sync background task.
     pub cell_lock_table: pyana_turn::CellLockTable,
 
+    // ─── Atomic Multi-Party Turn Coordination ─────────────────────────────────
+    /// Active 2PC coordinators keyed by proposal_id (hex string).
+    /// Each entry holds the coordinator state machine plus creation timestamp
+    /// for timeout-based expiry.
+    pub atomic_proposals: HashMap<[u8; 32], ActiveProposal>,
+
     // ─── Cross-Federation Bridge State ───────────────────────────────────────
     /// Revocations from remote federations (federation_id -> set of revoked token hashes).
     /// Populated by the bridge node when it receives revocation messages from
@@ -177,6 +185,22 @@ pub struct NodeStateInner {
     /// Depth 16 supports up to 4^16 = ~4 billion notes.
     pub note_tree: Poseidon2NoteTree,
 }
+
+/// An active atomic proposal tracked by the node.
+///
+/// Wraps a `Coordinator` instance together with metadata needed for
+/// timeout-based garbage collection and status reporting.
+pub struct ActiveProposal {
+    /// The 2PC coordinator state machine.
+    pub coordinator: Coordinator,
+    /// When this proposal was created (wall-clock, for expiry).
+    pub created_at: Instant,
+    /// The atomic forest associated with this proposal (kept for status/commit).
+    pub forest: pyana_coord::AtomicForest,
+}
+
+/// Default proposal expiry: coordinators older than this are garbage-collected.
+pub const PROPOSAL_EXPIRY_SECS: u64 = 120;
 
 /// Summary of the node's sync state for the status endpoint.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -299,6 +323,7 @@ impl NodeState {
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
                 cell_lock_table: pyana_turn::CellLockTable::with_defaults(),
+                atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
                 note_tree: Poseidon2NoteTree::with_depth(16),
@@ -358,6 +383,7 @@ impl NodeState {
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
                 cell_lock_table: pyana_turn::CellLockTable::with_defaults(),
+                atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
                 note_tree: Poseidon2NoteTree::with_depth(16),
@@ -449,6 +475,25 @@ impl NodeState {
                 }
             }
         }
+    }
+}
+
+// =============================================================================
+// Atomic Proposal Management Methods
+// =============================================================================
+
+impl NodeStateInner {
+    /// Remove proposals older than `PROPOSAL_EXPIRY_SECS`.
+    ///
+    /// Called lazily from the proposal/vote handlers to bound memory usage.
+    /// Returns the number of expired proposals removed.
+    pub fn expire_stale_proposals(&mut self) -> usize {
+        let now = Instant::now();
+        let expiry = std::time::Duration::from_secs(PROPOSAL_EXPIRY_SECS);
+        let before = self.atomic_proposals.len();
+        self.atomic_proposals
+            .retain(|_, p| now.duration_since(p.created_at) < expiry);
+        before - self.atomic_proposals.len()
     }
 }
 

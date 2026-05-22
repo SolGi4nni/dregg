@@ -493,7 +493,205 @@ fn test_morpheus_adapter_revocation_flow() {
 }
 
 // =============================================================================
-// Test 5: Multiple views with continuous finalization
+// Test 5: Adapter `take_finalized` emits real finalized blocks
+// =============================================================================
+
+/// Verifies the fix for the finalization-to-output pipeline: after enough messages
+/// are processed to finalize a block, `take_finalized()` returns the finalized
+/// block data (view, height, and deserialized revocation events).
+#[test]
+fn test_morpheus_adapter_take_finalized_returns_blocks() {
+    let num_parties: usize = 4;
+    let domain_max: usize = (1 + num_parties).next_power_of_two();
+    let mut rng = ark_std::test_rng();
+    let gd = hints::GlobalData::new(domain_max, &mut rng).unwrap();
+    let privs: Vec<hints::SecretKey> = (0..domain_max - 1)
+        .map(|_| hints::SecretKey::random(&mut rng))
+        .collect();
+    let pubkeys: Vec<hints::PublicKey> = privs.iter().map(|sk| sk.public(&gd)).collect();
+    let weights = vec![hints::F::from(1); domain_max - 1];
+    let hints_vec: Vec<_> = (0..domain_max - 1)
+        .map(|i| hints::generate_hint(&gd, &privs[i], domain_max, i).unwrap())
+        .collect();
+    let setup = hints::setup_universe(&gd, pubkeys.clone(), &hints_vec, weights).unwrap();
+
+    let keys: BTreeMap<Identity, hints::PublicKey> = (0..num_parties)
+        .map(|i| (Identity(i as u32 + 1), pubkeys[i].clone()))
+        .collect();
+    let identities: BTreeMap<hints::PublicKey, Identity> = (0..num_parties)
+        .map(|i| (pubkeys[i].clone(), Identity(i as u32 + 1)))
+        .collect();
+
+    let make_keybook = |i: usize| pyana_morpheus::KeyBook {
+        keys: keys.clone(),
+        identities: identities.clone(),
+        me_identity: Identity(i as u32 + 1),
+        me_pub_key: pubkeys[i].clone(),
+        me_sec_key: privs[i].clone(),
+        hints_setup: setup.clone(),
+    };
+
+    let config = ConsensusConfig::new(num_parties);
+    let delta = 100u128;
+
+    let mut adapters: Vec<MorpheusAdapter> = (0..num_parties)
+        .map(|i| {
+            let adapter_config = MorpheusAdapterConfig {
+                federation_config: config.clone(),
+                node_id: i,
+                delta,
+            };
+            MorpheusAdapter::new(adapter_config, make_keybook(i))
+        })
+        .collect();
+
+    // Submit revocation events to adapter 0
+    adapters[0].submit_event(RevocationEvent {
+        token_id: "revoke-abc".to_string(),
+        authority_id: 0,
+        signature: Signature([7u8; 64]),
+    });
+    adapters[0].submit_event(RevocationEvent {
+        token_id: "revoke-xyz".to_string(),
+        authority_id: 1,
+        signature: Signature([8u8; 64]),
+    });
+
+    // Drive the adapters using the same one-pass-per-round approach as test 4.
+    let mut time: u128 = 0;
+    let time_step: u128 = 100;
+
+    for _round in 0..20 {
+        time += time_step;
+
+        // Update time on all adapters
+        for adapter in adapters.iter_mut() {
+            adapter.set_time(time);
+        }
+
+        // Each adapter tries to produce blocks
+        for adapter in adapters.iter_mut() {
+            adapter.try_produce_block();
+        }
+
+        // Collect all outbound messages
+        let mut all_messages: Vec<(
+            usize,
+            pyana_morpheus::Message<pyana_morpheus::test_harness::TestTransaction>,
+            Option<Identity>,
+        )> = Vec::new();
+        for (idx, adapter) in adapters.iter_mut().enumerate() {
+            let msgs: Vec<_> = adapter.drain_outbox().collect();
+            for (msg, dest) in msgs {
+                all_messages.push((idx, msg, dest));
+            }
+        }
+
+        // Deliver messages
+        for (sender_idx, msg, dest) in all_messages {
+            let sender_id = Identity(sender_idx as u32 + 1);
+            match dest {
+                Some(target) => {
+                    let target_idx = (target.0 - 1) as usize;
+                    if target_idx < adapters.len() && target_idx != sender_idx {
+                        adapters[target_idx].handle_incoming(msg, sender_id);
+                    }
+                }
+                None => {
+                    for i in 0..adapters.len() {
+                        if i != sender_idx {
+                            adapters[i].handle_incoming(msg.clone(), sender_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check timeouts on all adapters
+        for adapter in adapters.iter_mut() {
+            adapter.check_timeouts();
+        }
+
+        // Drain timeout-generated outbound messages and deliver them too
+        let mut timeout_messages: Vec<(
+            usize,
+            pyana_morpheus::Message<pyana_morpheus::test_harness::TestTransaction>,
+            Option<Identity>,
+        )> = Vec::new();
+        for (idx, adapter) in adapters.iter_mut().enumerate() {
+            let msgs: Vec<_> = adapter.drain_outbox().collect();
+            for (msg, dest) in msgs {
+                timeout_messages.push((idx, msg, dest));
+            }
+        }
+        for (sender_idx, msg, dest) in timeout_messages {
+            let sender_id = Identity(sender_idx as u32 + 1);
+            match dest {
+                Some(target) => {
+                    let target_idx = (target.0 - 1) as usize;
+                    if target_idx < adapters.len() && target_idx != sender_idx {
+                        adapters[target_idx].handle_incoming(msg, sender_id);
+                    }
+                }
+                None => {
+                    for i in 0..adapters.len() {
+                        if i != sender_idx {
+                            adapters[i].handle_incoming(msg.clone(), sender_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- The critical assertion: take_finalized must return real blocks ---
+    let finalized_0 = adapters[0].take_finalized();
+    assert!(
+        !finalized_0.is_empty(),
+        "adapter 0 should have emitted finalized blocks via take_finalized(); \
+         underlying process has {} finalized entries",
+        adapters[0].finalized_count()
+    );
+
+    // Verify that finalized blocks have sensible structure
+    for block in &finalized_0 {
+        assert!(
+            block.height > 0,
+            "finalized block height should be > 0 (non-genesis)"
+        );
+    }
+
+    // At least one finalized Tr block should carry the revocation events we submitted.
+    let all_events: Vec<&RevocationEvent> =
+        finalized_0.iter().flat_map(|b| b.events.iter()).collect();
+    let has_abc = all_events.iter().any(|e| e.token_id == "revoke-abc");
+    let has_xyz = all_events.iter().any(|e| e.token_id == "revoke-xyz");
+    assert!(
+        has_abc && has_xyz,
+        "finalized blocks should contain the submitted revocation events; \
+         found revoke-abc={}, revoke-xyz={}, total events={}",
+        has_abc,
+        has_xyz,
+        all_events.len()
+    );
+
+    // Calling take_finalized again should return empty (already consumed)
+    let second_take = adapters[0].take_finalized();
+    assert!(
+        second_take.is_empty(),
+        "second call to take_finalized should return empty"
+    );
+
+    // Other adapters should also have finalized blocks
+    let finalized_1 = adapters[1].take_finalized();
+    assert!(
+        !finalized_1.is_empty(),
+        "adapter 1 should also have finalized blocks"
+    );
+}
+
+// =============================================================================
+// Test 6: Multiple views with continuous finalization
 // =============================================================================
 
 /// Verifies that the protocol can sustain finalization across multiple views,

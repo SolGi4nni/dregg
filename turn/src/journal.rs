@@ -10,6 +10,8 @@ use pyana_cell::{
     VerificationKey, state::FieldElement,
 };
 
+use crate::action::Symbol;
+
 /// A single undo entry in the journal.
 #[derive(Debug)]
 pub(crate) enum JournalEntry {
@@ -71,6 +73,23 @@ pub(crate) enum JournalEntry {
     ObligationFulfilled { obligation_id: [u8; 32] },
     /// An obligation was slashed. Recorded for the obligation registry.
     ObligationSlashed { obligation_id: [u8; 32] },
+    /// An event was emitted from a cell. Recorded so the receipt can include it.
+    EventEmitted {
+        cell: CellId,
+        topic: Symbol,
+        data: Vec<FieldElement>,
+    },
+    /// An escrow was created. Recorded for the escrow registry.
+    EscrowCreated {
+        escrow_id: [u8; 32],
+        creator: CellId,
+        recipient: CellId,
+        amount: u64,
+    },
+    /// An escrow was released (condition satisfied, funds sent to recipient).
+    EscrowReleased { escrow_id: [u8; 32] },
+    /// An escrow was refunded (timeout passed, funds returned to creator).
+    EscrowRefunded { escrow_id: [u8; 32] },
 }
 
 /// The undo journal for a turn's execution.
@@ -210,6 +229,40 @@ impl LedgerJournal {
             .push(JournalEntry::ObligationSlashed { obligation_id });
     }
 
+    /// Record an event emission.
+    pub fn record_event_emitted(&mut self, cell: CellId, topic: Symbol, data: Vec<FieldElement>) {
+        self.entries
+            .push(JournalEntry::EventEmitted { cell, topic, data });
+    }
+
+    /// Record an escrow creation.
+    pub fn record_escrow_created(
+        &mut self,
+        escrow_id: [u8; 32],
+        creator: CellId,
+        recipient: CellId,
+        amount: u64,
+    ) {
+        self.entries.push(JournalEntry::EscrowCreated {
+            escrow_id,
+            creator,
+            recipient,
+            amount,
+        });
+    }
+
+    /// Record an escrow release.
+    pub fn record_escrow_released(&mut self, escrow_id: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::EscrowReleased { escrow_id });
+    }
+
+    /// Record an escrow refund.
+    pub fn record_escrow_refunded(&mut self, escrow_id: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::EscrowRefunded { escrow_id });
+    }
+
     /// Roll back all recorded changes in reverse order.
     ///
     /// After this call, the ledger is restored to the state it was in before
@@ -283,14 +336,19 @@ impl LedgerJournal {
                         c.state.delegation_epoch = old_epoch;
                     }
                 }
-                // Note/obligation entries don't modify ledger state directly.
-                // On rollback these are simply discarded — the note layer and
-                // obligation registry only process them after a successful commit.
+                // Note/obligation/escrow/event entries don't modify ledger state directly.
+                // On rollback these are simply discarded — the note layer,
+                // obligation registry, and escrow registry only process them after
+                // a successful commit.
                 JournalEntry::NoteSpend { .. }
                 | JournalEntry::NoteCreate { .. }
                 | JournalEntry::ObligationCreated { .. }
                 | JournalEntry::ObligationFulfilled { .. }
-                | JournalEntry::ObligationSlashed { .. } => {}
+                | JournalEntry::ObligationSlashed { .. }
+                | JournalEntry::EscrowCreated { .. }
+                | JournalEntry::EscrowReleased { .. }
+                | JournalEntry::EscrowRefunded { .. }
+                | JournalEntry::EventEmitted { .. } => {}
             }
         }
     }

@@ -44,6 +44,7 @@
 pub mod client;
 pub mod discharge;
 pub mod discovery;
+pub mod embed;
 pub mod error;
 pub mod mnemonic;
 pub mod privacy;
@@ -79,6 +80,9 @@ pub use pyana_circuit::PresentationVerification;
 
 // Re-export mnemonic generation at crate root for convenience.
 pub use mnemonic::generate_mnemonic;
+
+// Re-export the no-IO embed layer for service integration.
+pub use embed::{EmbedError, EngineConfig, PyanaEngine, WireCodec};
 
 // Re-export privacy API types at crate root for convenience.
 pub use privacy::{

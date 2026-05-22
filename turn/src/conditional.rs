@@ -787,6 +787,7 @@ mod tests {
             federation_id: [0u8; 32],
             routing_directives: vec![],
             derivation_records: vec![],
+            emitted_events: vec![],
             executor_signature: None,
         };
         // Sign the receipt hash with the executor key.
@@ -828,6 +829,7 @@ mod tests {
             federation_id: [0u8; 32],
             routing_directives: vec![],
             derivation_records: vec![],
+            emitted_events: vec![],
             executor_signature: None,
         };
         let proof = ConditionProof::Receipt(receipt);
@@ -865,6 +867,7 @@ mod tests {
             federation_id: [0u8; 32],
             routing_directives: vec![],
             derivation_records: vec![],
+            emitted_events: vec![],
             executor_signature: None,
         };
         let proof = ConditionProof::Receipt(receipt);

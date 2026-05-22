@@ -25,6 +25,7 @@
     <a class="nav__link" href="paper.html">Paper</a>
     <a class="nav__link" href="demo.html">Demo</a>
     <a class="nav__link" href="explorer/">Explorer</a>
+    <a class="nav__link" href="playground/">Playground</a>
     <a class="nav__link" href="https://github.com/emberian/pyana">GitHub</a>
   </div>
 </nav>
@@ -340,6 +341,27 @@ let child = wallet.attenuate(&root, &Attenuation {
 let proof = wallet.present_private(&child, "inventory", "read").unwrap();</code></pre>
         </div>
       </div>
+      <div class="quickstart__step">
+        <span class="quickstart__n">4</span>
+        <div>
+          <p>Follow the hands-on tutorial or use the TypeScript SDK:</p>
+          <pre><code>// TypeScript (npm install @pyana/sdk pyana-wasm)
+import init from "pyana-wasm";
+import { PyanaClient } from "@pyana/sdk";
+
+const wasm = await init();
+const client = await PyanaClient.init(wasm);
+const token = await client.wallet.mint("api-gateway");
+const restricted = await client.wallet.attenuate(token.token, {
+  service: "api-gateway", actions: "read", expiresSecs: 3600,
+});
+const result = await client.wallet.verify(restricted.token, { action: "read" });</code></pre>
+          <p style="margin-top: var(--s2);">
+            <a href="docs/developers/tutorial-first-app.html">Full tutorial</a> |
+            <a href="docs/developers/typescript-sdk.html">TypeScript SDK docs</a>
+          </p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -351,7 +373,7 @@ let proof = wallet.present_private(&child, "inventory", "read").unwrap();</code>
   <div class="site-foot__inner">
     <span class="site-foot__left">Pyana -- distributed object-capability runtime. AGPL-3.0-or-later.</span>
     <div class="site-foot__links">
-      <a href="docs.html">Docs</a>
+      <a href="docs/index.html">Docs</a>
       <a href="paper.html">Paper</a>
       <a href="demo.html">Demo</a>
       <a href="https://github.com/emberian/pyana">GitHub</a>

@@ -43,6 +43,7 @@ pub mod conditional;
 pub mod conflict;
 pub mod encrypted;
 pub mod error;
+pub mod escrow;
 pub mod eventual;
 pub mod executor;
 pub mod fast_path;
@@ -74,13 +75,14 @@ pub use encrypted::{
     TurnValidityPublicInputs, order_encrypted_turns,
 };
 pub use error::TurnError;
+pub use escrow::{EscrowCondition, EscrowRecord};
 pub use eventual::{
     CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
     Target, TurnBatch, TurnOutput,
 };
 pub use executor::{
-    ComputronCosts, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline,
-    execute_pipeline_result, resolve_eventual_ref,
+    ComputronCosts, ObligationRecord, ProofVerifier, ResolutionTable, TurnExecutor,
+    execute_pipeline, execute_pipeline_result, resolve_eventual_ref,
 };
 pub use fast_path::{
     CellLockEntry, CellLockTable, FastPathConfig, FastPathError, TurnCertificate, TurnSign,
@@ -97,7 +99,7 @@ pub use pending::{
     ResolutionCondition, ResolutionEvent, ResolutionOutcome,
 };
 pub use routing::RoutingDirective;
-pub use turn::{Turn, TurnReceipt, TurnResult};
+pub use turn::{EmittedEvent, Turn, TurnReceipt, TurnResult};
 pub use verify::{
     VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,
     verify_receipt_chain_with_keys, verify_receipt_extends,

@@ -26,3 +26,6 @@ mod full_pipeline;
 
 // Adversarial boundary tests: property-based + scenario-driven
 mod adversarial_boundaries;
+
+// End-to-end adversarial integration tests: full pipeline with tampering detection
+mod adversarial_pipeline;

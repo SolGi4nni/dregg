@@ -1241,8 +1241,11 @@ impl BridgePresentationBuilder {
         } else {
             derivation_state_root
         };
-        let presentation_tag =
-            poseidon2::hash_many(&[final_root, presentation_randomness, verifier_nonce]);
+        let presentation_tag = pyana_circuit::binding::compute_presentation_tag(
+            final_root,
+            presentation_randomness,
+            verifier_nonce,
+        );
 
         // Compute the fold chain commitment: Poseidon2 over all fold step roots.
         // This summarizes the entire fold chain into a single field element.
@@ -1261,10 +1264,13 @@ impl BridgePresentationBuilder {
         // If an attacker swaps ANY sub-proof (e.g., attaches a valid membership
         // STARK from one token to a forged fold chain from another), the
         // composition_commitment will not match, and STARK verification fails.
+        // Use the narrow (single-element) tag for the composition hash since
+        // the composition commitment is itself a single BabyBear element.
+        let presentation_tag_narrow = poseidon2::hash_many(&presentation_tag);
         let composition_commitment = poseidon2::hash_many(&[
             fold_chain_commitment,
             derivation_state_root,
-            presentation_tag,
+            presentation_tag_narrow,
         ]);
 
         // Assemble the presentation witness.
@@ -2119,12 +2125,11 @@ pub fn verify_presentation_full(
             real.derivation_proof.public_inputs[0]
         };
         let presentation_tag = proof.circuit_proof.public_inputs.presentation_tag;
+        // Hash the 4-element presentation tag into a single BabyBear for composition.
+        let tag_hash = poseidon2::hash_many(&presentation_tag);
 
-        let recomputed = poseidon2::hash_many(&[
-            fold_chain_commitment,
-            derivation_state_root,
-            presentation_tag,
-        ]);
+        let recomputed =
+            poseidon2::hash_many(&[fold_chain_commitment, derivation_state_root, tag_hash]);
 
         if recomputed != proof.composition_commitment {
             return false;

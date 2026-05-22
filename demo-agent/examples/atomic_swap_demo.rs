@@ -131,6 +131,7 @@ fn main() {
                 note_tree_root: [0u8; 32], // Simplified for demo
                 value: 100,
                 asset_type: asset_a,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             // Create new note for Alice (50 Asset B)
             Effect::NoteCreate {
@@ -187,6 +188,7 @@ fn main() {
                 note_tree_root: [0u8; 32],
                 value: 50,
                 asset_type: asset_b,
+                spending_proof: vec![0x01], // placeholder for demo
             },
             // Create new note for Bob (100 Asset A)
             Effect::NoteCreate {

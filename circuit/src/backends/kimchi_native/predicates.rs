@@ -1,57 +1,68 @@
 //! Kimchi native predicate circuits (arithmetic, relational, temporal, compound).
-//! Each circuit enforces REAL algebraic constraints via Kimchi generic gates.
+//! Each circuit enforces REAL algebraic constraints via Kimchi double-generic gates.
 //!
-//! Generic gate equation:
-//!   c[0]*w[0] + c[1]*w[1] + c[2]*w[2] + c[3]*(w[0]*w[1]) + c[4]*(w[0]*w[2]) + c[COLUMNS-1] = 0
+//! Kimchi double-generic gate layout (per row, 2 sub-gates):
+//!   First gate:  c[0]*w[0] + c[1]*w[1] + c[2]*w[2] + c[3]*(w[0]*w[1]) + c[4] = 0
+//!   Second gate: c[5]*w[3] + c[6]*w[4] + c[7]*w[5] + c[8]*(w[3]*w[4]) + c[9] = 0
 //!
-//! All-zero coefficients = NO constraint (trivially satisfied). This file uses
-//! non-trivial coefficients throughout.
+//! We only use the first sub-gate per row for clarity.
+//! Coefficients: c[0]=left, c[1]=right, c[2]=output, c[3]=mul, c[4]=constant.
+//! All-zero coefficients = NO constraint (trivially satisfied).
+use super::{
+    BaseSponge, GTE_DIFF_BITS, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge,
+    VestaOpeningProof, fp_to_bytes32, hash_fact_fp,
+};
 use ark_ff::{Field, One, PrimeField, Zero};
 use groupmap::GroupMap;
-use kimchi::{circuits::{gate::{CircuitGate, GateType}, polynomials::poseidon::generate_witness, wires::{COLUMNS, Wire}}, curve::KimchiCurve, proof::ProverProof};
+use kimchi::{
+    circuits::{
+        gate::{CircuitGate, GateType},
+        polynomials::poseidon::generate_witness,
+        wires::{COLUMNS, Wire},
+    },
+    curve::KimchiCurve,
+    proof::ProverProof,
+};
 use mina_curves::pasta::{Fp, Vesta};
 use mina_poseidon::pasta::FULL_ROUNDS;
 use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
-use super::{BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, VestaOpeningProof, fp_to_bytes32, hash_fact_fp, GTE_DIFF_BITS};
 
 // ---------------------------------------------------------------------------
 // Helper: build a generic gate with given coefficients (remaining = 0)
+// Kimchi coefficient layout for double-generic gate (first sub-gate):
+//   c[0]=left_coeff, c[1]=right_coeff, c[2]=output_coeff, c[3]=mul_coeff, c[4]=const
 // ---------------------------------------------------------------------------
 fn generic_gate(row: usize, coeffs: &[(usize, Fp)]) -> CircuitGate<Fp> {
     let mut c = vec![Fp::zero(); COLUMNS];
-    for &(idx, val) in coeffs { c[idx] = val; }
+    for &(idx, val) in coeffs {
+        c[idx] = val;
+    }
     CircuitGate::new(GateType::Generic, Wire::for_row(row), c)
 }
 
 /// Bit-check gate: enforces w[0]*(w[0]-1) = 0, i.e. w[0] is binary.
-/// Using w[0]=w[1]=bit: c[3]*w[0]*w[1] + c[0]*w[0] = bit^2 - bit = 0
+/// With w[0]=w[1]=bit: c[3]*(w[0]*w[1]) + c[0]*w[0] = bit^2 - bit = 0
 fn bit_check_gate(row: usize) -> CircuitGate<Fp> {
+    // c[3]=1 (mul), c[0]=-1 (left) → 1*(bit*bit) + (-1)*bit = bit^2 - bit = 0
     generic_gate(row, &[(3, Fp::one()), (0, -Fp::one())])
 }
 
-/// Reconstruction gate: enforces that the weighted sum of bits in a row equals a target.
-/// We use: c[0]*w[0] + c[1]*w[1] + c[2]*w[2] + c[3]*w[0]*w[1] + c[4]*w[0]*w[2] + c[COLUMNS-1] = 0
-/// For bit reconstruction across columns, we encode a linear combination constraint.
-/// We'll constrain partial sums with accumulator rows.
-///
-/// Actually for Kimchi we only get 3 linear + 2 multiplicative per gate.
-/// So we use an accumulator pattern:
-///   Row: w[0]=acc_in, w[1]=bit, w[2]=acc_out
-///   Constraint: acc_out = acc_in + bit * 2^i
-///   i.e. c[0]*acc_in + c[2]*acc_out + c[1]*bit + c[COLUMNS-1] = 0
-///        → acc_in - acc_out + bit*2^i = 0
+/// Accumulator gate for bit reconstruction:
+///   w[0]=acc_in, w[1]=bit, w[2]=acc_out
+///   Constraint: acc_in + bit*2^i - acc_out = 0
+///   → c[0]*w[0] + c[1]*w[1] + c[2]*w[2] = 0
 fn accumulator_bit_gate(row: usize, power: u64) -> CircuitGate<Fp> {
-    // c[0]*w[0] + c[1]*w[1] + c[2]*w[2] = 0
-    // w[0]=acc_in, w[1]=bit, w[2]=acc_out
-    // acc_in + bit*2^i - acc_out = 0
-    generic_gate(row, &[(0, Fp::one()), (1, Fp::from(power)), (2, -Fp::one())])
+    generic_gate(
+        row,
+        &[(0, Fp::one()), (1, Fp::from(power)), (2, -Fp::one())],
+    )
 }
 
-/// NEQ gate: enforces diff * inv = 1
-/// w[0]=diff, w[1]=inv → c[3]*w[0]*w[1] + c[COLUMNS-1] = 0 → diff*inv - 1 = 0
+/// NEQ gate: enforces diff * inv = 1 (proves diff != 0)
+/// w[0]=diff, w[1]=inv → c[3]*(w[0]*w[1]) + c[4] = diff*inv - 1 = 0
 fn neq_gate(row: usize) -> CircuitGate<Fp> {
-    generic_gate(row, &[(3, Fp::one()), (COLUMNS - 1, -Fp::one())])
+    generic_gate(row, &[(3, Fp::one()), (4, -Fp::one())])
 }
 
 /// Equality gate: w[0] - w[1] = 0
@@ -74,15 +85,23 @@ fn mul_gate(row: usize) -> CircuitGate<Fp> {
     generic_gate(row, &[(3, Fp::one()), (2, -Fp::one())])
 }
 
-/// Diff gate: enforces w[2] = w[0] - w[1] (same as sub but different witness layout)
-/// c[0]*w[0] + c[1]*w[1] + c[2]*w[2] = 0  →  w[0] - w[1] - w[2] = 0
+/// Diff gate: w[0] - w[1] - w[2] = 0 (same as sub_gate)
 fn diff_gate(row: usize) -> CircuitGate<Fp> {
     generic_gate(row, &[(0, Fp::one()), (1, -Fp::one()), (2, -Fp::one())])
 }
 
-/// Diff-minus-one gate: w[0] - w[1] - 1 - w[2] = 0
+/// Diff-minus-one gate: w[0] - w[1] - w[2] - 1 = 0
+/// c[0]*w[0] + c[1]*w[1] + c[2]*w[2] + c[4] = 0
 fn diff_minus_one_gate(row: usize) -> CircuitGate<Fp> {
-    generic_gate(row, &[(0, Fp::one()), (1, -Fp::one()), (2, -Fp::one()), (COLUMNS - 1, -Fp::one())])
+    generic_gate(
+        row,
+        &[
+            (0, Fp::one()),
+            (1, -Fp::one()),
+            (2, -Fp::one()),
+            (4, -Fp::one()),
+        ],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -90,15 +109,58 @@ fn diff_minus_one_gate(row: usize) -> CircuitGate<Fp> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum KimchiCompareOp { Gte, Lte, Gt, Lt, Eq, Neq }
+pub enum KimchiCompareOp {
+    Gte,
+    Lte,
+    Gt,
+    Lt,
+    Eq,
+    Neq,
+}
 impl KimchiCompareOp {
-    pub fn to_fp(self) -> Fp { match self { Self::Gte => Fp::from(0u64), Self::Lte => Fp::from(1u64), Self::Gt => Fp::from(2u64), Self::Lt => Fp::from(3u64), Self::Eq => Fp::from(4u64), Self::Neq => Fp::from(5u64) } }
-    pub fn from_fp(fp: &Fp) -> Option<Self> { use ark_ff::BigInteger; let v = fp.into_bigint().as_ref()[0]; match v { 0=>Some(Self::Gte),1=>Some(Self::Lte),2=>Some(Self::Gt),3=>Some(Self::Lt),4=>Some(Self::Eq),5=>Some(Self::Neq),_=>None } }
+    pub fn to_fp(self) -> Fp {
+        match self {
+            Self::Gte => Fp::from(0u64),
+            Self::Lte => Fp::from(1u64),
+            Self::Gt => Fp::from(2u64),
+            Self::Lt => Fp::from(3u64),
+            Self::Eq => Fp::from(4u64),
+            Self::Neq => Fp::from(5u64),
+        }
+    }
+    pub fn from_fp(fp: &Fp) -> Option<Self> {
+        use ark_ff::BigInteger;
+        let v = fp.into_bigint().as_ref()[0];
+        match v {
+            0 => Some(Self::Gte),
+            1 => Some(Self::Lte),
+            2 => Some(Self::Gt),
+            3 => Some(Self::Lt),
+            4 => Some(Self::Eq),
+            5 => Some(Self::Neq),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Clone, Debug)] pub enum KimchiArithOp { Input(usize), Const(Fp), Add(usize, usize), Sub(usize, usize), Mul(usize, usize) }
+#[derive(Clone, Debug)]
+pub enum KimchiArithOp {
+    Input(usize),
+    Const(Fp),
+    Add(usize, usize),
+    Sub(usize, usize),
+    Mul(usize, usize),
+}
 
-#[derive(Clone, Debug)] pub struct KimchiArithmeticPredicateWitness { pub inputs: Vec<Fp>, pub ops: Vec<KimchiArithOp>, pub result_slot: usize, pub comparison_value: Fp, pub comparison_op: KimchiCompareOp, pub result_commitment: Fp }
+#[derive(Clone, Debug)]
+pub struct KimchiArithmeticPredicateWitness {
+    pub inputs: Vec<Fp>,
+    pub ops: Vec<KimchiArithOp>,
+    pub result_slot: usize,
+    pub comparison_value: Fp,
+    pub comparison_op: KimchiCompareOp,
+    pub result_commitment: Fp,
+}
 impl KimchiArithmeticPredicateWitness {
     pub fn evaluate_slots(&self) -> Vec<Fp> {
         let mut slots = Vec::with_capacity(self.ops.len());
@@ -114,7 +176,9 @@ impl KimchiArithmeticPredicateWitness {
         }
         slots
     }
-    pub fn expression_result(&self) -> Fp { self.evaluate_slots()[self.result_slot] }
+    pub fn expression_result(&self) -> Fp {
+        self.evaluate_slots()[self.result_slot]
+    }
     pub fn compute_diff(&self) -> Fp {
         let r = self.expression_result();
         match self.comparison_op {
@@ -141,9 +205,13 @@ impl KimchiArithmeticPredicateWitness {
     }
 }
 
-pub struct KimchiArithmeticPredicateCircuit { pub witness: KimchiArithmeticPredicateWitness }
+pub struct KimchiArithmeticPredicateCircuit {
+    pub witness: KimchiArithmeticPredicateWitness,
+}
 impl KimchiArithmeticPredicateCircuit {
-    pub fn new(witness: KimchiArithmeticPredicateWitness) -> Self { Self { witness } }
+    pub fn new(witness: KimchiArithmeticPredicateWitness) -> Self {
+        Self { witness }
+    }
 
     pub fn build_circuit(&self) -> (Vec<CircuitGate<Fp>>, usize) {
         let mut gates = Vec::new();
@@ -231,9 +299,12 @@ impl KimchiArithmeticPredicateCircuit {
         let mut row = 0;
 
         // Public inputs
-        wit[0][row] = self.witness.result_commitment; row += 1;
-        wit[0][row] = self.witness.comparison_value; row += 1;
-        wit[0][row] = self.witness.comparison_op.to_fp(); row += 1;
+        wit[0][row] = self.witness.result_commitment;
+        row += 1;
+        wit[0][row] = self.witness.comparison_value;
+        row += 1;
+        wit[0][row] = self.witness.comparison_op.to_fp();
+        row += 1;
 
         // Expression evaluation witness
         let slots = self.witness.evaluate_slots();
@@ -305,7 +376,7 @@ impl KimchiArithmeticPredicateCircuit {
                         wit[1][row] = result;
                         wit[2][row] = diff;
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
                 row += 1;
 
@@ -347,19 +418,31 @@ impl KimchiArithmeticPredicateCircuit {
     }
 
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
-        if !self.witness.is_satisfiable() { return Err("Arithmetic predicate is not satisfiable".into()); }
+        if !self.witness.is_satisfiable() {
+            return Err("Arithmetic predicate is not satisfiable".into());
+        }
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(&gm, wit, &[], &index, &mut OsRng)
-            .map_err(|e| format!("Kimchi arithmetic predicate prover error: {:?}", e))?;
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi arithmetic predicate prover error: {:?}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
         let mut pib = Vec::with_capacity(96);
         pib.extend_from_slice(&fp_to_bytes32(&self.witness.result_commitment));
         pib.extend_from_slice(&fp_to_bytes32(&self.witness.comparison_value));
         pib.extend_from_slice(&fp_to_bytes32(&self.witness.comparison_op.to_fp()));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::ArithmeticPredicate })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::ArithmeticPredicate,
+        })
     }
 }
 
@@ -368,16 +451,55 @@ impl KimchiArithmeticPredicateCircuit {
 // ===========================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum KimchiRelationType { GreaterThan, LessThan, GreaterOrEqual, LessOrEqual, Equal, NotEqual }
+pub enum KimchiRelationType {
+    GreaterThan,
+    LessThan,
+    GreaterOrEqual,
+    LessOrEqual,
+    Equal,
+    NotEqual,
+}
 impl KimchiRelationType {
-    pub fn to_fp(self) -> Fp { match self { Self::GreaterThan=>Fp::from(0u64), Self::LessThan=>Fp::from(1u64), Self::GreaterOrEqual=>Fp::from(2u64), Self::LessOrEqual=>Fp::from(3u64), Self::Equal=>Fp::from(4u64), Self::NotEqual=>Fp::from(5u64) } }
-    pub fn from_fp(fp: &Fp) -> Option<Self> { use ark_ff::BigInteger; let v = fp.into_bigint().as_ref()[0]; match v { 0=>Some(Self::GreaterThan),1=>Some(Self::LessThan),2=>Some(Self::GreaterOrEqual),3=>Some(Self::LessOrEqual),4=>Some(Self::Equal),5=>Some(Self::NotEqual),_=>None } }
+    pub fn to_fp(self) -> Fp {
+        match self {
+            Self::GreaterThan => Fp::from(0u64),
+            Self::LessThan => Fp::from(1u64),
+            Self::GreaterOrEqual => Fp::from(2u64),
+            Self::LessOrEqual => Fp::from(3u64),
+            Self::Equal => Fp::from(4u64),
+            Self::NotEqual => Fp::from(5u64),
+        }
+    }
+    pub fn from_fp(fp: &Fp) -> Option<Self> {
+        use ark_ff::BigInteger;
+        let v = fp.into_bigint().as_ref()[0];
+        match v {
+            0 => Some(Self::GreaterThan),
+            1 => Some(Self::LessThan),
+            2 => Some(Self::GreaterOrEqual),
+            3 => Some(Self::LessOrEqual),
+            4 => Some(Self::Equal),
+            5 => Some(Self::NotEqual),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Clone, Debug)] pub struct KimchiRelationalPredicateWitness { pub value_a: Fp, pub blinding_a: Fp, pub value_b: Fp, pub blinding_b: Fp, pub relation: KimchiRelationType }
+#[derive(Clone, Debug)]
+pub struct KimchiRelationalPredicateWitness {
+    pub value_a: Fp,
+    pub blinding_a: Fp,
+    pub value_b: Fp,
+    pub blinding_b: Fp,
+    pub relation: KimchiRelationType,
+}
 impl KimchiRelationalPredicateWitness {
-    pub fn commitment_a(&self) -> Fp { hash_fact_fp(self.value_a, &[self.blinding_a]) }
-    pub fn commitment_b(&self) -> Fp { hash_fact_fp(self.value_b, &[self.blinding_b]) }
+    pub fn commitment_a(&self) -> Fp {
+        hash_fact_fp(self.value_a, &[self.blinding_a])
+    }
+    pub fn commitment_b(&self) -> Fp {
+        hash_fact_fp(self.value_b, &[self.blinding_b])
+    }
     pub fn compute_diff(&self) -> Fp {
         match self.relation {
             KimchiRelationType::GreaterThan => self.value_a - self.value_b - Fp::one(),
@@ -402,9 +524,13 @@ impl KimchiRelationalPredicateWitness {
     }
 }
 
-pub struct KimchiRelationalPredicateCircuit { pub witness: KimchiRelationalPredicateWitness }
+pub struct KimchiRelationalPredicateCircuit {
+    pub witness: KimchiRelationalPredicateWitness,
+}
 impl KimchiRelationalPredicateCircuit {
-    pub fn new(witness: KimchiRelationalPredicateWitness) -> Self { Self { witness } }
+    pub fn new(witness: KimchiRelationalPredicateWitness) -> Self {
+        Self { witness }
+    }
 
     pub fn build_circuit(&self) -> (Vec<CircuitGate<Fp>>, usize) {
         let mut gates = Vec::new();
@@ -423,7 +549,11 @@ impl KimchiRelationalPredicateCircuit {
         let pr = FULL_ROUNDS / 5;
         for _ in 0..2 {
             let s = gates.len();
-            let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(s, [Wire::for_row(s), Wire::for_row(s + pr)], rc);
+            let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+                s,
+                [Wire::for_row(s), Wire::for_row(s + pr)],
+                rc,
+            );
             gates.extend(pg);
         }
 
@@ -487,17 +617,30 @@ impl KimchiRelationalPredicateCircuit {
         let w = &self.witness;
 
         // Public inputs
-        wit[0][row] = w.commitment_a(); row += 1;
-        wit[0][row] = w.commitment_b(); row += 1;
-        wit[0][row] = w.relation.to_fp(); row += 1;
+        wit[0][row] = w.commitment_a();
+        row += 1;
+        wit[0][row] = w.commitment_b();
+        row += 1;
+        wit[0][row] = w.relation.to_fp();
+        row += 1;
 
         // Poseidon witnesses for commitment_a
         let pgr = FULL_ROUNDS / 5 + 1;
-        generate_witness(row, Vesta::sponge_params(), &mut wit, [w.value_a, w.blinding_a, Fp::zero()]);
+        generate_witness(
+            row,
+            Vesta::sponge_params(),
+            &mut wit,
+            [w.value_a, w.blinding_a, Fp::zero()],
+        );
         row += pgr;
 
         // Poseidon witnesses for commitment_b
-        generate_witness(row, Vesta::sponge_params(), &mut wit, [w.value_b, w.blinding_b, Fp::zero()]);
+        generate_witness(
+            row,
+            Vesta::sponge_params(),
+            &mut wit,
+            [w.value_b, w.blinding_b, Fp::zero()],
+        );
         row += pgr;
 
         // Commitment verification: poseidon_output_a == commitment_a
@@ -541,7 +684,7 @@ impl KimchiRelationalPredicateCircuit {
                         wit[1][row] = w.value_a;
                         wit[2][row] = diff;
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
                 row += 1;
 
@@ -576,20 +719,32 @@ impl KimchiRelationalPredicateCircuit {
     }
 
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
-        if !self.witness.is_satisfiable() { return Err("Relational predicate is not satisfiable".into()); }
+        if !self.witness.is_satisfiable() {
+            return Err("Relational predicate is not satisfiable".into());
+        }
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
         let w = &self.witness;
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(&gm, wit, &[], &index, &mut OsRng)
-            .map_err(|e| format!("Kimchi relational predicate prover error: {:?}", e))?;
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi relational predicate prover error: {:?}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
         let mut pib = Vec::with_capacity(96);
         pib.extend_from_slice(&fp_to_bytes32(&w.commitment_a()));
         pib.extend_from_slice(&fp_to_bytes32(&w.commitment_b()));
         pib.extend_from_slice(&fp_to_bytes32(&w.relation.to_fp()));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::RelationalPredicate })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::RelationalPredicate,
+        })
     }
 }
 
@@ -597,21 +752,38 @@ impl KimchiRelationalPredicateCircuit {
 // Temporal Predicate
 // ===========================================================================
 
-#[derive(Clone, Debug)] pub struct KimchiTemporalPredicateWitness { pub values: Vec<Fp>, pub state_roots: Vec<Fp>, pub attribute_hash: Fp, pub threshold: Fp, pub initial_block_height: u64 }
+#[derive(Clone, Debug)]
+pub struct KimchiTemporalPredicateWitness {
+    pub values: Vec<Fp>,
+    pub state_roots: Vec<Fp>,
+    pub attribute_hash: Fp,
+    pub threshold: Fp,
+    pub initial_block_height: u64,
+}
 impl KimchiTemporalPredicateWitness {
     pub fn is_satisfiable(&self) -> bool {
-        if self.values.len() != self.state_roots.len() || self.values.is_empty() { return false; }
+        if self.values.len() != self.state_roots.len() || self.values.is_empty() {
+            return false;
+        }
         use ark_ff::BigInteger;
         let t = self.threshold.into_bigint().as_ref()[0];
         self.values.iter().all(|v| v.into_bigint().as_ref()[0] >= t)
     }
-    pub fn num_blocks(&self) -> usize { self.values.len() }
-    pub fn block_membership_hash(&self, i: usize) -> Fp { hash_fact_fp(self.attribute_hash, &[self.values[i], self.state_roots[i]]) }
+    pub fn num_blocks(&self) -> usize {
+        self.values.len()
+    }
+    pub fn block_membership_hash(&self, i: usize) -> Fp {
+        hash_fact_fp(self.attribute_hash, &[self.values[i], self.state_roots[i]])
+    }
 }
 
-pub struct KimchiTemporalPredicateCircuit { pub witness: KimchiTemporalPredicateWitness }
+pub struct KimchiTemporalPredicateCircuit {
+    pub witness: KimchiTemporalPredicateWitness,
+}
 impl KimchiTemporalPredicateCircuit {
-    pub fn new(witness: KimchiTemporalPredicateWitness) -> Self { Self { witness } }
+    pub fn new(witness: KimchiTemporalPredicateWitness) -> Self {
+        Self { witness }
+    }
 
     pub fn build_circuit(&self) -> (Vec<CircuitGate<Fp>>, usize) {
         let mut gates = Vec::new();
@@ -675,10 +847,14 @@ impl KimchiTemporalPredicateCircuit {
         let n = w.num_blocks();
 
         // Public inputs
-        wit[0][row] = w.attribute_hash; row += 1;
-        wit[0][row] = Fp::from(n as u64); row += 1;
-        wit[0][row] = *w.state_roots.last().unwrap_or(&Fp::zero()); row += 1;
-        wit[0][row] = Fp::from(w.initial_block_height); row += 1;
+        wit[0][row] = w.attribute_hash;
+        row += 1;
+        wit[0][row] = Fp::from(n as u64);
+        row += 1;
+        wit[0][row] = *w.state_roots.last().unwrap_or(&Fp::zero());
+        row += 1;
+        wit[0][row] = Fp::from(w.initial_block_height);
+        row += 1;
 
         // Per-block witness
         for block in 0..n {
@@ -731,12 +907,12 @@ impl KimchiTemporalPredicateCircuit {
             wit[1][row] = w.state_roots[i];
             row += 1;
 
-            // Height increment: h[i+1] - h[i] - 1 = 0
+            // Height increment: h[i+1] - h[i] - diff - 1 = 0, with diff=0
             let h_i = Fp::from(w.initial_block_height + i as u64);
             let h_next = Fp::from(w.initial_block_height + i as u64 + 1);
             wit[0][row] = h_next;
             wit[1][row] = h_i;
-            wit[2][row] = Fp::one(); // diff = 1 (h_next - h_i - 1 = 0)
+            wit[2][row] = Fp::zero(); // diff = h_next - h_i - 1 = 0
             row += 1;
         }
 
@@ -748,15 +924,23 @@ impl KimchiTemporalPredicateCircuit {
     }
 
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
-        if !self.witness.is_satisfiable() { return Err("Temporal predicate is not satisfiable: attribute did not meet threshold at all blocks".into()); }
+        if !self.witness.is_satisfiable() {
+            return Err("Temporal predicate is not satisfiable: attribute did not meet threshold at all blocks".into());
+        }
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
         let w = &self.witness;
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(&gm, wit, &[], &index, &mut OsRng)
-            .map_err(|e| format!("Kimchi temporal predicate prover error: {:?}", e))?;
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi temporal predicate prover error: {:?}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
         let n = w.num_blocks();
         let fr = *w.state_roots.last().unwrap_or(&Fp::zero());
         let mut pib = Vec::with_capacity(128);
@@ -764,7 +948,11 @@ impl KimchiTemporalPredicateCircuit {
         pib.extend_from_slice(&fp_to_bytes32(&Fp::from(n as u64)));
         pib.extend_from_slice(&fp_to_bytes32(&fr));
         pib.extend_from_slice(&fp_to_bytes32(&Fp::from(w.initial_block_height)));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::TemporalPredicate })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::TemporalPredicate,
+        })
     }
 }
 
@@ -772,21 +960,45 @@ impl KimchiTemporalPredicateCircuit {
 // Compound Predicate
 // ===========================================================================
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)] pub enum KimchiBooleanFormula { And, Or, Threshold(usize) }
-#[derive(Clone, Debug)] pub struct KimchiSubPredicateResult { pub proof_hash: Fp, pub result: bool }
-#[derive(Clone, Debug)] pub struct KimchiCompoundPredicateWitness { pub sub_results: Vec<KimchiSubPredicateResult>, pub formula: KimchiBooleanFormula, pub result_commitment: Fp }
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KimchiBooleanFormula {
+    And,
+    Or,
+    Threshold(usize),
+}
+#[derive(Clone, Debug)]
+pub struct KimchiSubPredicateResult {
+    pub proof_hash: Fp,
+    pub result: bool,
+}
+#[derive(Clone, Debug)]
+pub struct KimchiCompoundPredicateWitness {
+    pub sub_results: Vec<KimchiSubPredicateResult>,
+    pub formula: KimchiBooleanFormula,
+    pub result_commitment: Fp,
+}
 impl KimchiCompoundPredicateWitness {
     pub fn is_satisfiable(&self) -> bool {
-        if self.sub_results.is_empty() { return false; }
+        if self.sub_results.is_empty() {
+            return false;
+        }
         match &self.formula {
             KimchiBooleanFormula::And => self.sub_results.iter().all(|r| r.result),
             KimchiBooleanFormula::Or => self.sub_results.iter().any(|r| r.result),
-            KimchiBooleanFormula::Threshold(k) => self.sub_results.iter().filter(|r| r.result).count() >= *k,
+            KimchiBooleanFormula::Threshold(k) => {
+                self.sub_results.iter().filter(|r| r.result).count() >= *k
+            }
         }
     }
-    pub fn num_predicates(&self) -> usize { self.sub_results.len() }
+    pub fn num_predicates(&self) -> usize {
+        self.sub_results.len()
+    }
     pub fn formula_hash(&self) -> Fp {
-        let ft = match &self.formula { KimchiBooleanFormula::And => Fp::from(0u64), KimchiBooleanFormula::Or => Fp::from(1u64), KimchiBooleanFormula::Threshold(k) => Fp::from(2u64 + *k as u64) };
+        let ft = match &self.formula {
+            KimchiBooleanFormula::And => Fp::from(0u64),
+            KimchiBooleanFormula::Or => Fp::from(1u64),
+            KimchiBooleanFormula::Threshold(k) => Fp::from(2u64 + *k as u64),
+        };
         hash_fact_fp(ft, &[Fp::from(self.sub_results.len() as u64)])
     }
     pub fn threshold_k(&self) -> u64 {
@@ -798,9 +1010,13 @@ impl KimchiCompoundPredicateWitness {
     }
 }
 
-pub struct KimchiCompoundPredicateCircuit { pub witness: KimchiCompoundPredicateWitness }
+pub struct KimchiCompoundPredicateCircuit {
+    pub witness: KimchiCompoundPredicateWitness,
+}
 impl KimchiCompoundPredicateCircuit {
-    pub fn new(witness: KimchiCompoundPredicateWitness) -> Self { Self { witness } }
+    pub fn new(witness: KimchiCompoundPredicateWitness) -> Self {
+        Self { witness }
+    }
 
     pub fn build_circuit(&self) -> (Vec<CircuitGate<Fp>>, usize) {
         let mut gates = Vec::new();
@@ -861,10 +1077,14 @@ impl KimchiCompoundPredicateCircuit {
         let w = &self.witness;
 
         // Public inputs
-        wit[0][row] = w.formula_hash(); row += 1;
-        wit[0][row] = Fp::from(w.num_predicates() as u64); row += 1;
-        wit[0][row] = w.result_commitment; row += 1;
-        wit[0][row] = Fp::from(w.threshold_k()); row += 1;
+        wit[0][row] = w.formula_hash();
+        row += 1;
+        wit[0][row] = Fp::from(w.num_predicates() as u64);
+        row += 1;
+        wit[0][row] = w.result_commitment;
+        row += 1;
+        wit[0][row] = Fp::from(w.threshold_k());
+        row += 1;
 
         // Per sub-predicate: binary result + proof_hash in witness
         for sub in &w.sub_results {
@@ -928,20 +1148,32 @@ impl KimchiCompoundPredicateCircuit {
     }
 
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
-        if !self.witness.is_satisfiable() { return Err("Compound predicate is not satisfiable".into()); }
+        if !self.witness.is_satisfiable() {
+            return Err("Compound predicate is not satisfiable".into());
+        }
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
         let w = &self.witness;
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(&gm, wit, &[], &index, &mut OsRng)
-            .map_err(|e| format!("Kimchi compound predicate prover error: {:?}", e))?;
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi compound predicate prover error: {:?}", e))?;
+        let pb =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
         let mut pib = Vec::with_capacity(128);
         pib.extend_from_slice(&fp_to_bytes32(&w.formula_hash()));
         pib.extend_from_slice(&fp_to_bytes32(&Fp::from(w.num_predicates() as u64)));
         pib.extend_from_slice(&fp_to_bytes32(&w.result_commitment));
         pib.extend_from_slice(&fp_to_bytes32(&Fp::from(w.threshold_k())));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::CompoundPredicate })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::CompoundPredicate,
+        })
     }
 }

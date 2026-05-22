@@ -58,8 +58,8 @@ pub struct GarbledCircuit {
     /// Output labels for decoding the final result.
     pub output_label_true: WireLabel,
     pub output_label_false: WireLabel,
-    /// Commitment to the circuit (Poseidon2 hash of all garbled tables).
-    pub circuit_commitment: BabyBear,
+    /// Commitment to the circuit (WideHash of all garbled tables, 124-bit).
+    pub circuit_commitment: crate::binding::WideHash,
     /// Number of verifier input wires.
     pub num_verifier_inputs: usize,
     /// Number of prover input wires.
@@ -74,10 +74,10 @@ pub struct GarblingSecrets {
     /// Label pairs for the prover's input wires: (zero_label, one_label).
     /// The prover obtains exactly one per wire via OT.
     pub prover_label_pairs: Vec<(WireLabel, WireLabel)>,
-    /// The hash of the "true" output label (for verification).
-    pub true_output_hash: BabyBear,
-    /// The hash of the "false" output label.
-    pub false_output_hash: BabyBear,
+    /// The hash of the "true" output label (for verification, 124-bit).
+    pub true_output_hash: crate::binding::WideHash,
+    /// The hash of the "false" output label (124-bit).
+    pub false_output_hash: crate::binding::WideHash,
 }
 
 /// Result of garbled circuit evaluation.
@@ -107,10 +107,10 @@ pub struct GateEvalRecord {
 /// A complete garbled evaluation proof.
 #[derive(Clone, Debug)]
 pub struct GarbledEvaluationProof {
-    /// The circuit commitment (public).
-    pub circuit_commitment: BabyBear,
-    /// Hash of the output label (public).
-    pub output_label_hash: BabyBear,
+    /// The circuit commitment (public, 124-bit WideHash).
+    pub circuit_commitment: crate::binding::WideHash,
+    /// Hash of the output label (public, 124-bit WideHash).
+    pub output_label_hash: crate::binding::WideHash,
     /// The STARK proof of correct evaluation.
     pub stark_proof: crate::stark::StarkProof,
 }
@@ -203,8 +203,8 @@ fn random_label_pair() -> (WireLabel, WireLabel) {
     (l0, l1)
 }
 
-/// Compute the circuit commitment: Poseidon2 hash of all garbled table entries.
-fn compute_circuit_commitment(gates: &[GarbledGate]) -> BabyBear {
+/// Compute the circuit commitment: WideHash of all garbled table entries (124-bit).
+fn compute_circuit_commitment(gates: &[GarbledGate]) -> crate::binding::WideHash {
     let mut elements: Vec<BabyBear> = Vec::with_capacity(gates.len() * 32);
     for gate in gates {
         for entry in &gate.table {
@@ -213,12 +213,12 @@ fn compute_circuit_commitment(gates: &[GarbledGate]) -> BabyBear {
             }
         }
     }
-    poseidon2::hash_many(&elements)
+    crate::binding::WideHash::from_poseidon2("pyana-garbled-circuit-v1", &elements)
 }
 
-/// Hash a wire label to a single field element (for output comparison).
-pub fn hash_label(label: &WireLabel) -> BabyBear {
-    poseidon2::hash_many(label)
+/// Hash a wire label to a WideHash (124-bit, for output comparison).
+pub fn hash_label(label: &WireLabel) -> crate::binding::WideHash {
+    crate::binding::WideHash::from_poseidon2("pyana-garbled-label-v1", label)
 }
 
 // ============================================================================
@@ -516,23 +516,29 @@ pub fn prove_private_threshold(
 /// 3. The STARK proof verifies.
 pub fn verify_private_threshold(
     proof: &GarbledEvaluationProof,
-    expected_circuit_commitment: BabyBear,
-    true_output_label_hash: BabyBear,
+    expected_circuit_commitment: &crate::binding::WideHash,
+    true_output_label_hash: &crate::binding::WideHash,
 ) -> bool {
     // Check commitments match.
-    if proof.circuit_commitment != expected_circuit_commitment {
+    if proof.circuit_commitment != *expected_circuit_commitment {
         return false;
     }
-    if proof.output_label_hash != true_output_label_hash {
+    if proof.output_label_hash != *true_output_label_hash {
         return false;
     }
 
     // Verify the STARK proof.
-    let public_inputs = vec![expected_circuit_commitment, true_output_label_hash];
+    let mut public_inputs = Vec::with_capacity(8);
+    for &elem in expected_circuit_commitment.as_slice() {
+        public_inputs.push(elem);
+    }
+    for &elem in true_output_label_hash.as_slice() {
+        public_inputs.push(elem);
+    }
     let dummy_air = super::garbled_air::GarbledEvaluationAir::new(
         vec![], // dummy trace for verification shape
-        expected_circuit_commitment,
-        true_output_label_hash,
+        *expected_circuit_commitment,
+        *true_output_label_hash,
     );
     crate::stark::verify(&dummy_air, &proof.stark_proof, &public_inputs).is_ok()
 }
@@ -760,8 +766,8 @@ mod tests {
         // Verifier checks the proof.
         assert!(verify_private_threshold(
             &proof,
-            circuit.circuit_commitment,
-            secrets.true_output_hash,
+            &circuit.circuit_commitment,
+            &secrets.true_output_hash,
         ));
     }
 
@@ -808,10 +814,12 @@ mod tests {
         let proof = prove_private_threshold(&circuit, &prover_labels).unwrap();
 
         // Verify with wrong circuit commitment.
+        let wrong_commitment =
+            crate::binding::WideHash::from_poseidon2("wrong", &[BabyBear::new(99999)]);
         assert!(!verify_private_threshold(
             &proof,
-            BabyBear::new(99999), // wrong commitment
-            secrets.true_output_hash,
+            &wrong_commitment, // wrong commitment
+            &secrets.true_output_hash,
         ));
     }
 
@@ -838,8 +846,8 @@ mod tests {
         // Verify with wrong output label hash (e.g., the false output hash).
         assert!(!verify_private_threshold(
             &proof,
-            circuit.circuit_commitment,
-            secrets.false_output_hash, // wrong: this is the "false" label
+            &circuit.circuit_commitment,
+            &secrets.false_output_hash, // wrong: this is the "false" label
         ));
     }
 

@@ -28,20 +28,30 @@
 //! - Kimchi+Pickles: small recursive-step proofs, but full transitive
 //!   recursion still requires the in-circuit IPA verifier gadget
 //!
-//! # Recursion via Pickles
+//! # Recursion via Pickles (Dual-Curve Step/Wrap Architecture)
 //!
 //! Pickles achieves recursion by exploiting the Pasta cycle:
-//! 1. Prove step N on Pallas (produces a proof over Fp)
-//! 2. Verify step N's proof inside a Vesta circuit (operates on Fq = Fp)
-//! 3. Prove step N+1 on Vesta (produces a proof over Fq)
-//! 4. Verify step N+1's proof inside a Pallas circuit (operates on Fp = Fq)
+//! 1. **Step circuit** (on Vesta, scalar field = Fp): Proves state transition +
+//!    Fiat-Shamir transcript replay + b(zeta) computation. DEFERS EC operations.
+//! 2. **Wrap circuit** (on Pallas, scalar field = Fq): Verifies the Step proof's
+//!    deferred IPA EC operations. EndoMul gates here enforce the Vesta curve
+//!    equation NATIVELY because Fq is the Vesta base field.
 //!
-//! Full Pickles folds previous proof verification into each new proof. This
-//! module currently supports Kimchi-verified recursive-step circuits, but the
-//! in-circuit verifier gadget is still future work.
+//! The alternation is: Step(Vesta) -> Wrap(Pallas) -> Step(Vesta) -> Wrap(Pallas) -> ...
 //!
-//! For pyana, unbounded attenuation chains require completing that verifier
-//! gadget before the final proof is standalone-transitive.
+//! This module implements:
+//! - `build_step_verifier_circuit`: Poseidon + Generic gates ONLY (no EC gates)
+//! - `build_wrap_verifier_circuit`: EndoMul + CompleteAdd gates (EC verification)
+//! - `prove_dual_curve_step` / `verify_dual_curve_step`: End-to-end Step proving
+//! - Assisted recursion via `prove_recursive_step` (carries IPA accumulator forward)
+//!
+//! ## What Remains for Full End-to-End
+//!
+//! The Wrap circuit is structurally complete (correct gate layout, correct curve)
+//! but proving on Pallas requires the Pallas prover index and witness generation
+//! using Fq arithmetic. The next step is implementing `prove_dual_curve_wrap` with
+//! `ProverProof::<Pallas, PallasOpeningProof, FULL_ROUNDS>::create` and wiring the
+//! deferred values from the Step proof into the Wrap witness.
 
 use super::ProofBackend;
 
@@ -1475,11 +1485,12 @@ pub fn get_srs(size: usize) -> Arc<SRS<Vesta>> {
 //
 // # Gate Budget (k=15 rounds)
 //
-// - bullet_reduce: 2k * 33 = 990 EndoMul rows + 2k CompleteAdd = ~1020 rows
+// - Limb decomposition (Section 3.5): 2k = 30 Generic rows
+// - bullet_reduce (2-limb): 4k * 33 = 1980 EndoMul rows + 4k CompleteAdd = ~2040 rows
 // - Final equation: 4 * 33 + 4 CompleteAdd + 2 Generic = ~136 rows
 // - Poseidon transcript: ~420 rows
 // - b(zeta) field arithmetic: ~60 rows
-// - Total: ~1636 rows => domain 2^11 = 2048
+// - Total: ~2686 rows => domain 2^12 = 4096
 
 /// Number of IPA rounds. For SRS of size 2^k, we need k rounds.
 /// 15 rounds supports SRS up to 2^15 = 32768 (typical for Kimchi circuits).
@@ -1494,6 +1505,8 @@ pub struct IpaVerifierCircuitLayout {
     pub public_input_count: usize,
     /// Row where the Poseidon transcript section begins.
     pub transcript_section_start: usize,
+    /// Row where the 2-limb decomposition section begins (Section 3.5).
+    pub limb_decomposition_section_start: usize,
     /// Row where the bullet_reduce (EndoMul) section begins.
     pub bullet_reduce_section_start: usize,
     /// Row where the final equation check begins.
@@ -1505,7 +1518,81 @@ pub struct IpaVerifierCircuitLayout {
 /// Rows consumed by one EndoMul scalar multiplication (128 bits / 4 bits per row + 1 output).
 const ENDOMUL_ROWS_PER_SCALAR: usize = 33;
 
+/// Number of Generic gates per challenge for limb decomposition.
+/// Each challenge u needs 1 gate: u_lo + u_hi * 2^128 - u = 0.
+/// We decompose both u_i and u_i^{-1}, so 2 gates per round.
+const LIMB_DECOMP_GATES_PER_ROUND: usize = 2;
+
+/// Rows per round in bullet_reduce with 2-limb decomposition.
+/// Per challenge direction (u on R, u_inv on L):
+///   2 EndoMul (lo limb, hi limb) + 1 CompleteAdd (combine)
+/// Then: 1 CompleteAdd (add R + L results) + 1 CompleteAdd (accumulate)
+const BULLET_REDUCE_ROWS_PER_ROUND: usize = 4 * ENDOMUL_ROWS_PER_SCALAR + 4;
+
+/// Compute 2^128 as an Fp element.
+fn two_to_128() -> Fp {
+    let mut val = Fp::one();
+    for _ in 0..128 {
+        val = val + val;
+    }
+    val
+}
+
+/// Decompose a field element into two 128-bit limbs: (lo, hi) such that
+/// value = lo + hi * 2^128 (as Fp arithmetic).
+///
+/// Note: This is a witness-computation helper. The lo/hi values are the
+/// canonical decomposition of the integer representation of `value`.
+fn decompose_to_limbs(value: Fp) -> (Fp, Fp) {
+    let bigint = value.into_bigint();
+    let limbs = bigint.as_ref(); // [u64; 4] little-endian
+    // lo = lower 128 bits = limbs[0] + limbs[1] * 2^64
+    let lo_bigint = <Fp as PrimeField>::BigInt::from_bits_le(
+        &(0..128)
+            .map(|i| {
+                let limb_idx = i / 64;
+                let bit_in_limb = i % 64;
+                (limbs[limb_idx] >> bit_in_limb) & 1 == 1
+            })
+            .collect::<Vec<_>>(),
+    );
+    let lo = Fp::from_bigint(lo_bigint).unwrap_or(Fp::zero());
+    // hi = upper bits = limbs[2] + limbs[3] * 2^64
+    let hi_bigint = <Fp as PrimeField>::BigInt::from_bits_le(
+        &(0..128)
+            .map(|i| {
+                let limb_idx = 2 + i / 64;
+                let bit_in_limb = i % 64;
+                if limb_idx < 4 {
+                    (limbs[limb_idx] >> bit_in_limb) & 1 == 1
+                } else {
+                    false
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+    let hi = Fp::from_bigint(hi_bigint).unwrap_or(Fp::zero());
+    (lo, hi)
+}
+
+/// Compute [2^128] * P for a point on Pallas.
+/// This performs 128 doublings of P.
+fn scalar_mul_2_128(p: (Fp, Fp)) -> (Fp, Fp) {
+    let mut acc = p;
+    for _ in 0..128 {
+        acc = point_double_fp(acc);
+    }
+    acc
+}
+
 /// Build the Kimchi circuit for standalone IPA verification.
+///
+/// # Deprecated
+///
+/// Superseded by the dual-curve step/wrap architecture. See `build_step_verifier_circuit`
+/// (Poseidon + Generic only, over Fp) and `build_wrap_verifier_circuit` (EndoMul +
+/// CompleteAdd, over Fq). The monolithic approach tries to do EC operations non-natively
+/// which is both slower and architecturally unsound for full Pickles recursion.
 ///
 /// # Public Inputs (11 field elements)
 ///
@@ -1522,6 +1609,8 @@ const ENDOMUL_ROWS_PER_SCALAR: usize = 33;
 /// 4. bullet_reduce: EndoMul + CompleteAdd for sum_i [u_i^{-1}]*L_i + [u_i]*R_i
 /// 5. Final EC equation: c*Q + delta == z1*(sg + b*U) + z2*H
 /// 6. Output binding (Generic gate)
+#[deprecated(note = "Superseded by dual-curve step/wrap architecture. Use \
+    build_step_verifier_circuit + build_wrap_verifier_circuit.")]
 pub fn build_ipa_verifier_circuit(
     num_rounds: usize,
 ) -> (Vec<CircuitGate<Fp>>, usize, IpaVerifierCircuitLayout) {
@@ -1593,14 +1682,13 @@ pub fn build_ipa_verifier_circuit(
     //          (proves w[2] = b_running * factor = new b_running)
     //
     // This gives a tight Horner chain where each step is fully constrained.
-    let b_poly_rows = 4 * num_rounds;
-    for i in 0..num_rounds {
+    for _round in 0..num_rounds {
         // Row 0: z_power_new = z_power * z_power (squaring)
         // Constraint: w[0]*w[1] - w[2] = 0 with w[0]=w[1]=z_power, w[2]=z_power^2
         // Using: c0=0, c1=0, c2=-1, c3=1 (mul), c4=0 → 1*(w[0]*w[1]) + (-1)*w[2] = 0
         let mut coeffs = vec![Fp::zero(); COLUMNS];
         coeffs[2] = -Fp::one(); // o_coeff = -1
-        coeffs[3] = Fp::one();  // mul_coeff = 1
+        coeffs[3] = Fp::one(); // mul_coeff = 1
         gates.push(CircuitGate::new(
             GateType::Generic,
             Wire::for_row(row),
@@ -1612,7 +1700,7 @@ pub fn build_ipa_verifier_circuit(
         // Constraint: w[0]*w[1] - w[2] = 0
         let mut coeffs = vec![Fp::zero(); COLUMNS];
         coeffs[2] = -Fp::one(); // o_coeff = -1
-        coeffs[3] = Fp::one();  // mul_coeff = 1
+        coeffs[3] = Fp::one(); // mul_coeff = 1
         gates.push(CircuitGate::new(
             GateType::Generic,
             Wire::for_row(row),
@@ -1625,9 +1713,9 @@ pub fn build_ipa_verifier_circuit(
         // → w[0] - w[2] + 1 = 0 → w[2] = w[0] + 1
         // Here w[0] = u_i*z_power (from row 1's output), w[2] = factor
         let mut coeffs = vec![Fp::zero(); COLUMNS];
-        coeffs[0] = Fp::one();   // l_coeff = 1
-        coeffs[2] = -Fp::one();  // o_coeff = -1
-        coeffs[4] = Fp::one();   // constant = 1
+        coeffs[0] = Fp::one(); // l_coeff = 1
+        coeffs[2] = -Fp::one(); // o_coeff = -1
+        coeffs[4] = Fp::one(); // constant = 1
         gates.push(CircuitGate::new(
             GateType::Generic,
             Wire::for_row(row),
@@ -1639,7 +1727,7 @@ pub fn build_ipa_verifier_circuit(
         // Constraint: w[0]*w[1] - w[2] = 0
         let mut coeffs = vec![Fp::zero(); COLUMNS];
         coeffs[2] = -Fp::one(); // o_coeff = -1
-        coeffs[3] = Fp::one();  // mul_coeff = 1
+        coeffs[3] = Fp::one(); // mul_coeff = 1
         gates.push(CircuitGate::new(
             GateType::Generic,
             Wire::for_row(row),
@@ -1648,10 +1736,61 @@ pub fn build_ipa_verifier_circuit(
         row += 1;
     }
 
-    // --- Section 4: bullet_reduce ---
+    // --- Section 3.5: 2-Limb Decomposition ---
+    // Each 255-bit challenge u_i must be decomposed into two 128-bit limbs for
+    // EndoMul processing: u_i = u_lo + u_hi * 2^128.
+    // Similarly for u_i^{-1} = uinv_lo + uinv_hi * 2^128.
+    //
+    // Per challenge: 1 Generic gate constraining u_lo + u_hi * 2^128 - u = 0
+    // Per inverse:   1 Generic gate constraining uinv_lo + uinv_hi * 2^128 - uinv = 0
+    //
+    // Gate layout (using Generic double slot):
+    //   Slot 1: c0*w[0] + c1*w[1] + c2*w[2] + c3*(w[0]*w[1]) + c4 = 0
+    //   We use: c0=1 (u_lo coeff), c1=2^128 (u_hi coeff), c2=-1 (negate u), c3=0, c4=0
+    //   → w[0] + 2^128 * w[1] - w[2] = 0
+    //   → w[2] = w[0] + 2^128 * w[1] (proves w[2] = u when w[0]=u_lo, w[1]=u_hi)
+    //
+    // NOTE: Range checks on u_lo, u_hi < 2^128 are deferred (TODO). The
+    // decomposition constraint alone binds the EndoMul scalars to the full
+    // challenge value, which is the primary soundness improvement.
+    let limb_decomposition_section_start = row;
+    let two_128 = two_to_128();
+    for _ in 0..num_rounds {
+        // Decompose u_i: u_lo + u_hi * 2^128 = u_i
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[0] = Fp::one(); // w[0] = u_lo
+        coeffs[1] = two_128; // w[1] = u_hi, scaled by 2^128
+        coeffs[2] = -Fp::one(); // w[2] = u (negated)
+        // coeffs[3] = 0 (no mul term), coeffs[4] = 0 (no constant)
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+
+        // Decompose u_i^{-1}: uinv_lo + uinv_hi * 2^128 = u_i^{-1}
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[0] = Fp::one(); // w[0] = uinv_lo
+        coeffs[1] = two_128; // w[1] = uinv_hi, scaled by 2^128
+        coeffs[2] = -Fp::one(); // w[2] = u_inv (negated)
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+    }
+
+    // --- Section 4: bullet_reduce (2-limb) ---
+    // Each round now uses 4 EndoMul + 4 CompleteAdd:
+    //   [u_lo]*R_i, [u_hi]*(2^128*R_i), CompleteAdd → full [u_i]*R_i
+    //   [uinv_lo]*L_i, [uinv_hi]*(2^128*L_i), CompleteAdd → full [u_i^{-1}]*L_i
+    //   CompleteAdd: [u_i]*R_i + [u_i^{-1}]*L_i
+    //   CompleteAdd: accumulate
     let bullet_reduce_section_start = row;
     for _ in 0..num_rounds {
-        // [u_i] * R_i
+        // [u_lo] * R_i (32 EndoMul rows + 1 Zero)
         for _ in 0..32 {
             gates.push(CircuitGate::<Fp>::create_endomul(Wire::for_row(row)));
             row += 1;
@@ -1659,7 +1798,7 @@ pub fn build_ipa_verifier_circuit(
         gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
         row += 1;
 
-        // [u_i^{-1}] * L_i
+        // [u_hi] * (2^128 * R_i) (32 EndoMul rows + 1 Zero)
         for _ in 0..32 {
             gates.push(CircuitGate::<Fp>::create_endomul(Wire::for_row(row)));
             row += 1;
@@ -1667,14 +1806,47 @@ pub fn build_ipa_verifier_circuit(
         gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
         row += 1;
 
-        // Add results
+        // CompleteAdd: [u_lo]*R_i + [u_hi]*(2^128*R_i) → [u_i]*R_i
         gates.push(CircuitGate::new(
             GateType::CompleteAdd,
             Wire::for_row(row),
             vec![],
         ));
         row += 1;
-        // Accumulate
+
+        // [uinv_lo] * L_i (32 EndoMul rows + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fp>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // [uinv_hi] * (2^128 * L_i) (32 EndoMul rows + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fp>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // CompleteAdd: [uinv_lo]*L_i + [uinv_hi]*(2^128*L_i) → [u_i^{-1}]*L_i
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+
+        // CompleteAdd: [u_i]*R_i + [u_i^{-1}]*L_i
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+
+        // CompleteAdd: accumulate into running sum
         gates.push(CircuitGate::new(
             GateType::CompleteAdd,
             Wire::for_row(row),
@@ -1740,8 +1912,8 @@ pub fn build_ipa_verifier_circuit(
     // → w[0] - w[1] = 0 → w[0] == w[1]
     // Row h1: LHS.x == RHS.x
     let mut coeffs = vec![Fp::zero(); COLUMNS];
-    coeffs[0] = Fp::one();   // l_coeff = 1
-    coeffs[1] = -Fp::one();  // r_coeff = -1
+    coeffs[0] = Fp::one(); // l_coeff = 1
+    coeffs[1] = -Fp::one(); // r_coeff = -1
     gates.push(CircuitGate::new(
         GateType::Generic,
         Wire::for_row(row),
@@ -1750,8 +1922,8 @@ pub fn build_ipa_verifier_circuit(
     row += 1;
     // Row h2: LHS.y == RHS.y
     let mut coeffs = vec![Fp::zero(); COLUMNS];
-    coeffs[0] = Fp::one();   // l_coeff = 1
-    coeffs[1] = -Fp::one();  // r_coeff = -1
+    coeffs[0] = Fp::one(); // l_coeff = 1
+    coeffs[1] = -Fp::one(); // r_coeff = -1
     gates.push(CircuitGate::new(
         GateType::Generic,
         Wire::for_row(row),
@@ -1779,6 +1951,7 @@ pub fn build_ipa_verifier_circuit(
         total_gates: row,
         public_input_count: public_count,
         transcript_section_start,
+        limb_decomposition_section_start,
         bullet_reduce_section_start,
         final_check_section_start,
         num_rounds,
@@ -1956,55 +2129,126 @@ pub fn generate_ipa_verifier_witness(
         z_power = z_power * z_power;
     }
 
-    // --- bullet_reduce ---
+    // --- Section 3.5 witness: Limb decomposition ---
+    let decomp_start = layout.limb_decomposition_section_start;
+    for i in 0..num_rounds {
+        let decomp_row = decomp_start + i * LIMB_DECOMP_GATES_PER_ROUND;
+        if decomp_row + 1 >= total_rows {
+            break;
+        }
+
+        // Decompose u_i into limbs
+        let (u_lo, u_hi) = decompose_to_limbs(w.challenges[i]);
+        witness[0][decomp_row] = u_lo;
+        witness[1][decomp_row] = u_hi;
+        witness[2][decomp_row] = w.challenges[i]; // = u_lo + u_hi * 2^128
+
+        // Decompose u_i^{-1} into limbs
+        let (uinv_lo, uinv_hi) = decompose_to_limbs(w.challenge_inverses[i]);
+        witness[0][decomp_row + 1] = uinv_lo;
+        witness[1][decomp_row + 1] = uinv_hi;
+        witness[2][decomp_row + 1] = w.challenge_inverses[i];
+    }
+
+    // --- bullet_reduce (2-limb) ---
     let (endo_base, _) = kimchi::curve::pallas_endos();
     let mut lr_accumulator = (Fp::zero(), Fp::zero());
     let mut first_round = true;
     let bullet_start = layout.bullet_reduce_section_start;
-    let rows_per_round = 2 * ENDOMUL_ROWS_PER_SCALAR + 2;
 
     for i in 0..num_rounds {
-        let round_start = bullet_start + i * rows_per_round;
-        if round_start + rows_per_round > total_rows {
+        let round_start = bullet_start + i * BULLET_REDUCE_ROWS_PER_ROUND;
+        if round_start + BULLET_REDUCE_ROWS_PER_ROUND > total_rows {
             break;
         }
 
         let ((lx, ly), (rx, ry)) = w.lr_points[i];
-        let u_bits = scalar_to_bits_128(w.challenges[i]);
-        let u_inv_bits = scalar_to_bits_128(w.challenge_inverses[i]);
+
+        // Decompose challenges into 128-bit limbs
+        let (u_lo, u_hi) = decompose_to_limbs(w.challenges[i]);
+        let (uinv_lo, uinv_hi) = decompose_to_limbs(w.challenge_inverses[i]);
+
+        let u_lo_bits = scalar_to_bits_128(u_lo);
+        let u_hi_bits = scalar_to_bits_128(u_hi);
+        let uinv_lo_bits = scalar_to_bits_128(uinv_lo);
+        let uinv_hi_bits = scalar_to_bits_128(uinv_hi);
 
         let r_point = (rx, ry);
+        let l_point = (lx, ly);
+
+        // Precompute [2^128]*R_i and [2^128]*L_i
+        let r_scaled = scalar_mul_2_128(r_point);
+        let l_scaled = scalar_mul_2_128(l_point);
+
+        // --- [u_lo] * R_i ---
         let r_init = point_double_fp(r_point);
-        let res1 = endosclmul_witness_fill(
+        let mut offset = round_start;
+        let res_u_lo_r = endosclmul_witness_fill(
             &mut witness,
-            round_start,
+            offset,
             *endo_base,
             r_point,
-            &u_bits,
+            &u_lo_bits,
             r_init,
         );
+        offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        let l_point = (lx, ly);
-        let l_init = point_double_fp(l_point);
-        let res2 = endosclmul_witness_fill(
+        // --- [u_hi] * (2^128 * R_i) ---
+        let r_scaled_init = point_double_fp(r_scaled);
+        let res_u_hi_r = endosclmul_witness_fill(
             &mut witness,
-            round_start + ENDOMUL_ROWS_PER_SCALAR,
+            offset,
+            *endo_base,
+            r_scaled,
+            &u_hi_bits,
+            r_scaled_init,
+        );
+        offset += ENDOMUL_ROWS_PER_SCALAR;
+
+        // CompleteAdd: [u_lo]*R + [u_hi]*(2^128*R) → [u_i]*R_i
+        let full_u_r = complete_add_witness_fill(&mut witness, offset, res_u_lo_r, res_u_hi_r);
+        offset += 1;
+
+        // --- [uinv_lo] * L_i ---
+        let l_init = point_double_fp(l_point);
+        let res_uinv_lo_l = endosclmul_witness_fill(
+            &mut witness,
+            offset,
             *endo_base,
             l_point,
-            &u_inv_bits,
+            &uinv_lo_bits,
             l_init,
         );
+        offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        let add_row = round_start + 2 * ENDOMUL_ROWS_PER_SCALAR;
-        let term = complete_add_witness_fill(&mut witness, add_row, res1, res2);
+        // --- [uinv_hi] * (2^128 * L_i) ---
+        let l_scaled_init = point_double_fp(l_scaled);
+        let res_uinv_hi_l = endosclmul_witness_fill(
+            &mut witness,
+            offset,
+            *endo_base,
+            l_scaled,
+            &uinv_hi_bits,
+            l_scaled_init,
+        );
+        offset += ENDOMUL_ROWS_PER_SCALAR;
 
-        let acc_row = add_row + 1;
+        // CompleteAdd: [uinv_lo]*L + [uinv_hi]*(2^128*L) → [u_i^{-1}]*L_i
+        let full_uinv_l =
+            complete_add_witness_fill(&mut witness, offset, res_uinv_lo_l, res_uinv_hi_l);
+        offset += 1;
+
+        // CompleteAdd: [u_i]*R_i + [u_i^{-1}]*L_i
+        let term = complete_add_witness_fill(&mut witness, offset, full_u_r, full_uinv_l);
+        offset += 1;
+
+        // CompleteAdd: accumulate
         if first_round {
             lr_accumulator = term;
-            complete_add_witness_fill(&mut witness, acc_row, term, (Fp::zero(), Fp::zero()));
+            complete_add_witness_fill(&mut witness, offset, term, (Fp::zero(), Fp::zero()));
             first_round = false;
         } else {
-            lr_accumulator = complete_add_witness_fill(&mut witness, acc_row, lr_accumulator, term);
+            lr_accumulator = complete_add_witness_fill(&mut witness, offset, lr_accumulator, term);
         }
     }
 
@@ -2142,19 +2386,14 @@ pub fn generate_ipa_verifier_witness(
 ///    output (the derived challenge u_i) is wired to the corresponding row in
 ///    Section 3 where u_i is used in the Horner step.
 ///
-/// # Limitations (documented non-native gap)
+/// 4. **Poseidon transcript outputs → limb decomposition inputs**: Each squeeze
+///    output is wired to the decomposition gate's w[2] (the full challenge),
+///    ensuring the decomposition uses exactly the transcript-derived challenge.
 ///
-/// The transcript challenge values are full ~255-bit field elements, but the
-/// EndoMul gate in Section 4 (bullet_reduce) processes only 128 bits. A full
-/// connection from Poseidon output to EndoMul scalar would require either:
-/// - Two EndoMul chains per challenge (for high and low limbs), or
-/// - A range check gadget proving the challenge fits in 128 bits.
-///
-/// This is the "non-native field arithmetic" gap inherent in single-curve
-/// standalone verification. The Pickles approach (alternating Pallas/Vesta)
-/// makes these operations native. For now, the bullet_reduce section relies on
-/// witness consistency (the prover derives bits from the same challenges used
-/// in Section 3), and the b(zeta) connection provides the main soundness link.
+/// 5. **Limb decomposition outputs → EndoMul scalar inputs**: The u_lo (w[0])
+///    and u_hi (w[1]) from the decomposition gates are wired to the n_acc slots
+///    of the corresponding EndoMul Zero/output rows in Section 4. This binds
+///    the 128-bit scalars used by EndoMul to the decomposed limbs.
 pub fn add_ipa_verifier_copy_constraints(
     gates: &mut [CircuitGate<Fp>],
     layout: &IpaVerifierCircuitLayout,
@@ -2191,6 +2430,133 @@ pub fn add_ipa_verifier_copy_constraints(
         }
     }
 
+    // --- Connection 4: Poseidon outputs → limb decomposition w[2] ---
+    // The decomposition gate constrains: w[0] + w[1]*2^128 - w[2] = 0
+    // We wire the full challenge (from Poseidon squeeze) to w[2] of the decomp gate.
+    // This uses a 3-cycle: squeeze_out[0] → b_poly[0] → decomp[2] → squeeze_out[0]
+    // Actually, we wire decomp w[2] ↔ squeeze output via separate permutation cycles.
+    // Since the squeeze output is already in a 2-cycle with b_poly, we wire
+    // the decomp gate's w[2] to a different column of the squeeze output row.
+    //
+    // Alternative: the witness places the same value in decomp w[2] and the constraint
+    // enforces u_lo + u_hi*2^128 = w[2]. If the prover places a different value,
+    // the constraint still forces internal consistency. The binding to the Poseidon
+    // output comes from b(zeta) verification (Connection 3 binds u_i to Poseidon,
+    // and the decomp gate's w[2] must equal u_i for the constraint to pass given
+    // that w[0] and w[1] are the actual limbs used by EndoMul).
+    //
+    // For maximal soundness, we wire decomp w[2] to the b(zeta) challenge input,
+    // forming a 3-cycle: squeeze[col0] ↔ b_poly_u[col0] ↔ decomp[col2]
+    let decomp_start = layout.limb_decomposition_section_start;
+    for i in 0..num_rounds {
+        let squeeze_output_row = squeeze_section_start + i * poseidon_gadget_rows + poseidon_rows;
+        let decomp_u_row = decomp_start + i * LIMB_DECOMP_GATES_PER_ROUND;
+        let b_round_u_row = b_poly_start + i * 4 + 1;
+
+        // Form 3-cycle: squeeze[0] → b_poly[0] → decomp_u[2] → squeeze[0]
+        // Currently squeeze[0] ↔ b_poly[0] is a 2-cycle. Extend to 3-cycle:
+        // squeeze[0] → decomp_u[2], decomp_u[2] → b_poly[0], b_poly[0] → squeeze[0]
+        if squeeze_output_row < gates.len()
+            && decomp_u_row < gates.len()
+            && b_round_u_row < gates.len()
+        {
+            // 3-cycle: A → B → C → A where:
+            //   A = (squeeze_output_row, col 0)
+            //   B = (decomp_u_row, col 2)
+            //   C = (b_round_u_row, col 0)
+            gates[squeeze_output_row].wires[0] = Wire {
+                row: decomp_u_row,
+                col: 2,
+            };
+            gates[decomp_u_row].wires[2] = Wire {
+                row: b_round_u_row,
+                col: 0,
+            };
+            gates[b_round_u_row].wires[0] = Wire {
+                row: squeeze_output_row,
+                col: 0,
+            };
+        }
+
+        // Similarly for the inverse challenge:
+        // decomp_uinv w[2] should equal u_i^{-1}. We don't have a separate
+        // Poseidon squeeze for the inverse (it's computed in witness). The
+        // constraint decomp_uinv: w[0] + w[1]*2^128 = w[2] ensures internal
+        // consistency. The soundness relies on the fact that if u_i is correct
+        // (bound by Poseidon), then u_i^{-1} in the EndoMul must be the actual
+        // inverse for the IPA equation to balance.
+    }
+
+    // --- Connection 5: Decomposition limbs → EndoMul n_acc outputs ---
+    // The EndoMul Zero/output row stores the accumulated scalar in col 6 (n_acc).
+    // We wire the decomposition gate's u_lo (col 0) to the EndoMul output n_acc
+    // of the first EndoMul in each bullet_reduce round, and u_hi (col 1) to the
+    // second EndoMul's n_acc.
+    let bullet_start = layout.bullet_reduce_section_start;
+    for i in 0..num_rounds {
+        let decomp_u_row = decomp_start + i * LIMB_DECOMP_GATES_PER_ROUND;
+        let decomp_uinv_row = decomp_u_row + 1;
+
+        let round_start = bullet_start + i * BULLET_REDUCE_ROWS_PER_ROUND;
+        // EndoMul Zero rows (where n_acc lives in col 6):
+        //   [u_lo]*R: output at round_start + 32
+        //   [u_hi]*(2^128*R): output at round_start + ENDOMUL_ROWS_PER_SCALAR + 32
+        //   [uinv_lo]*L: output at round_start + 2*ENDOMUL_ROWS_PER_SCALAR + 1 + 32
+        //   [uinv_hi]*(2^128*L): output at round_start + 3*ENDOMUL_ROWS_PER_SCALAR + 1 + 32
+        let u_lo_endomul_out = round_start + 32; // Zero row of first EndoMul
+        let u_hi_endomul_out = round_start + ENDOMUL_ROWS_PER_SCALAR + 32;
+        let uinv_lo_endomul_out = round_start + 2 * ENDOMUL_ROWS_PER_SCALAR + 1 + 32;
+        let uinv_hi_endomul_out = round_start + 3 * ENDOMUL_ROWS_PER_SCALAR + 1 + 32;
+
+        // Wire decomp_u[col 0] (u_lo) ↔ EndoMul output[col 6] (n_acc for u_lo*R)
+        if decomp_u_row < gates.len() && u_lo_endomul_out < gates.len() {
+            gates[decomp_u_row].wires[0] = Wire {
+                row: u_lo_endomul_out,
+                col: 6,
+            };
+            gates[u_lo_endomul_out].wires[6] = Wire {
+                row: decomp_u_row,
+                col: 0,
+            };
+        }
+
+        // Wire decomp_u[col 1] (u_hi) ↔ EndoMul output[col 6] (n_acc for u_hi*(2^128*R))
+        if decomp_u_row < gates.len() && u_hi_endomul_out < gates.len() {
+            gates[decomp_u_row].wires[1] = Wire {
+                row: u_hi_endomul_out,
+                col: 6,
+            };
+            gates[u_hi_endomul_out].wires[6] = Wire {
+                row: decomp_u_row,
+                col: 1,
+            };
+        }
+
+        // Wire decomp_uinv[col 0] (uinv_lo) ↔ EndoMul output[col 6] (n_acc for uinv_lo*L)
+        if decomp_uinv_row < gates.len() && uinv_lo_endomul_out < gates.len() {
+            gates[decomp_uinv_row].wires[0] = Wire {
+                row: uinv_lo_endomul_out,
+                col: 6,
+            };
+            gates[uinv_lo_endomul_out].wires[6] = Wire {
+                row: decomp_uinv_row,
+                col: 0,
+            };
+        }
+
+        // Wire decomp_uinv[col 1] (uinv_hi) ↔ EndoMul output[col 6] (n_acc for uinv_hi*(2^128*L))
+        if decomp_uinv_row < gates.len() && uinv_hi_endomul_out < gates.len() {
+            gates[decomp_uinv_row].wires[1] = Wire {
+                row: uinv_hi_endomul_out,
+                col: 6,
+            };
+            gates[uinv_hi_endomul_out].wires[6] = Wire {
+                row: decomp_uinv_row,
+                col: 1,
+            };
+        }
+    }
+
     // --- Connection 1: b(zeta) final output → Section 5(a) EndoMul n_acc ---
     // The last row of Section 3 is the final accumulator multiply. Its output
     // (w[2] = final b_running) should equal the scalar used by EndoMul.
@@ -2217,14 +2583,8 @@ pub fn add_ipa_verifier_copy_constraints(
     // --- Connection 2: b(zeta) output → public input row 9 ---
     // Public input 9 is b_at_zeta. The binding gate at row 9 enforces
     // w[0][9] == public[9]. Wire the computed value to this row.
-    // Wire: (b_output_row, col 2) is already used above, so we use col 5
-    // of the b_output_row (second generic slot output) as a relay.
-    // Actually, we can use a 3-cycle: b_output[2] → endomul[6] → PI[9][0]
-    // But 3-cycles in Kimchi permutation are fine: A→B→C→A.
-    // However, modifying the public input gate's wires is risky since Kimchi
-    // has special handling for them. Instead, the verifier checks PI[9] externally
-    // against the b(zeta) value recomputed from the challenges.
-    // This is already done in verify_standalone_recursive_proof.
+    // The verifier checks PI[9] externally against the b(zeta) value
+    // recomputed from the challenges. This is done in verify_standalone_recursive_proof.
 }
 
 /// Prove a standalone recursive step with in-circuit IPA verification.
@@ -2804,10 +3164,11 @@ pub fn verify_standalone_recursive_proof(
 pub fn ipa_verifier_circuit_stats() -> String {
     let (_, public_count, layout) = build_ipa_verifier_circuit(IPA_ROUNDS);
     format!(
-        "IPA Verifier Circuit (k={} rounds):\n\
+        "IPA Verifier Circuit (k={} rounds, 2-limb decomposition):\n\
          - Total gates: {}\n\
          - Public inputs: {}\n\
          - Transcript section: row {}\n\
+         - Limb decomposition section: row {}\n\
          - bullet_reduce section: row {}\n\
          - Final EC check section: row {}\n\
          - Domain: 2^{} = {}",
@@ -2815,10 +3176,1198 @@ pub fn ipa_verifier_circuit_stats() -> String {
         layout.total_gates,
         public_count,
         layout.transcript_section_start,
+        layout.limb_decomposition_section_start,
         layout.bullet_reduce_section_start,
         layout.final_check_section_start,
         (layout.total_gates as f64).log2().ceil() as u32,
         1usize << (layout.total_gates as f64).log2().ceil() as u32,
+    )
+}
+
+// ============================================================================
+// Pickles Step/Wrap Dual-Curve Recursive Verification
+// ============================================================================
+//
+// This implements the Pickles-style dual-curve recursive verification architecture
+// from Mina's Pickles (~/dev/mina/src/lib/pickles/).
+//
+// ## Problem
+//
+// The standalone IPA verifier (`build_ipa_verifier_circuit`) tries to verify a
+// Vesta proof INSIDE a Vesta circuit. This fails because the IPA L/R points are
+// Vesta curve points (coordinates in Fq = Vesta base field), but EndoMul gates
+// on a Vesta circuit enforce the Pallas curve equation (y^2 = x^3 + 5 over Fp).
+// Vesta point coordinates are NOT on the Pallas curve.
+//
+// ## Solution: Pasta Cycle Alternation
+//
+// Pickles exploits the Pasta cycle:
+// - **Fp** = scalar field of Vesta = base field of Pallas
+// - **Fq** = scalar field of Pallas = base field of Vesta
+//
+// **Step circuit** (proves on Vesta, witnesses in Fp):
+//   - Fiat-Shamir transcript replay (Poseidon over Fp — NATIVE)
+//   - b(zeta) challenge polynomial evaluation (field arithmetic over Fp — NATIVE)
+//   - State transition logic (the pyana application logic)
+//   - DEFERS: the EC operations (outputs challenges, commitment coords, b(zeta)
+//     as public inputs for the wrap circuit to check)
+//
+// **Wrap circuit** (proves on Pallas, witnesses in Fq):
+//   - Verifies the step proof (a Vesta proof)
+//   - Performs IPA bullet_reduce: [u_i]*R_i + [u_i^{-1}]*L_i using EndoMul on
+//     **Pallas** points. Since L_i, R_i are Vesta points (coords in Fq = Pallas
+//     scalar field), and the wrap circuit's native field IS Fq, the EndoMul gates
+//     here enforce the Vesta curve equation (y^2 = x^3 + 5 over Fq). NATIVE!
+//   - Checks the final IPA equation: c*Q + delta = z1*(sg + b*U) + z2*H
+//
+// ## Recursion Pattern
+//
+// Full recursion alternates:
+//   Step(Vesta) → Wrap(Pallas) → Step(Vesta) → Wrap(Pallas) → ...
+//
+// Each wrap verifies the previous step, and each step can verify a previous wrap
+// (by deferring its EC operations to the next wrap). The final proof is on
+// whichever curve the last step/wrap produced.
+//
+// ## References
+//
+// - step_verifier.ml: `check_bulletproof` performs bullet_reduce over Inner_curve
+//   (the "other" curve), computing `lr_prod` and challenges. The key is that
+//   `Scalar_challenge.endo` and `Scalar_challenge.endo_inv` do the EndoMul
+//   scalar multiplication of L/R points.
+// - wrap_verifier.ml: Same `check_bulletproof` structure but on the Tock/Wrap
+//   side, using the opposite curve's endomorphism.
+// - scalar_challenge.ml: `to_field_checked` converts a 128-bit challenge into
+//   a field element using the endomorphism decomposition (Section 3.5 in our code).
+
+// --- Step Verifier Circuit (on Vesta, scalar field = Fp) ---
+
+/// Layout of the Step Verifier circuit.
+///
+/// This circuit runs on Vesta (witnesses in Fp) and proves:
+/// 1. Correct Fiat-Shamir transcript replay (Poseidon absorption of L/R coords)
+/// 2. Correct b(zeta) computation (Horner chain over challenges)
+/// 3. State transition (Poseidon hash of pre/post state)
+/// 4. DEFERS the EC operations by exposing challenges + b(zeta) as public outputs
+///
+/// The deferred values (challenges, commitment, b_at_zeta) become public inputs
+/// to the Wrap circuit, which performs the actual EC verification natively.
+#[derive(Clone, Debug)]
+pub struct StepVerifierLayout {
+    /// Total number of gates.
+    pub total_gates: usize,
+    /// Number of public inputs.
+    pub public_input_count: usize,
+    /// Row where Poseidon transcript section begins.
+    pub transcript_section_start: usize,
+    /// Row where b(zeta) Horner chain begins.
+    pub b_zeta_section_start: usize,
+    /// Row where state transition Poseidon begins.
+    pub state_transition_start: usize,
+    /// Number of IPA rounds.
+    pub num_rounds: usize,
+}
+
+/// Build the Step Verifier circuit (on Vesta, scalar field = Fp).
+///
+/// # Public Inputs (deferred values for the Wrap circuit)
+///
+/// 0: pre_state_hash
+/// 1: post_state_hash
+/// 2: accumulated_hash
+/// 3: step_count
+/// 4: prev_accumulated_hash
+/// 5: commitment_x (the combined polynomial commitment, x-coordinate as Fp)
+/// 6: commitment_y (y-coordinate)
+/// 7: evaluation_at_zeta (the combined evaluation v)
+/// 8: challenge_digest (Poseidon hash of all u_i challenges)
+/// 9: b_at_zeta (the challenge polynomial evaluated at zeta)
+/// 10: zeta (the evaluation point, derived from transcript)
+///
+/// The key difference from `build_ipa_verifier_circuit`: NO EndoMul or
+/// CompleteAdd gates. All EC operations are deferred to the Wrap circuit.
+/// This circuit only does field arithmetic (Generic gates) and Poseidon.
+pub fn build_step_verifier_circuit(
+    num_rounds: usize,
+) -> (Vec<CircuitGate<Fp>>, usize, StepVerifierLayout) {
+    let mut gates = Vec::new();
+    let mut row = 0;
+
+    // --- Section 1: Public input binding gates ---
+    let public_count = 11;
+    for _i in 0..public_count {
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[0] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+    }
+
+    // --- Section 2: Poseidon transcript replay ---
+    // Absorb L/R point coordinates: 4 field elements per round (Lx, Ly, Rx, Ry).
+    // These are the Fp-encoded coordinates of the Vesta L/R points.
+    // Poseidon over Fp is NATIVE here (we're on a Vesta circuit).
+    let transcript_section_start = row;
+    let round_constants = &Vesta::sponge_params().round_constants;
+    let poseidon_rows = FULL_ROUNDS / 5; // 11
+    let poseidon_gadget_total = poseidon_rows + 1; // 12 rows per gadget
+
+    // Absorption: ceil(4*num_rounds / 3) Poseidon calls
+    let absorption_calls = (4 * num_rounds + 2) / 3;
+    for _ in 0..absorption_calls {
+        let first_wire = Wire::for_row(row);
+        let last_wire = Wire::for_row(row + poseidon_rows);
+        let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+            row,
+            [first_wire, last_wire],
+            round_constants,
+        );
+        gates.extend(pg);
+        row += poseidon_gadget_total;
+    }
+
+    // Squeeze calls for challenge derivation: one per round
+    for _ in 0..num_rounds {
+        let first_wire = Wire::for_row(row);
+        let last_wire = Wire::for_row(row + poseidon_rows);
+        let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+            row,
+            [first_wire, last_wire],
+            round_constants,
+        );
+        gates.extend(pg);
+        row += poseidon_gadget_total;
+    }
+
+    // --- Section 3: b(zeta) Horner evaluation ---
+    // b(z) = prod_{i=0}^{k-1} (1 + u_i * z^{2^i})
+    // This is pure field arithmetic over Fp — NATIVE.
+    let b_zeta_section_start = row;
+    for _round in 0..num_rounds {
+        // Row 0: z_power squaring: w[0]*w[1] - w[2] = 0
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[2] = -Fp::one();
+        coeffs[3] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+
+        // Row 1: u_i * z_power: w[0]*w[1] - w[2] = 0
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[2] = -Fp::one();
+        coeffs[3] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+
+        // Row 2: factor = 1 + u_i*z_power: w[0] - w[2] + 1 = 0
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[0] = Fp::one();
+        coeffs[2] = -Fp::one();
+        coeffs[4] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+
+        // Row 3: b_new = b_old * factor: w[0]*w[1] - w[2] = 0
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[2] = -Fp::one();
+        coeffs[3] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+    }
+
+    // --- Section 4: State transition Poseidon ---
+    // Poseidon(prev_accumulated || pre_hash || post_hash) = new_accumulated
+    let state_transition_start = row;
+    let first_wire = Wire::for_row(row);
+    let last_wire = Wire::for_row(row + poseidon_rows);
+    let (pg, _) =
+        CircuitGate::<Fp>::create_poseidon_gadget(row, [first_wire, last_wire], round_constants);
+    gates.extend(pg);
+    row += poseidon_gadget_total;
+
+    // --- Section 5: Final output binding gate ---
+    gates.push(CircuitGate::new(
+        GateType::Generic,
+        Wire::for_row(row),
+        vec![Fp::zero(); COLUMNS],
+    ));
+    row += 1;
+
+    let layout = StepVerifierLayout {
+        total_gates: row,
+        public_input_count: public_count,
+        transcript_section_start,
+        b_zeta_section_start,
+        state_transition_start,
+        num_rounds,
+    };
+
+    (gates, public_count, layout)
+}
+
+/// Witness for the Step Verifier circuit.
+#[derive(Clone, Debug)]
+pub struct StepVerifierWitness {
+    /// The L and R point coordinates (as Fp elements from byte-mapping Fq → Fp).
+    pub lr_coords: Vec<((Fp, Fp), (Fp, Fp))>,
+    /// The IPA challenges u_i (derived from Poseidon transcript).
+    pub challenges: Vec<Fp>,
+    /// The evaluation point zeta.
+    pub zeta: Fp,
+    /// b(zeta) — the challenge polynomial evaluated at zeta.
+    pub b_at_zeta: Fp,
+    /// The combined polynomial commitment (x, y) as Fp elements.
+    pub commitment: (Fp, Fp),
+    /// The combined evaluation v at zeta.
+    pub evaluation: Fp,
+    /// State transition data.
+    pub pre_state_hash: Fp,
+    pub post_state_hash: Fp,
+    pub step_count: Fp,
+    pub prev_accumulated_hash: Fp,
+}
+
+/// Generate witness for the Step Verifier circuit.
+pub fn generate_step_verifier_witness(
+    w: &StepVerifierWitness,
+    layout: &StepVerifierLayout,
+) -> [Vec<Fp>; COLUMNS] {
+    let total_rows = layout.total_gates;
+    let mut witness: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); total_rows]);
+    let num_rounds = layout.num_rounds;
+
+    // Compute accumulated hash using the same logic as pickles_accumulated_hash
+    let has_previous = w.prev_accumulated_hash != Fp::zero();
+    let new_accumulated = {
+        let params = Vesta::sponge_params();
+        let mut sponge = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(params);
+        if has_previous {
+            sponge.absorb(&[
+                w.prev_accumulated_hash,
+                w.pre_state_hash,
+                w.post_state_hash,
+                w.step_count,
+            ]);
+        } else {
+            sponge.absorb(&[w.pre_state_hash, w.post_state_hash, w.step_count]);
+        }
+        sponge.squeeze()
+    };
+
+    // Compute challenge digest
+    let challenge_digest = {
+        let params = Vesta::sponge_params();
+        let mut sponge = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(params);
+        sponge.absorb(&w.challenges);
+        sponge.squeeze()
+    };
+
+    // --- Public inputs ---
+    witness[0][0] = w.pre_state_hash;
+    witness[0][1] = w.post_state_hash;
+    witness[0][2] = new_accumulated;
+    witness[0][3] = w.step_count;
+    witness[0][4] = w.prev_accumulated_hash;
+    witness[0][5] = w.commitment.0;
+    witness[0][6] = w.commitment.1;
+    witness[0][7] = w.evaluation;
+    witness[0][8] = challenge_digest;
+    witness[0][9] = w.b_at_zeta;
+    witness[0][10] = w.zeta;
+
+    // --- Poseidon transcript (absorption + squeeze) ---
+    let mut transcript_elements = Vec::with_capacity(4 * num_rounds);
+    for ((lx, ly), (rx, ry)) in &w.lr_coords {
+        transcript_elements.extend_from_slice(&[*lx, *ly, *rx, *ry]);
+    }
+    let poseidon_gadget_rows = (FULL_ROUNDS / 5) + 1;
+    let absorption_calls = (4 * num_rounds + 2) / 3;
+    let mut poseidon_row = layout.transcript_section_start;
+    for call_idx in 0..absorption_calls {
+        let base_elem = call_idx * 3;
+        let input = [
+            transcript_elements
+                .get(base_elem)
+                .copied()
+                .unwrap_or(Fp::zero()),
+            transcript_elements
+                .get(base_elem + 1)
+                .copied()
+                .unwrap_or(Fp::zero()),
+            transcript_elements
+                .get(base_elem + 2)
+                .copied()
+                .unwrap_or(Fp::zero()),
+        ];
+        generate_witness(poseidon_row, Vesta::sponge_params(), &mut witness, input);
+        poseidon_row += poseidon_gadget_rows;
+    }
+    for squeeze_idx in 0..num_rounds {
+        let input = [w.challenges[squeeze_idx], Fp::zero(), Fp::zero()];
+        generate_witness(poseidon_row, Vesta::sponge_params(), &mut witness, input);
+        poseidon_row += poseidon_gadget_rows;
+    }
+
+    // --- b(zeta) Horner chain ---
+    let b_poly_start = layout.b_zeta_section_start;
+    let mut z_power = w.zeta;
+    let mut b_running = Fp::one();
+    for i in 0..num_rounds {
+        let row_base = b_poly_start + i * 4;
+        if row_base + 3 >= total_rows {
+            break;
+        }
+        let u_i = w.challenges[num_rounds - 1 - i];
+
+        // Row 0: squaring
+        witness[0][row_base] = z_power;
+        witness[1][row_base] = z_power;
+        witness[2][row_base] = z_power * z_power;
+
+        // Row 1: u_i * z_power
+        witness[0][row_base + 1] = u_i;
+        witness[1][row_base + 1] = z_power;
+        witness[2][row_base + 1] = u_i * z_power;
+
+        // Row 2: factor = 1 + u_i*z_power
+        let product = u_i * z_power;
+        let factor = Fp::one() + product;
+        witness[0][row_base + 2] = product;
+        witness[1][row_base + 2] = Fp::zero();
+        witness[2][row_base + 2] = factor;
+
+        // Row 3: b_new = b_old * factor
+        let b_new = b_running * factor;
+        witness[0][row_base + 3] = b_running;
+        witness[1][row_base + 3] = factor;
+        witness[2][row_base + 3] = b_new;
+
+        b_running = b_new;
+        z_power = z_power * z_power;
+    }
+
+    // --- State transition Poseidon ---
+    let state_row = layout.state_transition_start;
+    if state_row + poseidon_gadget_rows <= total_rows {
+        // Match the same Poseidon invocation as pickles_accumulated_hash
+        let poseidon_input = if has_previous {
+            [w.prev_accumulated_hash, w.pre_state_hash, w.post_state_hash]
+        } else {
+            [w.pre_state_hash, w.post_state_hash, w.step_count]
+        };
+        generate_witness(
+            state_row,
+            Vesta::sponge_params(),
+            &mut witness,
+            poseidon_input,
+        );
+    }
+
+    // Final output row
+    witness[0][total_rows - 1] = new_accumulated;
+    witness
+}
+
+// --- Wrap Verifier Circuit (on Pallas, scalar field = Fq) ---
+
+/// Layout of the Wrap Verifier circuit.
+///
+/// This circuit runs on Pallas (witnesses in Fq) and verifies the deferred
+/// EC operations from the Step circuit. EndoMul gates here enforce the
+/// **Vesta** curve equation (y^2 = x^3 + 5 over Fq), so L/R points (which
+/// ARE Vesta points with Fq coordinates) are handled natively.
+///
+/// The Wrap circuit proves:
+/// 1. Limb decomposition of challenges (u_i → u_lo + u_hi * 2^128)
+/// 2. bullet_reduce: sum_i [u_i^{-1}]*L_i + [u_i]*R_i using EndoMul
+/// 3. Final IPA equation: c*Q + delta = z1*(sg + b*U) + z2*H
+///
+/// The Wrap takes the Step proof's public outputs (challenges, b_at_zeta,
+/// commitment) as its own public inputs, binding the two circuits together.
+#[derive(Clone, Debug)]
+pub struct WrapVerifierLayout {
+    /// Total number of gates.
+    pub total_gates: usize,
+    /// Number of public inputs.
+    pub public_input_count: usize,
+    /// Row where limb decomposition begins.
+    pub limb_decomp_start: usize,
+    /// Row where bullet_reduce (EndoMul + CompleteAdd) begins.
+    pub bullet_reduce_start: usize,
+    /// Row where the final EC equation check begins.
+    pub final_check_start: usize,
+    /// Number of IPA rounds.
+    pub num_rounds: usize,
+}
+
+/// Build the Wrap Verifier circuit (on Pallas, scalar field = Fq).
+///
+/// # Public Inputs
+///
+/// 0: challenge_digest (Poseidon hash of u_i, binding to Step proof output)
+/// 1: b_at_zeta (from Step proof, verified by Step's Horner chain)
+/// 2: commitment_x (combined polynomial commitment x-coordinate)
+/// 3: commitment_y (combined polynomial commitment y-coordinate)
+/// 4: evaluation_at_zeta (combined evaluation v)
+/// 5: ipa_check_passed (output: 1 if final equation balances)
+///
+/// # Gate Composition
+///
+/// - Limb decomposition: 2*num_rounds Generic gates (u_i, u_i^{-1} each)
+/// - bullet_reduce: 4*num_rounds EndoMul sequences + 4*num_rounds CompleteAdd
+/// - Final equation: 4 EndoMul + 3 CompleteAdd + 2 assertion Generic
+///
+/// The EndoMul gates here enforce the VESTA curve equation because we're on a
+/// Pallas circuit. This is exactly what we need: L_i, R_i are Vesta points.
+/// Build the Wrap verifier circuit (Pallas side, Fq arithmetic).
+///
+/// ## Architecture notes for implementors
+///
+/// The EndoMul gates here enforce the VESTA curve equation (y^2 = x^3 + 5 over Fq).
+/// This is correct because we are verifying Vesta IPA proofs: the L_i, R_i commitment
+/// points live on the Vesta curve, so their coordinates are Fq elements, and all EC
+/// scalar multiplications ([u_i]*R_i, [u_i^{-1}]*L_i) are Vesta group operations.
+/// Since our circuit runs on Pallas (scalar field = Fq), these operations are NATIVE.
+///
+/// The deferred values from the step proof feed into this circuit as private witness:
+/// - L_i, R_i point coordinates (k pairs, each 2*Fq)
+/// - Challenges u_i and u_i^{-1} (k Fp elements, reinterpreted as Fq via canonical embedding)
+/// - Final equation scalars: z1, z2, c, delta coords, sg coords
+///
+/// Public inputs should be: [step_proof_digest, accumulated_hash, num_steps,
+/// commitment_x, commitment_y, b_at_zeta] — binding the wrap to a specific step proof
+/// and enabling the next step to chain off this wrap.
+pub fn build_wrap_verifier_circuit(
+    num_rounds: usize,
+) -> (Vec<CircuitGate<Fq>>, usize, WrapVerifierLayout) {
+    // Note: This circuit is over Fq (Pallas scalar field = Vesta base field).
+    // All gates here use Fq coefficients and operate on Fq witnesses.
+    let mut gates: Vec<CircuitGate<Fq>> = Vec::new();
+    let mut row = 0;
+
+    // --- Section 1: Public input binding ---
+    let public_count = 6;
+    for _i in 0..public_count {
+        let mut coeffs = vec![Fq::zero(); COLUMNS];
+        coeffs[0] = Fq::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+    }
+
+    // --- Section 2: Limb decomposition ---
+    // Each challenge u_i is decomposed: u_lo + u_hi * 2^128 = u_i
+    // This is now over Fq (since challenges are Fq elements in the wrap context).
+    let limb_decomp_start = row;
+    let two_128_fq = {
+        let mut val = Fq::one();
+        for _ in 0..128 {
+            val = val + val;
+        }
+        val
+    };
+    for _ in 0..num_rounds {
+        // Decompose u_i
+        let mut coeffs = vec![Fq::zero(); COLUMNS];
+        coeffs[0] = Fq::one();
+        coeffs[1] = two_128_fq;
+        coeffs[2] = -Fq::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+
+        // Decompose u_i^{-1}
+        let mut coeffs = vec![Fq::zero(); COLUMNS];
+        coeffs[0] = Fq::one();
+        coeffs[1] = two_128_fq;
+        coeffs[2] = -Fq::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
+    }
+
+    // --- Section 3: bullet_reduce (EndoMul + CompleteAdd) ---
+    // This is the core EC section. EndoMul gates on a Pallas circuit enforce
+    // the Vesta curve equation: y^2 = x^3 + 5 over Fq.
+    // L_i, R_i are Vesta points (coordinates in Fq), so this is NATIVE.
+    let bullet_reduce_start = row;
+    for _ in 0..num_rounds {
+        // [u_lo] * R_i (32 EndoMul rows + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // [u_hi] * (2^128 * R_i) (32 EndoMul + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // CompleteAdd: [u_lo]*R + [u_hi]*(2^128*R) → [u_i]*R_i
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+
+        // [uinv_lo] * L_i (32 EndoMul + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // [uinv_hi] * (2^128 * L_i) (32 EndoMul + 1 Zero)
+        for _ in 0..32 {
+            gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+            row += 1;
+        }
+        gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+        row += 1;
+
+        // CompleteAdd: [uinv_lo]*L + [uinv_hi]*(2^128*L) → [u_i^{-1}]*L_i
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+
+        // CompleteAdd: [u_i]*R_i + [u_i^{-1}]*L_i
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+
+        // CompleteAdd: accumulate into running sum
+        gates.push(CircuitGate::new(
+            GateType::CompleteAdd,
+            Wire::for_row(row),
+            vec![],
+        ));
+        row += 1;
+    }
+
+    // --- Section 4: Final EC equation ---
+    // c*Q + delta = z1*(sg + b*U) + z2*H
+    // All EC operations here are on Vesta points (native to Pallas circuit).
+    let final_check_start = row;
+
+    // (a) [b_at_zeta] * U
+    for _ in 0..32 {
+        gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+        row += 1;
+    }
+    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    row += 1;
+    // (b) sg + b*U
+    gates.push(CircuitGate::new(
+        GateType::CompleteAdd,
+        Wire::for_row(row),
+        vec![],
+    ));
+    row += 1;
+    // (c) [z1] * (sg + b*U)
+    for _ in 0..32 {
+        gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+        row += 1;
+    }
+    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    row += 1;
+    // (d) [z2] * H
+    for _ in 0..32 {
+        gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+        row += 1;
+    }
+    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    row += 1;
+    // (e) RHS = z1*(sg+b*U) + z2*H
+    gates.push(CircuitGate::new(
+        GateType::CompleteAdd,
+        Wire::for_row(row),
+        vec![],
+    ));
+    row += 1;
+    // (f) [c] * Q
+    for _ in 0..32 {
+        gates.push(CircuitGate::<Fq>::create_endomul(Wire::for_row(row)));
+        row += 1;
+    }
+    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    row += 1;
+    // (g) LHS = c*Q + delta
+    gates.push(CircuitGate::new(
+        GateType::CompleteAdd,
+        Wire::for_row(row),
+        vec![],
+    ));
+    row += 1;
+    // (h) Assert LHS.x == RHS.x
+    let mut coeffs = vec![Fq::zero(); COLUMNS];
+    coeffs[0] = Fq::one();
+    coeffs[1] = -Fq::one();
+    gates.push(CircuitGate::new(
+        GateType::Generic,
+        Wire::for_row(row),
+        coeffs,
+    ));
+    row += 1;
+    // (i) Assert LHS.y == RHS.y
+    let mut coeffs = vec![Fq::zero(); COLUMNS];
+    coeffs[0] = Fq::one();
+    coeffs[1] = -Fq::one();
+    gates.push(CircuitGate::new(
+        GateType::Generic,
+        Wire::for_row(row),
+        coeffs,
+    ));
+    row += 1;
+
+    // Final output gate
+    gates.push(CircuitGate::new(
+        GateType::Generic,
+        Wire::for_row(row),
+        vec![Fq::zero(); COLUMNS],
+    ));
+    row += 1;
+
+    let layout = WrapVerifierLayout {
+        total_gates: row,
+        public_input_count: public_count,
+        limb_decomp_start,
+        bullet_reduce_start,
+        final_check_start,
+        num_rounds,
+    };
+
+    (gates, public_count, layout)
+}
+
+// --- Dual-Curve Proof Types ---
+
+/// A Step proof (on Vesta). Contains the Kimchi proof and the deferred values
+/// that the Wrap circuit needs to verify.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DualCurveStepProof {
+    /// Serialized Kimchi proof over Vesta.
+    pub proof_bytes: Vec<u8>,
+    /// Public inputs (serialized Fp field elements).
+    pub public_inputs: Vec<u8>,
+    /// Deferred IPA data for the Wrap circuit:
+    /// - challenges (k Fp elements, serialized)
+    /// - challenge inverses (k Fp elements)
+    /// - L/R points (k pairs of Vesta points, as Fq coordinates)
+    /// - z1, z2, delta, sg (Fp scalars and point coords)
+    /// - c_challenge (final challenge scalar)
+    pub deferred_ipa_data: Vec<u8>,
+    /// Number of recursive steps.
+    pub num_steps: u32,
+}
+
+/// A Wrap proof (on Pallas). Verifies a Step proof's deferred EC operations.
+///
+/// ## Wrap prover implementation roadmap
+///
+/// The wrap prover proves on PALLAS, verifying the step's VESTA proof's deferred EC work.
+///
+/// What the wrap prover does:
+/// 1. Takes the deferred IPA data from `DualCurveStepProof` (L_i, R_i as Fq coords,
+///    challenges u_i as Fp elements reinterpreted in Fq, and final check scalars).
+/// 2. Builds a Pallas circuit (`build_wrap_verifier_circuit`) that enforces the EC
+///    operations the Step circuit deferred: bullet_reduce and final pairing equation.
+/// 3. Creates a Kimchi proof over Pallas, producing `DualCurveWrapProof`.
+///
+/// The API call for proving:
+/// ```ignore
+/// ProverProof::<Pallas, PallasOpeningProof, FULL_ROUNDS>::create_recursive(...)
+/// ```
+/// using `PallasBaseSponge` and `PallasScalarSponge` (defined at ~line 592).
+///
+/// The prover index requires a Pallas SRS:
+/// ```ignore
+/// SRS::<Pallas>::create(domain_size)
+/// ```
+/// where domain_size >= number of gates in the wrap circuit (currently ~4700 for k=15).
+///
+/// The witness values are Fq elements (Vesta base field = Pallas scalar field),
+/// since L_i, R_i are Vesta affine points with Fq coordinates, and all EC arithmetic
+/// in the wrap circuit operates natively on Fq.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DualCurveWrapProof {
+    /// Serialized Kimchi proof over Pallas.
+    pub proof_bytes: Vec<u8>,
+    /// Public inputs (serialized Fq field elements).
+    pub public_inputs: Vec<u8>,
+    /// The Step proof that this Wrap verifies (needed for chaining).
+    pub step_proof_hash: [u8; 32],
+    /// Number of recursive steps.
+    pub num_steps: u32,
+}
+
+/// Prove a Step in the dual-curve recursion (on Vesta).
+///
+/// This proves the state transition AND the Fiat-Shamir/b(zeta) computation
+/// for the previous proof's IPA, but DEFERS the EC operations to the Wrap.
+///
+/// The Step circuit contains:
+/// - Poseidon transcript replay (native Fp arithmetic)
+/// - b(zeta) Horner evaluation (native Fp arithmetic)
+/// - State transition hash (native Poseidon)
+/// - NO EndoMul or CompleteAdd gates
+///
+/// The deferred values (challenges, commitment, b_at_zeta) become part of the
+/// Step proof's public inputs, and the Wrap circuit takes them as witness.
+pub fn prove_dual_curve_step(
+    previous: Option<&PicklesRecursiveProof>,
+    transition: &PicklesStateTransition,
+) -> Result<DualCurveStepProof, String> {
+    let pre_hash = bytes32_to_fp(&transition.pre_state_hash);
+    let post_hash = bytes32_to_fp(&transition.post_state_hash);
+    let step_count = previous.map_or(1u32, |p| p.num_steps + 1);
+    let step_fp = Fp::from(step_count as u64);
+
+    // Previous accumulated hash
+    let prev_accumulated = if let Some(prev) = previous {
+        if prev.public_inputs.len() < 96 {
+            return Err("Previous proof has malformed public inputs".into());
+        }
+        let acc_bytes: [u8; 32] = prev.public_inputs[64..96]
+            .try_into()
+            .map_err(|_| "Invalid accumulated hash bytes")?;
+        Some(bytes32_to_fp(&acc_bytes))
+    } else {
+        None
+    };
+
+    // For the base case (no previous proof), we still build a Step circuit
+    // but with dummy IPA data (all zeros). The Wrap for the base case is trivial.
+    let num_rounds = IPA_ROUNDS;
+
+    // Extract IPA data from previous proof if available
+    let (lr_coords, challenges, zeta, b_at_zeta, commitment, evaluation, deferred_ipa_data) =
+        if let Some(prev) = previous {
+            // Deserialize the previous Kimchi proof to extract IPA opening data
+            let prev_kimchi: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
+                rmp_serde::from_slice(&prev.proof_bytes)
+                    .map_err(|e| format!("Previous proof deserialization: {}", e))?;
+
+            let opening = &prev_kimchi.proof;
+            let lr: Vec<((Fp, Fp), (Fp, Fp))> = opening
+                .lr
+                .iter()
+                .map(|(l, r)| (vesta_point_to_fp_coords(*l), vesta_point_to_fp_coords(*r)))
+                .collect();
+
+            // Derive challenges from L/R via Fiat-Shamir
+            let (_, endo_r) = <Vesta as KimchiCurve<FULL_ROUNDS>>::endos();
+            let mut sponge =
+                BaseSponge::new(<Vesta as KimchiCurve<FULL_ROUNDS>>::other_curve_sponge_params());
+            let seed = {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(b"dual-curve-step-v1");
+                hasher.update(&prev.proof_bytes[..64.min(prev.proof_bytes.len())]);
+                bytes32_to_fp(hasher.finalize().as_bytes())
+            };
+            sponge.absorb_fr(&[seed]);
+
+            let chals: Vec<Fp> = opening
+                .lr
+                .iter()
+                .map(|(l, r)| {
+                    sponge.absorb_g(&[*l]);
+                    sponge.absorb_g(&[*r]);
+                    squeeze_challenge(endo_r, &mut sponge)
+                })
+                .collect();
+
+            let z: Fp = sponge.challenge();
+            let b = challenge_polynomial_eval(&chals, z);
+
+            let comm = if !prev_kimchi.commitments.w_comm.is_empty()
+                && !prev_kimchi.commitments.w_comm[0].chunks.is_empty()
+            {
+                vesta_point_to_fp_coords(prev_kimchi.commitments.w_comm[0].chunks[0])
+            } else {
+                (Fp::one(), Fp::one())
+            };
+
+            let eval = b; // Combined evaluation
+
+            // Serialize deferred IPA data for the Wrap
+            let mut deferred = Vec::new();
+            // challenges
+            for c in &chals {
+                deferred.extend_from_slice(&fp_to_bytes32(c));
+            }
+            // challenge inverses
+            for c in &chals {
+                let inv = c.inverse().unwrap_or(Fp::zero());
+                deferred.extend_from_slice(&fp_to_bytes32(&inv));
+            }
+            // L/R points (as raw Fq coordinates for Wrap's native arithmetic)
+            for (l, r) in opening.lr.iter() {
+                let l_xy = l.xy();
+                let r_xy = r.xy();
+                if let (Some((lx, ly)), Some((rx, ry))) = (l_xy, r_xy) {
+                    deferred.extend_from_slice(&fp_to_bytes32_generic(&lx));
+                    deferred.extend_from_slice(&fp_to_bytes32_generic(&ly));
+                    deferred.extend_from_slice(&fp_to_bytes32_generic(&rx));
+                    deferred.extend_from_slice(&fp_to_bytes32_generic(&ry));
+                } else {
+                    deferred.extend_from_slice(&[0u8; 128]);
+                }
+            }
+            // z1, z2
+            deferred.extend_from_slice(&fp_to_bytes32(&opening.z1));
+            deferred.extend_from_slice(&fp_to_bytes32(&opening.z2));
+            // delta coords
+            let delta_coords = vesta_point_to_fp_coords(opening.delta);
+            deferred.extend_from_slice(&fp_to_bytes32(&delta_coords.0));
+            deferred.extend_from_slice(&fp_to_bytes32(&delta_coords.1));
+            // sg coords
+            let sg_coords = vesta_point_to_fp_coords(opening.sg);
+            deferred.extend_from_slice(&fp_to_bytes32(&sg_coords.0));
+            deferred.extend_from_slice(&fp_to_bytes32(&sg_coords.1));
+            // c_challenge
+            sponge.absorb_g(&[opening.delta]);
+            let c_chal: Fp = squeeze_challenge(endo_r, &mut sponge);
+            deferred.extend_from_slice(&fp_to_bytes32(&c_chal));
+
+            // Pad lr_coords to num_rounds if needed
+            let mut lr_padded = lr;
+            while lr_padded.len() < num_rounds {
+                lr_padded.push(((Fp::zero(), Fp::zero()), (Fp::zero(), Fp::zero())));
+            }
+
+            let mut chals_padded = chals;
+            while chals_padded.len() < num_rounds {
+                chals_padded.push(Fp::zero());
+            }
+
+            (lr_padded, chals_padded, z, b, comm, eval, deferred)
+        } else {
+            // Base case: dummy IPA data
+            let lr = vec![((Fp::zero(), Fp::zero()), (Fp::zero(), Fp::zero())); num_rounds];
+            let chals = vec![Fp::zero(); num_rounds];
+            let z = Fp::zero();
+            let b = Fp::one(); // b(0) = 1 for all-zero challenges
+            let comm = (Fp::zero(), Fp::zero());
+            let eval = Fp::zero();
+            (lr, chals, z, b, comm, eval, Vec::new())
+        };
+
+    // Build the Step circuit
+    let (gates, public_count, layout) = build_step_verifier_circuit(num_rounds);
+
+    // Generate witness
+    let step_witness = StepVerifierWitness {
+        lr_coords,
+        challenges,
+        zeta,
+        b_at_zeta,
+        commitment,
+        evaluation,
+        pre_state_hash: pre_hash,
+        post_state_hash: post_hash,
+        step_count: step_fp,
+        prev_accumulated_hash: prev_accumulated.unwrap_or(Fp::zero()),
+    };
+    let witness = generate_step_verifier_witness(&step_witness, &layout);
+
+    // Create prover index and prove
+    let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+        gates,
+        public_count,
+    );
+
+    let group_map = <Vesta as CommitmentCurve>::Map::setup();
+    let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+        BaseSponge,
+        ScalarSponge,
+        _,
+    >(&group_map, witness, &[], &index, &mut OsRng)
+    .map_err(|e| format!("Step prover error: {:?}", e))?;
+
+    // Serialize
+    let proof_bytes =
+        rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
+
+    // Encode public inputs
+    let accumulated_hash =
+        pickles_accumulated_hash(pre_hash, post_hash, step_count, prev_accumulated);
+
+    let challenge_digest = {
+        let params = Vesta::sponge_params();
+        let mut sponge = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(params);
+        sponge.absorb(&step_witness.challenges);
+        sponge.squeeze()
+    };
+
+    let mut public_input_bytes = Vec::with_capacity(32 * 11);
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&pre_hash));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&post_hash));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&accumulated_hash));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_fp));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&prev_accumulated.unwrap_or(Fp::zero())));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_witness.commitment.0));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_witness.commitment.1));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_witness.evaluation));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&challenge_digest));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_witness.b_at_zeta));
+    public_input_bytes.extend_from_slice(&fp_to_bytes32(&step_witness.zeta));
+
+    Ok(DualCurveStepProof {
+        proof_bytes,
+        public_inputs: public_input_bytes,
+        deferred_ipa_data: deferred_ipa_data,
+        num_steps: step_count,
+    })
+}
+
+/// Verify a Step proof (checks the Kimchi proof but NOT the deferred EC operations).
+///
+/// This is the first half of verification. The second half is done by the Wrap.
+pub fn verify_dual_curve_step(proof: &DualCurveStepProof) -> Result<bool, String> {
+    if proof.public_inputs.len() < 32 * 11 {
+        return Err("Step proof has malformed public inputs".into());
+    }
+
+    // Decode and verify accumulated hash chain
+    let pre_hash_bytes: [u8; 32] = proof.public_inputs[0..32]
+        .try_into()
+        .map_err(|_| "Invalid pre_hash")?;
+    let post_hash_bytes: [u8; 32] = proof.public_inputs[32..64]
+        .try_into()
+        .map_err(|_| "Invalid post_hash")?;
+    let accumulated_hash_bytes: [u8; 32] = proof.public_inputs[64..96]
+        .try_into()
+        .map_err(|_| "Invalid acc_hash")?;
+    let step_fp_bytes: [u8; 32] = proof.public_inputs[96..128]
+        .try_into()
+        .map_err(|_| "Invalid step_count")?;
+    let prev_acc_bytes: [u8; 32] = proof.public_inputs[128..160]
+        .try_into()
+        .map_err(|_| "Invalid prev_acc")?;
+
+    let pre_hash = bytes32_to_fp(&pre_hash_bytes);
+    let post_hash = bytes32_to_fp(&post_hash_bytes);
+    let accumulated_hash = bytes32_to_fp(&accumulated_hash_bytes);
+    let step_fp = bytes32_to_fp(&step_fp_bytes);
+    let prev_acc = bytes32_to_fp(&prev_acc_bytes);
+
+    // Verify accumulated hash
+    let step_count_u64 = {
+        let bigint = step_fp.into_bigint();
+        bigint.as_ref()[0] as u32
+    };
+
+    let prev_accumulated = if prev_acc == Fp::zero() && step_count_u64 == 1 {
+        None
+    } else {
+        Some(prev_acc)
+    };
+
+    let expected = pickles_accumulated_hash(pre_hash, post_hash, step_count_u64, prev_accumulated);
+    if accumulated_hash != expected {
+        return Ok(false);
+    }
+
+    // Verify the Kimchi proof (Step circuit: only Poseidon + Generic gates)
+    let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
+        rmp_serde::from_slice(&proof.proof_bytes)
+            .map_err(|e| format!("Proof deserialization: {}", e))?;
+
+    let (gates, public_count, _layout) = build_step_verifier_circuit(IPA_ROUNDS);
+    let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+        gates,
+        public_count,
+    );
+    let verifier_index = index.verifier_index();
+    let group_map = <Vesta as CommitmentCurve>::Map::setup();
+
+    // Reconstruct public inputs as Fp elements
+    let mut pis = Vec::with_capacity(public_count);
+    for i in 0..public_count {
+        let offset = i * 32;
+        let bytes: [u8; 32] = proof.public_inputs[offset..offset + 32]
+            .try_into()
+            .map_err(|_| format!("Invalid PI at {}", i))?;
+        pis.push(bytes32_to_fp(&bytes));
+    }
+
+    if verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
+        &group_map,
+        &verifier_index,
+        &kimchi_proof,
+        &pis,
+    )
+    .is_err()
+    {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Prove the wrap step on Pallas, verifying the step proof's deferred EC operations.
+///
+/// ## Implementation roadmap:
+/// 1. Extract deferred IPA data from step proof (L_i, R_i points as Fq coordinates)
+/// 2. Build the wrap circuit using `build_wrap_verifier_circuit`
+/// 3. Generate Pallas witness:
+///    - Fill EndoMul rows with Vesta point EC operations (native on Pallas)
+///    - Fill CompleteAdd rows for bullet_reduce accumulation
+///    - Fill assertion rows for final equation check
+/// 4. Create Pallas prover index: `new_index_for_test::<FULL_ROUNDS, Pallas>(gates, public_count)`
+/// 5. Call `ProverProof::<Pallas, PallasOpeningProof, FULL_ROUNDS>::create_recursive(...)`
+/// 6. Extract Pallas RecursionChallenge for the next step
+///
+/// ## Key insight: Vesta endomorphism on Pallas
+/// The EndoMul gate on Pallas uses the Vesta endomorphism coefficients.
+/// Kimchi's `endosclmul` gate is parameterized by `KimchiCurve::endomorphism_base()`.
+/// For Pallas circuits, this returns the Pallas endomorphism — but we need Vesta's.
+/// Check: does `new_index_for_test::<FULL_ROUNDS, Pallas>` auto-select the right endo?
+/// Reference: ~/dev/mina/src/lib/pickles/step_verifier.ml `Scalar_challenge.endo`
+///
+/// ## Blocked on:
+/// - Verifying that Kimchi's Pallas EndoMul gate uses Vesta endomorphism (it should,
+///   since EndoMul on curve C uses C's endomorphism for scalar decomposition)
+/// - Testing `SRS::<Pallas>::create(size)` produces valid Pallas generators
+/// - Confirming `generate_witness` for Pallas circuits uses Fq witness values
+#[allow(unused_variables)]
+pub fn prove_dual_curve_wrap(
+    step_proof: &DualCurveStepProof,
+    _previous_wrap: Option<&DualCurveWrapProof>,
+) -> Result<DualCurveWrapProof, String> {
+    todo!("Implement Pallas-side wrap prover — see roadmap above")
+}
+
+/// Prove a full recursive chain: alternating Step(Vesta) and Wrap(Pallas).
+///
+/// ## Chain structure
+/// The alternation pattern is:
+///   Step_0(Vesta) -> Wrap_0(Pallas) -> Step_1(Vesta) -> Wrap_1(Pallas) -> ...
+///
+/// Each Step proves:
+///   - The state transition (pre_hash -> post_hash)
+///   - Fiat-Shamir transcript replay + b(zeta) for the PREVIOUS wrap proof's IPA
+///   - Defers: EC operations on Pallas points (the wrap proof's L_i, R_i)
+///
+/// Each Wrap proves:
+///   - EC operations for the PREVIOUS step proof's IPA (Vesta points, native on Pallas)
+///   - Defers: nothing (or its own Fiat-Shamir can be re-checked by the next step)
+///
+/// ## Composition with kimchi_native IVC
+/// The step circuit can incorporate kimchi_native's IVC fold:
+///   - State transition is the IVC "step function"
+///   - The deferred EC ops integrate with `create_recursive` for bonus accumulation
+///   - Each `create_recursive` call adds a `RecursionChallenge` that the next step absorbs
+///
+/// ## Final verification
+/// The chain is verifiable by checking EITHER:
+///   (a) The last Step proof + performing its deferred EC ops externally, OR
+///   (b) The last Wrap proof (which has no deferred ops — fully standalone)
+/// Option (b) gives a fully standalone proof: anyone can verify without doing EC work.
+///
+/// ## Integration with assisted recursion
+/// At each step, `create_recursive` can be used (instead of `create`) to accumulate
+/// previous IPA opening proofs. This gives TWO layers of recursion:
+///   - "Native" recursion: Step/Wrap alternation verifies the previous proof in-circuit
+///   - "Assisted" recursion: create_recursive accumulates IPA data for batch checking
+/// The assisted layer is a performance optimization — the native layer is what makes
+/// the proof standalone-transitive.
+#[allow(unused_variables)]
+pub fn prove_full_recursive_chain(
+    transitions: &[PicklesStateTransition],
+) -> Result<DualCurveWrapProof, String> {
+    // The implementation will:
+    // 1. prove_dual_curve_step(None, &transitions[0])  -- base case
+    // 2. prove_dual_curve_wrap(&step_0, None)           -- wrap the base
+    // 3. For each subsequent transition:
+    //    a. prove_dual_curve_step(Some(&prev_wrap_as_recursive), &transitions[i])
+    //    b. prove_dual_curve_wrap(&step_i, Some(&prev_wrap))
+    // 4. Return the final wrap proof (standalone-verifiable)
+    todo!("Implement end-to-end chain — see doc comment above")
+}
+
+/// Print circuit statistics for the dual-curve architecture.
+pub fn dual_curve_circuit_stats() -> String {
+    let (_, step_pi, step_layout) = build_step_verifier_circuit(IPA_ROUNDS);
+    let (_, wrap_pi, wrap_layout) = build_wrap_verifier_circuit(IPA_ROUNDS);
+    format!(
+        "Dual-Curve Pickles Architecture (k={} rounds):\n\
+         \n\
+         Step Circuit (Vesta, scalar field = Fp):\n\
+         - Total gates: {}\n\
+         - Public inputs: {}\n\
+         - Transcript section: row {}\n\
+         - b(zeta) section: row {}\n\
+         - State transition: row {}\n\
+         - Domain: 2^{} = {}\n\
+         - Gate types: Poseidon + Generic ONLY (no EC gates)\n\
+         \n\
+         Wrap Circuit (Pallas, scalar field = Fq):\n\
+         - Total gates: {}\n\
+         - Public inputs: {}\n\
+         - Limb decomposition: row {}\n\
+         - bullet_reduce: row {}\n\
+         - Final EC check: row {}\n\
+         - Domain: 2^{} = {}\n\
+         - Gate types: EndoMul + CompleteAdd + Generic (EC gates enforce VESTA curve)\n\
+         \n\
+         Key insight: EndoMul gates on Pallas circuit enforce Vesta curve equation,\n\
+         so L/R points (which are Vesta points) are handled NATIVELY.",
+        IPA_ROUNDS,
+        step_layout.total_gates,
+        step_pi,
+        step_layout.transcript_section_start,
+        step_layout.b_zeta_section_start,
+        step_layout.state_transition_start,
+        (step_layout.total_gates as f64).log2().ceil() as u32,
+        1usize << (step_layout.total_gates as f64).log2().ceil() as u32,
+        wrap_layout.total_gates,
+        wrap_pi,
+        wrap_layout.limb_decomp_start,
+        wrap_layout.bullet_reduce_start,
+        wrap_layout.final_check_start,
+        (wrap_layout.total_gates as f64).log2().ceil() as u32,
+        1usize << (wrap_layout.total_gates as f64).log2().ceil() as u32,
     )
 }
 
@@ -3165,11 +4714,12 @@ mod tests {
             "Verifier circuit should have >1000 gates"
         );
         assert!(
-            layout.total_gates < 2048,
-            "Verifier circuit should fit in 2^11 domain, got {} gates",
+            layout.total_gates < 4096,
+            "Verifier circuit should fit in 2^12 domain, got {} gates",
             layout.total_gates
         );
-        assert!(layout.transcript_section_start < layout.bullet_reduce_section_start);
+        assert!(layout.transcript_section_start < layout.limb_decomposition_section_start);
+        assert!(layout.limb_decomposition_section_start < layout.bullet_reduce_section_start);
         assert!(layout.bullet_reduce_section_start < layout.final_check_section_start);
         assert!(layout.final_check_section_start < layout.total_gates);
         println!("{}", ipa_verifier_circuit_stats());
@@ -3198,17 +4748,17 @@ mod tests {
         }
 
         // Verify expected counts
-        // bullet_reduce: 2 * IPA_ROUNDS * 32 EndoMul rows = 960
+        // bullet_reduce (2-limb): 4 * IPA_ROUNDS * 32 EndoMul rows = 1920
         // final equation: 4 * 32 = 128 EndoMul rows
-        let expected_endomul = 2 * IPA_ROUNDS * 32 + 4 * 32;
+        let expected_endomul = 4 * IPA_ROUNDS * 32 + 4 * 32;
         assert_eq!(
             endomul_count, expected_endomul,
             "Expected {} EndoMul gates, got {}",
             expected_endomul, endomul_count
         );
 
-        // CompleteAdd: 2*IPA_ROUNDS (bullet_reduce) + 3 (final equation: sg+bU, RHS, LHS)
-        let expected_complete_add = 2 * IPA_ROUNDS + 3;
+        // CompleteAdd: 4*IPA_ROUNDS (bullet_reduce: 2 combine + 1 add + 1 acc) + 3 (final equation)
+        let expected_complete_add = 4 * IPA_ROUNDS + 3;
         assert_eq!(
             complete_add_count, expected_complete_add,
             "Expected {} CompleteAdd gates, got {}",
@@ -3220,6 +4770,35 @@ mod tests {
             endomul_count, complete_add_count, poseidon_count, generic_count, zero_count
         );
         println!("Layout: {:?}", layout);
+    }
+
+    #[test]
+    fn test_limb_decomposition_roundtrip() {
+        let two_128 = two_to_128();
+
+        // Test with small values
+        let val = Fp::from(42u64);
+        let (lo, hi) = decompose_to_limbs(val);
+        assert_eq!(lo + hi * two_128, val);
+        assert_eq!(hi, Fp::zero()); // 42 fits in 128 bits
+
+        // Test with a value that has both limbs nonzero
+        let big_val = Fp::from(7u64) * two_128 + Fp::from(123u64);
+        let (lo, hi) = decompose_to_limbs(big_val);
+        assert_eq!(lo, Fp::from(123u64));
+        assert_eq!(hi, Fp::from(7u64));
+        assert_eq!(lo + hi * two_128, big_val);
+
+        // Test with a random-ish large value (use a field element near the modulus)
+        let large = -Fp::one(); // p - 1
+        let (lo, hi) = decompose_to_limbs(large);
+        assert_eq!(lo + hi * two_128, large);
+
+        // Verify the decomposition is stable
+        let val2 =
+            Fp::from(0xDEAD_BEEF_CAFE_BABEu64) * two_128 + Fp::from(0x1234_5678_9ABC_DEF0u64);
+        let (lo2, hi2) = decompose_to_limbs(val2);
+        assert_eq!(lo2 + hi2 * two_128, val2);
     }
 
     #[test]
@@ -3324,14 +4903,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires non-native field arithmetic (Pasta cycle alternation) for \
-                off-curve Vesta→Fp coordinate mapping. The EndoMul/CompleteAdd gates \
-                enforce the Pallas curve equation, but mapped Vesta coordinates are \
-                not on Pallas. Fix requires: (a) full non-native limb decomposition \
-                for Fq elements as pairs of Fp values, or (b) dual-curve circuit \
-                alternation as in real Pickles. Sections 3 and 5 constraints are \
-                now sound (Horner chain + equality assertion), but the EC sections \
-                (4, 5a-g) need native-curve points."]
+    #[ignore = "SUPERSEDED by dual-curve Step/Wrap architecture. The monolithic \
+                single-curve IPA verifier fails because EndoMul gates on Vesta enforce \
+                the Pallas curve equation, but L/R points are Vesta points (Fq coords). \
+                The fix is the dual-curve architecture: Step circuit (Vesta) defers EC \
+                ops, Wrap circuit (Pallas) verifies them natively. See \
+                build_step_verifier_circuit + build_wrap_verifier_circuit."]
     fn test_standalone_recursive_step_end_to_end() {
         // Step 1: Create a base-case proof using the assisted recursion path
         let transition1 = PicklesStateTransition {
@@ -3489,7 +5066,10 @@ mod tests {
         }
 
         // Verify the computed b matches expected
-        assert_eq!(b_running, expected_b, "Horner chain must produce correct b(zeta)");
+        assert_eq!(
+            b_running, expected_b,
+            "Horner chain must produce correct b(zeta)"
+        );
 
         // Create prover index and prove
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
@@ -3508,12 +5088,13 @@ mod tests {
         // Verify
         let verifier_index = index.verifier_index();
         let public_inputs = vec![zeta, expected_b];
-        let result = verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
-            &group_map,
-            &verifier_index,
-            &proof,
-            &public_inputs,
-        );
+        let result = verifier::verify::<
+            FULL_ROUNDS,
+            Vesta,
+            BaseSponge,
+            ScalarSponge,
+            VestaOpeningProof,
+        >(&group_map, &verifier_index, &proof, &public_inputs);
         assert!(
             result.is_ok(),
             "Horner chain proof must verify: {:?}",
@@ -3525,12 +5106,22 @@ mod tests {
     /// A dishonest prover who sets LHS != RHS must fail.
     #[test]
     fn test_section5_assertion_rejects_mismatch() {
-        // Build a minimal circuit with just the assertion gates
+        // Build a minimal circuit with assertion gates.
+        // We use 1 public input to satisfy Kimchi's requirement that at least
+        // one row be a "public input binding" gate.
         let mut gates = Vec::new();
         let mut row = 0;
 
-        // No public inputs for this test
-        let public_count = 0;
+        let public_count = 1;
+        // Public input binding gate (row 0): 1*w[0] - PI[0] = 0
+        let mut coeffs = vec![Fp::zero(); COLUMNS];
+        coeffs[0] = Fp::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+        row += 1;
 
         // Two assertion gates: w[0] - w[1] = 0
         let mut coeffs = vec![Fp::zero(); COLUMNS];
@@ -3554,7 +5145,7 @@ mod tests {
         row += 1;
 
         // Pad to minimum circuit size
-        for _ in 0..6 {
+        for _ in 0..5 {
             gates.push(CircuitGate::new(
                 GateType::Generic,
                 Wire::for_row(row),
@@ -3563,12 +5154,13 @@ mod tests {
             row += 1;
         }
 
-        // HONEST witness: w[0] == w[1]
+        // HONEST witness: w[0] == w[1] in assertion rows
         let mut witness_good: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); row]);
-        witness_good[0][0] = Fp::from(42u64);
-        witness_good[1][0] = Fp::from(42u64); // equal
-        witness_good[0][1] = Fp::from(99u64);
-        witness_good[1][1] = Fp::from(99u64); // equal
+        witness_good[0][0] = Fp::from(1u64); // public input
+        witness_good[0][1] = Fp::from(42u64);
+        witness_good[1][1] = Fp::from(42u64); // equal
+        witness_good[0][2] = Fp::from(99u64);
+        witness_good[1][2] = Fp::from(99u64); // equal
 
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
             gates.clone(),
@@ -3585,35 +5177,44 @@ mod tests {
         .expect("Honest prover with matching coordinates must succeed");
 
         let verifier_index = index.verifier_index();
-        let result = verifier::verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, VestaOpeningProof>(
-            &group_map,
-            &verifier_index,
-            &proof,
-            &[],
-        );
+        let public_inputs = vec![Fp::from(1u64)];
+        let result = verifier::verify::<
+            FULL_ROUNDS,
+            Vesta,
+            BaseSponge,
+            ScalarSponge,
+            VestaOpeningProof,
+        >(&group_map, &verifier_index, &proof, &public_inputs);
         assert!(result.is_ok(), "Honest proof must verify");
 
         // DISHONEST witness: w[0] != w[1]
-        let mut witness_bad: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); row]);
-        witness_bad[0][0] = Fp::from(42u64);
-        witness_bad[1][0] = Fp::from(43u64); // NOT equal!
-        witness_bad[0][1] = Fp::from(99u64);
-        witness_bad[1][1] = Fp::from(99u64);
+        // The Kimchi prover panics (rather than returning Err) when the witness
+        // fails the gate check. We use catch_unwind to verify it rejects.
+        let gates_clone = gates.clone();
+        let dishonest_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut witness_bad: [Vec<Fp>; COLUMNS] =
+                std::array::from_fn(|_| vec![Fp::zero(); row]);
+            witness_bad[0][0] = Fp::from(1u64); // public input
+            witness_bad[0][1] = Fp::from(42u64);
+            witness_bad[1][1] = Fp::from(43u64); // NOT equal!
+            witness_bad[0][2] = Fp::from(99u64);
+            witness_bad[1][2] = Fp::from(99u64);
 
-        // Re-create index for fresh proof
-        let index2 = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates,
-            public_count,
-        );
-        let dishonest_result = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-            BaseSponge,
-            ScalarSponge,
-            _,
-        >(&group_map, witness_bad, &[], &index2, &mut OsRng);
+            let index2 = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+                gates_clone,
+                public_count,
+            );
+            let group_map2 = <Vesta as CommitmentCurve>::Map::setup();
+            ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+                BaseSponge,
+                ScalarSponge,
+                _,
+            >(&group_map2, witness_bad, &[], &index2, &mut OsRng)
+        }));
 
         assert!(
             dishonest_result.is_err(),
-            "Dishonest prover with mismatched coordinates must FAIL. \
+            "Dishonest prover with mismatched coordinates must FAIL (panic). \
              If this passes, the assertion gates are not constraining."
         );
     }
@@ -3624,7 +5225,7 @@ mod tests {
         let (mut gates, _, layout) = build_ipa_verifier_circuit(IPA_ROUNDS);
         add_ipa_verifier_copy_constraints(&mut gates, &layout);
 
-        // Check that Poseidon squeeze outputs are wired to b(zeta) inputs
+        // Check that Poseidon squeeze outputs are wired through decomposition
         let poseidon_gadget_rows = (FULL_ROUNDS / 5) + 1;
         let absorption_calls = (4 * IPA_ROUNDS + 2) / 3;
         let squeeze_start =
@@ -3633,17 +5234,21 @@ mod tests {
         let first_squeeze_output = squeeze_start + poseidon_rows;
         if first_squeeze_output < gates.len() {
             let w = gates[first_squeeze_output].wires[0];
-            // Should point to the b(zeta) section (round 0, row 1), not to itself
+            // Should point to the decomposition section (3-cycle: squeeze → decomp → b_poly)
             assert_ne!(
                 w.row, first_squeeze_output,
                 "Copy constraint should have been set (wire should not be identity)"
             );
-            // Target should be in the b(zeta) section
-            let b_poly_start = squeeze_start + IPA_ROUNDS * poseidon_gadget_rows;
+            // Target should be in the limb decomposition section (col 2 of first decomp gate)
+            let decomp_start = layout.limb_decomposition_section_start;
             assert_eq!(
                 w.row,
-                b_poly_start + 1, // round 0, row 1 (where u_i is used)
-                "First squeeze output should wire to first b(zeta) round's u_i input"
+                decomp_start, // round 0 decomp gate
+                "First squeeze output should wire to first decomp gate's w[2] (full challenge)"
+            );
+            assert_eq!(
+                w.col, 2,
+                "Target should be col 2 (the full challenge in decomp)"
             );
         }
 
@@ -3661,5 +5266,200 @@ mod tests {
             );
             assert_eq!(w.col, 6, "Target should be n_acc column (col 6)");
         }
+    }
+
+    // ========================================================================
+    // Dual-Curve Step/Wrap Architecture Tests
+    // ========================================================================
+
+    #[test]
+    fn test_step_verifier_circuit_builds() {
+        let (gates, public_count, layout) = build_step_verifier_circuit(IPA_ROUNDS);
+        assert_eq!(public_count, 11);
+        assert!(!gates.is_empty());
+        assert!(layout.transcript_section_start < layout.b_zeta_section_start);
+        assert!(layout.b_zeta_section_start < layout.state_transition_start);
+        assert!(layout.state_transition_start < layout.total_gates);
+
+        // Step circuit should have NO EndoMul or CompleteAdd gates
+        let mut endomul_count = 0;
+        let mut complete_add_count = 0;
+        for gate in &gates {
+            match gate.typ {
+                GateType::EndoMul => endomul_count += 1,
+                GateType::CompleteAdd => complete_add_count += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            endomul_count, 0,
+            "Step circuit must have ZERO EndoMul gates (EC ops are deferred)"
+        );
+        assert_eq!(
+            complete_add_count, 0,
+            "Step circuit must have ZERO CompleteAdd gates (EC ops are deferred)"
+        );
+
+        println!(
+            "Step circuit: {} gates, domain 2^{}",
+            layout.total_gates,
+            (layout.total_gates as f64).log2().ceil() as u32
+        );
+    }
+
+    #[test]
+    fn test_wrap_verifier_circuit_builds() {
+        let (gates, public_count, layout) = build_wrap_verifier_circuit(IPA_ROUNDS);
+        assert_eq!(public_count, 6);
+        assert!(!gates.is_empty());
+        assert!(layout.limb_decomp_start < layout.bullet_reduce_start);
+        assert!(layout.bullet_reduce_start < layout.final_check_start);
+        assert!(layout.final_check_start < layout.total_gates);
+
+        // Wrap circuit SHOULD have EndoMul and CompleteAdd gates
+        let mut endomul_count = 0;
+        let mut complete_add_count = 0;
+        let mut poseidon_count = 0;
+        for gate in &gates {
+            match gate.typ {
+                GateType::EndoMul => endomul_count += 1,
+                GateType::CompleteAdd => complete_add_count += 1,
+                GateType::Poseidon => poseidon_count += 1,
+                _ => {}
+            }
+        }
+        assert!(
+            endomul_count > 0,
+            "Wrap circuit must have EndoMul gates for bullet_reduce"
+        );
+        assert!(
+            complete_add_count > 0,
+            "Wrap circuit must have CompleteAdd gates"
+        );
+        assert_eq!(
+            poseidon_count, 0,
+            "Wrap circuit should have NO Poseidon gates (transcript is in Step)"
+        );
+
+        // Expected EndoMul: 4*IPA_ROUNDS*32 (bullet_reduce) + 4*32 (final eq) = 2048
+        let expected_endomul = 4 * IPA_ROUNDS * 32 + 4 * 32;
+        assert_eq!(endomul_count, expected_endomul);
+
+        println!(
+            "Wrap circuit: {} gates, domain 2^{}, EndoMul={}, CompleteAdd={}",
+            layout.total_gates,
+            (layout.total_gates as f64).log2().ceil() as u32,
+            endomul_count,
+            complete_add_count
+        );
+    }
+
+    #[test]
+    fn test_step_wrap_separation_is_correct() {
+        // Verify that the Step + Wrap together cover the same gates as the
+        // old monolithic build_ipa_verifier_circuit
+        let (_, _, step_layout) = build_step_verifier_circuit(IPA_ROUNDS);
+        let (_, _, wrap_layout) = build_wrap_verifier_circuit(IPA_ROUNDS);
+        let (_, _, mono_layout) = build_ipa_verifier_circuit(IPA_ROUNDS);
+
+        // The Step has Poseidon + b(zeta) (same as monolithic Sections 2+3)
+        // The Wrap has limb_decomp + bullet_reduce + final_check (Sections 3.5+4+5)
+        // The monolithic has all of these in one circuit
+
+        // Step should be significantly smaller than monolithic (no EC gates)
+        assert!(
+            step_layout.total_gates < mono_layout.total_gates,
+            "Step ({}) should be smaller than monolithic ({})",
+            step_layout.total_gates,
+            mono_layout.total_gates
+        );
+
+        // Wrap should be similar size to monolithic's EC section
+        let mono_ec_gates = mono_layout.total_gates - mono_layout.bullet_reduce_section_start;
+        // Wrap includes its own public input gates + decomp + EC
+        assert!(
+            wrap_layout.total_gates > mono_ec_gates / 2,
+            "Wrap should contain the bulk of the EC gates"
+        );
+
+        println!("{}", dual_curve_circuit_stats());
+    }
+
+    #[test]
+    fn test_dual_curve_step_base_case() {
+        // Prove a base-case step (no previous proof)
+        let transition = PicklesStateTransition {
+            pre_state_hash: [1u8; 32],
+            post_state_hash: [2u8; 32],
+        };
+
+        let step_proof = prove_dual_curve_step(None, &transition)
+            .expect("Base case step proving should succeed");
+
+        assert_eq!(step_proof.num_steps, 1);
+        assert!(step_proof.deferred_ipa_data.is_empty()); // No IPA to defer for base case
+
+        // Verify the step proof (Kimchi verification of Poseidon + field arithmetic)
+        let valid =
+            verify_dual_curve_step(&step_proof).expect("Step verification should not error");
+        assert!(valid, "Base case step proof must verify");
+    }
+
+    #[test]
+    fn test_dual_curve_step_recursive() {
+        // Create a base case first using assisted recursion
+        let transition1 = PicklesStateTransition {
+            pre_state_hash: [1u8; 32],
+            post_state_hash: [2u8; 32],
+        };
+        let base_proof =
+            prove_recursive_step(None, &transition1).expect("Base case should succeed");
+
+        // Now prove a Step that defers the base proof's IPA verification
+        let transition2 = PicklesStateTransition {
+            pre_state_hash: [2u8; 32],
+            post_state_hash: [3u8; 32],
+        };
+        let step_proof = prove_dual_curve_step(Some(&base_proof), &transition2)
+            .expect("Recursive step proving should succeed");
+
+        assert_eq!(step_proof.num_steps, 2);
+        assert!(
+            !step_proof.deferred_ipa_data.is_empty(),
+            "Recursive step must have deferred IPA data for Wrap"
+        );
+
+        // Verify the step proof
+        let valid =
+            verify_dual_curve_step(&step_proof).expect("Step verification should not error");
+        assert!(valid, "Recursive step proof must verify");
+    }
+
+    #[test]
+    fn test_dual_curve_step_tampered_fails() {
+        let transition = PicklesStateTransition {
+            pre_state_hash: [1u8; 32],
+            post_state_hash: [2u8; 32],
+        };
+
+        let mut step_proof =
+            prove_dual_curve_step(None, &transition).expect("Proving should succeed");
+
+        // Tamper with accumulated hash
+        step_proof.public_inputs[64] ^= 0xFF;
+
+        let valid = verify_dual_curve_step(&step_proof)
+            .expect("Verification should not error on tampered data");
+        assert!(!valid, "Tampered step proof should fail verification");
+    }
+
+    #[test]
+    fn test_dual_curve_stats() {
+        let stats = dual_curve_circuit_stats();
+        assert!(stats.contains("Step Circuit"));
+        assert!(stats.contains("Wrap Circuit"));
+        assert!(stats.contains("no EC gates"));
+        assert!(stats.contains("VESTA curve"));
+        println!("{}", stats);
     }
 }

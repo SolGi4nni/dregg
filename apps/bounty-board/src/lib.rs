@@ -20,10 +20,11 @@ pub mod payment;
 pub mod qualification;
 pub mod state;
 
-use pyana_circuit::PredicateType;
+use pyana_app_framework::CellId;
+use pyana_app_framework::PredicateType;
+use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
 use pyana_sdk::HeldToken;
 use pyana_turn::TurnReceipt;
-use pyana_types::CellId;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -253,30 +254,12 @@ pub fn compute_worker_commitment(worker_key: &[u8; 32], randomness: &[u8; 32]) -
 
 /// Encode a bounty ID as hex string.
 pub fn bounty_id_hex(id: &[u8; 32]) -> String {
-    id.iter().map(|b| format!("{b:02x}")).collect()
+    bytes32_to_hex(id)
 }
 
 /// Decode a hex string to a bounty ID.
 pub fn bounty_id_from_hex(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        out[i] = (high << 4) | low;
-    }
-    Some(out)
-}
-
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
+    hex_to_bytes32(hex).ok()
 }
 
 /// Format a BountyStatus as a simple string label.

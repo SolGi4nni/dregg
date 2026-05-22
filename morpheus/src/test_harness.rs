@@ -20,7 +20,17 @@ use serde::{Deserialize, Serialize};
 use crate::*;
 
 #[derive(
-    Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, CanonicalDeserialize, CanonicalSerialize,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Hash,
+    Serialize,
+    Deserialize,
+    CanonicalDeserialize,
+    CanonicalSerialize,
 )]
 pub struct TestTransaction(pub Vec<u8>);
 

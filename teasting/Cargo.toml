@@ -32,6 +32,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 getrandom = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 serde = { workspace = true }
+curve25519-dalek = { version = "4", features = ["alloc"] }
 
 [lints]
 workspace = true

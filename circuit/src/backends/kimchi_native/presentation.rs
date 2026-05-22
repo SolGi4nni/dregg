@@ -9,14 +9,29 @@
 //! 3. Non-revocation check: non_revocation_eval * inverse == 1
 //! 4. Composition commitment non-zero: composition_commitment * inverse == 1
 //! 5. Sub-proof hash binding: fold_chain_hash and derivation_hash are inputs to composition Poseidon
+use super::{
+    BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, SpongeParams,
+    VestaOpeningProof, bytes32_to_fp, fp_to_bytes32, verify_kimchi_proof,
+};
 use ark_ff::{Field, One, Zero};
 use groupmap::GroupMap;
-use kimchi::{circuits::{gate::{CircuitGate, GateType}, polynomials::poseidon::{generate_witness, POS_ROWS_PER_HASH}, wires::{COLUMNS, Wire}}, curve::KimchiCurve, proof::ProverProof};
+use kimchi::{
+    circuits::{
+        gate::{CircuitGate, GateType},
+        polynomials::poseidon::{POS_ROWS_PER_HASH, generate_witness},
+        wires::{COLUMNS, Wire},
+    },
+    curve::KimchiCurve,
+    proof::ProverProof,
+};
 use mina_curves::pasta::{Fp, Vesta};
-use mina_poseidon::{constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, poseidon::{ArithmeticSponge, Sponge}};
+use mina_poseidon::{
+    constants::PlonkSpongeConstantsKimchi,
+    pasta::FULL_ROUNDS,
+    poseidon::{ArithmeticSponge, Sponge},
+};
 use poly_commitment::commitment::CommitmentCurve;
 use rand_core::OsRng;
-use super::{BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, SpongeParams, VestaOpeningProof, fp_to_bytes32, bytes32_to_fp, verify_kimchi_proof};
 
 /// Number of public input rows in the presentation circuit.
 const PUBLIC_INPUT_COUNT: usize = 10;
@@ -41,18 +56,26 @@ pub struct KimchiPresentationWitness {
     pub randomness: Fp,
 }
 
-pub fn compute_presentation_tag(final_root: Fp, randomness: Fp, verifier_nonce: Fp) -> Fp {
+/// Compute a single Poseidon permutation hash: set state = [a, b, c], apply block cipher,
+/// return state[0]. This matches exactly what the in-circuit Poseidon gadget computes.
+fn poseidon_permutation_hash(a: Fp, b: Fp, c: Fp) -> Fp {
     let p = Vesta::sponge_params();
-    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
-    s.absorb(&[final_root, randomness, verifier_nonce]);
-    s.squeeze()
+    let mut sponge = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
+    sponge.state = vec![a, b, c];
+    sponge.poseidon_block_cipher();
+    sponge.state[0]
 }
 
-pub fn compute_composition_commitment(fold_chain_hash: Fp, derivation_hash: Fp, presentation_tag: Fp) -> Fp {
-    let p = Vesta::sponge_params();
-    let mut s = ArithmeticSponge::<Fp, SpongeParams, FULL_ROUNDS>::new(p);
-    s.absorb(&[fold_chain_hash, derivation_hash, presentation_tag]);
-    s.squeeze()
+pub fn compute_presentation_tag(final_root: Fp, randomness: Fp, verifier_nonce: Fp) -> Fp {
+    poseidon_permutation_hash(final_root, randomness, verifier_nonce)
+}
+
+pub fn compute_composition_commitment(
+    fold_chain_hash: Fp,
+    derivation_hash: Fp,
+    presentation_tag: Fp,
+) -> Fp {
+    poseidon_permutation_hash(fold_chain_hash, derivation_hash, presentation_tag)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,7 +94,9 @@ pub struct KimchiPresentationCircuit {
 }
 
 impl KimchiPresentationCircuit {
-    pub fn new(witness: KimchiPresentationWitness) -> Self { Self { witness } }
+    pub fn new(witness: KimchiPresentationWitness) -> Self {
+        Self { witness }
+    }
 
     /// Build the circuit gates.
     ///
@@ -114,8 +139,8 @@ impl KimchiPresentationCircuit {
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            c[0] = Fp::one();       // poseidon1 output
-            c[1] = -Fp::one();      // composition_commitment (from public input)
+            c[0] = Fp::one(); // poseidon1 output
+            c[1] = -Fp::one(); // composition_commitment (from public input)
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -135,8 +160,8 @@ impl KimchiPresentationCircuit {
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            c[0] = Fp::one();       // poseidon2 output
-            c[1] = -Fp::one();      // presentation_tag (from public input)
+            c[0] = Fp::one(); // poseidon2 output
+            c[1] = -Fp::one(); // presentation_tag (from public input)
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -145,8 +170,8 @@ impl KimchiPresentationCircuit {
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            c[3] = Fp::one();       // mul coefficient
-            c[4] = -Fp::one();      // constant = -1
+            c[3] = Fp::one(); // mul coefficient
+            c[4] = -Fp::one(); // constant = -1
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -155,8 +180,8 @@ impl KimchiPresentationCircuit {
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            c[3] = Fp::one();       // mul coefficient
-            c[4] = -Fp::one();      // constant = -1
+            c[3] = Fp::one(); // mul coefficient
+            c[4] = -Fp::one(); // constant = -1
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
 
@@ -173,19 +198,34 @@ impl KimchiPresentationCircuit {
         let mut row = 0;
 
         // Public input rows (0..9)
-        wit[0][row] = w.federation_root; row += 1;                      // row 0
-        wit[0][row] = w.request_predicate[0]; row += 1;                 // row 1
-        wit[0][row] = w.request_predicate[1]; row += 1;                 // row 2
-        wit[0][row] = w.request_predicate[2]; row += 1;                 // row 3
-        wit[0][row] = w.request_predicate[3]; row += 1;                 // row 4
-        wit[0][row] = w.timestamp; row += 1;                            // row 5
-        wit[0][row] = w.verifier_nonce; row += 1;                       // row 6
-        wit[0][row] = w.composition_commitment; row += 1;               // row 7
-        wit[0][row] = w.presentation_tag; row += 1;                     // row 8
-        wit[0][row] = Fp::zero(); row += 1;                             // row 9 (padding)
+        wit[0][row] = w.federation_root;
+        row += 1; // row 0
+        wit[0][row] = w.request_predicate[0];
+        row += 1; // row 1
+        wit[0][row] = w.request_predicate[1];
+        row += 1; // row 2
+        wit[0][row] = w.request_predicate[2];
+        row += 1; // row 3
+        wit[0][row] = w.request_predicate[3];
+        row += 1; // row 4
+        wit[0][row] = w.timestamp;
+        row += 1; // row 5
+        wit[0][row] = w.verifier_nonce;
+        row += 1; // row 6
+        wit[0][row] = w.composition_commitment;
+        row += 1; // row 7
+        wit[0][row] = w.presentation_tag;
+        row += 1; // row 8
+        wit[0][row] = Fp::zero();
+        row += 1; // row 9 (padding)
 
         // Poseidon gadget 1: hash(fold_chain_hash, derivation_hash, presentation_tag)
-        generate_witness(row, Vesta::sponge_params(), &mut wit, [w.fold_chain_hash, w.derivation_hash, w.presentation_tag]);
+        generate_witness(
+            row,
+            Vesta::sponge_params(),
+            &mut wit,
+            [w.fold_chain_hash, w.derivation_hash, w.presentation_tag],
+        );
         row += POSEIDON_GADGET_ROWS;
 
         // The Poseidon output is at wit[0][row - 1] (the last row of the gadget = row + POS_ROWS_PER_HASH)
@@ -200,7 +240,12 @@ impl KimchiPresentationCircuit {
         row += 1;
 
         // Poseidon gadget 2: hash(final_root, randomness, verifier_nonce)
-        generate_witness(row, Vesta::sponge_params(), &mut wit, [w.final_root, w.randomness, w.verifier_nonce]);
+        generate_witness(
+            row,
+            Vesta::sponge_params(),
+            &mut wit,
+            [w.final_root, w.randomness, w.verifier_nonce],
+        );
         row += POSEIDON_GADGET_ROWS;
 
         let poseidon2_output = wit[0][row - 1];
@@ -252,43 +297,64 @@ impl KimchiPresentationCircuit {
             self.witness.verifier_nonce,
         );
         if self.witness.presentation_tag != expected_tag {
-            return Err("Presentation tag does not match hash(final_root, randomness, verifier_nonce)".into());
+            return Err(
+                "Presentation tag does not match hash(final_root, randomness, verifier_nonce)"
+                    .into(),
+            );
         }
 
         let (gates, pc) = self.build_circuit();
         let wit = self.generate_witness();
-        let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
+        let index =
+            kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
         let gm = <Vesta as CommitmentCurve>::Map::setup();
-        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<BaseSponge, ScalarSponge, _>(
-            &gm, wit, &[], &index, &mut OsRng,
-        ).map_err(|e| format!("Kimchi presentation prover error: {:?}", e))?;
+        let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
+            BaseSponge,
+            ScalarSponge,
+            _,
+        >(&gm, wit, &[], &index, &mut OsRng)
+        .map_err(|e| format!("Kimchi presentation prover error: {:?}", e))?;
 
-        let pb = rmp_serde::to_vec(&proof).map_err(|e| format!("Presentation proof serialization error: {}", e))?;
+        let pb = rmp_serde::to_vec(&proof)
+            .map_err(|e| format!("Presentation proof serialization error: {}", e))?;
         let w = &self.witness;
         let mut pib = Vec::with_capacity(320);
         pib.extend_from_slice(&fp_to_bytes32(&w.federation_root));
-        for i in 0..4 { pib.extend_from_slice(&fp_to_bytes32(&w.request_predicate[i])); }
+        for i in 0..4 {
+            pib.extend_from_slice(&fp_to_bytes32(&w.request_predicate[i]));
+        }
         pib.extend_from_slice(&fp_to_bytes32(&w.timestamp));
         pib.extend_from_slice(&fp_to_bytes32(&w.verifier_nonce));
         pib.extend_from_slice(&fp_to_bytes32(&w.composition_commitment));
         pib.extend_from_slice(&fp_to_bytes32(&w.presentation_tag));
         pib.extend_from_slice(&fp_to_bytes32(&Fp::zero()));
-        Ok(KimchiNativeProof { proof_bytes: pb, public_input_bytes: pib, circuit_type: KimchiNativeCircuitType::Presentation })
+        Ok(KimchiNativeProof {
+            proof_bytes: pb,
+            public_input_bytes: pib,
+            circuit_type: KimchiNativeCircuitType::Presentation,
+        })
     }
 
     /// Verify a presentation proof using the real Kimchi verifier.
     pub fn verify(proof_bytes: &[u8], public_inputs: &[Fp]) -> Result<bool, String> {
         let proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
-            rmp_serde::from_slice(proof_bytes).map_err(|e| format!("Deserialization error: {}", e))?;
+            rmp_serde::from_slice(proof_bytes)
+                .map_err(|e| format!("Deserialization error: {}", e))?;
 
         // Build a dummy witness to get the circuit structure (we only need gates)
         let dummy = KimchiPresentationWitness {
-            federation_root: Fp::zero(), request_predicate: [Fp::zero(); 4],
-            timestamp: Fp::zero(), verifier_nonce: Fp::zero(),
-            composition_commitment: Fp::one(), presentation_tag: Fp::zero(),
-            issuer_membership_hash: Fp::zero(), fold_chain_hash: Fp::zero(),
-            derivation_hash: Fp::zero(), non_revocation_eval: Fp::one(),
-            final_root: Fp::zero(), randomness: Fp::zero(),
+            federation_root: Fp::zero(),
+            request_predicate: [Fp::zero(); 4],
+            timestamp: Fp::zero(),
+            verifier_nonce: Fp::zero(),
+            composition_commitment: Fp::one(),
+            presentation_tag: Fp::zero(),
+            issuer_membership_hash: Fp::zero(),
+            fold_chain_hash: Fp::zero(),
+            derivation_hash: Fp::zero(),
+            non_revocation_eval: Fp::one(),
+            final_root: Fp::zero(),
+            randomness: Fp::zero(),
         };
         let circuit = KimchiPresentationCircuit::new(dummy);
         let (gates, pc) = circuit.build_circuit();
@@ -297,13 +363,59 @@ impl KimchiPresentationCircuit {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct KimchiPresentationProof {
     pub proof: KimchiNativeProof,
+    #[serde(with = "fp_serde")]
     pub federation_root: Fp,
+    #[serde(with = "fp_array4_serde")]
     pub request_predicate: [Fp; 4],
+    #[serde(with = "fp_serde")]
     pub timestamp: Fp,
+    #[serde(with = "fp_serde")]
     pub verifier_nonce: Fp,
+    #[serde(with = "fp_serde")]
     pub composition_commitment: Fp,
+    #[serde(with = "fp_serde")]
     pub presentation_tag: Fp,
+}
+
+mod fp_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(fp: &Fp, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = fp_to_bytes32(fp);
+        bytes.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Fp, D::Error> {
+        let bytes = <[u8; 32]>::deserialize(d)?;
+        Ok(super::super::bytes32_to_fp(&bytes))
+    }
+}
+
+mod fp_array4_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(fps: &[Fp; 4], s: S) -> Result<S::Ok, S::Error> {
+        let bytes: [[u8; 32]; 4] = [
+            fp_to_bytes32(&fps[0]),
+            fp_to_bytes32(&fps[1]),
+            fp_to_bytes32(&fps[2]),
+            fp_to_bytes32(&fps[3]),
+        ];
+        bytes.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[Fp; 4], D::Error> {
+        let bytes = <[[u8; 32]; 4]>::deserialize(d)?;
+        Ok([
+            super::super::bytes32_to_fp(&bytes[0]),
+            super::super::bytes32_to_fp(&bytes[1]),
+            super::super::bytes32_to_fp(&bytes[2]),
+            super::super::bytes32_to_fp(&bytes[3]),
+        ])
+    }
 }

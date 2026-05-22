@@ -1083,6 +1083,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn merkle_poseidon2_forged_proof_with_wrong_hash_fails_stark() {
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);

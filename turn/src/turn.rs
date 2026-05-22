@@ -3,12 +3,25 @@
 //! A Turn wraps a CallForest with metadata: who initiated it, replay protection
 //! via nonce, fee payment, and optional memo/expiration.
 
+use pyana_cell::state::FieldElement;
 use pyana_cell::{CellId, DerivationRecord, LedgerDelta};
 use serde::{Deserialize, Serialize};
 
+use crate::action::Symbol;
 use crate::error::TurnError;
 use crate::forest::CallForest;
 use crate::routing::RoutingDirective;
+
+/// An event emitted during turn execution, recorded in the receipt for audit/indexing.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EmittedEvent {
+    /// The cell that emitted this event.
+    pub cell: CellId,
+    /// The topic of this event (hashed method/event name).
+    pub topic: Symbol,
+    /// Arbitrary data fields.
+    pub data: Vec<FieldElement>,
+}
 
 /// A Turn is the atomic unit of agent execution.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,6 +162,9 @@ pub struct TurnReceipt {
     /// and Unseal effects in this turn. Verifiers use these to reconstruct the CDT.
     #[serde(default)]
     pub derivation_records: Vec<DerivationRecord>,
+    /// Events emitted during turn execution (for audit trails and off-chain indexing).
+    #[serde(default)]
+    pub emitted_events: Vec<EmittedEvent>,
     /// Ed25519 signature from the executor over the receipt hash.
     /// When present, this cryptographically binds the receipt to a known executor,
     /// making the federation exit path verifiable (not just a self-reported chain).
@@ -191,6 +207,14 @@ impl TurnReceipt {
         hasher.update(&(self.derivation_records.len() as u64).to_le_bytes());
         for dr in &self.derivation_records {
             hasher.update(&dr.hash());
+        }
+        hasher.update(&(self.emitted_events.len() as u64).to_le_bytes());
+        for ev in &self.emitted_events {
+            hasher.update(ev.cell.as_bytes());
+            hasher.update(&ev.topic);
+            for d in &ev.data {
+                hasher.update(d);
+            }
         }
         *hasher.finalize().as_bytes()
     }

@@ -77,8 +77,8 @@ pub struct StateIndex<Tr: Transaction> {
     /// Tracks (block_type, author, slot) tuples that have been seen.
     /// Used to detect equivocating blocks: if a process produces two different
     /// blocks for the same (type, author, slot) tuple, the second is rejected.
-    /// This is a serde-skip field since it can be reconstructed from `blocks`.
-    #[serde(skip, default)]
+    /// This field persists across serialization to prevent equivocation after
+    /// node restart.
     pub seen_slots: HashSet<(BlockType, Identity, SlotNum)>,
 }
 

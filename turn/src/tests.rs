@@ -3987,7 +3987,8 @@ fn test_note_spend_and_create_conservation() {
     let agent_id = agent.id;
     ledger.insert_cell(agent).unwrap();
 
-    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
     let nullifier = pyana_cell::Nullifier([0xAA; 32]);
     let commitment1 = pyana_cell::NoteCommitment([0xBB; 32]);
@@ -4001,6 +4002,7 @@ fn test_note_spend_and_create_conservation() {
             note_tree_root: [0xFFu8; 32],
             value: 100,
             asset_type: 1,
+            spending_proof: vec![0x01],
         });
         action.effect(Effect::NoteCreate {
             commitment: commitment1,
@@ -4033,7 +4035,8 @@ fn test_note_conservation_violated() {
     let agent_id = agent.id;
     ledger.insert_cell(agent).unwrap();
 
-    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
     let nullifier = pyana_cell::Nullifier([0xAA; 32]);
     let commitment = pyana_cell::NoteCommitment([0xBB; 32]);
@@ -4046,6 +4049,7 @@ fn test_note_conservation_violated() {
             note_tree_root: [0xFFu8; 32],
             value: 100,
             asset_type: 1,
+            spending_proof: vec![0x01],
         });
         action.effect(Effect::NoteCreate {
             commitment,
@@ -4085,7 +4089,8 @@ fn test_note_nft_transfer() {
     let agent_id = agent.id;
     ledger.insert_cell(agent).unwrap();
 
-    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
     let unique_asset_id: u64 = 0xDEAD_BEEF;
     let nullifier = pyana_cell::Nullifier([0xAA; 32]);
@@ -4100,6 +4105,7 @@ fn test_note_nft_transfer() {
             note_tree_root: [0xFFu8; 32],
             value: 0,
             asset_type: unique_asset_id,
+            spending_proof: vec![0x01],
         });
         // Create a new note for the recipient (same asset_type, value=0).
         action.effect(Effect::NoteCreate {
@@ -4129,7 +4135,8 @@ fn test_note_multiple_asset_types_conservation() {
     let agent_id = agent.id;
     ledger.insert_cell(agent).unwrap();
 
-    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
@@ -4139,12 +4146,14 @@ fn test_note_multiple_asset_types_conservation() {
             note_tree_root: [0xFFu8; 32],
             value: 100,
             asset_type: 1,
+            spending_proof: vec![0x01],
         });
         action.effect(Effect::NoteSpend {
             nullifier: pyana_cell::Nullifier([2u8; 32]),
             note_tree_root: [0xFFu8; 32],
             value: 50,
             asset_type: 2,
+            spending_proof: vec![0x01],
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([3u8; 32]),
@@ -4178,7 +4187,8 @@ fn test_note_cross_asset_conservation_fails() {
     let agent_id = agent.id;
     ledger.insert_cell(agent).unwrap();
 
-    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
@@ -4188,6 +4198,7 @@ fn test_note_cross_asset_conservation_fails() {
             note_tree_root: [0xFFu8; 32],
             value: 100,
             asset_type: 1,
+            spending_proof: vec![0x01],
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([2u8; 32]),
@@ -4208,6 +4219,139 @@ fn test_note_cross_asset_conservation_fails() {
             );
         }
         _ => panic!("expected rejection for cross-asset conservation violation"),
+    }
+}
+
+// =============================================================================
+// NoteSpend proof verification tests
+// =============================================================================
+
+#[test]
+fn test_note_spend_rejected_without_proof() {
+    // NoteSpend with empty spending_proof must be rejected.
+    let kp = TestKeypair::from_seed(1);
+    let mut ledger = Ledger::new();
+    let agent = Cell::with_balance(kp.public_key, [0u8; 32], 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "note_spend_no_proof");
+        action.effect(Effect::NoteSpend {
+            nullifier: pyana_cell::Nullifier([0xAA; 32]),
+            note_tree_root: [0xFFu8; 32],
+            value: 100,
+            asset_type: 1,
+            spending_proof: vec![], // empty = missing
+        });
+        action.effect(Effect::NoteCreate {
+            commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+            value: 100,
+            asset_type: 1,
+            encrypted_note: vec![],
+        });
+    }
+    let turn = builder.fee(10000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => {
+            assert!(
+                matches!(reason, TurnError::InvalidEffect { ref reason } if reason.contains("missing spending proof")),
+                "expected missing proof error, got: {reason:?}"
+            );
+        }
+        _ => panic!("expected rejection for NoteSpend without proof"),
+    }
+}
+
+#[test]
+fn test_note_spend_rejected_with_invalid_proof() {
+    // NoteSpend with a proof that fails verification must be rejected.
+    let kp = TestKeypair::from_seed(1);
+    let mut ledger = Ledger::new();
+    let agent = Cell::with_balance(kp.public_key, [0u8; 32], 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    let mut executor = TurnExecutor::new(ComputronCosts::zero());
+    executor.set_proof_verifier(Box::new(AlwaysRejectVerifier));
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "note_spend_bad_proof");
+        action.effect(Effect::NoteSpend {
+            nullifier: pyana_cell::Nullifier([0xAA; 32]),
+            note_tree_root: [0xFFu8; 32],
+            value: 100,
+            asset_type: 1,
+            spending_proof: vec![0xDE, 0xAD, 0xBE, 0xEF], // garbage proof
+        });
+        action.effect(Effect::NoteCreate {
+            commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+            value: 100,
+            asset_type: 1,
+            encrypted_note: vec![],
+        });
+    }
+    let turn = builder.fee(10000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => {
+            assert!(
+                matches!(reason, TurnError::InvalidEffect { ref reason } if reason.contains("verification failed")),
+                "expected proof verification failure, got: {reason:?}"
+            );
+        }
+        _ => panic!("expected rejection for NoteSpend with invalid proof"),
+    }
+}
+
+#[test]
+fn test_note_spend_rejected_without_verifier() {
+    // NoteSpend when no proof verifier is configured must be rejected (fail-closed).
+    let kp = TestKeypair::from_seed(1);
+    let mut ledger = Ledger::new();
+    let agent = Cell::with_balance(kp.public_key, [0u8; 32], 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    // No proof verifier set (fail-closed behavior).
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "note_spend_no_verifier");
+        action.effect(Effect::NoteSpend {
+            nullifier: pyana_cell::Nullifier([0xAA; 32]),
+            note_tree_root: [0xFFu8; 32],
+            value: 100,
+            asset_type: 1,
+            spending_proof: vec![0x01, 0x02, 0x03],
+        });
+        action.effect(Effect::NoteCreate {
+            commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+            value: 100,
+            asset_type: 1,
+            encrypted_note: vec![],
+        });
+    }
+    let turn = builder.fee(10000).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => {
+            assert!(
+                matches!(reason, TurnError::InvalidEffect { ref reason } if reason.contains("no proof verifier")),
+                "expected no-verifier error, got: {reason:?}"
+            );
+        }
+        _ => panic!("expected rejection for NoteSpend without configured verifier"),
     }
 }
 
@@ -5586,4 +5730,409 @@ fn test_fee_distribution_not_on_failure() {
 
     let treasury_cell = ledger.get(&treasury_id).unwrap();
     assert_eq!(treasury_cell.state.balance, 0);
+}
+
+// =============================================================================
+// Tests: Escrow conditional settlement
+// =============================================================================
+
+use crate::escrow::EscrowCondition;
+
+/// Helper: set up a ledger with a sender and recipient cell for escrow tests.
+fn setup_escrow_cells(sender_balance: u64, recipient_balance: u64) -> (Ledger, CellId, CellId) {
+    let mut ledger = Ledger::new();
+    let (sender, _) = make_open_cell(10, sender_balance);
+    let (recipient, _) = make_open_cell(11, recipient_balance);
+    let sender_id = sender.id;
+    let recipient_id = recipient.id;
+    ledger.insert_cell(sender).unwrap();
+    ledger.insert_cell(recipient).unwrap();
+    (ledger, sender_id, recipient_id)
+}
+
+#[test]
+fn test_escrow_create_and_release_with_predicate() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(100);
+
+    let escrow_id = [1u8; 32];
+    let predicate_hash = *blake3::hash(b"test-predicate").as_bytes();
+
+    // Create escrow.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 5000,
+            condition: EscrowCondition::PredicateSatisfied { predicate_hash },
+            timeout_height: 200,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "CreateEscrow should succeed: {:?}",
+        result
+    );
+
+    // Sender should have lost 5000 (escrow) + 100 (fee).
+    let sender = ledger.get(&sender_id).unwrap();
+    assert_eq!(sender.state.balance, 10000 - 5000 - 100);
+
+    // Recipient still has 0.
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 0);
+
+    // Release escrow with valid predicate proof.
+    let mut builder2 = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder2.action(sender_id, "release_escrow");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(predicate_hash.to_vec()),
+        });
+    }
+    let turn2 = builder2.fee(100).build();
+
+    let result2 = executor.execute(&turn2, &mut ledger);
+    assert!(
+        result2.is_committed(),
+        "ReleaseEscrow should succeed: {:?}",
+        result2
+    );
+
+    // Recipient should now have 5000.
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 5000);
+
+    // Sender paid two fees.
+    let sender = ledger.get(&sender_id).unwrap();
+    assert_eq!(sender.state.balance, 10000 - 5000 - 100 - 100);
+}
+
+#[test]
+fn test_escrow_create_and_timeout_refund() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(100);
+
+    let escrow_id = [2u8; 32];
+    let predicate_hash = [99u8; 32];
+
+    // Create escrow with timeout at block 200.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 3000,
+            condition: EscrowCondition::PredicateSatisfied { predicate_hash },
+            timeout_height: 200,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Try to refund BEFORE timeout — should fail.
+    executor.set_block_height(150);
+    let mut builder_early = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder_early.action(sender_id, "refund_early");
+        action.effect(Effect::RefundEscrow { escrow_id });
+    }
+    let turn_early = builder_early.fee(100).build();
+    let result_early = executor.execute(&turn_early, &mut ledger);
+    assert!(
+        result_early.is_rejected(),
+        "RefundEscrow before timeout should fail"
+    );
+
+    // Advance past timeout and refund (nonce is now 2 because the failed attempt still consumed nonce 1).
+    executor.set_block_height(201);
+    let mut builder_refund = TurnBuilder::new(sender_id, 2);
+    {
+        let action = builder_refund.action(sender_id, "refund_escrow");
+        action.effect(Effect::RefundEscrow { escrow_id });
+    }
+    let turn_refund = builder_refund.fee(100).build();
+    let result_refund = executor.execute(&turn_refund, &mut ledger);
+    assert!(
+        result_refund.is_committed(),
+        "RefundEscrow after timeout should succeed: {:?}",
+        result_refund
+    );
+
+    // Sender should get the 3000 back (minus fees).
+    let sender = ledger.get(&sender_id).unwrap();
+    // Started 10000, lost 100 (fee create) + 100 (fee failed refund) + 100 (fee refund)
+    // Lost 3000 to escrow, got 3000 back.
+    assert_eq!(sender.state.balance, 10000 - 100 - 100 - 100);
+
+    // Recipient still has 0.
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 0);
+}
+
+#[test]
+fn test_escrow_release_without_valid_proof_fails() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(100);
+
+    let escrow_id = [3u8; 32];
+    let predicate_hash = [77u8; 32];
+
+    // Create escrow.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 2000,
+            condition: EscrowCondition::PredicateSatisfied { predicate_hash },
+            timeout_height: 300,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Try to release with WRONG predicate hash.
+    let wrong_hash = [88u8; 32];
+    let mut builder_bad = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder_bad.action(sender_id, "release_bad");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(wrong_hash.to_vec()),
+        });
+    }
+    let turn_bad = builder_bad.fee(100).build();
+    let result_bad = executor.execute(&turn_bad, &mut ledger);
+    assert!(
+        result_bad.is_rejected(),
+        "ReleaseEscrow with wrong proof should fail"
+    );
+
+    // Try to release with no proof.
+    let mut builder_none = TurnBuilder::new(sender_id, 2);
+    {
+        let action = builder_none.action(sender_id, "release_none");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: None,
+        });
+    }
+    let turn_none = builder_none.fee(100).build();
+    let result_none = executor.execute(&turn_none, &mut ledger);
+    assert!(
+        result_none.is_rejected(),
+        "ReleaseEscrow with no proof should fail"
+    );
+
+    // Recipient still has 0.
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 0);
+}
+
+#[test]
+fn test_escrow_double_release_fails() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(100);
+
+    let escrow_id = [4u8; 32];
+    let predicate_hash = [55u8; 32];
+
+    // Create escrow.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 4000,
+            condition: EscrowCondition::PredicateSatisfied { predicate_hash },
+            timeout_height: 500,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Release escrow (first time — should succeed).
+    let mut builder_release = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder_release.action(sender_id, "release");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(predicate_hash.to_vec()),
+        });
+    }
+    let turn_release = builder_release.fee(100).build();
+    let result_release = executor.execute(&turn_release, &mut ledger);
+    assert!(result_release.is_committed());
+
+    // Release escrow AGAIN (second time — should fail: already resolved).
+    let mut builder_double = TurnBuilder::new(sender_id, 2);
+    {
+        let action = builder_double.action(sender_id, "release_again");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(predicate_hash.to_vec()),
+        });
+    }
+    let turn_double = builder_double.fee(100).build();
+    let result_double = executor.execute(&turn_double, &mut ledger);
+    assert!(
+        result_double.is_rejected(),
+        "Double release should fail: escrow already resolved"
+    );
+
+    // Recipient should only have 4000 (from single release).
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 4000);
+}
+
+#[test]
+fn test_escrow_create_insufficient_balance() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(1000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(100);
+
+    let escrow_id = [5u8; 32];
+
+    // Try to create escrow with more than the sender has (after fee).
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 950, // sender has 1000, fee is 100, so only 900 available
+            condition: EscrowCondition::PredicateSatisfied {
+                predicate_hash: [0u8; 32],
+            },
+            timeout_height: 200,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "CreateEscrow with insufficient balance should fail"
+    );
+}
+
+#[test]
+fn test_escrow_release_with_proof_verifier() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor =
+        TurnExecutor::with_proof_verifier(ComputronCosts::zero(), Box::new(AlwaysAcceptVerifier));
+    executor.set_block_height(100);
+
+    let escrow_id = [6u8; 32];
+    let vk = [42u8; 32];
+
+    // Create escrow with ProofPresented condition.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 5000,
+            condition: EscrowCondition::ProofPresented {
+                verification_key: vk,
+            },
+            timeout_height: 300,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Release with proof (AlwaysAcceptVerifier accepts anything).
+    let mut builder_release = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder_release.action(sender_id, "release");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(vec![1, 2, 3, 4]),
+        });
+    }
+    let turn_release = builder_release.fee(100).build();
+    let result_release = executor.execute(&turn_release, &mut ledger);
+    assert!(
+        result_release.is_committed(),
+        "ReleaseEscrow with valid proof should succeed: {:?}",
+        result_release
+    );
+
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 5000);
+}
+
+#[test]
+fn test_escrow_release_proof_rejected_by_verifier() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor =
+        TurnExecutor::with_proof_verifier(ComputronCosts::zero(), Box::new(AlwaysRejectVerifier));
+    executor.set_block_height(100);
+
+    let escrow_id = [7u8; 32];
+    let vk = [42u8; 32];
+
+    // Create escrow with ProofPresented condition.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 5000,
+            condition: EscrowCondition::ProofPresented {
+                verification_key: vk,
+            },
+            timeout_height: 300,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Try to release (AlwaysRejectVerifier rejects).
+    let mut builder_release = TurnBuilder::new(sender_id, 1);
+    {
+        let action = builder_release.action(sender_id, "release");
+        action.effect(Effect::ReleaseEscrow {
+            escrow_id,
+            proof: Some(vec![1, 2, 3, 4]),
+        });
+    }
+    let turn_release = builder_release.fee(100).build();
+    let result_release = executor.execute(&turn_release, &mut ledger);
+    assert!(
+        result_release.is_rejected(),
+        "ReleaseEscrow with rejected proof should fail"
+    );
+
+    // Recipient still 0.
+    let recipient = ledger.get(&recipient_id).unwrap();
+    assert_eq!(recipient.state.balance, 0);
 }
