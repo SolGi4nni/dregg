@@ -151,12 +151,29 @@ impl FederationBridge {
     /// This creates a new QUIC endpoint, joins the remote federation's gossip topics,
     /// and returns after the connection is established. Call `run_relay_loop` to start
     /// actually relaying messages.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `trusted_keys` is empty. Untrusted mode (empty
+    /// trusted_keys) is a debug/relay-only configuration that does NOT accept
+    /// state-mutating messages (revocations, turn receipts). Since the bridge
+    /// cannot safely process mutations without at least one trusted key to verify
+    /// against, callers must provide a non-empty set. Use `run_bridge_node` which
+    /// already enforces this requirement.
     pub async fn connect_remote(
         &self,
         federation_id: [u8; 32],
         peers: Vec<String>,
         trusted_keys: Vec<pyana_types::PublicKey>,
     ) -> Result<(), String> {
+        if trusted_keys.is_empty() {
+            return Err(
+                "trusted_keys must be non-empty: untrusted mode cannot safely accept \
+                 state-mutating messages (revocations, turn receipts)"
+                    .to_string(),
+            );
+        }
+
         let fed_id_hex: String = federation_id
             .iter()
             .take(4)
@@ -777,8 +794,15 @@ async fn handle_remote_revocation(
         let remotes_guard = remotes.read().await;
         if let Some(remote) = remotes_guard.get(&federation_id) {
             if remote.trusted_keys.is_empty() {
-                // Accept in untrusted mode.
-                true
+                // Untrusted mode (no trusted keys): refuse state-mutating messages.
+                // Revocations require verified signer identity to prevent spoofed
+                // revocations from poisoning the cross-federation cache.
+                warn!(
+                    from = %from,
+                    fed = %fed_hex,
+                    "rejecting revocation in untrusted mode (no trusted keys configured)"
+                );
+                false
             } else {
                 remote
                     .trusted_keys
@@ -893,10 +917,16 @@ async fn handle_remote_receipt(
         let remotes_guard = remotes.read().await;
         if let Some(remote) = remotes_guard.get(&federation_id) {
             if remote.trusted_keys.is_empty() {
-                // Accept in untrusted mode.
-                signed_turn
-                    .signer
-                    .verify(&computed_hash, &signed_turn.signature)
+                // Untrusted mode (no trusted keys): refuse state-mutating messages.
+                // Turn receipts that resolve pending local turns are state-mutating;
+                // without a trusted key set we cannot verify the signer's identity.
+                warn!(
+                    from = %from,
+                    fed = %fed_hex,
+                    turn_hash = %hash_hex,
+                    "rejecting remote receipt in untrusted mode (no trusted keys configured)"
+                );
+                false
             } else {
                 // Verify the signer is a known key in the remote federation.
                 let signer_known = remote.trusted_keys.contains(&signed_turn.signer);

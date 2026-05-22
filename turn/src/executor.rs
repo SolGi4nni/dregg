@@ -508,7 +508,9 @@ impl TurnExecutor {
 
             if let Err((error, path)) = result {
                 // Rollback: replay journal in reverse to restore ledger.
-                journal.rollback(ledger);
+                // Also removes any obligation/escrow/nullifier insertions from
+                // the executor's in-memory maps (prevents phantom record attacks).
+                journal.rollback(ledger, &self.obligations, &self.escrows, &self.bridged_nullifiers);
                 // Fast unlock: refund the budget debit on turn failure.
                 if let (Some(gate_cell), Some((digest, fee))) =
                     (&self.budget_gate, &budget_debit_digest)
@@ -524,7 +526,7 @@ impl TurnExecutor {
 
         // Check total cost against fee.
         if computrons_used > turn.fee {
-            journal.rollback(ledger);
+            journal.rollback(ledger, &self.obligations, &self.escrows, &self.bridged_nullifiers);
             if let (Some(gate_cell), Some((digest, fee))) =
                 (&self.budget_gate, &budget_debit_digest)
             {
@@ -543,7 +545,7 @@ impl TurnExecutor {
         // equal sum of created values. This is checked independently of the cell
         // balance excess (notes are a separate value domain).
         if let Err(error) = self.check_note_conservation(turn) {
-            journal.rollback(ledger);
+            journal.rollback(ledger, &self.obligations, &self.escrows, &self.bridged_nullifiers);
             if let (Some(gate_cell), Some((digest, fee))) =
                 (&self.budget_gate, &budget_debit_digest)
             {
@@ -561,7 +563,7 @@ impl TurnExecutor {
 
         // Check excess conservation law: must be zero at turn end.
         if excess != 0 {
-            journal.rollback(ledger);
+            journal.rollback(ledger, &self.obligations, &self.escrows, &self.bridged_nullifiers);
             if let (Some(gate_cell), Some((digest, fee))) =
                 (&self.budget_gate, &budget_debit_digest)
             {
@@ -808,12 +810,17 @@ impl TurnExecutor {
                             let child_cell = ledger.get_mut(parent_cell).unwrap();
                             if child_cell.delegation.is_none() {
                                 journal.record_set_delegation(*parent_cell, None);
+                                let clist_bytes = postcard::to_allocvec(&snapshot).unwrap_or_default();
+                                let clist_commitment = pyana_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
                                 child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
                                     ancestor_id,
+                                    *parent_cell,
                                     snapshot,
                                     delegation_epoch,
                                     now,
                                     max_staleness,
+                                    clist_commitment,
+                                    [0u8; 64], // Executor-internal delegation, signature verified by execution authority.
                                 ));
                             }
                             // Re-check access now that the delegation snapshot is set.
@@ -1607,6 +1614,22 @@ impl TurnExecutor {
                         "SetVerificationKey",
                     ));
                 }
+                // Locking funds in an escrow or obligation stake is equivalent to
+                // sending value out — require Send permission on the source cell.
+                Effect::CreateEscrow { .. } | Effect::CreateObligation { .. } if !has_send => {
+                    result.push((pyana_cell::permissions::Action::Send, "Send"));
+                    has_send = true;
+                }
+                // Settlement actions (release/refund/fulfill/slash) are checked for
+                // creator/beneficiary authorization in the handler, but still require
+                // at least Access permission to be mapped so that cells with
+                // Access: None cannot be targeted.
+                Effect::ReleaseEscrow { .. }
+                | Effect::RefundEscrow { .. }
+                | Effect::FulfillObligation { .. }
+                | Effect::SlashObligation { .. } => {
+                    result.push((pyana_cell::permissions::Action::Access, "Access"));
+                }
                 _ => {}
             }
         }
@@ -1957,14 +1980,18 @@ impl TurnExecutor {
                 let verify_stark = |nullifier: &[u8; 32],
                                     root: &[u8; 32],
                                     dest_federation: &[u8; 32],
+                                    value: u64,
+                                    asset_type: u64,
                                     proof_bytes: &[u8]|
                  -> Result<(), String> {
                     match &self.proof_verifier {
                         Some(verifier) => {
-                            let mut public_inputs = Vec::with_capacity(96);
+                            let mut public_inputs = Vec::with_capacity(112);
                             public_inputs.extend_from_slice(nullifier);
                             public_inputs.extend_from_slice(root);
                             public_inputs.extend_from_slice(dest_federation);
+                            public_inputs.extend_from_slice(&value.to_le_bytes());
+                            public_inputs.extend_from_slice(&asset_type.to_le_bytes());
                             // Use well-known constants for bridge-mint proofs so the
                             // verifier can distinguish them from authorization proofs.
                             // action = "bridge-mint", resource = hex(destination_federation).
@@ -2015,6 +2042,11 @@ impl TurnExecutor {
                             path.to_vec(),
                         )
                     })?;
+
+                // Record the insertion so it can be rolled back on turn failure.
+                // Without this, an attacker could craft a turn with BridgeMint +
+                // deliberate failure to permanently burn a nullifier without minting.
+                journal.record_bridged_nullifier_inserted(portable_proof.nullifier);
 
                 Ok(())
             }
@@ -2183,6 +2215,8 @@ impl TurnExecutor {
                         },
                     );
                 }
+                // Record the insertion so it is rolled back on turn failure.
+                journal.record_obligation_inserted(obligation_id);
 
                 // The actor (action_target) is the obligor.
                 journal.record_obligation_created(
@@ -2195,7 +2229,7 @@ impl TurnExecutor {
             }
             Effect::FulfillObligation {
                 obligation_id,
-                proof: _,
+                proof,
             } => {
                 // Validate obligation_id is non-zero.
                 if obligation_id.iter().all(|&b| b == 0) {
@@ -2227,6 +2261,17 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // ACCESS CONTROL: Only the obligor (original creator) can fulfill
+                // their own obligation. Without this check, anyone could fulfill
+                // and return the stake to the obligor, defeating the obligation's purpose.
+                if *action_target != record.obligor {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "only the obligor can fulfill their own obligation".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
                 // Verify the deadline has not passed (fulfillment must be before deadline).
                 if self.block_height > record.deadline_height {
                     return Err((
@@ -2235,6 +2280,30 @@ impl TurnExecutor {
                         },
                         path.to_vec(),
                     ));
+                }
+                // Verify the fulfillment proof if a proof verifier is configured and
+                // a STARK proof is provided in the ConditionProof.
+                if let crate::conditional::ConditionProof::StarkProof { proof_bytes, .. } = proof {
+                    if !proof_bytes.is_empty() {
+                        if let Some(verifier) = &self.proof_verifier {
+                            if !verifier.verify(
+                                proof_bytes,
+                                "obligation-fulfill",
+                                "obligation",
+                                obligation_id,
+                            ) {
+                                return Err((
+                                    TurnError::InvalidEffect {
+                                        reason: "obligation fulfillment proof verification failed"
+                                            .into(),
+                                    },
+                                    path.to_vec(),
+                                ));
+                            }
+                        }
+                        // If no verifier configured but proof is provided, that's acceptable
+                        // (fail-open for the proof, but access control still enforced above).
+                    }
                 }
                 // Return locked stake to the obligor.
                 let obligor_cell = ledger.get(&record.obligor).ok_or_else(|| {
@@ -2328,6 +2397,16 @@ impl TurnExecutor {
                 timeout_height,
                 escrow_id,
             } => {
+                // SECURITY: The cell field must match action_target to prevent
+                // locking someone else's funds via an action targeting a different cell.
+                if cell != action_target {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "CreateEscrow cell must match action target".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
                 // Validate recipient cell exists.
                 if ledger.get(recipient).is_none() {
                     return Err((
@@ -2410,6 +2489,8 @@ impl TurnExecutor {
                         },
                     );
                 }
+                // Record the insertion so it is rolled back on turn failure.
+                journal.record_escrow_inserted(*escrow_id);
 
                 journal.record_escrow_created(*escrow_id, *cell, *recipient, *amount);
                 Ok(())
@@ -3113,12 +3194,17 @@ impl TurnExecutor {
                 let mut child_cell = Cell::with_balance(*child_public_key, *child_token_id, 0);
                 child_cell.id = child_id;
                 child_cell.delegate = Some(*action_target);
+                let clist_bytes = postcard::to_allocvec(&snapshot).unwrap_or_default();
+                let clist_commitment = pyana_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
                 child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
                     *action_target,
+                    child_id,
                     snapshot,
                     delegation_epoch,
                     now,
                     *max_staleness,
+                    clist_commitment,
+                    [0u8; 64], // Executor-internal delegation, signature verified by execution authority.
                 ));
 
                 ledger
@@ -3160,12 +3246,17 @@ impl TurnExecutor {
 
                 let child_mut = ledger.get_mut(action_target).unwrap();
                 journal.record_set_delegation(*action_target, old_delegation);
+                let clist_bytes = postcard::to_allocvec(&new_snapshot).unwrap_or_default();
+                let clist_commitment = pyana_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
                 child_mut.delegation = Some(pyana_cell::DelegatedRef::new(
                     parent_id,
+                    *action_target,
                     new_snapshot,
                     new_epoch,
                     now,
                     max_staleness,
+                    clist_commitment,
+                    [0u8; 64], // Executor-internal delegation, signature verified by execution authority.
                 ));
                 Ok(())
             }
@@ -3617,6 +3708,7 @@ impl TurnExecutor {
                 }
                 JournalEntry::SetDelegation { .. } | JournalEntry::SetDelegationEpoch { .. } => {}
                 // Note/obligation/event/escrow entries don't affect the ledger delta directly.
+                // Obligation/escrow/nullifier insertion entries are rollback-only bookkeeping.
                 JournalEntry::NoteSpend { .. }
                 | JournalEntry::NoteCreate { .. }
                 | JournalEntry::ObligationCreated { .. }
@@ -3625,7 +3717,10 @@ impl TurnExecutor {
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::EscrowCreated { .. }
                 | JournalEntry::EscrowReleased { .. }
-                | JournalEntry::EscrowRefunded { .. } => {}
+                | JournalEntry::EscrowRefunded { .. }
+                | JournalEntry::ObligationInserted { .. }
+                | JournalEntry::EscrowInserted { .. }
+                | JournalEntry::BridgedNullifierInserted { .. } => {}
             }
         }
 

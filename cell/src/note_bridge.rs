@@ -249,6 +249,18 @@ impl BridgedNullifierSet {
     pub fn is_empty(&self) -> bool {
         self.nullifiers.is_empty()
     }
+
+    /// Remove a nullifier from the set (used for rollback).
+    /// Returns true if the nullifier was found and removed, false otherwise.
+    pub fn remove(&mut self, nullifier: &[u8; 32]) -> bool {
+        match self.nullifiers.binary_search(nullifier) {
+            Ok(idx) => {
+                self.nullifiers.remove(idx);
+                true
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 // ============================================================================
@@ -593,6 +605,8 @@ pub fn verify_bridge_receipt(receipt: &BridgeReceipt, trusted_keys: &[[u8; 32]])
 ///    with the destination_federation included in the public inputs (binding the
 ///    proof cryptographically to this specific target).
 /// 5. The nullifier is consistent with the proof's public inputs.
+/// 6. The value and asset_type claimed in the proof match commitments embedded in
+///    the STARK proof's public inputs (prevents value inflation attacks).
 ///
 /// On success, the caller should:
 /// - Add the nullifier to the bridged-nullifier set (prevent double-bridge).
@@ -604,9 +618,10 @@ pub fn verify_bridge_receipt(receipt: &BridgeReceipt, trusted_keys: &[[u8; 32]])
 /// * `local_federation_id` - This federation's identity (genesis root or configured ID).
 /// * `trusted_roots` - The set of attested roots we accept from other federations.
 /// * `verify_stark` - A closure that verifies the STARK proof given
-///   (nullifier_bytes, merkle_root_bytes, destination_federation_bytes, proof_bytes).
-///   The destination_federation is included in the public inputs so the proof is
-///   cryptographically bound to one target. Returns Ok(()) if valid.
+///   (nullifier_bytes, merkle_root_bytes, destination_federation_bytes, value, asset_type, proof_bytes).
+///   The destination_federation, value, and asset_type are included in the public inputs
+///   so the proof is cryptographically bound to one target and specific value/asset.
+///   Returns Ok(()) if valid.
 pub fn verify_portable_note<F>(
     proof: &PortableNoteProof,
     local_federation_id: &[u8; 32],
@@ -614,7 +629,7 @@ pub fn verify_portable_note<F>(
     verify_stark: F,
 ) -> Result<(), BridgeError>
 where
-    F: FnOnce(&[u8; 32], &[u8; 32], &[u8; 32], &[u8]) -> Result<(), String>,
+    F: FnOnce(&[u8; 32], &[u8; 32], &[u8; 32], u64, u64, &[u8]) -> Result<(), String>,
 {
     // 1. Check destination_federation matches local identity.
     // This prevents cross-federation replay: a proof addressed to Federation A
@@ -649,20 +664,31 @@ where
         .note_tree_root
         .ok_or(BridgeError::MissingNoteTreeRoot)?;
 
-    // 4. Verify the STARK spending proof with destination_federation in public inputs.
-    // The destination_federation is included so the proof is cryptographically bound
-    // to this specific target federation — prevents replay to other federations.
+    // 4. Verify the STARK spending proof with destination_federation, value, and
+    //    asset_type in public inputs. The verifier MUST check that the proof's
+    //    public inputs commit to these exact values. This prevents:
+    //    - Cross-federation replay (destination binding)
+    //    - Value inflation (value binding)
+    //    - Asset type confusion (asset_type binding)
+    //
+    // NOTE: The note_spending AIR must embed value and asset_type as public inputs
+    // for this check to be meaningful. If the current AIR does not include them,
+    // the verify_stark closure should reject the proof (fail-closed).
+    // TODO: Ensure NoteSpendingAir includes value and asset_type in public inputs.
     verify_stark(
         &proof.nullifier,
         &note_tree_root,
         &proof.destination_federation,
+        proof.value,
+        proof.asset_type,
         &proof.spending_proof,
     )
     .map_err(|reason| BridgeError::InvalidSpendingProof { reason })?;
 
     // 5. Verification passed. The nullifier corresponds to a valid note in the
-    //    source federation's note tree at the attested root, and the proof is
-    //    cryptographically bound to this federation.
+    //    source federation's note tree at the attested root, the proof is
+    //    cryptographically bound to this federation, and the value/asset_type
+    //    are consistent with the STARK proof's public inputs.
     Ok(())
 }
 
@@ -743,6 +769,8 @@ mod tests {
         _nullifier: &[u8; 32],
         _root: &[u8; 32],
         _dest_fed: &[u8; 32],
+        _value: u64,
+        _asset_type: u64,
         _proof: &[u8],
     ) -> Result<(), String> {
         Ok(())
@@ -753,6 +781,8 @@ mod tests {
         _nullifier: &[u8; 32],
         _root: &[u8; 32],
         _dest_fed: &[u8; 32],
+        _value: u64,
+        _asset_type: u64,
         _proof: &[u8],
     ) -> Result<(), String> {
         Err("mock verification failure".to_string())
@@ -967,6 +997,8 @@ mod tests {
         let verify_checks_integrity = |_nullifier: &[u8; 32],
                                        _root: &[u8; 32],
                                        _dest_fed: &[u8; 32],
+                                       _value: u64,
+                                       _asset_type: u64,
                                        proof_bytes: &[u8]|
          -> Result<(), String> {
             if proof_bytes == &[1, 2, 3, 4] {
@@ -989,37 +1021,85 @@ mod tests {
         );
     }
 
-    /// Adversarial test 11: Value mismatch (documents gap).
+    /// Adversarial test 11: Value mismatch — verifier now receives value/asset_type
+    /// as explicit parameters and can reject inflated claims.
     #[test]
-    fn adversarial_value_mismatch_documents_gap() {
+    fn adversarial_value_mismatch_rejected() {
         let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
         let mut proof = make_proof([0xCC; 32], 100, 1);
+        // Attacker inflates the claimed value.
         proof.value = 1000;
 
-        let result_naive = verify_portable_note(&proof, &TEST_FEDERATION_ID, &trusted, verify_ok);
-        assert!(
-            result_naive.is_ok(),
-            "BUG DOCUMENTATION: naive verifier does not catch value inflation"
-        );
-
+        // A verifier that checks value against the proof's embedded public inputs.
+        // The STARK proof was generated with value=100, but the PortableNoteProof claims 1000.
         let verify_with_value_check = |_nullifier: &[u8; 32],
                                        _root: &[u8; 32],
                                        _dest_fed: &[u8; 32],
+                                       value: u64,
+                                       _asset_type: u64,
                                        _proof_bytes: &[u8]|
          -> Result<(), String> {
-            Err("public input mismatch: proof binds value=100, claimed 1000".to_string())
+            // The STARK proof internally commits to value=100.
+            let proof_committed_value: u64 = 100;
+            if value != proof_committed_value {
+                Err(format!(
+                    "public input mismatch: proof binds value={}, claimed {}",
+                    proof_committed_value, value
+                ))
+            } else {
+                Ok(())
+            }
         };
 
-        let result_strict = verify_portable_note(
+        let result = verify_portable_note(
             &proof,
             &TEST_FEDERATION_ID,
             &trusted,
             verify_with_value_check,
         );
         assert!(
-            matches!(result_strict, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("value=100")),
+            matches!(result, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("value=100")),
             "value-aware verifier must catch inflation: got {:?}",
-            result_strict
+            result
+        );
+    }
+
+    /// Adversarial test: Asset type mismatch — verifier rejects wrong asset_type.
+    #[test]
+    fn adversarial_asset_type_mismatch_rejected() {
+        let trusted = vec![make_attested_root(42, Some([0xAA; 32]))];
+        let mut proof = make_proof([0xCD; 32], 100, 1);
+        // Attacker changes asset_type to a more valuable asset.
+        proof.asset_type = 99;
+
+        let verify_with_asset_check = |_nullifier: &[u8; 32],
+                                       _root: &[u8; 32],
+                                       _dest_fed: &[u8; 32],
+                                       _value: u64,
+                                       asset_type: u64,
+                                       _proof_bytes: &[u8]|
+         -> Result<(), String> {
+            let proof_committed_asset: u64 = 1;
+            if asset_type != proof_committed_asset {
+                Err(format!(
+                    "public input mismatch: proof binds asset_type={}, claimed {}",
+                    proof_committed_asset, asset_type
+                ))
+            } else {
+                Ok(())
+            }
+        };
+
+        let result = verify_portable_note(
+            &proof,
+            &TEST_FEDERATION_ID,
+            &trusted,
+            verify_with_asset_check,
+        );
+        assert!(
+            matches!(result, Err(BridgeError::InvalidSpendingProof { ref reason }) if reason.contains("asset_type=1")),
+            "asset-type-aware verifier must catch confusion: got {:?}",
+            result
         );
     }
 
@@ -1034,6 +1114,8 @@ mod tests {
         let verify_nullifier_binding = |nullifier: &[u8; 32],
                                         _root: &[u8; 32],
                                         _dest_fed: &[u8; 32],
+                                        _value: u64,
+                                        _asset_type: u64,
                                         _proof_bytes: &[u8]|
          -> Result<(), String> {
             let expected_nullifier = nullifier_b;

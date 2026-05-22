@@ -36,18 +36,30 @@ impl TokenFormat {
     /// Detect format from raw bytes (for binary-encoded tokens).
     ///
     /// Macaroon tokens start with MsgPack array marker.
-    /// Biscuit tokens start with Protobuf varint.
+    /// Biscuit tokens start with Protobuf varint patterns.
+    ///
+    /// Returns `UnrecognizedFormat` if the data does not match either format's
+    /// expected byte patterns, rather than defaulting to any format.
     pub fn detect_bytes(data: &[u8]) -> Result<TokenFormat, TokenError> {
         if data.is_empty() {
             return Err(TokenError::Malformed("empty token".into()));
         }
-        // MsgPack fixarray or array16/array32 markers
+        // MsgPack fixarray or array16/array32 markers (macaroon)
         if (data[0] & 0xf0) == 0x90 || data[0] == 0xdc || data[0] == 0xdd {
-            Ok(TokenFormat::Macaroon)
-        } else {
-            // Default to biscuit for protobuf-encoded data
-            Ok(TokenFormat::Biscuit)
+            return Ok(TokenFormat::Macaroon);
         }
+        // Biscuit uses protobuf encoding. Valid protobuf messages start with a
+        // field tag (varint). Field 1 with wire type 2 (length-delimited) = 0x0a.
+        // Field 1 with wire type 0 (varint) = 0x08. Field 2 with wire type 2 = 0x12.
+        // These cover the known Biscuit serialization patterns.
+        if data[0] == 0x0a || data[0] == 0x08 || data[0] == 0x12 {
+            return Ok(TokenFormat::Biscuit);
+        }
+        // Also accept the Biscuit v2 format which may start with version byte 2
+        if data.len() >= 2 && data[0] == 0x02 {
+            return Ok(TokenFormat::Biscuit);
+        }
+        Err(TokenError::UnrecognizedFormat)
     }
 }
 
@@ -141,5 +153,69 @@ mod tests {
         let header = format_auth_header(&["em2_token1", "em2_discharge1"]);
         let parsed = parse_auth_header(&header).unwrap();
         assert_eq!(parsed, vec!["em2_token1", "em2_discharge1"]);
+    }
+
+    // Security tests
+
+    #[test]
+    fn test_detect_bytes_rejects_unrecognized_data() {
+        // Random garbage data should NOT default to Biscuit.
+        // Previously any unrecognized data was assumed to be Biscuit format.
+        let garbage = &[0xFF, 0xFE, 0xFD, 0xFC, 0x00];
+        let result = TokenFormat::detect_bytes(garbage);
+        assert!(
+            result.is_err(),
+            "random garbage must not be accepted as any token format"
+        );
+
+        // More garbage patterns that are not valid MsgPack or Protobuf
+        let not_msgpack_not_proto = &[0x50, 0x4E, 0x47]; // "PNG" header bytes
+        let result = TokenFormat::detect_bytes(not_msgpack_not_proto);
+        assert!(
+            result.is_err(),
+            "PNG-like data must not be accepted as a token format"
+        );
+
+        // Null-filled data
+        let nulls = &[0x00, 0x00, 0x00, 0x00];
+        let result = TokenFormat::detect_bytes(nulls);
+        assert!(
+            result.is_err(),
+            "null data must not be accepted as a token format"
+        );
+    }
+
+    #[test]
+    fn test_detect_bytes_accepts_valid_macaroon_patterns() {
+        // MsgPack fixarray (0x90-0x9f)
+        let msgpack_fixarray = &[0x93, 0x01, 0x02];
+        assert_eq!(
+            TokenFormat::detect_bytes(msgpack_fixarray).unwrap(),
+            TokenFormat::Macaroon
+        );
+
+        // MsgPack array16
+        let msgpack_array16 = &[0xdc, 0x00, 0x10];
+        assert_eq!(
+            TokenFormat::detect_bytes(msgpack_array16).unwrap(),
+            TokenFormat::Macaroon
+        );
+    }
+
+    #[test]
+    fn test_detect_bytes_accepts_valid_biscuit_patterns() {
+        // Protobuf field 1, wire type 2 (length-delimited)
+        let proto_field1_len = &[0x0a, 0x05, 0x01, 0x02, 0x03];
+        assert_eq!(
+            TokenFormat::detect_bytes(proto_field1_len).unwrap(),
+            TokenFormat::Biscuit
+        );
+
+        // Protobuf field 1, wire type 0 (varint)
+        let proto_field1_varint = &[0x08, 0x01];
+        assert_eq!(
+            TokenFormat::detect_bytes(proto_field1_varint).unwrap(),
+            TokenFormat::Biscuit
+        );
     }
 }

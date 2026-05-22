@@ -193,13 +193,15 @@ pub fn verify_token(
 // STARK Proof operations
 // ============================================================================
 
-/// Generate a STARK proof for a Merkle membership claim.
+/// Demo/playground only. Uses simplified linear AIR (field-addition parent
+/// computation), not cryptographically sound for production. Generates a STARK
+/// proof for a Merkle membership claim using `MerkleStarkAir`.
 ///
 /// `leaf_value` is a u32 field element, `depth` controls the Merkle tree depth (2-8).
 ///
 /// Returns JSON with proof bytes, generation time, proof size, etc.
 #[wasm_bindgen]
-pub fn generate_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue, JsError> {
+pub fn generate_demo_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue, JsError> {
     use pyana_circuit::field::BabyBear;
     use pyana_circuit::stark::{MerkleStarkAir, prove};
 
@@ -262,11 +264,12 @@ pub fn generate_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue, JsEr
     Ok(serde_wasm_bindgen::to_value(&result)?)
 }
 
-/// Verify a previously generated STARK proof.
+/// Demo/playground only. Uses simplified linear AIR, not cryptographically
+/// sound for production. Verifies a previously generated demo STARK proof.
 ///
 /// Returns JSON: { "valid": bool, "error": null | "..." }
 #[wasm_bindgen]
-pub fn verify_stark_proof(proof_json: &str) -> Result<JsValue, JsError> {
+pub fn verify_demo_stark_proof(proof_json: &str) -> Result<JsValue, JsError> {
     use pyana_circuit::field::BabyBear;
     use pyana_circuit::stark::{MerkleStarkAir, StarkProof, verify};
 
@@ -303,11 +306,12 @@ pub fn verify_stark_proof(proof_json: &str) -> Result<JsValue, JsError> {
     Ok(serde_wasm_bindgen::to_value(&out)?)
 }
 
-/// Tamper with a STARK proof by flipping bits in the first query's trace values.
+/// Demo/playground only. Tamper with a demo STARK proof by flipping bits in
+/// the first query's trace values.
 ///
 /// Returns the tampered proof JSON.
 #[wasm_bindgen]
-pub fn tamper_stark_proof(proof_json: &str) -> Result<String, JsError> {
+pub fn tamper_demo_stark_proof(proof_json: &str) -> Result<String, JsError> {
     use pyana_circuit::stark::StarkProof;
 
     let mut proof: StarkProof =

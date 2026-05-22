@@ -20,6 +20,28 @@ pub struct CapabilityRef {
     pub expires_at: Option<u64>,
 }
 
+/// An attenuated capability without a slot assignment.
+///
+/// Produced by [`CapabilitySet::attenuate`]. This represents a capability with narrowed
+/// permissions that has not yet been placed into any c-list. The slot is assigned when
+/// inserted into a target `CapabilitySet` via [`CapabilitySet::insert_attenuated`].
+///
+/// This separation prevents a child from inheriting the parent's internal slot numbering,
+/// which could leak information about the parent's c-list layout or collide with existing
+/// entries in the child's c-list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttenuatedCap {
+    /// Which cell this capability points to.
+    pub target: CellId,
+    /// What authorization is required to exercise this capability.
+    pub permissions: AuthRequired,
+    /// Optional capability token hash for verification/revocation.
+    pub breadstuff: Option<[u8; 32]>,
+    /// Optional expiry height.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
 /// The c-list: the set of capabilities a cell holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitySet {
@@ -144,22 +166,45 @@ impl CapabilitySet {
         })
     }
 
-    /// Attenuate a capability: create a new CapabilityRef with narrower permissions.
-    /// Returns None if the slot doesn't exist or if `narrower` is not actually
+    /// Attenuate a capability: produce a slot-free [`AttenuatedCap`] with narrower permissions.
+    ///
+    /// The returned `AttenuatedCap` does NOT carry a slot number. When delegating to a
+    /// child, use [`CapabilitySet::insert_attenuated`] to assign the next available slot
+    /// in the child's c-list. This prevents a child from inheriting the parent's internal
+    /// slot numbering, which could leak information or collide with existing entries.
+    ///
+    /// Returns `None` if the slot doesn't exist or if `narrower` is not actually
     /// narrower than the existing permissions.
-    pub fn attenuate(&self, slot: u32, narrower: AuthRequired) -> Option<CapabilityRef> {
+    pub fn attenuate(&self, slot: u32, narrower: AuthRequired) -> Option<AttenuatedCap> {
         let existing = self.lookup(slot)?;
         // The new permission must be at least as restrictive as the old one.
         if !narrower.is_narrower_or_equal(&existing.permissions) {
             return None;
         }
-        Some(CapabilityRef {
+        Some(AttenuatedCap {
             target: existing.target,
-            slot: existing.slot,
             permissions: narrower,
             breadstuff: existing.breadstuff,
             expires_at: existing.expires_at,
         })
+    }
+
+    /// Insert an attenuated capability into this set, assigning the next available slot.
+    ///
+    /// This is the proper way to delegate an attenuated capability to a child: the child's
+    /// c-list assigns its own slot number rather than inheriting the parent's.
+    /// Returns the assigned slot number, or `None` if the slot counter would overflow.
+    pub fn insert_attenuated(&mut self, cap: AttenuatedCap) -> Option<u32> {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        self.refs.push(CapabilityRef {
+            target: cap.target,
+            slot,
+            permissions: cap.permissions,
+            breadstuff: cap.breadstuff,
+            expires_at: cap.expires_at,
+        });
+        Some(slot)
     }
 
     /// Restore a previously revoked capability by re-inserting it directly.

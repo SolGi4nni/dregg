@@ -205,13 +205,17 @@ impl FulfillmentRegistry {
             .get(intent_id)
             .ok_or(CommitRevealFulfillmentError::NoCommitment)?;
 
-        // Find the commitment matching this secret
-        let epoch = current_epoch(self.current_block_height);
-        let expected_hash = compute_commitment_hash(intent_id, fulfiller_secret, epoch);
-
+        // Find the commitment matching this secret.
+        // SECURITY FIX: Use each commitment's stored epoch (the epoch at commit
+        // time) to recompute the expected hash, NOT the current epoch. If the epoch
+        // advances between commit and reveal, using the current epoch would produce
+        // a different hash and the reveal would always fail at epoch boundaries.
         let matching = commitments
             .iter()
-            .find(|c| c.commitment_hash == expected_hash)
+            .find(|c| {
+                let expected_hash = compute_commitment_hash(intent_id, fulfiller_secret, c.epoch);
+                c.commitment_hash == expected_hash
+            })
             .ok_or(CommitRevealFulfillmentError::SecretMismatch)?;
 
         // Check the reveal window has elapsed
@@ -431,6 +435,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None)
     }

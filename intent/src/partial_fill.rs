@@ -52,6 +52,8 @@ pub enum PartialFillError {
     FillOrKillRejected { available: u64, required: u64 },
     /// The intent has no fill constraints (use regular fulfillment).
     NoFillConstraints,
+    /// The fill constraints are invalid.
+    InvalidConstraints(String),
     /// Underlying fulfillment error.
     Fulfillment(FulfillmentError),
 }
@@ -79,6 +81,9 @@ impl std::fmt::Display for PartialFillError {
             Self::NoFillConstraints => {
                 write!(f, "intent has no fill constraints; use regular fulfillment")
             }
+            Self::InvalidConstraints(msg) => {
+                write!(f, "invalid fill constraints: {}", msg)
+            }
             Self::Fulfillment(e) => write!(f, "fulfillment error: {}", e),
         }
     }
@@ -96,6 +101,24 @@ pub fn check_fill_amount(
     constraints: &FillConstraints,
     available_amount: u64,
 ) -> Result<u64, PartialFillError> {
+    // SECURITY: Reject zero min_fill_amount -- allows zero-value fills that bypass
+    // economic constraints.
+    if constraints.min_fill_amount == 0 {
+        return Err(PartialFillError::InvalidConstraints(
+            "min_fill_amount must be > 0".into(),
+        ));
+    }
+
+    // SECURITY: min must not exceed max
+    if constraints.min_fill_amount > constraints.max_fill_amount {
+        return Err(PartialFillError::InvalidConstraints(
+            format!(
+                "min_fill_amount ({}) must be <= max_fill_amount ({})",
+                constraints.min_fill_amount, constraints.max_fill_amount
+            ),
+        ));
+    }
+
     // Fill-or-kill: must satisfy the full max amount
     if constraints.fill_or_kill {
         if available_amount < constraints.max_fill_amount {
@@ -304,6 +327,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let constraints = FillConstraints {
             min_fill_amount: min,
@@ -690,6 +714,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         // Intent without fill constraints
         let intent = Intent::new(
@@ -709,5 +734,87 @@ mod tests {
             result.unwrap_err(),
             PartialFillError::NoFillConstraints
         ));
+    }
+
+    // =========================================================================
+    // SECURITY: Zero fill amount and min>max validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_zero_min_fill_amount_rejected_at_check() {
+        // ADVERSARIAL: Attacker tries to create fill constraints with min=0,
+        // allowing zero-value fills that bypass economic constraints.
+        let constraints = FillConstraints {
+            min_fill_amount: 0,
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let result = check_fill_amount(&constraints, 50);
+        assert!(
+            matches!(result, Err(PartialFillError::InvalidConstraints(_))),
+            "min_fill_amount=0 must be rejected at check_fill_amount, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_min_exceeds_max_rejected_at_check() {
+        // ADVERSARIAL: min > max should never be accepted.
+        let constraints = FillConstraints {
+            min_fill_amount: 200,
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let result = check_fill_amount(&constraints, 150);
+        assert!(
+            matches!(result, Err(PartialFillError::InvalidConstraints(_))),
+            "min > max must be rejected at check_fill_amount, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_zero_min_fill_amount_rejected_in_execute() {
+        // ADVERSARIAL: Even if somehow FillConstraints with min=0 makes it past
+        // creation, execute_partial_fill must reject it.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("transfer".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let constraints = FillConstraints {
+            min_fill_amount: 0,
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let intent = Intent::new_with_fill(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            u64::MAX,
+            None,
+            constraints,
+        );
+        let matched = make_match(&intent);
+        let token = make_source_token();
+        let our_id = CommitmentId([0xBB; 32]);
+        let options = make_options();
+
+        let result = execute_partial_fill(&intent, &matched, &token, our_id, 50, &options);
+        assert!(
+            matches!(result, Err(PartialFillError::InvalidConstraints(_))),
+            "zero min_fill_amount must be rejected in execute_partial_fill, got: {:?}",
+            result
+        );
     }
 }

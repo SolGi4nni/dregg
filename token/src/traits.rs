@@ -128,8 +128,8 @@ pub struct Attenuation {
     pub budget: Option<BudgetSpec>,
     /// Mark token as revocable via a revocation service.
     pub revocable: Option<String>,
-    /// Raw Datalog code to add (Biscuit only — ignored for macaroons).
-    pub raw_datalog: Option<String>,
+    // SECURITY: raw_datalog field was removed to prevent Datalog injection attacks.
+    // All attenuation MUST use structured caveats (apps, services, features, etc.).
 }
 
 /// Feature glob pattern specification for resource scoping.

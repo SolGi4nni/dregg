@@ -235,7 +235,13 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        let clearance2 = restricted.verify(&AuthRequest::default()).unwrap();
+        let clearance2 = restricted
+            .verify(&AuthRequest {
+                app_id: Some("app".into()),
+                action: Some("r".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(clearance2.format, TokenFormat::Macaroon);
     }
 

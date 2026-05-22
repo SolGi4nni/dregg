@@ -7,7 +7,7 @@ edition.workspace = true
 default = ["stark-verifier", "federation", "bridge"]
 stark-verifier = ["pyana-circuit"]
 federation = ["pyana-federation"]
-bridge = ["pyana-bridge", "token", "pyana-commit", "stark-verifier"]
+bridge = ["pyana-bridge", "pyana-commit", "stark-verifier"]
 dev = []
 
 [dependencies]
@@ -22,7 +22,7 @@ getrandom = { workspace = true }
 pyana-circuit = { path = "../circuit", optional = true }
 pyana-federation = { path = "../federation", optional = true }
 pyana-bridge = { path = "../bridge", optional = true, features = ["test-utils"] }
-token = { path = "../token", default-features = false, features = ["macaroon", "datalog", "rand-deps"], optional = true }
+token = { path = "../token", default-features = false, features = ["macaroon", "datalog", "rand-deps"] }
 pyana-commit = { path = "../commit", optional = true }
 pyana-cell = { path = "../cell" }
 pyana-store = { path = "../store" }

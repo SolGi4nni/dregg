@@ -5,12 +5,19 @@
 //! is simply dropped (zero cost). On failure, the journal is replayed in reverse
 //! to restore the ledger to its exact pre-turn state.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use pyana_cell::{
     CapabilityRef, CellId, DelegatedRef, Ledger, NoteCommitment, Nullifier, Permissions,
-    VerificationKey, state::FieldElement,
+    VerificationKey,
+    note_bridge::BridgedNullifierSet,
+    state::FieldElement,
 };
 
 use crate::action::Symbol;
+use crate::escrow::EscrowRecord;
+use crate::executor::ObligationRecord;
 
 /// A single undo entry in the journal.
 #[derive(Debug)]
@@ -90,6 +97,15 @@ pub(crate) enum JournalEntry {
     EscrowReleased { escrow_id: [u8; 32] },
     /// An escrow was refunded (timeout passed, funds returned to creator).
     EscrowRefunded { escrow_id: [u8; 32] },
+    /// An obligation was inserted into the executor's obligation map.
+    /// On rollback, this obligation_id must be REMOVED from the map.
+    ObligationInserted { obligation_id: [u8; 32] },
+    /// An escrow was inserted into the executor's escrow map.
+    /// On rollback, this escrow_id must be REMOVED from the map.
+    EscrowInserted { escrow_id: [u8; 32] },
+    /// A bridged nullifier was inserted into the executor's nullifier set.
+    /// On rollback, this nullifier must be REMOVED from the set.
+    BridgedNullifierInserted { nullifier: [u8; 32] },
 }
 
 /// The undo journal for a turn's execution.
@@ -263,11 +279,40 @@ impl LedgerJournal {
             .push(JournalEntry::EscrowRefunded { escrow_id });
     }
 
+    /// Record that an obligation was inserted into the executor's obligation map.
+    /// On rollback, this obligation_id will be removed from the map.
+    pub fn record_obligation_inserted(&mut self, obligation_id: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::ObligationInserted { obligation_id });
+    }
+
+    /// Record that an escrow was inserted into the executor's escrow map.
+    /// On rollback, this escrow_id will be removed from the map.
+    pub fn record_escrow_inserted(&mut self, escrow_id: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::EscrowInserted { escrow_id });
+    }
+
+    /// Record that a bridged nullifier was inserted into the executor's nullifier set.
+    /// On rollback, this nullifier will be removed from the set.
+    pub fn record_bridged_nullifier_inserted(&mut self, nullifier: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::BridgedNullifierInserted { nullifier });
+    }
+
     /// Roll back all recorded changes in reverse order.
     ///
     /// After this call, the ledger is restored to the state it was in before
-    /// any journaled mutations were applied.
-    pub fn rollback(self, ledger: &mut Ledger) {
+    /// any journaled mutations were applied. Also removes any obligation/escrow/
+    /// nullifier insertions that were recorded during the turn from the executor's
+    /// in-memory maps, preventing phantom record attacks.
+    pub fn rollback(
+        self,
+        ledger: &mut Ledger,
+        obligations: &Mutex<HashMap<[u8; 32], ObligationRecord>>,
+        escrows: &Mutex<HashMap<[u8; 32], EscrowRecord>>,
+        bridged_nullifiers: &Mutex<BridgedNullifierSet>,
+    ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
                 JournalEntry::SetField {
@@ -335,6 +380,18 @@ impl LedgerJournal {
                     if let Some(c) = ledger.get_mut(&cell) {
                         c.state.delegation_epoch = old_epoch;
                     }
+                }
+                // CRITICAL FIX: Remove obligation/escrow/nullifier insertions on rollback.
+                // Without this, an attacker could create phantom records that survive
+                // a failed turn and exploit them in subsequent turns for inflation.
+                JournalEntry::ObligationInserted { obligation_id } => {
+                    obligations.lock().unwrap().remove(&obligation_id);
+                }
+                JournalEntry::EscrowInserted { escrow_id } => {
+                    escrows.lock().unwrap().remove(&escrow_id);
+                }
+                JournalEntry::BridgedNullifierInserted { nullifier } => {
+                    bridged_nullifiers.lock().unwrap().remove(&nullifier);
                 }
                 // Note/obligation/escrow/event entries don't modify ledger state directly.
                 // On rollback these are simply discarded — the note layer,

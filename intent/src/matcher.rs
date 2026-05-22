@@ -287,7 +287,18 @@ pub fn satisfies_spec(token: &HeldCapability, spec: &MatchSpec, now: u64) -> boo
 
     // Check resource pattern
     if let Some(pattern) = &spec.resource_pattern {
-        if !resource_matches(&token.resource, pattern) {
+        if spec.strict_resource_matching {
+            // Strict mode: wildcards are not allowed in the pattern.
+            // Require exact match between token resource and pattern.
+            if pattern == "*" {
+                // A wildcard pattern with strict matching is contradictory:
+                // it means "match everything but also be strict". Reject it.
+                return false;
+            }
+            if token.resource != *pattern {
+                return false;
+            }
+        } else if !resource_matches(&token.resource, pattern) {
             return false;
         }
     }
@@ -305,6 +316,103 @@ pub fn satisfies_spec(token: &HeldCapability, spec: &MatchSpec, now: u64) -> boo
             Some(b) if b >= min_budget => {}
             Some(_) => return false,
             // No budget info means unlimited -- satisfies any min_budget
+            None => {}
+        }
+    }
+
+    true
+}
+
+/// Registry for custom constraint evaluators.
+///
+/// Custom constraints require explicit registration of evaluation logic.
+/// Without a registered evaluator, custom constraints FAIL CLOSED (return false).
+pub struct CustomConstraintEvaluators {
+    evaluators: std::collections::HashMap<String, Box<dyn Fn(&str) -> bool + Send + Sync>>,
+}
+
+impl CustomConstraintEvaluators {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            evaluators: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Register an evaluator for a custom predicate name.
+    pub fn register(
+        &mut self,
+        predicate: impl Into<String>,
+        evaluator: impl Fn(&str) -> bool + Send + Sync + 'static,
+    ) {
+        self.evaluators.insert(predicate.into(), Box::new(evaluator));
+    }
+
+    /// Evaluate a custom constraint. Returns `false` if no evaluator is registered.
+    pub fn evaluate(&self, predicate: &str, value: &str) -> bool {
+        match self.evaluators.get(predicate) {
+            Some(eval) => eval(value),
+            None => false,
+        }
+    }
+}
+
+impl Default for CustomConstraintEvaluators {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Check if a single held token satisfies a MatchSpec, with custom constraint evaluation.
+///
+/// This is the variant of `satisfies_spec` that supports custom constraints via
+/// the provided evaluator registry. Use this when intents may contain `Constraint::Custom`.
+pub fn satisfies_spec_with_custom(
+    token: &HeldCapability,
+    spec: &MatchSpec,
+    now: u64,
+    custom_evaluators: &CustomConstraintEvaluators,
+) -> bool {
+    // Check action patterns
+    if !spec.actions.is_empty() && !actions_match(token, &spec.actions) {
+        return false;
+    }
+
+    // Check resource pattern
+    if let Some(pattern) = &spec.resource_pattern {
+        if spec.strict_resource_matching {
+            if pattern == "*" {
+                return false;
+            }
+            if token.resource != *pattern {
+                return false;
+            }
+        } else if !resource_matches(&token.resource, pattern) {
+            return false;
+        }
+    }
+
+    // Check constraints
+    for constraint in &spec.constraints {
+        match constraint {
+            Constraint::Custom { predicate, value } => {
+                if !custom_evaluators.evaluate(predicate, value) {
+                    return false;
+                }
+            }
+            other => {
+                if !constraint_satisfied(token, other, now) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Check budget
+    if let Some(min_budget) = spec.min_budget {
+        match token.budget {
+            Some(b) if b >= min_budget => {}
+            Some(_) => return false,
             None => {}
         }
     }
@@ -406,16 +514,15 @@ fn constraint_satisfied(token: &HeldCapability, constraint: &Constraint, now: u6
             token.oauth_provider.as_ref().is_some_and(|p| p == provider)
         }
         Constraint::Custom { predicate, value } => {
-            // Custom constraints are extensible and not yet implemented in the
-            // matching engine. They fail-open by design: an unknown constraint
-            // is treated as "no additional filter" rather than a hard rejection.
+            // SECURITY: Custom constraints FAIL CLOSED. If there is no registered
+            // evaluator for this custom predicate, matching returns false. This
+            // prevents unrecognized constraints from being silently ignored, which
+            // would allow tokens to match intents they shouldn't satisfy.
             //
-            // Rationale: Custom constraints are user-defined extensions. Rejecting
-            // them would make the protocol non-extensible -- older nodes would never
-            // match intents with new constraint types. The security boundary is at
-            // fulfillment verification, not matching.
+            // To use custom constraints, callers must register an evaluator via
+            // the `CustomConstraintEvaluators` registry and use `satisfies_spec_with_custom`.
             let _ = (predicate, value, now);
-            true
+            false
         }
     }
 }
@@ -509,6 +616,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         Intent::new(
             IntentKind::Need,
@@ -577,6 +685,7 @@ mod tests {
             resource_pattern: Some("documents/reports/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -590,6 +699,7 @@ mod tests {
             resource_pattern: Some("secrets/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -606,6 +716,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -616,6 +727,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -635,6 +747,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -651,6 +764,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -661,6 +775,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_expired, 100));
     }
@@ -677,6 +792,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -687,6 +803,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_miss, 100));
     }
@@ -706,6 +823,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
 
@@ -719,6 +837,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_too_much, 100));
     }
@@ -736,6 +855,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -764,6 +884,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Offer,
@@ -793,6 +914,7 @@ mod tests {
             resource_pattern: Some("documents/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Offer,
@@ -820,6 +942,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Offer,
@@ -893,6 +1016,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -909,6 +1033,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec_ok, 100));
 
@@ -919,6 +1044,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(!satisfies_spec(&token, &spec_wrong, 100));
     }
@@ -946,6 +1072,7 @@ mod tests {
             resource_pattern: Some("api/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         assert!(satisfies_spec(&token, &spec, 100));
     }
@@ -963,6 +1090,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Query,
@@ -1053,6 +1181,7 @@ mod tests {
                     resource_pattern: Some("documents/*".into()),
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -1064,9 +1193,11 @@ mod tests {
                     resource_pattern: Some("compute/*".into()),
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
             ]),
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1120,6 +1251,7 @@ mod tests {
                     resource_pattern: Some("documents/*".into()),
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -1131,9 +1263,11 @@ mod tests {
                     resource_pattern: Some("compute/*".into()),
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
             ]),
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1178,6 +1312,7 @@ mod tests {
                     resource_pattern: None,
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
                 MatchSpec {
                     actions: vec![ActionPattern {
@@ -1189,9 +1324,11 @@ mod tests {
                     resource_pattern: None,
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 },
             ]),
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1216,5 +1353,154 @@ mod tests {
             }
             other => panic!("expected CompoundMatched, got {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // SECURITY: Custom constraint fail-closed tests
+    // =========================================================================
+
+    #[test]
+    fn test_custom_constraint_fails_closed_without_evaluator() {
+        // ADVERSARIAL: An attacker creates an intent with a custom constraint.
+        // Without a registered evaluator, the constraint must REJECT (fail closed).
+        let token = make_token(&["read", "write", "admin"], "*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![Constraint::Custom {
+                predicate: "is_employee".into(),
+                value: "true".into(),
+            }],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        // Even though the token grants "read" on "*", the custom constraint
+        // must prevent matching because no evaluator is registered.
+        assert!(
+            !satisfies_spec(&token, &spec, 100),
+            "custom constraints must FAIL CLOSED when no evaluator is registered"
+        );
+    }
+
+    #[test]
+    fn test_custom_constraint_with_registered_evaluator_passes() {
+        let token = make_token(&["read"], "*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![Constraint::Custom {
+                predicate: "is_employee".into(),
+                value: "true".into(),
+            }],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+
+        // Register an evaluator that accepts "true"
+        let mut evaluators = CustomConstraintEvaluators::new();
+        evaluators.register("is_employee", |v| v == "true");
+
+        // With evaluator registered, should pass
+        assert!(satisfies_spec_with_custom(&token, &spec, 100, &evaluators));
+    }
+
+    #[test]
+    fn test_custom_constraint_with_evaluator_rejects_wrong_value() {
+        let token = make_token(&["read"], "*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![Constraint::Custom {
+                predicate: "is_employee".into(),
+                value: "false".into(),
+            }],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+
+        let mut evaluators = CustomConstraintEvaluators::new();
+        evaluators.register("is_employee", |v| v == "true");
+
+        // Evaluator is registered but returns false for value "false"
+        assert!(!satisfies_spec_with_custom(&token, &spec, 100, &evaluators));
+    }
+
+    #[test]
+    fn test_custom_constraint_unregistered_predicate_fails() {
+        let token = make_token(&["read"], "*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![Constraint::Custom {
+                predicate: "unknown_predicate".into(),
+                value: "anything".into(),
+            }],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+
+        // Register a DIFFERENT predicate -- "unknown_predicate" is not covered
+        let mut evaluators = CustomConstraintEvaluators::new();
+        evaluators.register("is_employee", |_| true);
+
+        assert!(
+            !satisfies_spec_with_custom(&token, &spec, 100, &evaluators),
+            "unregistered predicate must fail closed even with other evaluators registered"
+        );
+    }
+
+    #[test]
+    fn test_custom_constraint_does_not_match_intent() {
+        // ADVERSARIAL: Verify that an intent with a custom constraint cannot be
+        // matched by any token when using the standard match_intent function.
+        let token = make_token(&["read", "write", "admin"], "*");
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![Constraint::Custom {
+                predicate: "bypass_check".into(),
+                value: "always_true".into(),
+            }],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            u64::MAX,
+            None,
+        );
+        let our_id = CommitmentId([0xBB; 32]);
+        let result = match_intent(&intent, &[token], our_id, VerificationMode::Trusted, 100);
+        assert!(
+            matches!(result, MatchResult::NoMatch),
+            "intent with unregistered custom constraint must not match any token"
+        );
     }
 }

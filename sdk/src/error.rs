@@ -57,4 +57,8 @@ pub enum SdkError {
     /// The federation root from the remote silo does not match the expected pinned root.
     #[error("federation root mismatch: remote root does not match pinned value")]
     FederationRootMismatch,
+
+    /// A non-membership proof failed cryptographic verification.
+    #[error("non-membership proof verification failed: {0}")]
+    NonMembershipVerificationFailed(String),
 }

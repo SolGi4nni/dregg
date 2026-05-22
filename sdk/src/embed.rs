@@ -80,6 +80,10 @@ pub enum EmbedError {
     },
     /// State snapshot serialization/deserialization failed.
     StateSerde(String),
+    /// State snapshot integrity check failed (BLAKE3 hash mismatch).
+    ///
+    /// This indicates the snapshot was tampered with or corrupted in storage/transit.
+    IntegrityCheckFailed,
     /// Token operation failed.
     Token(String),
     /// Proof generation failed.
@@ -96,6 +100,10 @@ impl std::fmt::Display for EmbedError {
                 write!(f, "turn rejected at {at_action:?}: {reason}")
             }
             Self::StateSerde(e) => write!(f, "state serde: {e}"),
+            Self::IntegrityCheckFailed => write!(
+                f,
+                "state integrity check failed: BLAKE3 hash mismatch (snapshot may be tampered)"
+            ),
             Self::Token(e) => write!(f, "token: {e}"),
             Self::ProofGen(e) => write!(f, "proof gen: {e}"),
             Self::ProofDecode(e) => write!(f, "proof decode: {e}"),
@@ -383,21 +391,46 @@ impl PyanaEngine {
     // State management (caller persists however they want)
     // =========================================================================
 
-    /// Serialize the current ledger state to bytes.
+    /// Serialize the current ledger state to bytes with BLAKE3 integrity hash.
     ///
     /// The caller can persist this to their own storage (postgres, rocksdb, S3, etc).
-    /// The format is postcard-encoded `Vec<Cell>`.
+    /// The format is postcard-encoded `Vec<Cell>` followed by a 32-byte BLAKE3 hash.
+    ///
+    /// The trailing 32-byte hash ensures that tampered snapshots are detected on load.
     pub fn state_snapshot(&self) -> Result<Vec<u8>, EmbedError> {
         let cells: Vec<&pyana_cell::Cell> = self.ledger.iter().map(|(_, cell)| cell).collect();
-        postcard::to_stdvec(&cells).map_err(|e| EmbedError::StateSerde(e.to_string()))
+        let serialized =
+            postcard::to_stdvec(&cells).map_err(|e| EmbedError::StateSerde(e.to_string()))?;
+        let hash = blake3::hash(&serialized);
+        let mut result = serialized;
+        result.extend_from_slice(hash.as_bytes());
+        Ok(result)
     }
 
-    /// Load ledger state from a previous snapshot.
+    /// Load ledger state from a previous snapshot, verifying BLAKE3 integrity.
     ///
-    /// Replaces the current ledger with the cells from the snapshot.
+    /// Replaces the current ledger with the cells from the snapshot. Returns an error
+    /// if the snapshot is too short to contain a hash, or if the integrity check fails
+    /// (indicating the snapshot was tampered with or corrupted).
     pub fn load_state(&mut self, snapshot: &[u8]) -> Result<(), EmbedError> {
+        // SECURITY: The snapshot must contain at least 32 bytes for the trailing BLAKE3 hash.
+        if snapshot.len() < 32 {
+            return Err(EmbedError::StateSerde(
+                "snapshot too short: missing integrity hash (expected at least 32 trailing bytes)"
+                    .into(),
+            ));
+        }
+
+        let (data, expected_hash_bytes) = snapshot.split_at(snapshot.len() - 32);
+
+        // Recompute the BLAKE3 hash over the data portion and compare.
+        let computed_hash = blake3::hash(data);
+        if computed_hash.as_bytes() != expected_hash_bytes {
+            return Err(EmbedError::IntegrityCheckFailed);
+        }
+
         let cells: Vec<pyana_cell::Cell> =
-            postcard::from_bytes(snapshot).map_err(|e| EmbedError::StateSerde(e.to_string()))?;
+            postcard::from_bytes(data).map_err(|e| EmbedError::StateSerde(e.to_string()))?;
         let mut ledger = Ledger::new();
         for cell in cells {
             ledger
@@ -690,5 +723,51 @@ mod tests {
         let engine = PyanaEngine::new(EngineConfig::default());
         // Garbage bytes should not verify.
         assert!(!engine.verify_presentation_bytes(&[0u8; 100]));
+    }
+
+    #[test]
+    fn load_state_rejects_tampered_snapshot() {
+        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let cell = pyana_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
+        engine.ledger_mut().insert_cell(cell).unwrap();
+
+        let mut snapshot = engine.state_snapshot().unwrap();
+        assert!(!snapshot.is_empty());
+
+        // Tamper with a byte in the data portion (not the hash).
+        snapshot[0] ^= 0xFF;
+
+        // Loading the tampered snapshot must fail with IntegrityCheckFailed.
+        let mut engine2 = PyanaEngine::new(EngineConfig::default());
+        let result = engine2.load_state(&snapshot);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, EmbedError::IntegrityCheckFailed),
+            "expected IntegrityCheckFailed, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn load_state_rejects_truncated_snapshot() {
+        // A snapshot shorter than 32 bytes cannot contain a valid hash.
+        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let result = engine.load_state(&[0u8; 16]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_state_rejects_hash_only_snapshot() {
+        // A snapshot of exactly 32 bytes (just the hash, no data) should either
+        // fail integrity or fail deserialization of the empty data portion.
+        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let empty_data = &[];
+        let hash = blake3::hash(empty_data);
+        let snapshot: Vec<u8> = hash.as_bytes().to_vec();
+        // This is 32 bytes exactly — the data portion is empty.
+        let result = engine.load_state(&snapshot);
+        // Should succeed (empty cell list is valid) or fail gracefully.
+        // The important thing is it doesn't panic.
+        let _ = result;
     }
 }

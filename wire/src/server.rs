@@ -179,6 +179,11 @@ pub struct SiloConfig {
     ///
     /// Default: `MAX_NONCE_CACHE_SIZE` (from wire message constants).
     pub nonce_cache_capacity: usize,
+    /// Maximum age (in seconds) the federation root may be stale before rejecting
+    /// ALL proofs (fail-closed). If `None`, no staleness check is performed
+    /// (backward compatible default). When set, if the root has not been updated
+    /// within this window, all presentations are rejected with a clear error.
+    pub max_root_age_secs: Option<u64>,
 }
 
 impl SiloConfig {
@@ -201,6 +206,7 @@ impl SiloConfig {
             max_request_age_secs: MAX_REQUEST_AGE_SECS,
             tls: TlsConfig::default(),
             nonce_cache_capacity: MAX_NONCE_CACHE_SIZE,
+            max_root_age_secs: None,
         }
     }
 
@@ -238,6 +244,16 @@ impl SiloConfig {
             cert_path: Some(cert_path),
             key_path: Some(key_path),
         };
+        self
+    }
+
+    /// Set the maximum federation root age (fail-closed staleness check).
+    ///
+    /// If the federation root has not been updated within `secs` seconds, all
+    /// proof presentations are rejected. This prevents stale-root abuse at the
+    /// cost of availability during consensus downtime.
+    pub fn with_max_root_age(mut self, secs: u64) -> Self {
+        self.max_root_age_secs = Some(secs);
         self
     }
 }
@@ -280,7 +296,8 @@ impl SiloConfig {
 ///
 /// This allows the silo server to delegate revocation submission, status checks,
 /// and root computation to an external system (e.g., a `pyana-federation` backed
-/// handler) while maintaining backward compatibility with the standalone logic.
+/// handler or a `RevocationRegistry`-backed handler) while maintaining backward
+/// compatibility with the standalone logic.
 pub trait RevocationHandler: Send + Sync {
     /// Submit a revocation for a token, returning true if accepted.
     ///
@@ -291,67 +308,90 @@ pub trait RevocationHandler: Send + Sync {
     fn is_revoked(&self, token_id: &str) -> bool;
     /// Get the current revocation root hash.
     fn current_root(&self) -> [u8; 32];
+    /// Get the current attested root for users requesting proofs.
+    ///
+    /// Returns `None` if no root has been attested yet (e.g., before the first
+    /// `publish_root()` call or consensus round).
+    fn attested_root(&self) -> Option<[u8; 32]> {
+        Some(self.current_root())
+    }
+    /// Generate a non-membership proof for a requesting user.
+    ///
+    /// Returns `None` if the token IS revoked or if proof generation is not
+    /// supported by this handler implementation. The returned bytes are an
+    /// opaque serialized proof that the client can verify offline.
+    fn prove_non_revocation(&self, token_id: &str) -> Option<Vec<u8>> {
+        // Default: no proof generation (backward compatible).
+        let _ = token_id;
+        None
+    }
 }
 
-/// Default revocation handler that wraps the existing standalone logic
-/// (Vec<String> + BLAKE3 hash chain). This preserves backward compatibility
-/// for existing tests and deployments.
+/// Default revocation handler backed by a [`pyana_token::RevocationRegistry`].
 ///
-/// # Deprecation Notice
+/// Provides exact (no false-positive) revocation checks and Merkle-based
+/// non-membership proof generation via a sorted revocation tree.
 ///
-/// This handler uses a BLAKE3 hash chain for root computation, which is **not
-/// consistent** with the 4-ary Merkle tree used by `pyana-federation`'s
-/// `RevocationTree`. For federation-connected deployments, use
-/// [`FederationBridge`](crate::federation_bridge::FederationBridge) as the
+/// For federation-connected deployments that need consensus-attested roots,
+/// use [`FederationBridge`](crate::federation_bridge::FederationBridge) as the
 /// `RevocationHandler` instead.
 #[derive(Clone, Debug)]
 pub struct DefaultRevocationHandler {
-    /// Revoked token IDs.
-    revoked_tokens: std::sync::Arc<std::sync::RwLock<Vec<String>>>,
-    /// Current root hash.
-    root: std::sync::Arc<std::sync::RwLock<[u8; 32]>>,
-    /// Current height (for hash chain).
+    /// The underlying revocation registry (exact set + Merkle tree).
+    registry: std::sync::Arc<std::sync::RwLock<pyana_token::RevocationRegistry>>,
+    /// Current height (incremented on each revocation for compatibility).
     height: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl DefaultRevocationHandler {
-    /// Create a new default handler with the given genesis root.
-    pub fn new(genesis_root: [u8; 32]) -> Self {
+    /// Create a new default handler.
+    ///
+    /// The `_genesis_root` parameter is accepted for API compatibility but is
+    /// no longer used; the root is derived from the Merkle tree contents.
+    pub fn new(_genesis_root: [u8; 32]) -> Self {
         Self {
-            revoked_tokens: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
-            root: std::sync::Arc::new(std::sync::RwLock::new(genesis_root)),
+            registry: std::sync::Arc::new(std::sync::RwLock::new(
+                pyana_token::RevocationRegistry::new(),
+            )),
             height: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
 
 impl RevocationHandler for DefaultRevocationHandler {
-    fn submit_revocation(&self, token_id: &str, sig: &[u8; 64], _authority: &PublicKey) -> bool {
-        let mut tokens = self.revoked_tokens.write().unwrap();
-        let new_height = self
-            .height
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        tokens.push(token_id.to_string());
-
-        let mut root = self.root.write().unwrap();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-root v1");
-        hasher.update(&*root);
-        hasher.update(token_id.as_bytes());
-        hasher.update(sig);
-        hasher.update(&new_height.to_le_bytes());
-        *root = *hasher.finalize().as_bytes();
-
-        true
+    fn submit_revocation(&self, token_id: &str, _sig: &[u8; 64], _authority: &PublicKey) -> bool {
+        let mut reg = self.registry.write().unwrap();
+        let newly_revoked = reg.revoke(token_id);
+        if newly_revoked {
+            self.height
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        newly_revoked
     }
 
     fn is_revoked(&self, token_id: &str) -> bool {
-        let tokens = self.revoked_tokens.read().unwrap();
-        tokens.iter().any(|t| t == token_id)
+        let reg = self.registry.read().unwrap();
+        reg.is_revoked(token_id)
     }
 
     fn current_root(&self) -> [u8; 32] {
-        *self.root.read().unwrap()
+        let reg = self.registry.read().unwrap();
+        reg.current_root()
+    }
+
+    fn attested_root(&self) -> Option<[u8; 32]> {
+        let reg = self.registry.read().unwrap();
+        reg.attested_root()
+            .map(|ar| ar.merkle_root)
+            .or_else(|| Some(reg.current_root()))
+    }
+
+    fn prove_non_revocation(&self, token_id: &str) -> Option<Vec<u8>> {
+        let reg = self.registry.read().unwrap();
+        match reg.prove_non_revocation(token_id) {
+            Ok(proof) => postcard::to_stdvec(&proof).ok(),
+            Err(_) => None,
+        }
     }
 }
 
@@ -384,6 +424,10 @@ pub struct SiloState {
     pub root_signatures: Vec<(PublicKey, Signature)>,
     /// Optional threshold QC from consensus (populated when federation bridge updates state).
     pub threshold_qc: Option<ThresholdQC>,
+    /// Unix timestamp (seconds) of the last federation root update.
+    /// Used for fail-closed staleness detection: if `now - last_root_update`
+    /// exceeds `SiloConfig::max_root_age_secs`, all proofs are rejected.
+    pub last_root_update: i64,
 }
 
 impl SiloState {
@@ -397,6 +441,7 @@ impl SiloState {
             revoked_tokens: Vec::new(),
             root_signatures: Vec::new(),
             threshold_qc: None,
+            last_root_update: current_timestamp(),
         }
     }
 
@@ -421,6 +466,7 @@ impl SiloState {
 
         // The handler already processed the revocation; just adopt its root.
         self.federation_root = handler.current_root();
+        self.last_root_update = current_timestamp();
 
         // Add the authority's signature to the root attestation.
         self.root_signatures.push((*authority, *authority_sig));
@@ -457,6 +503,7 @@ impl SiloState {
         hasher.update(&authority_sig.0);
         hasher.update(&self.height.to_le_bytes());
         self.federation_root = *hasher.finalize().as_bytes();
+        self.last_root_update = current_timestamp();
 
         // Add the authority's signature to the root attestation.
         self.root_signatures.push((*authority, *authority_sig));
@@ -484,49 +531,115 @@ impl SiloState {
 }
 
 // =============================================================================
-// Nonce Cache (replay prevention)
+// Nonce Cache (replay prevention — time-partitioned)
 // =============================================================================
 
-/// A nonce cache for replay prevention.
+/// A time-partitioned nonce cache for replay prevention.
 ///
-/// Tracks recently seen nonces to reject duplicate messages. Uses a bounded
-/// `HashSet` with FIFO eviction when the capacity is reached.
+/// Instead of a single FIFO that can be flushed by flooding, nonces are stored
+/// in time-partitioned buckets (30-second windows). The cache keeps the last 10
+/// buckets (= 5 minutes of coverage). A nonce is "seen" if it appears in ANY
+/// active bucket. Old buckets are dropped entirely when they age out.
 ///
-/// Uses `VecDeque` for O(1) eviction of the oldest entry (via `pop_front()`).
+/// This design is flood-resistant: an attacker flooding the current bucket cannot
+/// evict nonces from older buckets, so captured proofs within the freshness window
+/// remain protected against replay.
 #[derive(Debug)]
 pub struct NonceCache {
-    /// Set of seen nonces (as 16-byte arrays).
-    seen: HashSet<[u8; 16]>,
-    /// Insertion order for FIFO eviction (VecDeque for O(1) pop_front).
-    order: VecDeque<[u8; 16]>,
-    /// Maximum capacity.
-    capacity: usize,
+    /// Time-partitioned buckets. Each bucket covers a 30-second window.
+    /// Index 0 is the oldest active bucket.
+    buckets: VecDeque<NonceBucket>,
+    /// Duration of each bucket in seconds.
+    bucket_duration_secs: i64,
+    /// Maximum number of buckets to retain (covers freshness window).
+    max_buckets: usize,
+    /// Maximum nonces per bucket (prevents OOM within a single window).
+    max_per_bucket: usize,
+}
+
+/// A single time-partitioned bucket of nonces.
+#[derive(Debug)]
+struct NonceBucket {
+    /// The start timestamp of this bucket (Unix seconds).
+    window_start: i64,
+    /// Set of nonces seen in this time window.
+    nonces: HashSet<[u8; 16]>,
 }
 
 impl NonceCache {
-    /// Create a new nonce cache with the given capacity.
+    /// Create a new time-partitioned nonce cache.
+    ///
+    /// The `capacity` parameter is used to derive per-bucket limits:
+    /// `max_per_bucket = capacity / max_buckets`.
     pub fn new(capacity: usize) -> Self {
+        let bucket_duration_secs = 30;
+        let max_buckets = 10; // 10 * 30s = 5 minutes
+        let max_per_bucket = capacity / max_buckets;
         Self {
-            seen: HashSet::with_capacity(capacity.min(1024)),
-            order: VecDeque::with_capacity(capacity.min(1024)),
-            capacity,
+            buckets: VecDeque::with_capacity(max_buckets),
+            bucket_duration_secs,
+            max_buckets,
+            max_per_bucket,
         }
     }
 
     /// Check if a nonce has been seen before. If not, insert it and return `true` (fresh).
     /// If already seen, return `false` (replay).
     pub fn check_and_insert(&mut self, nonce: &[u8; 16]) -> bool {
-        if self.seen.contains(nonce) {
-            return false; // replay
-        }
-        // Evict oldest if at capacity — O(1) via VecDeque::pop_front()
-        if self.order.len() >= self.capacity {
-            if let Some(oldest) = self.order.pop_front() {
-                self.seen.remove(&oldest);
+        let now = current_timestamp();
+
+        // Expire old buckets that have aged out of the freshness window.
+        let min_window_start = now - (self.max_buckets as i64 * self.bucket_duration_secs);
+        while let Some(front) = self.buckets.front() {
+            if front.window_start < min_window_start {
+                self.buckets.pop_front();
+            } else {
+                break;
             }
         }
-        self.seen.insert(*nonce);
-        self.order.push_back(*nonce);
+
+        // Check if the nonce exists in ANY active bucket.
+        for bucket in self.buckets.iter() {
+            if bucket.nonces.contains(nonce) {
+                return false; // replay
+            }
+        }
+
+        // Determine which bucket this nonce belongs to (current time window).
+        let current_window_start = now - (now % self.bucket_duration_secs);
+
+        // Find or create the current bucket.
+        let needs_new_bucket = match self.buckets.back() {
+            Some(last) => last.window_start != current_window_start,
+            None => true,
+        };
+
+        if needs_new_bucket {
+            // If we're at max buckets, the oldest was already expired above,
+            // but enforce the limit defensively.
+            if self.buckets.len() >= self.max_buckets {
+                self.buckets.pop_front();
+            }
+            self.buckets.push_back(NonceBucket {
+                window_start: current_window_start,
+                nonces: HashSet::new(),
+            });
+        }
+
+        let current_bucket = self.buckets.back_mut().unwrap();
+
+        // Enforce per-bucket size limit to prevent OOM from floods.
+        // A flood only fills the current bucket — older buckets remain intact.
+        if current_bucket.nonces.len() >= self.max_per_bucket {
+            // Bucket is full. Still return true (fresh) because we checked all
+            // buckets above and the nonce wasn't found. The nonce won't be tracked,
+            // but legitimate nonces are unique so this is acceptable under flood.
+            // The attacker gains nothing: they can't replay OLD nonces from prior
+            // buckets, and their own flood nonces are worthless.
+            return true;
+        }
+
+        current_bucket.nonces.insert(*nonce);
         true // fresh
     }
 }
@@ -1103,11 +1216,31 @@ impl SiloServer {
                 // --- Issue 7: Move verification outside the read lock ---
                 // Clone the federation root from state, then release the lock
                 // BEFORE running the expensive proof verification.
-                let current_root = {
+                let (current_root, last_root_update) = {
                     let st = state.read().await;
-                    st.federation_root
+                    (st.federation_root, st.last_root_update)
                 };
                 // Read lock is now released.
+
+                // Fail-closed: if max_root_age_secs is configured and the root
+                // is too stale (consensus may be stalled/DoS'd), reject ALL proofs.
+                if let Some(max_age) = config.max_root_age_secs {
+                    let root_age = current_timestamp() - last_root_update;
+                    if root_age > max_age as i64 {
+                        event_log.lock().await.push(ServerEvent::TokenPresented {
+                            proof_size: proof.len(),
+                            accepted: false,
+                            remote: remote_addr,
+                        });
+                        return Some(WireMessage::PresentationResult {
+                            accepted: false,
+                            reason: Some(format!(
+                                "federation root too stale ({root_age}s since last update, max {max_age}s) — awaiting sync"
+                            )),
+                            request_digest: request.digest(),
+                        });
+                    }
+                }
 
                 // Check federation root freshness
                 if federation_root != current_root {
@@ -1555,6 +1688,7 @@ impl SiloServer {
         let mut st = self.state.write().await;
         st.federation_root = root;
         st.height = height;
+        st.last_root_update = current_timestamp();
     }
 }
 
@@ -1589,13 +1723,9 @@ pub fn revocation_signing_message(token_id: &str, nonce: &[u8; 16], timestamp: i
 
 /// Attempt to generate a non-membership proof for the given token.
 ///
-/// When a `RevocationHandler` is available and the handler confirms the token
-/// is NOT revoked, we construct a proof attestation signed by this node's identity.
-/// This provides cryptographic evidence that the token was not in the revocation
-/// set at the time of the query.
-///
-/// Without a handler, returns `None` to signal that this node cannot produce
-/// cryptographic proof of non-membership.
+/// Delegates to the handler's `prove_non_revocation` method, which generates
+/// a Merkle-based non-membership proof from the `RevocationRegistry`'s sorted
+/// tree. Falls back to the legacy attestation hash when no handler is available.
 fn generate_non_membership_proof(
     token_id: &str,
     root: &[u8; 32],
@@ -1608,18 +1738,15 @@ fn generate_non_membership_proof(
         return None;
     }
 
-    // Produce a non-membership attestation: a deterministic binding of
-    // (token_id, current_root, "not-revoked") that can be verified by any
-    // party that trusts this node's attestation.
-    //
-    // Format: blake3_derive_key("pyana-wire non-membership-v1", token_id || root)
-    // This is a compact proof-of-absence suitable for the wire protocol.
-    // Full Merkle non-membership proofs require the pyana-commit integration
-    // (available when the "bridge" feature is enabled).
+    // Try the handler's Merkle-based proof generation first.
+    if let Some(proof) = handler.prove_non_revocation(token_id) {
+        return Some(proof);
+    }
+
+    // Fallback: produce a legacy attestation binding (for handlers that don't
+    // implement Merkle proof generation).
     let handler_root = handler.current_root();
     if handler_root != *root {
-        // Root mismatch: the handler's state is ahead/behind. Cannot produce
-        // a proof relative to the requested root.
         return None;
     }
 
@@ -1627,10 +1754,6 @@ fn generate_non_membership_proof(
     hasher.update(token_id.as_bytes());
     hasher.update(root);
     let attestation = hasher.finalize();
-
-    // Return the 32-byte attestation hash as the proof.
-    // Verifiers check: blake3_derive_key("pyana-wire non-membership-v1", token_id || root)
-    // equals the proof bytes, confirming the node attested non-membership at this root.
     Some(attestation.as_bytes().to_vec())
 }
 

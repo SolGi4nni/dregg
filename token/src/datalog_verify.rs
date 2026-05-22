@@ -59,7 +59,7 @@ pub fn verify_token_datalog(
     pre_evaluation_deny_checks(caveat_set, request)?;
 
     // 1. Decode caveats to FactSet + SymbolTable
-    let (factset, symbols) = caveat_set_to_factset(caveat_set);
+    let (factset, symbols) = caveat_set_to_factset(caveat_set)?;
 
     // 2. Build TokenState from FactSet
     let mut state = TokenState::new();
@@ -1013,13 +1013,24 @@ pub fn pre_evaluation_deny_checks(
         }
     }
 
-    // OAuth provider: match-any
-    if let Some(req_provider) = &request.oauth_provider {
-        if !oauth_providers.is_empty() && !oauth_providers.contains(req_provider) {
-            return Err(TokenError::Denied(format!(
-                "token not valid for OAuth provider '{}'",
-                req_provider
-            )));
+    // OAuth provider: match-any.
+    // SECURITY: If the token has OAuth provider restrictions, the request MUST specify oauth_provider.
+    // Otherwise, a token scoped to a specific provider could be used without provider verification.
+    if !oauth_providers.is_empty() {
+        match &request.oauth_provider {
+            Some(req_provider) => {
+                if !oauth_providers.contains(req_provider) {
+                    return Err(TokenError::Denied(format!(
+                        "token not valid for OAuth provider '{}'",
+                        req_provider
+                    )));
+                }
+            }
+            None => {
+                return Err(TokenError::Denied(
+                    "token requires OAuth provider but request omits it".into(),
+                ));
+            }
         }
     }
 
@@ -1055,17 +1066,35 @@ pub fn pre_evaluation_deny_checks(
         }
     }
 
-    // Command: match-any
-    if let Some(req_cmd) = &request.command {
-        if !commands.is_empty() && !commands.contains(req_cmd) {
-            return Err(TokenError::Denied(format!(
-                "token not valid for command '{}'",
-                req_cmd
-            )));
+    // Command: match-any.
+    // SECURITY: If the token has command restrictions, the request MUST specify command.
+    // Otherwise, a command-restricted token could be used without command verification.
+    if !commands.is_empty() {
+        match &request.command {
+            Some(req_cmd) => {
+                if !commands.contains(req_cmd) {
+                    return Err(TokenError::Denied(format!(
+                        "token not valid for command '{}'",
+                        req_cmd
+                    )));
+                }
+            }
+            None => {
+                return Err(TokenError::Denied(
+                    "token requires command but request omits it".into(),
+                ));
+            }
         }
     }
 
-    // Features: set containment
+    // Features: set containment.
+    // SECURITY: If the token has feature restrictions, the request MUST specify features.
+    // Otherwise, a feature-restricted token could be used without feature verification.
+    if !features.is_empty() && request.features.is_empty() {
+        return Err(TokenError::Denied(
+            "token requires features but request specifies none".into(),
+        ));
+    }
     if !request.features.is_empty() && !features.is_empty() {
         for req_feat in &request.features {
             if !features.contains(req_feat) {
@@ -1221,8 +1250,24 @@ pub fn verify_token_datalog_full(
     }
 
     // If we reach here, the token has caveats (not empty) but the request
-    // doesn't specify app_id or service — e.g., a features-only or time-only
-    // request. Allow it (the deny checks already validated other dimensions).
+    // doesn't specify app_id or service.
+    //
+    // SECURITY: If the token has dimension caveats (app or service) but the
+    // request omits those dimensions entirely, the request is under-specified.
+    // We fail-closed to prevent a bypass where an attacker strips dimensions
+    // from the request to skip Datalog evaluation.
+    let token_has_dimension_caveats = has_app_caveats || has_service_caveats;
+    if token_has_dimension_caveats {
+        return Err(TokenError::Denied(
+            "request is missing required dimensions (app_id or service) that the token \
+             restricts — cannot authorize an under-specified request"
+                .into(),
+        ));
+    }
+
+    // Passthrough ONLY for tokens with NO dimension caveats (e.g., features-only
+    // or time-only tokens where app/service dimensions are genuinely irrelevant).
+    // The deny checks already validated other dimensions.
     let capabilities = extract_capabilities(caveat_set);
     let (expires_at, subject) = extract_metadata(caveat_set);
     Ok(TokenClearance {
@@ -1881,5 +1926,226 @@ mod tests {
             "old path must also deny cross-dimension"
         );
         assert!(new_result.is_err(), "new path must deny cross-dimension");
+    }
+
+    #[test]
+    fn test_dimension_passthrough_denied_when_token_has_service_caveat() {
+        // SECURITY: A token with a service caveat must NOT be authorized when
+        // the request omits the service dimension. This prevents bypassing
+        // Datalog evaluation by stripping dimensions from the request.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(
+            CAV_SERVICE,
+            encode_name_actions("payments", "rw"),
+        ));
+
+        // Request with no service or app dimension — must FAIL.
+        let request = AuthRequest {
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        let result = verify_token_datalog_full(&set, &request);
+        assert!(
+            result.is_err(),
+            "token with service caveat + request without service dimension must fail"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("missing required dimensions"),
+            "error should mention missing dimensions, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_dimension_passthrough_denied_when_token_has_app_caveat() {
+        // Same as above but with app caveats.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(
+            CAV_APP,
+            encode_name_actions("admin-panel", "rw"),
+        ));
+
+        // Request with no app or service dimension — must FAIL.
+        let request = AuthRequest {
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        let result = verify_token_datalog_full(&set, &request);
+        assert!(
+            result.is_err(),
+            "token with app caveat + request without app dimension must fail"
+        );
+    }
+
+    #[test]
+    fn test_dimension_passthrough_allowed_for_non_dimension_caveats() {
+        // Tokens with ONLY non-dimension caveats (e.g., time, user, features)
+        // should still pass through when the request omits app/service.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(
+            CAV_VALIDITY_WINDOW,
+            encode_validity_window(Some(1000), Some(5000)),
+        ));
+        set.push(WireCaveat::new(CAV_CONFINE_USER, encode_string("alice")));
+
+        let request = AuthRequest {
+            user_id: Some("alice".into()),
+            now: Some(3000),
+            ..Default::default()
+        };
+        let result = verify_token_datalog_full(&set, &request);
+        assert!(
+            result.is_ok(),
+            "token without dimension caveats should still allow passthrough, got: {:?}",
+            result.unwrap_err()
+        );
+        let clearance = result.unwrap();
+        assert_eq!(
+            clearance.matched_policy,
+            Some("dimension_passthrough".into())
+        );
+    }
+
+    // =========================================================================
+    // Security tests: fail-closed for OAuth/command/features
+    // =========================================================================
+
+    #[test]
+    fn test_oauth_provider_fails_closed_when_request_omits_provider() {
+        // ATTACK: Token has OAuthProvider("github") restriction.
+        // Request omits oauth_provider entirely.
+        // Previously this would PASS (fail-open). Now it must DENY.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_OAUTH_PROVIDER, encode_string("github")));
+
+        let request = AuthRequest {
+            now: Some(1700000000),
+            // oauth_provider: None -- omitted!
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_err(),
+            "token with OAuth provider restriction must deny when request omits oauth_provider"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("OAuth provider"),
+            "error should mention OAuth provider, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_command_fails_closed_when_request_omits_command() {
+        // ATTACK: Token has Command("deploy") restriction.
+        // Request omits command entirely.
+        // Previously this would PASS (fail-open). Now it must DENY.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
+
+        let request = AuthRequest {
+            now: Some(1700000000),
+            // command: None -- omitted!
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_err(),
+            "token with command restriction must deny when request omits command"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("command"),
+            "error should mention command, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_features_fails_closed_when_request_omits_features() {
+        // ATTACK: Token has Feature("ai-engine") restriction.
+        // Request omits features entirely.
+        // Previously this would PASS (fail-open). Now it must DENY.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_FEATURE, encode_string("ai-engine")));
+
+        let request = AuthRequest {
+            now: Some(1700000000),
+            features: vec![], // empty -- omitted!
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_err(),
+            "token with feature restriction must deny when request omits features"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("features"),
+            "error should mention features, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_oauth_provider_allows_when_request_provides_matching_provider() {
+        // Ensure the fail-closed fix doesn't break the happy path.
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_OAUTH_PROVIDER, encode_string("github")));
+
+        let request = AuthRequest {
+            oauth_provider: Some("github".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_ok(),
+            "matching OAuth provider should pass, got: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_command_allows_when_request_provides_matching_command() {
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
+
+        let request = AuthRequest {
+            command: Some("deploy".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_ok(),
+            "matching command should pass, got: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_features_allows_when_request_provides_matching_features() {
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_FEATURE, encode_string("ai-engine")));
+
+        let request = AuthRequest {
+            features: vec!["ai-engine".into()],
+            now: Some(1700000000),
+            ..Default::default()
+        };
+
+        let result = pre_evaluation_deny_checks(&set, &request);
+        assert!(
+            result.is_ok(),
+            "matching features should pass, got: {:?}",
+            result.unwrap_err()
+        );
     }
 }

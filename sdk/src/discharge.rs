@@ -66,16 +66,16 @@ pub async fn obtain_discharge(
     let (host, port, path, use_tls) = parse_url(&url)?;
 
     let response_body = if use_tls {
-        // SECURITY: TLS connections are preferred but require a full TLS stack.
-        // Log a warning and fall back to plaintext if the gateway URL is HTTPS.
-        // In production, callers should use obtain_discharge_with_client() with a
-        // proper TLS-capable HTTP client (e.g., reqwest).
-        #[cfg(feature = "tracing")]
-        tracing::warn!(
-            "HTTPS discharge gateway requested but no TLS client available; \
-             falling back to plaintext HTTP. Use obtain_discharge_with_client() for TLS."
-        );
-        http_post_plain(&host, port, &path, &body_json).await?
+        // SECURITY: When TLS is required (HTTPS URL), we MUST NOT fall back to plaintext.
+        // Sending credentials over an unencrypted channel exposes them to network attackers.
+        // Callers who need TLS should use obtain_discharge_with_client() with a proper
+        // TLS-capable HTTP client (e.g., reqwest with rustls/native-tls).
+        return Err(SdkError::Wire(
+            "TLS required (HTTPS URL) but no TLS client available in this build. \
+             Use obtain_discharge_with_client() with a TLS-capable HTTP client, \
+             or use an HTTP (non-TLS) gateway URL if plaintext is acceptable for your threat model."
+                .into(),
+        ));
     } else {
         http_post_plain(&host, port, &path, &body_json).await?
     };
@@ -257,4 +257,62 @@ async fn http_post_plain(
     })?;
 
     Ok(response[body_start + 4..].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P1-3 regression test: HTTPS URLs must NOT fall back to plaintext.
+    /// Sending credentials in the clear is a critical security violation.
+    #[tokio::test]
+    async fn obtain_discharge_rejects_https_without_tls_client() {
+        // An HTTPS gateway URL must be rejected (no TLS downgrade to plaintext).
+        let result = obtain_discharge(
+            "https://gateway.example.com",
+            &[1, 2, 3], // dummy ticket
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "SECURITY BUG: HTTPS URL must not silently fall back to plaintext"
+        );
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("TLS required"),
+            "error should mention TLS requirement, got: {err_msg}"
+        );
+    }
+
+    /// P1-3: HTTP (non-TLS) URLs should still work (explicit opt-in to insecure).
+    /// This test verifies that the plaintext path is still reachable for non-TLS URLs.
+    /// (It will fail to connect since there's no actual server, but the important thing
+    /// is that it does NOT return a "TLS required" error.)
+    #[tokio::test]
+    async fn obtain_discharge_allows_http_plaintext() {
+        // An HTTP (non-TLS) URL should attempt a plaintext connection (not be rejected
+        // at the TLS check). It will fail because no server is running, but the error
+        // should be a connection error, not a TLS-required error.
+        let result = obtain_discharge(
+            "http://127.0.0.1:1/discharge", // port 1 = will fail to connect
+            &[1, 2, 3],
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        // The error should be about connection failure, NOT about TLS being required.
+        assert!(
+            !err_msg.contains("TLS required"),
+            "HTTP URL should not trigger TLS check, got: {err_msg}"
+        );
+    }
 }

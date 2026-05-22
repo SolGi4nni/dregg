@@ -458,6 +458,9 @@ struct RateLimiter {
     window_secs: u64,
 }
 
+/// Default maximum turns per minute per connection (configurable).
+pub const DEFAULT_TURN_RATE_LIMIT: u32 = 60;
+
 impl RateLimiter {
     fn new(max_attempts: u32, window_secs: u64) -> Self {
         let limiter = Self {
@@ -664,10 +667,14 @@ const MAX_BODY_SIZE: usize = 1_024 * 1_024;
 /// Build the Axum router with all API routes.
 ///
 /// Includes CORS, body size limits, rate limiting on passphrase endpoints,
-/// and Bearer token authentication on protected routes.
+/// per-identity rate limiting on turn submission, and Bearer token
+/// authentication on protected routes.
 pub fn router(state: NodeState, enable_faucet: bool) -> Router {
     // Rate limiter for passphrase/unlock endpoints: 5 attempts per 60 seconds.
     let passphrase_limiter = RateLimiter::new(5, 60);
+
+    // Rate limiter for turn submission: DEFAULT_TURN_RATE_LIMIT per 60 seconds per IP.
+    let turn_limiter = RateLimiter::new(DEFAULT_TURN_RATE_LIMIT, 60);
 
     // Public routes (no auth required)
     let mut public_routes = Router::new()
@@ -678,8 +685,6 @@ pub fn router(state: NodeState, enable_faucet: bool) -> Router {
         .route("/api/cell/{id}", get(get_cell_detail))
         .route("/api/intents", get(get_intents))
         .route("/api/conditionals", get(get_pending_conditionals))
-        .route("/api/receipts", get(get_receipts))
-        .route("/api/tokens", get(get_tokens))
         .route("/api/discharge", post(post_discharge))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
@@ -724,7 +729,15 @@ pub fn router(state: NodeState, enable_faucet: bool) -> Router {
         .route("/wallet/receipts", get(get_receipts))
         .route("/intents", get(get_intents).post(post_intent))
         .route("/intents/fulfill", post(post_fulfill_intent))
-        .route("/turn/submit", post(post_submit_turn))
+        .route(
+            "/turn/submit",
+            post({
+                let limiter = turn_limiter.clone();
+                move |connect_info, state, body| {
+                    post_submit_turn(connect_info, state, body, limiter)
+                }
+            }),
+        )
         .route("/turn/fast-path", post(post_fast_path_lock))
         .route("/turn/certificate", post(post_fast_path_certificate))
         .route("/turn/submit-conditional", post(post_submit_conditional))
@@ -904,9 +917,16 @@ async fn get_receipts(State(state): State<NodeState>) -> Json<Vec<ReceiptInfo>> 
 }
 
 async fn post_submit_turn(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     State(state): State<NodeState>,
     Json(req): Json<SubmitTurnRequest>,
+    limiter: RateLimiter,
 ) -> Result<Json<SubmitTurnResponse>, StatusCode> {
+    // Per-connection rate limit: max DEFAULT_TURN_RATE_LIMIT turns per minute.
+    if !limiter.check(addr.ip()).await {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     let mut s = state.write().await;
 
     if !s.unlocked {
@@ -1894,6 +1914,39 @@ async fn post_atomic_vote(
     } else {
         pyana_coord::Vote::no("participant rejected", signature)
     };
+
+    // Defense-in-depth: verify the vote signature against the claimed voter's
+    // public key BEFORE passing to the coordinator. This prevents an authenticated
+    // node from voting as another participant (the coordinator also verifies, but
+    // rejecting early avoids acquiring the write lock for invalid votes).
+    {
+        let s = state.read().await;
+        let active = match s.atomic_proposals.get(&proposal_id) {
+            Some(p) => p,
+            None => {
+                return Ok(Json(AtomicVoteResponse {
+                    accepted: false,
+                    decision: None,
+                    error: Some("proposal not found".to_string()),
+                }));
+            }
+        };
+        let forest_hash = active.forest.hash;
+        let sig_valid = if req.approve {
+            pyana_coord::Vote::verify_yes(&signature, &proposal_id, &forest_hash, &voter)
+        } else {
+            pyana_coord::Vote::verify_no(&signature, &proposal_id, &forest_hash, &voter)
+        };
+        if !sig_valid {
+            return Ok(Json(AtomicVoteResponse {
+                accepted: false,
+                decision: None,
+                error: Some(
+                    "vote signature does not match claimed voter identity".to_string(),
+                ),
+            }));
+        }
+    }
 
     let mut s = state.write().await;
 

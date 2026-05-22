@@ -5343,12 +5343,17 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
 fn test_is_stale_various_timestamps() {
     use pyana_cell::DelegatedRef;
 
+    let source = CellId::derive_raw(&[1u8; 32], &[0u8; 32]);
+    let child = CellId::derive_raw(&[2u8; 32], &[0u8; 32]);
     let delegation = DelegatedRef::new(
-        CellId::derive_raw(&[1u8; 32], &[0u8; 32]),
+        source,
+        child,
         vec![],
         0,
         1000, // refreshed_at
         300,  // max_staleness = 300s
+        [0u8; 32], // clist_commitment (empty c-list)
+        [0u8; 64], // parent_signature (not verified in this test)
     );
 
     // Not stale: within window.
@@ -5362,11 +5367,14 @@ fn test_is_stale_various_timestamps() {
 
     // max_staleness = 0 means always stale.
     let always_stale = DelegatedRef::new(
-        CellId::derive_raw(&[1u8; 32], &[0u8; 32]),
+        source,
+        child,
         vec![],
         0,
         1000,
         0,
+        [0u8; 32],
+        [0u8; 64],
     );
     assert!(always_stale.is_stale(1000));
     assert!(always_stale.is_stale(0));
@@ -6135,4 +6143,295 @@ fn test_escrow_release_proof_rejected_by_verifier() {
     // Recipient still 0.
     let recipient = ledger.get(&recipient_id).unwrap();
     assert_eq!(recipient.state.balance, 0);
+}
+
+// =============================================================================
+// ADVERSARIAL TESTS: Rollback of obligation/escrow/nullifier state (CRITICAL fix)
+// =============================================================================
+
+/// Adversarial test: Obligation record must be removed on turn rollback.
+///
+/// Attack scenario:
+/// 1. Create obligation (balance deducted, record inserted into executor's map)
+/// 2. Same turn deliberately fails (balance restored by journal rollback)
+/// 3. WITHOUT the fix: obligation record survives; attacker submits new turn to fulfill
+///    the phantom obligation (balance credited again = inflation)
+/// 4. WITH the fix: obligation record is removed on rollback, no phantom exploit possible
+#[test]
+fn test_adversarial_obligation_rollback_on_turn_failure() {
+    let (mut ledger, agent_id, target_id) = setup_two_open_cells(10000, 5000);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let stake_commitment = pyana_cell::NoteCommitment([0xAA; 32]);
+
+    // Build a turn that creates an obligation, then FAILS with an invalid field index.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "create_then_fail");
+        // First effect: create obligation (will insert into obligations map and deduct balance).
+        action.effect(Effect::CreateObligation {
+            beneficiary: target_id,
+            condition: crate::conditional::ProofCondition::HashPreimage { hash: [0u8; 32] },
+            deadline_height: 100,
+            stake: stake_commitment,
+            stake_amount: 1000,
+        });
+        // Second effect: invalid field index to force the turn to fail.
+        action.effect(Effect::SetField {
+            cell: agent_id,
+            index: 99, // Invalid index: will fail
+            value: [0u8; 32],
+        });
+    }
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected(), "Turn should be rejected due to invalid field index");
+
+    // Verify the obligation was NOT left behind in the executor's map.
+    let obligations = executor.obligations.lock().unwrap();
+    assert!(
+        obligations.is_empty(),
+        "Obligation record must be removed on rollback; found {} records",
+        obligations.len()
+    );
+    drop(obligations);
+
+    // Verify balance was fully restored (fee still deducted, but obligation stake returned).
+    let agent = ledger.get(&agent_id).unwrap();
+    // Fee is always deducted (Phase 1, never rolled back), but stake should be returned.
+    assert_eq!(agent.state.balance, 10000 - 100);
+}
+
+/// Adversarial test: Escrow record must be removed on turn rollback.
+///
+/// Same attack pattern as obligation: create escrow, fail turn, exploit phantom record.
+#[test]
+fn test_adversarial_escrow_rollback_on_turn_failure() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let escrow_id = [0xEE; 32];
+
+    // Build a turn that creates an escrow, then FAILS.
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "create_escrow_then_fail");
+        // First effect: create escrow (will insert into escrows map and deduct balance).
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id,
+            recipient: recipient_id,
+            amount: 3000,
+            condition: crate::escrow::EscrowCondition::PredicateSatisfied {
+                predicate_hash: [0x42; 32],
+            },
+            timeout_height: 200,
+            escrow_id,
+        });
+        // Second effect: invalid field index to force failure.
+        action.effect(Effect::SetField {
+            cell: sender_id,
+            index: 99, // Invalid
+            value: [0u8; 32],
+        });
+    }
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected(), "Turn should be rejected due to invalid field index");
+
+    // Verify the escrow was NOT left behind.
+    let escrows = executor.escrows.lock().unwrap();
+    assert!(
+        escrows.is_empty(),
+        "Escrow record must be removed on rollback; found {} records",
+        escrows.len()
+    );
+    drop(escrows);
+
+    // Verify sender's balance was restored (minus fee).
+    let sender = ledger.get(&sender_id).unwrap();
+    assert_eq!(sender.state.balance, 10000 - 100);
+}
+
+// =============================================================================
+// ADVERSARIAL TEST: FulfillObligation access control (HIGH fix)
+// =============================================================================
+
+/// Adversarial test: Only the obligor can fulfill their own obligation.
+///
+/// Without the fix, ANY cell could call FulfillObligation and return the stake
+/// to the obligor, defeating the obligation's purpose (e.g., a beneficiary would
+/// lose their slash opportunity).
+#[test]
+fn test_adversarial_fulfill_obligation_wrong_caller() {
+    let (mut ledger, agent_id, target_id) = setup_two_open_cells(10000, 5000);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let stake_commitment = pyana_cell::NoteCommitment([0xBB; 32]);
+
+    // First turn: agent creates an obligation.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "create_obligation");
+        action.effect(Effect::CreateObligation {
+            beneficiary: target_id,
+            condition: crate::conditional::ProofCondition::HashPreimage { hash: [0u8; 32] },
+            deadline_height: 100,
+            stake: stake_commitment,
+            stake_amount: 2000,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "CreateObligation should succeed");
+
+    // Get the obligation_id (same derivation as executor).
+    let obligation_id = {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        hasher.update(agent_id.as_bytes());
+        hasher.update(target_id.as_bytes());
+        hasher.update(&100u64.to_le_bytes());
+        hasher.update(&stake_commitment.0);
+        *hasher.finalize().as_bytes()
+    };
+
+    // Second turn: target_id (NOT the obligor) tries to fulfill.
+    // target_id acts as agent for this turn.
+    let mut builder2 = TurnBuilder::new(target_id, 0);
+    {
+        let action = builder2.action(target_id, "steal_fulfill");
+        action.effect(Effect::FulfillObligation {
+            obligation_id,
+            proof: crate::conditional::ConditionProof::Preimage([0u8; 32]),
+        });
+    }
+    let turn2 = builder2.fee(100).build();
+    let result2 = executor.execute(&turn2, &mut ledger);
+    assert!(
+        result2.is_rejected(),
+        "FulfillObligation by non-obligor must be rejected"
+    );
+    let (error, _) = result2.unwrap_rejected();
+    match error {
+        TurnError::InvalidEffect { reason } => {
+            assert!(
+                reason.contains("only the obligor"),
+                "Expected obligor access control error, got: {reason}"
+            );
+        }
+        other => panic!("Expected InvalidEffect, got: {other:?}"),
+    }
+
+    // Verify the obligor can still fulfill their own obligation.
+    let mut builder3 = TurnBuilder::new(agent_id, 1);
+    {
+        let action = builder3.action(agent_id, "legitimate_fulfill");
+        action.effect(Effect::FulfillObligation {
+            obligation_id,
+            proof: crate::conditional::ConditionProof::Preimage([0u8; 32]),
+        });
+    }
+    let turn3 = builder3.fee(100).build();
+    let result3 = executor.execute(&turn3, &mut ledger);
+    assert!(
+        result3.is_committed(),
+        "FulfillObligation by obligor should succeed"
+    );
+
+    // Verify stake was returned to obligor.
+    let agent = ledger.get(&agent_id).unwrap();
+    // Started with 10000, paid 100 fee (turn1), lost 2000 stake, paid 100 fee (turn3), got 2000 back.
+    assert_eq!(agent.state.balance, 10000 - 100 - 2000 - 100 + 2000);
+}
+
+// =============================================================================
+// ADVERSARIAL TEST: CreateEscrow permission check (MEDIUM-HIGH fix)
+// =============================================================================
+
+/// Adversarial test: CreateEscrow cell must match action target.
+///
+/// Without the fix, an attacker could create an action targeting their own cell
+/// but specify someone else's cell in the CreateEscrow effect, locking the victim's
+/// funds without authorization.
+#[test]
+fn test_adversarial_create_escrow_wrong_cell() {
+    let (mut ledger, agent_id, target_id) = setup_two_open_cells(10000, 5000);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let escrow_id = [0xDD; 32];
+
+    // Attacker (agent) targets their own cell but specifies target_id as the
+    // escrow cell — attempting to lock target's funds.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "steal_lock");
+        action.effect(Effect::CreateEscrow {
+            cell: target_id, // WRONG: not the action target (agent_id)
+            recipient: agent_id,
+            amount: 5000,
+            condition: crate::escrow::EscrowCondition::PredicateSatisfied {
+                predicate_hash: [0x42; 32],
+            },
+            timeout_height: 200,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "CreateEscrow with cell != action_target must be rejected"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::InvalidEffect { reason } => {
+            assert!(
+                reason.contains("CreateEscrow cell must match action target"),
+                "Expected cell mismatch error, got: {reason}"
+            );
+        }
+        other => panic!("Expected InvalidEffect, got: {other:?}"),
+    }
+
+    // Verify target's balance is unchanged.
+    let target = ledger.get(&target_id).unwrap();
+    assert_eq!(target.state.balance, 5000);
+}
+
+/// Test that CreateEscrow succeeds when cell matches action target.
+#[test]
+fn test_create_escrow_correct_cell_matches_target() {
+    let (mut ledger, sender_id, recipient_id) = setup_escrow_cells(10000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let escrow_id = [0xCC; 32];
+
+    let mut builder = TurnBuilder::new(sender_id, 0);
+    {
+        let action = builder.action(sender_id, "valid_escrow");
+        action.effect(Effect::CreateEscrow {
+            cell: sender_id, // CORRECT: matches action target
+            recipient: recipient_id,
+            amount: 3000,
+            condition: crate::escrow::EscrowCondition::PredicateSatisfied {
+                predicate_hash: [0x42; 32],
+            },
+            timeout_height: 200,
+            escrow_id,
+        });
+    }
+    let turn = builder.fee(100).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "CreateEscrow with correct cell should succeed");
+
+    // Verify balance was deducted.
+    let sender = ledger.get(&sender_id).unwrap();
+    assert_eq!(sender.state.balance, 10000 - 100 - 3000);
 }

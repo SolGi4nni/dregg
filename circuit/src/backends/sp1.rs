@@ -312,7 +312,24 @@ fn compute_removal_commitment(removals: &[[u8; 32]]) -> [u8; 32] {
 /// When the `sp1` feature is enabled, this attempts to use the SP1 prover to
 /// generate real zkVM proofs of Datalog evaluation. Without the feature (or
 /// before the guest ELF is compiled), it provides structural stubs.
+///
+/// # Simulation Mode (`#[cfg(not(feature = "sp1"))]`)
+///
+/// **SIMULATION MODE: This backend does NOT generate or verify real ZK proofs
+/// when the `sp1` feature is disabled.** It validates circuit logic structurally
+/// but provides no cryptographic guarantees. Verification methods perform format
+/// checks on proof bytes but do not execute any ZK verification. Enable the
+/// `sp1` feature for real proving.
 pub struct Sp1Backend;
+
+impl Sp1Backend {
+    /// Returns `true` when the `sp1` feature is disabled and this backend
+    /// operates in simulation mode without real ZK proof generation/verification.
+    #[inline]
+    pub fn is_simulation_mode() -> bool {
+        cfg!(not(feature = "sp1"))
+    }
+}
 
 impl ProofBackend for Sp1Backend {
     type Proof = Sp1Proof;
@@ -1301,7 +1318,12 @@ impl Sp1Backend {
 
         #[cfg(not(feature = "sp1"))]
         {
-            // Stub verification: check structural validity.
+            // SIMULATION MODE: structural checks only, no real ZK verification.
+            eprintln!(
+                "[pyana-circuit] WARNING: Sp1Backend datalog verification is running in \
+                 SIMULATION MODE. No cryptographic proof is being verified. \
+                 Enable the `sp1` feature for real ZK verification."
+            );
             if proof.proof_bytes.len() < 14 {
                 return Err("proof too short".into());
             }
@@ -2057,6 +2079,12 @@ impl PredicateBackend for Sp1Backend {
     }
 
     fn verify_predicate(proof: &Self::PredicateProof) -> Result<bool, String> {
+        // SIMULATION MODE: structural checks only, no real ZK verification.
+        eprintln!(
+            "[pyana-circuit] WARNING: Sp1Backend predicate verification is running in \
+             SIMULATION MODE. No cryptographic proof is being verified. \
+             Enable the `sp1` feature for real ZK verification."
+        );
         if proof.proof_bytes.len() < 10 {
             return Err("proof too short".into());
         }
@@ -2479,6 +2507,12 @@ impl IvcBackend for Sp1Backend {
     }
 
     fn verify_ivc(proof: &Self::IvcProof) -> Result<IvcOutput, String> {
+        // SIMULATION MODE: structural checks only, no real ZK verification.
+        eprintln!(
+            "[pyana-circuit] WARNING: Sp1Backend IVC verification is running in \
+             SIMULATION MODE. No cryptographic proof is being verified. \
+             Enable the `sp1` feature for real ZK verification."
+        );
         if proof.proof_bytes.len() < 25 {
             return Err("proof too short for IVC".into());
         }

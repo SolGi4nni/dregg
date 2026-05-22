@@ -68,6 +68,50 @@ pub struct FillConstraints {
     pub remaining_after_fill: Option<IntentId>,
 }
 
+/// Error returned when constructing `FillConstraints` with invalid parameters.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FillConstraintsError {
+    /// min_fill_amount is zero (allows zero-value fills).
+    ZeroMinFillAmount,
+    /// min_fill_amount exceeds max_fill_amount.
+    MinExceedsMax { min: u64, max: u64 },
+}
+
+impl std::fmt::Display for FillConstraintsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroMinFillAmount => write!(f, "min_fill_amount must be > 0"),
+            Self::MinExceedsMax { min, max } => {
+                write!(f, "min_fill_amount ({}) must be <= max_fill_amount ({})", min, max)
+            }
+        }
+    }
+}
+
+impl std::error::Error for FillConstraintsError {}
+
+impl FillConstraints {
+    /// Construct validated FillConstraints.
+    ///
+    /// Enforces:
+    /// - `min_fill_amount > 0` (zero-value fills are rejected)
+    /// - `min_fill_amount <= max_fill_amount`
+    pub fn new(min: u64, max: u64, fill_or_kill: bool) -> Result<Self, FillConstraintsError> {
+        if min == 0 {
+            return Err(FillConstraintsError::ZeroMinFillAmount);
+        }
+        if min > max {
+            return Err(FillConstraintsError::MinExceedsMax { min, max });
+        }
+        Ok(Self {
+            min_fill_amount: min,
+            max_fill_amount: max,
+            fill_or_kill,
+            remaining_after_fill: None,
+        })
+    }
+}
+
 /// A predicate requirement for cross-party verification.
 ///
 /// When a cell posts an intent with predicate requirements, any fulfiller must
@@ -258,6 +302,15 @@ pub struct MatchSpec {
     /// Cross-party predicate requirements.
     #[serde(default)]
     pub predicate_requirements: Vec<PredicateRequirement>,
+    /// When true, resource matching is strict: wildcards ("*") in the
+    /// `resource_pattern` are NOT allowed. The token's resource must exactly
+    /// match the pattern (no glob expansion). This prevents a broad wildcard
+    /// pattern from inadvertently matching narrow-scope tokens.
+    ///
+    /// Defaults to `false` for backward compatibility (wildcards are powerful
+    /// and are the expected default behavior).
+    #[serde(default)]
+    pub strict_resource_matching: bool,
 }
 
 /// A broadcast intent: someone needs/offers/queries a capability.
@@ -512,6 +565,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let creator = CommitmentId([0xAA; 32]);
         let i1 = Intent::new(IntentKind::Need, spec.clone(), creator, 1000, None);
@@ -531,6 +585,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let spec2 = MatchSpec {
             actions: vec![ActionPattern {
@@ -542,6 +597,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let creator = CommitmentId([0xBB; 32]);
         let i1 = Intent::new(IntentKind::Need, spec1, creator, 1000, None);
@@ -558,6 +614,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let creator = CommitmentId([0xCC; 32]);
         let intent = Intent::new(IntentKind::Need, spec, creator, 1000, None);
@@ -626,6 +683,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -647,6 +705,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
 

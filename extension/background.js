@@ -748,7 +748,7 @@ function generateProof(witness, mode) {
 
   const hash = witness.reduce((acc, b, i) => acc ^ (b << ((i % 4) * 8)), 0) >>> 0;
   const depth = mode === 'private' ? 8 : mode === 'selective' ? 4 : 2;
-  const result = wasm.generate_stark_proof(hash, depth);
+  const result = wasm.generate_demo_stark_proof(hash, depth);
   return new TextEncoder().encode(result.proof_json);
 }
 

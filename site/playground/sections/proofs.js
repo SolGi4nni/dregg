@@ -77,7 +77,7 @@ export function initProofs(wasm) {
 
     const t0 = performance.now();
     try {
-      const proof = wasm.generate_stark_proof(leaf, depth);
+      const proof = wasm.generate_demo_stark_proof(leaf, depth);
       proveTimeMs = performance.now() - t0;
       currentProof = proof;
 
@@ -119,7 +119,7 @@ export function initProofs(wasm) {
 
     const t0 = performance.now();
     try {
-      const result = wasm.verify_stark_proof(JSON.stringify(currentProof));
+      const result = wasm.verify_demo_stark_proof(JSON.stringify(currentProof));
       const verifyTime = performance.now() - t0;
 
       container.querySelector('#pf-stat-verify').textContent = `${verifyTime.toFixed(1)}ms`;
@@ -146,11 +146,11 @@ export function initProofs(wasm) {
 
     try {
       // Tamper
-      const tampered = wasm.tamper_stark_proof(JSON.stringify(currentProof));
+      const tampered = wasm.tamper_demo_stark_proof(JSON.stringify(currentProof));
 
       // Try to verify tampered proof
       const t0 = performance.now();
-      const result = wasm.verify_stark_proof(tampered);
+      const result = wasm.verify_demo_stark_proof(tampered);
       const verifyTime = performance.now() - t0;
 
       if (!result.valid) {

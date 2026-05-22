@@ -73,7 +73,7 @@ export class ProofEngine {
     depth: number
   ): Promise<StarkProofResult> {
     try {
-      return this.wasm.generate_stark_proof(
+      return this.wasm.generate_demo_stark_proof(
         leafValue,
         depth
       ) as StarkProofResult;
@@ -91,7 +91,7 @@ export class ProofEngine {
    */
   async verifyStarkProof(proofJson: string): Promise<StarkVerifyResult> {
     try {
-      return this.wasm.verify_stark_proof(proofJson) as StarkVerifyResult;
+      return this.wasm.verify_demo_stark_proof(proofJson) as StarkVerifyResult;
     } catch (e) {
       throw new Error(`Failed to verify STARK proof: ${extractError(e)}`);
     }
@@ -107,7 +107,7 @@ export class ProofEngine {
    */
   async tamperStarkProof(proofJson: string): Promise<string> {
     try {
-      return this.wasm.tamper_stark_proof(proofJson);
+      return this.wasm.tamper_demo_stark_proof(proofJson);
     } catch (e) {
       throw new Error(`Failed to tamper proof: ${extractError(e)}`);
     }

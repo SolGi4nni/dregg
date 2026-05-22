@@ -31,6 +31,10 @@ pub enum TokenError {
     #[error("crypto error: {0}")]
     Crypto(String),
 
+    /// A caveat could not be decoded (malformed wire encoding).
+    #[error("malformed caveat: {0}")]
+    MalformedCaveat(String),
+
     /// Datalog evaluation error (Biscuit-specific).
     #[error("datalog error: {0}")]
     Datalog(String),
@@ -42,4 +46,8 @@ pub enum TokenError {
     /// Key material error.
     #[error("key error: {0}")]
     KeyError(String),
+
+    /// Binary data does not match any known token format.
+    #[error("unrecognized token format: data does not match Macaroon or Biscuit patterns")]
+    UnrecognizedFormat,
 }

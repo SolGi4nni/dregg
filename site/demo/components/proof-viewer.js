@@ -21,7 +21,7 @@ export class ProofViewer {
         const depth = parseInt(document.getElementById('stark-depth').value) || 4;
 
         try {
-            const result = this.wasm.generate_stark_proof(leaf, depth);
+            const result = this.wasm.generate_demo_stark_proof(leaf, depth);
             this.currentProofJson = result.proof_json;
             this.proofData = result;
             this.tampered = false;
@@ -49,7 +49,7 @@ export class ProofViewer {
         }
 
         try {
-            const result = this.wasm.verify_stark_proof(this.currentProofJson);
+            const result = this.wasm.verify_demo_stark_proof(this.currentProofJson);
             document.getElementById('stat-verify-time').textContent = result.verification_time_ms.toFixed(1) + 'ms';
 
             const statusEl = document.getElementById('pi-status');
@@ -70,7 +70,7 @@ export class ProofViewer {
         }
 
         try {
-            this.currentProofJson = this.wasm.tamper_stark_proof(this.currentProofJson);
+            this.currentProofJson = this.wasm.tamper_demo_stark_proof(this.currentProofJson);
             this.tampered = true;
 
             const statusEl = document.getElementById('pi-status');

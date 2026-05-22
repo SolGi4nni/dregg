@@ -903,6 +903,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = pool
             .broadcast_intent(IntentKind::Need, spec, 9999, None)
@@ -925,6 +926,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -951,6 +953,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = pool
             .broadcast_intent(IntentKind::Need, spec, 9999, valid_stake())
@@ -969,6 +972,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -991,6 +995,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1033,6 +1038,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1061,6 +1067,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x77; 32]), 9999, None);
         pool.intents.insert(
@@ -1102,6 +1109,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(
                 IntentKind::Need,
@@ -1125,6 +1133,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let i1 = Intent::new(
             IntentKind::Need,
@@ -1166,6 +1175,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
         let result = pool.receive_intent_checked(intent.clone(), 100, true);
@@ -1184,6 +1194,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let fake_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
         let (_root, mut real_proof) = build_test_tree();
@@ -1221,6 +1232,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1248,6 +1260,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(
                 IntentKind::Need,
@@ -1275,6 +1288,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent_overflow = Intent::new(
             IntentKind::Need,
@@ -1302,6 +1316,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(
                 IntentKind::Need,
@@ -1328,6 +1343,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent_new_epoch = Intent::new(
             IntentKind::Need,
@@ -1356,6 +1372,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(
                 IntentKind::Need,
@@ -1407,6 +1424,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1434,6 +1452,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
             let result = pool.receive_intent_checked(intent, 100, false);
@@ -1449,6 +1468,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
         let result = pool.receive_intent_checked(intent, 100, false);
@@ -1470,6 +1490,7 @@ mod tests {
                 resource_pattern: None,
                 compound: None,
                 predicate_requirements: vec![],
+                strict_resource_matching: false,
             };
             let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
             pool.receive_intent_checked(intent, 100, false).unwrap();
@@ -1484,6 +1505,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
         let result = pool.receive_intent_checked(intent, 161, false);
@@ -1506,6 +1528,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(
             IntentKind::Need,
@@ -1582,6 +1605,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
         let intent_id = intent.id;

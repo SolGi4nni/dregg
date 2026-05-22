@@ -265,6 +265,26 @@ pub struct HeldToken {
     root_key: [u8; 32],
     /// Unique identifier for lookup.
     pub id: String,
+    /// Whether this token's HMAC chain has been cryptographically verified.
+    ///
+    /// Tokens minted locally or decoded with the real root key are `true`.
+    /// Tokens received via delegation (where the root key is unknown) are `false`
+    /// because `receive_delegation` performs only structural validation (parse +
+    /// caveat structure), NOT HMAC chain verification.
+    ///
+    /// **SECURITY**: Code paths that treat a HeldToken as "trusted" for authorization
+    /// decisions MUST check this field. An unverified token may have been forged or
+    /// tampered with. Verification happens at presentation time when the token is
+    /// submitted to a service that holds the root key.
+    #[serde(default = "default_verified_true")]
+    pub verified: bool,
+}
+
+/// Default for deserialization of older snapshots that lack the `verified` field.
+/// Conservatively defaults to `true` to avoid breaking existing persisted wallets
+/// that only contain locally-minted tokens.
+fn default_verified_true() -> bool {
+    true
 }
 
 impl Drop for HeldToken {
@@ -275,6 +295,9 @@ impl Drop for HeldToken {
 
 impl HeldToken {
     /// Create a new HeldToken with the given fields.
+    ///
+    /// Tokens created with a real (non-zeroed) root key are marked as verified.
+    /// Tokens with a zeroed root key are marked as unverified (delegated tokens).
     pub(crate) fn new(
         label: String,
         service: String,
@@ -282,12 +305,14 @@ impl HeldToken {
         root_key: [u8; 32],
         id: String,
     ) -> Self {
+        let verified = root_key != [0u8; 32];
         Self {
             label,
             service,
             encoded,
             root_key,
             id,
+            verified,
         }
     }
 
@@ -296,6 +321,8 @@ impl HeldToken {
     /// Attenuated tokens carry only the encoded macaroon chain. They can be
     /// further attenuated and presented for verification, but cannot mint new
     /// root tokens or produce federation membership proofs.
+    ///
+    /// Attenuated tokens created locally (from a verified parent) are marked as verified.
     pub(crate) fn new_attenuated(
         label: String,
         service: String,
@@ -308,6 +335,7 @@ impl HeldToken {
             encoded,
             root_key: [0u8; 32],
             id,
+            verified: true, // Locally-attenuated from a verified parent
         }
     }
 
@@ -322,6 +350,15 @@ impl HeldToken {
     /// Only root tokens minted by this wallet return `true`.
     pub fn can_mint(&self) -> bool {
         self.root_key != [0u8; 32]
+    }
+
+    /// Returns `true` if this token's HMAC chain has been cryptographically verified.
+    ///
+    /// Tokens received via delegation are NOT verified (only structurally validated).
+    /// They should be treated as untrusted until presented to a service holding the
+    /// root key for full HMAC chain verification.
+    pub fn is_verified(&self) -> bool {
+        self.verified
     }
 
     /// Decode this held token into a [`MacaroonToken`] for operations.
@@ -521,14 +558,40 @@ impl AgentWallet {
     ///
     /// Returns `None` if the wallet was created from raw key bytes or if the
     /// mnemonic has been explicitly cleared.
-    pub fn export_mnemonic(&self) -> Option<&str> {
+    ///
+    /// # Security
+    ///
+    /// This method requires `&mut self` to prevent extraction via shared references.
+    /// The mnemonic phrase is the master secret from which all keys are derived.
+    /// Exposing it allows full wallet reconstruction including all sub-agent keys.
+    ///
+    /// Callers MUST ensure the returned value is:
+    /// - Never logged or serialized to persistent storage without encryption.
+    /// - Zeroized after use (the reference borrows from the wallet, so the wallet
+    ///   handles zeroization on drop, but callers must not copy into unprotected buffers).
+    /// - Never transmitted over network without end-to-end encryption.
+    #[must_use = "exported mnemonic is highly sensitive master key material"]
+    pub fn export_mnemonic(&mut self) -> Option<&str> {
         self.mnemonic_phrase.as_deref()
     }
 
     /// Export the raw seed if available.
     ///
     /// Returns `None` if the wallet was created from raw key bytes without a seed.
-    pub fn export_seed(&self) -> Option<&[u8; 64]> {
+    ///
+    /// # Security
+    ///
+    /// This method requires `&mut self` to prevent extraction via shared references.
+    /// The seed is the master secret from which all keys are derived. Exposing it
+    /// allows full wallet reconstruction including all sub-agent keys.
+    ///
+    /// Callers MUST ensure the returned value is:
+    /// - Never logged or serialized to persistent storage without encryption.
+    /// - Zeroized after use (the reference borrows from the wallet, so the wallet
+    ///   handles zeroization on drop, but callers must not copy into unprotected buffers).
+    /// - Never transmitted over network without end-to-end encryption.
+    #[must_use = "exported seed is highly sensitive master key material"]
+    pub fn export_seed(&mut self) -> Option<&[u8; 64]> {
         self.seed.as_ref()
     }
 
@@ -766,13 +829,28 @@ impl AgentWallet {
             }
         }
 
-        let held = HeldToken::new(
+        // SECURITY: The token is accepted with structural validation only. The HMAC chain
+        // is NOT verified because we do not hold the root key. The token is marked as
+        // unverified — callers MUST check `is_verified()` before trusting it for
+        // authorization decisions. Full verification occurs at presentation time when
+        // the token is submitted to a verifier that holds the root key.
+        tracing::warn!(
+            service = %delegated.service,
+            id = %delegated.id,
+            "accepting unverified delegated token: HMAC chain not verified (root key unavailable). \
+             Token will be verified at presentation time."
+        );
+
+        let mut held = HeldToken::new(
             delegated.label,
             delegated.service,
             delegated.token_bytes,
             [0u8; 32], // delegatee does not have the root key
             delegated.id,
         );
+        // Explicitly mark as unverified (new() already does this for zeroed root_key,
+        // but we're explicit here for clarity and defense-in-depth).
+        held.verified = false;
         self.tokens.push(held);
         Ok(())
     }
@@ -1019,7 +1097,7 @@ impl AgentWallet {
 
         // Step 4: Generate STARK proof via the bridge with the commitment as a public input.
         let bridge_proof = self.prove_authorization_selective(token, request, commitment)?;
-        let proof = Self::serialize_proof(&bridge_proof);
+        let proof = Self::serialize_proof(&bridge_proof)?;
 
         Ok(AuthorizationPresentation::Selective {
             revealed_facts,
@@ -1049,7 +1127,7 @@ impl AgentWallet {
         // The proof covers the entire MultiStepDerivationAir -- the verifier
         // only receives the conclusion public input, learning nothing else.
         let bridge_proof = self.prove_authorization(token, request)?;
-        let proof = Self::serialize_proof(&bridge_proof);
+        let proof = Self::serialize_proof(&bridge_proof)?;
 
         Ok(AuthorizationPresentation::Private { proof, conclusion })
     }
@@ -1178,7 +1256,7 @@ impl AgentWallet {
 
         // Step 5: Generate STARK proof with the commitment as public input.
         let bridge_proof = self.prove_authorization_selective(token, request, commitment)?;
-        let proof = Self::serialize_proof(&bridge_proof);
+        let proof = Self::serialize_proof(&bridge_proof)?;
 
         Ok(AuthorizationPresentation::Selective {
             revealed_facts,
@@ -1255,12 +1333,15 @@ impl AgentWallet {
     ///
     /// Prefers the real STARK proof (issuer membership) when available,
     /// otherwise serializes the constraint-checked circuit proof via postcard.
-    fn serialize_proof(bridge_proof: &BridgePresentationProof) -> Vec<u8> {
+    fn serialize_proof(bridge_proof: &BridgePresentationProof) -> Result<Vec<u8>, SdkError> {
         if let Some(ref real) = bridge_proof.real_stark_proof {
-            pyana_circuit::stark::proof_to_bytes(&real.issuer_membership_stark_proof)
+            Ok(pyana_circuit::stark::proof_to_bytes(
+                &real.issuer_membership_stark_proof,
+            ))
         } else {
             // Fast path: serialize the constraint-checked presentation proof.
-            postcard::to_stdvec(&bridge_proof.circuit_proof).unwrap_or_default()
+            postcard::to_stdvec(&bridge_proof.circuit_proof)
+                .map_err(|e| SdkError::Wire(format!("failed to serialize circuit proof: {e}")))
         }
     }
 
@@ -1535,12 +1616,31 @@ impl AgentWallet {
     /// token satisfies a predicate (e.g., "balance >= 1000", "valid_until >= T")
     /// without revealing the exact value.
     ///
+    /// # Security: `attribute_value` Binding
+    ///
+    /// IMPORTANT: `attribute_value` is the prover's claim. The verifier must independently
+    /// verify that this value is committed in the token's state root (via Merkle membership).
+    /// This function does NOT verify that claim -- it only proves the predicate holds IF the
+    /// value is correct.
+    ///
+    /// The binding between the claimed value and the token's actual state happens at a higher
+    /// level: the full presentation flow (via `authorize_with_disclosure` or the intent
+    /// fulfillment pipeline) includes a state root that commits to all attribute values.
+    /// The `fact_commitment` in the returned proof is derived from this state root, so a
+    /// verifier checking the proof against a known state root will reject fabricated values.
+    ///
+    /// Callers using this function directly (outside the full presentation flow) MUST ensure
+    /// the verifier independently checks the `fact_commitment` against the token's committed
+    /// state. Without this check, a dishonest prover can claim any value and produce a valid
+    /// proof for it.
+    ///
     /// # Arguments
     ///
     /// * `token` - The held token containing the attribute.
     /// * `attribute` - The attribute name (e.g., "valid_until", "balance", "reputation").
     ///   This is hashed to a field element and used to look up the fact in the token state.
-    /// * `attribute_value` - The actual (private) value of the attribute.
+    /// * `attribute_value` - The actual (private) value of the attribute. This is the
+    ///   prover's claim; see the Security section above regarding binding guarantees.
     /// * `predicate` - The predicate to prove (e.g., `Predicate::Gte(1000)`).
     ///
     /// # Returns
@@ -2426,7 +2526,7 @@ mod tests {
     #[test]
     fn test_wallet_from_mnemonic() {
         let mnemonic = crate::mnemonic::generate_mnemonic();
-        let wallet = AgentWallet::from_mnemonic(&mnemonic, "").unwrap();
+        let mut wallet = AgentWallet::from_mnemonic(&mnemonic, "").unwrap();
         assert!(wallet.export_mnemonic().is_some());
         assert_eq!(wallet.export_mnemonic().unwrap(), mnemonic);
         assert!(wallet.export_seed().is_some());
@@ -2476,7 +2576,7 @@ mod tests {
 
     #[test]
     fn test_wallet_new_has_no_mnemonic() {
-        let wallet = AgentWallet::new();
+        let mut wallet = AgentWallet::new();
         assert!(wallet.export_mnemonic().is_none());
         assert!(wallet.export_seed().is_none());
         assert!(wallet.derivation_path().is_none());
@@ -2556,5 +2656,59 @@ mod tests {
         let held = recv_wallet.tokens().first().unwrap();
         assert!(!held.can_mint());
         assert_eq!(held.root_key(), &[0u8; 32]);
+    }
+
+    /// P1-2 regression test: receive_delegation marks tokens as unverified since
+    /// HMAC chain cannot be checked without the root key.
+    #[test]
+    fn test_receive_delegation_marks_unverified() {
+        let mut wallet = AgentWallet::new();
+        let root_key = [0xAA; 32];
+        let root_token = wallet.mint_token(&root_key, "service");
+
+        // Root token must be verified.
+        assert!(root_token.is_verified());
+
+        let delegatee_wallet = AgentWallet::new();
+        let delegatee_pk = delegatee_wallet.public_key();
+
+        let restrictions = Attenuation {
+            services: vec![("service".to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        let delegated = wallet
+            .delegate(&root_token, &delegatee_pk, &restrictions)
+            .unwrap();
+
+        // Attenuated token created locally (from verified parent) is still verified.
+        let attenuated_in_wallet = wallet
+            .tokens()
+            .iter()
+            .find(|t| t.id.contains("att"))
+            .unwrap();
+        assert!(
+            attenuated_in_wallet.is_verified(),
+            "locally-attenuated token should be verified"
+        );
+
+        // When a delegatee receives the token, it must be marked as UNVERIFIED
+        // because the HMAC chain cannot be checked without the root key.
+        let mut recv_wallet = AgentWallet::new();
+        recv_wallet.receive_delegation(delegated).unwrap();
+        let received = recv_wallet.tokens().first().unwrap();
+        assert!(
+            !received.is_verified(),
+            "delegated token must be marked unverified (HMAC chain not checked)"
+        );
+    }
+
+    /// P1-2 regression test: minted tokens are verified.
+    #[test]
+    fn test_minted_token_is_verified() {
+        let mut wallet = AgentWallet::new();
+        let root_key = [0xBB; 32];
+        let token = wallet.mint_token(&root_key, "compute");
+        assert!(token.is_verified());
+        assert!(token.can_mint());
     }
 }

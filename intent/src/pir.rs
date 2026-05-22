@@ -367,17 +367,39 @@ pub struct PirDatabaseInfo {
     pub num_rows: usize,
     /// Number of columns per row (in BabyBear field elements).
     pub row_width: usize,
-    /// The ordered list of capability tags (so the client can find their target index).
-    /// In production, this would be replaced by a committed hash table for privacy.
-    pub tags: Vec<String>,
+    /// BLAKE3 commitments of each tag, in bucket order.
+    ///
+    /// Instead of revealing plaintext tags (which leaks available capabilities to
+    /// the server), we provide `BLAKE3(tag)` for each row. The client must know
+    /// the tag they are looking for, hash it locally, and find the matching index.
+    /// This prevents the server from learning which tags exist without already
+    /// knowing them.
+    pub tag_commitments: Vec<[u8; 32]>,
+}
+
+impl PirDatabaseInfo {
+    /// Find the row index for a known tag by hashing it and scanning commitments.
+    ///
+    /// The client must know the tag string they want to query. They hash it locally
+    /// and compare against the committed list to find the index for PIR query
+    /// generation. Returns `None` if the tag is not present.
+    pub fn find_tag_index(&self, tag: &str) -> Option<usize> {
+        let commitment = *blake3::hash(tag.as_bytes()).as_bytes();
+        self.tag_commitments.iter().position(|c| *c == commitment)
+    }
 }
 
 impl From<&IntentIndex> for PirDatabaseInfo {
     fn from(index: &IntentIndex) -> Self {
+        let tag_commitments = index
+            .tags
+            .iter()
+            .map(|tag| *blake3::hash(tag.as_bytes()).as_bytes())
+            .collect();
         Self {
             num_rows: index.num_rows(),
             row_width: index.row_width(),
-            tags: index.tags.clone(),
+            tag_commitments,
         }
     }
 }
@@ -408,6 +430,7 @@ mod tests {
                     resource_pattern: None,
                     compound: None,
                     predicate_requirements: vec![],
+                    strict_resource_matching: false,
                 };
                 let mut creator_bytes = [0u8; 32];
                 creator_bytes[0] = tag_idx as u8;
@@ -589,6 +612,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x11; 32]), 9999, None);
 
@@ -663,6 +687,7 @@ mod tests {
             resource_pattern: Some("api/v1/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
 
         let tags = extract_capability_tags(&spec);

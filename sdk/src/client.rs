@@ -8,10 +8,33 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use pyana_commit::{MerkleTree, NonMembershipProof};
 use pyana_wire::prelude::*;
 
 use crate::error::SdkError;
 use crate::wallet::{AgentWallet, HeldToken};
+
+/// Result of a revocation check, distinguishing between cryptographically verified
+/// outcomes and unverified server assertions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RevocationStatus {
+    /// The token has been revoked (server returned no non-membership proof).
+    Revoked,
+    /// The token is NOT revoked and this is cryptographically proven via a
+    /// verified non-membership proof anchored to the given root.
+    NotRevoked {
+        /// The Merkle root this proof is anchored to.
+        root: [u8; 32],
+        /// The height of the accumulator when the proof was generated.
+        height: u64,
+    },
+    /// The server claims the token is not revoked but did not provide a
+    /// cryptographic proof. The client cannot verify this claim.
+    ///
+    /// SECURITY: Callers MUST NOT treat this as equivalent to `NotRevoked`.
+    /// A malicious silo can return this status for revoked tokens.
+    Unverified,
+}
 
 /// Result of presenting a token to a remote silo.
 #[derive(Clone, Debug)]
@@ -392,9 +415,16 @@ impl SiloClient {
 
     /// Check whether a token has been revoked.
     ///
-    /// Sends a `RequestNonMembership` message to the silo and interprets the
-    /// response. If the silo returns a non-membership proof, the token is NOT
-    /// revoked. If the proof is `None`, the token IS revoked.
+    /// Sends a `RequestNonMembership` message to the silo and cryptographically
+    /// verifies the response. Returns a [`RevocationStatus`] that distinguishes
+    /// between verified and unverified outcomes.
+    ///
+    /// # Security
+    ///
+    /// A malicious silo cannot lie about revocation status when a proof is provided,
+    /// because the non-membership proof is cryptographically verified locally against
+    /// the attested root. If the server provides no proof but claims non-revocation,
+    /// [`RevocationStatus::Unverified`] is returned instead of blindly trusting the server.
     ///
     /// # Arguments
     ///
@@ -402,8 +432,9 @@ impl SiloClient {
     ///
     /// # Returns
     ///
-    /// `true` if the token has been revoked, `false` if it is still valid.
-    pub async fn check_revocation(&mut self, token_id: &str) -> Result<bool, SdkError> {
+    /// A [`RevocationStatus`] indicating the verified revocation state, or an error
+    /// if the wire protocol fails or proof verification fails.
+    pub async fn check_revocation(&mut self, token_id: &str) -> Result<RevocationStatus, SdkError> {
         let msg = WireMessage::RequestNonMembership {
             token_id: token_id.to_string(),
         };
@@ -415,10 +446,45 @@ impl SiloClient {
             .map_err(|e| SdkError::Wire(format!("check_revocation failed: {e}")))?;
 
         match response {
-            WireMessage::NonMembershipResponse { proof, .. } => {
-                // proof == Some(...) means NOT revoked (non-membership proven)
-                // proof == None means IS revoked (membership confirmed)
-                Ok(proof.is_none())
+            WireMessage::NonMembershipResponse {
+                proof,
+                root,
+                height,
+                ..
+            } => {
+                match proof {
+                    None => {
+                        // No proof means the token IS in the revocation set (revoked).
+                        Ok(RevocationStatus::Revoked)
+                    }
+                    Some(proof_bytes) => {
+                        // Server claims non-revocation with a proof. We MUST verify it
+                        // cryptographically rather than trusting the server's assertion.
+                        let nm_proof: NonMembershipProof = postcard::from_bytes(&proof_bytes)
+                            .map_err(|e| {
+                                SdkError::NonMembershipVerificationFailed(format!(
+                                    "failed to deserialize non-membership proof: {e}"
+                                ))
+                            })?;
+
+                        // Verify that the proof's absent_key matches the token we asked about.
+                        let expected_key = *blake3::hash(token_id.as_bytes()).as_bytes();
+                        if nm_proof.absent_key != expected_key {
+                            return Err(SdkError::NonMembershipVerificationFailed(
+                                "proof absent_key does not match requested token_id".into(),
+                            ));
+                        }
+
+                        // Cryptographically verify the non-membership proof against the root.
+                        if !MerkleTree::verify_non_membership(&root, &nm_proof) {
+                            return Err(SdkError::NonMembershipVerificationFailed(
+                                "non-membership proof does not verify against attested root".into(),
+                            ));
+                        }
+
+                        Ok(RevocationStatus::NotRevoked { root, height })
+                    }
+                }
             }
             WireMessage::Error { message, .. } => {
                 Err(SdkError::Wire(format!("revocation check error: {message}")))

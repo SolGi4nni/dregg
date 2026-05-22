@@ -417,6 +417,11 @@ async fn dispatch_tool(name: &str, params: Value, state: &NodeState) -> McpToolR
 
 async fn tool_get_status(state: &NodeState) -> McpToolResult {
     let s = state.read().await;
+
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
     let latest_height = s
         .store
         .latest_attested_root()
@@ -440,7 +445,13 @@ async fn tool_get_status(state: &NodeState) -> McpToolResult {
     }))
 }
 
-async fn tool_create_agent(params: &Value, _state: &NodeState) -> McpToolResult {
+async fn tool_create_agent(params: &Value, state: &NodeState) -> McpToolResult {
+    let s = state.read().await;
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+    drop(s);
+
     let name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return McpToolResult::error("missing required parameter: name"),
@@ -835,6 +846,11 @@ async fn tool_post_intent(params: &Value, state: &NodeState) -> McpToolResult {
         .unwrap_or(100);
 
     let s = state.read().await;
+
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
     let current_height = s
         .store
         .latest_attested_root()
@@ -1146,6 +1162,11 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
 
 async fn tool_check_capabilities(state: &NodeState) -> McpToolResult {
     let s = state.read().await;
+
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
     let ws = crate::state::WalletStatus {
         unlocked: s.unlocked,
         public_key: s
@@ -1196,6 +1217,11 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
     };
 
     let s = state.read().await;
+
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
     let cell_id = pyana_cell::CellId(cell_id_bytes);
     let found = s.ledger.get(&cell_id).is_some();
 
@@ -1210,6 +1236,11 @@ async fn tool_get_receipt_chain(params: &Value, state: &NodeState) -> McpToolRes
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     let s = state.read().await;
+
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
     let chain = s.wallet.receipt_chain();
     let receipts: Vec<Value> = chain
         .iter()

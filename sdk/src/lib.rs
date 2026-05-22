@@ -54,7 +54,7 @@ pub mod wallet;
 pub mod wordlist;
 
 // Re-export primary types at crate root for convenience.
-pub use client::{PresentationResult, SiloClient};
+pub use client::{PresentationResult, RevocationStatus, SiloClient};
 pub use error::SdkError;
 pub use runtime::{AgentRuntime, SubAgent};
 pub use wallet::{

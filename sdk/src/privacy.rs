@@ -646,12 +646,14 @@ pub fn verify_anonymous_presentation(
     // Re-wrap into a BridgePresentationProof for verification via the bridge layer.
     // The wire proof contains all necessary STARK data.
     if let Some(ref real_stark) = presentation.proof.real_stark_proof {
-        // Verify the blinded issuer membership STARK.
+        // SECURITY: Use new_canonical() for values from external (potentially adversarial)
+        // proof data. This ensures modular reduction is applied, preventing non-canonical
+        // representations that could cause malleability.
         let pi: Vec<BabyBear> = real_stark
             .issuer_membership_stark_proof
             .public_inputs
             .iter()
-            .map(|&v| BabyBear::new(v))
+            .map(|&v| BabyBear::new_canonical(v))
             .collect();
 
         let air_name = &real_stark.issuer_membership_stark_proof.air_name;

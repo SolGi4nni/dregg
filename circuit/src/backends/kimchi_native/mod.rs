@@ -1375,7 +1375,7 @@ impl PresentationBackend for KimchiNativeBackend {
             ],
             timestamp: proof.timestamp.into_bigint().as_ref()[0],
             presentation_tag,
-            revealed_facts_commitment: 0,
+            revealed_facts_commitment: [0u64; 4],
             composition_commitment: {
                 let cc_bytes = fp_to_bytes32(&proof.composition_commitment);
                 let mut cc = [0u64; 4];

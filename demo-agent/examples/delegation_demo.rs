@@ -359,10 +359,13 @@ fn main() {
 
     let delegation = pyana_cell::DelegatedRef::new(
         parent_id,
+        pyana_cell::CellId::from_bytes([0u8; 32]), // placeholder child
         vec![],
         0,
         1000, // refreshed at t=1000
         300,  // max staleness 300s
+        [0u8; 32], // clist_commitment
+        [0u8; 64], // parent_signature
     );
 
     println!("  Delegation refreshed_at=1000, max_staleness=300");

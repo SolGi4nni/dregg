@@ -729,18 +729,26 @@ impl PresentationAir {
             None
         };
 
+        let revealed_facts_opt = if !w.revealed_facts_commitment.is_zero() {
+            Some(w.revealed_facts_commitment)
+        } else {
+            None
+        };
+
         let merkle_stark_proof = if w.blinding_factor != BabyBear::ZERO {
             generate_blinded_merkle_poseidon2_stark_proof(
                 &w.issuer_membership,
                 w.blinding_factor,
                 &w.request_predicate,
                 composition_opt,
+                revealed_facts_opt,
             )?
         } else {
             generate_merkle_poseidon2_stark_proof_bound(
                 &w.issuer_membership,
                 &w.request_predicate,
                 composition_opt,
+                revealed_facts_opt,
             )?
         };
 
@@ -1479,6 +1487,7 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
     witness: &MerkleWitness,
     action_commitment: &crate::binding::ActionBinding,
     composition_commitment: Option<crate::binding::WideHash>,
+    revealed_facts_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, MerklePoseidon2StarkAir};
 
@@ -1518,6 +1527,18 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
         }
     }
 
+    // Append the revealed facts commitment if provided (selective disclosure, 4 elements).
+    // SECURITY: This cryptographically binds the revealed facts to the STARK proof.
+    // The verifier recomputes the commitment from the plaintext facts and checks it
+    // matches this value, ensuring the prover cannot lie about which facts were revealed.
+    if let Some(rfc) = revealed_facts_commitment {
+        if !rfc.is_zero() {
+            for &elem in rfc.as_slice() {
+                public_inputs.push(elem);
+            }
+        }
+    }
+
     // Generate the STARK proof with Poseidon2 constraints
     let air = MerklePoseidon2StarkAir;
     let proof = stark::prove(&air, &trace, &public_inputs);
@@ -1545,6 +1566,7 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     blinding_factor: BabyBear,
     action_commitment: &crate::binding::ActionBinding,
     composition_commitment: Option<crate::binding::WideHash>,
+    revealed_facts_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
     use crate::poseidon2_air::{self, BlindedMerklePoseidon2StarkAir};
 
@@ -1583,6 +1605,18 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     if let Some(cc) = composition_commitment {
         if !cc.is_zero() {
             for &elem in cc.as_slice() {
+                public_inputs.push(elem);
+            }
+        }
+    }
+
+    // Append the revealed facts commitment if provided (selective disclosure, 4 elements).
+    // SECURITY: This cryptographically binds the revealed facts to the STARK proof.
+    // The verifier recomputes the commitment from the plaintext facts and checks it
+    // matches this value, ensuring the prover cannot lie about which facts were revealed.
+    if let Some(rfc) = revealed_facts_commitment {
+        if !rfc.is_zero() {
+            for &elem in rfc.as_slice() {
                 public_inputs.push(elem);
             }
         }

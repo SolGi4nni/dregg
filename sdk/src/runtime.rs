@@ -408,6 +408,7 @@ impl AgentRuntime {
             federation_id: self.executor.local_federation_id,
             ledger: self.ledger.clone(),
             nonce: Mutex::new(0),
+            last_receipt_hash: Mutex::new(None),
         })
     }
 }
@@ -426,6 +427,10 @@ impl std::fmt::Debug for AgentRuntime {
 ///
 /// Sub-agents have their own identity and wallet but operate on the same ledger
 /// as their parent. Their token is strictly less powerful than the parent's.
+///
+/// Each sub-agent maintains its own receipt chain binding: every turn it executes
+/// includes `previous_receipt_hash` linking to its last committed receipt. This
+/// prevents reordering and replay of sub-agent turns.
 #[derive(Debug)]
 pub struct SubAgent {
     /// The sub-agent's wallet.
@@ -445,6 +450,10 @@ pub struct SubAgent {
     ledger: Arc<Mutex<Ledger>>,
     /// Nonce counter for turn submission (incremented on each execute call).
     nonce: Mutex<u64>,
+    /// The hash of the last committed receipt for this sub-agent.
+    /// Used to bind each new turn to its predecessor, preventing reordering
+    /// and replay of sub-agent turns.
+    last_receipt_hash: Mutex<Option<[u8; 32]>>,
 }
 
 impl SubAgent {
@@ -459,6 +468,10 @@ impl SubAgent {
     }
 
     /// Execute effects on the shared ledger using this sub-agent's cell.
+    ///
+    /// Each turn is bound to this sub-agent's receipt chain via `previous_receipt_hash`,
+    /// which prevents reordering and replay of sub-agent turns. The binding is updated
+    /// after each successful commit.
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
 
@@ -468,6 +481,9 @@ impl SubAgent {
             *n += 1;
             current
         };
+
+        // Read the current receipt chain head for binding.
+        let previous_receipt_hash = *self.last_receipt_hash.lock().unwrap();
 
         // Build unsigned action to compute signing message.
         let action_unsigned = Action {
@@ -502,7 +518,7 @@ impl SubAgent {
             fee: 5_000,
             memo: None,
             valid_until: None,
-            previous_receipt_hash: None,
+            previous_receipt_hash,
             depends_on: Vec::new(),
         };
 
@@ -510,7 +526,12 @@ impl SubAgent {
         let result = executor.execute(&turn, &mut ledger);
 
         match result {
-            TurnResult::Committed { receipt, .. } => Ok(receipt),
+            TurnResult::Committed { receipt, .. } => {
+                // SECURITY: Update the receipt chain binding so the next turn
+                // is linked to this one, preventing reordering and replay.
+                *self.last_receipt_hash.lock().unwrap() = Some(receipt.receipt_hash());
+                Ok(receipt)
+            }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
             TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
             TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),

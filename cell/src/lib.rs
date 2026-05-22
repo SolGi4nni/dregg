@@ -36,7 +36,7 @@ pub mod value_commitment;
 mod tests;
 
 // Re-exports for convenience.
-pub use capability::{CapabilityRef, CapabilitySet, is_attenuation};
+pub use capability::{AttenuatedCap, CapabilityRef, CapabilitySet, is_attenuation};
 pub use cell::{Cell, VerificationKey};
 pub use delegation::DelegatedRef;
 pub use derivation::{
@@ -60,7 +60,7 @@ pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
 pub use preconditions::{
     CellStatePrecondition, EvalContext, NetworkPrecondition, Preconditions, TimeRange,
 };
-pub use program::{CellProgram, ProgramError, StateConstraint};
+pub use program::{CellProgram, ProgramError, StateConstraint, field_from_u64, field_from_u64_be};
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,
 };

@@ -133,13 +133,20 @@ impl Cell {
             permissions: Permissions::default(),
             verification_key: None,
             delegate: Some(self.id),
-            delegation: Some(DelegatedRef::new(
-                self.id,
-                snapshot,
-                delegation_epoch,
-                refreshed_at,
-                max_staleness,
-            )),
+            delegation: Some({
+                let clist_bytes = postcard::to_allocvec(&snapshot).unwrap_or_default();
+                let clist_commitment = DelegatedRef::compute_clist_commitment(&clist_bytes);
+                DelegatedRef::new(
+                    self.id,
+                    id,
+                    snapshot,
+                    delegation_epoch,
+                    refreshed_at,
+                    max_staleness,
+                    clist_commitment,
+                    [0u8; 64], // Placeholder signature — spawn_child is a privileged internal op.
+                )
+            }),
             token_id: child_token_id,
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,

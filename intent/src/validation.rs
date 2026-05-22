@@ -42,6 +42,10 @@ pub enum ValidationError {
     CompoundTooDeep { depth: usize, max: usize },
     /// Too many total sub-specs in compound intent.
     TooManyCompoundSpecs { count: usize, max: usize },
+    /// min_budget is zero, which allows free fulfillment (must be > 0 or None).
+    ZeroBudget,
+    /// Fill constraints are invalid.
+    InvalidFillConstraints(String),
 }
 
 impl std::fmt::Display for ValidationError {
@@ -70,6 +74,12 @@ impl std::fmt::Display for ValidationError {
             }
             Self::TooManyCompoundSpecs { count, max } => {
                 write!(f, "too many compound sub-specs: {count} exceeds max {max}")
+            }
+            Self::ZeroBudget => {
+                write!(f, "min_budget must be > 0 (use None to omit budget constraint)")
+            }
+            Self::InvalidFillConstraints(msg) => {
+                write!(f, "invalid fill constraints: {msg}")
             }
         }
     }
@@ -146,6 +156,29 @@ pub fn validate_intent(intent: &Intent) -> Result<(), ValidationError> {
         validate_compound_depth(compound, 1)?;
     }
 
+    // SECURITY: Reject min_budget of 0 -- a zero-budget intent allows free
+    // fulfillment. If no budget constraint is needed, use None instead.
+    if spec.min_budget == Some(0) {
+        return Err(ValidationError::ZeroBudget);
+    }
+
+    // SECURITY: Validate fill constraints invariants
+    if let Some(fc) = &intent.fill_constraints {
+        if fc.min_fill_amount == 0 {
+            return Err(ValidationError::InvalidFillConstraints(
+                "min_fill_amount must be > 0".into(),
+            ));
+        }
+        if fc.min_fill_amount > fc.max_fill_amount {
+            return Err(ValidationError::InvalidFillConstraints(
+                format!(
+                    "min_fill_amount ({}) must be <= max_fill_amount ({})",
+                    fc.min_fill_amount, fc.max_fill_amount
+                ),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -203,6 +236,7 @@ mod tests {
             resource_pattern: Some("documents/*".into()),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None)
     }
@@ -228,6 +262,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -249,6 +284,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -271,6 +307,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -287,6 +324,7 @@ mod tests {
             resource_pattern: Some(long_pattern),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -306,6 +344,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
@@ -333,8 +372,180 @@ mod tests {
             resource_pattern: Some(max_string),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
+        assert!(validate_intent(&intent).is_ok());
+    }
+
+    // =========================================================================
+    // SECURITY: Budget and fill constraint validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_zero_budget_rejected() {
+        // ADVERSARIAL: An attacker creates an intent with min_budget=0 to get
+        // free fulfillment. This must be rejected.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("execute".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: Some(0), // ATTACK: zero budget = free fulfillment
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
+        let err = validate_intent(&intent).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::ZeroBudget),
+            "min_budget=0 must be rejected, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_nonzero_budget_accepted() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("execute".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: Some(1), // minimum acceptable
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
+        assert!(validate_intent(&intent).is_ok());
+    }
+
+    #[test]
+    fn test_none_budget_accepted() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None, // no budget constraint -- acceptable
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
+        assert!(validate_intent(&intent).is_ok());
+    }
+
+    #[test]
+    fn test_zero_min_fill_amount_rejected() {
+        // ADVERSARIAL: An attacker creates fill constraints with min=0, allowing
+        // zero-value fills that bypass economic requirements.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("transfer".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let constraints = crate::FillConstraints {
+            min_fill_amount: 0, // ATTACK: zero min allows zero-value fills
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let intent = Intent::new_with_fill(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            9999,
+            None,
+            constraints,
+        );
+        let err = validate_intent(&intent).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::InvalidFillConstraints(_)),
+            "min_fill_amount=0 must be rejected, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_min_exceeds_max_fill_rejected() {
+        // ADVERSARIAL: min > max is an invalid state that could cause logic errors.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("transfer".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let constraints = crate::FillConstraints {
+            min_fill_amount: 200, // ATTACK: min > max
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let intent = Intent::new_with_fill(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            9999,
+            None,
+            constraints,
+        );
+        let err = validate_intent(&intent).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::InvalidFillConstraints(_)),
+            "min > max must be rejected, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_valid_fill_constraints_accepted() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("transfer".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+            strict_resource_matching: false,
+        };
+        let constraints = crate::FillConstraints {
+            min_fill_amount: 10,
+            max_fill_amount: 100,
+            fill_or_kill: false,
+            remaining_after_fill: None,
+        };
+        let intent = Intent::new_with_fill(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0xAA; 32]),
+            9999,
+            None,
+            constraints,
+        );
         assert!(validate_intent(&intent).is_ok());
     }
 }

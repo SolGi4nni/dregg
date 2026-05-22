@@ -60,10 +60,9 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
     }
 
     for wc in &caveats {
-        let grant = match pyana_caveats::decode_grant(wc) {
-            Ok(g) => g,
-            Err(_) => continue, // Skip malformed caveats.
-        };
+        let grant = pyana_caveats::decode_grant(wc)
+            .map_err(|e| format!("failed to decode caveat: {}", e))
+            .expect("malformed caveat in verified token");
 
         let facts = grant_to_facts(&grant, &mut symbols);
         for fact in facts {
@@ -207,9 +206,13 @@ pub fn attenuation_to_facts(attenuation: &Attenuation, symbols: &mut SymbolTable
 ///
 /// This is the core function used by the Datalog verifier: given decoded
 /// caveats (after HMAC verification), produce the fact set for evaluation.
+///
+/// Returns an error if any caveat cannot be decoded. This is a security-critical
+/// fail-closed behavior: malformed caveats MUST NOT be silently dropped, as that
+/// would effectively remove restrictions from the token.
 pub fn caveat_set_to_factset(
     caveat_set: &pyana_macaroon::caveat::CaveatSet,
-) -> (FactSet, SymbolTable) {
+) -> Result<(FactSet, SymbolTable), crate::error::TokenError> {
     let mut factset = FactSet::new();
     let mut symbols = SymbolTable::new();
 
@@ -220,14 +223,13 @@ pub fn caveat_set_to_factset(
         let pred = symbols.intern("unrestricted");
         let fact = Fact::unary(pred, FieldElement::from_u64(1));
         factset.insert(fact);
-        return (factset, symbols);
+        return Ok((factset, symbols));
     }
 
     for wc in &caveats {
-        let grant = match pyana_caveats::decode_grant(wc) {
-            Ok(g) => g,
-            Err(_) => continue,
-        };
+        let grant = pyana_caveats::decode_grant(wc).map_err(|e| {
+            crate::error::TokenError::MalformedCaveat(format!("failed to decode caveat: {}", e))
+        })?;
 
         let facts = grant_to_facts(&grant, &mut symbols);
         for fact in facts {
@@ -235,7 +237,7 @@ pub fn caveat_set_to_factset(
         }
     }
 
-    (factset, symbols)
+    Ok((factset, symbols))
 }
 
 #[cfg(test)]
@@ -362,5 +364,59 @@ mod tests {
         assert_eq!(facts.len(), 2);
         assert_eq!(facts[0].predicate, FieldElement::from_symbol("valid_until"));
         assert_eq!(facts[1].predicate, FieldElement::from_symbol("valid_after"));
+    }
+
+    // Security test: malformed caveats must be rejected, not silently skipped.
+    #[test]
+    fn test_caveat_set_to_factset_rejects_malformed_caveat() {
+        use pyana_macaroon::caveat::{CaveatSet, WireCaveat};
+
+        let mut set = CaveatSet::new();
+        // Add a valid caveat first
+        set.push(WireCaveat::new(
+            crate::pyana_caveats::CAV_APP,
+            crate::pyana_caveats::encode_name_actions("my-app", "rw"),
+        ));
+        // Add a malformed caveat: known type ID but garbage body that cannot decode
+        set.push(WireCaveat::new(
+            crate::pyana_caveats::CAV_APP,
+            vec![0xFF, 0xFF, 0xFF], // invalid msgpack for a (String, String) tuple
+        ));
+
+        let result = caveat_set_to_factset(&set);
+        assert!(
+            result.is_err(),
+            "malformed caveat must cause an error, not be silently dropped"
+        );
+        match result.unwrap_err() {
+            crate::error::TokenError::MalformedCaveat(msg) => {
+                assert!(
+                    msg.contains("failed to decode"),
+                    "error message should indicate decode failure, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected MalformedCaveat error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_caveat_set_to_factset_succeeds_with_valid_caveats() {
+        use pyana_macaroon::caveat::{CaveatSet, WireCaveat};
+
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(
+            crate::pyana_caveats::CAV_APP,
+            crate::pyana_caveats::encode_name_actions("my-app", "rw"),
+        ));
+
+        let result = caveat_set_to_factset(&set);
+        assert!(
+            result.is_ok(),
+            "valid caveats should decode successfully, got: {:?}",
+            result.unwrap_err()
+        );
+        let (factset, _symbols) = result.unwrap();
+        assert_eq!(factset.len(), 1);
     }
 }

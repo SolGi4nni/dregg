@@ -523,7 +523,13 @@ pub fn verify_caveats(
         }
     }
 
-    // --- Features: set containment ---
+    // --- Features: set containment (fail-closed) ---
+    // SECURITY: If the token has feature restrictions, the request MUST specify features.
+    if !features.is_empty() && request.features.is_empty() {
+        return Err(TokenError::Denied(
+            "token requires features but request specifies none".into(),
+        ));
+    }
     if !request.features.is_empty() && !features.is_empty() {
         for req_feat in &request.features {
             if !features.contains(req_feat) {
@@ -545,13 +551,23 @@ pub fn verify_caveats(
         }
     }
 
-    // --- OAuth provider: match-any ---
-    if let Some(req_provider) = &request.oauth_provider {
-        if !oauth_providers.is_empty() && !oauth_providers.contains(req_provider) {
-            return Err(TokenError::Denied(format!(
-                "token not valid for OAuth provider '{}'",
-                req_provider
-            )));
+    // --- OAuth provider: match-any (fail-closed) ---
+    // SECURITY: If the token has OAuth provider restrictions, the request MUST specify oauth_provider.
+    if !oauth_providers.is_empty() {
+        match &request.oauth_provider {
+            Some(req_provider) => {
+                if !oauth_providers.contains(req_provider) {
+                    return Err(TokenError::Denied(format!(
+                        "token not valid for OAuth provider '{}'",
+                        req_provider
+                    )));
+                }
+            }
+            None => {
+                return Err(TokenError::Denied(
+                    "token requires OAuth provider but request omits it".into(),
+                ));
+            }
         }
     }
 
@@ -567,23 +583,43 @@ pub fn verify_caveats(
         }
     }
 
-    // --- Machine: match-any ---
-    if let Some(req_machine) = &request.machine_id {
-        if !machines.is_empty() && !machines.contains(req_machine) {
-            return Err(TokenError::Denied(format!(
-                "token not valid for machine '{}'",
-                req_machine
-            )));
+    // --- Machine: match-any (fail-closed) ---
+    // SECURITY: If the token is machine-restricted, the request MUST specify machine_id.
+    if !machines.is_empty() {
+        match &request.machine_id {
+            Some(req_machine) => {
+                if !machines.contains(req_machine) {
+                    return Err(TokenError::Denied(format!(
+                        "token not valid for machine '{}'",
+                        req_machine
+                    )));
+                }
+            }
+            None => {
+                return Err(TokenError::Denied(
+                    "token restricted to specific machine(s) but request does not specify machine_id".into(),
+                ));
+            }
         }
     }
 
-    // --- Command: match-any ---
-    if let Some(req_cmd) = &request.command {
-        if !commands.is_empty() && !commands.contains(req_cmd) {
-            return Err(TokenError::Denied(format!(
-                "token not valid for command '{}'",
-                req_cmd
-            )));
+    // --- Command: match-any (fail-closed) ---
+    // SECURITY: If the token has command restrictions, the request MUST specify command.
+    if !commands.is_empty() {
+        match &request.command {
+            Some(req_cmd) => {
+                if !commands.contains(req_cmd) {
+                    return Err(TokenError::Denied(format!(
+                        "token not valid for command '{}'",
+                        req_cmd
+                    )));
+                }
+            }
+            None => {
+                return Err(TokenError::Denied(
+                    "token requires command but request omits it".into(),
+                ));
+            }
         }
     }
 

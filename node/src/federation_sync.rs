@@ -368,9 +368,39 @@ pub async fn run_federation_sync(state: NodeState, morpheus_config: Option<Morph
     // Spawn receiver tasks for each topic.
     let state_turns = state.clone();
     tokio::spawn(async move {
+        // Dedup set to prevent double-execution of gossiped turns after
+        // crash recovery or re-broadcast. Bounded to the most recent N entries
+        // to prevent unbounded memory growth.
+        let mut seen_turn_hashes: std::collections::HashSet<[u8; 32]> =
+            std::collections::HashSet::new();
+        // Maximum number of turn hashes to track for deduplication.
+        // After this limit, the set is cleared and rebuilt (simple bounded
+        // eviction; in practice, legitimate re-broadcasts only happen within
+        // a short window after the original).
+        const MAX_SEEN_TURNS: usize = 16_384;
+
         loop {
             match turns_stream.recv().await {
                 Some(GossipEvent::Message { from, message }) => {
+                    // Extract turn hash for dedup before dispatching.
+                    let turn_hash = match &message {
+                        PeerMessage::PublishTurn { turn_hash, .. } => Some(*turn_hash),
+                        PeerMessage::PublishPipeline { pipeline_hash, .. } => Some(*pipeline_hash),
+                        _ => None,
+                    };
+                    if let Some(hash) = turn_hash {
+                        if seen_turn_hashes.contains(&hash) {
+                            let hash_hex: String =
+                                hash.iter().map(|b| format!("{b:02x}")).collect();
+                            debug!(from = %from, turn_hash = %hash_hex, "skipping duplicate gossiped turn");
+                            continue;
+                        }
+                        // Bound the set size: clear when full (simple bounded eviction).
+                        if seen_turn_hashes.len() >= MAX_SEEN_TURNS {
+                            seen_turn_hashes.clear();
+                        }
+                        seen_turn_hashes.insert(hash);
+                    }
                     handle_turn_message(&state_turns, from, message).await;
                 }
                 Some(GossipEvent::PeerJoined(addr)) => {

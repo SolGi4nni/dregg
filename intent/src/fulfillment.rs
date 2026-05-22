@@ -23,8 +23,9 @@ use crate::{CommitmentId, Intent, Match, PredicateRequirement, VerificationMode}
 use pyana_cell::CellId;
 use pyana_cell::Ledger;
 use pyana_circuit::BabyBear;
+use pyana_circuit::compute_action_binding_narrow;
 use pyana_circuit::multi_step_air::{
-    MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
+    MultiStepWitness, pi, prove_authorization_stark, verify_authorization_stark,
 };
 use pyana_circuit::stark;
 use pyana_circuit::{PredicateProof, PredicateType, verify_predicate};
@@ -60,6 +61,9 @@ pub enum FulfillmentError {
     StaleStateRoot(String),
     /// The automatic payment turn failed to execute.
     PaymentFailed(String),
+    /// The STARK proof's action binding does not match the intent's requirements.
+    /// This prevents replaying a proof from a different authorization context.
+    ProofActionMismatch(String),
 }
 
 impl std::fmt::Display for FulfillmentError {
@@ -74,6 +78,7 @@ impl std::fmt::Display for FulfillmentError {
             Self::PredicateProofFailed(e) => write!(f, "predicate proof failed: {}", e),
             Self::StaleStateRoot(e) => write!(f, "stale state root: {}", e),
             Self::PaymentFailed(e) => write!(f, "payment failed: {}", e),
+            Self::ProofActionMismatch(e) => write!(f, "proof action mismatch: {}", e),
         }
     }
 }
@@ -213,8 +218,9 @@ pub fn fulfill(
 
 /// Verify a fulfillment against its intent.
 ///
-/// For Trusted mode: verifies the token bytes are present and non-empty.
-/// (Full HMAC verification requires the issuer key, which is the trade-off.)
+/// For Trusted mode: verifies the token HMAC chain using the provided root key.
+/// The root key is REQUIRED for Trusted mode verification -- if unavailable,
+/// Trusted mode should not be used.
 ///
 /// For Private/Selective mode: verifies the STARK proof cryptographically.
 /// The verifier only needs the public inputs (conclusion, accumulated_hash)
@@ -227,18 +233,54 @@ pub fn verify_fulfillment(
     intent: &Intent,
     _state_root: BabyBear,
 ) -> Result<(), FulfillmentError> {
+    verify_fulfillment_with_key(fulfillment, intent, _state_root, None)
+}
+
+/// Verify a fulfillment with an explicit root key for Trusted mode HMAC verification.
+///
+/// In Trusted mode, the root key is used to cryptographically verify the HMAC
+/// chain of the attenuated macaroon token. Without the root key, Trusted mode
+/// verification will fail.
+pub fn verify_fulfillment_with_key(
+    fulfillment: &Fulfillment,
+    intent: &Intent,
+    _state_root: BabyBear,
+    root_key: Option<&[u8; 32]>,
+) -> Result<(), FulfillmentError> {
     // 1. Mode-specific verification
     match fulfillment.mode {
         VerificationMode::Trusted => {
-            // In trusted mode, verify token bytes are present and non-trivial.
-            // Full HMAC chain verification requires the issuer key — that's the
-            // fundamental trade-off of trusted mode.
+            // SECURITY: In trusted mode, we MUST verify the HMAC chain of the
+            // attenuated macaroon token. Merely checking non-empty bytes is
+            // insufficient -- an attacker could supply arbitrary bytes.
             let token_data = fulfillment.token_data.as_ref().ok_or_else(|| {
                 FulfillmentError::MissingData("trusted mode requires token_data".into())
             })?;
             if token_data.is_empty() {
                 return Err(FulfillmentError::MissingData("token_data is empty".into()));
             }
+
+            // Deserialize the raw macaroon bytes
+            let mac = pyana_token::pyana_macaroon::Macaroon::deserialize(token_data).map_err(|e| {
+                FulfillmentError::ProofVerificationFailed(format!(
+                    "failed to deserialize macaroon token: {}",
+                    e
+                ))
+            })?;
+
+            // Verify the HMAC chain with the root key
+            let key = root_key.ok_or_else(|| {
+                FulfillmentError::MissingData(
+                    "trusted mode requires root key for HMAC verification".into(),
+                )
+            })?;
+
+            mac.verify(key, &[]).map_err(|e| {
+                FulfillmentError::ProofVerificationFailed(format!(
+                    "macaroon HMAC chain verification failed: {}",
+                    e
+                ))
+            })?;
         }
         VerificationMode::Private | VerificationMode::Selective => {
             // Verify the STARK proof cryptographically.
@@ -267,6 +309,19 @@ pub fn verify_fulfillment(
 
             verify_authorization_stark(conclusion, accumulated_hash, &proof)
                 .map_err(|e| FulfillmentError::ProofVerificationFailed(e))?;
+
+            // SECURITY: Verify the proof is bound to THIS intent's requirements.
+            // The proof's request_hash (public input) must match the intent's
+            // action/resource binding. Without this check, a proof from a prior
+            // authorization can be replayed against a different intent.
+            let proof_request_hash = BabyBear(proof.public_inputs[pi::REQUEST_HASH]);
+            let required_binding = compute_intent_request_hash(intent);
+            if proof_request_hash != required_binding {
+                return Err(FulfillmentError::ProofActionMismatch(format!(
+                    "proof request_hash {:?} does not match intent binding {:?}",
+                    proof_request_hash, required_binding
+                )));
+            }
         }
     }
 
@@ -370,14 +425,28 @@ pub struct FulfillmentWithPredicates {
 ///    - A corresponding proof exists in `predicate_proofs`.
 ///    - The proof verifies against the expected threshold and predicate type.
 ///    - The state root is fresh enough (not stale).
+///
+/// For Trusted mode fulfillments, a root key must be provided via `root_key`.
+/// If `root_key` is `None` and the fulfillment uses Trusted mode, verification will fail.
 pub fn verify_fulfillment_with_predicates(
     fulfillment: &FulfillmentWithPredicates,
     intent: &Intent,
     state_root: BabyBear,
     current_block: u64,
 ) -> Result<(), FulfillmentError> {
+    verify_fulfillment_with_predicates_and_key(fulfillment, intent, state_root, current_block, None)
+}
+
+/// Verify a fulfillment with predicate proofs, providing a root key for Trusted mode.
+pub fn verify_fulfillment_with_predicates_and_key(
+    fulfillment: &FulfillmentWithPredicates,
+    intent: &Intent,
+    state_root: BabyBear,
+    current_block: u64,
+    root_key: Option<&[u8; 32]>,
+) -> Result<(), FulfillmentError> {
     // 1. Verify the base fulfillment (actions, resource, mode-specific).
-    verify_fulfillment(&fulfillment.base, intent, state_root)?;
+    verify_fulfillment_with_key(&fulfillment.base, intent, state_root, root_key)?;
 
     // 2. Verify each predicate requirement.
     let requirements = &intent.matcher.predicate_requirements;
@@ -637,6 +706,34 @@ fn resource_matches(granted: &str, required: &str) -> bool {
     crate::matcher::resource_matches(granted, required)
 }
 
+/// Compute the expected request_hash for an intent's MatchSpec.
+///
+/// This binding ties a STARK proof to a specific intent's requirements (action +
+/// resource pattern). The verifier recomputes this from the intent and checks it
+/// against the proof's public input, preventing proof replay attacks.
+///
+/// Uses `compute_action_binding_narrow` which produces the single-element hash
+/// that matches what the prover embeds as `request_hash` in the multi-step AIR.
+pub fn compute_intent_request_hash(intent: &Intent) -> BabyBear {
+    // Extract the primary action from the intent's MatchSpec.
+    // If no action is specified (wildcard), use "*".
+    let action = intent
+        .matcher
+        .actions
+        .first()
+        .and_then(|p| p.action.as_deref())
+        .unwrap_or("*");
+
+    // Extract the resource pattern. If not specified, use "*".
+    let resource = intent
+        .matcher
+        .resource_pattern
+        .as_deref()
+        .unwrap_or("*");
+
+    compute_action_binding_narrow(action, resource)
+}
+
 // ---------------------------------------------------------------------------
 // Automatic fulfillment payment: intent -> verified fulfillment -> payment turn
 // ---------------------------------------------------------------------------
@@ -764,9 +861,37 @@ pub fn execute_fulfillment_flow(
     current_height: u64,
     current_block: u64,
 ) -> Result<TurnReceipt, FulfillmentError> {
+    execute_fulfillment_flow_with_key(
+        intent,
+        fulfillment,
+        executor,
+        ledger,
+        payer_cell,
+        recipient_cell,
+        current_height,
+        current_block,
+        None,
+    )
+}
+
+/// Execute the full fulfillment-to-payment flow with an explicit root key for Trusted mode.
+///
+/// This is the secure variant that provides the root key for HMAC verification of
+/// Trusted mode fulfillments. For Private/Selective mode, the key is not needed.
+pub fn execute_fulfillment_flow_with_key(
+    intent: &Intent,
+    fulfillment: &FulfillmentWithPredicates,
+    executor: &TurnExecutor,
+    ledger: &mut Ledger,
+    payer_cell: CellId,
+    recipient_cell: CellId,
+    current_height: u64,
+    current_block: u64,
+    root_key: Option<&[u8; 32]>,
+) -> Result<TurnReceipt, FulfillmentError> {
     // Step 1: Verify the fulfillment.
     let state_root = fulfillment.state_root;
-    verify_fulfillment_with_predicates(fulfillment, intent, state_root, current_block)?;
+    verify_fulfillment_with_predicates_and_key(fulfillment, intent, state_root, current_block, root_key)?;
 
     // Step 2: Determine payment amount from the intent's min_budget.
     let payment_amount = intent.matcher.min_budget.unwrap_or(0);
@@ -824,7 +949,8 @@ mod tests {
     use super::*;
     use crate::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec, VerificationMode};
     use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+    use pyana_circuit::compute_action_binding_narrow;
+use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
     use pyana_circuit::poseidon2::hash_fact;
 
     fn source_token() -> HeldCapability {
@@ -857,6 +983,7 @@ mod tests {
             resource_pattern: resource_pattern.map(String::from),
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None)
     }
@@ -871,7 +998,7 @@ mod tests {
 
     /// Build a valid STARK witness that concludes ALLOW.
     /// This simulates what the matcher would produce after local Datalog evaluation.
-    fn build_allow_witness() -> MultiStepWitness {
+    fn build_allow_witness_for_intent(intent: &Intent) -> MultiStepWitness {
         let state_root = BabyBear::new(99999);
         let alice = BabyBear::new(1000);
         let app = BabyBear::new(2000);
@@ -915,7 +1042,7 @@ mod tests {
             budget_remaining: BabyBear::ZERO,
         };
 
-        build_multi_step_witness(state_root, BabyBear::new(42), vec![step])
+        build_multi_step_witness(state_root, compute_intent_request_hash(intent), vec![step])
     }
 
     #[test]
@@ -965,7 +1092,7 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let witness = build_allow_witness();
+        let witness = build_allow_witness_for_intent(&intent);
 
         let options = FulfillOptions {
             mode: VerificationMode::Private,
@@ -1014,7 +1141,7 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let witness = build_allow_witness();
+        let witness = build_allow_witness_for_intent(&intent);
 
         let options = FulfillOptions {
             mode: VerificationMode::Selective,
@@ -1234,12 +1361,70 @@ mod tests {
         };
 
         let fulfillment = fulfill(&intent, &matched, &token, our_id, &options).unwrap();
-        let result = verify_fulfillment(&fulfillment, &intent, BabyBear::ZERO);
+        let key = test_root_key();
+        let result = verify_fulfillment_with_key(&fulfillment, &intent, BabyBear::ZERO, Some(&key));
         assert!(
             result.is_ok(),
             "trusted fulfillment should verify: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_verify_fulfillment_trusted_rejects_without_root_key() {
+        let intent = test_intent(vec!["read"], None);
+        let matched = Match {
+            intent_id: intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let token = source_token();
+        let our_id = CommitmentId([0xBB; 32]);
+
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+
+        let fulfillment = fulfill(&intent, &matched, &token, our_id, &options).unwrap();
+        // Verify WITHOUT root key -- should fail
+        let result = verify_fulfillment(&fulfillment, &intent, BabyBear::ZERO);
+        assert!(result.is_err(), "trusted mode without root key must fail");
+        match result.unwrap_err() {
+            FulfillmentError::MissingData(msg) => {
+                assert!(msg.contains("root key"));
+            }
+            other => panic!("expected MissingData, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_fulfillment_trusted_rejects_arbitrary_bytes() {
+        let intent = test_intent(vec!["read"], None);
+
+        // Create a fake fulfillment with arbitrary non-macaroon bytes
+        let fulfillment = Fulfillment {
+            intent_id: intent.id,
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: VerificationMode::Trusted,
+            token_data: Some(vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04]),
+            proof: None,
+            granted_actions: vec!["read".into()],
+            granted_resource: "*".into(),
+            expiry: Some(5000),
+        };
+
+        let key = test_root_key();
+        let result = verify_fulfillment_with_key(&fulfillment, &intent, BabyBear::ZERO, Some(&key));
+        assert!(result.is_err(), "arbitrary bytes must not verify as valid macaroon");
+        match result.unwrap_err() {
+            FulfillmentError::ProofVerificationFailed(msg) => {
+                assert!(msg.contains("deserialize") || msg.contains("HMAC"));
+            }
+            other => panic!("expected ProofVerificationFailed, got {:?}", other),
+        }
     }
 
     #[test]
@@ -1254,7 +1439,7 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let witness = build_allow_witness();
+        let witness = build_allow_witness_for_intent(&intent);
 
         let options = FulfillOptions {
             mode: VerificationMode::Private,
@@ -1275,19 +1460,25 @@ mod tests {
     fn test_verify_fulfillment_rejects_missing_actions() {
         let intent = test_intent(vec!["read", "write"], None);
 
-        // Create a fulfillment that only grants "read" (missing "write")
-        let fulfillment = Fulfillment {
+        // Create a real fulfillment that only grants "read" (not "write")
+        // by using a source token that only has "read"
+        let mut token = source_token();
+        token.actions = vec!["read".into()]; // only read, no write
+        let matched = Match {
             intent_id: intent.id,
-            fulfiller: CommitmentId([0xBB; 32]),
-            mode: VerificationMode::Trusted,
-            token_data: Some(vec![1, 2, 3, 4]), // non-empty stub
+            satisfier: CommitmentId([0xBB; 32]),
             proof: None,
-            granted_actions: vec!["read".into()], // missing "write"!
-            granted_resource: "documents/*".into(),
-            expiry: Some(5000),
+            mode: VerificationMode::Trusted,
         };
+        let key = test_root_key();
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(key),
+            ..Default::default()
+        };
+        let fulfillment = fulfill(&intent, &matched, &token, CommitmentId([0xBB; 32]), &options).unwrap();
 
-        let result = verify_fulfillment(&fulfillment, &intent, BabyBear::ZERO);
+        let result = verify_fulfillment_with_key(&fulfillment, &intent, BabyBear::ZERO, Some(&key));
         assert!(result.is_err());
         match result.unwrap_err() {
             FulfillmentError::ActionsMismatch(msg) => {
@@ -1309,7 +1500,7 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let witness = build_allow_witness();
+        let witness = build_allow_witness_for_intent(&intent);
         let options = FulfillOptions {
             mode: VerificationMode::Private,
             stark_witness: Some(witness),
@@ -1354,7 +1545,7 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let witness = build_allow_witness();
+        let witness = build_allow_witness_for_intent(&intent);
         let conclusion = witness.conclusion();
         let acc_hash = witness.final_accumulated_hash();
 
@@ -1408,6 +1599,7 @@ mod tests {
                 upper_bound: None,
                 state_root_freshness: 100, // max 100 blocks old
             }],
+            strict_resource_matching: false,
         };
         let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1460,11 +1652,13 @@ mod tests {
         };
 
         // Verify at current block 1000 (state root at 950, freshness 100 => OK)
-        let result = verify_fulfillment_with_predicates(
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
             &fulfillment_with_preds,
             &pred_intent,
             BabyBear::ZERO,
             1000,
+            Some(&key),
         );
         assert!(
             result.is_ok(),
@@ -1496,6 +1690,7 @@ mod tests {
                 upper_bound: None,
                 state_root_freshness: 50, // max 50 blocks old
             }],
+            strict_resource_matching: false,
         };
         let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1546,11 +1741,13 @@ mod tests {
         };
 
         // Current block 1000, state root at 900, freshness 50 => STALE (900 + 50 < 1000)
-        let result = verify_fulfillment_with_predicates(
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
             &fulfillment_with_preds,
             &pred_intent,
             BabyBear::ZERO,
             1000,
+            Some(&key),
         );
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1584,6 +1781,7 @@ mod tests {
                 upper_bound: None,
                 state_root_freshness: 100,
             }],
+            strict_resource_matching: false,
         };
         let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1634,11 +1832,13 @@ mod tests {
             state_root_block: 990,
         };
 
-        let result = verify_fulfillment_with_predicates(
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
             &fulfillment_with_preds,
             &pred_intent,
             BabyBear::ZERO,
             1000,
+            Some(&key),
         );
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1667,6 +1867,7 @@ mod tests {
                 upper_bound: None,
                 state_root_freshness: 100,
             }],
+            strict_resource_matching: false,
         };
         let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1699,11 +1900,13 @@ mod tests {
             state_root_block: 990,
         };
 
-        let result = verify_fulfillment_with_predicates(
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
             &fulfillment_with_preds,
             &pred_intent,
             BabyBear::ZERO,
             1000,
+            Some(&key),
         );
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1746,6 +1949,7 @@ mod tests {
                     state_root_freshness: 100,
                 },
             ],
+            strict_resource_matching: false,
         };
         let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1811,11 +2015,13 @@ mod tests {
             state_root_block: 980,
         };
 
-        let result = verify_fulfillment_with_predicates(
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
             &fulfillment_with_preds,
             &pred_intent,
             BabyBear::ZERO,
             1000,
+            Some(&key),
         );
         assert!(
             result.is_ok(),
@@ -1840,6 +2046,7 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
@@ -1907,6 +2114,7 @@ mod tests {
     #[test]
     fn test_execute_fulfillment_flow_success() {
         use pyana_cell::{AuthRequired, Cell, Ledger, Permissions};
+        use crate::matcher::{HeldCapability, Sensitivity};
 
         let spec = MatchSpec {
             actions: vec![ActionPattern {
@@ -1918,19 +2126,25 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
-        let base = Fulfillment {
+        // Create a real attenuated macaroon token for Trusted mode verification
+        let key = test_root_key();
+        let token = source_token();
+        let matched = Match {
             intent_id: intent.id,
-            fulfiller: CommitmentId([0xBB; 32]),
-            mode: VerificationMode::Trusted,
-            token_data: Some(vec![1, 2, 3, 4]),
+            satisfier: CommitmentId([0xBB; 32]),
             proof: None,
-            granted_actions: vec!["read".into()],
-            granted_resource: "*".into(),
-            expiry: Some(5000),
+            mode: VerificationMode::Trusted,
         };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(key),
+            ..Default::default()
+        };
+        let base = fulfill(&intent, &matched, &token, CommitmentId([0xBB; 32]), &options).unwrap();
 
         let fulfillment = FulfillmentWithPredicates {
             base,
@@ -1976,7 +2190,7 @@ mod tests {
 
         let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
 
-        let result = execute_fulfillment_flow(
+        let result = execute_fulfillment_flow_with_key(
             &intent,
             &fulfillment,
             &executor,
@@ -1985,6 +2199,7 @@ mod tests {
             recipient_cell,
             1000,
             1000,
+            Some(&key),
         );
 
         assert!(result.is_ok(), "flow should succeed: {:?}", result.err());
@@ -2011,19 +2226,25 @@ mod tests {
             resource_pattern: None,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
-        let base = Fulfillment {
+        // Use a real attenuated token for the fulfillment
+        let key = test_root_key();
+        let token = source_token();
+        let matched = Match {
             intent_id: intent.id,
-            fulfiller: CommitmentId([0xBB; 32]),
-            mode: VerificationMode::Trusted,
-            token_data: Some(vec![1, 2, 3, 4]),
+            satisfier: CommitmentId([0xBB; 32]),
             proof: None,
-            granted_actions: vec!["read".into()],
-            granted_resource: "*".into(),
-            expiry: Some(5000),
+            mode: VerificationMode::Trusted,
         };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(key),
+            ..Default::default()
+        };
+        let base = fulfill(&intent, &matched, &token, CommitmentId([0xBB; 32]), &options).unwrap();
 
         let fulfillment = FulfillmentWithPredicates {
             base,
@@ -2038,7 +2259,7 @@ mod tests {
         let mut ledger = Ledger::new();
         let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
 
-        let result = execute_fulfillment_flow(
+        let result = execute_fulfillment_flow_with_key(
             &intent,
             &fulfillment,
             &executor,
@@ -2047,6 +2268,7 @@ mod tests {
             recipient_cell,
             1000,
             1000,
+            Some(&key),
         );
 
         assert!(result.is_err());
@@ -2079,19 +2301,25 @@ mod tests {
                 upper_bound: None,
                 state_root_freshness: 100,
             }],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
 
-        let base = Fulfillment {
+        // Use a real attenuated token for the fulfillment
+        let key = test_root_key();
+        let token = source_token();
+        let matched = Match {
             intent_id: intent.id,
-            fulfiller: CommitmentId([0xBB; 32]),
-            mode: VerificationMode::Trusted,
-            token_data: Some(vec![1, 2, 3, 4]),
+            satisfier: CommitmentId([0xBB; 32]),
             proof: None,
-            granted_actions: vec!["read".into()],
-            granted_resource: "*".into(),
-            expiry: Some(5000),
+            mode: VerificationMode::Trusted,
         };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(key),
+            ..Default::default()
+        };
+        let base = fulfill(&intent, &matched, &token, CommitmentId([0xBB; 32]), &options).unwrap();
 
         // Missing predicate proof: this should cause verification to fail.
         let fulfillment = FulfillmentWithPredicates {
@@ -2107,7 +2335,7 @@ mod tests {
         let mut ledger = Ledger::new();
         let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
 
-        let result = execute_fulfillment_flow(
+        let result = execute_fulfillment_flow_with_key(
             &intent,
             &fulfillment,
             &executor,
@@ -2116,6 +2344,7 @@ mod tests {
             recipient_cell,
             1000,
             1000,
+            Some(&key),
         );
 
         // Should fail at verification step, not payment.

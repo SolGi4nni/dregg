@@ -29,7 +29,7 @@ fn test_token(seed: u8) -> [u8; 32] {
 
 fn field_from_u64(val: u64) -> [u8; 32] {
     let mut f = [0u8; 32];
-    f[..8].copy_from_slice(&val.to_le_bytes());
+    f[24..32].copy_from_slice(&val.to_be_bytes());
     f
 }
 

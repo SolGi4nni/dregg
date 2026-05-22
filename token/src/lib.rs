@@ -49,7 +49,12 @@ pub use action_set::{ActionId, ActionSet};
 pub use error::TokenError;
 pub use format::TokenFormat;
 #[cfg(feature = "rand-deps")]
+#[allow(deprecated)]
 pub use revocation::RevocationFilter;
+#[cfg(feature = "rand-deps")]
+pub use revocation::{
+    AttestedRevocationRoot, NonMembershipProof, RevocationError, RevocationRegistry,
+};
 pub use traits::{
     Attenuation, AuthRequest, AuthToken, BudgetSpec, Capability, FeatureGlobSpec, TokenClearance,
     TokenVerifier,
