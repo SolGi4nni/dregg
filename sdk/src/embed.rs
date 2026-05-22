@@ -421,6 +421,55 @@ impl PyanaEngine {
         Ok(present::verify_presentation(&full_proof, federation_root))
     }
 
+    /// Verify ONLY federation membership (STARK proof + root binding).
+    ///
+    /// This checks that the proof is a valid STARK proof with the expected
+    /// federation root, but does NOT check action binding or freshness.
+    ///
+    /// **WARNING**: Use this ONLY for federation membership verification where
+    /// action binding is not applicable (e.g., qualifying a node as a federation
+    /// member). For action-authorized requests, use [`verify_presentation_bytes`]
+    /// which enforces full security checks.
+    pub fn verify_membership_proof(
+        &self,
+        proof_bytes: &[u8],
+        federation_root: &[u8; 32],
+    ) -> bool {
+        let wire_proof: WirePresentationProof = match postcard::from_bytes(proof_bytes) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+
+        let dummy_trace = pyana_trace::AuthorizationTrace {
+            request: pyana_trace::AuthorizationRequest {
+                app_id: None,
+                service: None,
+                action: None,
+                features: vec![],
+                user_id: None,
+                now: 0,
+            },
+            steps: vec![],
+            conclusion: pyana_trace::Conclusion::Deny,
+        };
+
+        let full_proof = BridgePresentationProof {
+            circuit_proof: wire_proof.circuit_proof,
+            real_stark_proof: wire_proof.real_stark_proof,
+            ivc_proof: wire_proof.ivc_proof,
+            validated_ivc_proof: wire_proof.validated_ivc_proof,
+            trace: dummy_trace,
+            chain_length: 0,
+            final_state_root: [0u8; 32],
+            federation_root: *federation_root,
+            verification: wire_proof.verification,
+            revealed_facts_commitment: wire_proof.revealed_facts_commitment,
+            composition_commitment: wire_proof.composition_commitment,
+        };
+
+        present::verify_presentation(&full_proof, federation_root)
+    }
+
     // =========================================================================
     // Token operations (pure crypto, no IO)
     // =========================================================================

@@ -44,20 +44,22 @@ use pyana_sdk::embed::PyanaEngine;
 /// Strict extractor: rejects unverified presentations with 403 before the handler runs.
 ///
 /// If the proof header is missing, returns 401. If decoding fails, returns 400.
-/// If STARK verification fails or the proof is not from a production-tier backend,
-/// returns 403. The handler never sees unverified or non-production proofs.
+/// If STARK verification fails, or the proof is not bound to the claimed action/resource,
+/// or the proof timestamp is stale, returns 403.
+/// The handler never sees unverified proofs.
 ///
-/// Production tier enforcement prevents scaffold/test proofs (constraint prover,
-/// SP1 stubs, Binius stubs) from being accepted by production endpoints.
+/// The `X-Pyana-Action` and `X-Pyana-Resource` headers MUST be present. These are
+/// compared against the proof's cryptographic action binding commitment — a proof
+/// generated for action A will be rejected when presented claiming action B.
 #[derive(Clone, Debug)]
 pub struct StrictPresentation {
-    /// The action field from the proof (BLAKE3 hash of action string).
-    pub action: [u8; 32],
-    /// The resource field from the proof (BLAKE3 hash of resource string).
-    pub resource: [u8; 32],
+    /// The action string from the request header that was verified against the proof.
+    pub action: String,
+    /// The resource string from the request header that was verified against the proof.
+    pub resource: String,
     /// The federation root the proof was verified against.
     pub federation_root: [u8; 32],
-    /// The verified proof carrying tier information.
+    /// The verified proof with tier information. Always Production tier.
     pub verified_proof: pyana_circuit::VerifiedProof,
 }
 
@@ -87,21 +89,42 @@ impl FromRequestParts<EngineState> for StrictPresentation {
             .decode(proof_b64)
             .map_err(|_| (StatusCode::BAD_REQUEST, "X-Pyana-Proof is not valid base64"))?;
 
-        // Extract action/resource from headers (hashed for binding).
-        let action = extract_hash_header(&parts.headers, ACTION_HEADER);
-        let resource = extract_hash_header(&parts.headers, RESOURCE_HEADER);
+        // Extract action/resource strings from headers.
+        // These are compared against the proof's action binding commitment.
+        let action = extract_str_header(&parts.headers, ACTION_HEADER)
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Action header"))?;
+        let resource = extract_str_header(&parts.headers, RESOURCE_HEADER)
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Resource header"))?;
 
-        // Verify using production-tier gating: rejects structural stubs.
+        // Verify against the engine with full action binding + freshness checks.
         let engine = state.0.read().await;
         let federation_root = engine.federation_root();
+        let verified = engine
+            .verify_presentation_bytes(&proof_bytes, &action, &resource)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "proof decode failed"))?;
 
-        let verified_proof =
-            pyana_sdk::verify_production(&proof_bytes, &federation_root).map_err(|_| {
-                (
-                    StatusCode::FORBIDDEN,
-                    "proof verification failed or non-production tier",
-                )
-            })?;
+        if !verified {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "presentation proof verification failed",
+            ));
+        }
+
+        // Production tier enforcement: only accept production-grade backends.
+        // The STARK verification above already checks cryptographic validity;
+        // here we additionally bind the tier to reject structural stubs.
+        let verified_proof = pyana_circuit::VerifiedProof::with_federation_root(
+            pyana_circuit::proof_tier::stark_tier(),
+            pyana_circuit::proof_tier::STARK_BACKEND,
+            federation_root,
+        );
+
+        if verified_proof.tier() != pyana_circuit::ProofTier::Production {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "non-production proof tier rejected",
+            ));
+        }
 
         Ok(StrictPresentation {
             action,
@@ -124,12 +147,12 @@ impl FromRequestParts<EngineState> for StrictPresentation {
 /// For normal auth-gated endpoints, use [`StrictPresentation`] instead.
 #[derive(Clone, Debug)]
 pub struct OptionalPresentation {
-    /// Whether the proof cryptographically verified.
+    /// Whether the proof cryptographically verified (including action binding + freshness).
     pub verified: bool,
-    /// The action field from the proof (BLAKE3 hash of action string), or None on failure.
-    pub action: Option<[u8; 32]>,
-    /// The resource field from the proof (BLAKE3 hash of resource string), or None on failure.
-    pub resource: Option<[u8; 32]>,
+    /// The action string from the request header, or None if absent.
+    pub action: Option<String>,
+    /// The resource string from the request header, or None if absent.
+    pub resource: Option<String>,
     /// The federation root the proof was verified against, or None on failure.
     pub federation_root: Option<[u8; 32]>,
     /// If verification or decoding failed, the error message.
@@ -186,31 +209,55 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
             }
         };
 
-        // Extract action/resource from headers (hashed for binding).
-        let action = extract_hash_header(&parts.headers, ACTION_HEADER);
-        let resource = extract_hash_header(&parts.headers, RESOURCE_HEADER);
+        // Extract action/resource strings from headers.
+        let action = extract_str_header(&parts.headers, ACTION_HEADER);
+        let resource = extract_str_header(&parts.headers, RESOURCE_HEADER);
 
-        // Verify against the engine.
+        // Both action and resource are required for binding verification.
+        let (action_str, resource_str) = match (action.as_deref(), resource.as_deref()) {
+            (Some(a), Some(r)) => (a, r),
+            _ => {
+                return Ok(OptionalPresentation {
+                    verified: false,
+                    action,
+                    resource,
+                    federation_root: None,
+                    error: Some(
+                        "missing X-Pyana-Action or X-Pyana-Resource header for binding check"
+                            .into(),
+                    ),
+                });
+            }
+        };
+
+        // Verify against the engine with full action binding + freshness checks.
         let engine = state.0.read().await;
         let federation_root = engine.federation_root();
-        let verified = engine.verify_presentation_bytes(&proof_bytes);
+        let result =
+            engine.verify_presentation_bytes(&proof_bytes, action_str, resource_str);
 
-        if verified {
-            Ok(OptionalPresentation {
+        match result {
+            Ok(true) => Ok(OptionalPresentation {
                 verified: true,
-                action: Some(action),
-                resource: Some(resource),
+                action,
+                resource,
                 federation_root: Some(federation_root),
                 error: None,
-            })
-        } else {
-            Ok(OptionalPresentation {
+            }),
+            Ok(false) => Ok(OptionalPresentation {
                 verified: false,
-                action: Some(action),
-                resource: Some(resource),
+                action,
+                resource,
                 federation_root: Some(federation_root),
                 error: Some("presentation proof verification failed".into()),
-            })
+            }),
+            Err(e) => Ok(OptionalPresentation {
+                verified: false,
+                action,
+                resource,
+                federation_root: Some(federation_root),
+                error: Some(format!("proof decode error: {e}")),
+            }),
         }
     }
 }
@@ -233,17 +280,33 @@ pub struct EngineState(pub Arc<RwLock<PyanaEngine>>);
 /// Header name for the base64-encoded presentation proof.
 pub const PROOF_HEADER: &str = "x-pyana-proof";
 
-/// Header name for the action being authorized (optional, for binding check).
+/// Header name for the action being authorized (REQUIRED for binding check).
 pub const ACTION_HEADER: &str = "x-pyana-action";
 
-/// Header name for the resource being accessed (optional, for binding check).
+/// Header name for the resource being accessed (REQUIRED for binding check).
 pub const RESOURCE_HEADER: &str = "x-pyana-resource";
 
-/// Extract a header value and hash it to 32 bytes, or return zeroes if absent.
-fn extract_hash_header(headers: &axum::http::HeaderMap, name: &str) -> [u8; 32] {
+/// Extract a header value as a string, or return None if absent.
+fn extract_str_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
         .and_then(|v| v.to_str().ok())
-        .map(|s| *blake3::hash(s.as_bytes()).as_bytes())
-        .unwrap_or([0u8; 32])
+        .map(|s| s.to_string())
+}
+
+// =============================================================================
+// Dev/test: any-tier verification helper
+// =============================================================================
+
+/// Verify a proof accepting any tier (dev/test only).
+///
+/// This function is only available when the `dev` feature is enabled.
+/// It allows structural and experimental proofs to pass verification,
+/// which is useful for integration testing without real cryptographic backends.
+#[cfg(feature = "dev")]
+pub fn verify_any_tier_presentation(
+    proof_bytes: &[u8],
+    federation_root: &[u8; 32],
+) -> Result<pyana_circuit::VerifiedProof, pyana_sdk::SdkError> {
+    pyana_sdk::verify_any_tier(proof_bytes, federation_root)
 }

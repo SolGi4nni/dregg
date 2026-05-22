@@ -18,6 +18,13 @@ use pyana_circuit::{
 
 use crate::QualificationRequirement;
 
+/// Standard action string for federation membership qualification proofs.
+/// Workers generate proofs bound to this action when proving membership.
+const MEMBERSHIP_PROOF_ACTION: &str = "qualify";
+
+/// Standard resource string for federation membership qualification proofs.
+const MEMBERSHIP_PROOF_RESOURCE: &str = "federation_member";
+
 /// Error type for qualification verification.
 #[derive(Debug, Clone)]
 pub enum QualificationError {
@@ -124,12 +131,20 @@ fn verify_federation_membership(
     // Perform real cryptographic verification via the engine.
     // The engine's verify_presentation_against() deserializes the wire proof and
     // verifies the STARK proof against the provided federation root.
-    if engine.verify_presentation_against(proof, &federation_root) {
-        Ok(true)
-    } else {
-        Err(QualificationError::ProofRejected(
+    // The action/resource binding for membership qualification proofs uses a standard pair.
+    match engine.verify_presentation_against(
+        proof,
+        &federation_root,
+        MEMBERSHIP_PROOF_ACTION,
+        MEMBERSHIP_PROOF_RESOURCE,
+    ) {
+        Ok(true) => Ok(true),
+        Ok(false) => Err(QualificationError::ProofRejected(
             "federation membership STARK verification failed".to_string(),
-        ))
+        )),
+        Err(_) => Err(QualificationError::InvalidProof(
+            "failed to decode federation membership proof".to_string(),
+        )),
     }
 }
 

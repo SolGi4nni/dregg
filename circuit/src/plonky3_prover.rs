@@ -31,12 +31,8 @@
 
 use std::sync::LazyLock;
 
-use p3_air::WindowAccess;
-use p3_air::{Air, AirBuilder, BaseAir};
-use p3_baby_bear::{
-    BabyBear as P3BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16,
-    default_babybear_poseidon2_24,
-};
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_baby_bear::{BabyBear as P3BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;

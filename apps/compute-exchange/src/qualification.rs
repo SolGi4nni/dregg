@@ -181,7 +181,9 @@ fn verify_federation_membership(
     }
 
     // Perform real cryptographic verification via the engine.
-    if engine.verify_presentation_against(proof, &federation_root) {
+    // Uses verify_membership_proof (no action binding) since this is a
+    // federation membership check, not an action-authorized request.
+    if engine.verify_membership_proof(proof, &federation_root) {
         Ok(true)
     } else {
         Err(QualificationError::ProofRejected(
