@@ -285,7 +285,7 @@ pub enum Constraint {
 ///
 /// This is the core matching language: a MatchSpec describes a "shape" of
 /// capability that can be matched against held tokens.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchSpec {
     /// What actions are required/offered.
     pub actions: Vec<ActionPattern>,

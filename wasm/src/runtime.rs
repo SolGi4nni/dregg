@@ -378,6 +378,7 @@ impl PyanaRuntime {
             resource_pattern,
             compound: None,
             predicate_requirements: vec![],
+            strict_resource_matching: false,
         };
         let intent = Intent::new(kind, spec, agent.commitment_id, expiry, None);
         let id = intent.id;

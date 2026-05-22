@@ -93,6 +93,7 @@ fn main() {
         resource_pattern: Some("treasury/*".into()),
         compound: None,
         predicate_requirements: vec![],
+        strict_resource_matching: false,
     };
 
     // Broadcast: service posts the intent with expiry 1 hour from now
@@ -501,6 +502,7 @@ fn main() {
         resource_pattern: None,
         compound: None,
         predicate_requirements: vec![],
+        strict_resource_matching: false,
     };
 
     // Create a Query intent (probe) -- Eve provides no real stake
