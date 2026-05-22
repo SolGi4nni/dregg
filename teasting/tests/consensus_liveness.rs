@@ -61,7 +61,6 @@ fn test_consensus_with_one_crash() {
 
 /// Recovery: crashed node rejoins and agrees with the rest.
 #[test]
-#[ignore = "TODO: simplified consensus lacks state-sync after recovery — recovered node has stale view"]
 fn test_consensus_recovery_after_crash() {
     let mut harness = quick_federation();
 
@@ -112,7 +111,6 @@ fn test_multiple_consensus_rounds() {
 
 /// Too many crashes: if >= n/3 nodes crash, consensus should stall (not finalize).
 #[test]
-#[ignore = "TODO: implement consensus stall detection"]
 fn test_consensus_stalls_with_too_many_crashes() {
     let mut harness = quick_federation();
 
@@ -125,17 +123,11 @@ fn test_consensus_stalls_with_too_many_crashes() {
         .federation_mut(0)
         .submit_revocation(0, "token-stall");
 
-    // TODO: Verify that consensus does NOT finalize (no quorum).
-    // The current Federation::run_consensus_round may still finalize
-    // due to simplified consensus — this test documents the expected behavior.
+    // With only 2/4 nodes online and a quorum threshold of 3, consensus cannot
+    // collect enough votes to finalize. drive_to_finalization must return None.
     let rounds = drive_to_finalization(&mut harness, 0, 10);
-    // With proper BFT: this should be None (no finalization possible).
-    // Document current behavior:
-    if rounds.is_some() {
-        // The simplified consensus might still finalize — flag this as a known gap.
-        eprintln!(
-            "WARNING: Consensus finalized with only 2/4 nodes online. \
-             Real BFT would require 3/4 (or 2f+1 for f=1)."
-        );
-    }
+    assert!(
+        rounds.is_none(),
+        "Consensus must NOT finalize with only 2/4 nodes online (quorum requires 3)"
+    );
 }

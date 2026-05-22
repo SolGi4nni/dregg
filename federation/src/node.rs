@@ -355,10 +355,30 @@ impl Federation {
         self.consensus_states[node_id].set_online(false);
     }
 
-    /// Recover a crashed node.
+    /// Recover a crashed node, replaying any finalized blocks it missed while offline.
+    ///
+    /// This performs state-sync: the node catches up with the federation's finalized
+    /// history by applying blocks it missed to its local revocation tree and updating
+    /// its consensus state (height, view, last_finalized_hash) to match.
     pub fn recover_node(&mut self, node_id: usize) {
         self.nodes[node_id].set_online(true);
         self.consensus_states[node_id].set_online(true);
+
+        // Replay finalized blocks the node missed while it was offline.
+        let node_height = self.consensus_states[node_id].finalized_blocks.len();
+        let federation_height = self.finalized_history.len();
+
+        if node_height < federation_height {
+            let identities = self.node_identities();
+            for i in node_height..federation_height {
+                let (block, qc) = self.finalized_history[i].clone();
+                // Apply the block to the node's revocation tree.
+                self.nodes[node_id].apply_finalized_block(&block);
+                self.nodes[node_id].update_attested_root(&qc, &identities);
+                // Update the node's consensus state.
+                self.consensus_states[node_id].finalize_block(block, qc);
+            }
+        }
     }
 
     /// Get the number of online nodes.

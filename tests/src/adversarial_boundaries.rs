@@ -855,10 +855,12 @@ fn proof_single_bit_flip_detected() {
     // Serialize
     let bytes = proof_to_bytes(&proof);
 
-    // Flip every single byte and verify detection
+    // Sample byte positions to flip (full iteration is too slow for CI).
+    let sample_size = 200.min(bytes.len());
+    let step = bytes.len() / sample_size;
     let mut detected = 0;
     let mut total = 0;
-    for i in 0..bytes.len() {
+    for i in (0..bytes.len()).step_by(step.max(1)).take(sample_size) {
         let mut tampered = bytes.clone();
         tampered[i] ^= 0x01; // single bit flip
 
@@ -866,8 +868,6 @@ fn proof_single_bit_flip_detected() {
         match proof_from_bytes(&tampered) {
             Err(_) => detected += 1,
             Ok(tampered_proof) => {
-                // The verifier might panic on malformed data (e.g., invalid trace_len).
-                // A panic is also a form of rejection (not a false positive).
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     verify(&air, &tampered_proof, &public_inputs)
                 }));

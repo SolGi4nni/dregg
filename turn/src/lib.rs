@@ -45,6 +45,7 @@ pub mod encrypted;
 pub mod error;
 pub mod escrow;
 pub mod eventual;
+pub mod execution_path;
 pub mod executor;
 pub mod fast_path;
 pub mod forest;
@@ -70,6 +71,7 @@ pub use conditional::{
     refund_conditional_deposit, resolve_condition, validate_conditional_submission,
 };
 pub use conflict::{ConflictSet, build_conflict_set, extract_access_sets};
+pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use encrypted::{
     ConflictBucket, EncryptedTurn, EncryptedTurnError, TurnOrdering, TurnValidityProof,
     TurnValidityPublicInputs, order_encrypted_turns,
