@@ -94,6 +94,7 @@ fn make_channel_receipt(
         federation_id: [0u8; 32],
         routing_directives: Vec::new(),
         derivation_records: Vec::new(),
+        emitted_events: Vec::new(),
         executor_signature: None,
     }
 }

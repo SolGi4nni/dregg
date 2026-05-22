@@ -940,6 +940,7 @@ async fn handle_remote_receipt(
         federation_id,
         routing_directives: vec![],
         derivation_records: vec![],
+        emitted_events: vec![],
         executor_signature: None,
     };
 

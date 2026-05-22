@@ -225,7 +225,7 @@ pub enum AuthorizationPresentation {
         /// recomputes it from `revealed_facts` using
         /// [`pyana_bridge::compute_revealed_facts_commitment`] and confirms it matches.
         /// A mismatch means the prover lied about which facts were part of the derivation.
-        revealed_facts_commitment: BabyBear,
+        revealed_facts_commitment: pyana_circuit::binding::WideHash,
         /// Predicate proofs for facts disclosed via predicate mode.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         predicate_proofs: Vec<(usize, BridgePredicateProof)>,
@@ -1430,7 +1430,7 @@ impl AgentWallet {
         &self,
         token: &HeldToken,
         request: &AuthRequest,
-        commitment: BabyBear,
+        commitment: pyana_circuit::binding::WideHash,
     ) -> Result<BridgePresentationProof, SdkError> {
         if !token.can_mint() {
             return Err(SdkError::MissingKey(

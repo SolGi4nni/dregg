@@ -365,6 +365,7 @@ fn main() {
         federation_id: [0; 32],
         routing_directives: vec![],
         derivation_records: vec![],
+        emitted_events: vec![],
         executor_signature: None,
     };
 
@@ -423,6 +424,7 @@ fn main() {
         federation_id: [0; 32],
         routing_directives: vec![],
         derivation_records: vec![],
+        emitted_events: vec![],
         executor_signature: None,
     };
 

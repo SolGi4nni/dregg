@@ -13,6 +13,7 @@
 //! the token chain, capabilities, or any private data — only the public
 //! inputs (federation root, request predicate, timestamp) are visible.
 
+use pyana_circuit::binding::WideHash;
 use pyana_circuit::derivation_air::{CircuitRule, DerivationWitness};
 use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
 use pyana_circuit::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
@@ -92,8 +93,8 @@ pub struct BridgePresentationBuilder {
     ///
     /// For selective disclosure mode, this is computed by the SDK before calling
     /// `prove()`. It is `poseidon2(hash(fact_1) || ... || hash(fact_n))` over the
-    /// revealed facts. For fully private mode, this is `BabyBear::ZERO`.
-    revealed_facts_commitment: BabyBear,
+    /// revealed facts. For fully private mode, this is `WideHash::ZERO`.
+    revealed_facts_commitment: WideHash,
 }
 
 /// The complete bridge presentation proof.
@@ -149,8 +150,8 @@ pub struct BridgePresentationProof {
     ///
     /// For selective disclosure mode, this is the Poseidon2 hash over the revealed
     /// fact hashes. The verifier recomputes from the plaintext facts and checks equality.
-    /// For fully private mode, this is `BabyBear::ZERO`.
-    pub revealed_facts_commitment: BabyBear,
+    /// For fully private mode, this is `WideHash::ZERO`.
+    pub revealed_facts_commitment: WideHash,
     /// Composition commitment binding all sub-proofs together.
     ///
     /// This is `poseidon2(fold_chain_commitment, derivation_state_root, presentation_tag)`.
@@ -158,7 +159,7 @@ pub struct BridgePresentationProof {
     /// an attacker from mixing sub-proofs across different presentations.
     /// The verifier recomputes this from the other sub-proofs and checks it matches
     /// the value committed in the STARK's public inputs.
-    pub composition_commitment: BabyBear,
+    pub composition_commitment: WideHash,
 }
 
 impl BridgePresentationProof {
@@ -327,9 +328,9 @@ pub struct WirePresentationProof {
     /// Verification result from the circuit layer.
     pub verification: PresentationVerification,
     /// Commitment to the selectively revealed facts.
-    pub revealed_facts_commitment: BabyBear,
+    pub revealed_facts_commitment: WideHash,
     /// Composition commitment binding all sub-proofs together.
-    pub composition_commitment: BabyBear,
+    pub composition_commitment: WideHash,
 }
 
 impl BridgePresentationBuilder {
@@ -350,7 +351,7 @@ impl BridgePresentationBuilder {
             root_token: None,
             auth_state: TokenState::new(),
             federation_tree: None,
-            revealed_facts_commitment: BabyBear::ZERO,
+            revealed_facts_commitment: WideHash::ZERO,
         }
     }
 
@@ -373,7 +374,7 @@ impl BridgePresentationBuilder {
             root_token: None,
             auth_state: TokenState::new(),
             federation_tree: None,
-            revealed_facts_commitment: BabyBear::ZERO,
+            revealed_facts_commitment: WideHash::ZERO,
         }
     }
 
@@ -385,7 +386,7 @@ impl BridgePresentationBuilder {
     ///
     /// The commitment is `poseidon2(hash(fact_1) || hash(fact_2) || ... || hash(fact_n))`
     /// where each fact_i is hashed with `poseidon2::hash_fact()`.
-    pub fn set_revealed_facts_commitment(&mut self, commitment: BabyBear) -> &mut Self {
+    pub fn set_revealed_facts_commitment(&mut self, commitment: WideHash) -> &mut Self {
         self.revealed_facts_commitment = commitment;
         self
     }
@@ -671,7 +672,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
-            composition_commitment: BabyBear::ZERO, // prove_fast has no STARK binding
+            composition_commitment: WideHash::ZERO, // prove_fast has no STARK binding
         })
     }
 
@@ -799,7 +800,7 @@ impl BridgePresentationBuilder {
             federation_root: self.federation_root,
             verification,
             revealed_facts_commitment: self.revealed_facts_commitment,
-            composition_commitment: BabyBear::ZERO, // Linear AIR (legacy, test-only)
+            composition_commitment: WideHash::ZERO, // Linear AIR (legacy, test-only)
         })
     }
 
@@ -1166,7 +1167,7 @@ impl BridgePresentationBuilder {
             revealed_facts_commitment: self.revealed_facts_commitment,
             blinding_factor: BabyBear::ZERO,
             presentation_randomness,
-            composition_commitment: BabyBear::ZERO,
+            composition_commitment: WideHash::ZERO,
             verifier_nonce: BabyBear::ZERO,
             verifier_block_height: BabyBear::ZERO,
         };
@@ -1267,11 +1268,14 @@ impl BridgePresentationBuilder {
         // Use the narrow (single-element) tag for the composition hash since
         // the composition commitment is itself a single BabyBear element.
         let presentation_tag_narrow = poseidon2::hash_many(&presentation_tag);
-        let composition_commitment = poseidon2::hash_many(&[
-            fold_chain_commitment,
-            derivation_state_root,
-            presentation_tag_narrow,
-        ]);
+        let composition_commitment = WideHash::from_poseidon2(
+            "pyana-composition-v1",
+            &[
+                fold_chain_commitment,
+                derivation_state_root,
+                presentation_tag_narrow,
+            ],
+        );
 
         // Assemble the presentation witness.
         let witness = PresentationWitness {
@@ -1378,9 +1382,8 @@ impl BridgePresentationBuilder {
             // This binds the actual check content to the fold proof, preventing
             // a prover from claiming checks they didn't actually add.
             let added_checks_commitment = if delta.added_checks.is_empty() {
-                BabyBear::ZERO
+                WideHash::ZERO
             } else {
-                use pyana_circuit::poseidon2::hash_many;
                 let check_hashes: Vec<BabyBear> = delta
                     .added_checks
                     .iter()
@@ -1394,7 +1397,7 @@ impl BridgePresentationBuilder {
                         hash_fact(pred_bb, &terms)
                     })
                     .collect();
-                hash_many(&check_hashes)
+                WideHash::from_poseidon2("pyana-checks-v1", &check_hashes)
             };
 
             witnesses.push(FoldWitness {
@@ -1954,9 +1957,9 @@ fn generate_presentation_randomness() -> BabyBear {
 /// binds the revealed facts to the STARK proof.
 ///
 /// Returns `BabyBear::ZERO` if no facts are provided (fully private mode).
-pub fn compute_revealed_facts_commitment(facts: &[pyana_trace::Fact]) -> BabyBear {
+pub fn compute_revealed_facts_commitment(facts: &[pyana_trace::Fact]) -> WideHash {
     if facts.is_empty() {
-        return BabyBear::ZERO;
+        return WideHash::ZERO;
     }
 
     let fact_hashes: Vec<BabyBear> = facts
@@ -1975,7 +1978,7 @@ pub fn compute_revealed_facts_commitment(facts: &[pyana_trace::Fact]) -> BabyBea
         })
         .collect();
 
-    poseidon2::hash_many(&fact_hashes)
+    WideHash::from_poseidon2("pyana-revealed-facts-v1", &fact_hashes)
 }
 
 /// Verify that a set of revealed facts matches the commitment in a proof.
@@ -1987,7 +1990,7 @@ pub fn compute_revealed_facts_commitment(facts: &[pyana_trace::Fact]) -> BabyBea
 /// Returns `true` if the commitment matches (the prover did not lie about revealed facts).
 pub fn verify_revealed_facts_commitment(
     revealed_facts: &[pyana_trace::Fact],
-    proof_commitment: BabyBear,
+    proof_commitment: WideHash,
 ) -> bool {
     let recomputed = compute_revealed_facts_commitment(revealed_facts);
     recomputed == proof_commitment
@@ -2102,7 +2105,7 @@ pub fn verify_presentation_full(
     //    from the fold chain and derivation sub-proofs. This prevents an attacker
     //    from attaching a valid membership STARK from one token to a forged fold
     //    chain from another.
-    if proof.composition_commitment != BabyBear::ZERO {
+    if !proof.composition_commitment.is_zero() {
         // Recompute the composition commitment from the sub-proof data.
         let fold_chain_commitment = if real.fold_proofs.is_empty() {
             BabyBear::ZERO
@@ -2126,21 +2129,27 @@ pub fn verify_presentation_full(
         };
         let presentation_tag = proof.circuit_proof.public_inputs.presentation_tag;
         // Hash the 4-element presentation tag into a single BabyBear for composition.
-        let tag_hash = poseidon2::hash_many(&presentation_tag);
+        let tag_hash = poseidon2::hash_many(&[presentation_tag]);
 
-        let recomputed =
-            poseidon2::hash_many(&[fold_chain_commitment, derivation_state_root, tag_hash]);
+        let recomputed = WideHash::from_poseidon2(
+            "pyana-composition-v1",
+            &[fold_chain_commitment, derivation_state_root, tag_hash],
+        );
 
         if recomputed != proof.composition_commitment {
             return false;
         }
 
         // Also verify the composition_commitment is present in the STARK's public inputs.
-        // For blinded proofs: pi = [blinded_leaf, root, action, composition_commitment]
-        // For non-blinded: pi = [leaf_hash, root, action, composition_commitment]
-        let expected_cc_idx = 3; // After blinded_leaf/leaf_hash, root, action
-        if pi.len() <= expected_cc_idx || pi[expected_cc_idx] != proof.composition_commitment {
+        // Public input layout: [leaf, root, action[4], composition[4]]
+        let expected_cc_idx = 6; // After leaf, root, action[4]
+        if pi.len() <= expected_cc_idx + 3 {
             return false;
+        }
+        for i in 0..4 {
+            if pi[expected_cc_idx + i] != proof.composition_commitment[i] {
+                return false;
+            }
         }
     }
 
@@ -2452,7 +2461,7 @@ pub fn verify_presentation_complete(
 
     // For multi-step chains without IVC, accept if we have a real STARK proof
     // with a valid (non-zero) composition commitment binding the fold chain.
-    if proof.real_stark_proof.is_some() && proof.composition_commitment != BabyBear::ZERO {
+    if proof.real_stark_proof.is_some() && !proof.composition_commitment.is_zero() {
         return true;
     }
 
@@ -3424,7 +3433,7 @@ mod tests {
     fn test_compute_revealed_facts_commitment_empty() {
         // Empty facts should produce ZERO commitment.
         let commitment = super::compute_revealed_facts_commitment(&[]);
-        assert_eq!(commitment, BabyBear::ZERO);
+        assert!(commitment.is_zero());
     }
 
     #[test]
@@ -3445,9 +3454,8 @@ mod tests {
         let c1 = super::compute_revealed_facts_commitment(&facts);
         let c2 = super::compute_revealed_facts_commitment(&facts);
         assert_eq!(c1, c2, "commitment must be deterministic");
-        assert_ne!(
-            c1,
-            BabyBear::ZERO,
+        assert!(
+            !c1.is_zero(),
             "non-empty facts must produce non-zero commitment"
         );
     }

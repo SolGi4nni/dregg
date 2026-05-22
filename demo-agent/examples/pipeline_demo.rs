@@ -471,7 +471,7 @@ fn main() {
 
     // Compute Turn A's hash for the EventualRef.
     let turn4_a_hash = {
-        let mut t = turn4_a.clone();
+        let t = turn4_a.clone();
         t.hash()
     };
 

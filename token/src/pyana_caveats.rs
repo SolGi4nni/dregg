@@ -722,6 +722,7 @@ pub fn verify_caveats(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

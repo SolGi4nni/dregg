@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_unknown_word() {
-        let mut mnemonic = generate_mnemonic();
+        let mnemonic = generate_mnemonic();
         // Replace the first word with something not in the list.
         let words: Vec<&str> = mnemonic.split_whitespace().collect();
         let mut modified = vec!["xyzzyplugh"];

@@ -185,9 +185,10 @@ impl AgentWallet {
 
         // Extract the presentation tag from the circuit proof's public inputs.
         // The tag is [BabyBear; 4]; hash to a single element for the wire representation.
-        let presentation_tag = pyana_circuit::poseidon2::hash_many(
-            &proof.circuit_proof.public_inputs.presentation_tag,
-        );
+        let presentation_tag = pyana_circuit::poseidon2::hash_many(&[proof
+            .circuit_proof
+            .public_inputs
+            .presentation_tag]);
 
         // Convert to wire-safe representation (strips private trace data).
         let wire_proof = proof.into_wire_proof();

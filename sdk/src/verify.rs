@@ -167,10 +167,10 @@ pub fn verify_selective_disclosure(
     if revealed_facts.is_empty() {
         // No facts revealed — this is effectively a fully private proof.
         // The commitment should be zero.
-        Ok(recomputed_commitment == BabyBear::ZERO)
+        Ok(recomputed_commitment.is_zero())
     } else {
         // Facts are revealed — commitment must be non-zero.
-        Ok(recomputed_commitment != BabyBear::ZERO)
+        Ok(!recomputed_commitment.is_zero())
     }
 }
 

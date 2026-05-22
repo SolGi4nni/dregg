@@ -226,7 +226,9 @@ mod tests {
 
         // Append the canonical action binding as third public input.
         let binding = compute_action_binding(action, resource);
-        public_inputs.push(binding);
+        for &elem in binding.iter() {
+            public_inputs.push(elem);
+        }
 
         let air = MerklePoseidon2StarkAir;
         let proof = prove(&air, &trace, &public_inputs);
@@ -262,7 +264,9 @@ mod tests {
 
         // Append the canonical action binding as third public input.
         let binding = compute_action_binding(action, resource);
-        public_inputs.push(binding);
+        for &elem in binding.iter() {
+            public_inputs.push(elem);
+        }
 
         // Append timestamp as 4th public input.
         public_inputs.push(BabyBear::new(timestamp));

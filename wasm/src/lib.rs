@@ -1453,7 +1453,7 @@ pub fn garbled_compare(prover_value: u32, verifier_threshold: u32) -> Result<JsV
         Some(p) => {
             let size = serde_json::to_vec(&p.stark_proof).unwrap_or_default().len();
             let v =
-                verify_private_threshold(p, circuit.circuit_commitment, secrets.true_output_hash);
+                verify_private_threshold(p, &circuit.circuit_commitment, &secrets.true_output_hash);
             (size, v)
         }
         None => (0, false),

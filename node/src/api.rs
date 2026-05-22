@@ -1897,49 +1897,45 @@ async fn post_atomic_vote(
 
     let mut s = state.write().await;
 
-    // Look up the coordinator by proposal_id.
-    let active = match s.atomic_proposals.get_mut(&proposal_id) {
-        Some(p) => p,
-        None => {
-            return Ok(Json(AtomicVoteResponse {
-                accepted: false,
-                decision: None,
-                error: Some("proposal not found".to_string()),
-            }));
-        }
-    };
-
     // Feed the vote to the coordinator.
-    let decision = match active.coordinator.receive_vote(voter, vote) {
-        Ok(maybe_decision) => maybe_decision,
-        Err(e) => {
-            return Ok(Json(AtomicVoteResponse {
-                accepted: false,
-                decision: None,
-                error: Some(format!("{e}")),
-            }));
+    let decision = {
+        let active = match s.atomic_proposals.get_mut(&proposal_id) {
+            Some(p) => p,
+            None => {
+                return Ok(Json(AtomicVoteResponse {
+                    accepted: false,
+                    decision: None,
+                    error: Some("proposal not found".to_string()),
+                }));
+            }
+        };
+        match active.coordinator.receive_vote(voter, vote) {
+            Ok(maybe_decision) => maybe_decision,
+            Err(e) => {
+                return Ok(Json(AtomicVoteResponse {
+                    accepted: false,
+                    decision: None,
+                    error: Some(format!("{e}")),
+                }));
+            }
         }
     };
 
     // Handle the decision.
     match decision {
         Some(pyana_coord::Decision::Commit) => {
+            // Extract the proposal so we can borrow ledger mutably.
+            let mut active = s.atomic_proposals.remove(&proposal_id).unwrap();
             // Execute the atomic turn against the ledger.
             match active.coordinator.commit(&mut s.ledger) {
-                Ok(_commit_msg) => {
-                    // Remove the proposal now that it is committed.
-                    s.atomic_proposals.remove(&proposal_id);
-
-                    Ok(Json(AtomicVoteResponse {
-                        accepted: true,
-                        decision: Some("commit".to_string()),
-                        error: None,
-                    }))
-                }
+                Ok(_commit_msg) => Ok(Json(AtomicVoteResponse {
+                    accepted: true,
+                    decision: Some("commit".to_string()),
+                    error: None,
+                })),
                 Err(e) => {
                     // Commit failed (e.g., turn execution error) — abort.
                     let _ = active.coordinator.abort(format!("commit failed: {e}"));
-                    s.atomic_proposals.remove(&proposal_id);
 
                     Ok(Json(AtomicVoteResponse {
                         accepted: true,
@@ -1950,10 +1946,10 @@ async fn post_atomic_vote(
             }
         }
         Some(pyana_coord::Decision::Abort) => {
+            let mut active = s.atomic_proposals.remove(&proposal_id).unwrap();
             let _ = active
                 .coordinator
                 .abort("too many rejections — threshold unreachable");
-            s.atomic_proposals.remove(&proposal_id);
 
             Ok(Json(AtomicVoteResponse {
                 accepted: true,
@@ -2047,7 +2043,7 @@ async fn post_evaluate_proposal(
     let atomic_forest: pyana_coord::AtomicForest =
         serde_json::from_value(req.forest).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let mut s = state.write().await;
+    let s = state.write().await;
 
     // Build a Participant from the node's local identity and ledger.
     let node_id = s.silo_id;

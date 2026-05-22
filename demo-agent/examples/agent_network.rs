@@ -419,7 +419,7 @@ fn main() {
     );
 
     let turn_e_hash = {
-        let mut t = turn_e.clone();
+        let t = turn_e.clone();
         t.hash()
     };
 

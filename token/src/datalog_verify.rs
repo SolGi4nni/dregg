@@ -1239,6 +1239,7 @@ pub fn verify_token_datalog_full(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::pyana_caveats::*;
