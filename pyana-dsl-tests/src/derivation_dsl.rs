@@ -32,17 +32,23 @@ fn term(coeff: BabyBear, cols: &[usize]) -> PolyTerm {
     }
 }
 
+/// Auxiliary column indices for C2 (ConditionalNonzero) inverse columns.
+/// These are appended after the standard DERIVATION_AIR_WIDTH (371) columns.
+/// One inverse column per body atom slot (8 total).
+pub const BODY_HASH_INV_START: usize = DERIVATION_AIR_WIDTH; // 371
+
+/// Extended trace width including auxiliary inverse columns for C2.
+pub const EXTENDED_TRACE_WIDTH: usize = DERIVATION_AIR_WIDTH + MAX_BODY_ATOMS; // 379
+
 /// Construct the derivation AIR as a CircuitDescriptor.
 ///
-/// This encodes constraints C1-C19 (body membership, hash verification, state root binding,
-/// substitution application, equal checks, memberof checks, GTE range check) plus
-/// C20-C24 (LT checks) and C25-C28 (check term binding).
+/// This encodes constraints C1-C28 including:
+/// - C2 (body_hash_nonzero_when_used): ConditionalNonzero
+/// - C3 (at_least_one_body): AtLeastOne
+/// - C4 (derived_hash_correct): Hash
 ///
-/// NOTE: Constraints C2 (body_hash_nonzero_when_used), C3 (at_least_one_body), and
-/// C4 (derived_hash_correct) use conditional/hash logic that cannot be expressed as
-/// pure polynomial constraints in the current ConstraintExpr system. We skip them
-/// in the descriptor and focus on the algebraic constraints that CAN be expressed.
-/// This is sufficient to prove the descriptor handles real complexity.
+/// The trace is extended by 8 auxiliary inverse columns (for C2) beyond the
+/// standard DERIVATION_AIR_WIDTH, giving EXTENDED_TRACE_WIDTH = 379.
 pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
     let mut constraints = Vec::new();
 
@@ -53,6 +59,45 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
         let flag_col = col::BODY_MEMBERSHIP_START + i;
         constraints.push(ConstraintExpr::Binary { col: flag_col });
     }
+
+    // ========================================================================
+    // C2: body_hash_nonzero_when_used — when flag=1, hash must be nonzero
+    // Uses ConditionalNonzero: selector * (value * inverse - 1) == 0
+    // ========================================================================
+    for i in 0..MAX_BODY_ATOMS {
+        let flag_col = col::BODY_MEMBERSHIP_START + i;
+        let hash_col = col::BODY_HASH_START + i;
+        let inv_col = BODY_HASH_INV_START + i;
+        constraints.push(ConstraintExpr::ConditionalNonzero {
+            selector_col: flag_col,
+            value_col: hash_col,
+            inverse_col: inv_col,
+        });
+    }
+
+    // ========================================================================
+    // C3: at_least_one_body — at least one membership flag must be 1
+    // ========================================================================
+    {
+        let flag_cols: Vec<usize> = (0..MAX_BODY_ATOMS)
+            .map(|i| col::BODY_MEMBERSHIP_START + i)
+            .collect();
+        constraints.push(ConstraintExpr::AtLeastOne { flag_cols });
+    }
+
+    // ========================================================================
+    // C4: derived_hash_correct — DERIVED_HASH == hash_fact(HEAD_PRED, HEAD_TERM[0..3])
+    // ========================================================================
+    constraints.push(ConstraintExpr::Hash {
+        output_col: col::DERIVED_HASH,
+        input_cols: vec![
+            col::HEAD_PRED,
+            col::HEAD_TERM_START,
+            col::HEAD_TERM_START + 1,
+            col::HEAD_TERM_START + 2,
+            col::HEAD_TERM_START + 3,
+        ],
+    });
 
     // ========================================================================
     // C5: body_roots_match_state — flag * (root - state_root) == 0
@@ -665,7 +710,7 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
 
     CircuitDescriptor {
         name: "pyana-derivation-dsl-v1".into(),
-        trace_width: DERIVATION_AIR_WIDTH,
+        trace_width: EXTENDED_TRACE_WIDTH,
         max_degree: 3, // Gated(degree-1 selector * degree-2 inner) = degree 3
         columns,
         constraints,

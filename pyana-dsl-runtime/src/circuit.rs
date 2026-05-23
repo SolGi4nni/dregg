@@ -70,8 +70,10 @@ pub enum ConstraintExpr {
     /// Gated constraint: `local[selector_col] * inner == 0`
     Gated { selector_col: usize, inner: Box<ConstraintExpr> },
 
-    /// Constrain col_output == Poseidon2(col_inputs[0], col_inputs[1], ...)
-    /// The evaluator computes the hash and checks equality.
+    /// Constrain col_output == Poseidon2_hash_fact(col_inputs[0], col_inputs[1..])
+    /// The first input column is the predicate, the rest are terms.
+    /// The evaluator computes hash_fact(predicate, &terms) and checks equality.
+    /// For general-purpose hashing (sponge), use hash_many via Polynomial encoding.
     Hash {
         output_col: usize,
         input_cols: Vec<usize>,
@@ -159,6 +161,57 @@ impl ConstraintExpr {
             }
             Self::Gated { selector_col, inner } => {
                 local[*selector_col] * inner.evaluate(local, next, pi)
+            }
+            Self::Hash { output_col, input_cols } => {
+                // First input is the predicate, rest are terms.
+                let predicate = local[input_cols[0]];
+                let terms: Vec<BabyBear> = input_cols[1..].iter().map(|&c| local[c]).collect();
+                let expected = pyana_circuit::poseidon2::hash_fact(predicate, &terms);
+                expected - local[*output_col]
+            }
+            Self::ConditionalNonzero { selector_col, value_col, inverse_col } => {
+                // selector * (value * inverse - 1) == 0
+                // When selector=0: constraint is trivially 0.
+                // When selector!=0: requires value*inverse=1, i.e. value!=0.
+                local[*selector_col] * (local[*value_col] * local[*inverse_col] - BabyBear::ONE)
+            }
+            Self::AtLeastOne { flag_cols } => {
+                // (1-f0)*(1-f1)*...*(1-fn) == 0 iff at least one fi=1
+                let mut product = BabyBear::ONE;
+                for &col in flag_cols {
+                    product = product * (BabyBear::ONE - local[col]);
+                }
+                product
+            }
+            Self::SelectiveWrite { target_col, source_col, pos_col, target_index } => {
+                // When local[pos_col] == target_index, require next[target_col] = local[source_col].
+                // Constraint: (pos - target_index) * 0 + delta * (next[target] - local[source]) == 0
+                // where delta = 1 when pos==target_index, 0 otherwise.
+                //
+                // Algebraic form: we use the inverse-based approach:
+                //   Let diff = pos - target_index. If diff==0, the write is active.
+                //   Constraint: next[target] - local[source] - diff * aux == 0
+                // But we don't have an aux column here. Instead, use the simpler form:
+                //   (1 - diff * inv) * (next[target] - local[source]) == 0
+                // which requires an inverse column. For now, use the product approach:
+                //   If pos == target_index (i.e. diff == 0): next[target] - local[source] must be 0.
+                //   Encode as: prod_{k != target_index, k in 0..N} (pos - k) is nonzero when pos == target_index.
+                //
+                // Simplest correct form without auxiliary columns (works for small index spaces):
+                //   For a single target_index, the constraint is:
+                //     indicator(pos, target_index) * (next[target] - local[source]) == 0
+                //   where indicator is 1 when pos==target_index.
+                //   We approximate by direct check: the product of (pos - k) for k != target_index
+                //   is nonzero exactly when pos == target_index, but that gives a high-degree poly.
+                //
+                // For the DSL runtime, we evaluate directly:
+                let pos = local[*pos_col];
+                let target = BabyBear::new(*target_index as u32);
+                if pos == target {
+                    next[*target_col] - local[*source_col]
+                } else {
+                    BabyBear::ZERO
+                }
             }
         }
     }
@@ -328,6 +381,19 @@ impl ConstraintExpr {
             Self::Gated { selector_col, inner } => {
                 let inner_max = inner.max_column_index().unwrap_or(0);
                 Some((*selector_col).max(inner_max))
+            }
+            Self::Hash { output_col, input_cols } => {
+                let max_input = input_cols.iter().copied().max().unwrap_or(0);
+                Some((*output_col).max(max_input))
+            }
+            Self::ConditionalNonzero { selector_col, value_col, inverse_col } => {
+                Some((*selector_col).max(*value_col).max(*inverse_col))
+            }
+            Self::AtLeastOne { flag_cols } => {
+                flag_cols.iter().copied().max()
+            }
+            Self::SelectiveWrite { target_col, source_col, pos_col, .. } => {
+                Some((*target_col).max(*source_col).max(*pos_col))
             }
         }
     }

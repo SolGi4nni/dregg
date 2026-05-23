@@ -436,6 +436,30 @@ pub struct UpdateCommitmentResponse {
 }
 
 // =============================================================================
+// Program Deployment types
+// =============================================================================
+
+/// Request body for deploying a custom cell program to the federation.
+#[derive(Deserialize)]
+pub struct DeployProgramRequest {
+    /// Hex-encoded postcard-serialized CircuitDescriptor bytes.
+    pub descriptor_bytes: String,
+    /// Program version (for upgrade/migration tracking).
+    pub version: u32,
+}
+
+/// Response to a program deployment.
+#[derive(Serialize)]
+pub struct DeployProgramResponse {
+    pub deployed: bool,
+    /// Hex-encoded 32-byte VK hash (program identity).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vk_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// =============================================================================
 // Atomic Multi-Party Turn types
 // =============================================================================
 
@@ -836,6 +860,7 @@ pub fn router(
         .route("/cells/register", post(post_register_cell))
         .route("/cells/deregister", post(post_deregister_cell))
         .route("/cells/update-commitment", post(post_update_commitment))
+        .route("/programs/deploy", post(post_deploy_program))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Metrics endpoint (separate state: PrometheusHandle)

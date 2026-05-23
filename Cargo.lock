@@ -6347,6 +6347,7 @@ dependencies = [
  "pyana-circuit",
  "pyana-commit",
  "pyana-coord",
+ "pyana-dsl-runtime",
  "pyana-federation",
  "pyana-intent",
  "pyana-morpheus",
@@ -6490,6 +6491,7 @@ dependencies = [
  "proptest",
  "pyana-cell",
  "pyana-circuit",
+ "pyana-dsl-runtime",
  "pyana-types",
  "serde",
 ]

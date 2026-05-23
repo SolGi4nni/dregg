@@ -27,6 +27,8 @@ use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;
 use crate::turn::{EmittedEvent, Turn, TurnReceipt, TurnResult};
 
+use pyana_dsl_runtime::ProgramRegistry;
+
 /// Whether note effects in a turn use Pedersen value commitments or cleartext values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NoteCommitmentMode {
@@ -127,6 +129,11 @@ impl Default for ComputronCosts {
 pub struct TurnExecutor {
     /// Cost configuration for computron metering.
     pub costs: ComputronCosts,
+    /// Program registry for custom cell programs (smart contract runtime).
+    /// When a sovereign cell has a `verification_key_hash` set, the executor
+    /// looks up the deployed program here and verifies proofs against it.
+    /// Falls back to `SovereignTransitionAir` if no program is found.
+    pub program_registry: ProgramRegistry,
     /// Current timestamp for precondition evaluation.
     pub current_timestamp: i64,
     /// Current block height for precondition evaluation.
@@ -194,6 +201,7 @@ impl TurnExecutor {
     pub fn new(costs: ComputronCosts) -> Self {
         TurnExecutor {
             costs,
+            program_registry: ProgramRegistry::new(),
             current_timestamp: 0,
             block_height: 0,
             proof_verifier: None,
@@ -222,6 +230,7 @@ impl TurnExecutor {
     pub fn with_budget_gate(costs: ComputronCosts, gate: BudgetGate) -> Self {
         TurnExecutor {
             costs,
+            program_registry: ProgramRegistry::new(),
             current_timestamp: 0,
             block_height: 0,
             proof_verifier: None,
@@ -246,6 +255,7 @@ impl TurnExecutor {
     pub fn with_proof_verifier(costs: ComputronCosts, verifier: Box<dyn ProofVerifier>) -> Self {
         TurnExecutor {
             costs,
+            program_registry: ProgramRegistry::new(),
             current_timestamp: 0,
             block_height: 0,
             proof_verifier: Some(verifier),
@@ -400,6 +410,20 @@ impl TurnExecutor {
         self.revocation_channels = Some(channels);
     }
 
+    /// Set the program registry for custom cell program verification.
+    ///
+    /// When a sovereign cell has a `verification_key_hash` in its registration,
+    /// proof-carrying turns are verified against the deployed program instead of
+    /// the default `SovereignTransitionAir`.
+    pub fn set_program_registry(&mut self, registry: ProgramRegistry) {
+        self.program_registry = registry;
+    }
+
+    /// Get a mutable reference to the program registry (for deploying programs).
+    pub fn program_registry_mut(&mut self) -> &mut ProgramRegistry {
+        &mut self.program_registry
+    }
+
     /// Verify a STARK execution proof for a sovereign cell and update its commitment.
     ///
     /// This is the core of Phase 3: proof-carrying sovereign turns. The executor
@@ -491,10 +515,29 @@ impl TurnExecutor {
             }
         }
 
-        // 8. Verify the STARK proof using the SovereignTransitionAir.
-        let air = pyana_circuit::SovereignTransitionAir;
-        stark::verify(&air, &proof, &public_inputs)
-            .map_err(|e| TurnError::ProofVerificationFailed(e))?;
+        // 8. Verify the STARK proof.
+        // If the cell has a verification_key_hash binding it to a custom program,
+        // look up that program in the registry and verify against it. Otherwise
+        // fall back to the default SovereignTransitionAir.
+        let vk_hash = self.get_cell_vk_hash(cell_id, ledger);
+        if let Some(vk) = vk_hash {
+            if let Some(program) = self.program_registry.get(&vk) {
+                // Custom program verification via the DSL circuit runtime.
+                program.verify_transition(&public_inputs, proof_bytes)
+                    .map_err(|e| TurnError::ProofVerificationFailed(e.to_string()))?;
+            } else {
+                // VK hash is set but program not found in registry -- reject.
+                return Err(TurnError::ProofVerificationFailed(format!(
+                    "cell has verification_key_hash {:02x}{:02x}... but no matching program is deployed",
+                    vk[0], vk[1]
+                )));
+            }
+        } else {
+            // Default path: verify using the hardcoded SovereignTransitionAir.
+            let air = pyana_circuit::SovereignTransitionAir;
+            stark::verify(&air, &proof, &public_inputs)
+                .map_err(|e| TurnError::ProofVerificationFailed(e))?;
+        }
 
         // 9. Update commitment (no re-execution!). Try the legacy map first, then registrations.
         if ledger.is_sovereign(cell_id) {
@@ -510,6 +553,26 @@ impl TurnExecutor {
         }
 
         Ok(())
+    }
+
+    /// Get the verification key hash for a sovereign cell, if one is set.
+    ///
+    /// Checks both the sovereign registration (which has an explicit `verification_key_hash`
+    /// field) and the cell's `verification_key` (for hosted cells or legacy sovereign cells).
+    fn get_cell_vk_hash(&self, cell_id: &CellId, ledger: &Ledger) -> Option<[u8; 32]> {
+        // Check sovereign registration first (proof-carrying path).
+        if let Some(reg) = ledger.get_sovereign_registration(cell_id) {
+            if let Some(vk_hash) = reg.verification_key_hash {
+                return Some(vk_hash);
+            }
+        }
+        // Fallback: check if the cell itself has a verification_key with a hash.
+        if let Some(cell) = ledger.get(cell_id) {
+            if let Some(vk) = &cell.verification_key {
+                return Some(vk.hash);
+            }
+        }
+        None
     }
 
     /// Encode a 32-byte hash as 8 BabyBear field elements (4 bytes each, little-endian).

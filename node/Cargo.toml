@@ -19,6 +19,7 @@ pyana-sdk = { path = "../sdk" }
 pyana-intent = { path = "../intent" }
 pyana-circuit = { path = "../circuit" }
 pyana-commit = { path = "../commit" }
+pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-coord = { path = "../coord" }
 pyana-net = { path = "../net" }
 pyana-morpheus = { path = "../morpheus" }

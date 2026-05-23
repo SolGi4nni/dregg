@@ -11,12 +11,10 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    parse2, Expr, FnArg, Ident, Item, ItemConst, ItemFn, ItemMod, Lit, Pat, ReturnType, Type,
-    spanned::Spanned,
-};
+use syn::{Expr, Ident, Item, ItemConst, ItemFn, ItemMod, Lit};
 
 /// Parsed representation of a `#[pyana_circuit]` module.
+#[allow(dead_code)]
 pub struct CircuitModule {
     /// The module name (becomes the struct name in PascalCase).
     pub name: Ident,

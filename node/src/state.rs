@@ -19,6 +19,7 @@ use pyana_coord::budget::{
     BudgetCoordinator, BudgetError, FastUnlockManager, SiloId, SpendingCertificate,
     UnlockCertificate, UnlockRequest, UnlockVote,
 };
+use pyana_dsl_runtime::ProgramRegistry;
 use pyana_sdk::AgentWallet;
 use pyana_store::{PersistentStore, Poseidon2NoteTree};
 
@@ -132,6 +133,11 @@ pub struct NodeStateInner {
     /// tracks previously-discharged tickets. Creating a fresh gateway per request
     /// (the old behavior) made the replay set useless since it was dropped immediately.
     pub discharge_gateway: Option<pyana_macaroon::DischargeGateway>,
+
+    /// Program registry for the smart contract runtime (DSL circuit programs).
+    /// Maps verification key hashes to deployed CellPrograms. Used by the executor
+    /// to verify proof-carrying turns against custom programs.
+    pub program_registry: ProgramRegistry,
 
     // ─── Stingray Budget Coordination ─────────────────────────────────────────
     /// Per-agent budget coordinators for bounded-counter resource metering.
@@ -371,6 +377,7 @@ impl NodeState {
                 prove_transitions: false,
                 pir_index_cache: None,
                 discharge_gateway: None,
+                program_registry: ProgramRegistry::new(),
                 budget_coordinators: HashMap::new(),
                 fast_unlock_manager: None,
                 silo_id,
@@ -436,6 +443,7 @@ impl NodeState {
                 prove_transitions: false,
                 pir_index_cache: None,
                 discharge_gateway: None,
+                program_registry: ProgramRegistry::new(),
                 budget_coordinators: HashMap::new(),
                 fast_unlock_manager: None,
                 silo_id,

@@ -4,6 +4,7 @@ pub mod derivation_dsl;
 pub mod fold_dsl;
 pub mod pyana_definitions;
 pub mod temporal_dsl;
+pub mod temporal_macro;
 
 // --- Phase 1 caveats (preserved) ---
 
