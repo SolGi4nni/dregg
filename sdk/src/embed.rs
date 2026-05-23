@@ -838,7 +838,7 @@ mod tests {
         // Garbage bytes should fail to decode or not verify.
         let result = engine.verify_presentation_bytes(&[0u8; 100], "read", "api/v1/users");
         // Either returns Err (decode failure) or Ok(false) (verification failure).
-        assert!(result.is_err() || result == Ok(false));
+        assert!(result.is_err() || matches!(result, Ok(false)));
     }
 
     #[test]

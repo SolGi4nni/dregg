@@ -1963,7 +1963,11 @@ mod tests {
 
     #[tokio::test]
     async fn server_rejects_revocation_with_invalid_signature() {
-        let config = SiloConfig::new("revoker").with_verifier(Arc::new(NoopVerifier));
+        // Generate a valid keypair and configure it as the only authority.
+        let (sk, pk) = pyana_types::generate_keypair();
+        let config = SiloConfig::new("revoker")
+            .with_verifier(Arc::new(NoopVerifier))
+            .with_revocation_authorities(vec![pk]);
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
 
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
@@ -1990,10 +1994,12 @@ mod tests {
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).unwrap();
 
-        // Use a forged signature (random bytes) with a random public key.
+        // Use a forged signature: correct authority key but wrong signature bytes.
+        // This tests that even with the authority in the whitelist, a bad signature
+        // is rejected.
         let msg = WireMessage::SubmitRevocation {
             token_id: "tok-forged".to_string(),
-            authority: PublicKey([0xdd; 32]),
+            authority: pk,
             authority_sig: Signature([0xcc; 64]),
             nonce,
             timestamp: current_timestamp(),
@@ -2005,6 +2011,58 @@ mod tests {
             WireMessage::Error { code, message } => {
                 assert_eq!(code, crate::message::error_codes::INVALID_SIGNATURE);
                 assert!(message.contains("signature"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn server_rejects_revocation_without_configured_authorities() {
+        // With no revocation authorities configured, ALL revocations must be rejected
+        // (fail-closed). This tests the secure default.
+        let config = SiloConfig::new("revoker").with_verifier(Arc::new(NoopVerifier));
+        let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
+
+        let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
+
+        tokio::spawn(async move {
+            server.run_with_addr(addr_tx).await.unwrap();
+        });
+
+        let addr = addr_rx.await.unwrap();
+        let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
+
+        client
+            .send(WireMessage::Hello {
+                node_id: [0x11; 32],
+                node_name: "fail-closed-client".to_string(),
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: vec![],
+            })
+            .await
+            .unwrap();
+        let _welcome = client.recv().await.unwrap();
+
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).unwrap();
+
+        let msg = WireMessage::SubmitRevocation {
+            token_id: "tok-should-fail".to_string(),
+            authority: PublicKey([0xdd; 32]),
+            authority_sig: Signature([0xcc; 64]),
+            nonce,
+            timestamp: current_timestamp(),
+        };
+        client.send(msg).await.unwrap();
+
+        let response = client.recv().await.unwrap();
+        match response {
+            WireMessage::Error { code, message } => {
+                assert_eq!(code, crate::message::error_codes::INVALID_SIGNATURE);
+                assert!(
+                    message.contains("no revocation authorities configured"),
+                    "expected fail-closed message, got: {message}"
+                );
             }
             other => panic!("expected Error, got {other:?}"),
         }
