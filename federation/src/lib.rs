@@ -103,7 +103,7 @@ pub use types::{
 
 /// Canonical BFT quorum threshold: minimum votes needed for safety.
 ///
-/// For n validators tolerating f = floor((n-1)/3) Byzantine faults,
+/// For n validators tolerating f = floor(n/3) Byzantine faults,
 /// quorum = n - f.
 ///
 /// This is the ONE correct formula used throughout the system.
@@ -118,9 +118,12 @@ pub fn quorum_threshold(n: usize) -> usize {
 
 /// Maximum Byzantine faults tolerable for n validators.
 ///
-/// f = floor((n-1)/3)
+/// f = floor(n/3)
+///
+/// Standard BFT: a system of n nodes can tolerate at most floor(n/3) faulty nodes
+/// while maintaining safety (no conflicting commits) and liveness (progress continues).
 pub fn fault_tolerance(n: usize) -> usize {
-    n.saturating_sub(1) / 3
+    n / 3
 }
 
 #[cfg(test)]
@@ -139,9 +142,10 @@ mod threshold_tests {
 
     #[test]
     fn test_fault_tolerance() {
+        assert_eq!(fault_tolerance(0), 0);
         assert_eq!(fault_tolerance(1), 0);
         assert_eq!(fault_tolerance(2), 0);
-        assert_eq!(fault_tolerance(3), 0);
+        assert_eq!(fault_tolerance(3), 1);
         assert_eq!(fault_tolerance(4), 1);
         assert_eq!(fault_tolerance(7), 2);
         assert_eq!(fault_tolerance(10), 3);

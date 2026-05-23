@@ -122,7 +122,9 @@ fn wire_format_e2e_happy_path_and_adversarial() {
     );
 
     // --- Step 5: Create PyanaEngine with matching federation root ---
-    let federation_root_bb = compute_federation_root_bb(&root_key);
+    // The wallet uses derive_proof_key(root_key) for federation membership, not root_key directly.
+    let proof_key = blake3::derive_key("pyana-proof-key-v1", &root_key);
+    let federation_root_bb = compute_federation_root_bb(&proof_key);
     let federation_root_bytes = bb_to_bytes(federation_root_bb);
 
     let config = EngineConfig {

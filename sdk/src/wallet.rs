@@ -3366,6 +3366,7 @@ mod tests {
             restrictions: Attenuation::default(),
             proof_key: None, // No proof_key (legacy delegation)
             membership_proof: None,
+            caveat_chain_hash: None,
         };
 
         // This will fail because "em2_test" is not a valid token, but let's test
