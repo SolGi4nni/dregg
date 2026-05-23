@@ -499,6 +499,36 @@ async fn run_node(
         }
     }
 
+    // Phase C: Log multi-group participation if --groups is specified.
+    // Actual group membership is resolved once the blocklace syncs and the
+    // group registry is available. For now we validate the group IDs.
+    if !groups.is_empty() {
+        let mut valid_groups = 0usize;
+        for group_hex in &groups {
+            if group_hex.len() != 64 {
+                error!(
+                    group = %group_hex,
+                    "invalid group ID (expected 64 hex chars), skipping"
+                );
+                continue;
+            }
+            if hex_decode_32(group_hex).is_some() {
+                valid_groups += 1;
+            } else {
+                error!(
+                    group = %group_hex,
+                    "invalid hex for group ID, skipping"
+                );
+            }
+        }
+        if valid_groups > 0 {
+            info!(
+                group_count = valid_groups,
+                "multi-group mode enabled (Phase C cross-reference dissemination)"
+            );
+        }
+    }
+
     // Install Prometheus metrics recorder.
     let metrics_handle = metrics::install_recorder();
 

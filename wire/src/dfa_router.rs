@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use pyana_captp::GroupId;
+use pyana_captp::FederationId as GroupId;
 use pyana_types::CellId;
 
 // ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ mod tests {
     }
 
     fn test_federation_id(n: u8) -> GroupId {
-        GroupId([n; 32])
+        pyana_captp::FederationId([n; 32])
     }
 
     #[test]

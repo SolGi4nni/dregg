@@ -3524,7 +3524,14 @@ async fn post_queue_allocate(
     // Add entropy from the node's public key to make queue IDs unique per node.
     let wallet = &s.wallet;
     hasher.update(&wallet.public_key().0);
-    hasher.update(&s.latest_height.to_le_bytes());
+    let latest_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+    hasher.update(&latest_height.to_le_bytes());
     let queue_id = *hasher.finalize().as_bytes();
 
     tracing::info!(

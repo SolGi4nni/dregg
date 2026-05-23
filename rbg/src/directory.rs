@@ -192,7 +192,7 @@ pub struct DirectoryCell {
     max_entries: usize,
     /// The gossip topic for this directory's scoped intent pool.
     pub gossip_topic: GossipTopic,
-    /// Federation block height at creation.
+    /// Block height at creation.
     pub created_at: u64,
 }
 

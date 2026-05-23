@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use pyana_captp::{GroupId, PyanaUri};
+use pyana_captp::{FederationId as GroupId, PyanaUri};
 use pyana_cell::{AuthRequired, Ledger};
 use pyana_federation::node::Federation;
 use pyana_federation::types::AttestedRoot;

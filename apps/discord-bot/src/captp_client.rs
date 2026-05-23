@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use pyana_captp::GroupId;
+use pyana_captp::FederationId as GroupId;
 use pyana_captp::uri::PyanaUri;
 use tokio::sync::RwLock;
 use tracing::{debug, info};

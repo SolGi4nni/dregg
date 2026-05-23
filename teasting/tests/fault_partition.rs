@@ -327,7 +327,7 @@ fn test_split_brain_gc_convergence() {
     // B sends DropRef for cell_1
     let session = harness.session_mut(0, 1).unwrap();
     session.send_b_to_a(WireMessage::DropRemoteRef {
-        from_federation: session.fed_b_id.0,
+        from_strand: session.fed_b_id.0,
         cell_id: cell_1.0,
         session_epoch: 0,
     });

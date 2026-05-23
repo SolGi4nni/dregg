@@ -213,7 +213,7 @@ fn test_byzantine_fabricated_captp_messages() {
     // Byzantine attack 1: DropRef for a cell that federation C doesn't hold
     // (C is not even in this session)
     let fake_drop = WireMessage::DropRemoteRef {
-        from_federation: fed_c_id().0, // C is not a party to this session
+        from_strand: fed_c_id().0, // C is not a party to this session
         cell_id: test_cell(0xFF).0,    // doesn't exist
         session_epoch: 0,
     };
@@ -472,7 +472,7 @@ fn test_byzantine_cross_session_attack() {
     // by sending a DropRef claiming to be from B's federation
     let session_ac = harness.session_mut(0, fed_c_idx).unwrap();
     let spoofed_drop = WireMessage::DropRemoteRef {
-        from_federation: fed_b_id().0, // C pretends to be B
+        from_strand: fed_b_id().0, // C pretends to be B
         cell_id: cell_ab.0,
         session_epoch: 0,
     };

@@ -1359,6 +1359,7 @@ fn circuit_atomic_tx_wrong_old_root_rejected() {
         tx_hash,
         combined_old_root: fake_old_root, // WRONG! Doesn't match field[4]
         combined_new_root: combined_new,
+        net_deposit: 0,
     }];
 
     let (trace, public_inputs) = generate_effect_vm_trace(&cell_state, &effects);
@@ -1378,8 +1379,9 @@ fn circuit_atomic_tx_wrong_old_root_rejected() {
 // Test 21: Circuit-level AtomicQueueTx — balance unchanged enforced
 // =============================================================================
 
-/// Adversarial test: prover attempts to change balance during AtomicQueueTx.
-/// The circuit must reject (balance_unchanged constraint).
+/// Adversarial test: prover attempts to change balance by more than the declared
+/// net_deposit during AtomicQueueTx. The circuit must reject (balance delta mismatch).
+/// With net_deposit=0, ANY balance change is rejected.
 #[test]
 fn circuit_atomic_tx_balance_change_rejected() {
     use pyana_circuit::effect_vm::{
@@ -1403,12 +1405,13 @@ fn circuit_atomic_tx_balance_change_rejected() {
         tx_hash,
         combined_old_root: combined_old,
         combined_new_root: combined_new,
+        net_deposit: 0, // Declares zero balance change
     }];
 
     let (mut trace, public_inputs) = generate_effect_vm_trace(&cell_state, &effects);
 
     // Tamper: change balance in state_after (try to steal 1000 computrons).
-    // new_balance = 11000 instead of 10000.
+    // new_balance = 11000 instead of 10000. With net_deposit=0, this must fail.
     let (tampered_lo, tampered_hi) = pyana_circuit::effect_vm::split_u64(11_000);
     trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = tampered_lo;
     trace[0][STATE_AFTER_BASE + state::BALANCE_HI] = tampered_hi;
@@ -1437,13 +1440,14 @@ fn circuit_atomic_tx_balance_change_rejected() {
 
     let air = EffectVmAir::new(trace.len());
 
-    // The AtomicQueueTx balance constraint should fire.
+    // The AtomicQueueTx balance constraint should fire:
+    // new_bal_lo - old_bal_lo + net_deposit != 0 when balance changed but net_deposit=0.
     let alpha = BabyBear::new(13);
     let c = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
     assert_ne!(
         c,
         BabyBear::ZERO,
-        "Balance change during AtomicQueueTx must fail constraints"
+        "Balance change beyond declared net_deposit during AtomicQueueTx must fail constraints"
     );
 }
 

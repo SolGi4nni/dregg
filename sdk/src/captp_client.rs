@@ -19,7 +19,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use pyana_captp::GroupId;
+use pyana_captp::FederationId as GroupId;
 use pyana_captp::gc::{DropMessage, ImportGcManager};
 use pyana_captp::handoff::HandoffCertificate;
 use pyana_captp::pipeline::{PipelineRegistry, PipelinedAction};
@@ -37,11 +37,17 @@ use crate::error::SdkError;
 
 /// Configuration for the CapTP client layer.
 ///
-/// Specifies which federation this wallet belongs to and the current block height
-/// (needed for expiration checks on sturdy refs and handoff certificates).
+/// Specifies which group (formerly "federation") this wallet belongs to and the
+/// current block height (needed for expiration checks on sturdy refs and handoff
+/// certificates).
+///
+/// In the unified lace model, `GroupId` is semantically equivalent to `FederationId`.
+/// Both types are accepted interchangeably (they are the same struct).
 #[derive(Clone, Debug)]
 pub struct CapTpConfig {
-    /// The federation ID this wallet operates within.
+    /// The group/federation ID this wallet operates within.
+    ///
+    /// Accepts both `FederationId` and `GroupId` (they are the same type).
     pub federation_id: GroupId,
     /// The current block height (used for expiration checks).
     pub current_height: u64,

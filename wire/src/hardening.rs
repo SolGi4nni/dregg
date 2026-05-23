@@ -558,10 +558,10 @@ mod tests {
         let msg = coord.goodbye_message();
         match msg {
             WireMessage::CapGoodbye {
-                federation_id,
+                group_id,
                 reason,
             } => {
-                assert_eq!(federation_id, [0xBB; 32]);
+                assert_eq!(group_id, [0xBB; 32]);
                 assert_eq!(reason, Some("server shutting down".to_string()));
             }
             _ => panic!("expected CapGoodbye"),

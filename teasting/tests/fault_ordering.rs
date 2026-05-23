@@ -118,7 +118,7 @@ fn test_duplicate_cap_hello_idempotent() {
 
     // Simulate duplicate: inject another CapHello from A to B
     let duplicate_hello = WireMessage::CapHello {
-        federation_id: fed_a_id().0,
+        group_id: fed_a_id().0,
         initial_exports: vec![],
     };
     session.send_a_to_b(duplicate_hello.clone());
@@ -168,7 +168,7 @@ fn test_stale_messages_after_teardown() {
             timestamp: 1,
         },
         WireMessage::DropRemoteRef {
-            from_federation: fed_b_id().0,
+            from_strand: fed_b_id().0,
             cell_id: cell.0,
             session_epoch: 0,
         },
@@ -232,7 +232,7 @@ fn test_drop_before_enliven_graceful() {
 
     // Before B enlivens, send a DropRef (temporal inversion due to network reorder)
     let premature_drop = WireMessage::DropRemoteRef {
-        from_federation: fed_b_id().0,
+        from_strand: fed_b_id().0,
         cell_id: cell.0,
         session_epoch: 0,
     };

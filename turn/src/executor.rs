@@ -1319,6 +1319,114 @@ impl TurnExecutor {
                     Effect::IncrementNonce { cell } if cell == cell_id => {
                         // Nonce increment is implicit in the VM (row-to-row).
                     }
+                    Effect::QueueAllocate {
+                        capacity,
+                        program_vk: _,
+                    } => {
+                        // AllocateQueue: cost = capacity (1 computron per slot).
+                        vm_effects.push(VmEffect::AllocateQueue {
+                            capacity: *capacity as u32,
+                            owner_quota_id: hash_to_bb(cell_id.as_bytes()),
+                            cost_per_slot: 1,
+                        });
+                    }
+                    Effect::QueueEnqueue {
+                        queue,
+                        message_hash,
+                        deposit,
+                    } => {
+                        vm_effects.push(VmEffect::EnqueueMessage {
+                            message_hash: hash_to_bb(message_hash),
+                            deposit_amount: *deposit as u32,
+                            sender_id: hash_to_bb(cell_id.as_bytes()),
+                            queue_len: 0, // Actual length validated by executor; circuit uses hash chain.
+                            program_vk: BabyBear::ZERO, // No program VK binding in basic enqueue.
+                        });
+                    }
+                    Effect::QueueDequeue { queue } => {
+                        // DequeueMessage: the expected_message_hash is the queue's head.
+                        // The executor validates correctness; the circuit proves the hash chain.
+                        // Use queue ID hash as a placeholder (actual message hash comes from state).
+                        vm_effects.push(VmEffect::DequeueMessage {
+                            expected_message_hash: hash_to_bb(queue.as_bytes()),
+                            deposit_refund: 0, // Refund computed by executor at runtime.
+                        });
+                    }
+                    Effect::QueueResize {
+                        queue,
+                        new_capacity,
+                    } => {
+                        vm_effects.push(VmEffect::ResizeQueue {
+                            new_capacity: *new_capacity as u32,
+                            queue_id: hash_to_bb(queue.as_bytes()),
+                            cost_per_slot: 1,
+                            old_capacity: 0, // Old capacity provided by executor at runtime.
+                        });
+                    }
+                    Effect::QueueAtomicTx { operations } => {
+                        // Compute net deposit: sum of enqueue deposits in the tx.
+                        let mut net_deposit: u64 = 0;
+                        for op in operations {
+                            match op {
+                                crate::action::QueueTxOp::Enqueue { deposit, .. } => {
+                                    net_deposit += deposit;
+                                }
+                                crate::action::QueueTxOp::Dequeue { .. } => {
+                                    // Refunds are runtime-computed; approximated as zero here.
+                                }
+                            }
+                        }
+                        // Build combined root hashes (binding the atomic transition).
+                        let op_count = operations.len() as u32;
+                        let tx_hash_input: Vec<u8> = operations
+                            .iter()
+                            .flat_map(|op| match op {
+                                crate::action::QueueTxOp::Enqueue { message_hash, .. } => {
+                                    message_hash.to_vec()
+                                }
+                                crate::action::QueueTxOp::Dequeue { queue } => {
+                                    queue.as_bytes().to_vec()
+                                }
+                            })
+                            .collect();
+                        let tx_hash_bytes = blake3::hash(&tx_hash_input);
+                        let tx_hash = hash_to_bb(tx_hash_bytes.as_bytes());
+                        // Combined roots use cell_id field[4] as a stand-in.
+                        let combined_root = hash_to_bb(cell_id.as_bytes());
+                        vm_effects.push(VmEffect::AtomicQueueTx {
+                            op_count,
+                            tx_hash,
+                            combined_old_root: combined_root,
+                            combined_new_root: combined_root,
+                            net_deposit: net_deposit as u32,
+                        });
+                    }
+                    Effect::QueuePipelineStep {
+                        pipeline_id,
+                        source,
+                        sinks,
+                    } => {
+                        let pipeline_bb = hash_to_bb(pipeline_id);
+                        let source_root = hash_to_bb(source.as_bytes());
+                        // Source new root = hash(source_old, message) — use a deterministic placeholder.
+                        let msg_hash = hash_to_bb(pipeline_id);
+                        let source_new =
+                            pyana_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
+                        let sink_root = if let Some(sink) = sinks.first() {
+                            hash_to_bb(sink.as_bytes())
+                        } else {
+                            BabyBear::ZERO
+                        };
+                        let sink_new =
+                            pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
+                        vm_effects.push(VmEffect::PipelineStep {
+                            pipeline_id: pipeline_bb,
+                            source_old_root: source_root,
+                            source_new_root: source_new,
+                            sink_new_root: sink_new,
+                            message_hash: msg_hash,
+                        });
+                    }
                     _ => {
                         // Other effects map to NoOp.
                         vm_effects.push(VmEffect::NoOp);

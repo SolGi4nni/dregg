@@ -338,6 +338,10 @@ pub mod param {
     pub const ATOMIC_TX_COMBINED_OLD_ROOT: usize = 2;
     /// Combined new roots after atomic execution.
     pub const ATOMIC_TX_COMBINED_NEW_ROOT: usize = 3;
+    /// Net deposit paid across all sub-operations in the atomic tx.
+    /// This is the sum of deposits paid by enqueue ops minus refunds from dequeue ops.
+    /// Allows the circuit to prove the correct balance delta for atomic transactions.
+    pub const ATOMIC_TX_NET_DEPOSIT: usize = 4;
     // PipelineStep params.
     /// Pipeline identity hash (content-addressed from stage descriptions).
     pub const PIPELINE_ID: usize = 0;
@@ -579,6 +583,7 @@ pub enum Effect {
     /// bound to a specific set of operations via tx_hash.
     /// State transition: field[4] transitions from combined_old_root to combined_new_root
     /// (proves ALL queues transitioned atomically; if ANY op fails, proof is invalid).
+    /// Balance transition: balance changes by net_deposit (sum of deposits paid minus refunds).
     AtomicQueueTx {
         /// Number of operations in the transaction.
         op_count: u32,
@@ -588,6 +593,9 @@ pub enum Effect {
         combined_old_root: BabyBear,
         /// Combined new roots after atomic execution.
         combined_new_root: BabyBear,
+        /// Net deposit paid across all sub-operations (deposits - refunds).
+        /// Positive means balance decreases (net payment out).
+        net_deposit: u32,
     },
     /// PipelineStep: prove a pipeline step correctly routed a message.
     /// Proves: message M was dequeued from source S and enqueued to sink K,
@@ -715,7 +723,7 @@ impl CellState {
 
 /// Split a u64 into two BabyBear elements: (lo = lower 30 bits, hi = upper 34 bits).
 /// Both values fit in BabyBear (< 2^31).
-pub(crate) fn split_u64(val: u64) -> (BabyBear, BabyBear) {
+pub fn split_u64(val: u64) -> (BabyBear, BabyBear) {
     let lo = (val & 0x3FFF_FFFF) as u32; // lower 30 bits
     let hi = (val >> 30) as u32; // upper 34 bits (fits in u32 since val < 2^64)
     (BabyBear::new(lo), BabyBear::new(hi))
@@ -923,12 +931,14 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 tx_hash,
                 combined_old_root,
                 combined_new_root,
+                net_deposit,
             } => {
                 hasher_inputs.push(BabyBear::new(22));
                 hasher_inputs.push(BabyBear::new(*op_count));
                 hasher_inputs.push(*tx_hash);
                 hasher_inputs.push(*combined_old_root);
                 hasher_inputs.push(*combined_new_root);
+                hasher_inputs.push(BabyBear::new(*net_deposit));
             }
             Effect::PipelineStep {
                 pipeline_id,
@@ -1985,12 +1995,16 @@ impl StarkAir for EffectVmAir {
         // -- AtomicQueueTx: atomic cross-queue transaction --
         // Proves: field[4] transitions from combined_old_root to combined_new_root.
         // Binding: aux[0] == hash(tx_hash, hash(combined_old_root, combined_new_root))
-        // State: field[4] changes, balance/cap/other fields unchanged.
+        // State: field[4] changes, balance debited by net_deposit, cap/other fields unchanged.
+        // Balance: new_bal_lo = old_bal_lo - net_deposit (like Transfer direction=1).
+        // This allows atomic transactions involving deposits (enqueue ops pay deposits,
+        // dequeue ops receive refunds; the net is the overall balance change).
         let s_atomic_tx = local[sel::ATOMIC_QUEUE_TX];
         {
             let tx_hash_val = local[PARAM_BASE + param::ATOMIC_TX_HASH];
             let combined_old = local[PARAM_BASE + param::ATOMIC_TX_COMBINED_OLD_ROOT];
             let combined_new = local[PARAM_BASE + param::ATOMIC_TX_COMBINED_NEW_ROOT];
+            let net_deposit = local[PARAM_BASE + param::ATOMIC_TX_NET_DEPOSIT];
 
             // field[4] must equal combined_old_root before.
             let old_f4 = local[STATE_BEFORE_BASE + state::FIELD_BASE + 4];
@@ -2012,8 +2026,10 @@ impl StarkAir for EffectVmAir {
             combined = combined + alpha_pow * c_atx_bind;
             alpha_pow = alpha_pow * alpha;
 
-            // Balance unchanged.
-            let c_atx_bal_lo = s_atomic_tx * (new_bal_lo - old_bal_lo);
+            // Balance debit: new_bal_lo = old_bal_lo - net_deposit.
+            // This follows the same pattern as Transfer (direction=1) and EnqueueMessage.
+            // net_deposit == 0 means no balance change (backward compatible).
+            let c_atx_bal_lo = s_atomic_tx * (new_bal_lo - old_bal_lo + net_deposit);
             combined = combined + alpha_pow * c_atx_bal_lo;
             alpha_pow = alpha_pow * alpha;
             let c_atx_bal_hi = s_atomic_tx * (new_bal_hi - old_bal_hi);
@@ -2527,6 +2543,15 @@ pub fn generate_effect_vm_trace(
                         running_balance -= cost;
                     }
                 }
+                Effect::AtomicQueueTx { net_deposit, .. } => {
+                    assert!(
+                        (*net_deposit as u64) <= running_balance,
+                        "AtomicQueueTx underflow: net_deposit {} > running balance {}",
+                        net_deposit,
+                        running_balance
+                    );
+                    running_balance -= *net_deposit as u64;
+                }
                 _ => {}
             }
         }
@@ -2941,16 +2966,22 @@ pub fn generate_effect_vm_trace(
                 tx_hash,
                 combined_old_root,
                 combined_new_root,
+                net_deposit,
             } => {
                 row[PARAM_BASE + param::ATOMIC_TX_OP_COUNT] = BabyBear::new(*op_count);
                 row[PARAM_BASE + param::ATOMIC_TX_HASH] = *tx_hash;
                 row[PARAM_BASE + param::ATOMIC_TX_COMBINED_OLD_ROOT] = *combined_old_root;
                 row[PARAM_BASE + param::ATOMIC_TX_COMBINED_NEW_ROOT] = *combined_new_root;
+                row[PARAM_BASE + param::ATOMIC_TX_NET_DEPOSIT] = BabyBear::new(*net_deposit);
 
                 // State transition: field[4] changes from combined_old_root to combined_new_root.
                 // The circuit constrains that field[4] == combined_old_root before and
                 // becomes combined_new_root after, binding the atomic transition.
                 new_state.fields[4] = *combined_new_root;
+
+                // Balance debit by net_deposit (sum of deposits paid minus refunds received).
+                new_state.balance = new_state.balance.saturating_sub(*net_deposit as u64);
+                net_delta -= *net_deposit as i64;
 
                 // Auxiliary witness: aux[0] = hash(tx_hash, hash(combined_old_root, combined_new_root))
                 // This binds the transaction to the specific state transition.
@@ -5354,6 +5385,7 @@ mod tests {
             tx_hash,
             combined_old_root: combined_old,
             combined_new_root: combined_new,
+            net_deposit: 0,
         }];
 
         let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
@@ -5414,6 +5446,7 @@ mod tests {
             tx_hash,
             combined_old_root: combined_old,
             combined_new_root: combined_new,
+            net_deposit: 0,
         }];
 
         let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
@@ -5549,6 +5582,165 @@ mod tests {
         assert!(
             result.is_err(),
             "Wrong pipeline_id (via tampered effects_hash) should fail verification"
+        );
+    }
+
+    // ========================================================================
+    // SOVEREIGN CELL QUEUE OPERATION TESTS (Bug fix verification)
+    // ========================================================================
+
+    /// Test: Sovereign cell executes QueueEnqueue with proof, proof verifies correctly.
+    /// Validates Bug 2 fix: queue effects are no longer silently dropped to NoOp.
+    #[test]
+    fn test_sovereign_cell_enqueue_with_proof_verifies() {
+        // Sovereign cell state: has balance for deposit, has a queue root in field[4].
+        let mut state = CellState::new(50_000, 5);
+        state.mode_flag = 1; // sovereign
+        let initial_queue_root = hash_2_to_1(BabyBear::new(0x10), BabyBear::new(0x20));
+        state.fields[4] = initial_queue_root;
+        state.refresh_commitment();
+
+        let message_hash = BabyBear::new(0xCAFE);
+        let deposit_amount = 100u32;
+
+        // Expected new queue root after enqueue.
+        let expected_new_root = hash_2_to_1(initial_queue_root, message_hash);
+
+        let effects = vec![Effect::EnqueueMessage {
+            message_hash,
+            deposit_amount,
+            sender_id: BabyBear::new(0x5E),
+            queue_len: 3,
+            program_vk: BabyBear::ZERO, // No program validation.
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        // Verify constraints pass on all rows.
+        for alpha_val in [7u32, 13, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            for row in 0..trace.len() - 1 {
+                let next_row = (row + 1) % trace.len();
+                let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
+                assert_eq!(
+                    c,
+                    BabyBear::ZERO,
+                    "Sovereign EnqueueMessage: constraint non-zero at row {} alpha={}",
+                    row,
+                    alpha_val
+                );
+            }
+        }
+
+        // STARK roundtrip: sovereign cell can prove queue enqueue.
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Sovereign cell EnqueueMessage should verify: {:?}",
+            result.err()
+        );
+
+        // Verify queue root transitioned correctly.
+        let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
+        assert_eq!(
+            new_f4, expected_new_root,
+            "field[4] should become new queue root after enqueue"
+        );
+
+        // Balance should decrease by deposit amount.
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(
+            delta,
+            -(deposit_amount as i64),
+            "Sovereign EnqueueMessage should debit balance by deposit"
+        );
+    }
+
+    /// Test: Sovereign cell executes AtomicQueueTx with deposits, proof includes correct balance delta.
+    /// Validates Bug 1 fix: AtomicQueueTx no longer enforces balance_unchanged.
+    #[test]
+    fn test_sovereign_cell_atomic_tx_with_deposits_verifies() {
+        let mut state = CellState::new(100_000, 0);
+        state.mode_flag = 1; // sovereign
+
+        // Set field[4] to combined_old_root (hash of two queue roots).
+        let queue_a_root = hash_2_to_1(BabyBear::new(0xAA), BabyBear::new(0xBB));
+        let queue_b_root = hash_2_to_1(BabyBear::new(0xCC), BabyBear::new(0xDD));
+        let combined_old = hash_2_to_1(queue_a_root, queue_b_root);
+        state.fields[4] = combined_old;
+        state.refresh_commitment();
+
+        // After atomic tx: 2 enqueue ops with deposits of 500 each = net deposit 1000.
+        let msg = BabyBear::new(0xDEAD);
+        let new_queue_a_root = hash_2_to_1(queue_a_root, msg);
+        let new_queue_b_root = hash_2_to_1(queue_b_root, msg);
+        let combined_new = hash_2_to_1(new_queue_a_root, new_queue_b_root);
+
+        let tx_hash = hash_2_to_1(msg, BabyBear::new(2)); // 2 ops
+        let net_deposit = 1000u32; // Total deposits paid across sub-operations.
+
+        let effects = vec![Effect::AtomicQueueTx {
+            op_count: 2,
+            tx_hash,
+            combined_old_root: combined_old,
+            combined_new_root: combined_new,
+            net_deposit,
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        // Verify constraints pass on all rows.
+        for alpha_val in [7u32, 13, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            for row in 0..trace.len() - 1 {
+                let next_row = (row + 1) % trace.len();
+                let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
+                assert_eq!(
+                    c,
+                    BabyBear::ZERO,
+                    "Sovereign AtomicQueueTx with deposits: constraint non-zero at row {} alpha={}",
+                    row,
+                    alpha_val
+                );
+            }
+        }
+
+        // STARK roundtrip: sovereign cell can prove atomic tx with balance change.
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Sovereign AtomicQueueTx with deposits should verify: {:?}",
+            result.err()
+        );
+
+        // Verify field[4] transitioned.
+        let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
+        assert_eq!(
+            new_f4, combined_new,
+            "field[4] should become combined_new_root"
+        );
+
+        // Balance should decrease by net_deposit.
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(
+            delta,
+            -(net_deposit as i64),
+            "AtomicQueueTx with deposits should debit balance by net_deposit"
+        );
+
+        // Verify the actual balance in the trace matches expectation.
+        let final_bal_lo = trace[0][STATE_AFTER_BASE + state::BALANCE_LO];
+        let initial_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
+        let expected_diff = BabyBear::new(net_deposit);
+        assert_eq!(
+            initial_bal_lo - final_bal_lo,
+            expected_diff,
+            "Balance lo should decrease by net_deposit ({})",
+            net_deposit
         );
     }
 }

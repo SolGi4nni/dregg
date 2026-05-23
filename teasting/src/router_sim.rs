@@ -133,7 +133,7 @@ impl SimRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_captp::GroupId;
+    use pyana_captp::FederationId as GroupId;
     use pyana_types::CellId;
 
     fn test_cell(n: u8) -> CellId {

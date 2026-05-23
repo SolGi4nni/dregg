@@ -113,6 +113,16 @@ pub trait EffectEnv {
         self.assert_state_unchanged(state::BALANCE_HI);
     }
 
+    /// Assert balance debit: new_bal_lo = old_bal_lo - amount, hi unchanged.
+    /// When amount == 0, this is equivalent to assert_balance_unchanged.
+    fn assert_balance_debit(&mut self, amount: BabyBear) {
+        let old_lo = self.read_state_before(state::BALANCE_LO);
+        let new_lo = self.read_state_after(state::BALANCE_LO);
+        let expected = self.sub(old_lo, amount);
+        self.assert_eq(new_lo, expected);
+        self.assert_state_unchanged(state::BALANCE_HI);
+    }
+
     /// Assert cap_root is unchanged.
     fn assert_cap_unchanged(&mut self) {
         self.assert_state_unchanged(state::CAP_ROOT);
@@ -1053,11 +1063,12 @@ pub fn execute_dequeue_message(env: &mut impl EffectEnv) {
 ///
 /// Proves: field[4] transitions from combined_old_root to combined_new_root.
 /// Binding: aux[0] == hash(tx_hash, hash(combined_old_root, combined_new_root))
-/// State: field[4] changes, balance/cap/other fields unchanged.
+/// State: field[4] changes, balance debited by net_deposit, cap/other fields unchanged.
 pub fn execute_atomic_queue_tx(env: &mut impl EffectEnv) {
     let tx_hash_val = env.read_param(param::ATOMIC_TX_HASH);
     let combined_old = env.read_param(param::ATOMIC_TX_COMBINED_OLD_ROOT);
     let combined_new = env.read_param(param::ATOMIC_TX_COMBINED_NEW_ROOT);
+    let net_deposit = env.read_param(param::ATOMIC_TX_NET_DEPOSIT);
 
     // field[4] must equal combined_old_root before.
     let old_f4 = env.read_state_before(state::FIELD_BASE + 4);
@@ -1074,8 +1085,9 @@ pub fn execute_atomic_queue_tx(env: &mut impl EffectEnv) {
     let aux_binding = env.read_aux(0);
     env.assert_eq(aux_binding, expected_binding);
 
-    // Balance unchanged.
-    env.assert_balance_unchanged();
+    // Balance debit by net_deposit: new_bal_lo = old_bal_lo - net_deposit.
+    // net_deposit == 0 means no balance change (backward compatible).
+    env.assert_balance_debit(net_deposit);
 
     // Cap root unchanged.
     env.assert_cap_unchanged();

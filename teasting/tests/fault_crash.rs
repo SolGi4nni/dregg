@@ -303,12 +303,12 @@ fn test_gc_crash_pending_drops() {
     let real_fed_b_id = harness.federation_id(1);
     let pending_drops = vec![
         WireMessage::DropRemoteRef {
-            from_federation: real_fed_b_id.0,
+            from_strand: real_fed_b_id.0,
             cell_id: cells[0].0,
             session_epoch: 0,
         },
         WireMessage::DropRemoteRef {
-            from_federation: real_fed_b_id.0,
+            from_strand: real_fed_b_id.0,
             cell_id: cells[2].0,
             session_epoch: 0,
         },

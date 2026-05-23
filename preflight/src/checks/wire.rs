@@ -70,7 +70,8 @@ fn check_peer_role_classification() -> Result<(), String> {
     let anonymous = PeerRole::Anonymous;
     let light = PeerRole::LightClient;
     let captp = PeerRole::CapTpPeer {
-        federation_id: [1u8; 32],
+        peer_strand: [1u8; 32],
+        group_id: None,
     };
     let member = PeerRole::Member {
         participant_key: [2u8; 32],

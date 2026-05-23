@@ -1,6 +1,6 @@
 //! DFA routing checks: compilation, classification, governance.
 
-use pyana_captp::GroupId;
+use pyana_captp::FederationId as GroupId;
 use pyana_types::CellId;
 use pyana_wire::dfa_router::{
     GovernanceProof, GovernedRouter, RouteTarget, Router, compile_routes,

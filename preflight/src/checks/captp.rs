@@ -1,6 +1,6 @@
 //! CapTP subsystem checks: swiss table, session lifecycle, handoff, pipeline, store-and-forward.
 
-use pyana_captp::GroupId;
+use pyana_captp::FederationId as GroupId;
 use pyana_captp::handoff::HandoffCertificate;
 use pyana_captp::pipeline::PipelineRegistry;
 use pyana_captp::session::CapSession;

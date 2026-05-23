@@ -469,8 +469,12 @@ pub struct SubAgent {
     pub parent: PublicKey,
     /// The domain this sub-agent operates in.
     pub domain: String,
-    /// The federation ID inherited from the parent runtime.
-    /// Used for signing messages with the correct federation context.
+    /// The federation/group ID inherited from the parent runtime.
+    ///
+    /// In the unified lace model, this is equivalent to a `GroupId` (the
+    /// reference group this agent belongs to). Used for signing messages
+    /// with the correct group context. The field name is preserved for
+    /// backward compatibility; semantically it is a group identifier.
     pub federation_id: [u8; 32],
     /// Shared ledger with the parent.
     ledger: Arc<Mutex<Ledger>>,

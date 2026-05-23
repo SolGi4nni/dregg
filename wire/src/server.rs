@@ -117,40 +117,34 @@ impl ProofVerifier for StarkVerifier {
 
 /// A no-op verifier that always accepts proofs without cryptographic checks.
 ///
-/// Only available when the `dev` feature is enabled or in test builds.
-/// Production code should use [`StarkVerifier`] which performs full STARK verification.
-#[cfg(any(test, feature = "dev"))]
+/// Useful for testing, local development, or scenarios where proof verification
+/// is handled elsewhere. Production deployments should use [`StarkVerifier`].
 #[derive(Clone, Debug)]
 pub struct NoopVerifier;
 
-#[cfg(any(test, feature = "dev"))]
 impl ProofVerifier for NoopVerifier {
     fn verify(&self, _proof_bytes: &[u8], _action: &str, _resource: &str) -> Result<bool, String> {
         Ok(true)
     }
 }
 
-/// A verifier that always rejects. Available only for testing.
-#[cfg(any(test, feature = "dev"))]
+/// A verifier that always rejects all proofs unconditionally.
 #[derive(Clone, Debug)]
 pub struct RejectAllVerifier;
 
-#[cfg(any(test, feature = "dev"))]
 impl ProofVerifier for RejectAllVerifier {
     fn verify(&self, _proof_bytes: &[u8], _action: &str, _resource: &str) -> Result<bool, String> {
         Ok(false)
     }
 }
 
-/// A verifier that requires a minimum proof size. Available only for testing
+/// A verifier that requires a minimum proof size. Useful for testing
 /// transport framing without real crypto.
-#[cfg(any(test, feature = "dev"))]
 #[derive(Clone, Debug)]
 pub struct MinSizeVerifier {
     pub min_bytes: usize,
 }
 
-#[cfg(any(test, feature = "dev"))]
 impl ProofVerifier for MinSizeVerifier {
     fn verify(&self, proof_bytes: &[u8], _action: &str, _resource: &str) -> Result<bool, String> {
         Ok(proof_bytes.len() >= self.min_bytes)
@@ -304,7 +298,6 @@ impl SiloConfig {
 
 /// Legacy type alias retained for source compatibility in tests.
 /// New code should use `SiloConfig::with_verifier()` directly.
-#[cfg(any(test, feature = "dev"))]
 #[derive(Clone, Debug)]
 pub enum VerificationMode {
     /// Always accept. Equivalent to `NoopVerifier`.
@@ -318,7 +311,6 @@ pub enum VerificationMode {
     MinProofSize(usize),
 }
 
-#[cfg(any(test, feature = "dev"))]
 impl SiloConfig {
     /// Convenience: set verifier from a legacy VerificationMode.
     #[allow(deprecated)]

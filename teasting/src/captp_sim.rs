@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 
-use pyana_captp::{CapSession, ExportGcManager, GroupId, ImportGcManager, PyanaUri, SwissTable};
+use pyana_captp::{CapSession, ExportGcManager, FederationId as GroupId, ImportGcManager, PyanaUri, SwissTable};
 use pyana_cell::AuthRequired;
 use pyana_types::CellId;
 use pyana_wire::message::WireMessage;
@@ -68,11 +68,11 @@ impl SimCapTpSession {
 
         // Simulate the CapHello exchange
         sim.a_to_b.push_back(WireMessage::CapHello {
-            federation_id: fed_a_id.0,
+            group_id: fed_a_id.0,
             initial_exports: vec![],
         });
         sim.b_to_a.push_back(WireMessage::CapHello {
-            federation_id: fed_b_id.0,
+            group_id: fed_b_id.0,
             initial_exports: vec![],
         });
 
@@ -247,11 +247,11 @@ impl SimCapTpSession {
                 }
             }
             WireMessage::DropRemoteRef {
-                from_federation,
+                from_strand,
                 cell_id,
                 session_epoch: _,
             } => {
-                let fed_id = GroupId(*from_federation);
+                let fed_id = GroupId(*from_strand);
                 let cell = CellId(*cell_id);
                 self.import_gc_b.local_ref_dropped(fed_id, cell);
                 self.session_b.disconnect_import(&cell);
@@ -273,11 +273,11 @@ impl SimCapTpSession {
                 }
             }
             WireMessage::DropRemoteRef {
-                from_federation,
+                from_strand,
                 cell_id,
                 session_epoch: _,
             } => {
-                let fed_id = GroupId(*from_federation);
+                let fed_id = GroupId(*from_strand);
                 let cell = CellId(*cell_id);
                 self.export_gc_a.process_drop(cell, fed_id);
                 self.session_a.release_export(&cell);
@@ -386,7 +386,7 @@ mod tests {
 
         // B sends a DropRemoteRef to A
         session.send_b_to_a(WireMessage::DropRemoteRef {
-            from_federation: fed_b_id().0,
+            from_strand: fed_b_id().0,
             cell_id: cell.0,
             session_epoch: 0,
         });

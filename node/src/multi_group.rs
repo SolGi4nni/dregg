@@ -37,13 +37,11 @@ use std::collections::HashMap;
 
 use pyana_blocklace::addressing::GroupId;
 use pyana_blocklace::constitution::GovernedReferenceGroup;
-use pyana_blocklace::cross_reference::{
-    BlockPayload, CrossRefPolicy, CrossRefPurpose, DagDeliveredProof,
-};
+use pyana_blocklace::cross_reference::{BlockPayload, CrossRefPolicy, DagDeliveredProof};
 use pyana_blocklace::dissemination::{Disseminator, Subscription};
-use pyana_blocklace::ordering::{OrderingConfig, ReferenceGroup, tau_unified};
+use pyana_blocklace::ordering::{OrderingConfig, tau_unified};
 use pyana_blocklace::{Block, BlockId, Blocklace, NodeKey};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // =============================================================================
 // Multi-Group Node
@@ -360,7 +358,7 @@ impl MultiGroupNode {
     pub fn scan_for_pending_forwards(&self) -> Vec<PendingProofForward> {
         let mut forwards = Vec::new();
 
-        for (idx, group) in self.groups.iter().enumerate() {
+        for (idx, _group) in self.groups.iter().enumerate() {
             let group_id = self.group_ids[idx];
             let ordering = match self.orderings.get(&group_id) {
                 Some(o) => o,
@@ -413,7 +411,7 @@ impl MultiGroupNode {
     ) {
         // A proof is forwarded if its source_block references a block whose
         // creator is in another group we participate in but NOT in the source group.
-        for (idx, group) in self.groups.iter().enumerate() {
+        for (idx, _group) in self.groups.iter().enumerate() {
             let dest_group_id = self.group_ids[idx];
             if dest_group_id == source_group_id {
                 continue; // Don't forward to the same group.
