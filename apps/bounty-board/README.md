@@ -50,8 +50,6 @@ cargo run -p pyana-bounty-board -- --node-url http://127.0.0.1:8420
 # Or provide an explicit federation root (skips node fetch)
 cargo run -p pyana-bounty-board -- --federation-root <64-hex-chars>
 
-# Dev mode (allows starting without a live node; proofs will be rejected)
-cargo run -p pyana-bounty-board -- --dev
 ```
 
 The bounty board will:
@@ -144,7 +142,6 @@ The proof is generated client-side using the `pyana-circuit` crate's ring member
 | `--federation-root` | `PYANA_FEDERATION_ROOT` | (fetched from node) | Explicit federation root (64 hex chars) |
 | `--listen` | `PYANA_LISTEN` | `127.0.0.1:3030` | HTTP listen address |
 | `--sync-interval` | `PYANA_SYNC_INTERVAL` | `30` | Root sync interval in seconds |
-| `--dev` | `PYANA_DEV` | `false` | Allow starting without a live federation |
 
 ## Architecture
 

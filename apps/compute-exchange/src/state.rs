@@ -67,10 +67,6 @@ impl AppState {
         }
     }
 
-    /// Create a new empty state (dev mode: zeroed federation root).
-    pub fn new() -> Self {
-        Self::with_federation_root([0u8; 32])
-    }
 
     // =========================================================================
     // Block height

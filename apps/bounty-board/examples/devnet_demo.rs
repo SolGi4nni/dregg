@@ -19,10 +19,10 @@
 //!
 //! ```bash
 //! # Start the devnet node:
-//! cargo run -p pyana-node -- --dev
+//! cargo run -p pyana-node -- run --data-dir /tmp/devnet
 //!
-//! # Start the bounty board (connects to devnet):
-//! cargo run -p pyana-bounty-board -- --dev
+//! # Start the bounty board (connects to devnet node on default port):
+//! cargo run -p pyana-bounty-board -- --node-url http://127.0.0.1:8420
 //!
 //! # Run this demo:
 //! cargo run -p pyana-bounty-board --example devnet_demo
@@ -251,9 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("    Claim REJECTED: {}", claim_body["error"].as_str().unwrap_or("unknown"));
         println!("    HTTP status: {claim_status}");
         println!();
-        println!("    NOTE: If running in --dev mode with a zeroed federation root,");
-        println!("    membership proofs will be rejected. Ensure the federation root");
-        println!("    is configured (step 3 above) or run with a live devnet.");
+        println!("    NOTE: Ensure the federation root is configured (step 3 above)");
+        println!("    or that the bounty board is connected to a live devnet node.");
         return Ok(());
     }
     println!();
