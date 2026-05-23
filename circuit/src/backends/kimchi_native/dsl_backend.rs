@@ -1248,9 +1248,73 @@ pub fn prove_dsl_kimchi(
 
     // Build gates
     let (gates, pc) = descriptor_to_kimchi_gates(desc)?;
+    let num_rows = gates.len();
 
-    // Build witness
-    let witness = dsl_witness_to_kimchi_matrix(desc, trace, public_inputs)?;
+    // Build witness inline (single source of truth for gate count)
+    let trace_row: Vec<Fp> = trace[0].iter().map(|&v| Fp::from(v as u64)).collect();
+    let next_row_data: Vec<Fp> = if trace.len() > 1 {
+        trace[1].iter().map(|&v| Fp::from(v as u64)).collect()
+    } else {
+        trace_row.clone()
+    };
+    let pi_fp: Vec<Fp> = public_inputs.iter().map(|&v| Fp::from(v as u64)).collect();
+
+    let mut witness: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); num_rows]);
+
+    // Fill public input rows
+    for i in 0..pc.min(num_rows) {
+        witness[0][i] = pi_fp.get(i).copied().unwrap_or(Fp::zero());
+    }
+
+    // Fill constraint rows
+    let mut row_idx = pc;
+    for constraint in &desc.constraints {
+        if row_idx >= num_rows {
+            break;
+        }
+        row_idx = fill_constraint_witness(
+            &mut witness,
+            row_idx,
+            constraint,
+            &trace_row,
+            &next_row_data,
+            &pi_fp,
+        )?;
+    }
+
+    // Debug: verify witness satisfies gates manually before prover
+    #[cfg(debug_assertions)]
+    {
+        let public_check: Vec<Fp> = witness[0][0..pc].to_vec();
+        for (row, gate) in gates.iter().enumerate() {
+            if gate.typ != GateType::Generic {
+                continue;
+            }
+            let get_c = |idx: usize| gate.coeffs.get(idx).copied().unwrap_or(Fp::zero());
+            let w = |col: usize| witness[col][row];
+            let sum1 = get_c(0) * w(0) + get_c(1) * w(1) + get_c(2) * w(2);
+            let mul1 = get_c(3) * w(0) * w(1);
+            let cst1 = get_c(4);
+            let pub1 = public_check.get(row).copied().unwrap_or(Fp::zero());
+            let result1 = sum1 + mul1 + cst1 - pub1;
+            assert!(
+                result1 == Fp::zero(),
+                "Pre-prover check FAILED at row {}: result={:?}, c=[{:?},{:?},{:?},{:?},{:?}], w=[{:?},{:?},{:?}], pub={:?}",
+                row, result1, get_c(0), get_c(1), get_c(2), get_c(3), get_c(4),
+                w(0), w(1), w(2), pub1
+            );
+            // Sub-gate 2
+            let sum2 = get_c(5) * w(3) + get_c(6) * w(4) + get_c(7) * w(5);
+            let mul2 = get_c(8) * w(3) * w(4);
+            let cst2 = get_c(9);
+            let result2 = sum2 + mul2 + cst2;
+            assert!(
+                result2 == Fp::zero(),
+                "Pre-prover sub-gate 2 FAILED at row {}: result={:?}",
+                row, result2
+            );
+        }
+    }
 
     // Create prover index
     let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
@@ -1486,6 +1550,50 @@ mod tests {
         let proof = prove_dsl_circuit(&desc, witness).expect("should prove");
         let v = verify_dsl_proof(&desc, &proof).expect("should verify");
         assert!(v, "direct equality proof must verify");
+    }
+
+    /// Test that uses my gates + manually built witness to isolate the issue.
+    #[test]
+    fn test_my_gates_manual_witness() {
+        use super::super::from_dsl::prove_dsl_circuit;
+
+        // Build a descriptor with 1 PI + 1 equality constraint
+        let desc = DslKimchiDescriptor {
+            name: "eq-debug".to_string(),
+            trace_width: 3,
+            constraints: vec![DslConstraint::Equality { col_a: 0, col_b: 1 }],
+            public_input_count: 1,
+        };
+
+        let (gates, pc) = descriptor_to_kimchi_gates(&desc).unwrap();
+        let num_rows = gates.len();
+
+        // Now build witness manually matching from_dsl's pattern
+        let mut witness: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); num_rows]);
+
+        // PI row (row 0): w[0] = pi_value = 0
+        witness[0][0] = Fp::zero();
+
+        // Equality gate (row 1): w[0] = 42, w[1] = 42
+        witness[0][1] = Fp::from(42u64);
+        witness[1][1] = Fp::from(42u64);
+
+        // Use from_dsl's prove function which takes raw gates + witness
+        let from_dsl_desc = super::super::from_dsl::DslCircuitDescriptor {
+            gates: vec![
+                super::super::from_dsl::DslGate {
+                    typ: super::super::from_dsl::DslGateType::Generic,
+                    coeffs: vec![1, -1, 0, 0, 0],
+                    wires: 2,
+                },
+            ],
+            public_input_count: 1,
+            trace_width: 3,
+        };
+
+        // Prove using from_dsl infrastructure but with my gates
+        let proof = prove_dsl_circuit(&from_dsl_desc, witness);
+        assert!(proof.is_ok(), "Manual witness prove failed: {:?}", proof.err());
     }
 
     /// Build a simple DslKimchiDescriptor equivalent to SovereignTransitionAir:

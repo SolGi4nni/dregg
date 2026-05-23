@@ -1,11 +1,31 @@
-version: '3.8'
+# =============================================================================
+# Full-stack devnet: 3 federation nodes + gallery + discharge-gateway + proxy
+#
+# Usage:
+#   docker compose up -d          # start full stack
+#   docker compose up node-0 -d   # start single node
+#   docker compose logs -f gallery
+#
+# Multi-arch build (for Graviton/ARM64):
+#   docker buildx bake --set *.platform=linux/arm64
+# =============================================================================
 
 services:
+  # ---------------------------------------------------------------------------
+  # Federation nodes (3-node devnet)
+  # ---------------------------------------------------------------------------
   node-0:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: run --data-dir /data --bind 0.0.0.0 --port 8420 --gossip-port 9420 --key-file node-0.key --morpheus --node-index 0 --federation-size 3 --federation-peers node-1:9420,node-2:9420 --enable-pruning --enable-faucet
+      target: node
+    command: >
+      run --data-dir /data
+      --bind 0.0.0.0 --port 8420 --gossip-port 9420
+      --key-file node-0.key
+      --morpheus --node-index 0 --federation-size 3
+      --federation-peers node-1:9420,node-2:9420
+      --enable-pruning --enable-faucet
     volumes:
       - node0-data:/data
       - ./devnet-config/node-0.key:/data/node-0.key:ro
@@ -18,12 +38,23 @@ services:
       - RUST_LOG=info
     networks:
       - devnet
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8420/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   node-1:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: run --data-dir /data --bind 0.0.0.0 --port 8420 --gossip-port 9420 --key-file node-1.key --morpheus --node-index 1 --federation-size 3 --federation-peers node-0:9420,node-2:9420
+      target: node
+    command: >
+      run --data-dir /data
+      --bind 0.0.0.0 --port 8420 --gossip-port 9420
+      --key-file node-1.key
+      --morpheus --node-index 1 --federation-size 3
+      --federation-peers node-0:9420,node-2:9420
     volumes:
       - node1-data:/data
       - ./devnet-config/node-1.key:/data/node-1.key:ro
@@ -36,12 +67,23 @@ services:
       - RUST_LOG=info
     networks:
       - devnet
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8420/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   node-2:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: run --data-dir /data --bind 0.0.0.0 --port 8420 --gossip-port 9420 --key-file node-2.key --morpheus --node-index 2 --federation-size 3 --federation-peers node-0:9420,node-1:9420
+      target: node
+    command: >
+      run --data-dir /data
+      --bind 0.0.0.0 --port 8420 --gossip-port 9420
+      --key-file node-2.key
+      --morpheus --node-index 2 --federation-size 3
+      --federation-peers node-0:9420,node-1:9420
     volumes:
       - node2-data:/data
       - ./devnet-config/node-2.key:/data/node-2.key:ro
@@ -54,7 +96,68 @@ services:
       - RUST_LOG=info
     networks:
       - devnet
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8420/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
+  # ---------------------------------------------------------------------------
+  # Gallery backend
+  # ---------------------------------------------------------------------------
+  gallery:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: gallery
+    command: >
+      --listen 0.0.0.0:3040
+      --frontend /srv/gallery/frontend
+      --node-url http://node-0:8420
+    ports:
+      - "3040:3040"
+    environment:
+      - RUST_LOG=info
+      - PYANA_NODE_URL=http://node-0:8420
+    depends_on:
+      node-0:
+        condition: service_healthy
+    networks:
+      - devnet
+
+  # ---------------------------------------------------------------------------
+  # Discharge gateway (macaroon third-party caveat discharge)
+  # ---------------------------------------------------------------------------
+  discharge-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: discharge-gateway
+    ports:
+      - "8480:8080"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - devnet
+
+  # ---------------------------------------------------------------------------
+  # Reverse proxy (local dev — routes /api to nodes, /gallery to gallery)
+  # ---------------------------------------------------------------------------
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "8400:8400"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - node-0
+      - gallery
+    networks:
+      - devnet
+
+  # ---------------------------------------------------------------------------
+  # Static explorer (existing)
+  # ---------------------------------------------------------------------------
   explorer:
     image: nginx:alpine
     volumes:

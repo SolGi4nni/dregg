@@ -147,21 +147,5 @@ jobs:
             git push origin federation-state
           }
 
-      - name: Check for changes on main
-        id: diff
-        run: |
-          if git diff --quiet site/discovery.json 2>/dev/null; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit and push discovery.json to main
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          git config user.name "pyana-federation[bot]"
-          git config user.email "federation@pyana.dev"
-          git add site/discovery.json
-          git commit -m "chore(federation): update discovery.json [skip ci]"
-          git push origin main
-        continue-on-error: true
+      # Discovery state is pushed ONLY to the federation-state orphan branch.
+      # Never push federation automation to main.

@@ -6358,10 +6358,10 @@ dependencies = [
  "blake3",
  "clap",
  "futures",
+ "getrandom 0.3.4",
  "postcard",
  "pyana-app-framework",
  "pyana-circuit",
- "pyana-sdk",
  "pyana-turn",
  "reqwest",
  "serde",
@@ -6679,11 +6679,13 @@ dependencies = [
  "js-sys",
  "macaroon",
  "postcard",
+ "pyana-bridge",
  "pyana-cell",
  "pyana-circuit",
  "pyana-commit",
  "pyana-coord",
  "pyana-intent",
+ "pyana-sdk",
  "pyana-trace",
  "pyana-turn",
  "pyana-types",
@@ -6693,6 +6695,7 @@ dependencies = [
  "token",
  "wasm-bindgen",
  "web-sys",
+ "x25519-dalek",
 ]
 
 [[package]]

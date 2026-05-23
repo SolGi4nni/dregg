@@ -10,6 +10,20 @@
 //! All proof verification paths perform CRYPTOGRAPHIC verification. Structural checks alone
 //! are NEVER sufficient. The `dev` feature enables a fallback for local testing without a
 //! live federation, but it is never the default.
+//!
+//! # Federation root coherence
+//!
+//! In a multi-validator devnet, different nodes may have slightly different current roots
+//! due to propagation delay or ordering differences. A proof generated against one node's
+//! root might be verified against another node that hasn't yet seen that root update.
+//!
+//! To handle this, [`FederationRootHistory`] maintains a sliding window of recent roots.
+//! Verification accepts a proof that matches ANY root in the window. This provides
+//! tolerance for propagation lag without weakening security (old roots are evicted after
+//! a bounded TTL measured in root updates).
+
+use std::collections::VecDeque;
+use std::time::Instant;
 
 use pyana_app_framework::{PredicateType, PyanaEngine};
 use pyana_circuit::{
@@ -17,6 +31,130 @@ use pyana_circuit::{
 };
 
 use crate::QualificationRequirement;
+
+// =============================================================================
+// Federation Root History
+// =============================================================================
+
+/// Default number of historical roots to retain.
+/// With 30-second sync intervals, 16 roots covers ~8 minutes of lag tolerance.
+const DEFAULT_ROOT_HISTORY_DEPTH: usize = 16;
+
+/// A sliding window of recent federation roots for multi-validator coherence.
+///
+/// In a multi-node federation, roots propagate with non-zero latency. A worker
+/// may generate a proof against root R_n while the verifier is still on R_{n-1}
+/// (or vice versa). By accepting any root from the recent history, slight lag
+/// between nodes does not cause spurious proof rejections.
+///
+/// # Security properties
+///
+/// - The window is bounded: only the most recent `depth` roots are accepted.
+/// - Roots are ordered by insertion time (newest first for fast-path matching).
+/// - The zero root is never stored (invalid federation state).
+/// - Duplicate roots are not re-inserted (prevents history pollution).
+#[derive(Clone, Debug)]
+pub struct FederationRootHistory {
+    /// Recent roots, ordered newest-first.
+    roots: VecDeque<RootEntry>,
+    /// Maximum number of roots to retain.
+    depth: usize,
+}
+
+/// A single entry in the root history.
+#[derive(Clone, Debug)]
+struct RootEntry {
+    root: [u8; 32],
+    /// When this root was recorded locally.
+    recorded_at: Instant,
+}
+
+impl FederationRootHistory {
+    /// Create a new root history with the default depth.
+    pub fn new() -> Self {
+        Self {
+            roots: VecDeque::new(),
+            depth: DEFAULT_ROOT_HISTORY_DEPTH,
+        }
+    }
+
+    /// Create a new root history with a specific depth.
+    pub fn with_depth(depth: usize) -> Self {
+        Self {
+            roots: VecDeque::new(),
+            depth: depth.max(1),
+        }
+    }
+
+    /// Create a root history initialized with a single root.
+    pub fn with_initial_root(root: [u8; 32]) -> Self {
+        let mut history = Self::new();
+        history.push(root);
+        history
+    }
+
+    /// Push a new root into the history.
+    ///
+    /// If the root is all-zeroes or already present, this is a no-op.
+    /// Oldest entries are evicted when the window exceeds `depth`.
+    pub fn push(&mut self, root: [u8; 32]) {
+        // Reject zero root.
+        if root == [0u8; 32] {
+            return;
+        }
+
+        // Deduplicate: don't re-insert a root already in the window.
+        if self.roots.iter().any(|entry| entry.root == root) {
+            return;
+        }
+
+        // Insert at the front (newest first).
+        self.roots.push_front(RootEntry {
+            root,
+            recorded_at: Instant::now(),
+        });
+
+        // Evict oldest if over capacity.
+        while self.roots.len() > self.depth {
+            self.roots.pop_back();
+        }
+    }
+
+    /// Check whether a given root is in the history window.
+    pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
+        self.roots.iter().any(|entry| &entry.root == root)
+    }
+
+    /// Get the current (most recently pushed) root, if any.
+    pub fn current(&self) -> Option<[u8; 32]> {
+        self.roots.front().map(|entry| entry.root)
+    }
+
+    /// Get all known roots (newest first), for verification attempts.
+    pub fn known_roots(&self) -> Vec<[u8; 32]> {
+        self.roots.iter().map(|entry| entry.root).collect()
+    }
+
+    /// Return the number of roots currently stored.
+    pub fn len(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Whether the history is empty.
+    pub fn is_empty(&self) -> bool {
+        self.roots.is_empty()
+    }
+
+    /// The configured maximum depth.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Age of the most recent root entry (time since it was recorded).
+    pub fn current_age(&self) -> Option<std::time::Duration> {
+        self.roots.front().map(|entry| entry.recorded_at.elapsed())
+    }
+}
 
 /// Error type for qualification verification.
 #[derive(Debug, Clone)]

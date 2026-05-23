@@ -1,0 +1,40 @@
+//! Standalone pyana-gallery server binary.
+
+use std::net::SocketAddr;
+
+use clap::Parser;
+use pyana_gallery::server::{ServerConfig, start_server};
+
+#[derive(Parser)]
+#[command(name = "pyana-gallery", about = "Federated art gallery server")]
+struct Cli {
+    /// Listen address (host:port).
+    #[arg(long, default_value = "0.0.0.0:3040")]
+    listen: SocketAddr,
+
+    /// Path to frontend static files directory.
+    #[arg(long, default_value = "/srv/gallery/frontend")]
+    frontend: String,
+
+    /// Node API URL for the backing pyana node.
+    #[arg(long, env = "PYANA_NODE_URL", default_value = "http://node-0:8420")]
+    node_url: String,
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+
+    let cli = Cli::parse();
+
+    let config = ServerConfig {
+        listen: cli.listen,
+        frontend_path: Some(cli.frontend),
+    };
+
+    let addr = start_server(config).await;
+    tracing::info!(%addr, node_url = %cli.node_url, "gallery server running");
+
+    // Block forever (server runs in background task).
+    std::future::pending::<()>().await;
+}

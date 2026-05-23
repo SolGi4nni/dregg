@@ -1,0 +1,27 @@
+# Local dev reverse proxy for the pyana devnet stack.
+# Accessible at http://localhost:8400
+
+:8400 {
+    # Federation node API (round-robin across all 3 nodes)
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy node-0:8420 node-1:8420 node-2:8420
+    }
+
+    # Gallery backend
+    handle /gallery/* {
+        uri strip_prefix /gallery
+        reverse_proxy gallery:3040
+    }
+
+    # Discharge gateway
+    handle /discharge/* {
+        uri strip_prefix /discharge
+        reverse_proxy discharge-gateway:8080
+    }
+
+    # Default: proxy to gallery frontend
+    handle {
+        reverse_proxy gallery:3040
+    }
+}

@@ -24,14 +24,16 @@
 //! | 10  | field0_range_lo   | value - min (non-negative witness)       |
 //! | 11  | field0_range_hi   | max - value (non-negative witness)       |
 //!
-//! # Constraints
+//! # Constraints (combined with random alpha)
 //!
-//! - C1: `child_vk_lo` matches expected (PI binding)
-//! - C2: `child_vk_hi` matches expected (PI binding)
-//! - C3: `budget_diff == budget_limit - creation_counter` (counter check)
-//! - C4: `budget_diff * budget_diff_bit == budget_diff` (non-negative: range bit)
-//! - C5: `field0_range_lo == field0_value - field0_min` (lower bound)
-//! - C6: `field0_range_hi == field0_max - field0_value` (upper bound)
+//! - C1: `factory_vk_lo` matches PI
+//! - C2: `factory_vk_hi` matches PI
+//! - C3: `child_vk_lo` matches PI
+//! - C4: `child_vk_hi` matches PI
+//! - C5: `budget_diff == budget_limit - creation_counter`
+//! - C6: `creation_counter` matches PI
+//! - C7: `field0_range_lo == field0_value - field0_min`
+//! - C8: `field0_range_hi == field0_max - field0_value`
 //!
 //! # Public Inputs (6 BabyBear elements)
 //!
@@ -39,7 +41,7 @@
 
 use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::stark::{self, StarkAir, StarkProof, Trace};
+use pyana_circuit::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Width of the factory creation proof trace.
 pub const FACTORY_TRACE_WIDTH: usize = 12;
@@ -59,82 +61,86 @@ impl StarkAir for FactoryCreationAir {
         2
     }
 
-    fn num_public_inputs(&self) -> usize {
-        FACTORY_PUBLIC_INPUTS
-    }
-
     fn air_name(&self) -> &'static str {
         "pyana-factory-creation-v1"
     }
 
-    fn evaluate_constraints(
-        &self,
-        trace_row: &[u32],
-        public_inputs: &[BabyBear],
-        _next_row: Option<&[u32]>,
-    ) -> Vec<BabyBear> {
-        let p = BABYBEAR_P as u64;
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
 
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
         // Columns from trace.
-        let factory_vk_lo = trace_row[0] as u64;
-        let factory_vk_hi = trace_row[1] as u64;
-        let child_vk_lo = trace_row[2] as u64;
-        let child_vk_hi = trace_row[3] as u64;
-        let creation_counter = trace_row[4] as u64;
-        let budget_limit = trace_row[5] as u64;
-        let budget_diff = trace_row[6] as u64;
-        let field0_value = trace_row[7] as u64;
-        let field0_min = trace_row[8] as u64;
-        let field0_max = trace_row[9] as u64;
-        let field0_range_lo = trace_row[10] as u64;
-        let field0_range_hi = trace_row[11] as u64;
+        let factory_vk_lo = local[0];
+        let factory_vk_hi = local[1];
+        let child_vk_lo = local[2];
+        let child_vk_hi = local[3];
+        let creation_counter = local[4];
+        let budget_limit = local[5];
+        let budget_diff = local[6];
+        let field0_value = local[7];
+        let field0_min = local[8];
+        let field0_max = local[9];
+        let field0_range_lo = local[10];
+        let field0_range_hi = local[11];
 
         // Public inputs.
-        let pi_factory_vk_lo = public_inputs[0].0 as u64;
-        let pi_factory_vk_hi = public_inputs[1].0 as u64;
-        let pi_child_vk_lo = public_inputs[2].0 as u64;
-        let pi_child_vk_hi = public_inputs[3].0 as u64;
-        let pi_creation_counter = public_inputs[4].0 as u64;
-        let pi_budget_limit = public_inputs[5].0 as u64;
+        let pi_factory_vk_lo = public_inputs[0];
+        let pi_factory_vk_hi = public_inputs[1];
+        let pi_child_vk_lo = public_inputs[2];
+        let pi_child_vk_hi = public_inputs[3];
+        let pi_creation_counter = public_inputs[4];
+        let _pi_budget_limit = public_inputs[5];
 
-        let mut constraints = Vec::with_capacity(8);
+        // Combine constraints with powers of alpha.
+        let c1 = factory_vk_lo - pi_factory_vk_lo;
+        let c2 = factory_vk_hi - pi_factory_vk_hi;
+        let c3 = child_vk_lo - pi_child_vk_lo;
+        let c4 = child_vk_hi - pi_child_vk_hi;
+        let c5 = budget_diff - (budget_limit - creation_counter);
+        let c6 = creation_counter - pi_creation_counter;
+        let c7 = field0_range_lo - (field0_value - field0_min);
+        let c8 = field0_range_hi - (field0_max - field0_value);
 
-        // C1: factory_vk_lo matches PI.
-        let c1 = (factory_vk_lo + p - pi_factory_vk_lo) % p;
-        constraints.push(BabyBear::new(c1 as u32));
+        // Random linear combination.
+        let mut result = c1;
+        let mut alpha_power = alpha;
+        result = result + alpha_power * c2;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c3;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c4;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c5;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c6;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c7;
+        alpha_power = alpha_power * alpha;
+        result = result + alpha_power * c8;
 
-        // C2: factory_vk_hi matches PI.
-        let c2 = (factory_vk_hi + p - pi_factory_vk_hi) % p;
-        constraints.push(BabyBear::new(c2 as u32));
+        result
+    }
 
-        // C3: child_vk_lo matches PI.
-        let c3 = (child_vk_lo + p - pi_child_vk_lo) % p;
-        constraints.push(BabyBear::new(c3 as u32));
-
-        // C4: child_vk_hi matches PI.
-        let c4 = (child_vk_hi + p - pi_child_vk_hi) % p;
-        constraints.push(BabyBear::new(c4 as u32));
-
-        // C5: budget_diff == budget_limit - creation_counter.
-        let expected_diff = (budget_limit + p - creation_counter) % p;
-        let c5 = (budget_diff + p - expected_diff) % p;
-        constraints.push(BabyBear::new(c5 as u32));
-
-        // C6: creation_counter matches PI (binding).
-        let c6 = (creation_counter + p - pi_creation_counter) % p;
-        constraints.push(BabyBear::new(c6 as u32));
-
-        // C7: field0_range_lo == field0_value - field0_min (lower bound).
-        let expected_lo = (field0_value + p - field0_min) % p;
-        let c7 = (field0_range_lo + p - expected_lo) % p;
-        constraints.push(BabyBear::new(c7 as u32));
-
-        // C8: field0_range_hi == field0_max - field0_value (upper bound).
-        let expected_hi = (field0_max + p - field0_value) % p;
-        let c8 = (field0_range_hi + p - expected_hi) % p;
-        constraints.push(BabyBear::new(c8 as u32));
-
-        constraints
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        vec![
+            BoundaryConstraint { row: 0, col: 0, value: public_inputs[0] },
+            BoundaryConstraint { row: 0, col: 1, value: public_inputs[1] },
+            BoundaryConstraint { row: 0, col: 2, value: public_inputs[2] },
+            BoundaryConstraint { row: 0, col: 3, value: public_inputs[3] },
+            BoundaryConstraint { row: 0, col: 4, value: public_inputs[4] },
+            BoundaryConstraint { row: 0, col: 5, value: public_inputs[5] },
+        ]
     }
 }
 
@@ -158,36 +164,28 @@ pub struct FactoryCreationWitness {
 }
 
 /// Generate a trace for the factory creation circuit.
-pub fn generate_factory_creation_trace(witness: &FactoryCreationWitness) -> Trace {
-    let p = BABYBEAR_P as u64;
-
-    let budget_diff =
-        ((witness.budget_limit as u64 + p - witness.creation_counter as u64) % p) as u32;
-    let field0_range_lo =
-        ((witness.field0_value as u64 + p - witness.field0_min as u64) % p) as u32;
-    let field0_range_hi =
-        ((witness.field0_max as u64 + p - witness.field0_value as u64) % p) as u32;
+pub fn generate_factory_creation_trace(witness: &FactoryCreationWitness) -> Vec<Vec<BabyBear>> {
+    let budget_diff = BabyBear::new(witness.budget_limit) - BabyBear::new(witness.creation_counter);
+    let field0_range_lo = BabyBear::new(witness.field0_value) - BabyBear::new(witness.field0_min);
+    let field0_range_hi = BabyBear::new(witness.field0_max) - BabyBear::new(witness.field0_value);
 
     // Build 2 rows (minimum power-of-two for the STARK prover).
     let row = vec![
-        witness.factory_vk_lo,
-        witness.factory_vk_hi,
-        witness.child_vk_lo,
-        witness.child_vk_hi,
-        witness.creation_counter,
-        witness.budget_limit,
+        BabyBear::new(witness.factory_vk_lo),
+        BabyBear::new(witness.factory_vk_hi),
+        BabyBear::new(witness.child_vk_lo),
+        BabyBear::new(witness.child_vk_hi),
+        BabyBear::new(witness.creation_counter),
+        BabyBear::new(witness.budget_limit),
         budget_diff,
-        witness.field0_value,
-        witness.field0_min,
-        witness.field0_max,
+        BabyBear::new(witness.field0_value),
+        BabyBear::new(witness.field0_min),
+        BabyBear::new(witness.field0_max),
         field0_range_lo,
         field0_range_hi,
     ];
 
-    Trace {
-        width: FACTORY_TRACE_WIDTH,
-        rows: vec![row.clone(), row],
-    }
+    vec![row.clone(), row]
 }
 
 /// Generate public inputs for the factory creation circuit.
@@ -233,7 +231,7 @@ pub fn vk_to_lo_hi(vk: &[u8; 32]) -> (u32, u32) {
 // Proves that a child VK was correctly derived from a factory VK and parameter hash.
 //
 // The derivation is: derived_vk = Hash(factory_vk, param_hash)
-// where param_hash = Hash(param_0, param_1, ..., param_n)
+// where param_hash = Hash(param_0, param_1, param_2, param_3)
 //
 // # Trace Layout (2 rows, width = 10)
 //
@@ -254,7 +252,7 @@ pub fn vk_to_lo_hi(vk: &[u8; 32]) -> (u32, u32) {
 //
 // - C1: param_hash == hash_fact(param_0, [param_1, param_2, param_3])
 // - C2: derivation_hash == hash_fact(factory_vk_lo, [factory_vk_hi, param_hash])
-// - C3: derived_vk_lo == derivation_hash (low bits binding via PI)
+// - C3: derived_vk_lo == derivation_hash (low bits binding)
 // - C4: factory_vk_lo matches PI
 // - C5: factory_vk_hi matches PI
 // - C6: derived_vk_lo matches PI
@@ -283,88 +281,96 @@ impl StarkAir for FactoryVkDerivationAir {
         2
     }
 
-    fn num_public_inputs(&self) -> usize {
-        VK_DERIVATION_PUBLIC_INPUTS
-    }
-
     fn air_name(&self) -> &'static str {
         "pyana-factory-vk-derivation-v1"
     }
 
-    fn evaluate_constraints(
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+
+    fn eval_constraints(
         &self,
-        trace_row: &[u32],
+        local: &[BabyBear],
+        _next: &[BabyBear],
         public_inputs: &[BabyBear],
-        _next_row: Option<&[u32]>,
-    ) -> Vec<BabyBear> {
-        let p = BABYBEAR_P as u64;
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let factory_vk_lo = local[0];
+        let factory_vk_hi = local[1];
+        let param_0 = local[2];
+        let param_1 = local[3];
+        let param_2 = local[4];
+        let param_3 = local[5];
+        let param_hash_col = local[6];
+        let derived_vk_lo = local[7];
+        let derived_vk_hi = local[8];
+        let derivation_hash_col = local[9];
 
-        // Columns from trace.
-        let factory_vk_lo = trace_row[0] as u64;
-        let factory_vk_hi = trace_row[1] as u64;
-        let param_0 = trace_row[2];
-        let param_1 = trace_row[3];
-        let param_2 = trace_row[4];
-        let param_3 = trace_row[5];
-        let param_hash_col = trace_row[6];
-        let derived_vk_lo = trace_row[7] as u64;
-        let derived_vk_hi = trace_row[8] as u64;
-        let derivation_hash_col = trace_row[9];
-
-        // Public inputs.
-        let pi_factory_vk_lo = public_inputs[0].0 as u64;
-        let pi_factory_vk_hi = public_inputs[1].0 as u64;
-        let pi_derived_vk_lo = public_inputs[2].0 as u64;
-        let pi_derived_vk_hi = public_inputs[3].0 as u64;
-        let pi_param_hash = public_inputs[4].0 as u64;
-
-        let mut constraints = Vec::with_capacity(7);
+        let pi_factory_vk_lo = public_inputs[0];
+        let pi_factory_vk_hi = public_inputs[1];
+        let pi_derived_vk_lo = public_inputs[2];
+        let pi_derived_vk_hi = public_inputs[3];
+        let pi_param_hash = public_inputs[4];
 
         // C1: param_hash == hash_fact(param_0, [param_1, param_2, param_3])
-        let expected_param_hash = hash_fact(
-            BabyBear::new(param_0),
-            &[
-                BabyBear::new(param_1),
-                BabyBear::new(param_2),
-                BabyBear::new(param_3),
-            ],
-        );
-        let c1 = (param_hash_col as u64 + p - expected_param_hash.0 as u64) % p;
-        constraints.push(BabyBear::new(c1 as u32));
+        let expected_param_hash = hash_fact(param_0, &[param_1, param_2, param_3]);
+        let c1 = param_hash_col - expected_param_hash;
 
         // C2: derivation_hash == hash_fact(factory_vk_lo, [factory_vk_hi, param_hash])
-        let expected_derivation = hash_fact(
-            BabyBear::new(trace_row[0]),
-            &[BabyBear::new(trace_row[1]), BabyBear::new(param_hash_col)],
-        );
-        let c2 = (derivation_hash_col as u64 + p - expected_derivation.0 as u64) % p;
-        constraints.push(BabyBear::new(c2 as u32));
+        let expected_derivation = hash_fact(factory_vk_lo, &[factory_vk_hi, param_hash_col]);
+        let c2 = derivation_hash_col - expected_derivation;
 
-        // C3: derived_vk_lo == derivation_hash (the low bits of derived VK come from the hash)
-        let c3 = (derived_vk_lo + p - derivation_hash_col as u64) % p;
-        constraints.push(BabyBear::new(c3 as u32));
+        // C3: derived_vk_lo == derivation_hash
+        let c3 = derived_vk_lo - derivation_hash_col;
 
         // C4: factory_vk_lo matches PI
-        let c4 = (factory_vk_lo + p - pi_factory_vk_lo) % p;
-        constraints.push(BabyBear::new(c4 as u32));
+        let c4 = factory_vk_lo - pi_factory_vk_lo;
 
         // C5: factory_vk_hi matches PI
-        let c5 = (factory_vk_hi + p - pi_factory_vk_hi) % p;
-        constraints.push(BabyBear::new(c5 as u32));
+        let c5 = factory_vk_hi - pi_factory_vk_hi;
 
         // C6: derived_vk_lo matches PI
-        let c6 = (derived_vk_lo + p - pi_derived_vk_lo) % p;
-        constraints.push(BabyBear::new(c6 as u32));
+        let c6 = derived_vk_lo - pi_derived_vk_lo;
 
         // C7: derived_vk_hi matches PI
-        let c7 = (derived_vk_hi + p - pi_derived_vk_hi) % p;
-        constraints.push(BabyBear::new(c7 as u32));
+        let c7 = derived_vk_hi - pi_derived_vk_hi;
 
         // C8: param_hash matches PI
-        let c8 = (param_hash_col as u64 + p - pi_param_hash) % p;
-        constraints.push(BabyBear::new(c8 as u32));
+        let c8 = param_hash_col - pi_param_hash;
 
-        constraints
+        // Combine with alpha powers.
+        let mut result = c1;
+        let mut ap = alpha;
+        result = result + ap * c2;
+        ap = ap * alpha;
+        result = result + ap * c3;
+        ap = ap * alpha;
+        result = result + ap * c4;
+        ap = ap * alpha;
+        result = result + ap * c5;
+        ap = ap * alpha;
+        result = result + ap * c6;
+        ap = ap * alpha;
+        result = result + ap * c7;
+        ap = ap * alpha;
+        result = result + ap * c8;
+
+        result
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        vec![
+            BoundaryConstraint { row: 0, col: 0, value: public_inputs[0] },
+            BoundaryConstraint { row: 0, col: 1, value: public_inputs[1] },
+            BoundaryConstraint { row: 0, col: 7, value: public_inputs[2] },
+            BoundaryConstraint { row: 0, col: 8, value: public_inputs[3] },
+            BoundaryConstraint { row: 0, col: 6, value: public_inputs[4] },
+        ]
     }
 }
 
@@ -378,74 +384,57 @@ pub struct VkDerivationWitness {
 }
 
 /// Generate a trace for the VK derivation circuit.
-pub fn generate_vk_derivation_trace(witness: &VkDerivationWitness) -> Trace {
+pub fn generate_vk_derivation_trace(witness: &VkDerivationWitness) -> Vec<Vec<BabyBear>> {
+    let factory_vk_lo = BabyBear::new(witness.factory_vk_lo);
+    let factory_vk_hi = BabyBear::new(witness.factory_vk_hi);
+    let param_0 = BabyBear::new(witness.params[0]);
+    let param_1 = BabyBear::new(witness.params[1]);
+    let param_2 = BabyBear::new(witness.params[2]);
+    let param_3 = BabyBear::new(witness.params[3]);
+
     // Compute param_hash = hash_fact(param_0, [param_1, param_2, param_3])
-    let param_hash = hash_fact(
-        BabyBear::new(witness.params[0]),
-        &[
-            BabyBear::new(witness.params[1]),
-            BabyBear::new(witness.params[2]),
-            BabyBear::new(witness.params[3]),
-        ],
-    );
+    let param_hash = hash_fact(param_0, &[param_1, param_2, param_3]);
 
     // Compute derivation_hash = hash_fact(factory_vk_lo, [factory_vk_hi, param_hash])
-    let derivation_hash = hash_fact(
-        BabyBear::new(witness.factory_vk_lo),
-        &[BabyBear::new(witness.factory_vk_hi), param_hash],
-    );
+    let derivation_hash = hash_fact(factory_vk_lo, &[factory_vk_hi, param_hash]);
 
     // derived_vk_lo = derivation_hash (field element is the low bits)
-    let derived_vk_lo = derivation_hash.0;
+    let derived_vk_lo = derivation_hash;
 
     // derived_vk_hi: compute a second hash for the high bits
-    // Use hash_fact(derivation_hash, [1]) as a domain-separated high-bits derivation
-    let derived_vk_hi_hash = hash_fact(derivation_hash, &[BabyBear::new(1)]);
-    let derived_vk_hi = derived_vk_hi_hash.0;
+    let derived_vk_hi = hash_fact(derivation_hash, &[BabyBear::new(1)]);
 
     let row = vec![
-        witness.factory_vk_lo,
-        witness.factory_vk_hi,
-        witness.params[0],
-        witness.params[1],
-        witness.params[2],
-        witness.params[3],
-        param_hash.0,
+        factory_vk_lo,
+        factory_vk_hi,
+        param_0,
+        param_1,
+        param_2,
+        param_3,
+        param_hash,
         derived_vk_lo,
         derived_vk_hi,
-        derivation_hash.0,
+        derivation_hash,
     ];
 
-    Trace {
-        width: VK_DERIVATION_TRACE_WIDTH,
-        rows: vec![row.clone(), row],
-    }
+    vec![row.clone(), row]
 }
 
 /// Generate public inputs for the VK derivation circuit.
 pub fn vk_derivation_public_inputs(witness: &VkDerivationWitness) -> Vec<BabyBear> {
-    let param_hash = hash_fact(
-        BabyBear::new(witness.params[0]),
-        &[
-            BabyBear::new(witness.params[1]),
-            BabyBear::new(witness.params[2]),
-            BabyBear::new(witness.params[3]),
-        ],
-    );
-    let derivation_hash = hash_fact(
-        BabyBear::new(witness.factory_vk_lo),
-        &[BabyBear::new(witness.factory_vk_hi), param_hash],
-    );
-    let derived_vk_lo = derivation_hash.0;
-    let derived_vk_hi = hash_fact(derivation_hash, &[BabyBear::new(1)]).0;
+    let factory_vk_lo = BabyBear::new(witness.factory_vk_lo);
+    let factory_vk_hi = BabyBear::new(witness.factory_vk_hi);
+    let param_0 = BabyBear::new(witness.params[0]);
+    let param_1 = BabyBear::new(witness.params[1]);
+    let param_2 = BabyBear::new(witness.params[2]);
+    let param_3 = BabyBear::new(witness.params[3]);
 
-    vec![
-        BabyBear::new(witness.factory_vk_lo),
-        BabyBear::new(witness.factory_vk_hi),
-        BabyBear::new(derived_vk_lo),
-        BabyBear::new(derived_vk_hi),
-        param_hash,
-    ]
+    let param_hash = hash_fact(param_0, &[param_1, param_2, param_3]);
+    let derivation_hash = hash_fact(factory_vk_lo, &[factory_vk_hi, param_hash]);
+    let derived_vk_lo = derivation_hash;
+    let derived_vk_hi = hash_fact(derivation_hash, &[BabyBear::new(1)]);
+
+    vec![factory_vk_lo, factory_vk_hi, derived_vk_lo, derived_vk_hi, param_hash]
 }
 
 /// Prove a factory VK derivation.
@@ -463,12 +452,12 @@ pub fn verify_vk_derivation(proof: &StarkProof, public_inputs: &[BabyBear]) -> R
 }
 
 // ============================================================================
-// Factory VK From-Set (Merkle Membership) AIR
+// Factory VK From-Set (Membership) AIR
 // ============================================================================
 //
-// Proves that a child VK is a member of an approved set using hash_fact-based
-// Merkle membership. For small sets, we use a direct equality check approach:
-// the trace contains the approved VKs and proves the claimed VK equals one of them.
+// Proves that a child VK is a member of an approved set.
+// For small sets, uses a direct equality check: the prover provides the matching
+// VK from the set, and the constraint proves claimed == match.
 //
 // # Trace Layout (2 rows, width = 6)
 //
@@ -481,19 +470,9 @@ pub fn verify_vk_derivation(proof: &StarkProof, public_inputs: &[BabyBear]) -> R
 // | 4   | diff_lo       | claimed_vk_lo - match_vk_lo (must be 0)        |
 // | 5   | diff_hi       | claimed_vk_hi - match_vk_hi (must be 0)        |
 //
-// # Constraints
-//
-// - C1: diff_lo == claimed_vk_lo - match_vk_lo
-// - C2: diff_hi == claimed_vk_hi - match_vk_hi
-// - C3: diff_lo == 0 (proves match)
-// - C4: diff_hi == 0 (proves match)
-// - C5: claimed_vk_lo matches PI
-// - C6: claimed_vk_hi matches PI
-//
 // # Public Inputs (4 BabyBear elements)
 //
 // [claimed_vk_lo, claimed_vk_hi, set_root_lo, set_root_hi]
-// where set_root = hash of all approved VKs (binding the set).
 
 /// Width of the from-set membership proof trace.
 pub const FROM_SET_TRACE_WIDTH: usize = 6;
@@ -513,65 +492,79 @@ impl StarkAir for FactoryVkFromSetAir {
         2
     }
 
-    fn num_public_inputs(&self) -> usize {
-        FROM_SET_PUBLIC_INPUTS
-    }
-
     fn air_name(&self) -> &'static str {
         "pyana-factory-vk-from-set-v1"
     }
 
-    fn evaluate_constraints(
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+
+    fn eval_constraints(
         &self,
-        trace_row: &[u32],
+        local: &[BabyBear],
+        _next: &[BabyBear],
         public_inputs: &[BabyBear],
-        _next_row: Option<&[u32]>,
-    ) -> Vec<BabyBear> {
-        let p = BABYBEAR_P as u64;
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let claimed_vk_lo = local[0];
+        let claimed_vk_hi = local[1];
+        let match_vk_lo = local[2];
+        let match_vk_hi = local[3];
+        let diff_lo = local[4];
+        let diff_hi = local[5];
 
-        let claimed_vk_lo = trace_row[0] as u64;
-        let claimed_vk_hi = trace_row[1] as u64;
-        let match_vk_lo = trace_row[2] as u64;
-        let match_vk_hi = trace_row[3] as u64;
-        let diff_lo = trace_row[4] as u64;
-        let diff_hi = trace_row[5] as u64;
-
-        let pi_claimed_lo = public_inputs[0].0 as u64;
-        let pi_claimed_hi = public_inputs[1].0 as u64;
-
-        let mut constraints = Vec::with_capacity(6);
+        let pi_claimed_lo = public_inputs[0];
+        let pi_claimed_hi = public_inputs[1];
 
         // C1: diff_lo == claimed_vk_lo - match_vk_lo
-        let expected_diff_lo = (claimed_vk_lo + p - match_vk_lo) % p;
-        let c1 = (diff_lo + p - expected_diff_lo) % p;
-        constraints.push(BabyBear::new(c1 as u32));
+        let c1 = diff_lo - (claimed_vk_lo - match_vk_lo);
 
         // C2: diff_hi == claimed_vk_hi - match_vk_hi
-        let expected_diff_hi = (claimed_vk_hi + p - match_vk_hi) % p;
-        let c2 = (diff_hi + p - expected_diff_hi) % p;
-        constraints.push(BabyBear::new(c2 as u32));
+        let c2 = diff_hi - (claimed_vk_hi - match_vk_hi);
 
-        // C3: diff_lo == 0
-        constraints.push(BabyBear::new(diff_lo as u32));
+        // C3: diff_lo == 0 (proves equality)
+        let c3 = diff_lo;
 
-        // C4: diff_hi == 0
-        constraints.push(BabyBear::new(diff_hi as u32));
+        // C4: diff_hi == 0 (proves equality)
+        let c4 = diff_hi;
 
         // C5: claimed_vk_lo matches PI
-        let c5 = (claimed_vk_lo + p - pi_claimed_lo) % p;
-        constraints.push(BabyBear::new(c5 as u32));
+        let c5 = claimed_vk_lo - pi_claimed_lo;
 
         // C6: claimed_vk_hi matches PI
-        let c6 = (claimed_vk_hi + p - pi_claimed_hi) % p;
-        constraints.push(BabyBear::new(c6 as u32));
+        let c6 = claimed_vk_hi - pi_claimed_hi;
 
-        constraints
+        // Combine with alpha powers.
+        let mut result = c1;
+        let mut ap = alpha;
+        result = result + ap * c2;
+        ap = ap * alpha;
+        result = result + ap * c3;
+        ap = ap * alpha;
+        result = result + ap * c4;
+        ap = ap * alpha;
+        result = result + ap * c5;
+        ap = ap * alpha;
+        result = result + ap * c6;
+
+        result
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        vec![
+            BoundaryConstraint { row: 0, col: 0, value: public_inputs[0] },
+            BoundaryConstraint { row: 0, col: 1, value: public_inputs[1] },
+        ]
     }
 }
 
 /// Compute a Merkle-style root hash for a set of approved VKs.
 pub fn compute_set_root(approved_vks: &[[u8; 32]]) -> (u32, u32) {
-    // Hash all VKs together to produce a binding commitment to the set.
     let mut elements = Vec::new();
     for vk in approved_vks {
         let (lo, hi) = vk_to_lo_hi(vk);
@@ -579,7 +572,6 @@ pub fn compute_set_root(approved_vks: &[[u8; 32]]) -> (u32, u32) {
         elements.push(BabyBear::new(hi));
     }
     let root = pyana_circuit::poseidon2::hash_many(&elements);
-    // For the high bits, hash again with domain separation
     let root_hi = hash_fact(root, &[BabyBear::new(approved_vks.len() as u32)]);
     (root.0, root_hi.0)
 }
@@ -598,20 +590,16 @@ pub struct FromSetWitness {
 }
 
 /// Generate a trace for the from-set membership circuit.
-pub fn generate_from_set_trace(witness: &FromSetWitness) -> Trace {
-    let row = vec![
-        witness.claimed_vk_lo,
-        witness.claimed_vk_hi,
-        witness.match_vk_lo,
-        witness.match_vk_hi,
-        0, // diff_lo = 0 (they match)
-        0, // diff_hi = 0 (they match)
-    ];
+pub fn generate_from_set_trace(witness: &FromSetWitness) -> Vec<Vec<BabyBear>> {
+    let claimed_lo = BabyBear::new(witness.claimed_vk_lo);
+    let claimed_hi = BabyBear::new(witness.claimed_vk_hi);
+    let match_lo = BabyBear::new(witness.match_vk_lo);
+    let match_hi = BabyBear::new(witness.match_vk_hi);
+    let diff_lo = claimed_lo - match_lo;
+    let diff_hi = claimed_hi - match_hi;
 
-    Trace {
-        width: FROM_SET_TRACE_WIDTH,
-        rows: vec![row.clone(), row],
-    }
+    let row = vec![claimed_lo, claimed_hi, match_lo, match_hi, diff_lo, diff_hi];
+    vec![row.clone(), row]
 }
 
 /// Generate public inputs for the from-set circuit.
@@ -777,7 +765,6 @@ mod tests {
         let air = FactoryCreationAir;
         assert_eq!(air.width(), FACTORY_TRACE_WIDTH);
         assert_eq!(air.constraint_degree(), 2);
-        assert_eq!(air.num_public_inputs(), FACTORY_PUBLIC_INPUTS);
         assert_eq!(air.air_name(), "pyana-factory-creation-v1");
     }
 
@@ -794,7 +781,7 @@ mod tests {
         let witness = VkDerivationWitness {
             factory_vk_lo: fvk_lo,
             factory_vk_hi: fvk_hi,
-            params: [1, 2, 0, 0], // token_a=1, token_b=2
+            params: [1, 2, 0, 0],
         };
 
         let proof = prove_vk_derivation(&witness);
@@ -887,7 +874,6 @@ mod tests {
         let air = FactoryVkDerivationAir;
         assert_eq!(air.width(), VK_DERIVATION_TRACE_WIDTH);
         assert_eq!(air.constraint_degree(), 2);
-        assert_eq!(air.num_public_inputs(), VK_DERIVATION_PUBLIC_INPUTS);
         assert_eq!(air.air_name(), "pyana-factory-vk-derivation-v1");
     }
 
@@ -918,7 +904,11 @@ mod tests {
         let proof = prove_from_set(&witness);
         let pi = from_set_public_inputs(&witness);
         let result = verify_from_set(&proof, &pi);
-        assert!(result.is_ok(), "from-set proof failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "from-set proof failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -929,7 +919,7 @@ mod tests {
         let approved = [vk_admin];
         let (set_root_lo, set_root_hi) = compute_set_root(&approved);
 
-        // Try to claim rogue VK is in the set by providing wrong match
+        // Try to claim rogue VK is in the set by providing wrong match.
         let (claimed_lo, claimed_hi) = vk_to_lo_hi(&vk_rogue);
         let (match_lo, match_hi) = vk_to_lo_hi(&vk_admin); // mismatch!
 
@@ -942,20 +932,16 @@ mod tests {
             set_root_hi,
         };
 
-        // The trace will have non-zero diffs, so constraint evaluation fails.
+        // The trace will have non-zero diffs, so constraints won't be zero.
         let trace = generate_from_set_trace(&witness);
-        // Manually check: diff_lo should be non-zero.
-        // The prove/verify should fail because the constraint diff==0 won't hold
-        // unless the prover cheats (which our honest prover doesn't).
         let air = FactoryVkFromSetAir;
         let pi = from_set_public_inputs(&witness);
-        let row = &trace.rows[0];
-        let eval = air.evaluate_constraints(row, &pi, Some(&trace.rows[1]));
-        // At least one constraint should be non-zero (the diff constraints).
-        let has_nonzero = eval.iter().any(|c| c.0 != 0);
-        assert!(
-            has_nonzero,
-            "mismatched VKs should produce non-zero constraints"
+        // Evaluate constraints at alpha=1 and check non-zero.
+        let result = air.eval_constraints(&trace[0], &trace[1], &pi, BabyBear::ONE);
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "mismatched VKs should produce non-zero constraint evaluation"
         );
     }
 
@@ -964,7 +950,6 @@ mod tests {
         let air = FactoryVkFromSetAir;
         assert_eq!(air.width(), FROM_SET_TRACE_WIDTH);
         assert_eq!(air.constraint_degree(), 2);
-        assert_eq!(air.num_public_inputs(), FROM_SET_PUBLIC_INPUTS);
         assert_eq!(air.air_name(), "pyana-factory-vk-from-set-v1");
     }
 
