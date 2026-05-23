@@ -13,8 +13,6 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
-use std::collections::HashMap;
-
 use pyana_circuit::field::{BabyBear, BABYBEAR_P};
 use pyana_circuit::stark::{self, StarkAir};
 use pyana_dsl_runtime::circuit::{
@@ -597,7 +595,7 @@ fn test_dsl_pipeline_wrong_vk_rejected() {
     deploy_descriptor.public_input_count = 32;
 
     let program = CellProgram::new(deploy_descriptor.clone(), 1);
-    let real_vk_hash = program.vk_hash;
+    let _real_vk_hash = program.vk_hash;
 
     let mut registry = ProgramRegistry::new();
     registry.deploy(program.clone()).unwrap();

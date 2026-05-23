@@ -1,9 +1,15 @@
 //! DSL-generated temporal predicate AIR.
 //!
-//! This module replaces the hand-written `temporal_predicate_air.rs` with
-//! a `#[pyana_circuit]` macro-generated implementation. The macro produces
-//! an `impl StarkAir` that is bit-for-bit equivalent to the manual descriptor
-//! in `pyana-dsl-tests/src/temporal_dsl.rs`.
+//! This module replaces the hand-written `temporal_predicate_air.rs` with the
+//! equivalent of the `#[pyana_circuit]` macro-generated implementation. The
+//! macro version (in `pyana-dsl-tests/src/temporal_macro.rs`) passes full STARK
+//! prove/verify and is bit-for-bit equivalent to the manual descriptor in
+//! `pyana-dsl-tests/src/temporal_dsl.rs`.
+//!
+//! Because proc-macro-generated code references `pyana_circuit::*` which cannot
+//! resolve when compiled *within* the `pyana-circuit` crate itself, this file
+//! contains the manually-expanded equivalent of what `#[pyana_circuit]` would
+//! produce.
 //!
 //! # Migration
 //!
@@ -11,24 +17,16 @@
 //! The public API is preserved: `TemporalPredicateAir`, `TemporalPredicateWitness`,
 //! `TemporalPredicateProof`, `prove_temporal_predicate`, `verify_temporal_predicate`,
 //! and `TemporalPredicateRequirement` are all re-exported with the same signatures.
-//!
-//! The underlying AIR uses the DSL-generated `TemporalPredicateDsl` struct which
-//! implements `StarkAir` via the `#[pyana_circuit]` macro.
 
 use crate::field::BabyBear;
 use crate::predicate_air::{PREDICATE_DIFF_BITS, PredicateType};
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
-use pyana_dsl::pyana_circuit;
-
-// Allow the macro-generated code to reference `pyana_circuit::field::BabyBear`
-// and `pyana_circuit::stark::StarkAir` when used within this crate.
-use crate as pyana_circuit;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DSL-generated core AIR
+// DSL-equivalent core AIR (manual expansion of #[pyana_circuit] output)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Column layout constants for the DSL-generated temporal AIR.
+/// Column layout constants for the DSL temporal AIR.
 pub const VALUE: usize = 0;
 pub const THRESHOLD: usize = 1;
 pub const DIFF: usize = 2;
@@ -44,98 +42,126 @@ pub const DSL_TRACE_WIDTH: usize = STEP_PLUS_ONE + 1; // 37
 pub const PI_NUM_STEPS: usize = 0;
 pub const DSL_PUBLIC_INPUT_COUNT: usize = 1;
 
-#[pyana_circuit]
-mod temporal_predicate_dsl {
-    const WIDTH: usize = 37;
-    const DEGREE: usize = 2;
-    const PI_COUNT: usize = 1;
+/// Column index submodule (mirrors the `mod col` in the `#[pyana_circuit]` definition).
+pub mod col {
+    pub const VALUE: usize = 0;
+    pub const THRESHOLD: usize = 1;
+    pub const DIFF: usize = 2;
+    pub const DIFF_BITS_START: usize = 3;
+    pub const NUM_DIFF_BITS: usize = 30;
+    pub const ACCUMULATOR: usize = 33;
+    pub const STEP_INDEX: usize = 34;
+    pub const ACC_PLUS_ONE: usize = 35;
+    pub const STEP_PLUS_ONE: usize = 36;
+}
 
-    mod col {
-        pub const VALUE: usize = 0;
-        pub const THRESHOLD: usize = 1;
-        pub const DIFF: usize = 2;
-        pub const DIFF_BITS_START: usize = 3;
-        pub const NUM_DIFF_BITS: usize = 30;
-        pub const ACCUMULATOR: usize = 33;
-        pub const STEP_INDEX: usize = 34;
-        pub const ACC_PLUS_ONE: usize = 35;
-        pub const STEP_PLUS_ONE: usize = 36;
+/// The DSL-generated temporal predicate AIR struct.
+///
+/// This is the equivalent of what `#[pyana_circuit] mod temporal_predicate_dsl { ... }`
+/// would produce: a unit struct implementing `StarkAir`.
+pub struct TemporalPredicateDsl;
+
+impl StarkAir for TemporalPredicateDsl {
+    fn width(&self) -> usize {
+        37
     }
 
-    // Per-row constraints
-    fn constraints(
-        local: &[pyana_circuit::field::BabyBear],
-        _next: &[pyana_circuit::field::BabyBear],
-        pi: &[pyana_circuit::field::BabyBear],
-    ) -> Vec<pyana_circuit::field::BabyBear> {
-        use pyana_circuit::field::BabyBear;
+    fn constraint_degree(&self) -> usize {
+        2
+    }
 
-        let mut cs = Vec::new();
+    fn air_name(&self) -> &'static str {
+        "pyana-temporal_predicate_dsl-v1"
+    }
 
-        // C1: diff = value - threshold
-        cs.push(local[col::DIFF] - (local[col::VALUE] - local[col::THRESHOLD]));
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
 
-        // C2: Each diff_bit is binary
-        for i in 0..col::NUM_DIFF_BITS {
-            let bit = local[col::DIFF_BITS_START + i];
-            cs.push(bit * (bit - BabyBear::ONE));
-        }
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        // Per-row constraints (inlined from the `fn constraints` body)
+        let constraint_values: Vec<BabyBear> = {
+            let pi = public_inputs;
+            let mut cs = Vec::new();
 
-        // C3: Bit reconstruction: sum(diff_bits[i] * 2^i) == diff
-        {
-            let mut reconstructed = BabyBear::ZERO;
-            let mut power_of_two = BabyBear::ONE;
-            let two = BabyBear::new(2);
+            // C1: diff = value - threshold
+            cs.push(local[col::DIFF] - (local[col::VALUE] - local[col::THRESHOLD]));
+
+            // C2: Each diff_bit is binary
             for i in 0..col::NUM_DIFF_BITS {
-                reconstructed = reconstructed + local[col::DIFF_BITS_START + i] * power_of_two;
-                power_of_two = power_of_two * two;
+                let bit = local[col::DIFF_BITS_START + i];
+                cs.push(bit * (bit - BabyBear::ONE));
             }
-            cs.push(reconstructed - local[col::DIFF]);
+
+            // C3: Bit reconstruction: sum(diff_bits[i] * 2^i) == diff
+            {
+                let mut reconstructed = BabyBear::ZERO;
+                let mut power_of_two = BabyBear::ONE;
+                let two = BabyBear::new(2);
+                for i in 0..col::NUM_DIFF_BITS {
+                    reconstructed =
+                        reconstructed + local[col::DIFF_BITS_START + i] * power_of_two;
+                    power_of_two = power_of_two * two;
+                }
+                cs.push(reconstructed - local[col::DIFF]);
+            }
+
+            // C4: High bit is zero (range proof: diff < 2^30 => non-negative)
+            cs.push(local[col::DIFF_BITS_START + col::NUM_DIFF_BITS - 1]);
+
+            // C5: acc_plus_one = accumulator + 1
+            cs.push(local[col::ACC_PLUS_ONE] - local[col::ACCUMULATOR] - BabyBear::ONE);
+
+            // C6: step_plus_one = step_index + 1
+            cs.push(local[col::STEP_PLUS_ONE] - local[col::STEP_INDEX] - BabyBear::ONE);
+
+            let _ = pi; // suppress unused warning
+            cs
+        };
+
+        // Transition constraints (inlined from the `fn transitions` body)
+        let transition_values: Vec<BabyBear> = {
+            vec![
+                // T1: next[accumulator] = local[acc_plus_one]
+                next[col::ACCUMULATOR] - local[col::ACC_PLUS_ONE],
+                // T2: next[step_index] = local[step_plus_one]
+                next[col::STEP_INDEX] - local[col::STEP_PLUS_ONE],
+            ]
+        };
+
+        // Compose all constraints with alpha powers
+        let mut result = BabyBear::ZERO;
+        let mut alpha_power = BabyBear::ONE;
+        for c in constraint_values.iter().chain(transition_values.iter()) {
+            result = result + alpha_power * *c;
+            alpha_power = alpha_power * alpha;
         }
-
-        // C4: High bit is zero (range proof: diff < 2^30 => non-negative)
-        cs.push(local[col::DIFF_BITS_START + col::NUM_DIFF_BITS - 1]);
-
-        // C5: acc_plus_one = accumulator + 1
-        cs.push(
-            local[col::ACC_PLUS_ONE] - local[col::ACCUMULATOR] - BabyBear::ONE,
-        );
-
-        // C6: step_plus_one = step_index + 1
-        cs.push(
-            local[col::STEP_PLUS_ONE] - local[col::STEP_INDEX] - BabyBear::ONE,
-        );
-
-        cs
+        result
     }
 
-    // Transition constraints (row-to-row)
-    fn transitions(
-        local: &[pyana_circuit::field::BabyBear],
-        next: &[pyana_circuit::field::BabyBear],
-    ) -> Vec<pyana_circuit::field::BabyBear> {
-        vec![
-            // T1: next[accumulator] = local[acc_plus_one]
-            next[col::ACCUMULATOR] - local[col::ACC_PLUS_ONE],
-            // T2: next[step_index] = local[step_plus_one]
-            next[col::STEP_INDEX] - local[col::STEP_PLUS_ONE],
-        ]
-    }
-
-    // Boundary constraints
-    fn boundaries(
-        pi: &[pyana_circuit::field::BabyBear],
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
         trace_len: usize,
-    ) -> Vec<(usize, usize, pyana_circuit::field::BabyBear)> {
-        use pyana_circuit::field::BabyBear;
-        vec![
+    ) -> Vec<BoundaryConstraint> {
+        let pi = public_inputs;
+        let raw: Vec<(usize, usize, BabyBear)> = vec![
             // First row: accumulator = 1
             (0, col::ACCUMULATOR, BabyBear::ONE),
             // First row: step_index = 0
             (0, col::STEP_INDEX, BabyBear::ZERO),
             // Last row: accumulator = num_steps (pi[0])
             (trace_len - 1, col::ACCUMULATOR, pi[0]),
-        ]
+        ];
+        raw.into_iter()
+            .map(|(row, col, value)| BoundaryConstraint { row, col, value })
+            .collect()
     }
 }
 
@@ -143,24 +169,7 @@ mod temporal_predicate_dsl {
 // Public API: backward-compatible types and functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Re-export the legacy column layout for backward compatibility.
-pub mod legacy_col {
-    use super::PREDICATE_DIFF_BITS;
-
-    pub const STEP_INDEX: usize = 0;
-    pub const STATE_ROOT: usize = 1;
-    pub const PREDICATE_VALUE: usize = 2;
-    pub const DIFF: usize = 3;
-    pub const DIFF_BITS_START: usize = 4;
-    pub const ACCUMULATOR: usize = DIFF_BITS_START + PREDICATE_DIFF_BITS; // 34
-
-    #[inline]
-    pub const fn diff_bit(bit_idx: usize) -> usize {
-        DIFF_BITS_START + bit_idx
-    }
-}
-
-/// Trace width for the temporal predicate AIR (legacy layout).
+/// Trace width for the temporal predicate AIR (legacy 35-column layout reference).
 pub const TEMPORAL_PREDICATE_WIDTH: usize = 35;
 
 /// Witness for a temporal predicate proof.
@@ -222,7 +231,7 @@ impl TemporalPredicateWitness {
 
 /// The Temporal Predicate AIR (DSL-generated).
 ///
-/// This is a thin wrapper around the DSL-generated `TemporalPredicateDsl` struct
+/// This is a wrapper around the DSL-generated `TemporalPredicateDsl` struct
 /// that maintains the same public interface as the hand-written version. The
 /// witness is stored for trace generation, while constraint evaluation is
 /// delegated to the DSL-generated implementation.
@@ -238,9 +247,9 @@ impl TemporalPredicateAir {
 
 /// Generate the DSL trace from a witness.
 ///
-/// This converts from the legacy witness format (multiple predicate types,
-/// state roots) into the DSL trace layout (GTE-normalized, 37-column layout).
-fn generate_dsl_trace(witness: &TemporalPredicateWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+/// This converts from the witness format (multiple predicate types, state roots)
+/// into the DSL trace layout (37-column layout with auxiliary columns).
+pub fn generate_dsl_trace(witness: &TemporalPredicateWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let num_steps = witness.num_steps();
     assert!(num_steps >= 1, "temporal witness must have at least 1 step");
 
@@ -252,20 +261,19 @@ fn generate_dsl_trace(witness: &TemporalPredicateWitness) -> (Vec<Vec<BabyBear>>
         let mut row = vec![BabyBear::ZERO; DSL_TRACE_WIDTH];
 
         // For padding rows beyond num_steps, repeat the last real row's value.
-        let (val, threshold) = if step < num_steps {
-            (witness.values[step], witness.threshold)
+        let val = if step < num_steps {
+            witness.values[step]
         } else {
-            (*witness.values.last().unwrap(), witness.threshold)
+            *witness.values.last().unwrap()
         };
 
         row[VALUE] = val;
-        row[THRESHOLD] = threshold;
+        row[THRESHOLD] = witness.threshold;
 
-        // Compute diff based on predicate type (normalized to non-negative for GTE-like)
+        // Compute diff based on predicate type
         let diff = if step < num_steps {
             witness.compute_diff_at(step)
         } else {
-            // Padding: use last real step's diff
             witness.compute_diff_at(num_steps - 1)
         };
         row[DIFF] = diff;
@@ -306,7 +314,6 @@ impl StarkAir for TemporalPredicateAir {
     }
 
     fn air_name(&self) -> &'static str {
-        // Use the DSL-generated name for consistency.
         "pyana-temporal_predicate_dsl-v1"
     }
 
@@ -550,6 +557,68 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_dsl_circuit_invalid_value_below_threshold() {
+        let circuit = TemporalPredicateDsl;
+
+        let values: Vec<BabyBear> = vec![100, 30, 100]
+            .into_iter()
+            .map(BabyBear::new)
+            .collect();
+        let state_roots = test_state_roots(3);
+        let witness = TemporalPredicateWitness {
+            values,
+            state_roots,
+            predicate_type: PredicateType::Gte,
+            threshold: BabyBear::new(50),
+        };
+
+        let (trace, public_inputs) = generate_dsl_trace(&witness);
+
+        let alpha = BabyBear::new(7);
+        let row1_result =
+            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        assert_ne!(
+            row1_result,
+            BabyBear::ZERO,
+            "Constraint should be nonzero at row 1 where value < threshold"
+        );
+    }
+
+    #[test]
+    fn test_dsl_circuit_transition_detects_gap() {
+        let circuit = TemporalPredicateDsl;
+
+        let values = vec![BabyBear::new(100); 3];
+        let state_roots = test_state_roots(3);
+        let witness = TemporalPredicateWitness {
+            values,
+            state_roots,
+            predicate_type: PredicateType::Gte,
+            threshold: BabyBear::new(50),
+        };
+
+        let (mut trace, public_inputs) = generate_dsl_trace(&witness);
+
+        // Corrupt row 2: accumulator gap
+        trace[2][ACCUMULATOR] = BabyBear::new(4);
+        trace[2][ACC_PLUS_ONE] = BabyBear::new(5);
+
+        let alpha = BabyBear::new(7);
+        let result =
+            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Transition constraint should be nonzero when accumulator has a gap"
+        );
+
+        // Row 0 -> Row 1 still fine
+        let result_01 =
+            circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
+        assert_eq!(result_01, BabyBear::ZERO);
+    }
+
     // =========================================================================
     // Full prove/verify cycle (matches old API)
     // =========================================================================
@@ -615,7 +684,7 @@ mod tests {
 
         let valid = verify_temporal_predicate(
             &proof,
-            BabyBear::new(50), // wrong threshold
+            BabyBear::new(50),
             3,
             state_roots[0],
             state_roots[2],
@@ -635,7 +704,7 @@ mod tests {
         let valid = verify_temporal_predicate(
             &proof,
             threshold,
-            5, // wrong count
+            5,
             state_roots[0],
             state_roots[2],
         );
@@ -655,7 +724,7 @@ mod tests {
             &proof,
             threshold,
             3,
-            BabyBear::new(99999), // wrong root
+            BabyBear::new(99999),
             state_roots[2],
         );
         assert!(!valid, "Wrong initial state root should fail verification");
@@ -665,7 +734,7 @@ mod tests {
             threshold,
             3,
             state_roots[0],
-            BabyBear::new(99999), // wrong root
+            BabyBear::new(99999),
         );
         assert!(!valid, "Wrong final state root should fail verification");
     }
@@ -747,7 +816,7 @@ mod tests {
     fn test_temporal_mismatched_lengths_fails() {
         let threshold = BabyBear::new(100);
         let values: Vec<BabyBear> = vec![200, 300].into_iter().map(BabyBear::new).collect();
-        let state_roots = test_state_roots(3); // 3 roots, 2 values
+        let state_roots = test_state_roots(3);
 
         let proof = prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold);
         assert!(

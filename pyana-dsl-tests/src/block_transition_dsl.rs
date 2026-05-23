@@ -186,8 +186,6 @@ pub fn generate_valid_block_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         current_root = new_root;
     }
 
-    let post_state_root = current_root;
-
     // Pad to power of 2 with identity-like rows
     for i in num_events as usize..padded_len {
         let pad_leaf = BabyBear::ZERO;

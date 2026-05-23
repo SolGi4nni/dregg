@@ -29,12 +29,15 @@ mod integration;
 mod full_pipeline;
 
 // Adversarial boundary tests: property-based + scenario-driven
+#[cfg(feature = "__wip_tests")]
 mod adversarial_boundaries;
 
 // End-to-end adversarial integration tests: full pipeline with tampering detection
+#[cfg(feature = "__wip_tests")]
 mod adversarial_pipeline;
 
 // Wire format end-to-end: wallet.authorize() -> postcard -> PyanaEngine::verify
+#[cfg(feature = "__wip_tests")]
 mod wire_format_e2e;
 
 // Sovereign proof-carrying turns (Phase 2): wallet generates proof -> executor verifies

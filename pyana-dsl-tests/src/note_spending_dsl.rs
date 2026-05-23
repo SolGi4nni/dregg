@@ -46,22 +46,20 @@ use pyana_dsl_runtime::circuit::{
     DslCircuit,
 };
 
+/// Auxiliary column for the intermediate nullifier hash (two-step derivation).
+/// Uses col 17 which is unused in the standard NOTE_SPENDING_WIDTH layout.
+pub const NULLIFIER_INTERMEDIATE: usize = 17;
+
 /// Build the note spending CircuitDescriptor.
 ///
 /// Encodes the core constraints of the note spending AIR using DSL primitives:
 /// - C1: `is_merkle` is binary
-/// - C2: Commitment hash binding (gated by 1 - is_merkle):
+/// - C2: Commitment hash binding:
 ///        commitment == hash_fact(owner, [value, asset_type, creation_nonce, randomness])
-/// - C3: Nullifier derivation (gated by 1 - is_merkle):
-///        nullifier == hash_fact(commitment, [key[0..7], creation_nonce])
-/// - C4: Merkle hash binding (gated by is_merkle):
-///        parent == hash_fact(current, [sib0, sib1, sib2])
-///        (Simplified model: uses hash_fact of 4 inputs rather than full position-aware hash_4_to_1.
-///         This correctly expresses the *structural* constraint; a full equivalence would
-///         require Lagrange interpolation inside the descriptor, which is out of scope.)
-/// - C5: PiBinding: nullifier == pi[0] (on commitment row)
-/// - C6: PiBinding: value == pi[2] (on commitment row)
-/// - C7: PiBinding: asset_type == pi[3] (on commitment row)
+/// - C3: Nullifier intermediate:
+///        intermediate == hash_fact(commitment, [key[0], key[1], key[2], key[3]])
+/// - C4: Nullifier final:
+///        nullifier == hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
 ///
 /// Boundary constraints bind the commitment row's nullifier/value/asset_type to
 /// their respective public inputs, and the last row's `current` to the Merkle root.
@@ -114,52 +112,61 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
     });
 
     // ========================================================================
-    // C3: Nullifier derivation
+    // C3-C4: Nullifier derivation (two-step hash)
     //
-    // nullifier == hash_fact(commitment, [key[0], key[1], ..., key[7], creation_nonce])
+    // Since hash_fact only supports up to 4 terms, we split the nullifier
+    // derivation into two hash steps using an auxiliary column (col 17):
     //
-    // Hash constraint: hash_fact(input_cols[0], input_cols[1..]) == output_col
-    //   input_cols[0] = commitment (the "predicate")
-    //   input_cols[1..9] = spending_key[0..8]
-    //   input_cols[9] = creation_nonce
-    //   output_col = nullifier
+    // Step 1: intermediate = hash_fact(commitment, [key[0], key[1], key[2], key[3]])
+    // Step 2: nullifier = hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
+    //
+    // This binds ALL 8 key limbs into the nullifier derivation.
+    // The creation_nonce is already bound via the commitment preimage (C2).
     // ========================================================================
-    {
-        let mut nullifier_inputs = Vec::with_capacity(1 + SPENDING_KEY_LIMBS + 1);
-        nullifier_inputs.push(col::COMMITMENT); // predicate
-        for j in 0..SPENDING_KEY_LIMBS {
-            nullifier_inputs.push(col::SPENDING_KEY_START + j);
-        }
-        nullifier_inputs.push(col::CREATION_NONCE);
-        constraints.push(ConstraintExpr::Hash {
-            output_col: col::NULLIFIER,
-            input_cols: nullifier_inputs,
-        });
-    }
-
-    // ========================================================================
-    // C4: Nullifier == pi[0]
-    // ========================================================================
-    constraints.push(ConstraintExpr::PiBinding {
-        col: col::NULLIFIER,
-        pi_index: pi::NULLIFIER,
+    // C3: intermediate hash (col 17)
+    constraints.push(ConstraintExpr::Hash {
+        output_col: NULLIFIER_INTERMEDIATE,
+        input_cols: vec![
+            col::COMMITMENT,
+            col::SPENDING_KEY_START,
+            col::SPENDING_KEY_START + 1,
+            col::SPENDING_KEY_START + 2,
+            col::SPENDING_KEY_START + 3,
+        ],
+    });
+    // C4: nullifier from intermediate + remaining key limbs
+    constraints.push(ConstraintExpr::Hash {
+        output_col: col::NULLIFIER,
+        input_cols: vec![
+            NULLIFIER_INTERMEDIATE,
+            col::SPENDING_KEY_START + 4,
+            col::SPENDING_KEY_START + 5,
+            col::SPENDING_KEY_START + 6,
+            col::SPENDING_KEY_START + 7,
+        ],
     });
 
     // ========================================================================
-    // C5: Value == pi[2]
+    // C4-C6: ConditionalNonzero on commitment (gated by 1 - is_merkle).
+    //
+    // We use an auxiliary column (col 17) to hold the inverse of `commitment`
+    // on the commitment row. This enforces that when is_merkle=0, the commitment
+    // must be nonzero (a valid hash output is overwhelmingly likely to be nonzero).
+    //
+    // ConditionalNonzero { selector: ?, value: COMMITMENT, inverse: col_17 }
+    // But the selector should be (1 - is_merkle). Since we can't directly express
+    // that with ConditionalNonzero (it uses local[selector_col]), we note that
+    // the commitment is always nonzero on commitment rows (it's a Poseidon2 output),
+    // so this is a structural soundness reinforcement.
+    //
+    // For simplicity and to keep the descriptor focused on the key constraints
+    // (Hash binding + Boundary constraints), we rely on boundary constraints alone
+    // to bind trace columns to public inputs. The PiBinding constraints are enforced
+    // at the boundary level (first/last row), not as per-row eval_constraints.
+    //
+    // This is the same pattern used by the hand-written AIR: it does NOT enforce
+    // pi equality in eval_constraints, only via boundary_constraints.
     // ========================================================================
-    constraints.push(ConstraintExpr::PiBinding {
-        col: col::VALUE,
-        pi_index: pi::VALUE,
-    });
-
-    // ========================================================================
-    // C6: Asset type == pi[3]
-    // ========================================================================
-    constraints.push(ConstraintExpr::PiBinding {
-        col: col::ASSET_TYPE,
-        pi_index: pi::ASSET_TYPE,
-    });
 
     // ========================================================================
     // Boundary constraints
@@ -248,36 +255,49 @@ pub fn generate_commitment_row_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     // hash_fact(owner, [value, asset_type, creation_nonce, randomness])
     let commitment = hash_fact(owner, &[value, asset_type, creation_nonce, randomness]);
 
-    // Compute nullifier using hash_fact
-    // hash_fact(commitment, [key[0], key[1], ..., key[7], creation_nonce])
-    let mut nullifier_terms = Vec::with_capacity(SPENDING_KEY_LIMBS + 1);
-    for j in 0..SPENDING_KEY_LIMBS {
-        nullifier_terms.push(key[j]);
-    }
-    nullifier_terms.push(creation_nonce);
-    let nullifier = hash_fact(commitment, &nullifier_terms);
+    // Compute nullifier using two-step hash_fact (matches DSL constraints C3+C4)
+    // Step 1: intermediate = hash_fact(commitment, [key[0], key[1], key[2], key[3]])
+    let intermediate = hash_fact(commitment, &[key[0], key[1], key[2], key[3]]);
+    // Step 2: nullifier = hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
+    let nullifier = hash_fact(intermediate, &[key[4], key[5], key[6], key[7]]);
 
-    // For the Merkle root, we use a placeholder since this test focuses on the
-    // commitment row constraints (Hash + PiBinding). The Merkle membership is
-    // structurally separate.
+    // The Merkle root boundary constraint binds the LAST row's col 0 (merkle_col::CURRENT)
+    // to pi[1]. Since col 0 == col::OWNER on the commitment row, we need the second row
+    // (padding/Merkle row) to have col 0 = merkle_root for the boundary to be satisfied.
+    // We use the owner as the merkle_root placeholder (making the boundary trivially satisfied
+    // on the first row), or better: set up the second row as a Merkle-type row.
     let merkle_root = BabyBear::new(99999);
 
     // Build the commitment row (row 0)
-    let mut row = vec![BabyBear::ZERO; NOTE_SPENDING_WIDTH];
-    row[col::OWNER] = owner;
-    row[col::VALUE] = value;
-    row[col::ASSET_TYPE] = asset_type;
-    row[col::CREATION_NONCE] = creation_nonce;
-    row[col::COMMITMENT] = commitment;
+    let mut row0 = vec![BabyBear::ZERO; NOTE_SPENDING_WIDTH];
+    row0[col::OWNER] = owner;
+    row0[col::VALUE] = value;
+    row0[col::ASSET_TYPE] = asset_type;
+    row0[col::CREATION_NONCE] = creation_nonce;
+    row0[col::COMMITMENT] = commitment;
     for j in 0..SPENDING_KEY_LIMBS {
-        row[col::SPENDING_KEY_START + j] = key[j];
+        row0[col::SPENDING_KEY_START + j] = key[j];
     }
-    row[col::NULLIFIER] = nullifier;
-    row[col::RANDOMNESS] = randomness;
-    row[col::IS_MERKLE] = BabyBear::ZERO;
+    row0[col::NULLIFIER] = nullifier;
+    row0[col::RANDOMNESS] = randomness;
+    row0[col::IS_MERKLE] = BabyBear::ZERO;
+    row0[NULLIFIER_INTERMEDIATE] = intermediate;
 
-    // 2-row trace (pad with copy)
-    let trace = vec![row.clone(), row];
+    // Build a padding/Merkle row (row 1) where col 0 (CURRENT) = merkle_root.
+    // This satisfies the last-row boundary constraint: trace[last][0] == pi[1].
+    // All Hash constraints must also be satisfied on this row.
+    let padding_commitment = hash_fact(merkle_root, &[BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+    let padding_intermediate = hash_fact(padding_commitment, &[BabyBear::ZERO; 4]);
+    let padding_nullifier = hash_fact(padding_intermediate, &[BabyBear::ZERO; 4]);
+
+    let mut row1 = vec![BabyBear::ZERO; NOTE_SPENDING_WIDTH];
+    row1[merkle_col::CURRENT] = merkle_root; // col 0
+    row1[col::COMMITMENT] = padding_commitment; // col 5
+    row1[NULLIFIER_INTERMEDIATE] = padding_intermediate; // col 17
+    row1[col::NULLIFIER] = padding_nullifier; // col 14
+    row1[col::IS_MERKLE] = BabyBear::ONE; // Mark as Merkle row (binary constraint satisfied)
+
+    let trace = vec![row0, row1];
     let public_inputs = vec![nullifier, merkle_root, value, asset_type];
 
     (trace, public_inputs)
@@ -310,8 +330,8 @@ mod tests {
         assert_eq!(desc.public_input_count, 4);
         assert_eq!(desc.name, "pyana-note-spending-dsl-v1");
 
-        // Should have: 1 Binary + 2 Hash + 3 PiBinding = 6 constraints
-        assert_eq!(desc.constraints.len(), 6);
+        // Should have: 1 Binary + 3 Hash = 4 constraints
+        assert_eq!(desc.constraints.len(), 4);
 
         // Should have 4 boundary constraints
         assert_eq!(desc.boundaries.len(), 4);
@@ -383,53 +403,55 @@ mod tests {
     }
 
     #[test]
-    fn wrong_value_pi_detected() {
-        let (trace, mut pi) = generate_commitment_row_trace();
+    fn wrong_value_pi_rejected_by_stark() {
+        // Value binding is enforced via BOUNDARY constraints (not eval_constraints).
+        // The STARK verifier checks boundaries, so wrong pi should fail verification.
+        let (trace, pi) = generate_commitment_row_trace();
         let circuit = note_spending_dsl_circuit();
-        let alpha = BabyBear::new(7);
 
-        // Tamper public input: claim inflated value
-        pi[pi::VALUE] = BabyBear::new(999999);
+        let proof = stark::prove(&circuit, &trace, &pi);
 
-        let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
-        assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Wrong value in public inputs should violate PiBinding constraint"
+        let mut wrong_pi = pi.clone();
+        wrong_pi[pi::VALUE] = BabyBear::new(999999); // inflated value
+
+        let result = stark::verify(&circuit, &proof, &wrong_pi);
+        assert!(
+            result.is_err(),
+            "STARK should reject proof with wrong value public input"
         );
     }
 
     #[test]
-    fn wrong_asset_type_pi_detected() {
-        let (trace, mut pi) = generate_commitment_row_trace();
+    fn wrong_asset_type_pi_rejected_by_stark() {
+        let (trace, pi) = generate_commitment_row_trace();
         let circuit = note_spending_dsl_circuit();
-        let alpha = BabyBear::new(7);
 
-        // Tamper public input: claim different asset type
-        pi[pi::ASSET_TYPE] = BabyBear::new(42);
+        let proof = stark::prove(&circuit, &trace, &pi);
 
-        let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
-        assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Wrong asset_type in public inputs should violate PiBinding constraint"
+        let mut wrong_pi = pi.clone();
+        wrong_pi[pi::ASSET_TYPE] = BabyBear::new(42); // wrong asset type
+
+        let result = stark::verify(&circuit, &proof, &wrong_pi);
+        assert!(
+            result.is_err(),
+            "STARK should reject proof with wrong asset_type public input"
         );
     }
 
     #[test]
-    fn wrong_nullifier_pi_detected() {
-        let (trace, mut pi) = generate_commitment_row_trace();
+    fn wrong_nullifier_pi_rejected_by_stark() {
+        let (trace, pi) = generate_commitment_row_trace();
         let circuit = note_spending_dsl_circuit();
-        let alpha = BabyBear::new(7);
 
-        // Tamper public input: different nullifier
-        pi[pi::NULLIFIER] = BabyBear::new(77777);
+        let proof = stark::prove(&circuit, &trace, &pi);
 
-        let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
-        assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Wrong nullifier in public inputs should violate PiBinding constraint"
+        let mut wrong_pi = pi.clone();
+        wrong_pi[pi::NULLIFIER] = BabyBear::new(77777); // wrong nullifier
+
+        let result = stark::verify(&circuit, &proof, &wrong_pi);
+        assert!(
+            result.is_err(),
+            "STARK should reject proof with wrong nullifier public input"
         );
     }
 

@@ -33,7 +33,9 @@ p3-batch-stark = { workspace = true, optional = true }
 p3-lookup = { workspace = true, optional = true }
 p3-poseidon2-circuit-air = { workspace = true, optional = true }
 
-# Pyana DSL proc-macro for circuit generation
+# Pyana DSL proc-macro — the temporal_predicate_dsl module is the manually-expanded
+# equivalent of the #[pyana_circuit] macro output (the macro cannot self-reference
+# within its own crate, so we expand it manually).
 pyana-dsl = { path = "../pyana-dsl" }
 
 blake3 = "1"
