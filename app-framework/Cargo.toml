@@ -16,6 +16,8 @@ pyana-intent = { path = "../intent" }
 pyana-circuit = { path = "../circuit" }
 pyana-cell = { path = "../cell" }
 pyana-types = { path = "../types" }
+pyana-storage = { path = "../storage" }
+pyana-captp = { path = "../captp" }
 
 axum = "0.8"
 http = "1"
@@ -26,6 +28,10 @@ tokio = { version = "1", features = ["full"] }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 blake3 = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+[dev-dependencies]
+tower = "0.5"
 
 [features]
 default = []

@@ -5,7 +5,7 @@
 //! proving, and presenting tokens.
 
 use pyana_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
-use pyana_sdk::{AgentWallet, Attenuation, AuthRequest, DelegatedToken, HeldToken};
+use pyana_sdk::{AgentWallet, Attenuation, AuthRequest, DelegatedToken, DelegationAuthority, HeldToken};
 use pyana_types::PublicKey;
 
 /// A simulated agent participating in integration tests.
@@ -62,11 +62,18 @@ impl SimAgent {
     }
 
     /// Receive a delegated token into this agent's wallet.
+    ///
+    /// Test-only helper: the SimAgent trusts whatever delegator the envelope
+    /// declares, because the integration tests use SimAgents that already know
+    /// each other out-of-band. Real callers must use a stricter
+    /// [`DelegationAuthority`] (e.g., `TrustedKey(expected_pk)`).
     pub fn receive_delegation(
         &mut self,
         delegated: DelegatedToken,
     ) -> Result<(), pyana_sdk::SdkError> {
-        self.wallet.receive_delegation(delegated)
+        let expected = delegated.delegator_public_key;
+        self.wallet
+            .receive_signed_delegation(delegated, &DelegationAuthority::TrustedKey(expected))
     }
 
     /// Verify that a token authorizes a request (plaintext Datalog evaluation).

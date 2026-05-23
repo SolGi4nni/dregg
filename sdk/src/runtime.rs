@@ -19,7 +19,7 @@ use pyana_turn::{
 use pyana_types::PublicKey;
 
 use crate::error::SdkError;
-use crate::wallet::{AgentWallet, DelegatedToken, HeldToken};
+use crate::wallet::{AgentWallet, HeldToken};
 
 /// The agent runtime: orchestrates wallet, ledger, and execution.
 ///
@@ -392,21 +392,30 @@ impl AgentRuntime {
             None
         };
 
-        sub_wallet.receive_delegation(DelegatedToken {
-            token_bytes: encoded,
-            service: token.service.clone(),
-            label: delegated_label,
-            id: token_id,
-            delegatee: sub_pk,
-            restrictions: restrictions.clone(),
-            proof_key,
-            membership_proof: None,
-            caveat_chain_hash: None,
-            // Sub-agent delegations are local (same process), so no cross-boundary
-            // signature is required. The parent wallet's signing key is not available here.
-            delegator_signature: None,
-            delegator_public_key: None,
-        })?;
+        // Local (in-process) sub-agent spawning. We use the typed `LocalDelegation`
+        // path so this code can never accidentally normalize an externally-sourced
+        // unsigned token. The local envelope is still signature-bound (under a
+        // distinct domain tag), and the receiver verifies it against the parent
+        // wallet's public key.
+        let parent_pubkey = {
+            let parent = self.wallet.read().unwrap_or_else(|e| e.into_inner());
+            parent.public_key()
+        };
+        let local = {
+            let parent = self.wallet.read().unwrap_or_else(|e| e.into_inner());
+            parent.make_local_delegation(
+                encoded,
+                token.service.clone(),
+                delegated_label,
+                token_id,
+                sub_pk,
+                restrictions.clone(),
+                proof_key,
+                None, // no pre-generated membership proof in this path
+                None, // no caveat_chain_hash; sub-agent operates on local state
+            )
+        };
+        sub_wallet.receive_local_delegation(local, &parent_pubkey)?;
 
         // Create the sub-agent's cell in the ledger.
         let sub_cell_id = sub_wallet.cell_id(&self.domain);

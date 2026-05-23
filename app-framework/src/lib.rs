@@ -45,11 +45,20 @@
 //! a single dependency instead of reaching into `pyana-intent`, `pyana-turn`, etc.
 
 pub mod auth;
+pub mod batch_executor;
+pub mod blinded_endpoint;
+pub mod captp_server;
+pub mod discovery;
 pub mod dispute;
 pub mod escrow;
+pub mod fee_policy;
 pub mod hex;
+pub mod inbox_endpoint;
 pub mod middleware;
+pub mod multi_group;
 pub mod persistence;
+pub mod queue_endpoint;
+pub mod ring_trade;
 pub mod server;
 pub mod store;
 
@@ -89,3 +98,12 @@ pub use dispute::{
     DisputeEvidence, DisputeResolution, OptimisticSettlement, SettlementState,
 };
 pub use dispute::{DisputeId, SettlementId as DisputeSettlementId};
+pub use dispute::BlindedDisputable;
+
+// New-world module re-exports.
+pub use batch_executor::{BatchExecution, BatchExecutor, ClientTurnRequest};
+pub use captp_server::CapTpServer;
+pub use discovery::{DiscoveryError, NameRegistration, NameserviceClient};
+pub use fee_policy::{AcceptedAsset, FeePolicy};
+pub use multi_group::MultiGroupConfig;
+pub use ring_trade::{LegId, RingTradeParticipant};

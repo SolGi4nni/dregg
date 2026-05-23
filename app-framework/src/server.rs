@@ -131,6 +131,9 @@ pub struct AppServer {
     config: AppConfig,
     router: Router,
     service_name: String,
+    /// Pending nameservice registration, set by `with_name`.
+    /// Registered just before the server starts accepting connections.
+    pending_registration: Option<crate::discovery::NameRegistration>,
 }
 
 impl AppServer {
@@ -140,6 +143,7 @@ impl AppServer {
             config,
             router: Router::new(),
             service_name: "pyana-app".into(),
+            pending_registration: None,
         }
     }
 
@@ -216,13 +220,90 @@ impl AppServer {
         &self.config
     }
 
+    // =========================================================================
+    // New-world extension methods (Phase 1)
+    // =========================================================================
+
+    /// Nest a [`QueueEndpoint`] router at `path`.
+    pub fn with_queue_endpoint(
+        self,
+        path: &str,
+        endpoint: crate::queue_endpoint::QueueEndpoint,
+    ) -> Self {
+        self.nest(path, endpoint.router())
+    }
+
+    /// Nest a [`FairDistributionEndpoint`] router at `path`.
+    pub fn with_blinded_endpoint(
+        self,
+        path: &str,
+        endpoint: crate::blinded_endpoint::FairDistributionEndpoint,
+    ) -> Self {
+        self.nest(path, endpoint.router())
+    }
+
+    /// Nest an [`InboxEndpoint`] router at `path`.
+    pub fn with_inbox(self, path: &str, endpoint: crate::inbox_endpoint::InboxEndpoint) -> Self {
+        self.nest(path, endpoint.router())
+    }
+
+    /// Install a [`CapTpServer`] as an axum Extension layer.
+    ///
+    /// Handlers can extract it with `axum::Extension<CapTpServer>`.
+    pub fn with_captp(self, server: crate::captp_server::CapTpServer) -> Self {
+        let router = self.router.layer(axum::Extension(server));
+        Self { router, ..self }
+    }
+
+    /// Install a [`FeePolicy`] as an axum Extension layer.
+    ///
+    /// Handlers can extract it with `axum::Extension<FeePolicy>`.
+    pub fn with_fee_policy(self, policy: crate::fee_policy::FeePolicy) -> Self {
+        let router = self.router.layer(axum::Extension(policy));
+        Self { router, ..self }
+    }
+
+    /// Install a [`MultiGroupConfig`] as an axum Extension layer.
+    ///
+    /// Handlers can extract it with `axum::Extension<MultiGroupConfig>`.
+    pub fn with_multi_group(self, config: crate::multi_group::MultiGroupConfig) -> Self {
+        let router = self.router.layer(axum::Extension(config));
+        Self { router, ..self }
+    }
+
+    /// Set the app's nameservice registration.
+    ///
+    /// Just before the server starts, it will POST to the nameservice
+    /// (`PYANA_NAMESERVICE_URL`) to register under `name` with `tags`.
+    /// Registration failure is logged but does NOT abort startup.
+    pub fn with_name(mut self, name: impl Into<String>, tags: Vec<String>) -> Self {
+        self.pending_registration = Some(crate::discovery::NameRegistration {
+            name: name.into(),
+            tags,
+            target_uri: format!("http://{}", self.config.listen),
+        });
+        self
+    }
+
     /// Start serving. Binds to the configured address and runs until shutdown.
     ///
     /// Prints the listen address to stderr on startup.
+    /// If `with_name` was called, attempts nameservice registration after binding
+    /// (failure is logged to stderr but does not abort startup).
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(&self.config.listen).await?;
         let addr = listener.local_addr()?;
         eprintln!("{} listening on http://{addr}", self.service_name);
+
+        if let Some(reg) = &self.pending_registration {
+            if let Err(e) = crate::discovery::NameserviceClient::from_env()
+                .register(reg)
+                .await
+            {
+                eprintln!("[nameservice] registration failed (non-fatal): {e}");
+            }
+        }
+
         axum::serve(listener, self.router).await?;
         Ok(())
     }
@@ -230,12 +311,23 @@ impl AppServer {
     /// Start serving and return the bound address (useful for tests).
     ///
     /// Spawns the server as a background tokio task and returns immediately.
+    /// If `with_name` was called, attempts nameservice registration before spawning.
     pub async fn serve_background(
         self,
     ) -> Result<std::net::SocketAddr, Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(&self.config.listen).await?;
         let addr = listener.local_addr()?;
         eprintln!("{} listening on http://{addr}", self.service_name);
+
+        if let Some(reg) = &self.pending_registration {
+            if let Err(e) = crate::discovery::NameserviceClient::from_env()
+                .register(reg)
+                .await
+            {
+                eprintln!("[nameservice] registration failed (non-fatal): {e}");
+            }
+        }
+
         tokio::spawn(async move {
             axum::serve(listener, self.router)
                 .await

@@ -673,6 +673,49 @@ pub fn validate_evidence_structure(evidence: &DisputeEvidence) -> Result<(), &'s
 }
 
 // =============================================================================
+// BlindedDisputable extension
+// =============================================================================
+
+/// Extension of [`Disputable`] for apps that allow blinded dispute filing.
+///
+/// The challenger commits to evidence first (anti-grief pattern): they lock a
+/// stake and reveal a hash of the evidence they intend to submit. The evidence
+/// is revealed in a second call. This prevents griefing by forcing challengers
+/// to commit before seeing if the claim changes.
+///
+/// # Lifecycle
+///
+/// 1. `file_blinded_dispute` — challenger submits commitment hash + stake.
+/// 2. `reveal_evidence` — challenger reveals the pre-image; if it matches the
+///    commitment the dispute proceeds to arbiter evaluation.
+pub trait BlindedDisputable: Disputable {
+    /// File a dispute with a commitment to evidence (anti-grief).
+    ///
+    /// The challenger locks `challenger_stake` and submits
+    /// `evidence_commitment = blake3(evidence_bytes || randomness)`.
+    /// No evidence is revealed at this stage.
+    fn file_blinded_dispute(
+        &mut self,
+        settlement_id: SettlementId,
+        challenger: pyana_cell::CellId,
+        evidence_commitment: [u8; 32],
+        challenger_stake: u64,
+    ) -> Result<DisputeId, Self::Error>;
+
+    /// Reveal the evidence committed in `file_blinded_dispute`.
+    ///
+    /// The implementation must verify that
+    /// `blake3(evidence || randomness) == evidence_commitment`
+    /// before accepting the evidence and advancing the dispute.
+    fn reveal_evidence(
+        &mut self,
+        dispute_id: DisputeId,
+        evidence: Self::Evidence,
+        randomness: [u8; 32],
+    ) -> Result<(), Self::Error>;
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

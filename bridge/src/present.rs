@@ -1795,21 +1795,20 @@ impl BridgePresentationBuilder {
     /// Build issuer membership from a pre-generated MerkleProof (linear binding).
     ///
     /// This is used in the delegation path: the delegator pre-generated the proof
-    /// using the REAL issuer key. The delegatee converts it to a circuit witness
-    /// using the `issuer_key_hash` (which is derived from their proof_key) for the
-    /// leaf computation, but uses the pre-generated path (siblings/positions) directly.
+    /// using the BLAKE3-derived proof key (`derive_key("pyana-proof-key-v1",
+    /// root_key)`), which is what the federation Merkle tree actually stores as
+    /// a leaf. We do NOT use the raw root HMAC key as a leaf.
     ///
-    /// Note: the `issuer_key_hash` here is computed from the proof_key (the BLAKE3
-    /// derivation). The proof's path is valid for the REAL issuer key in the tree.
-    /// The circuit witness uses the path from the pre-generated proof but recomputes
-    /// parents from the leaf hash of the real issuer key's Poseidon2 encoding.
+    /// The delegatee receives the proof and uses its `leaf_hash` directly (which
+    /// equals `bytes_to_babybear(derived_proof_key)`); the circuit witness then
+    /// recomputes parents from this leaf along the pre-generated path.
     fn build_issuer_membership_from_proof(
         &self,
         proof: &MerkleProof,
         _issuer_key_hash: BabyBear,
     ) -> Result<MerkleWitness, AuthError> {
-        // Convert the pre-generated proof's leaf_hash to a BabyBear field element.
-        // This is the hash of the REAL issuer key, not the proof_key.
+        // The pre-generated proof's leaf_hash is the BabyBear encoding of the
+        // BLAKE3-derived proof key (the actual federation tree leaf).
         let real_leaf_hash = bytes_to_babybear(&proof.leaf_hash);
 
         let mut levels = Vec::with_capacity(proof.path_indices.len());
@@ -1959,18 +1958,18 @@ impl BridgePresentationBuilder {
 
     /// Build Poseidon2 issuer membership from a pre-generated MerkleProof.
     ///
-    /// This is the Poseidon2 variant of the delegation path. The delegator pre-generated
-    /// the proof using the REAL issuer key. We convert the byte-level siblings to BabyBear
-    /// field elements and use Poseidon2 hashing (hash_fact) to compute parents.
-    ///
-    /// The leaf_hash in the proof corresponds to the REAL issuer key, so we use it
-    /// (converted to BabyBear) as the starting leaf for the witness computation.
+    /// Poseidon2 variant of the delegation path. The delegator pre-generated
+    /// the proof using the BLAKE3-derived proof key (the actual federation tree
+    /// leaf — raw root HMAC keys are never used as leaves). We convert byte-level
+    /// siblings to BabyBear field elements and use Poseidon2 hashing to compute
+    /// parents along the pre-generated path.
     fn build_issuer_membership_poseidon2_from_proof(
         &self,
         proof: &MerkleProof,
         _issuer_key_hash: BabyBear,
     ) -> Result<MerkleWitness, AuthError> {
-        // Use the pre-generated proof's leaf_hash (the REAL issuer key hash from the tree).
+        // Use the pre-generated proof's leaf_hash (BabyBear encoding of the
+        // BLAKE3-derived proof key — the actual federation tree leaf).
         let real_leaf_hash = bytes_to_babybear(&proof.leaf_hash);
 
         let mut levels = Vec::with_capacity(proof.path_indices.len());

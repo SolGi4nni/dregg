@@ -453,11 +453,22 @@ impl HeldToken {
     }
 }
 
-/// A token that has been delegated to another agent.
+/// A token that has been delegated to another agent (signed envelope).
 ///
 /// Contains only the serialized attenuated macaroon bytes (NOT the root key).
 /// The delegatee can present this token for verification and further attenuate it,
 /// but cannot mint new root tokens.
+///
+/// # Envelope v2 (mandatory signature)
+///
+/// This struct is the on-the-wire delegation envelope. All envelope-relevant fields
+/// (token_bytes, delegatee, service, id, restrictions, proof_key, caveat_chain_hash,
+/// membership_leaf, parent_delegation_hash) are bound by `delegator_signature`. The
+/// signature must verify under `delegator_public_key`.
+///
+/// **The envelope is NOT trustworthy on its own**: the receiver must additionally
+/// check that `delegator_public_key` is an *authorized* delegator for this chain.
+/// See [`AgentWallet::receive_signed_delegation`] for the authority model.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DelegatedToken {
     /// The serialized attenuated token (encoded macaroon string).
@@ -487,11 +498,13 @@ pub struct DelegatedToken {
     pub proof_key: Option<[u8; 32]>,
     /// Pre-generated federation membership proof for the delegatee.
     ///
-    /// The delegator (who holds the REAL issuer key and CAN generate membership
-    /// proofs from the federation tree) pre-generates this proof and includes it
-    /// in the delegation payload. The delegatee uses this proof directly instead
-    /// of trying to look up membership by `proof_key` (which is a BLAKE3 derivation
-    /// not present in the federation tree).
+    /// The delegator (who can look up the BLAKE3-derived proof key as a leaf in
+    /// the federation Merkle tree) pre-generates this proof and includes it in the
+    /// delegation payload. The delegatee uses this proof directly instead of trying
+    /// to look up membership themselves.
+    ///
+    /// **Note**: Federation tree leaves are BLAKE3-derived proof keys, NOT raw
+    /// issuer keys. The path's `leaf_hash` corresponds to `derive_proof_key(root_key)`.
     ///
     /// **Security property**: The membership proof is bound to the specific federation
     /// root at delegation time. If the federation root changes (e.g., issuer is removed),
@@ -507,16 +520,105 @@ pub struct DelegatedToken {
     /// the encoded token and generate proofs over fabricated authorization facts.
     #[serde(default)]
     pub caveat_chain_hash: Option<[u8; 32]>,
-    /// Ed25519 signature from the delegator over the delegation envelope.
+    /// Hash of the parent delegation envelope, when this delegation is part of a
+    /// chain (A → B → C). For root delegations (issuer → first recipient), this
+    /// is the zero hash. The parent hash is part of the signed payload so chains
+    /// link cryptographically.
+    #[serde(default)]
+    pub parent_delegation_hash: [u8; 32],
+    /// Ed25519 signature from the delegator over the **entire** delegation envelope.
     ///
-    /// Signs `blake3::derive_key("pyana-delegation-binding-v1", caveat_chain_hash || proof_key || membership_leaf)`.
-    /// This prevents a malicious delegatee from mutating caveats and recomputing the
-    /// `caveat_chain_hash` — they cannot forge the delegator's signature.
-    #[serde(default)]
-    pub delegator_signature: Option<Signature>,
-    /// The delegator's public key, needed to verify `delegator_signature`.
-    #[serde(default)]
-    pub delegator_public_key: Option<PublicKey>,
+    /// The signed payload covers `token_bytes`, `delegatee`, `service`, `id`,
+    /// `restrictions`, `proof_key`, `caveat_chain_hash`, `membership_leaf`,
+    /// `parent_delegation_hash`, and the envelope domain tag. See
+    /// [`AgentWallet::compute_delegation_signing_message_v2`].
+    ///
+    /// This prevents a malicious holder of `proof_key` from forging an envelope:
+    /// they cannot produce a signature that verifies under the legitimate
+    /// delegator's public key.
+    pub delegator_signature: Signature,
+    /// The delegator's public key.
+    ///
+    /// **WARNING**: This field is asserted by the wire envelope, not verified by it.
+    /// The receiver MUST additionally check that this public key is an authorized
+    /// delegator (matches an expected key or chains to a previously-accepted
+    /// envelope). See [`AgentWallet::receive_signed_delegation`].
+    pub delegator_public_key: PublicKey,
+}
+
+impl DelegatedToken {
+    /// Compute the envelope hash. Used as a parent-pointer when this delegation
+    /// is later re-delegated (forming a chain).
+    pub fn envelope_hash(&self) -> [u8; 32] {
+        let membership_leaf = self.membership_proof.as_ref().map(|p| p.leaf_hash);
+        AgentWallet::compute_delegation_signing_message_v2(
+            &self.token_bytes,
+            &self.delegatee,
+            &self.service,
+            &self.id,
+            &self.restrictions,
+            &self.proof_key,
+            &self.caveat_chain_hash,
+            membership_leaf.as_ref(),
+            &self.parent_delegation_hash,
+            &self.delegator_public_key,
+        )
+    }
+}
+
+/// Authority policy for accepting [`DelegatedToken`] envelopes.
+///
+/// See [`AgentWallet::check_delegation_authority`] for the security model.
+#[derive(Clone, Debug)]
+pub enum DelegationAuthority {
+    /// Accept envelopes signed by exactly this public key. Most common case for
+    /// first-time delegations where the receiver knows (out-of-band) which agent
+    /// is delegating to them.
+    TrustedKey(PublicKey),
+    /// Accept envelopes signed by any key in this set. Useful when several
+    /// authorized delegators may issue tokens (e.g., a small federation).
+    TrustedKeys(std::collections::HashSet<PublicKey>),
+    /// Accept envelopes that link to a known parent envelope hash AND are signed
+    /// by the expected re-delegator. Used when accepting Bob's delegation along
+    /// a chain Alice → Bob → Carol: Carol verifies the envelope's parent_hash
+    /// matches the envelope she already received from Alice (transitively).
+    ChainsFromParent {
+        /// The envelope hash this delegation must declare as its parent.
+        parent_hash: [u8; 32],
+        /// The expected delegator (the agent re-delegating the parent envelope).
+        delegator: PublicKey,
+    },
+    /// Accept any well-signed envelope. **UNSAFE** — only for development.
+    /// `warn` controls whether to emit a tracing warning on use.
+    Open {
+        /// Whether to emit a tracing warning on every use (recommended: true).
+        warn: bool,
+    },
+}
+
+/// A delegation produced *inside this process* for handing tokens to sub-agents.
+///
+/// This is **not** wire-transferable: it does not implement `Serialize`/`Deserialize`
+/// and its constructor is crate-private. Receiving wallets accept it via the
+/// dedicated [`AgentWallet::receive_local_delegation`] path, which never runs on
+/// externally-sourced bytes.
+///
+/// Even local delegations are signed (so authority binding is uniform across all
+/// code paths). The envelope tag is `"pyana-delegation-local-v1"`, which is
+/// distinct from the external envelope tag and therefore non-confusable.
+#[derive(Clone, Debug)]
+pub struct LocalDelegation {
+    pub(crate) token_bytes: String,
+    pub(crate) service: String,
+    pub(crate) label: String,
+    pub(crate) id: String,
+    pub(crate) delegatee: PublicKey,
+    pub(crate) restrictions: Attenuation,
+    pub(crate) proof_key: Option<[u8; 32]>,
+    pub(crate) membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+    pub(crate) caveat_chain_hash: Option<[u8; 32]>,
+    pub(crate) delegator_signature: Signature,
+    pub(crate) delegator_public_key: PublicKey,
 }
 
 /// A turn signed by this wallet's identity, ready for submission.
@@ -911,6 +1013,21 @@ impl AgentWallet {
         to: &PublicKey,
         restrictions: &Attenuation,
     ) -> Result<DelegatedToken, SdkError> {
+        self.delegate_with_parent(token, to, restrictions, [0u8; 32])
+    }
+
+    /// Like [`Self::delegate`], but anchors this delegation to a parent envelope hash.
+    ///
+    /// When re-delegating a token received from another agent, pass the parent
+    /// envelope hash (from [`DelegatedToken::envelope_hash`]) so the resulting
+    /// chain links cryptographically.
+    pub fn delegate_with_parent(
+        &mut self,
+        token: &HeldToken,
+        to: &PublicKey,
+        restrictions: &Attenuation,
+        parent_delegation_hash: [u8; 32],
+    ) -> Result<DelegatedToken, SdkError> {
         let attenuated = self.attenuate(token, restrictions)?;
 
         // Pass through the derived proof key to the delegatee.
@@ -931,10 +1048,23 @@ impl AgentWallet {
             Some(Self::compute_caveat_chain_hash(&decoded))
         };
 
-        // SECURITY: Sign the delegation envelope so the delegatee cannot mutate
-        // caveats and recompute caveat_chain_hash without the delegator's key.
-        let (delegator_signature, delegator_public_key) =
-            self.sign_delegation_envelope(&caveat_chain_hash, &proof_key, None);
+        // SECURITY: Sign the entire delegation envelope (v2 payload) so neither
+        // the delegatee nor a `proof_key` holder can mutate any envelope field
+        // without invalidating the signature.
+        let signing_message = Self::compute_delegation_signing_message_v2(
+            &attenuated.encoded,
+            to,
+            &attenuated.service,
+            &attenuated.id,
+            restrictions,
+            &proof_key,
+            &caveat_chain_hash,
+            None, // no pre-generated membership proof
+            &parent_delegation_hash,
+            &self.public_key,
+        );
+        let sig = self.signing_key.sign(&signing_message);
+        let delegator_signature = Signature(sig.to_bytes());
 
         Ok(DelegatedToken {
             token_bytes: attenuated.encoded.clone(),
@@ -946,8 +1076,9 @@ impl AgentWallet {
             proof_key,
             membership_proof: None,
             caveat_chain_hash,
-            delegator_signature: Some(delegator_signature),
-            delegator_public_key: Some(delegator_public_key),
+            parent_delegation_hash,
+            delegator_signature,
+            delegator_public_key: self.public_key,
         })
     }
 
@@ -978,6 +1109,18 @@ impl AgentWallet {
         restrictions: &Attenuation,
         federation_tree: &pyana_commit::merkle::MerkleTree,
     ) -> Result<DelegatedToken, SdkError> {
+        self.delegate_with_tree_and_parent(token, to, restrictions, federation_tree, [0u8; 32])
+    }
+
+    /// Like [`Self::delegate_with_tree`], but anchors this delegation to a parent envelope hash.
+    pub fn delegate_with_tree_and_parent(
+        &mut self,
+        token: &HeldToken,
+        to: &PublicKey,
+        restrictions: &Attenuation,
+        federation_tree: &pyana_commit::merkle::MerkleTree,
+        parent_delegation_hash: [u8; 32],
+    ) -> Result<DelegatedToken, SdkError> {
         let attenuated = self.attenuate(token, restrictions)?;
 
         // Pass through the derived proof key to the delegatee.
@@ -1004,11 +1147,22 @@ impl AgentWallet {
             Some(Self::compute_caveat_chain_hash(&decoded))
         };
 
-        // SECURITY: Sign the delegation envelope so the delegatee cannot mutate
-        // caveats and recompute caveat_chain_hash without the delegator's key.
+        // SECURITY: Sign the entire delegation envelope (v2 payload).
         let membership_leaf = membership_proof.as_ref().map(|p| p.leaf_hash);
-        let (delegator_signature, delegator_public_key) =
-            self.sign_delegation_envelope(&caveat_chain_hash, &proof_key, membership_leaf.as_ref());
+        let signing_message = Self::compute_delegation_signing_message_v2(
+            &attenuated.encoded,
+            to,
+            &attenuated.service,
+            &attenuated.id,
+            restrictions,
+            &proof_key,
+            &caveat_chain_hash,
+            membership_leaf.as_ref(),
+            &parent_delegation_hash,
+            &self.public_key,
+        );
+        let sig = self.signing_key.sign(&signing_message);
+        let delegator_signature = Signature(sig.to_bytes());
 
         Ok(DelegatedToken {
             token_bytes: attenuated.encoded.clone(),
@@ -1020,8 +1174,9 @@ impl AgentWallet {
             proof_key,
             membership_proof,
             caveat_chain_hash,
-            delegator_signature: Some(delegator_signature),
-            delegator_public_key: Some(delegator_public_key),
+            parent_delegation_hash,
+            delegator_signature,
+            delegator_public_key: self.public_key,
         })
     }
 
@@ -1059,8 +1214,34 @@ impl AgentWallet {
     /// # Errors
     ///
     /// Returns [`SdkError`] if any validation check fails.
-    pub fn receive_delegation(&mut self, delegated: DelegatedToken) -> Result<(), SdkError> {
-        // (a) Size check: reject oversized tokens to prevent memory DoS.
+    /// Receive an externally-sourced [`DelegatedToken`].
+    ///
+    /// # Authority model
+    ///
+    /// `policy` decides which delegator public keys are authorized to grant a
+    /// delegation to this wallet. The envelope's `delegator_public_key` must be
+    /// accepted by `policy` AND the envelope's signature must verify under that
+    /// same key. See [`DelegationAuthority`] for the policy variants.
+    ///
+    /// The previous `receive_delegation(delegated)` API silently accepted any
+    /// signed envelope (or no envelope at all) — that was unsound. There is no
+    /// safe default policy, so callers must always provide one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SdkError::InvalidDelegation`] if:
+    /// - the token bytes are oversized or unparseable,
+    /// - the restrictions are expired,
+    /// - the delegator's public key is rejected by the policy,
+    /// - the signature does not verify under the (asserted) delegator key,
+    /// - the envelope's `parent_delegation_hash` does not match a parent the
+    ///   policy expected (when using [`DelegationAuthority::ChainsFromParent`]).
+    pub fn receive_signed_delegation(
+        &mut self,
+        delegated: DelegatedToken,
+        policy: &DelegationAuthority,
+    ) -> Result<(), SdkError> {
+        // (a) Size check.
         if delegated.token_bytes.len() > Self::MAX_DELEGATED_TOKEN_SIZE {
             return Err(SdkError::InvalidDelegation(format!(
                 "token payload too large: {} bytes exceeds {} byte limit",
@@ -1069,17 +1250,13 @@ impl AgentWallet {
             )));
         }
 
-        // (b) Deserialization check: ensure the token can be decoded as a valid macaroon.
-        // We use a zeroed root_key since we don't have the issuer key -- this verifies
-        // structural validity (parse, caveat structure) without HMAC chain verification.
+        // (b) Structural validity (parse only; HMAC chain not verifiable without root key).
         let _decoded =
             MacaroonToken::from_encoded(&delegated.token_bytes, [0u8; 32]).map_err(|e| {
                 SdkError::InvalidDelegation(format!("token failed to deserialize: {e}"))
             })?;
 
-        // (c) Expiry check: if the delegation restrictions specify not_after, ensure
-        // the token hasn't already expired. This catches the common case where an
-        // attacker replays an old delegation with an expired time window.
+        // (c) Expiry.
         if let Some(not_after) = delegated.restrictions.not_after {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1092,65 +1269,212 @@ impl AgentWallet {
             }
         }
 
-        // (d) Delegation envelope signature verification: if the delegator provided a
-        // signature, verify it to ensure the caveat_chain_hash has not been tampered with.
-        // This is the primary defense against a malicious delegate mutating caveats.
-        if let (Some(sig), Some(pubkey)) = (
-            &delegated.delegator_signature,
-            &delegated.delegator_public_key,
-        ) {
-            let membership_leaf = delegated.membership_proof.as_ref().map(|p| p.leaf_hash);
-            Self::verify_delegation_signature(
-                pubkey,
-                sig,
-                &delegated.caveat_chain_hash,
-                &delegated.proof_key,
-                membership_leaf.as_ref(),
-            )?;
+        // (d) Delegatee binding: the envelope must be addressed to this wallet.
+        if delegated.delegatee != self.public_key {
+            return Err(SdkError::InvalidDelegation(format!(
+                "delegation addressed to {:?}, not this wallet ({:?})",
+                delegated.delegatee, self.public_key,
+            )));
         }
 
-        // SECURITY: The token is accepted with structural validation only. The HMAC chain
-        // is NOT verified because we do not hold the root key. The token is marked as
-        // unverified — callers MUST check `is_verified()` before trusting it for
-        // authorization decisions. Full verification occurs at presentation time when
-        // the token is submitted to a verifier that holds the root key.
-        tracing::warn!(
+        // (e) Authority check: the asserted delegator must be accepted by the policy.
+        Self::check_delegation_authority(policy, &delegated)?;
+
+        // (f) Signature verification: the envelope must be signed by the asserted
+        // delegator key. After step (e), we know that key is authorized.
+        Self::verify_delegation_envelope_v2(&delegated)?;
+
+        // SECURITY: The token's HMAC chain is still not verified (we don't hold the
+        // root key); structural validation + signed envelope + caveat_chain_hash
+        // commitment is the strongest binding we can produce on the delegatee side.
+        // Authorization decisions still require full HMAC verification at a verifier
+        // that holds the root key.
+        tracing::debug!(
             service = %delegated.service,
             id = %delegated.id,
-            "accepting unverified delegated token: HMAC chain not verified (root key unavailable). \
-             Token will be verified at presentation time."
+            delegator = ?delegated.delegator_public_key,
+            "accepted signed delegation: envelope verified; HMAC chain pending until presentation",
         );
 
         let mut held = HeldToken::new(
             delegated.label,
             delegated.service,
             delegated.token_bytes,
-            [0u8; 32], // delegatee does not have the root key
+            [0u8; 32],
             delegated.id,
         );
-        // Explicitly mark as unverified (new() already does this for zeroed root_key,
-        // but we're explicit here for clarity and defense-in-depth).
         held.verified = false;
 
-        // Store the derived proof key if provided by the delegator.
-        // This allows the delegatee to generate ZK proofs (federation membership)
-        // without holding the raw issuer key (one-way derivation preserves security).
         if let Some(proof_key) = delegated.proof_key {
             if proof_key != [0u8; 32] {
                 held.issuer_key = proof_key;
             }
         }
-
-        // Store the pre-generated federation membership proof if provided.
-        // The delegator generated this from the BLAKE3-derived proof key (which is the
-        // tree leaf). The delegatee uses it directly during proof generation.
         held.membership_proof = delegated.membership_proof;
-
-        // Store the caveat chain hash for integrity verification at proof time.
         held.caveat_chain_hash = delegated.caveat_chain_hash;
 
         self.tokens.push(held);
         Ok(())
+    }
+
+    /// Receive a [`LocalDelegation`] produced in-process by a parent wallet.
+    ///
+    /// This path is NOT exposed for externally-sourced bytes — [`LocalDelegation`]
+    /// is not deserializable, so no caller can produce one from untrusted input.
+    /// The envelope is still signature-bound (under the local-envelope tag, which
+    /// is distinct from the external-envelope tag), so authority is uniformly
+    /// enforced across all code paths.
+    ///
+    /// `expected_parent_pubkey` is the parent wallet's identity; the signature
+    /// must verify under that key.
+    pub fn receive_local_delegation(
+        &mut self,
+        local: LocalDelegation,
+        expected_parent_pubkey: &PublicKey,
+    ) -> Result<(), SdkError> {
+        if local.token_bytes.len() > Self::MAX_DELEGATED_TOKEN_SIZE {
+            return Err(SdkError::InvalidDelegation(format!(
+                "token payload too large: {} bytes exceeds {} byte limit",
+                local.token_bytes.len(),
+                Self::MAX_DELEGATED_TOKEN_SIZE,
+            )));
+        }
+
+        let _decoded =
+            MacaroonToken::from_encoded(&local.token_bytes, [0u8; 32]).map_err(|e| {
+                SdkError::InvalidDelegation(format!("token failed to deserialize: {e}"))
+            })?;
+
+        if local.delegatee != self.public_key {
+            return Err(SdkError::InvalidDelegation(format!(
+                "local delegation addressed to {:?}, not this wallet ({:?})",
+                local.delegatee, self.public_key,
+            )));
+        }
+
+        if local.delegator_public_key != *expected_parent_pubkey {
+            return Err(SdkError::InvalidDelegation(format!(
+                "local delegator key {:?} does not match expected parent {:?}",
+                local.delegator_public_key, expected_parent_pubkey,
+            )));
+        }
+
+        // Verify the local-envelope signature.
+        let membership_leaf = local.membership_proof.as_ref().map(|p| p.leaf_hash);
+        let signing_message = Self::compute_local_delegation_signing_message(
+            &local.token_bytes,
+            &local.delegatee,
+            &local.service,
+            &local.id,
+            &local.restrictions,
+            &local.proof_key,
+            &local.caveat_chain_hash,
+            membership_leaf.as_ref(),
+            &local.delegator_public_key,
+        );
+        use ed25519_dalek::Verifier;
+        let verifying_key =
+            ed25519_dalek::VerifyingKey::from_bytes(&local.delegator_public_key.0).map_err(|e| {
+                SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
+            })?;
+        let signature = ed25519_dalek::Signature::from_bytes(&local.delegator_signature.0);
+        verifying_key
+            .verify(&signing_message, &signature)
+            .map_err(|e| {
+                SdkError::InvalidDelegation(format!(
+                    "local delegation signature verification failed: {e}"
+                ))
+            })?;
+
+        let mut held = HeldToken::new(
+            local.label,
+            local.service,
+            local.token_bytes,
+            [0u8; 32],
+            local.id,
+        );
+        held.verified = false;
+
+        if let Some(proof_key) = local.proof_key {
+            if proof_key != [0u8; 32] {
+                held.issuer_key = proof_key;
+            }
+        }
+        held.membership_proof = local.membership_proof;
+        held.caveat_chain_hash = local.caveat_chain_hash;
+
+        self.tokens.push(held);
+        Ok(())
+    }
+
+    /// Apply the authority policy to a delegation envelope.
+    ///
+    /// # Authority model (v1)
+    ///
+    /// We do not have a global root-issuer registry: any wallet may legitimately
+    /// produce a token. "Authority" therefore reduces to: *does the receiver
+    /// have prior reason to trust this delegator key for this chain?*
+    ///
+    /// The receiver expresses that trust via [`DelegationAuthority`]:
+    /// - `TrustedKey(pk)`: accept envelopes signed by exactly `pk`.
+    /// - `TrustedKeys(set)`: accept envelopes signed by any key in `set`.
+    /// - `ChainsFromParent { parent_hash, delegator }`: accept envelopes that
+    ///   declare the given parent hash AND are signed by `delegator`. Used when
+    ///   re-delegating along a chain the receiver has already accepted upstream.
+    /// - `Open { warn }`: accept any well-signed envelope. This is unsafe and
+    ///   only intended for development; production callers should NEVER use it.
+    fn check_delegation_authority(
+        policy: &DelegationAuthority,
+        env: &DelegatedToken,
+    ) -> Result<(), SdkError> {
+        match policy {
+            DelegationAuthority::TrustedKey(pk) => {
+                if env.delegator_public_key != *pk {
+                    return Err(SdkError::InvalidDelegation(format!(
+                        "delegator {:?} not in authority set (expected {:?})",
+                        env.delegator_public_key, pk,
+                    )));
+                }
+                Ok(())
+            }
+            DelegationAuthority::TrustedKeys(set) => {
+                if !set.contains(&env.delegator_public_key) {
+                    return Err(SdkError::InvalidDelegation(format!(
+                        "delegator {:?} not in authority set ({} keys)",
+                        env.delegator_public_key,
+                        set.len(),
+                    )));
+                }
+                Ok(())
+            }
+            DelegationAuthority::ChainsFromParent {
+                parent_hash,
+                delegator,
+            } => {
+                if env.parent_delegation_hash != *parent_hash {
+                    return Err(SdkError::InvalidDelegation(format!(
+                        "parent_delegation_hash mismatch: envelope claims {:?}, policy expects {:?}",
+                        env.parent_delegation_hash, parent_hash,
+                    )));
+                }
+                if env.delegator_public_key != *delegator {
+                    return Err(SdkError::InvalidDelegation(format!(
+                        "chain delegator {:?} does not match policy-expected {:?}",
+                        env.delegator_public_key, delegator,
+                    )));
+                }
+                Ok(())
+            }
+            DelegationAuthority::Open { warn } => {
+                if *warn {
+                    tracing::warn!(
+                        delegator = ?env.delegator_public_key,
+                        "DelegationAuthority::Open: accepting envelope without authority check (unsafe)",
+                    );
+                }
+                Ok(())
+            }
+        }
     }
 
     // =========================================================================
@@ -1875,66 +2199,132 @@ impl AgentWallet {
         Ok(self.sign_turn(&turn))
     }
 
-    /// Compute and sign the delegation envelope binding.
-    ///
-    /// The signing message is:
-    /// `blake3::derive_key("pyana-delegation-binding-v1", caveat_chain_hash || proof_key || membership_leaf)`
-    ///
-    /// This prevents a malicious delegatee from mutating caveats and recomputing the
-    /// `caveat_chain_hash` — they cannot forge the delegator's signature over the
-    /// new hash.
-    fn sign_delegation_envelope(
-        &self,
-        caveat_chain_hash: &Option<[u8; 32]>,
-        proof_key: &Option<[u8; 32]>,
-        membership_leaf: Option<&[u8; 32]>,
-    ) -> (Signature, PublicKey) {
-        let signing_message =
-            Self::compute_delegation_signing_message(caveat_chain_hash, proof_key, membership_leaf);
-        let sig = self.signing_key.sign(&signing_message);
-        (Signature(sig.to_bytes()), self.public_key)
-    }
+    // =========================================================================
+    // Delegation Envelope Signing / Verification (v2)
+    //
+    // Authority model:
+    //   The delegation envelope is signed by the delegator's wallet key. The
+    //   receiver supplies a `DelegationAuthority` policy that decides which
+    //   delegator key is authorized (TrustedKey / TrustedKeys / ChainsFromParent
+    //   / Open). The signature MUST verify under the asserted delegator key, AND
+    //   the asserted delegator key MUST be accepted by the policy.
+    //
+    //   We do not chain to a root issuer because pyana wallets are sovereign:
+    //   there is no global registry of "who is allowed to mint a token". Trust
+    //   is established explicitly by the receiver — either by hard-coding an
+    //   expected key, or by linking to a previously-accepted parent envelope.
+    //
+    // Signed payload:
+    //   The v2 payload binds every authority-affecting field:
+    //     - token_bytes (the actual macaroon being delegated)
+    //     - delegatee (who can present this token)
+    //     - service (which service this token is for)
+    //     - id (token identifier)
+    //     - restrictions (the attenuations applied)
+    //     - proof_key (the BLAKE3-derived ZK proof key, if any)
+    //     - caveat_chain_hash (caveat integrity commitment)
+    //     - membership_leaf (federation-proof leaf, if any)
+    //     - parent_delegation_hash (links chains; zero for root delegations)
+    //     - delegator_public_key (binds the signer to the envelope)
+    //
+    //   Domain separation uses `blake3::keyed_hash` with the v2 envelope context,
+    //   distinct from the v1 binding tag and from the local-delegation tag.
+    // =========================================================================
 
-    /// Compute the canonical signing message for a delegation envelope.
-    fn compute_delegation_signing_message(
-        caveat_chain_hash: &Option<[u8; 32]>,
-        proof_key: &Option<[u8; 32]>,
-        membership_leaf: Option<&[u8; 32]>,
-    ) -> [u8; 32] {
-        let mut message_data = Vec::with_capacity(96);
-        if let Some(h) = caveat_chain_hash {
-            message_data.extend_from_slice(h);
-        }
-        if let Some(k) = proof_key {
-            message_data.extend_from_slice(k);
-        }
-        if let Some(r) = membership_leaf {
-            message_data.extend_from_slice(r);
-        }
-        blake3::derive_key("pyana-delegation-binding-v1", &message_data)
-    }
+    /// Domain key for the external delegation envelope (v2).
+    const DELEGATION_ENVELOPE_V2_CONTEXT: &'static str = "pyana-delegation-envelope-v2";
 
-    /// Verify a delegation envelope signature.
+    /// Domain key for the local (in-process) delegation envelope.
+    const DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT: &'static str = "pyana-delegation-local-v1";
+
+    /// Compute the canonical v2 signing message for an external delegation envelope.
     ///
-    /// Returns `Ok(())` if the signature is valid, or an error describing the failure.
-    pub(crate) fn verify_delegation_signature(
+    /// Binds every authority-affecting field. See [`AgentWallet::compute_delegation_signing_message_v2`]
+    /// documentation block above for the full payload listing.
+    pub(crate) fn compute_delegation_signing_message_v2(
+        token_bytes: &str,
+        delegatee: &PublicKey,
+        service: &str,
+        id: &str,
+        restrictions: &Attenuation,
+        proof_key: &Option<[u8; 32]>,
+        caveat_chain_hash: &Option<[u8; 32]>,
+        membership_leaf: Option<&[u8; 32]>,
+        parent_delegation_hash: &[u8; 32],
         delegator_public_key: &PublicKey,
-        delegator_signature: &Signature,
-        caveat_chain_hash: &Option<[u8; 32]>,
-        proof_key: &Option<[u8; 32]>,
-        membership_leaf: Option<&[u8; 32]>,
-    ) -> Result<(), SdkError> {
+    ) -> [u8; 32] {
+        // Use postcard for deterministic canonical serialization of structured
+        // fields (restrictions in particular), and length-prefix opaque blobs so
+        // boundary ambiguity is impossible.
+        let mut hasher = blake3::Hasher::new_derive_key(Self::DELEGATION_ENVELOPE_V2_CONTEXT);
+
+        // Length-prefixed strings.
+        hasher.update(&(token_bytes.len() as u64).to_le_bytes());
+        hasher.update(token_bytes.as_bytes());
+        hasher.update(&(service.len() as u64).to_le_bytes());
+        hasher.update(service.as_bytes());
+        hasher.update(&(id.len() as u64).to_le_bytes());
+        hasher.update(id.as_bytes());
+
+        // Fixed-size 32-byte fields.
+        hasher.update(&delegatee.0);
+        hasher.update(&delegator_public_key.0);
+        hasher.update(parent_delegation_hash);
+
+        // Optional 32-byte fields use a 1-byte presence tag to disambiguate
+        // `Some([0; 32])` from `None`.
+        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| {
+            match value {
+                Some(v) => {
+                    hasher.update(&[1u8]);
+                    hasher.update(v);
+                }
+                None => {
+                    hasher.update(&[0u8]);
+                    hasher.update(&[0u8; 32]);
+                }
+            }
+        };
+        write_optional(&mut hasher, proof_key.as_ref());
+        write_optional(&mut hasher, caveat_chain_hash.as_ref());
+        write_optional(&mut hasher, membership_leaf);
+
+        // Restrictions: canonical postcard encoding, length-prefixed.
+        let restrictions_bytes =
+            postcard::to_allocvec(restrictions).expect("restrictions serialization should not fail");
+        hasher.update(&(restrictions_bytes.len() as u64).to_le_bytes());
+        hasher.update(&restrictions_bytes);
+
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Verify the v2 delegation envelope signature.
+    ///
+    /// Checks only the cryptographic signature; **does not** check authority.
+    /// Use [`AgentWallet::check_delegation_authority`] first.
+    pub(crate) fn verify_delegation_envelope_v2(env: &DelegatedToken) -> Result<(), SdkError> {
         use ed25519_dalek::Verifier;
 
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&delegator_public_key.0)
-            .map_err(|e| {
+        let verifying_key =
+            ed25519_dalek::VerifyingKey::from_bytes(&env.delegator_public_key.0).map_err(|e| {
                 SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
             })?;
 
-        let signing_message =
-            Self::compute_delegation_signing_message(caveat_chain_hash, proof_key, membership_leaf);
+        let membership_leaf = env.membership_proof.as_ref().map(|p| p.leaf_hash);
+        let signing_message = Self::compute_delegation_signing_message_v2(
+            &env.token_bytes,
+            &env.delegatee,
+            &env.service,
+            &env.id,
+            &env.restrictions,
+            &env.proof_key,
+            &env.caveat_chain_hash,
+            membership_leaf.as_ref(),
+            &env.parent_delegation_hash,
+            &env.delegator_public_key,
+        );
 
-        let signature = ed25519_dalek::Signature::from_bytes(&delegator_signature.0);
+        let signature = ed25519_dalek::Signature::from_bytes(&env.delegator_signature.0);
         verifying_key
             .verify(&signing_message, &signature)
             .map_err(|e| {
@@ -1942,6 +2332,101 @@ impl AgentWallet {
                     "delegation envelope signature verification failed: {e}"
                 ))
             })
+    }
+
+    /// Compute the canonical signing message for a *local* delegation envelope.
+    ///
+    /// Uses a distinct domain tag so external and local envelopes are not
+    /// cross-confusable.
+    pub(crate) fn compute_local_delegation_signing_message(
+        token_bytes: &str,
+        delegatee: &PublicKey,
+        service: &str,
+        id: &str,
+        restrictions: &Attenuation,
+        proof_key: &Option<[u8; 32]>,
+        caveat_chain_hash: &Option<[u8; 32]>,
+        membership_leaf: Option<&[u8; 32]>,
+        delegator_public_key: &PublicKey,
+    ) -> [u8; 32] {
+        let mut hasher =
+            blake3::Hasher::new_derive_key(Self::DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT);
+        hasher.update(&(token_bytes.len() as u64).to_le_bytes());
+        hasher.update(token_bytes.as_bytes());
+        hasher.update(&(service.len() as u64).to_le_bytes());
+        hasher.update(service.as_bytes());
+        hasher.update(&(id.len() as u64).to_le_bytes());
+        hasher.update(id.as_bytes());
+        hasher.update(&delegatee.0);
+        hasher.update(&delegator_public_key.0);
+
+        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| {
+            match value {
+                Some(v) => {
+                    hasher.update(&[1u8]);
+                    hasher.update(v);
+                }
+                None => {
+                    hasher.update(&[0u8]);
+                    hasher.update(&[0u8; 32]);
+                }
+            }
+        };
+        write_optional(&mut hasher, proof_key.as_ref());
+        write_optional(&mut hasher, caveat_chain_hash.as_ref());
+        write_optional(&mut hasher, membership_leaf);
+
+        let restrictions_bytes =
+            postcard::to_allocvec(restrictions).expect("restrictions serialization should not fail");
+        hasher.update(&(restrictions_bytes.len() as u64).to_le_bytes());
+        hasher.update(&restrictions_bytes);
+
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Build a [`LocalDelegation`] for in-process sub-agent spawning.
+    ///
+    /// This is the **only** way to construct a `LocalDelegation`. It signs the
+    /// envelope under the local-envelope tag so [`Self::receive_local_delegation`]
+    /// can verify authority uniformly with the external path.
+    pub(crate) fn make_local_delegation(
+        &self,
+        token_bytes: String,
+        service: String,
+        label: String,
+        id: String,
+        delegatee: PublicKey,
+        restrictions: Attenuation,
+        proof_key: Option<[u8; 32]>,
+        membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+        caveat_chain_hash: Option<[u8; 32]>,
+    ) -> LocalDelegation {
+        let membership_leaf = membership_proof.as_ref().map(|p| p.leaf_hash);
+        let signing_message = Self::compute_local_delegation_signing_message(
+            &token_bytes,
+            &delegatee,
+            &service,
+            &id,
+            &restrictions,
+            &proof_key,
+            &caveat_chain_hash,
+            membership_leaf.as_ref(),
+            &self.public_key,
+        );
+        let sig = self.signing_key.sign(&signing_message);
+        LocalDelegation {
+            token_bytes,
+            service,
+            label,
+            id,
+            delegatee,
+            restrictions,
+            proof_key,
+            membership_proof,
+            caveat_chain_hash,
+            delegator_signature: Signature(sig.to_bytes()),
+            delegator_public_key: self.public_key,
+        }
     }
 
     // =========================================================================
@@ -5026,13 +5511,14 @@ mod tests {
         let root_key = [99u8; 32];
         let root_token = wallet.mint_token(&root_key, "storage");
 
-        let delegatee_wallet = AgentWallet::new();
-        let delegatee_pk = delegatee_wallet.public_key();
+        let recv_wallet = AgentWallet::new();
+        let delegatee_pk = recv_wallet.public_key();
 
         let restrictions = Attenuation {
             services: vec![("storage".to_string(), "r".to_string())],
             ..Default::default()
         };
+        let delegator_pk = wallet.public_key();
         let delegated = wallet
             .delegate(&root_token, &delegatee_pk, &restrictions)
             .unwrap();
@@ -5047,16 +5533,19 @@ mod tests {
         assert!(!attenuated_in_wallet.can_mint());
         assert_eq!(attenuated_in_wallet.root_key(), &[0u8; 32]);
 
-        // When the delegatee receives it, they also don't get root_key.
-        let mut recv_wallet = AgentWallet::new();
-        recv_wallet.receive_delegation(delegated).unwrap();
+        // When the delegatee receives it (under TrustedKey policy), they also
+        // don't get root_key.
+        let mut recv_wallet = recv_wallet;
+        recv_wallet
+            .receive_signed_delegation(delegated, &DelegationAuthority::TrustedKey(delegator_pk))
+            .unwrap();
         let held = recv_wallet.tokens().first().unwrap();
         assert!(!held.can_mint());
         assert_eq!(held.root_key(), &[0u8; 32]);
     }
 
-    /// P1-2 regression test: receive_delegation marks tokens as unverified since
-    /// HMAC chain cannot be checked without the root key.
+    /// P1-2 regression test: receive_signed_delegation marks tokens as unverified
+    /// since the HMAC chain cannot be checked without the root key.
     #[test]
     fn test_receive_delegation_marks_unverified() {
         let mut wallet = AgentWallet::new();
@@ -5066,13 +5555,14 @@ mod tests {
         // Root token must be verified.
         assert!(root_token.is_verified());
 
-        let delegatee_wallet = AgentWallet::new();
-        let delegatee_pk = delegatee_wallet.public_key();
+        let recv_wallet = AgentWallet::new();
+        let delegatee_pk = recv_wallet.public_key();
 
         let restrictions = Attenuation {
             services: vec![("service".to_string(), "r".to_string())],
             ..Default::default()
         };
+        let delegator_pk = wallet.public_key();
         let delegated = wallet
             .delegate(&root_token, &delegatee_pk, &restrictions)
             .unwrap();
@@ -5090,8 +5580,10 @@ mod tests {
 
         // When a delegatee receives the token, it must be marked as UNVERIFIED
         // because the HMAC chain cannot be checked without the root key.
-        let mut recv_wallet = AgentWallet::new();
-        recv_wallet.receive_delegation(delegated).unwrap();
+        let mut recv_wallet = recv_wallet;
+        recv_wallet
+            .receive_signed_delegation(delegated, &DelegationAuthority::TrustedKey(delegator_pk))
+            .unwrap();
         let received = recv_wallet.tokens().first().unwrap();
         assert!(
             !received.is_verified(),
@@ -5214,10 +5706,12 @@ mod tests {
     #[test]
     fn test_delegated_token_can_prove_with_proof_key() {
         let mut issuer_wallet = AgentWallet::new();
+        let issuer_pk = issuer_wallet.public_key();
         let root_key = [0xDD; 32];
         let root_token = issuer_wallet.mint_token(&root_key, "api");
 
-        let holder_wallet_pk = AgentWallet::new().public_key();
+        let holder_wallet = AgentWallet::new();
+        let holder_wallet_pk = holder_wallet.public_key();
 
         let restrictions = Attenuation {
             services: vec![("api".to_string(), "r".to_string())],
@@ -5239,9 +5733,11 @@ mod tests {
             "proof_key must be derived, not the raw root key"
         );
 
-        // Holder receives the delegation (with proof_key).
-        let mut holder_wallet = AgentWallet::new();
-        holder_wallet.receive_delegation(delegated).unwrap();
+        // Holder receives the delegation (with proof_key) under a trusted-key policy.
+        let mut holder_wallet = holder_wallet;
+        holder_wallet
+            .receive_signed_delegation(delegated, &DelegationAuthority::TrustedKey(issuer_pk))
+            .unwrap();
         let held = holder_wallet.tokens().first().unwrap().clone();
 
         // Delegated token cannot mint but CAN prove (has derived proof_key as issuer_key).
@@ -5265,30 +5761,19 @@ mod tests {
         );
     }
 
-    /// Test that delegated tokens without proof_key (legacy/stripped delegations)
+    /// Test that delegated tokens without proof_key (stripped delegations)
     /// cannot prove without explicit issuer_key provision.
+    ///
+    /// (The struct literal that used to construct an unsigned envelope here is
+    /// no longer constructible — `DelegatedToken` now requires a signature.
+    /// This is the encoded form of the design fix.)
     #[test]
     fn test_delegated_token_cannot_prove_without_proof_key() {
         let holder_wallet = AgentWallet::new();
 
-        // Simulate receiving a legacy delegation without proof_key.
-        let _delegated = DelegatedToken {
-            token_bytes: "em2_test".to_string(), // will fail parse but tests the path
-            service: "api".to_string(),
-            label: "legacy".to_string(),
-            id: "legacy:0".to_string(),
-            delegatee: holder_wallet.public_key(),
-            restrictions: Attenuation::default(),
-            proof_key: None, // No proof_key (legacy delegation)
-            membership_proof: None,
-            caveat_chain_hash: None,
-            delegator_signature: None,
-            delegator_public_key: None,
-        };
-
-        // This will fail because "em2_test" is not a valid token, but let's test
-        // with a real token construction. Instead, directly construct a HeldToken
-        // with zeroed issuer_key to test the proof path.
+        // Directly construct a HeldToken with zeroed issuer_key to exercise the
+        // proof-without-key path (the wire-level DelegatedToken can no longer
+        // carry an absent signature, so this is the only meaningful shape).
         let held = HeldToken::new(
             "legacy".to_string(),
             "api".to_string(),
@@ -5568,5 +6053,374 @@ mod tests {
         // PeerExchange should be initialized with the wallet's cell_id.
         let expected_cell_id = wallet.cell_id("test");
         assert_eq!(exchange.cell_id(), expected_cell_id);
+    }
+
+    // =========================================================================
+    // Delegation envelope soundness (P0/P1 adversarial regression suite)
+    //
+    // These tests encode the "delegation envelope is an authority binding"
+    // invariant. If any of them fail, the security model is broken.
+    // =========================================================================
+
+    /// Helper: mint a delegated envelope from `delegator` to `recipient_pk`.
+    fn mint_delegation(
+        delegator: &mut AgentWallet,
+        recipient_pk: PublicKey,
+        root_key: [u8; 32],
+        service: &str,
+    ) -> DelegatedToken {
+        let root_token = delegator.mint_token(&root_key, service);
+        let restrictions = Attenuation {
+            services: vec![(service.to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        delegator
+            .delegate(&root_token, &recipient_pk, &restrictions)
+            .unwrap()
+    }
+
+    /// P0: a holder of `proof_key` cannot forge an envelope for themselves.
+    ///
+    /// Even though the attacker can compute caveat_chain_hash and knows the
+    /// proof_key, they cannot sign under the legitimate delegator's key.
+    #[test]
+    fn test_envelope_rejects_attacker_forged_signature() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        // Alice delegates legitimately to Bob.
+        let env = mint_delegation(&mut alice, bob_pk, [0x11; 32], "svc");
+
+        // Attacker Mallory tries to forge a new envelope: same content but
+        // signed under her own key, claiming to be from Alice.
+        let mallory = AgentWallet::new();
+        let mut forged = env.clone();
+        // Mallory keeps Alice's pubkey but signs with her own key. The signature
+        // will not verify under Alice's key.
+        let msg = AgentWallet::compute_delegation_signing_message_v2(
+            &forged.token_bytes,
+            &forged.delegatee,
+            &forged.service,
+            &forged.id,
+            &forged.restrictions,
+            &forged.proof_key,
+            &forged.caveat_chain_hash,
+            forged.membership_proof.as_ref().map(|p| &p.leaf_hash),
+            &forged.parent_delegation_hash,
+            &forged.delegator_public_key,
+        );
+        let mallory_sig = mallory.signing_key.sign(&msg);
+        forged.delegator_signature = Signature(mallory_sig.to_bytes());
+
+        // Bob receives the forged envelope with a TrustedKey(alice) policy.
+        let mut bob = bob;
+        let result = bob.receive_signed_delegation(
+            forged,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(
+            matches!(result, Err(SdkError::InvalidDelegation(_))),
+            "envelope signed by wrong key must be rejected; got {:?}",
+            result
+        );
+    }
+
+    /// P0: an attacker cannot swap in their own pubkey + sign under their own
+    /// key — the authority policy rejects them.
+    #[test]
+    fn test_envelope_rejects_unauthorized_delegator() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        // Alice delegates to Bob legitimately.
+        let _legit = mint_delegation(&mut alice, bob_pk, [0x22; 32], "svc");
+
+        // Mallory (different wallet) crafts her own valid envelope to Bob,
+        // signed under her own key.
+        let mut mallory = AgentWallet::new();
+        let mallory_env = mint_delegation(&mut mallory, bob_pk, [0x33; 32], "svc");
+
+        // Bob's policy is "TrustedKey(alice_pk)" — Mallory must be rejected
+        // even though her envelope is internally well-signed.
+        let mut bob = bob;
+        let result = bob.receive_signed_delegation(
+            mallory_env,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(
+            matches!(result, Err(SdkError::InvalidDelegation(_))),
+            "envelope from non-authorized delegator must be rejected; got {:?}",
+            result
+        );
+    }
+
+    /// P1: replay across recipients is rejected — delegatee is in the signed
+    /// payload, so an envelope minted for Bob cannot be accepted by Carol.
+    #[test]
+    fn test_envelope_rejects_replay_to_wrong_recipient() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+        let mut carol = AgentWallet::new();
+
+        // Alice delegates to Bob.
+        let env_for_bob = mint_delegation(&mut alice, bob_pk, [0x44; 32], "svc");
+
+        // Carol tries to accept Bob's envelope as her own.
+        let result = carol.receive_signed_delegation(
+            env_for_bob.clone(),
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(
+            matches!(result, Err(SdkError::InvalidDelegation(_))),
+            "envelope addressed to Bob must be rejected by Carol; got {:?}",
+            result
+        );
+
+        // Mallory also can't rewrite the delegatee to Carol — the signature
+        // covers `delegatee`, so flipping it breaks the signature.
+        let mut tampered = env_for_bob.clone();
+        tampered.delegatee = carol.public_key();
+        let result2 = carol.receive_signed_delegation(
+            tampered,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(
+            matches!(result2, Err(SdkError::InvalidDelegation(_))),
+            "tampered delegatee must invalidate signature; got {:?}",
+            result2
+        );
+    }
+
+    /// P1: tampering with `restrictions`, `service`, `id`, or `token_bytes`
+    /// invalidates the signature.
+    #[test]
+    fn test_envelope_rejects_tampered_fields() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        let env = mint_delegation(&mut alice, bob_pk, [0x55; 32], "svc");
+
+        // Tamper with restrictions (widen permissions).
+        let mut t1 = env.clone();
+        t1.restrictions = Attenuation {
+            services: vec![("svc".to_string(), "rw".to_string())],
+            ..Default::default()
+        };
+        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(
+            bob.signing_key.to_bytes(),
+        ));
+        let r1 = bob1.receive_signed_delegation(
+            t1,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(matches!(r1, Err(SdkError::InvalidDelegation(_))));
+
+        // Tamper with service.
+        let mut t2 = env.clone();
+        t2.service = "other-svc".to_string();
+        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(
+            bob.signing_key.to_bytes(),
+        ));
+        let r2 = bob2.receive_signed_delegation(
+            t2,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(matches!(r2, Err(SdkError::InvalidDelegation(_))));
+
+        // Tamper with id.
+        let mut t3 = env.clone();
+        t3.id = "different-id".to_string();
+        let mut bob3 = AgentWallet::from_key_bytes(Zeroizing::new(
+            bob.signing_key.to_bytes(),
+        ));
+        let r3 = bob3.receive_signed_delegation(
+            t3,
+            &DelegationAuthority::TrustedKey(alice_pk),
+        );
+        assert!(matches!(r3, Err(SdkError::InvalidDelegation(_))));
+    }
+
+    /// P1: chain delegations only validate when `parent_delegation_hash` matches.
+    #[test]
+    fn test_envelope_chain_rejects_wrong_parent_hash() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+        let carol = AgentWallet::new();
+        let carol_pk = carol.public_key();
+
+        // Alice → Bob.
+        let env_ab = mint_delegation(&mut alice, bob_pk, [0x66; 32], "svc");
+        let mut bob = bob;
+        bob.receive_signed_delegation(
+            env_ab.clone(),
+            &DelegationAuthority::TrustedKey(alice_pk),
+        )
+        .unwrap();
+        let received_hash = env_ab.envelope_hash();
+
+        // Bob → Carol, properly chained.
+        let bob_token = bob.tokens().first().unwrap().clone();
+        let restrictions = Attenuation {
+            services: vec![("svc".to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        let env_bc = bob
+            .delegate_with_parent(&bob_token, &carol_pk, &restrictions, received_hash)
+            .unwrap();
+
+        // Carol accepts with the correct chain policy.
+        let mut carol_ok = carol;
+        carol_ok
+            .receive_signed_delegation(
+                env_bc.clone(),
+                &DelegationAuthority::ChainsFromParent {
+                    parent_hash: received_hash,
+                    delegator: bob.public_key(),
+                },
+            )
+            .unwrap();
+
+        // Carol with the wrong expected parent hash must reject.
+        let mut carol_bad = AgentWallet::new();
+        let env_bc_for_carol_bad = bob
+            .delegate_with_parent(
+                &bob_token,
+                &carol_bad.public_key(),
+                &restrictions,
+                received_hash,
+            )
+            .unwrap();
+        let wrong_parent = [0xFFu8; 32];
+        let result = carol_bad.receive_signed_delegation(
+            env_bc_for_carol_bad,
+            &DelegationAuthority::ChainsFromParent {
+                parent_hash: wrong_parent,
+                delegator: bob.public_key(),
+            },
+        );
+        assert!(
+            matches!(result, Err(SdkError::InvalidDelegation(_))),
+            "ChainsFromParent must reject envelope whose parent_hash mismatches; got {:?}",
+            result
+        );
+    }
+
+    /// P1 / type-level: there is no API path that constructs a DelegatedToken
+    /// without a signature. Any externally-sourced bytes must come through
+    /// deserialization, and the struct has no `Option`s on the sig fields.
+    /// This is a compile-time guarantee, verified by the absence of a
+    /// `delegator_signature: None` constructor anywhere in the crate.
+    #[test]
+    fn test_envelope_has_no_unsigned_constructor() {
+        // The struct literal below is intentionally commented out — if anyone
+        // re-introduces optional sigs, this comment becomes outdated and the
+        // grep-based audit will need to be rerun. The test exists to anchor
+        // the invariant in the test file's git history.
+        //
+        //   let _bad = DelegatedToken {
+        //       delegator_signature: None,  // <-- would not compile
+        //       delegator_public_key: None, // <-- would not compile
+        //       ..
+        //   };
+
+        // Sanity check: a well-formed envelope round-trips through serde.
+        let mut alice = AgentWallet::new();
+        let bob = AgentWallet::new();
+        let env = mint_delegation(&mut alice, bob.public_key(), [0x77; 32], "svc");
+        let bytes = postcard::to_allocvec(&env).unwrap();
+        let _restored: DelegatedToken = postcard::from_bytes(&bytes).unwrap();
+    }
+
+    /// P1: the `Open` policy is unsafe but exists for dev. Verify it accepts
+    /// any well-signed envelope (so tests can opt in), AND verify a tampered
+    /// envelope still gets rejected by the signature check.
+    #[test]
+    fn test_envelope_open_policy_still_verifies_signature() {
+        let mut alice = AgentWallet::new();
+        let bob = AgentWallet::new();
+        let env = mint_delegation(&mut alice, bob.public_key(), [0x88; 32], "svc");
+
+        // Open policy accepts a legitimate envelope.
+        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(
+            bob.signing_key.to_bytes(),
+        ));
+        bob1.receive_signed_delegation(env.clone(), &DelegationAuthority::Open { warn: false })
+            .unwrap();
+
+        // Open policy still rejects a tampered envelope (signature mismatch).
+        let mut tampered = env.clone();
+        tampered.restrictions = Attenuation {
+            services: vec![("svc".to_string(), "rw".to_string())],
+            ..Default::default()
+        };
+        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(
+            bob.signing_key.to_bytes(),
+        ));
+        let result =
+            bob2.receive_signed_delegation(tampered, &DelegationAuthority::Open { warn: false });
+        assert!(matches!(result, Err(SdkError::InvalidDelegation(_))));
+    }
+
+    /// P0/runtime: the local-delegation path used by sub-agent spawning is
+    /// signature-verified end-to-end. A caller cannot pass in an unsigned
+    /// LocalDelegation (the struct is non-public and crate-internal).
+    #[test]
+    fn test_local_delegation_signature_required() {
+        let mut parent = AgentWallet::new();
+        let root_key = [0x99; 32];
+        let parent_token = parent.mint_token(&root_key, "svc");
+
+        let child = AgentWallet::new();
+        let child_pk = child.public_key();
+
+        // Build a legitimate local delegation.
+        let local = parent.make_local_delegation(
+            parent_token.encoded.clone(),
+            "svc".to_string(),
+            "test".to_string(),
+            "test-id".to_string(),
+            child_pk,
+            Attenuation::default(),
+            None,
+            None,
+            None,
+        );
+
+        // Child accepts under the parent's pubkey.
+        let mut child = child;
+        child
+            .receive_local_delegation(local.clone(), &parent.public_key())
+            .unwrap();
+
+        // Child rejects if we claim a different expected parent.
+        let mut child2 = AgentWallet::new();
+        let local2 = parent.make_local_delegation(
+            parent_token.encoded.clone(),
+            "svc".to_string(),
+            "test".to_string(),
+            "test-id".to_string(),
+            child2.public_key(),
+            Attenuation::default(),
+            None,
+            None,
+            None,
+        );
+        let bogus_pk = AgentWallet::new().public_key();
+        let result = child2.receive_local_delegation(local2, &bogus_pk);
+        assert!(
+            matches!(result, Err(SdkError::InvalidDelegation(_))),
+            "local delegation must reject when expected parent doesn't match signer; got {:?}",
+            result
+        );
     }
 }

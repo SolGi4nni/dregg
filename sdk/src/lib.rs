@@ -91,8 +91,9 @@ pub use committed_turn::{
 pub use error::SdkError;
 pub use runtime::{AgentRuntime, SubAgent};
 pub use wallet::{
-    AgentWallet, AuthorizationPresentation, DelegatedToken, DisclosureSpec, FactDisclosure,
-    FactIndex, HeldToken, OwnedStealthNote, SignedTurn, VerificationMode,
+    AgentWallet, AuthorizationPresentation, DelegatedToken, DelegationAuthority, DisclosureSpec,
+    FactDisclosure, FactIndex, HeldToken, LocalDelegation, OwnedStealthNote, SignedTurn,
+    VerificationMode,
 };
 
 // Re-export commonly needed types from dependencies so users don't need
