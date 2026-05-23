@@ -160,7 +160,7 @@ fn bench_note_spending(c: &mut Criterion) {
     let proof_bytes = proof_to_bytes(&proof);
 
     group.bench_function("verify_d4", |b| {
-        b.iter(|| black_box(verify_note_spend(nullifier, merkle_root, &proof).unwrap()));
+        b.iter(|| black_box(verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof).unwrap()));
     });
 
     eprintln!(
@@ -188,7 +188,7 @@ fn bench_note_spending(c: &mut Criterion) {
     let proof_bytes8 = proof_to_bytes(&proof8);
 
     group.bench_function("verify_d8", |b| {
-        b.iter(|| black_box(verify_note_spend(null8, root8, &proof8).unwrap()));
+        b.iter(|| black_box(verify_note_spend(null8, root8, witness8.value, witness8.asset_type, &proof8).unwrap()));
     });
 
     eprintln!(

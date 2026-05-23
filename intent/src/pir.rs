@@ -1,8 +1,20 @@
-//! 2-Server Information-Theoretic Private Information Retrieval (IT-PIR).
+//! Private Information Retrieval (PIR) for anonymous marketplace browsing.
 //!
 //! Enables private intent discovery: a client can query the intent pool's
 //! inverted index (capability_tag -> [intent_ids]) without revealing which
 //! capability tag they are looking for.
+//!
+//! # Modes
+//!
+//! Multiple PIR modes are supported for different deployment scenarios:
+//!
+//! - **TwoServer**: 2-server additive IT-PIR (information-theoretic, requires
+//!   non-colluding servers). Post-quantum safe.
+//! - **DownloadAll**: Client downloads the entire (encrypted) database and
+//!   selects locally. Perfectly private, practical for small catalogs (<1000 items).
+//! - **SingleServerPadded**: Single-server mode that pads the database and uses
+//!   blinding to hide which item was queried. Weaker than IT-PIR but deployable
+//!   without a second server.
 //!
 //! # Protocol (additive, 2-server)
 //!
@@ -20,11 +32,23 @@
 //! Since XOR over GF(2) doesn't work with BabyBear field arithmetic, we use
 //! the additive variant: subtraction in BabyBear replaces XOR.
 //!
+//! # Size hiding
+//!
+//! The database is padded to the next power-of-2 number of rows before serving
+//! queries. This prevents clients from learning the exact catalog size from the
+//! `PirDatabaseInfo` metadata.
+//!
+//! # Batch queries
+//!
+//! Multiple items can be queried in a single PIR request via `BatchPirQuery`,
+//! amortizing the per-query overhead for browsing use cases.
+//!
 //! # Security
 //!
 //! - Information-theoretic: each server sees a uniformly random vector.
-//! - Requires non-collusion between the two servers.
+//! - Requires non-collusion between the two servers (TwoServer mode).
 //! - Post-quantum safe (no computational assumptions).
+//! - Database size is hidden via power-of-2 padding.
 
 use pyana_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
