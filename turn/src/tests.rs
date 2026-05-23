@@ -524,9 +524,9 @@ fn test_real_signature_verification() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -655,9 +655,9 @@ fn test_wrong_key_signature_rejected() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -1230,9 +1230,9 @@ fn test_empty_forest_rejected() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4714,9 +4714,9 @@ fn test_budget_gate_refund_on_turn_failure() {
         conservation_proof: None,
         previous_receipt_hash: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4847,9 +4847,9 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4926,9 +4926,9 @@ fn test_child_acts_via_delegated_caps() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn1, &mut ledger);
     assert!(result.is_committed());
@@ -4968,9 +4968,9 @@ fn test_child_acts_via_delegated_caps() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -5036,9 +5036,9 @@ fn test_refresh_delegation_updates_snapshot() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5093,9 +5093,9 @@ fn test_refresh_delegation_updates_snapshot() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "refresh should work: {:?}", result);
@@ -5161,9 +5161,9 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5206,9 +5206,9 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "revoke should work: {:?}", result);
@@ -5271,9 +5271,9 @@ fn test_parent_new_cap_invisible_until_refresh() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5317,9 +5317,9 @@ fn test_parent_new_cap_invisible_until_refresh() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -5383,9 +5383,9 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5431,9 +5431,9 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -7039,9 +7039,9 @@ fn sovereign_cell_make_sovereign_effect() {
         depends_on: vec![],
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let executor = zero_cost_executor();
@@ -7417,10 +7417,26 @@ fn test_custom_program_proof_carrying_turn() {
         trace_width: 4,
         max_degree: 2,
         columns: vec![
-            ColumnDef { name: "old_balance".to_string(), index: 0, kind: ColumnKind::Value },
-            ColumnDef { name: "new_balance".to_string(), index: 1, kind: ColumnKind::Value },
-            ColumnDef { name: "pad0".to_string(), index: 2, kind: ColumnKind::Value },
-            ColumnDef { name: "pad1".to_string(), index: 3, kind: ColumnKind::Value },
+            ColumnDef {
+                name: "old_balance".to_string(),
+                index: 0,
+                kind: ColumnKind::Value,
+            },
+            ColumnDef {
+                name: "new_balance".to_string(),
+                index: 1,
+                kind: ColumnKind::Value,
+            },
+            ColumnDef {
+                name: "pad0".to_string(),
+                index: 2,
+                kind: ColumnKind::Value,
+            },
+            ColumnDef {
+                name: "pad1".to_string(),
+                index: 3,
+                kind: ColumnKind::Value,
+            },
         ],
         constraints: vec![
             // old_balance == new_balance
@@ -7548,13 +7564,7 @@ fn test_custom_program_missing_from_registry_rejected() {
     let fake_vk_hash = [0xABu8; 32];
 
     ledger
-        .register_sovereign_cell_with_vk(
-            sovereign_id,
-            old_commitment,
-            0,
-            1000,
-            Some(fake_vk_hash),
-        )
+        .register_sovereign_cell_with_vk(sovereign_id, old_commitment, 0, 1000, Some(fake_vk_hash))
         .unwrap();
 
     let new_commitment = [22u8; 32];
@@ -7597,7 +7607,10 @@ fn test_custom_program_missing_from_registry_rejected() {
     turn.execution_proof_new_commitment = Some(new_commitment);
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_rejected(), "should reject: program not in registry");
+    assert!(
+        result.is_rejected(),
+        "should reject: program not in registry"
+    );
     let (err, _) = result.unwrap_rejected();
     assert!(
         matches!(err, TurnError::ProofVerificationFailed(ref msg) if msg.contains("no matching program")),

@@ -96,6 +96,8 @@ pub mod committed_threshold;
 pub mod compound_predicate_air;
 pub mod garbled;
 pub mod garbled_air;
+pub mod native_signature;
+pub mod native_signature_air;
 pub mod non_membership;
 pub mod non_revocation_air;
 pub mod note_spending_air;

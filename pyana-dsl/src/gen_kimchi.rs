@@ -10,7 +10,6 @@
 /// - Membership: Poseidon gadgets (12 rows per hash level)
 /// - SubAssign: `coeffs[0]=1, coeffs[1]=-1, coeffs[2]=-1` (old - amount - new = 0)
 /// - AddAssign: `coeffs[0]=1, coeffs[1]=1, coeffs[2]=-1` (old + amount - new = 0)
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 

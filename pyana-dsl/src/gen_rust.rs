@@ -3,7 +3,6 @@
 /// Produces a function `{name}_check(params...) -> Result<(), ConstraintError>`
 /// that directly evaluates the constraint at runtime.
 /// For effects, mutable params are taken as `&mut` and mutations are applied in-place.
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -60,47 +59,45 @@ fn generate_statements_rust(statements: &[Statement], caveat_name: &str) -> Toke
 
 fn generate_statement_rust(stmt: &Statement, caveat_name: &str) -> TokenStream {
     match stmt {
-        Statement::Require(req) => {
-            match &req.kind {
-                RequirementKind::LessEqual { left, right } => {
-                    quote! {
-                        if !(#left <= #right) {
-                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
-                        }
-                    }
-                }
-                RequirementKind::GreaterEqual { left, right } => {
-                    quote! {
-                        if !(#left >= #right) {
-                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
-                        }
-                    }
-                }
-                RequirementKind::Equal { left, right } => {
-                    quote! {
-                        if !(#left == #right) {
-                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
-                        }
-                    }
-                }
-                RequirementKind::NotEqual { left, right } => {
-                    quote! {
-                        if !(#left != #right) {
-                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
-                        }
-                    }
-                }
-                RequirementKind::Membership { set, element } => {
-                    let set_ident = format_ident!("{}", set);
-                    let elem_ident = format_ident!("{}", element);
-                    quote! {
-                        if !#set_ident.contains(&#elem_ident) {
-                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
-                        }
+        Statement::Require(req) => match &req.kind {
+            RequirementKind::LessEqual { left, right } => {
+                quote! {
+                    if !(#left <= #right) {
+                        return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
                     }
                 }
             }
-        }
+            RequirementKind::GreaterEqual { left, right } => {
+                quote! {
+                    if !(#left >= #right) {
+                        return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
+                    }
+                }
+            }
+            RequirementKind::Equal { left, right } => {
+                quote! {
+                    if !(#left == #right) {
+                        return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
+                    }
+                }
+            }
+            RequirementKind::NotEqual { left, right } => {
+                quote! {
+                    if !(#left != #right) {
+                        return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
+                    }
+                }
+            }
+            RequirementKind::Membership { set, element } => {
+                let set_ident = format_ident!("{}", set);
+                let elem_ident = format_ident!("{}", element);
+                quote! {
+                    if !#set_ident.contains(&#elem_ident) {
+                        return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
+                    }
+                }
+            }
+        },
         Statement::Mutate(mutation) => {
             let target = format_ident!("{}", mutation.target);
             let operand = format_ident!("{}", mutation.operand);
@@ -117,10 +114,8 @@ fn generate_statement_rust(stmt: &Statement, caveat_name: &str) -> TokenStream {
                 .map(|arm| {
                     let body = generate_statements_rust(&arm.body, caveat_name);
                     // Parse the stored pattern tokens back into a TokenStream
-                    let pat_ts: TokenStream = arm
-                        .pattern_tokens
-                        .parse()
-                        .unwrap_or_else(|_| quote! { _ });
+                    let pat_ts: TokenStream =
+                        arm.pattern_tokens.parse().unwrap_or_else(|_| quote! { _ });
                     quote! { #pat_ts => { #body } }
                 })
                 .collect();

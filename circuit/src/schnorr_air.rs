@@ -663,7 +663,11 @@ pub fn verify_schnorr_via_trace(
 
 /// Recompute the Fiat-Shamir challenge from signature components.
 /// (Duplicates logic from schnorr_sig but needed here to build the witness.)
-fn recompute_challenge(r: &CurvePoint, pk: &CurvePoint, message_hash: &[BabyBear; 8]) -> Scalar {
+pub fn recompute_challenge(
+    r: &CurvePoint,
+    pk: &CurvePoint,
+    message_hash: &[BabyBear; 8],
+) -> Scalar {
     use crate::poseidon2;
 
     let mut transcript = Vec::with_capacity(40);

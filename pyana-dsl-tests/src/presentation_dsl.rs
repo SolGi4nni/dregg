@@ -33,8 +33,7 @@
 
 use pyana_circuit::field::BabyBear;
 use pyana_dsl_runtime::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
-    DslCircuit,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
 };
 
 /// Presentation trace width (11 columns).
@@ -65,7 +64,10 @@ pub fn presentation_circuit_descriptor() -> CircuitDescriptor {
     //   trace[col] - pi[col] == 0
     // ========================================================================
     for i in 0..PRESENTATION_WIDTH {
-        constraints.push(ConstraintExpr::PiBinding { col: i, pi_index: i });
+        constraints.push(ConstraintExpr::PiBinding {
+            col: i,
+            pi_index: i,
+        });
     }
 
     // ========================================================================
@@ -95,17 +97,61 @@ pub fn presentation_circuit_descriptor() -> CircuitDescriptor {
 
     // Column definitions
     let columns = vec![
-        ColumnDef { name: "federation_root".into(), index: col::FEDERATION_ROOT, kind: ColumnKind::Hash },
-        ColumnDef { name: "request_predicate[0]".into(), index: col::REQUEST_PRED_START, kind: ColumnKind::Hash },
-        ColumnDef { name: "request_predicate[1]".into(), index: col::REQUEST_PRED_START + 1, kind: ColumnKind::Hash },
-        ColumnDef { name: "request_predicate[2]".into(), index: col::REQUEST_PRED_START + 2, kind: ColumnKind::Hash },
-        ColumnDef { name: "request_predicate[3]".into(), index: col::REQUEST_PRED_START + 3, kind: ColumnKind::Hash },
-        ColumnDef { name: "timestamp".into(), index: col::TIMESTAMP, kind: ColumnKind::Value },
-        ColumnDef { name: "presentation_tag".into(), index: col::PRESENTATION_TAG, kind: ColumnKind::Hash },
-        ColumnDef { name: "revealed_facts[0]".into(), index: col::REVEALED_FACTS_START, kind: ColumnKind::Hash },
-        ColumnDef { name: "revealed_facts[1]".into(), index: col::REVEALED_FACTS_START + 1, kind: ColumnKind::Hash },
-        ColumnDef { name: "revealed_facts[2]".into(), index: col::REVEALED_FACTS_START + 2, kind: ColumnKind::Hash },
-        ColumnDef { name: "revealed_facts[3]".into(), index: col::REVEALED_FACTS_START + 3, kind: ColumnKind::Hash },
+        ColumnDef {
+            name: "federation_root".into(),
+            index: col::FEDERATION_ROOT,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "request_predicate[0]".into(),
+            index: col::REQUEST_PRED_START,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "request_predicate[1]".into(),
+            index: col::REQUEST_PRED_START + 1,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "request_predicate[2]".into(),
+            index: col::REQUEST_PRED_START + 2,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "request_predicate[3]".into(),
+            index: col::REQUEST_PRED_START + 3,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "timestamp".into(),
+            index: col::TIMESTAMP,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "presentation_tag".into(),
+            index: col::PRESENTATION_TAG,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "revealed_facts[0]".into(),
+            index: col::REVEALED_FACTS_START,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "revealed_facts[1]".into(),
+            index: col::REVEALED_FACTS_START + 1,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "revealed_facts[2]".into(),
+            index: col::REVEALED_FACTS_START + 2,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "revealed_facts[3]".into(),
+            index: col::REVEALED_FACTS_START + 3,
+            kind: ColumnKind::Hash,
+        },
     ];
 
     CircuitDescriptor {
@@ -215,9 +261,11 @@ mod tests {
     #[test]
     fn presentation_descriptor_all_pi_bindings() {
         let desc = presentation_circuit_descriptor();
-        let pi_binding_count = desc.constraints.iter().filter(|c| {
-            matches!(c, ConstraintExpr::PiBinding { .. })
-        }).count();
+        let pi_binding_count = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, ConstraintExpr::PiBinding { .. }))
+            .count();
         assert_eq!(pi_binding_count, 11, "All constraints should be PiBinding");
     }
 
@@ -228,7 +276,11 @@ mod tests {
         let alpha = BabyBear::new(7);
 
         for i in 0..trace.len() {
-            let next = if i + 1 < trace.len() { &trace[i + 1] } else { &trace[i] };
+            let next = if i + 1 < trace.len() {
+                &trace[i + 1]
+            } else {
+                &trace[i]
+            };
             let result = circuit.eval_constraints(&trace[i], next, &pi, alpha);
             assert_eq!(
                 result,

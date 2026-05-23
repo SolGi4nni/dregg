@@ -574,9 +574,9 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -709,9 +709,9 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -792,9 +792,9 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1126,9 +1126,9 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1479,9 +1479,9 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     let signed = s.wallet.sign_turn(&turn);

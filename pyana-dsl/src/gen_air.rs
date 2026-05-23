@@ -15,7 +15,6 @@
 /// Multi-constraint composition:
 /// - Total trace width = sum of all sub-constraint widths + shared columns
 /// - Constraints combined via random linear combination (alpha^i * constraint_i)
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -38,7 +37,7 @@ pub fn generate_air_descriptor(ir: &ConstraintIr) -> TokenStream {
         let base = match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
-            ParamType::Set => 1, // Merkle root commitment
+            ParamType::Set => 1,            // Merkle root commitment
             ParamType::UserDefined(_) => 1, // selector column for enums
         };
         if p.mutable {

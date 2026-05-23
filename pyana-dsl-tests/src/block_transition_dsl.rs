@@ -29,11 +29,10 @@
 //!
 //! [pre_state_root, post_state_root]
 
-use pyana_circuit::block_transition_air::{col, BLOCK_TRANSITION_WIDTH};
+use pyana_circuit::block_transition_air::{BLOCK_TRANSITION_WIDTH, col};
 use pyana_circuit::field::BabyBear;
 use pyana_dsl_runtime::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
-    DslCircuit,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
 };
 
 /// Build the block transition CircuitDescriptor.
@@ -72,7 +71,12 @@ pub fn block_transition_circuit_descriptor() -> CircuitDescriptor {
     // ========================================================================
     constraints.push(ConstraintExpr::Hash {
         output_col: col::NEW_ROOT,
-        input_cols: vec![col::OLD_ROOT, col::NEW_LEAF, col::POSITION, col::SIBLING_HASH],
+        input_cols: vec![
+            col::OLD_ROOT,
+            col::NEW_LEAF,
+            col::POSITION,
+            col::SIBLING_HASH,
+        ],
     });
 
     // ========================================================================
@@ -117,12 +121,36 @@ pub fn block_transition_circuit_descriptor() -> CircuitDescriptor {
     // Column definitions
     // ========================================================================
     let columns = vec![
-        ColumnDef { name: "old_root".into(), index: col::OLD_ROOT, kind: ColumnKind::Hash },
-        ColumnDef { name: "new_leaf".into(), index: col::NEW_LEAF, kind: ColumnKind::Value },
-        ColumnDef { name: "position".into(), index: col::POSITION, kind: ColumnKind::Value },
-        ColumnDef { name: "new_root".into(), index: col::NEW_ROOT, kind: ColumnKind::Hash },
-        ColumnDef { name: "sibling_hash".into(), index: col::SIBLING_HASH, kind: ColumnKind::Hash },
-        ColumnDef { name: "event_index".into(), index: col::EVENT_INDEX, kind: ColumnKind::Value },
+        ColumnDef {
+            name: "old_root".into(),
+            index: col::OLD_ROOT,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "new_leaf".into(),
+            index: col::NEW_LEAF,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "position".into(),
+            index: col::POSITION,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "new_root".into(),
+            index: col::NEW_ROOT,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "sibling_hash".into(),
+            index: col::SIBLING_HASH,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "event_index".into(),
+            index: col::EVENT_INDEX,
+            kind: ColumnKind::Value,
+        },
     ];
 
     CircuitDescriptor {
@@ -279,18 +307,25 @@ mod tests {
     #[test]
     fn has_transition_constraint() {
         let desc = block_transition_circuit_descriptor();
-        let transition_count = desc.constraints.iter().filter(|c| {
-            matches!(c, ConstraintExpr::Transition { .. })
-        }).count();
-        assert_eq!(transition_count, 1, "Should have exactly 1 transition constraint");
+        let transition_count = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, ConstraintExpr::Transition { .. }))
+            .count();
+        assert_eq!(
+            transition_count, 1,
+            "Should have exactly 1 transition constraint"
+        );
     }
 
     #[test]
     fn has_hash_constraint() {
         let desc = block_transition_circuit_descriptor();
-        let hash_count = desc.constraints.iter().filter(|c| {
-            matches!(c, ConstraintExpr::Hash { .. })
-        }).count();
+        let hash_count = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, ConstraintExpr::Hash { .. }))
+            .count();
         assert_eq!(hash_count, 1, "Should have exactly 1 hash constraint");
     }
 

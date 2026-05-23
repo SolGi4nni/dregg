@@ -17,12 +17,12 @@
 //! 7. Body roots match state root (gated by is_active)
 //! 8. Boundary constraints: first row initialization, final row accumulated hash binding
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
-use pyana_circuit::multi_step_air::{self, col, pi, MULTI_STEP_AIR_WIDTH, ALLOW_PREDICATE};
-use pyana_circuit::derivation_air::{col as dcol, MAX_BODY_ATOMS};
+use pyana_circuit::derivation_air::{MAX_BODY_ATOMS, col as dcol};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use pyana_circuit::multi_step_air::{self, ALLOW_PREDICATE, MULTI_STEP_AIR_WIDTH, col, pi};
 use pyana_dsl_runtime::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
-    DslCircuit, PolyTerm,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
+    PolyTerm,
 };
 
 /// Negate a field element.
@@ -50,13 +50,17 @@ pub fn multi_step_circuit_descriptor() -> CircuitDescriptor {
     // C1: is_active is binary
     //   is_active * (is_active - 1) == 0
     // ========================================================================
-    constraints.push(ConstraintExpr::Binary { col: col::IS_ACTIVE });
+    constraints.push(ConstraintExpr::Binary {
+        col: col::IS_ACTIVE,
+    });
 
     // ========================================================================
     // C2: is_final_step is binary
     //   is_final * (is_final - 1) == 0
     // ========================================================================
-    constraints.push(ConstraintExpr::Binary { col: col::IS_FINAL_STEP });
+    constraints.push(ConstraintExpr::Binary {
+        col: col::IS_FINAL_STEP,
+    });
 
     // ========================================================================
     // C3: is_final_step implies is_active
@@ -118,9 +122,7 @@ pub fn multi_step_circuit_descriptor() -> CircuitDescriptor {
     constraints.push(ConstraintExpr::InvertedGated {
         selector_col: col::IS_ACTIVE,
         inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                term(BabyBear::ONE, &[is_active_next_aux]),
-            ],
+            terms: vec![term(BabyBear::ONE, &[is_active_next_aux])],
         }),
     });
 
@@ -183,7 +185,10 @@ pub fn multi_step_circuit_descriptor() -> CircuitDescriptor {
     let neg_allow = BabyBear::ZERO - allow_pred_val;
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            term(BabyBear::ONE, &[conclusion_aux, col::IS_FINAL_STEP, dcol::HEAD_PRED]),
+            term(
+                BabyBear::ONE,
+                &[conclusion_aux, col::IS_FINAL_STEP, dcol::HEAD_PRED],
+            ),
             term(neg_allow, &[conclusion_aux, col::IS_FINAL_STEP]),
         ],
     });
@@ -255,15 +260,51 @@ pub fn multi_step_circuit_descriptor() -> CircuitDescriptor {
     // Column definitions
     // ========================================================================
     let columns = vec![
-        ColumnDef { name: "step_index".into(), index: col::STEP_INDEX, kind: ColumnKind::Value },
-        ColumnDef { name: "accumulated_hash".into(), index: col::ACCUMULATED_HASH, kind: ColumnKind::Hash },
-        ColumnDef { name: "prev_accumulated".into(), index: col::PREV_ACCUMULATED, kind: ColumnKind::Hash },
-        ColumnDef { name: "is_final_step".into(), index: col::IS_FINAL_STEP, kind: ColumnKind::Binary },
-        ColumnDef { name: "is_active".into(), index: col::IS_ACTIVE, kind: ColumnKind::Binary },
-        ColumnDef { name: "is_active_next_aux".into(), index: is_active_next_aux, kind: ColumnKind::Binary },
-        ColumnDef { name: "prev_acc_next_aux".into(), index: prev_acc_next_aux, kind: ColumnKind::Value },
-        ColumnDef { name: "conclusion_aux".into(), index: conclusion_aux, kind: ColumnKind::Value },
-        ColumnDef { name: "state_root_aux".into(), index: state_root_aux, kind: ColumnKind::Value },
+        ColumnDef {
+            name: "step_index".into(),
+            index: col::STEP_INDEX,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "accumulated_hash".into(),
+            index: col::ACCUMULATED_HASH,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "prev_accumulated".into(),
+            index: col::PREV_ACCUMULATED,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "is_final_step".into(),
+            index: col::IS_FINAL_STEP,
+            kind: ColumnKind::Binary,
+        },
+        ColumnDef {
+            name: "is_active".into(),
+            index: col::IS_ACTIVE,
+            kind: ColumnKind::Binary,
+        },
+        ColumnDef {
+            name: "is_active_next_aux".into(),
+            index: is_active_next_aux,
+            kind: ColumnKind::Binary,
+        },
+        ColumnDef {
+            name: "prev_acc_next_aux".into(),
+            index: prev_acc_next_aux,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "conclusion_aux".into(),
+            index: conclusion_aux,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "state_root_aux".into(),
+            index: state_root_aux,
+            kind: ColumnKind::Value,
+        },
     ];
 
     // Total trace width: MULTI_STEP_AIR_WIDTH + 4 auxiliary columns
@@ -292,8 +333,8 @@ pub const MULTI_STEP_DSL_WIDTH: usize = MULTI_STEP_AIR_WIDTH + 4;
 ///
 /// Returns (trace, public_inputs) with auxiliary columns filled.
 pub fn generate_valid_multi_step_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
     use pyana_circuit::poseidon2::hash_fact;
-    use pyana_circuit::derivation_air::{CircuitRule, BodyAtomPattern, DerivationWitness};
 
     let initial_state_root = BabyBear::new(99999);
     let request_hash = BabyBear::new(12345);
@@ -453,9 +494,11 @@ mod tests {
     #[test]
     fn multi_step_descriptor_has_transition_constraints() {
         let desc = multi_step_circuit_descriptor();
-        let transition_count = desc.constraints.iter().filter(|c| {
-            matches!(c, ConstraintExpr::Transition { .. })
-        }).count();
+        let transition_count = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, ConstraintExpr::Transition { .. }))
+            .count();
         assert_eq!(
             transition_count, 2,
             "Should have 2 transition constraints (is_active_next, prev_acc_next)"
@@ -488,11 +531,7 @@ mod tests {
         trace[0][col::IS_ACTIVE] = BabyBear::new(2);
 
         let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
-        assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Should reject non-binary is_active"
-        );
+        assert_ne!(result, BabyBear::ZERO, "Should reject non-binary is_active");
     }
 
     #[test]
@@ -509,7 +548,11 @@ mod tests {
             // the next row is active — this violates (1 - 0) * 1 = 1 != 0.
             trace[2][MULTI_STEP_AIR_WIDTH] = BabyBear::ONE; // is_active_next_aux = 1
 
-            let next = if trace.len() > 3 { &trace[3] } else { &trace[2] };
+            let next = if trace.len() > 3 {
+                &trace[3]
+            } else {
+                &trace[2]
+            };
             let result = circuit.eval_constraints(&trace[2], next, &pi, alpha);
             assert_ne!(
                 result,

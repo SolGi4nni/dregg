@@ -814,8 +814,12 @@ fn recursive_verifier_unavailable() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plonky3_prover::{generate_sound_merkle_trace, prove_plonky3};
+    use crate::plonky3_prover::{
+        create_config, generate_sound_merkle_trace, prove_plonky3, to_p3, trace_to_matrix,
+    };
     use crate::poseidon2_air::create_poseidon2_test_witness;
+    use p3_baby_bear::BabyBear as P3BabyBear;
+    use p3_matrix::dense::RowMajorMatrix;
 
     /// Helper: create a proven Merkle membership proof.
     fn make_test_proof(leaf_val: u32) -> (PyanaProof, Vec<BabyBear>) {

@@ -1180,9 +1180,9 @@ pub fn execute_committed_fulfillment_flow(
     let turn = Turn {
         conservation_proof: Some(proof_bytes),
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
         ..partial_turn
     };
 

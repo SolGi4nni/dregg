@@ -523,7 +523,8 @@ impl TurnExecutor {
         if let Some(vk) = vk_hash {
             if let Some(program) = self.program_registry.get(&vk) {
                 // Custom program verification via the DSL circuit runtime.
-                program.verify_transition(&public_inputs, proof_bytes)
+                program
+                    .verify_transition(&public_inputs, proof_bytes)
                     .map_err(|e| TurnError::ProofVerificationFailed(e.to_string()))?;
             } else {
                 // VK hash is set but program not found in registry -- reject.

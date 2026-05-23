@@ -14,7 +14,7 @@
 //! deploys their SLA accumulator as a sovereign cell program, accumulates
 //! latency measurements into rolling statistics, and proves compliance to buyers.
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
     ConstraintExpr, DslCircuit, PolyTerm, ProgramRegistry,
@@ -82,32 +82,115 @@ fn neg_one() -> BabyBear {
 }
 
 fn term(coeff: BabyBear, cols: &[usize]) -> PolyTerm {
-    PolyTerm { coeff, col_indices: cols.to_vec() }
+    PolyTerm {
+        coeff,
+        col_indices: cols.to_vec(),
+    }
 }
 
 /// Build the GPU worker temporal accumulator CircuitDescriptor.
 pub fn gpu_worker_accumulator_descriptor() -> CircuitDescriptor {
     let mut columns = Vec::with_capacity(TRACE_WIDTH);
-    columns.push(ColumnDef { name: "measurement".into(), index: MEASUREMENT, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "sum".into(), index: SUM, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "count".into(), index: COUNT, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "over_200ms_count".into(), index: OVER_200MS_COUNT, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "ema".into(), index: EMA, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "bucket_0_50".into(), index: BUCKET_0_50, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "bucket_50_100".into(), index: BUCKET_50_100, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "bucket_100_200".into(), index: BUCKET_100_200, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "bucket_200_500".into(), index: BUCKET_200_500, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "bucket_500_plus".into(), index: BUCKET_500_PLUS, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "sel_0".into(), index: SEL_0, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "sel_1".into(), index: SEL_1, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "sel_2".into(), index: SEL_2, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "sel_3".into(), index: SEL_3, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "sel_4".into(), index: SEL_4, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "is_over_200".into(), index: IS_OVER_200, kind: ColumnKind::Binary });
-    columns.push(ColumnDef { name: "sum_next".into(), index: SUM_NEXT, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "count_next".into(), index: COUNT_NEXT, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "ema_times_10".into(), index: EMA_TIMES_10, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "ema_rhs".into(), index: EMA_RHS, kind: ColumnKind::Value });
+    columns.push(ColumnDef {
+        name: "measurement".into(),
+        index: MEASUREMENT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "sum".into(),
+        index: SUM,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "count".into(),
+        index: COUNT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "over_200ms_count".into(),
+        index: OVER_200MS_COUNT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "ema".into(),
+        index: EMA,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "bucket_0_50".into(),
+        index: BUCKET_0_50,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "bucket_50_100".into(),
+        index: BUCKET_50_100,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "bucket_100_200".into(),
+        index: BUCKET_100_200,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "bucket_200_500".into(),
+        index: BUCKET_200_500,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "bucket_500_plus".into(),
+        index: BUCKET_500_PLUS,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "sel_0".into(),
+        index: SEL_0,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "sel_1".into(),
+        index: SEL_1,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "sel_2".into(),
+        index: SEL_2,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "sel_3".into(),
+        index: SEL_3,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "sel_4".into(),
+        index: SEL_4,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "is_over_200".into(),
+        index: IS_OVER_200,
+        kind: ColumnKind::Binary,
+    });
+    columns.push(ColumnDef {
+        name: "sum_next".into(),
+        index: SUM_NEXT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "count_next".into(),
+        index: COUNT_NEXT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "ema_times_10".into(),
+        index: EMA_TIMES_10,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "ema_rhs".into(),
+        index: EMA_RHS,
+        kind: ColumnKind::Value,
+    });
 
     let mut constraints = Vec::new();
 
@@ -238,25 +321,73 @@ pub fn gpu_worker_accumulator_descriptor() -> CircuitDescriptor {
     // ─── Boundaries ─────────────────────────────────────────────────────────
     let boundaries = vec![
         // First row: sum = 0
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: SUM, value: BabyBear::ZERO },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: SUM,
+            value: BabyBear::ZERO,
+        },
         // First row: count = 1 (first measurement is counted)
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: COUNT, value: BabyBear::ONE },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: COUNT,
+            value: BabyBear::ONE,
+        },
         // First row: ema = 0 (initial EMA, will be updated after first measurement)
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: EMA, value: BabyBear::ZERO },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: EMA,
+            value: BabyBear::ZERO,
+        },
         // First row: over_200ms_count = 0
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: OVER_200MS_COUNT, value: BabyBear::ZERO },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: OVER_200MS_COUNT,
+            value: BabyBear::ZERO,
+        },
         // First row: all bucket counts = 0
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: BUCKET_0_50, value: BabyBear::ZERO },
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: BUCKET_50_100, value: BabyBear::ZERO },
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: BUCKET_100_200, value: BabyBear::ZERO },
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: BUCKET_200_500, value: BabyBear::ZERO },
-        BoundaryDef::Fixed { row: BoundaryRow::First, col: BUCKET_500_PLUS, value: BabyBear::ZERO },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: BUCKET_0_50,
+            value: BabyBear::ZERO,
+        },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: BUCKET_50_100,
+            value: BabyBear::ZERO,
+        },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: BUCKET_100_200,
+            value: BabyBear::ZERO,
+        },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: BUCKET_200_500,
+            value: BabyBear::ZERO,
+        },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: BUCKET_500_PLUS,
+            value: BabyBear::ZERO,
+        },
         // Last row: count == total_steps (PI[0])
-        BoundaryDef::PiBinding { row: BoundaryRow::Last, col: COUNT, pi_index: PI_TOTAL_STEPS },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: COUNT,
+            pi_index: PI_TOTAL_STEPS,
+        },
         // Last row: sum == final_sum (PI[1])
-        BoundaryDef::PiBinding { row: BoundaryRow::Last, col: SUM, pi_index: PI_FINAL_SUM },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: SUM,
+            pi_index: PI_FINAL_SUM,
+        },
         // Last row: ema == final_ema (PI[2])
-        BoundaryDef::PiBinding { row: BoundaryRow::Last, col: EMA, pi_index: PI_FINAL_EMA },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: EMA,
+            pi_index: PI_FINAL_EMA,
+        },
     ];
 
     CircuitDescriptor {
@@ -315,7 +446,11 @@ pub fn generate_gpu_worker_trace(measurements: &[u32]) -> (Vec<Vec<BabyBear>>, V
         let mut row = vec![BabyBear::ZERO; TRACE_WIDTH];
 
         // For padding rows beyond num_steps, repeat the last measurement.
-        let m = if step < num_steps { measurements[step] } else { measurements[num_steps - 1] };
+        let m = if step < num_steps {
+            measurements[step]
+        } else {
+            measurements[num_steps - 1]
+        };
 
         // Update running state
         running_count += 1;
@@ -367,9 +502,12 @@ pub fn generate_gpu_worker_trace(measurements: &[u32]) -> (Vec<Vec<BabyBear>>, V
         row[EMA] = BabyBear::from_u64(ema_local);
         row[BUCKET_0_50] = BabyBear::from_u64(bucket_counts[0] - if bucket == 0 { 1 } else { 0 });
         row[BUCKET_50_100] = BabyBear::from_u64(bucket_counts[1] - if bucket == 1 { 1 } else { 0 });
-        row[BUCKET_100_200] = BabyBear::from_u64(bucket_counts[2] - if bucket == 2 { 1 } else { 0 });
-        row[BUCKET_200_500] = BabyBear::from_u64(bucket_counts[3] - if bucket == 3 { 1 } else { 0 });
-        row[BUCKET_500_PLUS] = BabyBear::from_u64(bucket_counts[4] - if bucket == 4 { 1 } else { 0 });
+        row[BUCKET_100_200] =
+            BabyBear::from_u64(bucket_counts[2] - if bucket == 2 { 1 } else { 0 });
+        row[BUCKET_200_500] =
+            BabyBear::from_u64(bucket_counts[3] - if bucket == 3 { 1 } else { 0 });
+        row[BUCKET_500_PLUS] =
+            BabyBear::from_u64(bucket_counts[4] - if bucket == 4 { 1 } else { 0 });
 
         // Selectors
         row[SEL_0] = BabyBear::new(if bucket == 0 { 1 } else { 0 });
@@ -394,14 +532,13 @@ pub fn generate_gpu_worker_trace(measurements: &[u32]) -> (Vec<Vec<BabyBear>>, V
     // Public inputs: values at the LAST row.
     let last = &trace[padded_len - 1];
     let public_inputs = vec![
-        last[COUNT],      // total_steps
-        last[SUM],        // final_sum (sum at last row, before last measurement adds)
-        last[EMA],        // final_ema
+        last[COUNT], // total_steps
+        last[SUM],   // final_sum (sum at last row, before last measurement adds)
+        last[EMA],   // final_ema
     ];
 
     (trace, public_inputs)
 }
-
 
 // ============================================================================
 // Full pipeline demonstration
@@ -421,14 +558,18 @@ pub fn run_gpu_worker_pipeline(
 ) -> Result<([u8; 32], GpuWorkerOutput), String> {
     // 1. Build descriptor
     let descriptor = gpu_worker_accumulator_descriptor();
-    descriptor.validate().map_err(|e| format!("Validation failed: {e}"))?;
+    descriptor
+        .validate()
+        .map_err(|e| format!("Validation failed: {e}"))?;
 
     // 2. Create CellProgram
     let program = CellProgram::new(descriptor, 1);
 
     // 3. Deploy to registry
     let mut registry = ProgramRegistry::new();
-    let vk_hash = registry.deploy(program.clone()).map_err(|e| format!("Deploy failed: {e}"))?;
+    let vk_hash = registry
+        .deploy(program.clone())
+        .map_err(|e| format!("Deploy failed: {e}"))?;
 
     // 4. Generate trace
     let (trace, public_inputs) = generate_gpu_worker_trace(measurements);
@@ -492,7 +633,11 @@ mod tests {
     #[test]
     fn descriptor_validates() {
         let desc = gpu_worker_accumulator_descriptor();
-        assert!(desc.validate().is_ok(), "descriptor should pass validation: {:?}", desc.validate().err());
+        assert!(
+            desc.validate().is_ok(),
+            "descriptor should pass validation: {:?}",
+            desc.validate().err()
+        );
         assert_eq!(desc.trace_width, TRACE_WIDTH);
         assert_eq!(desc.max_degree, 2);
         assert_eq!(desc.public_input_count, PUBLIC_INPUT_COUNT);
@@ -577,7 +722,10 @@ mod tests {
         let mut wrong_pi = pi.clone();
         wrong_pi[PI_TOTAL_STEPS] = BabyBear::new(999);
         let result = stark::verify(&circuit, &proof, &wrong_pi);
-        assert!(result.is_err(), "Should reject proof with wrong public inputs");
+        assert!(
+            result.is_err(),
+            "Should reject proof with wrong public inputs"
+        );
     }
 
     #[test]
@@ -598,9 +746,14 @@ mod tests {
     #[test]
     fn p95_passes_for_good_worker() {
         // A "good" worker: all measurements under 200ms.
-        let good_measurements = [45u32, 80, 55, 90, 60, 75, 95, 110, 42, 88, 150, 130, 60, 70, 50, 45];
+        let good_measurements = [
+            45u32, 80, 55, 90, 60, 75, 95, 110, 42, 88, 150, 130, 60, 70, 50, 45,
+        ];
         let result = run_gpu_worker_pipeline(&good_measurements).unwrap();
-        assert!(result.1.p95_latency_ok, "p95 should pass for all-under-200 worker");
+        assert!(
+            result.1.p95_latency_ok,
+            "p95 should pass for all-under-200 worker"
+        );
         assert_eq!(result.1.over_200ms_count, 0);
     }
 
@@ -660,6 +813,10 @@ mod tests {
         // The transition from row 1 -> row 2 checks: next[SUM] == local[SUM_NEXT]
         // local[SUM_NEXT] at row 1 was correctly computed, but row 2's SUM is wrong.
         let result = circuit.eval_constraints(&trace[1], &trace[2], &pi, alpha);
-        assert_ne!(result, BabyBear::ZERO, "Should detect corrupted sum at row 2");
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Should detect corrupted sum at row 2"
+        );
     }
 }

@@ -1073,9 +1073,9 @@ async fn post_submit_turn(
         previous_receipt_hash: None,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
     };
 
     // Sign the turn.
@@ -2418,10 +2418,13 @@ async fn post_register_cell(
         .map(|r| r.height)
         .unwrap_or(0);
 
-    match s
-        .ledger
-        .register_sovereign_cell_with_vk(cell_id, commitment, current_height, ttl, vk_hash)
-    {
+    match s.ledger.register_sovereign_cell_with_vk(
+        cell_id,
+        commitment,
+        current_height,
+        ttl,
+        vk_hash,
+    ) {
         Ok(()) => Ok(Json(RegisterCellResponse {
             registered: true,
             ttl_blocks: ttl,
@@ -2543,9 +2546,7 @@ async fn post_deploy_program(
 
     // Deserialize the CircuitDescriptor from postcard format.
     let descriptor: pyana_dsl_runtime::CircuitDescriptor =
-        postcard::from_bytes(&descriptor_bytes).map_err(|_| {
-            StatusCode::BAD_REQUEST
-        })?;
+        postcard::from_bytes(&descriptor_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Create the CellProgram (computes VK hash).
     let program = pyana_dsl_runtime::CellProgram::new(descriptor, req.version);

@@ -7,7 +7,7 @@
 //! The constraints here must produce IDENTICAL evaluations to `DerivationStarkAir::eval_constraints`
 //! on the same trace rows. We verify this via equivalence tests.
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
@@ -15,8 +15,8 @@ use pyana_dsl_runtime::circuit::{
 
 // Re-export the derivation AIR column layout constants.
 use pyana_circuit::derivation_air::{
-    col, DERIVATION_AIR_WIDTH, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS,
-    MAX_MEMBEROF_CHECKS, MAX_SUB_VARS,
+    DERIVATION_AIR_WIDTH, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS,
+    MAX_MEMBEROF_CHECKS, MAX_SUB_VARS, col,
 };
 
 /// Negate a field element: returns BABYBEAR_P - 1 (the additive inverse of ONE).
@@ -464,7 +464,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -484,7 +490,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -509,7 +521,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -529,7 +547,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -554,7 +578,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -574,7 +604,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -599,7 +635,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -619,7 +661,13 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
             terms_vec.push(term(neg_one(), &[raw_col]));
             terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
             for var_j in 0..MAX_SUB_VARS {
-                terms_vec.push(term(neg_one(), &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j]));
+                terms_vec.push(term(
+                    neg_one(),
+                    &[
+                        col::check_term_sel(slot, var_j),
+                        col::SUB_VALUE_START + var_j,
+                    ],
+                ));
             }
             constraints.push(ConstraintExpr::Gated {
                 selector_col: active_col,
@@ -648,9 +696,21 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
     // Column definitions (key columns for documentation)
     // ========================================================================
     let columns = vec![
-        ColumnDef { name: "rule_id".into(), index: col::RULE_ID, kind: ColumnKind::Value },
-        ColumnDef { name: "head_pred".into(), index: col::HEAD_PRED, kind: ColumnKind::Value },
-        ColumnDef { name: "derived_hash".into(), index: col::DERIVED_HASH, kind: ColumnKind::Hash },
+        ColumnDef {
+            name: "rule_id".into(),
+            index: col::RULE_ID,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "head_pred".into(),
+            index: col::HEAD_PRED,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "derived_hash".into(),
+            index: col::DERIVED_HASH,
+            kind: ColumnKind::Hash,
+        },
     ];
 
     CircuitDescriptor {
@@ -676,10 +736,8 @@ pub fn derivation_dsl_circuit() -> DslCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::derivation_air::{
-        create_test_derivation, DerivationAir, DerivationWitness,
-    };
     use pyana_circuit::constraint_prover::Air;
+    use pyana_circuit::derivation_air::{DerivationAir, DerivationWitness, create_test_derivation};
     use pyana_circuit::stark::StarkAir;
 
     /// Extend a row from DERIVATION_AIR_WIDTH to EXTENDED_TRACE_WIDTH,
@@ -710,7 +768,8 @@ mod tests {
     #[test]
     fn descriptor_validates_successfully() {
         let desc = derivation_circuit_descriptor();
-        desc.validate().expect("derivation descriptor should pass validation");
+        desc.validate()
+            .expect("derivation descriptor should pass validation");
     }
 
     #[test]
@@ -738,7 +797,10 @@ mod tests {
             "Expected > 100 constraints, got {}",
             desc.constraints.len()
         );
-        eprintln!("Derivation DSL descriptor has {} constraints", desc.constraints.len());
+        eprintln!(
+            "Derivation DSL descriptor has {} constraints",
+            desc.constraints.len()
+        );
     }
 
     #[test]
@@ -856,9 +918,7 @@ mod tests {
     #[test]
     fn dsl_circuit_rejects_fake_eq_check_terms() {
         // Soundness test: prover lies about eq check terms (same attack as in derivation_air tests)
-        use pyana_circuit::derivation_air::{
-            BodyAtomPattern, CircuitEqualCheck, CircuitRule,
-        };
+        use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitEqualCheck, CircuitRule};
         use pyana_circuit::poseidon2::hash_fact;
 
         let access_pred = BabyBear::new(300);
@@ -935,9 +995,7 @@ mod tests {
     #[test]
     fn dsl_circuit_rejects_fake_gte_terms() {
         // Soundness test: prover has budget=5, cost=10 but lies about GTE terms
-        use pyana_circuit::derivation_air::{
-            BodyAtomPattern, CircuitGteCheck, CircuitRule,
-        };
+        use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitGteCheck, CircuitRule};
         use pyana_circuit::poseidon2::hash_fact;
 
         let access_pred = BabyBear::new(300);
@@ -1022,9 +1080,7 @@ mod tests {
     #[test]
     fn dsl_circuit_gte_honest_valid_passes() {
         // budget=50 >= cost=10, honestly generated trace
-        use pyana_circuit::derivation_air::{
-            BodyAtomPattern, CircuitGteCheck, CircuitRule,
-        };
+        use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitGteCheck, CircuitRule};
         use pyana_circuit::poseidon2::hash_fact;
 
         let access_pred = BabyBear::new(300);

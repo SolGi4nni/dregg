@@ -126,10 +126,7 @@ fn budget(remaining: u64, request_cost: u64) {
 // The hand-written version checks token_id is in a not-revoked set.
 // We model this as set membership.
 #[pyana_caveat]
-fn check_not_revoked(
-    not_revoked_set: &std::collections::HashSet<u64>,
-    token_id_hash: u64,
-) {
+fn check_not_revoked(not_revoked_set: &std::collections::HashSet<u64>, token_id_hash: u64) {
     require!(not_revoked_set.contains(token_id_hash));
 }
 
@@ -628,9 +625,10 @@ mod tests {
         assert!(air.width > 0);
         assert!(!air.constraints.is_empty());
         // Should have a MerkleMembership constraint
-        let has_membership = air.constraints.iter().any(|c| {
-            matches!(c, pyana_dsl_runtime::Constraint::MerkleMembership { .. })
-        });
+        let has_membership = air
+            .constraints
+            .iter()
+            .any(|c| matches!(c, pyana_dsl_runtime::Constraint::MerkleMembership { .. }));
         assert!(has_membership);
     }
 

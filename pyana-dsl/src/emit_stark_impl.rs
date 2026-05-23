@@ -9,7 +9,6 @@
 /// It then emits a STRUCT + TRAIT IMPL with all values baked in as constants,
 /// rather than a runtime descriptor. The generated code implements
 /// `pyana_circuit::stark::StarkAir` directly.
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -162,10 +161,7 @@ fn statement_degree(stmt: &Statement) -> usize {
 
 /// Main entry point: emit a struct + impl StarkAir for the given IR.
 pub fn emit_stark_impl(ir: &ConstraintIr) -> TokenStream {
-    let struct_name = format_ident!(
-        "{}Circuit",
-        to_pascal_case(&ir.name.to_string())
-    );
+    let struct_name = format_ident!("{}Circuit", to_pascal_case(&ir.name.to_string()));
     let layout = compute_layout(ir);
     let width = layout.width;
     let degree = compute_max_degree(ir);

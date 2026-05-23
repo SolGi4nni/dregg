@@ -76,14 +76,10 @@ mod temporal_predicate {
         cs.push(local[col::DIFF_BITS_START + col::NUM_DIFF_BITS - 1]);
 
         // C5: acc_plus_one = accumulator + 1
-        cs.push(
-            local[col::ACC_PLUS_ONE] - local[col::ACCUMULATOR] - BabyBear::ONE,
-        );
+        cs.push(local[col::ACC_PLUS_ONE] - local[col::ACCUMULATOR] - BabyBear::ONE);
 
         // C6: step_plus_one = step_index + 1
-        cs.push(
-            local[col::STEP_PLUS_ONE] - local[col::STEP_INDEX] - BabyBear::ONE,
-        );
+        cs.push(local[col::STEP_PLUS_ONE] - local[col::STEP_INDEX] - BabyBear::ONE);
 
         cs
     }
@@ -198,8 +194,7 @@ mod tests {
         // Verify per-row + transition constraints evaluate to zero.
         let alpha = BabyBear::new(7);
         for i in 0..trace.len() - 1 {
-            let result =
-                circuit.eval_constraints(&trace[i], &trace[i + 1], &public_inputs, alpha);
+            let result = circuit.eval_constraints(&trace[i], &trace[i + 1], &public_inputs, alpha);
             assert_eq!(
                 result,
                 BabyBear::ZERO,
@@ -246,8 +241,7 @@ mod tests {
         let (trace, public_inputs) = generate_temporal_trace(&values, threshold);
 
         let alpha = BabyBear::new(7);
-        let row1_result =
-            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        let row1_result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
             row1_result,
             BabyBear::ZERO,
@@ -268,8 +262,7 @@ mod tests {
         trace[2][ACC_PLUS_ONE] = BabyBear::new(5);
 
         let alpha = BabyBear::new(7);
-        let result =
-            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        let result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
             result,
             BabyBear::ZERO,
@@ -277,8 +270,7 @@ mod tests {
         );
 
         // Row 0 -> Row 1 still fine
-        let result_01 =
-            circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
+        let result_01 = circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
         assert_eq!(result_01, BabyBear::ZERO);
     }
 

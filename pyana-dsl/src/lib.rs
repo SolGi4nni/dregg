@@ -22,7 +22,7 @@ mod parse_circuit;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn, ItemMod};
+use syn::{ItemFn, ItemMod, parse_macro_input};
 
 /// Marks a function as a pyana caveat constraint.
 ///

@@ -284,9 +284,8 @@ impl DslAwareProofVerifier {
         if vk.len() < 32 {
             return false;
         }
-        let expected_root = BabyBear::new_canonical(u32::from_le_bytes([
-            vk[0], vk[1], vk[2], vk[3],
-        ]));
+        let expected_root =
+            BabyBear::new_canonical(u32::from_le_bytes([vk[0], vk[1], vk[2], vk[3]]));
         if pi[1] != expected_root {
             return false;
         }
@@ -328,11 +327,7 @@ impl DslAwareProofVerifier {
     /// The VK bytes are interpreted as the 32-byte program VK hash. The program
     /// is looked up in the registry, and the proof is verified against its
     /// `DslCircuit` AIR.
-    fn verify_dsl_program(
-        &self,
-        stark_proof: &stark::StarkProof,
-        vk: &[u8],
-    ) -> bool {
+    fn verify_dsl_program(&self, stark_proof: &stark::StarkProof, vk: &[u8]) -> bool {
         if vk.len() < 32 {
             return false;
         }

@@ -3303,12 +3303,16 @@ impl AgentWallet {
         fee: u64,
     ) -> Result<Turn, SdkError> {
         // 1. Get our local cell state.
-        let cell_state = self.sovereign_cells.get(cell_id).ok_or_else(|| {
-            SdkError::MissingKey(format!(
-                "no local sovereign state for cell {}; call store_sovereign_state() first",
-                cell_id
-            ))
-        })?.clone();
+        let cell_state = self
+            .sovereign_cells
+            .get(cell_id)
+            .ok_or_else(|| {
+                SdkError::MissingKey(format!(
+                    "no local sovereign state for cell {}; call store_sovereign_state() first",
+                    cell_id
+                ))
+            })?
+            .clone();
 
         // 2. Compute old commitment.
         let old_commitment = cell_state.state_commitment();
@@ -3876,7 +3880,10 @@ impl AgentWallet {
             agent: agent_id,
             nonce,
             fee,
-            call_forest: pyana_turn::CallForest { roots: vec![], forest_hash: [0u8; 32] },
+            call_forest: pyana_turn::CallForest {
+                roots: vec![],
+                forest_hash: [0u8; 32],
+            },
             valid_until: None,
             execution_proof: Some(proof_bytes),
             execution_proof_cell: Some(*cell_id),

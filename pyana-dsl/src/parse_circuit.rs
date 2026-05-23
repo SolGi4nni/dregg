@@ -85,7 +85,10 @@ pub fn parse_circuit_module(module: &ItemMod) -> syn::Result<CircuitModule> {
         syn::Error::new(module.ident.span(), "missing `const DEGREE: usize = ...;`")
     })?;
     let pi_count = pi_count.ok_or_else(|| {
-        syn::Error::new(module.ident.span(), "missing `const PI_COUNT: usize = ...;`")
+        syn::Error::new(
+            module.ident.span(),
+            "missing `const PI_COUNT: usize = ...;`",
+        )
     })?;
 
     Ok(CircuitModule {
@@ -105,9 +108,9 @@ fn extract_usize_const(c: &ItemConst) -> syn::Result<usize> {
     // Try to extract from a literal integer expression.
     match c.expr.as_ref() {
         Expr::Lit(lit) => match &lit.lit {
-            Lit::Int(int_lit) => int_lit.base10_parse::<usize>().map_err(|e| {
-                syn::Error::new(int_lit.span(), format!("invalid integer: {e}"))
-            }),
+            Lit::Int(int_lit) => int_lit
+                .base10_parse::<usize>()
+                .map_err(|e| syn::Error::new(int_lit.span(), format!("invalid integer: {e}"))),
             _ => Err(syn::Error::new(
                 c.ident.span(),
                 "expected integer literal for constant",

@@ -39,11 +39,10 @@
 
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::note_spending_air::{
-    col, merkle_col, pi, NOTE_SPENDING_WIDTH, SPENDING_KEY_LIMBS,
+    NOTE_SPENDING_WIDTH, SPENDING_KEY_LIMBS, col, merkle_col, pi,
 };
 use pyana_dsl_runtime::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
-    DslCircuit,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
 };
 
 /// Auxiliary column for the intermediate nullifier hash (two-step derivation).
@@ -69,7 +68,9 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
     // ========================================================================
     // C1: is_merkle is binary
     // ========================================================================
-    constraints.push(ConstraintExpr::Binary { col: col::IS_MERKLE });
+    constraints.push(ConstraintExpr::Binary {
+        col: col::IS_MERKLE,
+    });
 
     // ========================================================================
     // C2: Commitment hash binding (commitment row only)
@@ -202,14 +203,46 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
     // Column definitions
     // ========================================================================
     let columns = vec![
-        ColumnDef { name: "owner".into(), index: col::OWNER, kind: ColumnKind::Value },
-        ColumnDef { name: "value".into(), index: col::VALUE, kind: ColumnKind::Value },
-        ColumnDef { name: "asset_type".into(), index: col::ASSET_TYPE, kind: ColumnKind::Value },
-        ColumnDef { name: "creation_nonce".into(), index: col::CREATION_NONCE, kind: ColumnKind::Value },
-        ColumnDef { name: "commitment".into(), index: col::COMMITMENT, kind: ColumnKind::Hash },
-        ColumnDef { name: "nullifier".into(), index: col::NULLIFIER, kind: ColumnKind::Hash },
-        ColumnDef { name: "randomness".into(), index: col::RANDOMNESS, kind: ColumnKind::Value },
-        ColumnDef { name: "is_merkle".into(), index: col::IS_MERKLE, kind: ColumnKind::Binary },
+        ColumnDef {
+            name: "owner".into(),
+            index: col::OWNER,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "value".into(),
+            index: col::VALUE,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "asset_type".into(),
+            index: col::ASSET_TYPE,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "creation_nonce".into(),
+            index: col::CREATION_NONCE,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "commitment".into(),
+            index: col::COMMITMENT,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "nullifier".into(),
+            index: col::NULLIFIER,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "randomness".into(),
+            index: col::RANDOMNESS,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "is_merkle".into(),
+            index: col::IS_MERKLE,
+            kind: ColumnKind::Binary,
+        },
     ];
 
     CircuitDescriptor {
@@ -286,7 +319,15 @@ pub fn generate_commitment_row_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     // Build a padding/Merkle row (row 1) where col 0 (CURRENT) = merkle_root.
     // This satisfies the last-row boundary constraint: trace[last][0] == pi[1].
     // All Hash constraints must also be satisfied on this row.
-    let padding_commitment = hash_fact(merkle_root, &[BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+    let padding_commitment = hash_fact(
+        merkle_root,
+        &[
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
+    );
     let padding_intermediate = hash_fact(padding_commitment, &[BabyBear::ZERO; 4]);
     let padding_nullifier = hash_fact(padding_intermediate, &[BabyBear::ZERO; 4]);
 

@@ -5,7 +5,7 @@
 
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::sovereign_transition_air::{
-    SovereignTransitionAir, SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
+    SOVEREIGN_PUBLIC_INPUTS, SovereignTransitionAir, bytes32_to_babybear,
     generate_sovereign_transition_trace,
 };
 use pyana_circuit::stark::{StarkAir, proof_from_bytes, proof_to_bytes, prove, verify};

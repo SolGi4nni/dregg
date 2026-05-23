@@ -72,7 +72,9 @@ fn test_proof_carrying_sovereign_turn_accepted() {
     let result = executor.execute(&turn, &mut ledger);
 
     match result {
-        TurnResult::Committed { computrons_used, .. } => {
+        TurnResult::Committed {
+            computrons_used, ..
+        } => {
             // Proof-carrying turns use zero computrons (just verification).
             assert_eq!(computrons_used, 0);
         }

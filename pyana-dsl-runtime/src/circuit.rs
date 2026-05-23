@@ -68,7 +68,10 @@ pub enum ConstraintExpr {
     /// Arbitrary polynomial: sum of terms, each a coefficient times a product of columns.
     Polynomial { terms: Vec<PolyTerm> },
     /// Gated constraint: `local[selector_col] * inner == 0`
-    Gated { selector_col: usize, inner: Box<ConstraintExpr> },
+    Gated {
+        selector_col: usize,
+        inner: Box<ConstraintExpr>,
+    },
 
     /// Constraint active when selector_col == 0 (inverted gating)
     /// `(1 - local[selector_col]) * inner == 0`
@@ -79,9 +82,7 @@ pub enum ConstraintExpr {
 
     /// Squared constraint: `inner^2 == 0` (equivalent to `inner == 0` for soundness,
     /// but produces different numerical values when composed with alpha powers).
-    Squared {
-        inner: Box<ConstraintExpr>,
-    },
+    Squared { inner: Box<ConstraintExpr> },
 
     /// Constrain col_output == Poseidon2_hash_fact(col_inputs[0], col_inputs[1..])
     /// The first input column is the predicate, the rest are terms.
@@ -104,9 +105,7 @@ pub enum ConstraintExpr {
     /// Require sum(flag_cols) >= 1 (at least one flag is active).
     /// Implemented as: (1 - flag_0) * (1 - flag_1) * ... * (1 - flag_n) == 0
     /// (product is zero iff at least one flag is 1).
-    AtLeastOne {
-        flag_cols: Vec<usize>,
-    },
+    AtLeastOne { flag_cols: Vec<usize> },
 
     /// Constrain that next[target_col] = local[source_col] when local[pos_col] == target_index.
     /// (selective write to a specific position in a column group)
@@ -130,9 +129,17 @@ pub struct PolyTerm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BoundaryDef {
     /// `trace[row][col] == pi[pi_index]`
-    PiBinding { row: BoundaryRow, col: usize, pi_index: usize },
+    PiBinding {
+        row: BoundaryRow,
+        col: usize,
+        pi_index: usize,
+    },
     /// `trace[row][col] == fixed_value`
-    Fixed { row: BoundaryRow, col: usize, value: BabyBear },
+    Fixed {
+        row: BoundaryRow,
+        col: usize,
+        value: BabyBear,
+    },
 }
 
 /// Which row a boundary constraint targets.
@@ -153,14 +160,13 @@ impl ConstraintExpr {
     pub fn evaluate(&self, local: &[BabyBear], next: &[BabyBear], pi: &[BabyBear]) -> BabyBear {
         match self {
             Self::Equality { col_a, col_b } => local[*col_a] - local[*col_b],
-            Self::Multiplication { a, b, output } => {
-                local[*a] * local[*b] - local[*output]
-            }
-            Self::Binary { col } => {
-                local[*col] * (local[*col] - BabyBear::ONE)
-            }
+            Self::Multiplication { a, b, output } => local[*a] * local[*b] - local[*output],
+            Self::Binary { col } => local[*col] * (local[*col] - BabyBear::ONE),
             Self::PiBinding { col, pi_index } => local[*col] - pi[*pi_index],
-            Self::Transition { next_col, local_col } => next[*next_col] - local[*local_col],
+            Self::Transition {
+                next_col,
+                local_col,
+            } => next[*next_col] - local[*local_col],
             Self::Polynomial { terms } => {
                 let mut sum = BabyBear::ZERO;
                 for term in terms {
@@ -172,24 +178,33 @@ impl ConstraintExpr {
                 }
                 sum
             }
-            Self::Gated { selector_col, inner } => {
-                local[*selector_col] * inner.evaluate(local, next, pi)
-            }
-            Self::InvertedGated { selector_col, inner } => {
-                (BabyBear::ONE - local[*selector_col]) * inner.evaluate(local, next, pi)
-            }
+            Self::Gated {
+                selector_col,
+                inner,
+            } => local[*selector_col] * inner.evaluate(local, next, pi),
+            Self::InvertedGated {
+                selector_col,
+                inner,
+            } => (BabyBear::ONE - local[*selector_col]) * inner.evaluate(local, next, pi),
             Self::Squared { inner } => {
                 let v = inner.evaluate(local, next, pi);
                 v * v
             }
-            Self::Hash { output_col, input_cols } => {
+            Self::Hash {
+                output_col,
+                input_cols,
+            } => {
                 // First input is the predicate, rest are terms.
                 let predicate = local[input_cols[0]];
                 let terms: Vec<BabyBear> = input_cols[1..].iter().map(|&c| local[c]).collect();
                 let expected = pyana_circuit::poseidon2::hash_fact(predicate, &terms);
                 expected - local[*output_col]
             }
-            Self::ConditionalNonzero { selector_col, value_col, inverse_col } => {
+            Self::ConditionalNonzero {
+                selector_col,
+                value_col,
+                inverse_col,
+            } => {
                 // selector * (value * inverse - 1) == 0
                 // When selector=0: constraint is trivially 0.
                 // When selector!=0: requires value*inverse=1, i.e. value!=0.
@@ -203,7 +218,12 @@ impl ConstraintExpr {
                 }
                 product
             }
-            Self::SelectiveWrite { target_col, source_col, pos_col, target_index } => {
+            Self::SelectiveWrite {
+                target_col,
+                source_col,
+                pos_col,
+                target_index,
+            } => {
                 // When local[pos_col] == target_index, require next[target_col] = local[source_col].
                 // Constraint: (pos - target_index) * 0 + delta * (next[target] - local[source]) == 0
                 // where delta = 1 when pos==target_index, 0 otherwise.
@@ -348,13 +368,25 @@ pub enum ProgramValidationError {
     /// Constraint degree exceeds the maximum allowed (8).
     DegreeTooHigh { degree: usize },
     /// A constraint references a column index that exceeds trace_width.
-    ColumnOutOfBounds { constraint_index: usize, col: usize, trace_width: usize },
+    ColumnOutOfBounds {
+        constraint_index: usize,
+        col: usize,
+        trace_width: usize,
+    },
     /// Too many public inputs declared.
     TooManyPublicInputs { count: usize },
     /// A boundary constraint references an out-of-bounds column.
-    BoundaryColumnOutOfBounds { boundary_index: usize, col: usize, trace_width: usize },
+    BoundaryColumnOutOfBounds {
+        boundary_index: usize,
+        col: usize,
+        trace_width: usize,
+    },
     /// A boundary constraint references a public input index out of range.
-    BoundaryPiOutOfBounds { boundary_index: usize, pi_index: usize, pi_count: usize },
+    BoundaryPiOutOfBounds {
+        boundary_index: usize,
+        pi_index: usize,
+        pi_count: usize,
+    },
     /// Program name is empty or too long.
     InvalidName,
     /// Trace width is zero.
@@ -364,17 +396,46 @@ pub enum ProgramValidationError {
 impl std::fmt::Display for ProgramValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooWide { width } => write!(f, "trace width {width} exceeds max {MAX_TRACE_WIDTH}"),
-            Self::DegreeTooHigh { degree } => write!(f, "constraint degree {degree} exceeds max {MAX_CONSTRAINT_DEGREE}"),
-            Self::ColumnOutOfBounds { constraint_index, col, trace_width } => {
-                write!(f, "constraint {constraint_index} references column {col} but trace_width is {trace_width}")
+            Self::TooWide { width } => {
+                write!(f, "trace width {width} exceeds max {MAX_TRACE_WIDTH}")
             }
-            Self::TooManyPublicInputs { count } => write!(f, "public_input_count {count} exceeds max {MAX_PUBLIC_INPUTS}"),
-            Self::BoundaryColumnOutOfBounds { boundary_index, col, trace_width } => {
-                write!(f, "boundary {boundary_index} references column {col} but trace_width is {trace_width}")
+            Self::DegreeTooHigh { degree } => write!(
+                f,
+                "constraint degree {degree} exceeds max {MAX_CONSTRAINT_DEGREE}"
+            ),
+            Self::ColumnOutOfBounds {
+                constraint_index,
+                col,
+                trace_width,
+            } => {
+                write!(
+                    f,
+                    "constraint {constraint_index} references column {col} but trace_width is {trace_width}"
+                )
             }
-            Self::BoundaryPiOutOfBounds { boundary_index, pi_index, pi_count } => {
-                write!(f, "boundary {boundary_index} references pi[{pi_index}] but public_input_count is {pi_count}")
+            Self::TooManyPublicInputs { count } => write!(
+                f,
+                "public_input_count {count} exceeds max {MAX_PUBLIC_INPUTS}"
+            ),
+            Self::BoundaryColumnOutOfBounds {
+                boundary_index,
+                col,
+                trace_width,
+            } => {
+                write!(
+                    f,
+                    "boundary {boundary_index} references column {col} but trace_width is {trace_width}"
+                )
+            }
+            Self::BoundaryPiOutOfBounds {
+                boundary_index,
+                pi_index,
+                pi_count,
+            } => {
+                write!(
+                    f,
+                    "boundary {boundary_index} references pi[{pi_index}] but public_input_count is {pi_count}"
+                )
             }
             Self::InvalidName => write!(f, "program name is empty or exceeds 256 bytes"),
             Self::ZeroWidth => write!(f, "trace width must be at least 1"),
@@ -392,36 +453,48 @@ impl ConstraintExpr {
             Self::Multiplication { a, b, output } => Some((*a).max(*b).max(*output)),
             Self::Binary { col } => Some(*col),
             Self::PiBinding { col, .. } => Some(*col),
-            Self::Transition { next_col, local_col } => Some((*next_col).max(*local_col)),
-            Self::Polynomial { terms } => {
-                terms.iter()
-                    .flat_map(|t| t.col_indices.iter().copied())
-                    .max()
-            }
-            Self::Gated { selector_col, inner } => {
+            Self::Transition {
+                next_col,
+                local_col,
+            } => Some((*next_col).max(*local_col)),
+            Self::Polynomial { terms } => terms
+                .iter()
+                .flat_map(|t| t.col_indices.iter().copied())
+                .max(),
+            Self::Gated {
+                selector_col,
+                inner,
+            } => {
                 let inner_max = inner.max_column_index().unwrap_or(0);
                 Some((*selector_col).max(inner_max))
             }
-            Self::InvertedGated { selector_col, inner } => {
+            Self::InvertedGated {
+                selector_col,
+                inner,
+            } => {
                 let inner_max = inner.max_column_index().unwrap_or(0);
                 Some((*selector_col).max(inner_max))
             }
-            Self::Squared { inner } => {
-                inner.max_column_index()
-            }
-            Self::Hash { output_col, input_cols } => {
+            Self::Squared { inner } => inner.max_column_index(),
+            Self::Hash {
+                output_col,
+                input_cols,
+            } => {
                 let max_input = input_cols.iter().copied().max().unwrap_or(0);
                 Some((*output_col).max(max_input))
             }
-            Self::ConditionalNonzero { selector_col, value_col, inverse_col } => {
-                Some((*selector_col).max(*value_col).max(*inverse_col))
-            }
-            Self::AtLeastOne { flag_cols } => {
-                flag_cols.iter().copied().max()
-            }
-            Self::SelectiveWrite { target_col, source_col, pos_col, .. } => {
-                Some((*target_col).max(*source_col).max(*pos_col))
-            }
+            Self::ConditionalNonzero {
+                selector_col,
+                value_col,
+                inverse_col,
+            } => Some((*selector_col).max(*value_col).max(*inverse_col)),
+            Self::AtLeastOne { flag_cols } => flag_cols.iter().copied().max(),
+            Self::SelectiveWrite {
+                target_col,
+                source_col,
+                pos_col,
+                ..
+            } => Some((*target_col).max(*source_col).max(*pos_col)),
         }
     }
 }
@@ -447,17 +520,23 @@ impl CircuitDescriptor {
             return Err(ProgramValidationError::ZeroWidth);
         }
         if self.trace_width > MAX_TRACE_WIDTH {
-            return Err(ProgramValidationError::TooWide { width: self.trace_width });
+            return Err(ProgramValidationError::TooWide {
+                width: self.trace_width,
+            });
         }
 
         // Constraint degree bounds
         if self.max_degree > MAX_CONSTRAINT_DEGREE {
-            return Err(ProgramValidationError::DegreeTooHigh { degree: self.max_degree });
+            return Err(ProgramValidationError::DegreeTooHigh {
+                degree: self.max_degree,
+            });
         }
 
         // Public input count
         if self.public_input_count > MAX_PUBLIC_INPUTS {
-            return Err(ProgramValidationError::TooManyPublicInputs { count: self.public_input_count });
+            return Err(ProgramValidationError::TooManyPublicInputs {
+                count: self.public_input_count,
+            });
         }
 
         // Validate column indices in constraints
@@ -526,7 +605,11 @@ pub enum ProgramError {
     /// Witness is missing required column data.
     MissingWitness { column: String },
     /// Witness column has wrong length.
-    WitnessLengthMismatch { column: String, expected: usize, got: usize },
+    WitnessLengthMismatch {
+        column: String,
+        expected: usize,
+        got: usize,
+    },
     /// Trace length must be a power of two and >= 2.
     InvalidTraceLength { len: usize },
 }
@@ -539,8 +622,15 @@ impl std::fmt::Display for ProgramError {
             Self::InvalidProof(msg) => write!(f, "invalid proof: {msg}"),
             Self::VerificationFailed(msg) => write!(f, "verification failed: {msg}"),
             Self::MissingWitness { column } => write!(f, "witness missing column: {column}"),
-            Self::WitnessLengthMismatch { column, expected, got } => {
-                write!(f, "witness column '{column}' has length {got}, expected {expected}")
+            Self::WitnessLengthMismatch {
+                column,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "witness column '{column}' has length {got}, expected {expected}"
+                )
             }
             Self::InvalidTraceLength { len } => {
                 write!(f, "trace length {len} must be a power of two and >= 2")
@@ -580,7 +670,11 @@ impl CellProgram {
     /// Create a new CellProgram from a descriptor, computing the VK hash.
     pub fn new(descriptor: CircuitDescriptor, version: u32) -> Self {
         let vk_hash = Self::compute_vk_hash(&descriptor);
-        Self { descriptor, version, vk_hash }
+        Self {
+            descriptor,
+            version,
+            vk_hash,
+        }
     }
 
     /// Compute the verification key hash from the descriptor.
@@ -610,9 +704,11 @@ impl CellProgram {
         public_inputs: &[BabyBear],
         proof_bytes: &[u8],
     ) -> Result<(), ProgramError> {
-        let circuit = DslCircuit { descriptor: self.descriptor.clone() };
-        let proof = stark::proof_from_bytes(proof_bytes)
-            .map_err(|e| ProgramError::InvalidProof(e))?;
+        let circuit = DslCircuit {
+            descriptor: self.descriptor.clone(),
+        };
+        let proof =
+            stark::proof_from_bytes(proof_bytes).map_err(|e| ProgramError::InvalidProof(e))?;
         stark::verify(&circuit, &proof, public_inputs)
             .map_err(|e| ProgramError::VerificationFailed(e))
     }
@@ -666,7 +762,9 @@ impl CellProgram {
         public_inputs: &[BabyBear],
     ) -> Result<Vec<u8>, ProgramError> {
         let trace = self.generate_trace(witness_values, num_rows)?;
-        let circuit = DslCircuit { descriptor: self.descriptor.clone() };
+        let circuit = DslCircuit {
+            descriptor: self.descriptor.clone(),
+        };
         let proof = stark::prove(&circuit, &trace, public_inputs);
         Ok(stark::proof_to_bytes(&proof))
     }
@@ -689,7 +787,9 @@ pub struct ProgramRegistry {
 impl ProgramRegistry {
     /// Create an empty program registry.
     pub fn new() -> Self {
-        Self { programs: HashMap::new() }
+        Self {
+            programs: HashMap::new(),
+        }
     }
 
     /// Deploy a program to the registry after validation.
@@ -774,12 +874,36 @@ mod tests {
             trace_width: 6,
             max_degree: 2,
             columns: vec![
-                ColumnDef { name: "old_balance".to_string(), index: 0, kind: ColumnKind::Value },
-                ColumnDef { name: "transfer_amount".to_string(), index: 1, kind: ColumnKind::Value },
-                ColumnDef { name: "new_balance".to_string(), index: 2, kind: ColumnKind::Value },
-                ColumnDef { name: "direction".to_string(), index: 3, kind: ColumnKind::Binary },
-                ColumnDef { name: "pad0".to_string(), index: 4, kind: ColumnKind::Value },
-                ColumnDef { name: "pad1".to_string(), index: 5, kind: ColumnKind::Value },
+                ColumnDef {
+                    name: "old_balance".to_string(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "transfer_amount".to_string(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "new_balance".to_string(),
+                    index: 2,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "direction".to_string(),
+                    index: 3,
+                    kind: ColumnKind::Binary,
+                },
+                ColumnDef {
+                    name: "pad0".to_string(),
+                    index: 4,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "pad1".to_string(),
+                    index: 5,
+                    kind: ColumnKind::Value,
+                },
             ],
             constraints: vec![
                 // c1: direction is boolean
@@ -788,10 +912,22 @@ mod tests {
                 // new_balance - old_balance - transfer_amount + 2*direction*transfer_amount == 0
                 ConstraintExpr::Polynomial {
                     terms: vec![
-                        PolyTerm { coeff: BabyBear::ONE, col_indices: vec![2] },          // +new_balance
-                        PolyTerm { coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1), col_indices: vec![0] }, // -old_balance
-                        PolyTerm { coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1), col_indices: vec![1] }, // -transfer_amount
-                        PolyTerm { coeff: BabyBear::new(2), col_indices: vec![3, 1] },    // +2*direction*transfer_amount
+                        PolyTerm {
+                            coeff: BabyBear::ONE,
+                            col_indices: vec![2],
+                        }, // +new_balance
+                        PolyTerm {
+                            coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1),
+                            col_indices: vec![0],
+                        }, // -old_balance
+                        PolyTerm {
+                            coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1),
+                            col_indices: vec![1],
+                        }, // -transfer_amount
+                        PolyTerm {
+                            coeff: BabyBear::new(2),
+                            col_indices: vec![3, 1],
+                        }, // +2*direction*transfer_amount
                     ],
                 },
             ],
@@ -856,13 +992,17 @@ mod tests {
 
         let dsl = DslCircuit::new(sovereign_transfer_descriptor());
         let result = dsl.eval_constraints(&row, &dummy_next, &dummy_pi, alpha);
-        assert_ne!(result, BabyBear::ZERO, "Invalid trace must produce nonzero constraint");
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Invalid trace must produce nonzero constraint"
+        );
     }
 
     #[test]
     fn dsl_circuit_prove_and_verify() {
         use pyana_circuit::sovereign_transition_air::{
-            bytes32_to_babybear, SOVEREIGN_PUBLIC_INPUTS,
+            SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
         let old_balance = 1000u64;
@@ -893,13 +1033,17 @@ mod tests {
         // Prove and verify using our custom STARK.
         let proof = prove(&dsl, &trace, &public_inputs);
         let result = verify(&dsl, &proof, &public_inputs);
-        assert!(result.is_ok(), "DslCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "DslCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn dsl_circuit_incoming_transfer() {
         use pyana_circuit::sovereign_transition_air::{
-            bytes32_to_babybear, SOVEREIGN_PUBLIC_INPUTS,
+            SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
         let old_balance = 500u64;
@@ -926,7 +1070,11 @@ mod tests {
         let dsl = DslCircuit::new(sovereign_transfer_descriptor());
         let proof = prove(&dsl, &trace, &public_inputs);
         let result = verify(&dsl, &proof, &public_inputs);
-        assert!(result.is_ok(), "DslCircuit incoming transfer failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "DslCircuit incoming transfer failed: {:?}",
+            result.err()
+        );
     }
 
     // ========================================================================
@@ -959,7 +1107,7 @@ mod tests {
     #[test]
     fn prove_and_verify_via_registry() {
         use pyana_circuit::sovereign_transition_air::{
-            bytes32_to_babybear, SOVEREIGN_PUBLIC_INPUTS,
+            SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
         let descriptor = sovereign_transfer_descriptor();
@@ -976,10 +1124,22 @@ mod tests {
         let num_rows = 2;
 
         let mut witness = HashMap::new();
-        witness.insert("old_balance".to_string(), vec![BabyBear::from_u64(old_balance); num_rows]);
-        witness.insert("transfer_amount".to_string(), vec![BabyBear::from_u64(transfer_amount); num_rows]);
-        witness.insert("new_balance".to_string(), vec![BabyBear::from_u64(new_balance); num_rows]);
-        witness.insert("direction".to_string(), vec![BabyBear::new(direction); num_rows]);
+        witness.insert(
+            "old_balance".to_string(),
+            vec![BabyBear::from_u64(old_balance); num_rows],
+        );
+        witness.insert(
+            "transfer_amount".to_string(),
+            vec![BabyBear::from_u64(transfer_amount); num_rows],
+        );
+        witness.insert(
+            "new_balance".to_string(),
+            vec![BabyBear::from_u64(new_balance); num_rows],
+        );
+        witness.insert(
+            "direction".to_string(),
+            vec![BabyBear::new(direction); num_rows],
+        );
 
         // Build public inputs
         let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(SOVEREIGN_PUBLIC_INPUTS);
@@ -989,12 +1149,18 @@ mod tests {
         public_inputs.extend(bytes32_to_babybear(&[4u8; 32]));
 
         // Prove
-        let proof_bytes = program.prove_transition(&witness, num_rows, &public_inputs).unwrap();
+        let proof_bytes = program
+            .prove_transition(&witness, num_rows, &public_inputs)
+            .unwrap();
         assert!(!proof_bytes.is_empty());
 
         // Verify via registry
         let result = registry.verify_with_program(&vk_hash, &public_inputs, &proof_bytes);
-        assert!(result.is_ok(), "Registry verification failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Registry verification failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1035,14 +1201,19 @@ mod tests {
     fn invalid_program_column_out_of_bounds_rejected() {
         let mut descriptor = sovereign_transfer_descriptor();
         // Add a constraint referencing column 99 in a 6-wide trace
-        descriptor.constraints.push(ConstraintExpr::Binary { col: 99 });
+        descriptor
+            .constraints
+            .push(ConstraintExpr::Binary { col: 99 });
 
         let program = CellProgram::new(descriptor, 1);
         let mut registry = ProgramRegistry::new();
         let result = registry.deploy(program);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ProgramError::ValidationFailed(ProgramValidationError::ColumnOutOfBounds { col, .. }) => {
+            ProgramError::ValidationFailed(ProgramValidationError::ColumnOutOfBounds {
+                col,
+                ..
+            }) => {
                 assert_eq!(col, 99);
             }
             other => panic!("Expected ColumnOutOfBounds error, got: {:?}", other),
@@ -1059,7 +1230,9 @@ mod tests {
         let result = registry.deploy(program);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ProgramError::ValidationFailed(ProgramValidationError::TooManyPublicInputs { count }) => {
+            ProgramError::ValidationFailed(ProgramValidationError::TooManyPublicInputs {
+                count,
+            }) => {
                 assert_eq!(count, MAX_PUBLIC_INPUTS + 1);
             }
             other => panic!("Expected TooManyPublicInputs error, got: {:?}", other),
@@ -1069,7 +1242,7 @@ mod tests {
     #[test]
     fn wrong_vk_hash_verification_fails() {
         use pyana_circuit::sovereign_transition_air::{
-            bytes32_to_babybear, SOVEREIGN_PUBLIC_INPUTS,
+            SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
         let descriptor = sovereign_transfer_descriptor();
@@ -1093,7 +1266,7 @@ mod tests {
     #[test]
     fn valid_proof_under_correct_program_passes() {
         use pyana_circuit::sovereign_transition_air::{
-            bytes32_to_babybear, SOVEREIGN_PUBLIC_INPUTS,
+            SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
         let descriptor = sovereign_transfer_descriptor();
@@ -1110,10 +1283,22 @@ mod tests {
         let num_rows = 2;
 
         let mut witness = HashMap::new();
-        witness.insert("old_balance".to_string(), vec![BabyBear::from_u64(old_balance); num_rows]);
-        witness.insert("transfer_amount".to_string(), vec![BabyBear::from_u64(transfer_amount); num_rows]);
-        witness.insert("new_balance".to_string(), vec![BabyBear::from_u64(new_balance); num_rows]);
-        witness.insert("direction".to_string(), vec![BabyBear::new(direction); num_rows]);
+        witness.insert(
+            "old_balance".to_string(),
+            vec![BabyBear::from_u64(old_balance); num_rows],
+        );
+        witness.insert(
+            "transfer_amount".to_string(),
+            vec![BabyBear::from_u64(transfer_amount); num_rows],
+        );
+        witness.insert(
+            "new_balance".to_string(),
+            vec![BabyBear::from_u64(new_balance); num_rows],
+        );
+        witness.insert(
+            "direction".to_string(),
+            vec![BabyBear::new(direction); num_rows],
+        );
 
         let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(SOVEREIGN_PUBLIC_INPUTS);
         public_inputs.extend(bytes32_to_babybear(&[10u8; 32]));
@@ -1121,7 +1306,9 @@ mod tests {
         public_inputs.extend(bytes32_to_babybear(&[12u8; 32]));
         public_inputs.extend(bytes32_to_babybear(&[13u8; 32]));
 
-        let proof_bytes = program.prove_transition(&witness, num_rows, &public_inputs).unwrap();
+        let proof_bytes = program
+            .prove_transition(&witness, num_rows, &public_inputs)
+            .unwrap();
 
         // Verify via registry — should pass
         let result = registry.verify_with_program(&vk_hash, &public_inputs, &proof_bytes);
@@ -1139,7 +1326,10 @@ mod tests {
         assert_eq!(deserialized.max_degree, descriptor.max_degree);
         assert_eq!(deserialized.columns.len(), descriptor.columns.len());
         assert_eq!(deserialized.constraints.len(), descriptor.constraints.len());
-        assert_eq!(deserialized.public_input_count, descriptor.public_input_count);
+        assert_eq!(
+            deserialized.public_input_count,
+            descriptor.public_input_count
+        );
 
         // VK hash should be identical after roundtrip
         let vk_before = CellProgram::compute_vk_hash(&descriptor);
@@ -1210,7 +1400,11 @@ mod tests {
         let result = program.generate_trace(&witness, 2);
         assert!(result.is_err());
         match result.unwrap_err() {
-            ProgramError::WitnessLengthMismatch { column, expected, got } => {
+            ProgramError::WitnessLengthMismatch {
+                column,
+                expected,
+                got,
+            } => {
                 assert_eq!(column, "old_balance");
                 assert_eq!(expected, 2);
                 assert_eq!(got, 3);
@@ -1226,11 +1420,17 @@ mod tests {
 
         // Non-power-of-two
         let result = program.generate_trace(&HashMap::new(), 3);
-        assert!(matches!(result, Err(ProgramError::InvalidTraceLength { len: 3 })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::InvalidTraceLength { len: 3 })
+        ));
 
         // Too small
         let result = program.generate_trace(&HashMap::new(), 1);
-        assert!(matches!(result, Err(ProgramError::InvalidTraceLength { len: 1 })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::InvalidTraceLength { len: 1 })
+        ));
     }
 
     #[test]

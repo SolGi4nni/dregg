@@ -105,8 +105,7 @@ impl StarkAir for TemporalPredicateDsl {
                 let mut power_of_two = BabyBear::ONE;
                 let two = BabyBear::new(2);
                 for i in 0..col::NUM_DIFF_BITS {
-                    reconstructed =
-                        reconstructed + local[col::DIFF_BITS_START + i] * power_of_two;
+                    reconstructed = reconstructed + local[col::DIFF_BITS_START + i] * power_of_two;
                     power_of_two = power_of_two * two;
                 }
                 cs.push(reconstructed - local[col::DIFF]);
@@ -249,7 +248,9 @@ impl TemporalPredicateAir {
 ///
 /// This converts from the witness format (multiple predicate types, state roots)
 /// into the DSL trace layout (37-column layout with auxiliary columns).
-pub fn generate_dsl_trace(witness: &TemporalPredicateWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+pub fn generate_dsl_trace(
+    witness: &TemporalPredicateWitness,
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let num_steps = witness.num_steps();
     assert!(num_steps >= 1, "temporal witness must have at least 1 step");
 
@@ -547,8 +548,7 @@ mod tests {
 
         let alpha = BabyBear::new(7);
         for i in 0..trace.len() - 1 {
-            let result =
-                circuit.eval_constraints(&trace[i], &trace[i + 1], &public_inputs, alpha);
+            let result = circuit.eval_constraints(&trace[i], &trace[i + 1], &public_inputs, alpha);
             assert_eq!(
                 result,
                 BabyBear::ZERO,
@@ -561,10 +561,7 @@ mod tests {
     fn test_dsl_circuit_invalid_value_below_threshold() {
         let circuit = TemporalPredicateDsl;
 
-        let values: Vec<BabyBear> = vec![100, 30, 100]
-            .into_iter()
-            .map(BabyBear::new)
-            .collect();
+        let values: Vec<BabyBear> = vec![100, 30, 100].into_iter().map(BabyBear::new).collect();
         let state_roots = test_state_roots(3);
         let witness = TemporalPredicateWitness {
             values,
@@ -576,8 +573,7 @@ mod tests {
         let (trace, public_inputs) = generate_dsl_trace(&witness);
 
         let alpha = BabyBear::new(7);
-        let row1_result =
-            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        let row1_result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
             row1_result,
             BabyBear::ZERO,
@@ -605,8 +601,7 @@ mod tests {
         trace[2][ACC_PLUS_ONE] = BabyBear::new(5);
 
         let alpha = BabyBear::new(7);
-        let result =
-            circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        let result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
             result,
             BabyBear::ZERO,
@@ -614,8 +609,7 @@ mod tests {
         );
 
         // Row 0 -> Row 1 still fine
-        let result_01 =
-            circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
+        let result_01 = circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
         assert_eq!(result_01, BabyBear::ZERO);
     }
 
@@ -682,13 +676,8 @@ mod tests {
         let proof =
             prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold).unwrap();
 
-        let valid = verify_temporal_predicate(
-            &proof,
-            BabyBear::new(50),
-            3,
-            state_roots[0],
-            state_roots[2],
-        );
+        let valid =
+            verify_temporal_predicate(&proof, BabyBear::new(50), 3, state_roots[0], state_roots[2]);
         assert!(!valid, "Wrong threshold should fail verification");
     }
 
@@ -701,13 +690,7 @@ mod tests {
         let proof =
             prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold).unwrap();
 
-        let valid = verify_temporal_predicate(
-            &proof,
-            threshold,
-            5,
-            state_roots[0],
-            state_roots[2],
-        );
+        let valid = verify_temporal_predicate(&proof, threshold, 5, state_roots[0], state_roots[2]);
         assert!(!valid, "Wrong num_steps should fail verification");
     }
 
@@ -720,22 +703,12 @@ mod tests {
         let proof =
             prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold).unwrap();
 
-        let valid = verify_temporal_predicate(
-            &proof,
-            threshold,
-            3,
-            BabyBear::new(99999),
-            state_roots[2],
-        );
+        let valid =
+            verify_temporal_predicate(&proof, threshold, 3, BabyBear::new(99999), state_roots[2]);
         assert!(!valid, "Wrong initial state root should fail verification");
 
-        let valid = verify_temporal_predicate(
-            &proof,
-            threshold,
-            3,
-            state_roots[0],
-            BabyBear::new(99999),
-        );
+        let valid =
+            verify_temporal_predicate(&proof, threshold, 3, state_roots[0], BabyBear::new(99999));
         assert!(!valid, "Wrong final state root should fail verification");
     }
 

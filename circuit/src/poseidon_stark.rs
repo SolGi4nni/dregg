@@ -1442,7 +1442,7 @@ mod tests {
         let mut proof = prove_poseidon(&air, &trace, &pi);
 
         // Tamper with trace commitment
-        proof.trace_commitment = FpSer(proof.trace_commitment.fp() + Fp::one());
+        proof.trace_commitment = FpSer(proof.trace_commitment.fp() + Fp::from(1u64));
         assert!(verify_poseidon(&air, &proof, &pi).is_err());
     }
 

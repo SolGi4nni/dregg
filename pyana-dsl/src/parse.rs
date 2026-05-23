@@ -6,9 +6,8 @@
 /// - `*target -= operand` / `*target += operand` mutations (for effects)
 /// - `match direction { ... }` arms
 /// - `require!(set.contains(x))` membership checks
-
 use proc_macro2::Span;
-use syn::{spanned::Spanned, BinOp, Expr, FnArg, ItemFn, Pat, Stmt, Type};
+use syn::{BinOp, Expr, FnArg, ItemFn, Pat, Stmt, Type, spanned::Spanned};
 
 use crate::ir::{
     ConstraintIr, MatchArm, MutateOp, Mutation, Param, ParamType, Requirement, RequirementKind,
@@ -186,10 +185,7 @@ fn parse_stmts(stmts: &[Stmt], is_effect: bool) -> Result<Vec<Statement>, syn::E
     Ok(statements)
 }
 
-fn try_parse_statement_expr(
-    expr: &Expr,
-    is_effect: bool,
-) -> Result<Option<Statement>, syn::Error> {
+fn try_parse_statement_expr(expr: &Expr, is_effect: bool) -> Result<Option<Statement>, syn::Error> {
     // Check for require!() macro
     if let Expr::Macro(em) = expr {
         if is_require_macro(&em.mac) {
@@ -235,7 +231,7 @@ fn try_parse_mutation(expr: &Expr) -> Result<Option<Mutation>, syn::Error> {
                         return Err(syn::Error::new(
                             bin.op.span(),
                             "unsupported mutation operator (use -= or +=)",
-                        ))
+                        ));
                     }
                 };
                 return Ok(Some(Mutation {
@@ -312,10 +308,7 @@ fn parse_match_expr(em: &syn::ExprMatch, is_effect: bool) -> Result<Statement, s
         });
     }
 
-    Ok(Statement::Match {
-        discriminant,
-        arms,
-    })
+    Ok(Statement::Match { discriminant, arms })
 }
 
 fn pat_to_variant_string(pat: &Pat) -> Result<String, syn::Error> {

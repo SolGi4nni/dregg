@@ -73,18 +73,66 @@ pub const FOLD_DSL_PI_COUNT: usize = 5;
 /// - Last row: MEMBERSHIP_ROOT == pi[4] (transition hash binding)
 pub fn fold_circuit_descriptor() -> CircuitDescriptor {
     let columns = vec![
-        ColumnDef { name: "row_type".into(), index: ROW_TYPE, kind: ColumnKind::Selector },
-        ColumnDef { name: "fact_hash".into(), index: FACT_HASH, kind: ColumnKind::Hash },
-        ColumnDef { name: "membership_root".into(), index: MEMBERSHIP_ROOT, kind: ColumnKind::Hash },
-        ColumnDef { name: "old_root".into(), index: OLD_ROOT, kind: ColumnKind::Value },
-        ColumnDef { name: "new_root".into(), index: NEW_ROOT, kind: ColumnKind::Value },
-        ColumnDef { name: "removal_count".into(), index: REMOVAL_COUNT, kind: ColumnKind::Value },
-        ColumnDef { name: "check_count".into(), index: CHECK_COUNT, kind: ColumnKind::Value },
-        ColumnDef { name: "fact_pred".into(), index: FACT_PRED, kind: ColumnKind::Value },
-        ColumnDef { name: "fact_term_0".into(), index: FACT_TERM_START, kind: ColumnKind::Value },
-        ColumnDef { name: "fact_term_1".into(), index: FACT_TERM_START + 1, kind: ColumnKind::Value },
-        ColumnDef { name: "fact_term_2".into(), index: FACT_TERM_START + 2, kind: ColumnKind::Value },
-        ColumnDef { name: "hash_valid".into(), index: HASH_VALID, kind: ColumnKind::Binary },
+        ColumnDef {
+            name: "row_type".into(),
+            index: ROW_TYPE,
+            kind: ColumnKind::Selector,
+        },
+        ColumnDef {
+            name: "fact_hash".into(),
+            index: FACT_HASH,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "membership_root".into(),
+            index: MEMBERSHIP_ROOT,
+            kind: ColumnKind::Hash,
+        },
+        ColumnDef {
+            name: "old_root".into(),
+            index: OLD_ROOT,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "new_root".into(),
+            index: NEW_ROOT,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "removal_count".into(),
+            index: REMOVAL_COUNT,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "check_count".into(),
+            index: CHECK_COUNT,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "fact_pred".into(),
+            index: FACT_PRED,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "fact_term_0".into(),
+            index: FACT_TERM_START,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "fact_term_1".into(),
+            index: FACT_TERM_START + 1,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "fact_term_2".into(),
+            index: FACT_TERM_START + 2,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "hash_valid".into(),
+            index: HASH_VALID,
+            kind: ColumnKind::Binary,
+        },
         ColumnDef {
             name: "removal_count_plus_one".into(),
             index: REMOVAL_COUNT_PLUS_ONE,
@@ -110,10 +158,16 @@ pub fn fold_circuit_descriptor() -> CircuitDescriptor {
     };
 
     // Constraint 4: OLD_ROOT == pi[0]
-    let c_old_root_pi = ConstraintExpr::PiBinding { col: OLD_ROOT, pi_index: 0 };
+    let c_old_root_pi = ConstraintExpr::PiBinding {
+        col: OLD_ROOT,
+        pi_index: 0,
+    };
 
     // Constraint 5: NEW_ROOT == pi[1]
-    let c_new_root_pi = ConstraintExpr::PiBinding { col: NEW_ROOT, pi_index: 1 };
+    let c_new_root_pi = ConstraintExpr::PiBinding {
+        col: NEW_ROOT,
+        pi_index: 1,
+    };
 
     // Constraint 6: removal_count_increment (transition).
     // When is_removal (row_type == 0): next[REMOVAL_COUNT] == local[REMOVAL_COUNT] + 1
@@ -132,7 +186,10 @@ pub fn fold_circuit_descriptor() -> CircuitDescriptor {
     // Gated { selector_col: ROW_TYPE, inner: PiBinding { col: MEMBERSHIP_ROOT, pi_index: 4 } }
     let c_transition_binding = ConstraintExpr::Gated {
         selector_col: ROW_TYPE,
-        inner: Box::new(ConstraintExpr::PiBinding { col: MEMBERSHIP_ROOT, pi_index: 4 }),
+        inner: Box::new(ConstraintExpr::PiBinding {
+            col: MEMBERSHIP_ROOT,
+            pi_index: 4,
+        }),
     };
 
     let constraints = vec![
@@ -147,15 +204,35 @@ pub fn fold_circuit_descriptor() -> CircuitDescriptor {
 
     let boundaries = vec![
         // First row: old_root == pi[0]
-        BoundaryDef::PiBinding { row: BoundaryRow::First, col: OLD_ROOT, pi_index: 0 },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: OLD_ROOT,
+            pi_index: 0,
+        },
         // First row: new_root == pi[1]
-        BoundaryDef::PiBinding { row: BoundaryRow::First, col: NEW_ROOT, pi_index: 1 },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: NEW_ROOT,
+            pi_index: 1,
+        },
         // Last row: row_type == 1 (summary)
-        BoundaryDef::Fixed { row: BoundaryRow::Last, col: ROW_TYPE, value: BabyBear::ONE },
+        BoundaryDef::Fixed {
+            row: BoundaryRow::Last,
+            col: ROW_TYPE,
+            value: BabyBear::ONE,
+        },
         // Last row: removal_count == pi[2]
-        BoundaryDef::PiBinding { row: BoundaryRow::Last, col: REMOVAL_COUNT, pi_index: 2 },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: REMOVAL_COUNT,
+            pi_index: 2,
+        },
         // Last row: membership_root == pi[4] (transition hash)
-        BoundaryDef::PiBinding { row: BoundaryRow::Last, col: MEMBERSHIP_ROOT, pi_index: 4 },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: MEMBERSHIP_ROOT,
+            pi_index: 4,
+        },
     ];
 
     CircuitDescriptor {
@@ -226,11 +303,11 @@ pub fn generate_valid_fold_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let trace = vec![row0, row1, row2, row3];
 
     let public_inputs = vec![
-        old_root,                // pi[0]: old_root
-        new_root,                // pi[1]: new_root
-        BabyBear::new(2),       // pi[2]: total_removal_count
-        BabyBear::ZERO,         // pi[3]: total_check_count
-        transition_hash,         // pi[4]: root_transition_hash
+        old_root,         // pi[0]: old_root
+        new_root,         // pi[1]: new_root
+        BabyBear::new(2), // pi[2]: total_removal_count
+        BabyBear::ZERO,   // pi[3]: total_check_count
+        transition_hash,  // pi[4]: root_transition_hash
     ];
 
     (trace, public_inputs)
@@ -251,10 +328,7 @@ pub fn generate_invalid_fold_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
 ///
 /// Returns the sum of absolute constraint evaluations across all rows.
 /// A valid trace returns ZERO; an invalid trace returns NON-ZERO.
-pub fn evaluate_fold_constraints(
-    trace: &[Vec<BabyBear>],
-    public_inputs: &[BabyBear],
-) -> BabyBear {
+pub fn evaluate_fold_constraints(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> BabyBear {
     let descriptor = fold_circuit_descriptor();
     let mut total = BabyBear::ZERO;
 
@@ -289,7 +363,10 @@ mod tests {
     #[test]
     fn fold_descriptor_validates() {
         let desc = fold_circuit_descriptor();
-        assert!(desc.validate().is_ok(), "fold descriptor should pass validation");
+        assert!(
+            desc.validate().is_ok(),
+            "fold descriptor should pass validation"
+        );
     }
 
     #[test]

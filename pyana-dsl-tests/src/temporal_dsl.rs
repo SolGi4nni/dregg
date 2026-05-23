@@ -41,7 +41,7 @@
 //! - row(last).accumulator = num_steps (PiBinding to public_input[0])
 //! - row(0).step_index = 0 (Fixed)
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
@@ -79,9 +79,21 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
     let neg_one = BabyBear::new(BABYBEAR_P - 1);
 
     let mut columns = Vec::with_capacity(TRACE_WIDTH);
-    columns.push(ColumnDef { name: "value".into(), index: VALUE, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "threshold".into(), index: THRESHOLD, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "diff".into(), index: DIFF, kind: ColumnKind::Value });
+    columns.push(ColumnDef {
+        name: "value".into(),
+        index: VALUE,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "threshold".into(),
+        index: THRESHOLD,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "diff".into(),
+        index: DIFF,
+        kind: ColumnKind::Value,
+    });
     for i in 0..NUM_DIFF_BITS {
         columns.push(ColumnDef {
             name: format!("diff_bit_{i}"),
@@ -89,10 +101,26 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
             kind: ColumnKind::Binary,
         });
     }
-    columns.push(ColumnDef { name: "accumulator".into(), index: ACCUMULATOR, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "step_index".into(), index: STEP_INDEX, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "acc_plus_one".into(), index: ACC_PLUS_ONE, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "step_plus_one".into(), index: STEP_PLUS_ONE, kind: ColumnKind::Value });
+    columns.push(ColumnDef {
+        name: "accumulator".into(),
+        index: ACCUMULATOR,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "step_index".into(),
+        index: STEP_INDEX,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "acc_plus_one".into(),
+        index: ACC_PLUS_ONE,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "step_plus_one".into(),
+        index: STEP_PLUS_ONE,
+        kind: ColumnKind::Value,
+    });
 
     let mut constraints = Vec::new();
 
@@ -101,15 +129,26 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
     // => +1*diff + (-1)*value + (+1)*threshold == 0
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![DIFF] },
-            PolyTerm { coeff: neg_one, col_indices: vec![VALUE] },
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![THRESHOLD] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![DIFF],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![VALUE],
+            },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![THRESHOLD],
+            },
         ],
     });
 
     // ─── C2: Each diff_bit is binary ─────────────────────────────────────────
     for i in 0..NUM_DIFF_BITS {
-        constraints.push(ConstraintExpr::Binary { col: DIFF_BITS_START + i });
+        constraints.push(ConstraintExpr::Binary {
+            col: DIFF_BITS_START + i,
+        });
     }
 
     // ─── C3: Bit reconstruction matches diff ─────────────────────────────────
@@ -127,7 +166,10 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
             // Keep within BabyBear field -- all powers of 2 up to 2^29 fit in u32
         }
         // Subtract diff
-        terms.push(PolyTerm { coeff: neg_one, col_indices: vec![DIFF] });
+        terms.push(PolyTerm {
+            coeff: neg_one,
+            col_indices: vec![DIFF],
+        });
         constraints.push(ConstraintExpr::Polynomial { terms });
     }
 
@@ -146,9 +188,18 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
     // acc_plus_one - accumulator - 1 == 0
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![ACC_PLUS_ONE] },
-            PolyTerm { coeff: neg_one, col_indices: vec![ACCUMULATOR] },
-            PolyTerm { coeff: neg_one, col_indices: vec![] }, // constant -1
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![ACC_PLUS_ONE],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![ACCUMULATOR],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![],
+            }, // constant -1
         ],
     });
 
@@ -156,9 +207,18 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
     // step_plus_one - step_index - 1 == 0
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![STEP_PLUS_ONE] },
-            PolyTerm { coeff: neg_one, col_indices: vec![STEP_INDEX] },
-            PolyTerm { coeff: neg_one, col_indices: vec![] }, // constant -1
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![STEP_PLUS_ONE],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![STEP_INDEX],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![],
+            }, // constant -1
         ],
     });
 
@@ -233,7 +293,11 @@ pub fn generate_temporal_trace(
         let mut row = vec![BabyBear::ZERO; TRACE_WIDTH];
 
         // For padding rows beyond num_steps, repeat the last real row's value.
-        let val = if step < num_steps { values[step] } else { values[num_steps - 1] };
+        let val = if step < num_steps {
+            values[step]
+        } else {
+            values[num_steps - 1]
+        };
 
         row[VALUE] = BabyBear::new(val);
         row[THRESHOLD] = BabyBear::new(threshold);
@@ -311,12 +375,20 @@ mod tests {
 
         // Verify accumulator reaches expected value at last row.
         let last_acc = trace.last().unwrap()[ACCUMULATOR];
-        assert_eq!(last_acc, BabyBear::new(4), "accumulator should reach padded_len=4");
+        assert_eq!(
+            last_acc,
+            BabyBear::new(4),
+            "accumulator should reach padded_len=4"
+        );
 
         // Full STARK prove/verify cycle.
         let proof = stark::prove(&circuit, &trace, &public_inputs);
         let result = stark::verify(&circuit, &proof, &public_inputs);
-        assert!(result.is_ok(), "STARK verify failed on valid trace: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "STARK verify failed on valid trace: {:?}",
+            result.err()
+        );
     }
 
     // ========================================================================
@@ -401,7 +473,11 @@ mod tests {
     fn test_temporal_descriptor_validation() {
         let descriptor = temporal_predicate_descriptor();
         let result = descriptor.validate();
-        assert!(result.is_ok(), "Descriptor validation failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Descriptor validation failed: {:?}",
+            result.err()
+        );
 
         // Check structural properties
         assert_eq!(descriptor.trace_width, TRACE_WIDTH);
@@ -426,9 +502,11 @@ mod tests {
     fn test_temporal_has_transition_constraints() {
         let descriptor = temporal_predicate_descriptor();
 
-        let transition_count = descriptor.constraints.iter().filter(|c| {
-            matches!(c, ConstraintExpr::Transition { .. })
-        }).count();
+        let transition_count = descriptor
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, ConstraintExpr::Transition { .. }))
+            .count();
 
         assert_eq!(
             transition_count, 2,

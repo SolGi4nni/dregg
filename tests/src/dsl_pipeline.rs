@@ -13,13 +13,13 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
+use pyana_cell::{Cell, CellId, Ledger};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_circuit::stark::{self, StarkAir};
 use pyana_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
     ConstraintExpr, DslCircuit, PolyTerm, ProgramRegistry,
 };
-use pyana_cell::{Cell, CellId, Ledger};
 use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 // ============================================================================
@@ -45,9 +45,21 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
     let neg_one = BabyBear::new(BABYBEAR_P - 1);
 
     let mut columns = Vec::with_capacity(TRACE_WIDTH);
-    columns.push(ColumnDef { name: "value".into(), index: VALUE, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "threshold".into(), index: THRESHOLD, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "diff".into(), index: DIFF, kind: ColumnKind::Value });
+    columns.push(ColumnDef {
+        name: "value".into(),
+        index: VALUE,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "threshold".into(),
+        index: THRESHOLD,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "diff".into(),
+        index: DIFF,
+        kind: ColumnKind::Value,
+    });
     for i in 0..NUM_DIFF_BITS {
         columns.push(ColumnDef {
             name: format!("diff_bit_{i}"),
@@ -55,25 +67,52 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
             kind: ColumnKind::Binary,
         });
     }
-    columns.push(ColumnDef { name: "accumulator".into(), index: ACCUMULATOR, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "step_index".into(), index: STEP_INDEX, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "acc_plus_one".into(), index: ACC_PLUS_ONE, kind: ColumnKind::Value });
-    columns.push(ColumnDef { name: "step_plus_one".into(), index: STEP_PLUS_ONE, kind: ColumnKind::Value });
+    columns.push(ColumnDef {
+        name: "accumulator".into(),
+        index: ACCUMULATOR,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "step_index".into(),
+        index: STEP_INDEX,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "acc_plus_one".into(),
+        index: ACC_PLUS_ONE,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "step_plus_one".into(),
+        index: STEP_PLUS_ONE,
+        kind: ColumnKind::Value,
+    });
 
     let mut constraints = Vec::new();
 
     // C1: diff = value - threshold => diff - value + threshold == 0
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![DIFF] },
-            PolyTerm { coeff: neg_one, col_indices: vec![VALUE] },
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![THRESHOLD] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![DIFF],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![VALUE],
+            },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![THRESHOLD],
+            },
         ],
     });
 
     // C2: Each diff_bit is binary
     for i in 0..NUM_DIFF_BITS {
-        constraints.push(ConstraintExpr::Binary { col: DIFF_BITS_START + i });
+        constraints.push(ConstraintExpr::Binary {
+            col: DIFF_BITS_START + i,
+        });
     }
 
     // C3: Bit reconstruction matches diff
@@ -87,7 +126,10 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
             });
             power_of_two = power_of_two.wrapping_mul(2);
         }
-        terms.push(PolyTerm { coeff: neg_one, col_indices: vec![DIFF] });
+        terms.push(PolyTerm {
+            coeff: neg_one,
+            col_indices: vec![DIFF],
+        });
         constraints.push(ConstraintExpr::Polynomial { terms });
     }
 
@@ -102,18 +144,36 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
     // C5: acc_plus_one = accumulator + 1
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![ACC_PLUS_ONE] },
-            PolyTerm { coeff: neg_one, col_indices: vec![ACCUMULATOR] },
-            PolyTerm { coeff: neg_one, col_indices: vec![] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![ACC_PLUS_ONE],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![ACCUMULATOR],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![],
+            },
         ],
     });
 
     // C6: step_plus_one = step_index + 1
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![STEP_PLUS_ONE] },
-            PolyTerm { coeff: neg_one, col_indices: vec![STEP_INDEX] },
-            PolyTerm { coeff: neg_one, col_indices: vec![] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![STEP_PLUS_ONE],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![STEP_INDEX],
+            },
+            PolyTerm {
+                coeff: neg_one,
+                col_indices: vec![],
+            },
         ],
     });
 
@@ -160,10 +220,7 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
 }
 
 /// Generate a valid temporal predicate trace.
-fn generate_temporal_trace(
-    values: &[u32],
-    threshold: u32,
-) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+fn generate_temporal_trace(values: &[u32], threshold: u32) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let num_steps = values.len();
     assert!(num_steps >= 1);
 
@@ -172,7 +229,11 @@ fn generate_temporal_trace(
 
     for step in 0..padded_len {
         let mut row = vec![BabyBear::ZERO; TRACE_WIDTH];
-        let val = if step < num_steps { values[step] } else { values[num_steps - 1] };
+        let val = if step < num_steps {
+            values[step]
+        } else {
+            values[num_steps - 1]
+        };
 
         row[VALUE] = BabyBear::new(val);
         row[THRESHOLD] = BabyBear::new(threshold);
@@ -294,7 +355,8 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     let circuit = DslCircuit::new(descriptor.clone());
     let alpha = BabyBear::new(7);
     for i in 0..trace.len() - 1 {
-        let result = circuit.eval_constraints(&trace[i], &trace[i + 1], &circuit_public_inputs, alpha);
+        let result =
+            circuit.eval_constraints(&trace[i], &trace[i + 1], &circuit_public_inputs, alpha);
         assert_eq!(result, BabyBear::ZERO, "Constraint nonzero at row {i}");
     }
 
@@ -357,7 +419,9 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
 
     // Re-register the sovereign cell with the chosen commitment.
     // First deregister, then re-register.
-    ledger.deregister_sovereign_cell(&sovereign_cell_id).unwrap();
+    ledger
+        .deregister_sovereign_cell(&sovereign_cell_id)
+        .unwrap();
     ledger
         .register_sovereign_cell_with_vk(
             sovereign_cell_id,
@@ -423,7 +487,9 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     executor.set_program_registry(registry32);
 
     // Re-register sovereign cell with the new VK hash.
-    ledger.deregister_sovereign_cell(&sovereign_cell_id).unwrap();
+    ledger
+        .deregister_sovereign_cell(&sovereign_cell_id)
+        .unwrap();
     ledger
         .register_sovereign_cell_with_vk(
             sovereign_cell_id,
@@ -440,11 +506,19 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
 
     // Sanity: verify locally before submitting.
     let local_verify = stark::verify(&circuit32, &proof, &full_public_inputs);
-    assert!(local_verify.is_ok(), "Local STARK verify failed: {:?}", local_verify.err());
+    assert!(
+        local_verify.is_ok(),
+        "Local STARK verify failed: {:?}",
+        local_verify.err()
+    );
 
     // Serialize proof to bytes.
     let proof_bytes = stark::proof_to_bytes(&proof);
-    assert!(proof_bytes.len() > 100, "Proof should be substantial: {} bytes", proof_bytes.len());
+    assert!(
+        proof_bytes.len() > 100,
+        "Proof should be substantial: {} bytes",
+        proof_bytes.len()
+    );
 
     // --- Step 7: Build a Turn with execution_proof ---
     turn.execution_proof = Some(proof_bytes.clone());
@@ -456,8 +530,13 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
 
     // --- Step 9: Assert success ---
     match &result {
-        TurnResult::Committed { computrons_used, .. } => {
-            assert_eq!(*computrons_used, 0, "Proof-carrying turns use zero computrons");
+        TurnResult::Committed {
+            computrons_used, ..
+        } => {
+            assert_eq!(
+                *computrons_used, 0,
+                "Proof-carrying turns use zero computrons"
+            );
         }
         TurnResult::Rejected { reason, .. } => {
             panic!("Turn was rejected: {:?}", reason);
@@ -466,7 +545,9 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     }
 
     // Verify the sovereign commitment was updated.
-    let updated = ledger.get_sovereign_registration(&sovereign_cell_id).unwrap();
+    let updated = ledger
+        .get_sovereign_registration(&sovereign_cell_id)
+        .unwrap();
     assert_eq!(
         updated.commitment, new_commitment,
         "Commitment should be updated to new_commitment after proof-carrying turn"
@@ -580,8 +661,13 @@ fn test_dsl_pipeline_wrong_proof_rejected() {
     }
 
     // Commitment should NOT have been updated.
-    let reg = ledger.get_sovereign_registration(&sovereign_cell_id).unwrap();
-    assert_eq!(reg.commitment, old_commitment, "Commitment must not change on rejected proof");
+    let reg = ledger
+        .get_sovereign_registration(&sovereign_cell_id)
+        .unwrap();
+    assert_eq!(
+        reg.commitment, old_commitment,
+        "Commitment must not change on rejected proof"
+    );
 }
 
 // ============================================================================
@@ -690,6 +776,11 @@ fn test_dsl_pipeline_wrong_vk_rejected() {
     }
 
     // Commitment should NOT have been updated.
-    let reg = ledger.get_sovereign_registration(&sovereign_cell_id).unwrap();
-    assert_eq!(reg.commitment, old_commitment, "Commitment must not change on wrong VK");
+    let reg = ledger
+        .get_sovereign_registration(&sovereign_cell_id)
+        .unwrap();
+    assert_eq!(
+        reg.commitment, old_commitment,
+        "Commitment must not change on wrong VK"
+    );
 }

@@ -5,7 +5,6 @@
 ///
 /// For effects, mutations become output facts (e.g., `next_balance(B - Amount)`).
 /// For membership, emits `member_of(X, Set)`.
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -74,8 +73,12 @@ fn collect_datalog_predicates(statements: &[Statement], body_parts: &mut Vec<Str
                 let target = capitalize(&mutation.target);
                 let operand = capitalize(&mutation.operand);
                 let next = match mutation.op {
-                    MutateOp::SubAssign => format!("next_{}({} - {})", mutation.target, target, operand),
-                    MutateOp::AddAssign => format!("next_{}({} + {})", mutation.target, target, operand),
+                    MutateOp::SubAssign => {
+                        format!("next_{}({} - {})", mutation.target, target, operand)
+                    }
+                    MutateOp::AddAssign => {
+                        format!("next_{}({} + {})", mutation.target, target, operand)
+                    }
                     MutateOp::Assign => format!("next_{}({})", mutation.target, operand),
                 };
                 body_parts.push(next);

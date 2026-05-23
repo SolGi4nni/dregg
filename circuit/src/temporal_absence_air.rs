@@ -53,7 +53,7 @@
 //! proofs binding both entries to the same timeline root, this constitutes a
 //! complete absence proof.
 
-use crate::constraint_prover::{Air, Constraint};
+use crate::constraint_prover::{Air, Constraint, ConstraintProver};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_many;
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};

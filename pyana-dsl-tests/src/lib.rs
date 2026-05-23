@@ -2,13 +2,18 @@ use pyana_dsl::{pyana_caveat, pyana_effect};
 
 pub mod accumulator_dsl;
 pub mod block_transition_dsl;
+pub mod compound_predicate_dsl;
 pub mod derivation_dsl;
 pub mod fold_dsl;
+pub mod garbled_dsl;
 pub mod gpu_worker;
+pub mod merkle_dsl;
 pub mod multi_step_dsl;
+pub mod non_revocation_dsl;
 pub mod note_spending_dsl;
 pub mod presentation_dsl;
 pub mod pyana_definitions;
+pub mod sovereign_transition_dsl;
 pub mod temporal_dsl;
 pub mod temporal_macro;
 
@@ -118,7 +123,11 @@ mod tests {
 
         // Verify the proof
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "NotAfterCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "NotAfterCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -144,7 +153,11 @@ mod tests {
         let pi = vec![BabyBear::from_u64(42), BabyBear::from_u64(42)];
         let proof = stark::prove(&circuit, &trace, &pi);
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "ExactMatchCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "ExactMatchCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -158,7 +171,11 @@ mod tests {
         let pi = vec![BabyBear::from_u64(100), BabyBear::from_u64(50)];
         let proof = stark::prove(&circuit, &trace, &pi);
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "MinimumBalanceCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "MinimumBalanceCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -172,7 +189,11 @@ mod tests {
         let pi = vec![BabyBear::from_u64(1), BabyBear::from_u64(2)];
         let proof = stark::prove(&circuit, &trace, &pi);
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "DifferentPartiesCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "DifferentPartiesCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -191,7 +212,11 @@ mod tests {
         ];
         let proof = stark::prove(&circuit, &trace, &pi);
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "CompoundCheckCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "CompoundCheckCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -211,7 +236,11 @@ mod tests {
         ];
         let proof = stark::prove(&circuit, &trace, &pi);
         let result = stark::verify(&circuit, &proof, &pi);
-        assert!(result.is_ok(), "DecrementCircuit prove/verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "DecrementCircuit prove/verify failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -226,7 +255,10 @@ mod tests {
         let proof = stark::prove(&circuit, &trace, &pi);
         // Verify with wrong public inputs should fail
         let result = stark::verify(&circuit, &proof, &wrong_pi);
-        assert!(result.is_err(), "Should reject proof with wrong public inputs");
+        assert!(
+            result.is_err(),
+            "Should reject proof with wrong public inputs"
+        );
     }
 
     // --- Phase 1 tests (preserved) ---
@@ -362,10 +394,14 @@ mod tests {
         // Plus auxiliary columns from require (2) + mutation transition (2)
         assert!(air.width >= 3); // at minimum: 2 (counter old+new) + 1 (step)
         // Should have both a RangeCheck constraint and a Transition constraint
-        let has_transition = air.constraints.iter().any(|c| {
-            matches!(c, pyana_dsl_runtime::Constraint::Transition { .. })
-        });
-        assert!(has_transition, "effect AIR should have Transition constraint");
+        let has_transition = air
+            .constraints
+            .iter()
+            .any(|c| matches!(c, pyana_dsl_runtime::Constraint::Transition { .. }));
+        assert!(
+            has_transition,
+            "effect AIR should have Transition constraint"
+        );
     }
 
     #[test]
@@ -399,10 +435,14 @@ mod tests {
     #[test]
     fn test_service_scope_air_membership() {
         let air = service_scope_air_constraints();
-        let has_membership = air.constraints.iter().any(|c| {
-            matches!(c, pyana_dsl_runtime::Constraint::MerkleMembership { .. })
-        });
-        assert!(has_membership, "membership caveat should emit MerkleMembership constraint");
+        let has_membership = air
+            .constraints
+            .iter()
+            .any(|c| matches!(c, pyana_dsl_runtime::Constraint::MerkleMembership { .. }));
+        assert!(
+            has_membership,
+            "membership caveat should emit MerkleMembership constraint"
+        );
     }
 
     // --- Phase 2: Multi-constraint composition ---
@@ -486,10 +526,15 @@ mod tests {
     fn test_kimchi_membership_poseidon() {
         let kimchi = service_scope_kimchi();
         // Membership uses Poseidon gates
-        let poseidon_count = kimchi.gates.iter().filter(|g| {
-            g.typ == pyana_dsl_runtime::GateType::Poseidon
-        }).count();
-        assert_eq!(poseidon_count, 32, "membership should emit 32 Poseidon gates (one per tree level)");
+        let poseidon_count = kimchi
+            .gates
+            .iter()
+            .filter(|g| g.typ == pyana_dsl_runtime::GateType::Poseidon)
+            .count();
+        assert_eq!(
+            poseidon_count, 32,
+            "membership should emit 32 Poseidon gates (one per tree level)"
+        );
     }
 
     // --- Phase 2: Permission annotation ---
