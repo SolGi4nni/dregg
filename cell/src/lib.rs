@@ -16,6 +16,8 @@ pub mod capability_proof;
 pub mod cell;
 pub mod delegation;
 pub mod derivation;
+pub mod facet;
+pub mod factory;
 pub mod id;
 pub mod ledger;
 pub mod note;
@@ -48,15 +50,28 @@ pub use capability_proof::{
     CapabilityExerciseRequest, CapabilityExerciseResponse, CapabilityProof, CapabilityProofData,
     CapabilityProofError, PeerEffect, VerificationContext, sign_capability_proof,
 };
-pub use cell::{Cell, CellMode, VerificationKey};
+pub use cell::{Cell, CellConfig, CellMode, VerificationKey};
 pub use delegation::DelegatedRef;
 pub use derivation::{
     DerivationEdge, DerivationNode, DerivationRecord, DerivationTree, DerivationType,
 };
+pub use facet::{
+    EFFECT_ALL, EFFECT_BRIDGE_OPS, EFFECT_CREATE_CELL, EFFECT_DELEGATION_OPS, EFFECT_EMIT_EVENT,
+    EFFECT_ESCROW_OPS, EFFECT_GRANT_CAPABILITY, EFFECT_INCREMENT_NONCE, EFFECT_INTRODUCE,
+    EFFECT_NOTE_CREATE, EFFECT_NOTE_SPEND, EFFECT_OBLIGATION_OPS, EFFECT_REVOKE_CAPABILITY,
+    EFFECT_SEAL_OPS, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS, EFFECT_SET_VERIFICATION_KEY,
+    EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectMask, FACET_ADMIN, FACET_DELEGATOR,
+    FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY, FacetBuilder, is_effect_permitted,
+    is_facet_attenuation,
+};
+pub use factory::{
+    CapGrant, CapTarget, CapTemplate, FactoryCreationParams, FactoryDescriptor, FactoryError,
+    FactoryRegistry, FieldConstraint, Provenance,
+};
 pub use id::CellId;
 pub use ledger::{
     CellStateDelta, DEFAULT_SOVEREIGN_TTL, Ledger, LedgerDelta, LedgerError, MembershipProof, Side,
-    SovereignRegistration,
+    SovereignRegistration, WitnessDiff,
 };
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
 #[cfg(feature = "crypto")]

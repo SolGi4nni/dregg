@@ -485,6 +485,21 @@ pub enum Effect {
         /// The cell to make sovereign.
         cell: CellId,
     },
+    /// Create a new cell from a deployed factory.
+    ///
+    /// The factory's constraints are validated against the creation parameters.
+    /// On success, the new cell is created with the specified program, capabilities,
+    /// initial state, and provenance recording which factory created it.
+    CreateCellFromFactory {
+        /// The factory VK hash identifying which factory to use.
+        factory_vk: [u8; 32],
+        /// Owner public key for the new cell.
+        owner_pubkey: [u8; 32],
+        /// Token domain for the new cell.
+        token_id: [u8; 32],
+        /// Creation parameters (validated against factory descriptor).
+        params: pyana_cell::factory::FactoryCreationParams,
+    },
 }
 
 /// An event emitted by an action.
@@ -997,6 +1012,39 @@ impl Effect {
                 hasher.update(&[35u8]);
                 hasher.update(cell.as_bytes());
             }
+            Effect::CreateCellFromFactory {
+                factory_vk,
+                owner_pubkey,
+                token_id,
+                params,
+            } => {
+                hasher.update(&[36u8]);
+                hasher.update(factory_vk);
+                hasher.update(owner_pubkey);
+                hasher.update(token_id);
+                // Hash params deterministically.
+                let mode_byte = match params.mode {
+                    pyana_cell::CellMode::Hosted => 0u8,
+                    pyana_cell::CellMode::Sovereign => 1u8,
+                };
+                hasher.update(&[mode_byte]);
+                match &params.program_vk {
+                    Some(vk) => {
+                        hasher.update(&[1u8]);
+                        hasher.update(vk);
+                    }
+                    None => {
+                        hasher.update(&[0u8]);
+                    }
+                }
+                hasher.update(&(params.initial_fields.len() as u64).to_le_bytes());
+                for (idx, val) in &params.initial_fields {
+                    hasher.update(&idx.to_le_bytes());
+                    hasher.update(&val.to_le_bytes());
+                }
+                hasher.update(&(params.initial_caps.len() as u64).to_le_bytes());
+                hasher.update(&params.owner_pubkey);
+            }
         }
         *hasher.finalize().as_bytes()
     }
@@ -1092,6 +1140,15 @@ impl Effect {
                 4 + inner_effects.iter().map(|e| e.data_bytes()).sum::<usize>()
             }
             Effect::MakeSovereign { .. } => 32, // cell id
+            Effect::CreateCellFromFactory { params, .. } => {
+                32 + 32
+                    + 32
+                    + 1
+                    + 33
+                    + params.initial_fields.len() * 12
+                    + params.initial_caps.len() * 34
+                    + 32
+            }
         }
     }
 
@@ -1105,6 +1162,50 @@ impl Effect {
             self,
             Effect::SetPermissions { .. } | Effect::SetVerificationKey { .. }
         )
+    }
+
+    /// Return the effect kind bitmask for this effect.
+    ///
+    /// Used by `ExerciseViaCapability` to check whether a faceted capability
+    /// permits this operation. Each effect type maps to exactly one bit in the
+    /// [`EffectMask`](pyana_cell::EffectMask).
+    pub fn effect_kind_mask(&self) -> pyana_cell::EffectMask {
+        match self {
+            Effect::SetField { .. } => pyana_cell::EFFECT_SET_FIELD,
+            Effect::Transfer { .. } => pyana_cell::EFFECT_TRANSFER,
+            Effect::GrantCapability { .. } => pyana_cell::EFFECT_GRANT_CAPABILITY,
+            Effect::RevokeCapability { .. } => pyana_cell::EFFECT_REVOKE_CAPABILITY,
+            Effect::EmitEvent { .. } => pyana_cell::EFFECT_EMIT_EVENT,
+            Effect::IncrementNonce { .. } => pyana_cell::EFFECT_INCREMENT_NONCE,
+            Effect::CreateCell { .. } => pyana_cell::EFFECT_CREATE_CELL,
+            Effect::SetPermissions { .. } => pyana_cell::EFFECT_SET_PERMISSIONS,
+            Effect::SetVerificationKey { .. } => pyana_cell::EFFECT_SET_VERIFICATION_KEY,
+            Effect::NoteSpend { .. } => pyana_cell::EFFECT_NOTE_SPEND,
+            Effect::NoteCreate { .. } => pyana_cell::EFFECT_NOTE_CREATE,
+            Effect::CreateSealPair { .. } | Effect::Seal { .. } | Effect::Unseal { .. } => {
+                pyana_cell::EFFECT_SEAL_OPS
+            }
+            Effect::BridgeMint { .. }
+            | Effect::BridgeLock { .. }
+            | Effect::BridgeFinalize { .. }
+            | Effect::BridgeCancel { .. } => pyana_cell::EFFECT_BRIDGE_OPS,
+            Effect::Introduce { .. } | Effect::PipelinedSend { .. } => pyana_cell::EFFECT_INTRODUCE,
+            Effect::CreateObligation { .. }
+            | Effect::FulfillObligation { .. }
+            | Effect::SlashObligation { .. } => pyana_cell::EFFECT_OBLIGATION_OPS,
+            Effect::CreateEscrow { .. }
+            | Effect::ReleaseEscrow { .. }
+            | Effect::RefundEscrow { .. }
+            | Effect::CreateCommittedEscrow { .. }
+            | Effect::ReleaseCommittedEscrow { .. }
+            | Effect::RefundCommittedEscrow { .. } => pyana_cell::EFFECT_ESCROW_OPS,
+            Effect::SpawnWithDelegation { .. }
+            | Effect::RefreshDelegation
+            | Effect::RevokeDelegation { .. } => pyana_cell::EFFECT_DELEGATION_OPS,
+            Effect::ExerciseViaCapability { .. } => pyana_cell::EFFECT_ALL,
+            Effect::MakeSovereign { .. } => pyana_cell::EFFECT_SOVEREIGN_OPS,
+            Effect::CreateCellFromFactory { .. } => pyana_cell::EFFECT_CREATE_CELL,
+        }
     }
 }
 

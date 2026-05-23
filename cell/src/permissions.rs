@@ -93,6 +93,24 @@ impl Permissions {
         }
     }
 
+    /// Sovereign cell default permissions.
+    ///
+    /// Like `default_user()` but with `set_verification_key: Proof` (self-upgrading).
+    /// This implements the VK upgrade strategy from the sovereign cell design:
+    /// the current circuit must produce a proof authorizing its own replacement.
+    pub fn sovereign_default() -> Self {
+        Permissions {
+            send: AuthRequired::Signature,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::Signature,
+            set_permissions: AuthRequired::Signature,
+            set_verification_key: AuthRequired::Proof,
+            increment_nonce: AuthRequired::Signature,
+            delegate: AuthRequired::Signature,
+            access: AuthRequired::None,
+        }
+    }
+
     /// Locked-down permissions: proof required for everything, receive is impossible.
     pub fn zkapp() -> Self {
         Permissions {

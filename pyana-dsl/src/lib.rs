@@ -5,8 +5,13 @@
 //! - An AIR constraint descriptor (`{name}_air_constraints`)
 //! - A Datalog rule fragment (`{name}_datalog`)
 //! - A Kimchi circuit descriptor (`{name}_kimchi`)
+//! - A compile-time STARK AIR impl (`{Name}Circuit`)
+//! - A Midnight ZKIR v3 program (`{name}_midnight_zkir`)
+//! - A native Plonky3 Air impl (`{Name}P3Air`)
+//! - An SP1 guest program (`{name}_sp1_guest`)
 //!
-//! Phase 2: adds effects with mutation, Kimchi codegen, multi-constraint composition,
+//! Phase 3: adds Midnight ZKIR v3, native Plonky3, and SP1 backends alongside
+//! the existing effects, Kimchi codegen, multi-constraint composition,
 //! set membership, and permission annotations.
 
 extern crate proc_macro;
@@ -15,7 +20,10 @@ mod emit_stark_impl;
 mod gen_air;
 mod gen_datalog;
 mod gen_kimchi;
+mod gen_midnight;
+mod gen_plonky3;
 mod gen_rust;
+mod gen_sp1;
 mod ir;
 mod parse;
 mod parse_circuit;
@@ -57,6 +65,9 @@ pub fn pyana_caveat(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let datalog = gen_datalog::generate_datalog(&ir);
     let kimchi = gen_kimchi::generate_kimchi(&ir);
     let stark_impl = emit_stark_impl::emit_stark_impl(&ir);
+    let midnight = gen_midnight::generate_midnight(&ir);
+    let plonky3 = gen_plonky3::generate_plonky3(&ir);
+    let sp1 = gen_sp1::generate_sp1(&ir);
 
     let output = quote! {
         #rust_eval
@@ -64,6 +75,9 @@ pub fn pyana_caveat(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #datalog
         #kimchi
         #stark_impl
+        #midnight
+        #plonky3
+        #sp1
     };
 
     output.into()
@@ -114,6 +128,9 @@ pub fn pyana_effect(attr: TokenStream, item: TokenStream) -> TokenStream {
     let kimchi = gen_kimchi::generate_kimchi(&ir);
     let effect_desc = gen_rust::generate_effect_descriptor(&ir);
     let stark_impl = emit_stark_impl::emit_stark_impl(&ir);
+    let midnight = gen_midnight::generate_midnight(&ir);
+    let plonky3 = gen_plonky3::generate_plonky3(&ir);
+    let sp1 = gen_sp1::generate_sp1(&ir);
 
     let output = quote! {
         #rust_eval
@@ -122,6 +139,9 @@ pub fn pyana_effect(attr: TokenStream, item: TokenStream) -> TokenStream {
         #kimchi
         #effect_desc
         #stark_impl
+        #midnight
+        #plonky3
+        #sp1
     };
 
     output.into()

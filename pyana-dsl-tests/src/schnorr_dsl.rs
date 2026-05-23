@@ -37,6 +37,7 @@
 //! [pk.x(8), pk.y(8), R.x(8), R.y(8), s(8), msg_hash(8)]
 
 use pyana_circuit::field::BabyBear;
+#[allow(unused_imports)]
 use pyana_circuit::schnorr_air::{
     self, PHASE_1_START, PHASE_2_START, PHASE_3_START, SCHNORR_AIR_WIDTH, TRACE_HEIGHT, col, pi,
 };
@@ -62,7 +63,9 @@ pub fn schnorr_circuit_descriptor() -> CircuitDescriptor {
     // ========================================================================
     // C1: scalar_bit (col 32) is binary
     // ========================================================================
-    constraints.push(ConstraintExpr::Binary { col: col::SCALAR_BIT });
+    constraints.push(ConstraintExpr::Binary {
+        col: col::SCALAR_BIT,
+    });
 
     // ========================================================================
     // C2: Phase range constraint
@@ -77,10 +80,22 @@ pub fn schnorr_circuit_descriptor() -> CircuitDescriptor {
     let eleven = BabyBear::new(11);
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![p, p, p, p] }, // phase^4
-            PolyTerm { coeff: neg6, col_indices: vec![p, p, p] },              // -6*phase^3
-            PolyTerm { coeff: eleven, col_indices: vec![p, p] },               // +11*phase^2
-            PolyTerm { coeff: neg6, col_indices: vec![p] },                    // -6*phase
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![p, p, p, p],
+            }, // phase^4
+            PolyTerm {
+                coeff: neg6,
+                col_indices: vec![p, p, p],
+            }, // -6*phase^3
+            PolyTerm {
+                coeff: eleven,
+                col_indices: vec![p, p],
+            }, // +11*phase^2
+            PolyTerm {
+                coeff: neg6,
+                col_indices: vec![p],
+            }, // -6*phase
         ],
     });
 
@@ -155,13 +170,25 @@ pub fn schnorr_circuit_descriptor() -> CircuitDescriptor {
             inner: Box::new(ConstraintExpr::Polynomial {
                 terms: vec![
                     // lambda[i] * base_x[i] (diagonal term of extension mul)
-                    PolyTerm { coeff: BabyBear::ONE, col_indices: vec![lambda_i, base_x_i] },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![lambda_i, base_x_i],
+                    },
                     // -lambda[i] * acc_x[i]
-                    PolyTerm { coeff: neg1, col_indices: vec![lambda_i, acc_x_i] },
+                    PolyTerm {
+                        coeff: neg1,
+                        col_indices: vec![lambda_i, acc_x_i],
+                    },
                     // -base_y[i]
-                    PolyTerm { coeff: neg1, col_indices: vec![base_y_i] },
+                    PolyTerm {
+                        coeff: neg1,
+                        col_indices: vec![base_y_i],
+                    },
                     // +acc_y[i]
-                    PolyTerm { coeff: BabyBear::ONE, col_indices: vec![acc_y_i] },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![acc_y_i],
+                    },
                 ],
             }),
         });
@@ -193,17 +220,35 @@ pub fn schnorr_circuit_descriptor() -> CircuitDescriptor {
     let two = BabyBear::new(2);
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![p, p, p, col::SCALAR_BIT] },
-            PolyTerm { coeff: neg3, col_indices: vec![p, p, col::SCALAR_BIT] },
-            PolyTerm { coeff: two, col_indices: vec![p, col::SCALAR_BIT] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![p, p, p, col::SCALAR_BIT],
+            },
+            PolyTerm {
+                coeff: neg3,
+                col_indices: vec![p, p, col::SCALAR_BIT],
+            },
+            PolyTerm {
+                coeff: two,
+                col_indices: vec![p, col::SCALAR_BIT],
+            },
         ],
     });
     // phase*(phase-1)*(phase-2)*op_type == 0
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
-            PolyTerm { coeff: BabyBear::ONE, col_indices: vec![p, p, p, col::OP_TYPE] },
-            PolyTerm { coeff: neg3, col_indices: vec![p, p, col::OP_TYPE] },
-            PolyTerm { coeff: two, col_indices: vec![p, col::OP_TYPE] },
+            PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![p, p, p, col::OP_TYPE],
+            },
+            PolyTerm {
+                coeff: neg3,
+                col_indices: vec![p, p, col::OP_TYPE],
+            },
+            PolyTerm {
+                coeff: two,
+                col_indices: vec![p, col::OP_TYPE],
+            },
         ],
     });
 
@@ -430,7 +475,11 @@ mod tests {
         // (the gated slope constraints are inactive)
         for i in 0..PHASE_1_START {
             if trace[i][col::SCALAR_BIT] == BabyBear::ZERO {
-                let next = if i + 1 < trace.len() { &trace[i + 1] } else { &trace[i] };
+                let next = if i + 1 < trace.len() {
+                    &trace[i + 1]
+                } else {
+                    &trace[i]
+                };
                 let result = circuit.eval_constraints(&trace[i], next, &pi_vec, alpha);
                 assert_eq!(
                     result,
@@ -459,15 +508,19 @@ mod tests {
         let boundaries = circuit.boundary_constraints(&wrong_pi, trace.len());
 
         // Find the boundary for base_x[0] at PHASE_1_START
-        let pk_boundary = boundaries.iter().find(|b| {
-            b.row == PHASE_1_START && b.col == col::BASE_X
-        });
-        assert!(pk_boundary.is_some(), "Should have pk.x boundary at PHASE_1_START");
+        let pk_boundary = boundaries
+            .iter()
+            .find(|b| b.row == PHASE_1_START && b.col == col::BASE_X);
+        assert!(
+            pk_boundary.is_some(),
+            "Should have pk.x boundary at PHASE_1_START"
+        );
 
         // The boundary value should NOT match the trace value (since we corrupted PI)
         let b = pk_boundary.unwrap();
         assert_ne!(
-            b.value, trace[PHASE_1_START][col::BASE_X],
+            b.value,
+            trace[PHASE_1_START][col::BASE_X],
             "Corrupted pk should mismatch trace value"
         );
     }
@@ -528,10 +581,14 @@ mod tests {
             message_hash,
             challenge,
         };
-        let (trace, correct_pi) = generate_schnorr_trace(&witness);
+        let (_trace, correct_pi) = generate_schnorr_trace(&witness);
 
         // The original AIR catches wrong messages:
-        assert!(!schnorr_air::verify_schnorr_via_trace(&pk, &sig, b"wrong message"));
+        assert!(!schnorr_air::verify_schnorr_via_trace(
+            &pk,
+            &sig,
+            b"wrong message"
+        ));
 
         // With wrong message, the challenge e changes, which means the scalar
         // multiplication in phase 1 would be different. The trace is bound to
@@ -613,7 +670,9 @@ mod tests {
         let boundaries = circuit.boundary_constraints(&fake_pi, TRACE_HEIGHT);
 
         // Row 0 boundary requires phase=0, but trace has phase=3
-        let row0_phase = boundaries.iter().find(|b| b.row == 0 && b.col == col::PHASE);
+        let row0_phase = boundaries
+            .iter()
+            .find(|b| b.row == 0 && b.col == col::PHASE);
         assert!(row0_phase.is_some());
         let b = row0_phase.unwrap();
         assert_eq!(b.value, BabyBear::ZERO); // expects phase=0

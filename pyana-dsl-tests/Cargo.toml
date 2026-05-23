@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+blake3 = "1"
 pyana-dsl = { path = "../pyana-dsl" }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-circuit = { path = "../circuit" }

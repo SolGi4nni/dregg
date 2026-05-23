@@ -1,0 +1,19 @@
+[package]
+name = "pyana-orderbook"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-app-framework = { path = "../../app-framework" }
+pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+pyana-turn = { path = "../../turn" }
+pyana-intent = { path = "../../intent" }
+pyana-types = { path = "../../types" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = "1"
+postcard = { version = "1", features = ["use-std"] }
+
+[lints]
+workspace = true

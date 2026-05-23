@@ -1400,6 +1400,7 @@ fn test_grant_and_use_capability() {
         permissions: AuthRequired::None,
         breadstuff: None,
         expires_at: None,
+        allowed_effects: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2374,6 +2375,7 @@ fn test_grant_capability_amplification_blocked() {
         permissions: AuthRequired::None,
         breadstuff: None,
         expires_at: None,
+        allowed_effects: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2438,6 +2440,7 @@ fn test_grant_capability_attenuation_only() {
         permissions: AuthRequired::None,
         breadstuff: None,
         expires_at: None,
+        allowed_effects: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2500,6 +2503,7 @@ fn test_grant_capability_attenuation_succeeds() {
         permissions: AuthRequired::Signature,
         breadstuff: None,
         expires_at: None,
+        allowed_effects: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -6547,7 +6551,7 @@ fn test_create_escrow_correct_cell_matches_target() {
 #[test]
 fn test_committed_conservation_valid_proof_passes() {
     use curve25519_dalek::scalar::Scalar;
-    use pyana_cell::{ValueCommitment, prove_conservation};
+    use pyana_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation};
 
     // Setup: single agent cell with open permissions and a proof verifier.
     let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
@@ -6583,6 +6587,10 @@ fn test_committed_conservation_valid_proof_passes() {
     let output_vc1_bytes = output_vc1.to_bytes().0;
     let output_vc2_bytes = output_vc2.to_bytes().0;
 
+    // Create real Bulletproof range proofs for each output commitment.
+    let range_proof1 = BulletproofRangeProof::prove_range(300, &r_out1);
+    let range_proof2 = BulletproofRangeProof::prove_range(200, &r_out2);
+
     // Build the turn with committed note effects.
     let nullifier = pyana_cell::Nullifier([0xBB; 32]);
     let commitment1 = pyana_cell::NoteCommitment([0xCC; 32]);
@@ -6605,7 +6613,7 @@ fn test_committed_conservation_valid_proof_passes() {
             asset_type: 1,
             encrypted_note: vec![],
             value_commitment: Some(output_vc1_bytes),
-            range_proof: Some(vec![0x01]), // placeholder range proof
+            range_proof: Some(range_proof1.proof_bytes),
         });
         action.effect(Effect::NoteCreate {
             commitment: commitment2,
@@ -6613,7 +6621,7 @@ fn test_committed_conservation_valid_proof_passes() {
             asset_type: 1,
             encrypted_note: vec![],
             value_commitment: Some(output_vc2_bytes),
-            range_proof: Some(vec![0x01]), // placeholder range proof
+            range_proof: Some(range_proof2.proof_bytes),
         });
     }
     let mut turn = builder.fee(10000).build();
@@ -7668,4 +7676,301 @@ fn test_default_air_still_works_without_vk_hash() {
             _ => "non-rejected".to_string(),
         }
     );
+}
+
+// =============================================================================
+// Facet enforcement tests (E-language restricted object views)
+// =============================================================================
+
+#[test]
+fn test_faceted_capability_permits_allowed_effects() {
+    // Alice has a faceted capability to Bob that only allows Transfer.
+    // ExerciseViaCapability with a Transfer effect should succeed.
+    let mut ledger = Ledger::new();
+    let alice_pk = [10u8; 32];
+    let bob_pk = [20u8; 32];
+
+    let alice_cell = Cell::with_balance(alice_pk, [0u8; 32], 100_000);
+    let bob_cell = Cell::with_balance(bob_pk, [0u8; 32], 100_000);
+    let alice_id = alice_cell.id;
+    let bob_id = bob_cell.id;
+
+    ledger.insert_cell(alice_cell).unwrap();
+    ledger.insert_cell(bob_cell).unwrap();
+
+    // Give Alice a FACETED capability to Bob: only Transfer allowed.
+    {
+        let alice = ledger.get_mut(&alice_id).unwrap();
+        alice.capabilities.grant_faceted(
+            bob_id,
+            AuthRequired::None,
+            pyana_cell::FACET_TRANSFER_ONLY,
+        );
+    }
+
+    // Set Bob's permissions to allow everything without auth.
+    {
+        let bob = ledger.get_mut(&bob_id).unwrap();
+        bob.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+    }
+
+    // Alice exercises the capability with a Transfer (allowed).
+    let action = Action {
+        target: alice_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: CellPreconditions::default(),
+        effects: vec![Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![Effect::Transfer {
+                from: bob_id,
+                to: alice_id,
+                amount: 100,
+            }],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+    let turn = Turn {
+        agent: alice_id,
+        nonce: 0,
+        call_forest: forest,
+        fee: 10000,
+        memo: None,
+        valid_until: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        previous_receipt_hash: None,
+    };
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "faceted Transfer should be allowed: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_faceted_capability_blocks_disallowed_effects() {
+    // Alice has a faceted capability to Bob that only allows Transfer.
+    // ExerciseViaCapability with a SetField effect should be REJECTED.
+    let mut ledger = Ledger::new();
+    let alice_pk = [10u8; 32];
+    let bob_pk = [20u8; 32];
+
+    let alice_cell = Cell::with_balance(alice_pk, [0u8; 32], 100_000);
+    let bob_cell = Cell::with_balance(bob_pk, [0u8; 32], 100_000);
+    let alice_id = alice_cell.id;
+    let bob_id = bob_cell.id;
+
+    ledger.insert_cell(alice_cell).unwrap();
+    ledger.insert_cell(bob_cell).unwrap();
+
+    // Give Alice a FACETED capability to Bob: only Transfer allowed.
+    {
+        let alice = ledger.get_mut(&alice_id).unwrap();
+        alice.capabilities.grant_faceted(
+            bob_id,
+            AuthRequired::None,
+            pyana_cell::FACET_TRANSFER_ONLY,
+        );
+    }
+
+    // Set Bob's permissions to allow everything without auth.
+    {
+        let bob = ledger.get_mut(&bob_id).unwrap();
+        bob.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+    }
+
+    // Alice tries to exercise with SetField (NOT allowed by the facet).
+    let action = Action {
+        target: alice_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: CellPreconditions::default(),
+        effects: vec![Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![Effect::SetField {
+                cell: bob_id,
+                index: 0,
+                value: [42u8; 32],
+            }],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+    let turn = Turn {
+        agent: alice_id,
+        nonce: 0,
+        call_forest: forest,
+        fee: 10000,
+        memo: None,
+        valid_until: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        previous_receipt_hash: None,
+    };
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let result = executor.execute(&turn, &mut ledger);
+
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => {
+            assert!(
+                matches!(reason, TurnError::FacetViolation { .. }),
+                "expected FacetViolation, got: {:?}",
+                reason
+            );
+        }
+        _ => panic!(
+            "expected rejection due to facet violation, got: {:?}",
+            result
+        ),
+    }
+}
+
+#[test]
+fn test_unfaceted_capability_allows_all_effects() {
+    // Alice has an UNFACETED capability to Bob (allowed_effects = None).
+    // ExerciseViaCapability with any effect should succeed.
+    let mut ledger = Ledger::new();
+    let alice_pk = [10u8; 32];
+    let bob_pk = [20u8; 32];
+
+    let alice_cell = Cell::with_balance(alice_pk, [0u8; 32], 100_000);
+    let bob_cell = Cell::with_balance(bob_pk, [0u8; 32], 100_000);
+    let alice_id = alice_cell.id;
+    let bob_id = bob_cell.id;
+
+    ledger.insert_cell(alice_cell).unwrap();
+    ledger.insert_cell(bob_cell).unwrap();
+
+    // Give Alice an UNFACETED capability to Bob (None = unrestricted).
+    {
+        let alice = ledger.get_mut(&alice_id).unwrap();
+        alice.capabilities.grant(bob_id, AuthRequired::None);
+    }
+
+    // Set Bob's permissions to allow everything without auth.
+    {
+        let bob = ledger.get_mut(&bob_id).unwrap();
+        bob.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+    }
+
+    // Alice exercises with SetField (allowed because unfaceted).
+    let action = Action {
+        target: alice_id,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: CellPreconditions::default(),
+        effects: vec![Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![Effect::SetField {
+                cell: bob_id,
+                index: 0,
+                value: [42u8; 32],
+            }],
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+    let turn = Turn {
+        agent: alice_id,
+        nonce: 0,
+        call_forest: forest,
+        fee: 10000,
+        memo: None,
+        valid_until: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        previous_receipt_hash: None,
+    };
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "unfaceted capability should allow SetField: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_facet_attenuation_only_restricts() {
+    // Test that attenuate_faceted prevents amplification.
+    use pyana_cell::{EFFECT_SET_FIELD, EFFECT_TRANSFER, FACET_STATE_WRITER, FACET_TRANSFER_ONLY};
+
+    let mut cset = pyana_cell::CapabilitySet::new();
+    let target = CellId::from_bytes([1u8; 32]);
+
+    // Grant a faceted capability allowing only state writing.
+    cset.grant_faceted(target, AuthRequired::None, FACET_STATE_WRITER);
+
+    // Attenuate to transfer-only should FAIL (TRANSFER not in FACET_STATE_WRITER).
+    let result = cset.attenuate_faceted(0, AuthRequired::None, FACET_TRANSFER_ONLY);
+    assert!(result.is_none(), "should not amplify to include Transfer");
+
+    // Attenuate to just SET_FIELD should SUCCEED (subset of STATE_WRITER).
+    let result = cset.attenuate_faceted(0, AuthRequired::None, EFFECT_SET_FIELD);
+    assert!(
+        result.is_some(),
+        "should be able to narrow to just SetField"
+    );
+    assert_eq!(result.unwrap().allowed_effects, Some(EFFECT_SET_FIELD));
 }

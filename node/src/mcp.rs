@@ -689,6 +689,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         permissions: perm_level,
         breadstuff: None,
         expires_at: None,
+        allowed_effects: None,
     };
 
     let effect = pyana_turn::Effect::GrantCapability {
@@ -1103,6 +1104,7 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         permissions: pyana_cell::AuthRequired::Signature,
         breadstuff: None,
         expires_at: restrictions.not_after.map(|t| t as u64),
+        allowed_effects: None,
     };
 
     let effect = pyana_turn::Effect::GrantCapability {

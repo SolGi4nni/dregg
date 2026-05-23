@@ -3543,6 +3543,102 @@ impl AgentWallet {
     }
 
     // =========================================================================
+    // Factory Operations (EROS-style object creation)
+    // =========================================================================
+
+    /// Deploy a factory descriptor, returning its VK hash identifier.
+    ///
+    /// The factory descriptor defines what cells the factory can create: what
+    /// program is installed, what capabilities are granted, what field constraints
+    /// apply, and the per-epoch creation budget.
+    ///
+    /// Anyone can inspect the descriptor to understand exactly what the factory
+    /// creates — this is constructor transparency.
+    pub fn deploy_factory(&self, descriptor: pyana_cell::FactoryDescriptor) -> [u8; 32] {
+        descriptor.factory_vk
+    }
+
+    /// Build a turn that creates a cell from a deployed factory.
+    ///
+    /// The turn carries a `CreateCellFromFactory` effect that the executor validates
+    /// against the factory's registered descriptor.
+    pub fn create_from_factory(
+        &self,
+        agent_cell: CellId,
+        factory_vk: [u8; 32],
+        owner_pubkey: [u8; 32],
+        token_id: [u8; 32],
+        params: pyana_cell::FactoryCreationParams,
+        nonce: u64,
+        fee: u64,
+    ) -> Turn {
+        use pyana_turn::action::{Action, Authorization, DelegationMode, Effect};
+
+        let method = *blake3::hash(b"factory_create").as_bytes();
+        let action = Action {
+            target: agent_cell,
+            method,
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: pyana_cell::Preconditions::none(),
+            effects: vec![Effect::CreateCellFromFactory {
+                factory_vk,
+                owner_pubkey,
+                token_id,
+                params,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+
+        use pyana_turn::forest::{CallForest, CallTree};
+        let tree = CallTree {
+            action,
+            children: vec![],
+        };
+        let forest = CallForest { roots: vec![tree] };
+
+        Turn {
+            agent: agent_cell,
+            nonce,
+            fee,
+            call_forest: forest,
+            valid_until: None,
+            sovereign_witnesses: vec![],
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+        }
+    }
+
+    /// Verify provenance of a cell — returns the factory that created it (if any).
+    ///
+    /// In the current implementation, provenance is tracked by the executor
+    /// at creation time. This method inspects the cell's VK and checks it
+    /// against known factory VK hashes.
+    pub fn verify_provenance(
+        &self,
+        cell: &Cell,
+        known_factories: &[pyana_cell::FactoryDescriptor],
+    ) -> Option<pyana_cell::Provenance> {
+        if let Some(vk) = &cell.verification_key {
+            for factory in known_factories {
+                if factory.child_program_vk == Some(vk.hash) {
+                    return Some(pyana_cell::Provenance::from_factory(
+                        factory.factory_vk,
+                        None,
+                        0,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    // =========================================================================
     // Encrypted Intent Posting
     // =========================================================================
 

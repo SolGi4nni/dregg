@@ -224,6 +224,172 @@ pub fn generate_invalid_presentation_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBea
 }
 
 // ============================================================================
+// Composition-based Presentation
+// ============================================================================
+
+/// Build a membership circuit descriptor (for composing membership proofs).
+///
+/// This is a simplified membership circuit: PI[0] = leaf_hash, PI[1] = root.
+pub fn membership_circuit_descriptor() -> CircuitDescriptor {
+    CircuitDescriptor {
+        name: "pyana-membership-v1".into(),
+        trace_width: 6,
+        max_degree: 4,
+        columns: (0..6)
+            .map(|i| ColumnDef {
+                name: format!("merkle_col_{i}"),
+                index: i,
+                kind: ColumnKind::Value,
+            })
+            .collect(),
+        constraints: vec![
+            ConstraintExpr::PiBinding {
+                col: 0,
+                pi_index: 0,
+            },
+            ConstraintExpr::PiBinding {
+                col: 5,
+                pi_index: 1,
+            },
+        ],
+        boundaries: vec![
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: 0,
+                pi_index: 0,
+            },
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::Last,
+                col: 5,
+                pi_index: 1,
+            },
+        ],
+        public_input_count: 2,
+    }
+}
+
+/// Build a predicate circuit descriptor (for composing predicate proofs).
+///
+/// This is a simplified predicate circuit: PI[0] = threshold, PI[1] = fact_commitment.
+pub fn predicate_circuit_descriptor() -> CircuitDescriptor {
+    CircuitDescriptor {
+        name: "pyana-predicate-v1".into(),
+        trace_width: 4,
+        max_degree: 2,
+        columns: (0..4)
+            .map(|i| ColumnDef {
+                name: format!("pred_col_{i}"),
+                index: i,
+                kind: ColumnKind::Value,
+            })
+            .collect(),
+        constraints: vec![
+            ConstraintExpr::PiBinding {
+                col: 0,
+                pi_index: 0,
+            },
+            ConstraintExpr::PiBinding {
+                col: 1,
+                pi_index: 1,
+            },
+        ],
+        boundaries: vec![
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: 0,
+                pi_index: 0,
+            },
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: 1,
+                pi_index: 1,
+            },
+        ],
+        public_input_count: 2,
+    }
+}
+
+/// Build a temporal step circuit descriptor (for IVC chain composition).
+///
+/// PI[0] = initial_state, PI[1] = final_state.
+pub fn temporal_step_descriptor() -> CircuitDescriptor {
+    CircuitDescriptor {
+        name: "pyana-temporal-step-v1".into(),
+        trace_width: 4,
+        max_degree: 2,
+        columns: (0..4)
+            .map(|i| ColumnDef {
+                name: format!("temporal_col_{i}"),
+                index: i,
+                kind: ColumnKind::Value,
+            })
+            .collect(),
+        constraints: vec![
+            ConstraintExpr::PiBinding {
+                col: 0,
+                pi_index: 0,
+            },
+            ConstraintExpr::PiBinding {
+                col: 1,
+                pi_index: 1,
+            },
+        ],
+        boundaries: vec![
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: 0,
+                pi_index: 0,
+            },
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: 1,
+                pi_index: 1,
+            },
+        ],
+        public_input_count: 2,
+    }
+}
+
+/// Compose a presentation proof from membership + predicate sub-proofs.
+///
+/// This replaces the old PI-only presentation with actual sub-proof composition.
+/// The composed circuit proves:
+/// - Membership sub-proof verifies (issuer in federation)
+/// - Predicate sub-proof verifies (attribute satisfies condition)
+/// - Both share a common state root (PI[1] of membership == PI[1] of predicate)
+pub fn composed_presentation_descriptor() -> pyana_dsl_runtime::ComposedCircuitDescriptor {
+    let membership = membership_circuit_descriptor();
+    let predicate = predicate_circuit_descriptor();
+
+    // Shared link: membership PI[1] (root) == predicate PI[1] (fact_commitment)
+    // This binds the predicate proof to the same state proven by membership.
+    pyana_dsl_runtime::compose_and(&membership, &predicate, &[(1, 1)])
+}
+
+/// Compose two membership proofs (prove membership in BOTH trees).
+pub fn composed_dual_membership() -> pyana_dsl_runtime::ComposedCircuitDescriptor {
+    let membership_a = membership_circuit_descriptor();
+    let membership_b = membership_circuit_descriptor();
+
+    // Both share PI[0] (leaf_hash): prove the same leaf is in both trees
+    pyana_dsl_runtime::compose_and(&membership_a, &membership_b, &[(0, 0)])
+}
+
+/// Compose a 3-step temporal chain (IVC).
+pub fn composed_temporal_chain() -> pyana_dsl_runtime::ComposedCircuitDescriptor {
+    let step = temporal_step_descriptor();
+    pyana_dsl_runtime::compose_chain(&[&step, &step, &step])
+}
+
+/// Compose 4 different sub-proofs (aggregate).
+pub fn composed_aggregate_4() -> pyana_dsl_runtime::ComposedCircuitDescriptor {
+    let mem = membership_circuit_descriptor();
+    let pred = predicate_circuit_descriptor();
+    let temporal = temporal_step_descriptor();
+    pyana_dsl_runtime::compose_aggregate(&[&mem, &pred, &temporal, &pred])
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -423,6 +589,226 @@ mod tests {
         assert!(
             result.is_err(),
             "Should reject proof with wrong public inputs"
+        );
+    }
+
+    // ========================================================================
+    // Composition Tests
+    // ========================================================================
+
+    #[test]
+    fn presentation_compose_dual_membership_proves_and_verifies() {
+        // Prove membership in BOTH trees (same leaf)
+        let composed = composed_dual_membership();
+        assert_eq!(composed.sub_proofs.len(), 2);
+        assert!(composed.circuit.validate().is_ok());
+
+        // Generate trace: shared PI[0] is the leaf hash
+        let shared = vec![BabyBear::new(42)]; // leaf_hash shared between both
+        let proof_hashes = vec![BabyBear::new(111), BabyBear::new(222)];
+        let (trace, pi) = pyana_dsl_runtime::generate_and_trace(&composed, &shared, &proof_hashes);
+
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed);
+        let proof = stark::prove(&circuit, &trace, &pi);
+        let result = stark::verify(&circuit, &proof, &pi);
+        assert!(
+            result.is_ok(),
+            "Dual membership composition STARK should pass: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn presentation_compose_membership_plus_predicate() {
+        // Prove membership AND age >= 18 (shared state root)
+        let composed = composed_presentation_descriptor();
+        assert_eq!(composed.sub_proofs.len(), 2);
+        assert!(composed.circuit.validate().is_ok());
+
+        // Shared value: the state root (membership PI[1] == predicate PI[1])
+        let shared = vec![BabyBear::new(999)]; // shared state root
+        let proof_hashes = vec![BabyBear::new(333), BabyBear::new(444)];
+        let (trace, pi) = pyana_dsl_runtime::generate_and_trace(&composed, &shared, &proof_hashes);
+
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed);
+        let proof = stark::prove(&circuit, &trace, &pi);
+        let result = stark::verify(&circuit, &proof, &pi);
+        assert!(
+            result.is_ok(),
+            "Membership+predicate composition STARK should pass: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn presentation_compose_chain_3_temporal_steps() {
+        // Chain 3 temporal steps via IVC
+        let composed = composed_temporal_chain();
+        assert_eq!(composed.sub_proofs.len(), 3);
+        assert!(composed.transition.is_some());
+        assert!(composed.circuit.validate().is_ok());
+
+        // Generate IVC trace
+        let initial = BabyBear::new(100);
+        let final_s = BabyBear::new(400);
+        let prev_hash = pyana_circuit::ivc::initial_accumulated_hash(initial);
+        let acc_hash = pyana_circuit::ivc::extend_accumulated_hash(prev_hash, final_s, 3);
+
+        let (trace, pi) = pyana_dsl_runtime::generate_chain_trace(
+            &composed, 3, initial, final_s, prev_hash, acc_hash,
+        );
+
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed);
+        let proof = stark::prove(&circuit, &trace, &pi);
+        let result = stark::verify(&circuit, &proof, &pi);
+        assert!(
+            result.is_ok(),
+            "Chain 3-step IVC composition STARK should pass: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn presentation_compose_aggregate_4_proofs() {
+        // Aggregate 4 different sub-proofs
+        let composed = composed_aggregate_4();
+        assert_eq!(composed.sub_proofs.len(), 4);
+        assert!(composed.transition.is_none());
+        // Total PI = 2 + 2 + 2 + 2 = 8
+        assert_eq!(composed.circuit.public_input_count, 8);
+        assert!(composed.circuit.validate().is_ok());
+
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed.clone());
+        let width = circuit.total_width();
+
+        // Merged PIs from all sub-circuits
+        let pi = vec![
+            BabyBear::new(10),
+            BabyBear::new(20), // membership PIs
+            BabyBear::new(30),
+            BabyBear::new(40), // predicate PIs
+            BabyBear::new(50),
+            BabyBear::new(60), // temporal PIs
+            BabyBear::new(70),
+            BabyBear::new(80), // predicate 2 PIs
+        ];
+
+        let mut row = vec![BabyBear::ZERO; width];
+        // Fill main columns with PI values
+        for (i, &val) in pi.iter().enumerate() {
+            if i < composed.circuit.trace_width {
+                row[i] = val;
+            }
+        }
+        // Fill valid flags for all sub-proofs
+        for i in 0..composed.sub_proofs.len() {
+            let offset = circuit.sub_proof_offset(i);
+            for (j, &elem) in composed.sub_proofs[i]
+                .sub_circuit_vk_hash
+                .iter()
+                .enumerate()
+            {
+                if offset + j < width {
+                    row[offset + j] = elem;
+                }
+            }
+            let vf_col = circuit.valid_flag_col(i);
+            if vf_col < width {
+                row[vf_col] = BabyBear::ONE;
+            }
+        }
+
+        let trace = vec![row.clone(), row];
+        let proof = stark::prove(&circuit, &trace, &pi);
+        let result = stark::verify(&circuit, &proof, &pi);
+        assert!(
+            result.is_ok(),
+            "Aggregate 4-proof composition STARK should pass: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn presentation_compose_rejects_missing_sub_proof() {
+        // Verify that removing a valid flag causes constraint failure
+        let composed = composed_dual_membership();
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed.clone());
+        let width = circuit.total_width();
+
+        let shared = vec![BabyBear::new(42)];
+        let proof_hashes = vec![BabyBear::new(111), BabyBear::new(222)];
+        let (mut trace, pi) =
+            pyana_dsl_runtime::generate_and_trace(&composed, &shared, &proof_hashes);
+
+        // Tamper: set second sub-proof valid flag to 0
+        let vf_col = circuit.valid_flag_col(1);
+        trace[0][vf_col] = BabyBear::ZERO;
+        trace[1][vf_col] = BabyBear::ZERO;
+
+        let alpha = BabyBear::new(7);
+        let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Should reject composition with missing sub-proof (valid_flag=0)"
+        );
+    }
+
+    #[test]
+    fn presentation_compose_chain_wrong_hash_rejected() {
+        // IVC chain with wrong accumulated hash should fail constraints
+        let composed = composed_temporal_chain();
+        let circuit = pyana_dsl_runtime::ComposedDslCircuit::new(composed.clone());
+
+        let initial = BabyBear::new(100);
+        let final_s = BabyBear::new(400);
+        let prev_hash = pyana_circuit::ivc::initial_accumulated_hash(initial);
+        let wrong_acc_hash = BabyBear::new(12345); // WRONG hash
+
+        let (trace, pi) = pyana_dsl_runtime::generate_chain_trace(
+            &composed,
+            3,
+            initial,
+            final_s,
+            prev_hash,
+            wrong_acc_hash,
+        );
+
+        let alpha = BabyBear::new(7);
+        let result = circuit.eval_constraints(&trace[0], &trace[1], &pi, alpha);
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Should reject IVC chain with wrong accumulated hash"
+        );
+    }
+
+    #[test]
+    fn presentation_composed_descriptor_validates() {
+        let desc = composed_presentation_descriptor();
+        assert!(desc.circuit.validate().is_ok());
+        assert_eq!(desc.sub_proofs.len(), 2);
+        assert_eq!(desc.sub_proofs[0].label, "pyana-membership-v1-sub-a");
+        assert_eq!(desc.sub_proofs[1].label, "pyana-predicate-v1-sub-b");
+    }
+
+    #[test]
+    fn presentation_compose_vk_hashes_are_deterministic() {
+        let mem = membership_circuit_descriptor();
+        let vk1 = pyana_dsl_runtime::compute_descriptor_vk_elements(&mem);
+        let vk2 = pyana_dsl_runtime::compute_descriptor_vk_elements(&mem);
+        assert_eq!(vk1, vk2, "VK hash should be deterministic");
+    }
+
+    #[test]
+    fn presentation_compose_different_circuits_different_vk() {
+        let mem = membership_circuit_descriptor();
+        let pred = predicate_circuit_descriptor();
+        let vk_mem = pyana_dsl_runtime::compute_descriptor_vk_elements(&mem);
+        let vk_pred = pyana_dsl_runtime::compute_descriptor_vk_elements(&pred);
+        assert_ne!(
+            vk_mem, vk_pred,
+            "Different circuits must have different VK hashes"
         );
     }
 }

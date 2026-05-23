@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auction - moons' gallery</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <a href="index.html" class="logo">moons' gallery</a>
+            <div class="wallet-status" id="wallet-status">
+                <span class="dot disconnected"></span>
+                <span id="wallet-label">Connect Wallet</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="auction-page">
+        <div class="auction-layout">
+            <!-- Artwork Display -->
+            <div class="artwork-panel">
+                <div class="artwork-image" id="artwork-image">
+                    <div class="placeholder-art"></div>
+                </div>
+                <div class="artwork-info" id="artwork-info">
+                    <h1 id="artwork-title">Loading...</h1>
+                    <p id="artwork-description"></p>
+                    <div class="artwork-meta">
+                        <span class="meta-label">Artist</span>
+                        <span class="meta-value" id="artwork-artist"></span>
+                    </div>
+                    <div class="artwork-meta">
+                        <span class="meta-label">Image Hash</span>
+                        <span class="meta-value mono" id="artwork-hash"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auction Panel -->
+            <div class="bidding-panel">
+                <div class="auction-status">
+                    <div class="phase-badge" id="phase-badge">BIDDING</div>
+                    <div class="countdown" id="countdown">
+                        <span class="countdown-label">Time Remaining</span>
+                        <span class="countdown-value" id="countdown-value">--</span>
+                    </div>
+                </div>
+
+                <div class="bid-stats">
+                    <div class="stat">
+                        <span class="stat-label">Reserve Price</span>
+                        <span class="stat-value" id="reserve-price">--</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Total Bids</span>
+                        <span class="stat-value" id="total-bids">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Highest Bid</span>
+                        <span class="stat-value" id="highest-bid">--</span>
+                    </div>
+                </div>
+
+                <!-- Place Bid Form (visible during bidding phase) -->
+                <div class="bid-form-section" id="bid-section">
+                    <h3>Place Bid</h3>
+                    <p class="bid-info">Your bid amount is hidden behind a BLAKE3 commitment until the reveal phase.</p>
+                    <form id="bid-form">
+                        <div class="form-group">
+                            <label for="bid-amount">Bid Amount</label>
+                            <input type="number" id="bid-amount" min="1" required placeholder="Enter bid amount">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-large">
+                            Commit Bid (Hidden)
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Reveal Form (visible during reveal phase) -->
+                <div class="bid-form-section hidden" id="reveal-section">
+                    <h3>Reveal Your Bid</h3>
+                    <p class="bid-info">Reveal your bid amount to prove your commitment. Unrevealed bids forfeit.</p>
+                    <button id="reveal-btn" class="btn btn-primary btn-large">
+                        Reveal My Bid
+                    </button>
+                </div>
+
+                <!-- Settled (visible after settlement) -->
+                <div class="bid-form-section hidden" id="settled-section">
+                    <h3>Auction Settled</h3>
+                    <div class="settlement-info">
+                        <div class="winner-info">
+                            <span class="label">Winner</span>
+                            <span class="value mono" id="winner-address">--</span>
+                        </div>
+                        <div class="winner-info">
+                            <span class="label">Winning Bid</span>
+                            <span class="value" id="winning-amount">--</span>
+                        </div>
+                        <div class="winner-info">
+                            <span class="label">Receipt</span>
+                            <span class="value mono" id="receipt-hash">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bid History -->
+                <div class="bid-history">
+                    <h3>Bid History</h3>
+                    <div class="bid-list" id="bid-list">
+                        <div class="empty-state">No bids yet</div>
+                    </div>
+                </div>
+
+                <!-- Provenance -->
+                <div class="provenance-section">
+                    <h3>Provenance</h3>
+                    <div class="provenance-chain" id="provenance-chain">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <span>Powered by <strong>pyana</strong> federation protocol</span>
+            <span class="ws-status" id="ws-status">WS: disconnected</span>
+        </div>
+    </footer>
+
+    <script src="wallet.js"></script>
+    <script src="bid.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

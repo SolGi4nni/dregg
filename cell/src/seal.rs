@@ -418,6 +418,7 @@ impl SealPair {
             permissions,
             breadstuff,
             expires_at,
+            allowed_effects: None,
         })
     }
 
@@ -479,6 +480,7 @@ mod tests {
             permissions: AuthRequired::Signature,
             breadstuff: None,
             expires_at: None,
+            allowed_effects: None,
         }
     }
     fn make_test_cap_with_breadstuff(seed: u8) -> CapabilityRef {
@@ -494,6 +496,7 @@ mod tests {
             permissions: AuthRequired::Either,
             breadstuff: Some(bs),
             expires_at: None,
+            allowed_effects: None,
         }
     }
 
@@ -605,6 +608,7 @@ mod tests {
                 permissions: perm.clone(),
                 breadstuff: None,
                 expires_at: None,
+                allowed_effects: None,
             };
             assert_eq!(pair.unseal(&pair.seal(&cap)).unwrap().permissions, perm);
         }

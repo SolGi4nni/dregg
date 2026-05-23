@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::mpsc;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +8,27 @@ use crate::cell::Cell;
 use crate::id::CellId;
 use crate::permissions::Permissions;
 use crate::state::{FieldElement, STATE_SLOTS};
+
+// =============================================================================
+// Witness Freshness Types
+// =============================================================================
+
+/// A diff representing changes to a cell's Merkle path between two roots.
+///
+/// Used for witness freshness subscriptions: when the ledger root changes,
+/// subscribers receive a diff that lets them update their local witness
+/// (Merkle proof) without re-downloading the entire state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessDiff {
+    /// The cell whose witness path changed.
+    pub cell_id: CellId,
+    /// The old Merkle path (sibling hashes from leaf to root).
+    pub old_path: Vec<[u8; 32]>,
+    /// The new Merkle path (sibling hashes from leaf to root).
+    pub new_path: Vec<[u8; 32]>,
+    /// The new Merkle root after the change.
+    pub new_root: [u8; 32],
+}
 
 /// A delta to apply to a single cell's state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +277,10 @@ pub struct Ledger {
     /// When true, the cached root and tree_levels are stale and must be
     /// rebuilt before `root()` can return a valid value.
     dirty: bool,
+    /// Witness freshness subscribers: cell_id -> senders.
+    /// When the Merkle root changes, subscribers receive `WitnessDiff` updates
+    /// containing the new path for their subscribed cell.
+    witness_subscribers: HashMap<CellId, Vec<mpsc::Sender<WitnessDiff>>>,
 }
 
 impl Ledger {
@@ -268,6 +294,7 @@ impl Ledger {
             tree_levels: Vec::new(),
             root: Self::compute_empty_root(),
             dirty: false,
+            witness_subscribers: HashMap::new(),
         }
     }
 
@@ -298,12 +325,13 @@ impl Ledger {
         self.cells.is_empty()
     }
 
-    /// Create a new cell and insert it. Returns the CellId.
+    /// Create a new hosted cell and insert it. Returns the CellId.
     ///
+    /// The cell is created in Hosted mode since the ledger stores its full state.
     /// The Merkle tree rebuild is deferred until `root()` is called, making
     /// sequential inserts O(N) total instead of O(N^2).
     pub fn create_cell(&mut self, public_key: [u8; 32], token_id: [u8; 32]) -> CellId {
-        let cell = Cell::new(public_key, token_id);
+        let cell = Cell::new_hosted(public_key, token_id);
         let id = cell.id;
         self.cells.insert(id, cell);
         self.dirty = true;
@@ -1175,6 +1203,147 @@ impl Ledger {
     /// Check whether a cell has an active ephemeral sovereign registration.
     pub fn is_sovereign_registered(&self, id: &CellId) -> bool {
         self.sovereign_registrations.contains_key(id)
+    }
+
+    // =========================================================================
+    // Witness Freshness (Phase 5 prerequisite)
+    // =========================================================================
+
+    /// Compute the witness diff between two roots for a specific cell.
+    ///
+    /// Returns the old and new Merkle paths along with the new root.
+    /// The caller can use this to update a previously-cached Merkle proof
+    /// without re-downloading the entire tree.
+    ///
+    /// NOTE: This triggers a tree rebuild if the ledger is dirty (to compute
+    /// the current path). The `old_path` is computed from the provided
+    /// `old_root` if it matches the prior state; otherwise this returns None.
+    pub fn compute_witness_diff(
+        &mut self,
+        cell_id: &CellId,
+        old_root: [u8; 32],
+    ) -> Option<WitnessDiff> {
+        if !self.cells.contains_key(cell_id) {
+            return None;
+        }
+
+        // The old root should match the cached root before we rebuild.
+        // If it doesn't, the caller's state is too stale for incremental update.
+        let cached_root = self.root_cached();
+        if cached_root != old_root && !self.dirty {
+            // Root mismatch and tree is not dirty — caller's root is stale.
+            return None;
+        }
+
+        // Get old path before any rebuild (if tree isn't dirty, this is valid).
+        let old_path = if !self.dirty {
+            self.extract_path(cell_id)
+        } else {
+            // Tree is dirty — old root was before modifications.
+            // We can't reconstruct the old path from the dirty tree.
+            // Return empty old_path indicating the subscriber should do a full refresh.
+            Vec::new()
+        };
+
+        // Ensure tree is up to date.
+        if self.dirty {
+            self.rebuild_tree();
+        }
+
+        let new_path = self.extract_path(cell_id);
+        let new_root = self.root;
+
+        Some(WitnessDiff {
+            cell_id: *cell_id,
+            old_path,
+            new_path,
+            new_root,
+        })
+    }
+
+    /// Subscribe to witness updates for a specific cell.
+    ///
+    /// Returns a `mpsc::Receiver<WitnessDiff>` that will receive diffs
+    /// whenever the cell's Merkle path changes due to ledger mutations.
+    ///
+    /// The sender is stored internally; when the ledger root changes,
+    /// all subscribers for affected cells are notified.
+    pub fn subscribe_witness_updates(&mut self, cell_id: CellId) -> mpsc::Receiver<WitnessDiff> {
+        let (tx, rx) = mpsc::channel();
+        self.witness_subscribers
+            .entry(cell_id)
+            .or_insert_with(Vec::new)
+            .push(tx);
+        rx
+    }
+
+    /// Notify witness subscribers after a ledger mutation.
+    ///
+    /// Call this after `apply_delta()` or any mutation that changes the Merkle root.
+    /// It computes diffs for all subscribed cells and sends them via channels.
+    pub fn notify_witness_subscribers(&mut self) {
+        if self.witness_subscribers.is_empty() {
+            return;
+        }
+
+        // Ensure tree is rebuilt so we have valid paths.
+        if self.dirty {
+            self.rebuild_tree();
+        }
+
+        let new_root = self.root;
+
+        // Collect cell IDs with subscribers (to avoid borrowing issues).
+        let subscribed_ids: Vec<CellId> = self.witness_subscribers.keys().cloned().collect();
+
+        for cell_id in subscribed_ids {
+            if !self.cells.contains_key(&cell_id) {
+                // Cell was removed — drop subscribers.
+                self.witness_subscribers.remove(&cell_id);
+                continue;
+            }
+
+            let new_path = self.extract_path(&cell_id);
+            let diff = WitnessDiff {
+                cell_id,
+                old_path: Vec::new(), // Subscribers track their own old state.
+                new_path,
+                new_root,
+            };
+
+            // Send to all subscribers, removing any whose receiver has been dropped.
+            if let Some(senders) = self.witness_subscribers.get_mut(&cell_id) {
+                senders.retain(|tx| tx.send(diff.clone()).is_ok());
+                if senders.is_empty() {
+                    self.witness_subscribers.remove(&cell_id);
+                }
+            }
+        }
+    }
+
+    /// Extract the Merkle path (sibling hashes) for a cell from the stored tree.
+    fn extract_path(&self, cell_id: &CellId) -> Vec<[u8; 32]> {
+        let pos = match self.leaf_positions.get(&cell_id.0) {
+            Some(&p) => p,
+            None => return Vec::new(),
+        };
+
+        if self.tree_levels.len() <= 1 {
+            return Vec::new();
+        }
+
+        let mut path = Vec::new();
+        let mut idx = pos;
+        for level in 0..self.tree_levels.len() - 1 {
+            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+            let sibling_hash = self.tree_levels[level]
+                .get(sibling_idx)
+                .copied()
+                .unwrap_or([0u8; 32]);
+            path.push(sibling_hash);
+            idx /= 2;
+        }
+        path
     }
 }
 

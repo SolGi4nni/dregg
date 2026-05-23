@@ -948,6 +948,64 @@ pub fn execute_fulfillment_flow_with_key(
     }
 }
 
+/// Execute the fulfillment flow with anti-frontrunning enforcement.
+///
+/// This variant requires a `FulfillmentRegistry` and a `fulfiller_secret`.
+/// Before proceeding with verification and payment, it checks that the fulfiller
+/// registered a commitment for this intent BEFORE the reveal window elapsed.
+///
+/// This prevents a malicious observer from racing to submit their own fulfillment
+/// after seeing a match in the gossip layer.
+///
+/// # Arguments
+///
+/// * `registry` - The commit-reveal fulfillment registry.
+/// * `fulfiller_secret` - The secret used in the original commitment.
+/// * `now` - Current timestamp (for window validation).
+/// * All other arguments are the same as `execute_fulfillment_flow_with_key`.
+///
+/// # Errors
+///
+/// Returns `FulfillmentError::MissingData` if no commitment was registered (front-running
+/// attempt), or if the reveal window checks fail.
+pub fn execute_fulfillment_flow_with_commitment(
+    intent: &Intent,
+    fulfillment: &FulfillmentWithPredicates,
+    executor: &TurnExecutor,
+    ledger: &mut Ledger,
+    payer_cell: CellId,
+    recipient_cell: CellId,
+    current_height: u64,
+    current_block: u64,
+    root_key: Option<&[u8; 32]>,
+    registry: &mut crate::commit_reveal_fulfillment::FulfillmentRegistry,
+    fulfiller_secret: &[u8; 32],
+    now: u64,
+) -> Result<TurnReceipt, FulfillmentError> {
+    // Anti-frontrunning gate: validate that the fulfiller has a registered commitment.
+    registry
+        .validate_reveal(&intent.id, fulfiller_secret, now)
+        .map_err(|e| FulfillmentError::MissingData(format!("commit-reveal check failed: {}", e)))?;
+
+    // Proceed with the standard execution flow.
+    let receipt = execute_fulfillment_flow_with_key(
+        intent,
+        fulfillment,
+        executor,
+        ledger,
+        payer_cell,
+        recipient_cell,
+        current_height,
+        current_block,
+        root_key,
+    )?;
+
+    // Mark the intent as fulfilled in the registry (prevents double-fulfillment).
+    registry.mark_fulfilled(intent.id);
+
+    Ok(receipt)
+}
+
 // ============================================================================
 // Committed payment fulfillment flow
 // ============================================================================

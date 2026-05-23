@@ -82,17 +82,26 @@ fn collect_kimchi_gates(
                             wires: 2,
                         }
                     });
-                    // 64 binary constraint gates for bit decomposition
+                    // 64 binary constraint gates for bit decomposition.
+                    // Each constrains bit_i * bit_i - bit_i = 0 (boolean constraint).
+                    // Kimchi Generic gate: c0*l + c1*r + c2*o + c3*(l*r) + c4 = 0
+                    // With l = r = bit_i: c3*(bit^2) + c0*bit = 0
+                    // Setting c0=-1, c3=1: bit^2 - bit = 0
                     for _ in 0..64 {
                         gates.push(quote! {
                             pyana_dsl_runtime::KimchiGate {
                                 typ: pyana_dsl_runtime::GateType::Generic,
-                                coeffs: vec![1, 0, -1, 0, 0],
-                                wires: 1,
+                                coeffs: vec![-1, 0, 0, 1, 0],
+                                wires: 2,
                             }
                         });
                     }
-                    // Reconstruction gate (sum of bits * powers of 2 == diff)
+                    // Reconstruction gate: sum(bit_i * 2^i) == diff.
+                    // Kimchi Generic gate: c0*l + c1*r + c2*o = 0
+                    // l = accumulated sum, r = diff → l - r = 0
+                    // NOTE: In a real Kimchi circuit, reconstruction uses a chain
+                    // of "double-and-add" gates. Here we emit a single gate that
+                    // the verifier interprets as a 64-bit range-check binding.
                     gates.push(quote! {
                         pyana_dsl_runtime::KimchiGate {
                             typ: pyana_dsl_runtime::GateType::Generic,

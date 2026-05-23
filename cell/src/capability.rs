@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::facet::EffectMask;
 use crate::id::CellId;
 use crate::permissions::AuthRequired;
 
@@ -18,6 +19,21 @@ pub struct CapabilityRef {
     /// after this block height (used for introduction-granted capabilities).
     #[serde(default)]
     pub expires_at: Option<u64>,
+    /// Optional facet mask restricting which effect types this capability permits.
+    ///
+    /// When `None`, all effect types are allowed (unrestricted capability).
+    /// When `Some(mask)`, only effect types whose corresponding bit is set in the
+    /// mask can be performed via `ExerciseViaCapability` using this capability.
+    ///
+    /// This implements E-language **facets**: a faceted capability exposes only a
+    /// subset of the target cell's interface to the holder. For example, a
+    /// transfer-only facet allows sending value but not modifying state fields
+    /// or changing permissions.
+    ///
+    /// Facets compose with attenuation: a delegated faceted capability can only
+    /// further restrict (bitwise subset), never amplify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_effects: Option<EffectMask>,
 }
 
 /// An attenuated capability without a slot assignment.
@@ -40,6 +56,9 @@ pub struct AttenuatedCap {
     /// Optional expiry height.
     #[serde(default)]
     pub expires_at: Option<u64>,
+    /// Optional facet mask (same semantics as CapabilityRef::allowed_effects).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_effects: Option<EffectMask>,
 }
 
 /// The c-list: the set of capabilities a cell holds.
@@ -80,6 +99,7 @@ impl CapabilitySet {
             permissions,
             breadstuff,
             expires_at: None,
+            allowed_effects: None,
         });
         Some(slot)
     }
@@ -101,6 +121,7 @@ impl CapabilitySet {
             permissions,
             breadstuff: None,
             expires_at: Some(expires_at),
+            allowed_effects: None,
         });
         Some(slot)
     }
@@ -124,6 +145,34 @@ impl CapabilitySet {
             permissions,
             breadstuff,
             expires_at,
+            allowed_effects: None,
+        });
+        Some(slot)
+    }
+
+    /// Grant a faceted capability: restricted to only certain effect types.
+    ///
+    /// This implements E-language facets: the capability holder can only exercise
+    /// the subset of operations described by `effect_mask`. For example, a
+    /// `FACET_TRANSFER_ONLY` capability allows sending value but not modifying
+    /// state fields or changing permissions.
+    ///
+    /// Returns the assigned slot number, or `None` if the slot counter would overflow.
+    pub fn grant_faceted(
+        &mut self,
+        target: CellId,
+        permissions: AuthRequired,
+        effect_mask: EffectMask,
+    ) -> Option<u32> {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        self.refs.push(CapabilityRef {
+            target,
+            slot,
+            permissions,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: Some(effect_mask),
         });
         Some(slot)
     }
@@ -186,6 +235,42 @@ impl CapabilitySet {
             permissions: narrower,
             breadstuff: existing.breadstuff,
             expires_at: existing.expires_at,
+            allowed_effects: existing.allowed_effects,
+        })
+    }
+
+    /// Attenuate a capability with a restricted effect mask (faceting).
+    ///
+    /// Like `attenuate`, but additionally narrows the allowed effects. The new
+    /// `effect_mask` must be a subset of the existing capability's mask (bitwise AND
+    /// must equal the new mask). This enforces that facets can only restrict, never
+    /// expand, the set of permitted operations.
+    ///
+    /// Returns `None` if:
+    /// - The slot doesn't exist
+    /// - `narrower` permissions are not actually narrower
+    /// - `effect_mask` attempts to enable bits not present in the original
+    pub fn attenuate_faceted(
+        &self,
+        slot: u32,
+        narrower: AuthRequired,
+        effect_mask: EffectMask,
+    ) -> Option<AttenuatedCap> {
+        let existing = self.lookup(slot)?;
+        if !narrower.is_narrower_or_equal(&existing.permissions) {
+            return None;
+        }
+        // Enforce monotonic narrowing of the effect mask.
+        let parent_mask = existing.allowed_effects.unwrap_or(crate::facet::EFFECT_ALL);
+        if !crate::facet::is_facet_attenuation(parent_mask, effect_mask) {
+            return None;
+        }
+        Some(AttenuatedCap {
+            target: existing.target,
+            permissions: narrower,
+            breadstuff: existing.breadstuff,
+            expires_at: existing.expires_at,
+            allowed_effects: Some(effect_mask),
         })
     }
 
@@ -203,6 +288,7 @@ impl CapabilitySet {
             permissions: cap.permissions,
             breadstuff: cap.breadstuff,
             expires_at: cap.expires_at,
+            allowed_effects: cap.allowed_effects,
         });
         Some(slot)
     }

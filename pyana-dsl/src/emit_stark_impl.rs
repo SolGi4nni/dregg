@@ -159,8 +159,39 @@ fn statement_degree(stmt: &Statement) -> usize {
     }
 }
 
+/// Check if the IR contains any Membership constraints (directly or inside match arms).
+fn has_membership_constraint(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        match stmt {
+            Statement::Require(req) => {
+                if matches!(req.kind, RequirementKind::Membership { .. }) {
+                    return true;
+                }
+            }
+            Statement::Mutate(_) => {}
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    if has_membership_constraint(&arm.body) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Main entry point: emit a struct + impl StarkAir for the given IR.
+///
+/// If the IR contains Membership constraints, no STARK impl is emitted because
+/// Membership requires explicit Merkle path columns that cannot be auto-generated.
 pub fn emit_stark_impl(ir: &ConstraintIr) -> TokenStream {
+    // Membership constraints cannot be compiled to a STARK AIR automatically.
+    // Skip STARK codegen entirely rather than emitting unsound BabyBear::ZERO.
+    if has_membership_constraint(&ir.statements) {
+        return TokenStream::new();
+    }
+
     let struct_name = format_ident!("{}Circuit", to_pascal_case(&ir.name.to_string()));
     let layout = compute_layout(ir);
     let width = layout.width;
@@ -362,31 +393,53 @@ fn emit_requirement_expr(
 ) -> TokenStream {
     match &req.kind {
         RequirementKind::LessEqual { left, right } => {
-            // Constraint: right - left >= 0, enforced as diff * (diff - bound) structure.
-            // Simplified: diff = right - left, constraint: diff_col - (right_col - left_col) == 0
-            // Plus: bit_col * (bit_col - 1) == 0 (binary check on sign bit).
-            // For a simple range check, emit: local[diff_col] - (right_expr - left_expr) == 0.
+            // Range check: right - left >= 0, proven via bit decomposition.
+            //
+            // Constraints emitted (combined into a single polynomial for alpha composition):
+            //   1. diff_col == right_col - left_col  (diff consistency)
+            //   2. bit_col * (bit_col - 1) == 0  (binary constraint on sign bit)
+            //   3. bit_col == 0  (high bit must be zero => non-negative in BabyBear)
+            //
+            // The prover fills diff_col = right - left, bit_col = 0 for valid witnesses.
+            // If diff is negative (wraps in the field), the prover cannot satisfy bit_col=0
+            // because the field representation of a negative number has its high bit set.
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
             let bit_col = layout.aux_start + *aux_idx + 1;
             *aux_idx += 2;
-            // The constraint is: diff_col holds (right - left), and bit_col is 0 (non-negative indicator).
-            // Simplified polynomial: local[diff_col] - local[right_col] + local[left_col]
-            // Combined with bit check.
             quote! {
-                (local[#diff_col] - local[#right_col] + local[#left_col])
+                {
+                    // Constraint 1: diff_col == right - left
+                    let diff_check = local[#diff_col] - local[#right_col] + local[#left_col];
+                    // Constraint 2: bit_col is binary (sign bit)
+                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
+                    // Constraint 3: bit_col == 0 (high bit must be zero for non-negative diff)
+                    let bit_zero = local[#bit_col];
+                    // Combine: all three must be zero
+                    diff_check + bit_binary + bit_zero
+                }
             }
         }
         RequirementKind::GreaterEqual { left, right } => {
-            // diff = left - right >= 0
+            // Range check: left - right >= 0, proven via bit decomposition.
+            // Same structure as LessEqual but diff = left - right.
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let _bit_col = layout.aux_start + *aux_idx + 1;
+            let bit_col = layout.aux_start + *aux_idx + 1;
             *aux_idx += 2;
             quote! {
-                (local[#diff_col] - local[#left_col] + local[#right_col])
+                {
+                    // Constraint 1: diff_col == left - right
+                    let diff_check = local[#diff_col] - local[#left_col] + local[#right_col];
+                    // Constraint 2: bit_col is binary (sign bit)
+                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
+                    // Constraint 3: bit_col == 0 (high bit must be zero for non-negative diff)
+                    let bit_zero = local[#bit_col];
+                    // Combine: all three must be zero
+                    diff_check + bit_binary + bit_zero
+                }
             }
         }
         RequirementKind::Equal { left, right } => {
@@ -407,10 +460,17 @@ fn emit_requirement_expr(
             }
         }
         RequirementKind::Membership { .. } => {
-            // For membership, simplified: the commitment root column must match.
-            // Full Merkle membership is complex; emit a placeholder constraint.
-            *aux_idx += 1; // skip the commitment root column
-            quote! { BabyBear::ZERO }
+            // Membership constraints require explicit Merkle path witness columns.
+            // This branch should be unreachable because emit_stark_impl() returns early
+            // when membership constraints are present, but emit a compile_error as a
+            // safety net in case the early-return check is bypassed.
+            *aux_idx += 1;
+            quote! {
+                compile_error!(
+                    "Membership constraints cannot be compiled to a STARK AIR automatically. \
+                     Use explicit Merkle path columns with Hash and Binary constraints."
+                )
+            }
         }
     }
 }
@@ -613,22 +673,26 @@ fn emit_aux_fill_statements(
                     let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
                     let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
                     let diff_col = layout.aux_start + *aux_idx;
-                    let _bit_col = layout.aux_start + *aux_idx + 1;
+                    let bit_col = layout.aux_start + *aux_idx + 1;
                     *aux_idx += 2;
                     stmts.push(quote! {
                         // diff = right - left (must be non-negative for valid witness)
                         row[#diff_col] = row[#right_col] - row[#left_col];
+                        // bit_col = 0 (sign bit; must be zero for non-negative diff)
+                        row[#bit_col] = BabyBear::ZERO;
                     });
                 }
                 RequirementKind::GreaterEqual { left, right } => {
                     let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
                     let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
                     let diff_col = layout.aux_start + *aux_idx;
-                    let _bit_col = layout.aux_start + *aux_idx + 1;
+                    let bit_col = layout.aux_start + *aux_idx + 1;
                     *aux_idx += 2;
                     stmts.push(quote! {
                         // diff = left - right (must be non-negative for valid witness)
                         row[#diff_col] = row[#left_col] - row[#right_col];
+                        // bit_col = 0 (sign bit; must be zero for non-negative diff)
+                        row[#bit_col] = BabyBear::ZERO;
                     });
                 }
                 RequirementKind::Equal { .. } => {

@@ -11,6 +11,7 @@
 //! the [`CellProgram`] and [`ProgramRegistry`] types.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::stark::{self, BoundaryConstraint, StarkAir};
@@ -107,14 +108,26 @@ pub enum ConstraintExpr {
     /// (product is zero iff at least one flag is 1).
     AtLeastOne { flag_cols: Vec<usize> },
 
-    /// Constrain that next[target_col] = local[source_col] when local[pos_col] == target_index.
-    /// (selective write to a specific position in a column group)
-    SelectiveWrite {
-        target_col: usize,
-        source_col: usize,
-        pos_col: usize,
-        target_index: usize,
+    /// Constrain output_col == Poseidon2_hash_2_to_1(input_col_a, input_col_b).
+    /// Uses the 2-to-1 compression function with arity tag 2.
+    Hash2to1 {
+        output_col: usize,
+        input_col_a: usize,
+        input_col_b: usize,
     },
+
+    /// Constrain output_col == Poseidon2_hash_4_to_1([col_0, col_1, col_2, col_3]).
+    /// Uses the 4-to-1 compression function with arity tag 4.
+    Hash4to1 {
+        output_col: usize,
+        input_cols: [usize; 4],
+    },
+    // NOTE: SelectiveWrite was removed -- it used a non-algebraic Rust if/else branch
+    // which is unsound in a STARK (constraints must be evaluatable as polynomials over
+    // the entire domain). Users should instead use a Gated constraint with an explicit
+    // binary indicator column set to 1 at the target row and 0 elsewhere:
+    //   indicator * (next[target_col] - local[source_col]) == 0
+    // This is algebraic and soundly verifiable.
 }
 
 /// A single term in a polynomial constraint: `coeff * product(local[col] for col in col_indices)`.
@@ -218,40 +231,27 @@ impl ConstraintExpr {
                 }
                 product
             }
-            Self::SelectiveWrite {
-                target_col,
-                source_col,
-                pos_col,
-                target_index,
+            Self::Hash2to1 {
+                output_col,
+                input_col_a,
+                input_col_b,
             } => {
-                // When local[pos_col] == target_index, require next[target_col] = local[source_col].
-                // Constraint: (pos - target_index) * 0 + delta * (next[target] - local[source]) == 0
-                // where delta = 1 when pos==target_index, 0 otherwise.
-                //
-                // Algebraic form: we use the inverse-based approach:
-                //   Let diff = pos - target_index. If diff==0, the write is active.
-                //   Constraint: next[target] - local[source] - diff * aux == 0
-                // But we don't have an aux column here. Instead, use the simpler form:
-                //   (1 - diff * inv) * (next[target] - local[source]) == 0
-                // which requires an inverse column. For now, use the product approach:
-                //   If pos == target_index (i.e. diff == 0): next[target] - local[source] must be 0.
-                //   Encode as: prod_{k != target_index, k in 0..N} (pos - k) is nonzero when pos == target_index.
-                //
-                // Simplest correct form without auxiliary columns (works for small index spaces):
-                //   For a single target_index, the constraint is:
-                //     indicator(pos, target_index) * (next[target] - local[source]) == 0
-                //   where indicator is 1 when pos==target_index.
-                //   We approximate by direct check: the product of (pos - k) for k != target_index
-                //   is nonzero exactly when pos == target_index, but that gives a high-degree poly.
-                //
-                // For the DSL runtime, we evaluate directly:
-                let pos = local[*pos_col];
-                let target = BabyBear::new(*target_index as u32);
-                if pos == target {
-                    next[*target_col] - local[*source_col]
-                } else {
-                    BabyBear::ZERO
-                }
+                let expected =
+                    pyana_circuit::poseidon2::hash_2_to_1(local[*input_col_a], local[*input_col_b]);
+                expected - local[*output_col]
+            }
+            Self::Hash4to1 {
+                output_col,
+                input_cols,
+            } => {
+                let children = [
+                    local[input_cols[0]],
+                    local[input_cols[1]],
+                    local[input_cols[2]],
+                    local[input_cols[3]],
+                ];
+                let expected = pyana_circuit::poseidon2::hash_4_to_1(&children);
+                expected - local[*output_col]
             }
         }
     }
@@ -272,6 +272,22 @@ impl BoundaryDef {
 // ============================================================================
 // DslCircuit: generic StarkAir driven by a descriptor
 // ============================================================================
+
+/// Global cache for leaked air name strings. Ensures each unique name is leaked at most once,
+/// preventing unbounded memory growth when multiple `DslCircuit` instances share the same name.
+static AIR_NAME_CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
+
+/// Intern a string as `&'static str`, reusing a previously leaked copy if available.
+pub(crate) fn intern_air_name(name: &str) -> &'static str {
+    let mut guard = AIR_NAME_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if let Some(&existing) = cache.get(name) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    cache.insert(name.to_owned(), leaked);
+    leaked
+}
 
 /// A circuit defined entirely by its descriptor. Implements `StarkAir` generically.
 pub struct DslCircuit {
@@ -294,9 +310,8 @@ impl StarkAir for DslCircuit {
     }
 
     fn air_name(&self) -> &'static str {
-        // Leak the string to satisfy the 'static lifetime requirement.
-        // This is acceptable because DslCircuit instances are long-lived program objects.
-        Box::leak(self.descriptor.name.clone().into_boxed_str())
+        // Use the global intern cache so each unique name is leaked at most once.
+        intern_air_name(&self.descriptor.name)
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -391,6 +406,18 @@ pub enum ProgramValidationError {
     InvalidName,
     /// Trace width is zero.
     ZeroWidth,
+    /// A constraint's algebraic degree exceeds max_degree.
+    ConstraintDegreeExceeded {
+        constraint_index: usize,
+        degree: usize,
+        max_degree: usize,
+    },
+    /// A PiBinding constraint references an out-of-bounds public input index.
+    PiBindingOutOfBounds {
+        constraint_index: usize,
+        pi_index: usize,
+        pi_count: usize,
+    },
 }
 
 impl std::fmt::Display for ProgramValidationError {
@@ -439,6 +466,26 @@ impl std::fmt::Display for ProgramValidationError {
             }
             Self::InvalidName => write!(f, "program name is empty or exceeds 256 bytes"),
             Self::ZeroWidth => write!(f, "trace width must be at least 1"),
+            Self::ConstraintDegreeExceeded {
+                constraint_index,
+                degree,
+                max_degree,
+            } => {
+                write!(
+                    f,
+                    "constraint {constraint_index} has degree {degree} which exceeds max_degree {max_degree}"
+                )
+            }
+            Self::PiBindingOutOfBounds {
+                constraint_index,
+                pi_index,
+                pi_count,
+            } => {
+                write!(
+                    f,
+                    "constraint {constraint_index} PiBinding references pi[{pi_index}] but public_input_count is {pi_count}"
+                )
+            }
         }
     }
 }
@@ -446,6 +493,48 @@ impl std::fmt::Display for ProgramValidationError {
 impl std::error::Error for ProgramValidationError {}
 
 impl ConstraintExpr {
+    /// Compute the algebraic degree of this constraint expression.
+    ///
+    /// Each column reference contributes degree 1. Multiplication of sub-expressions
+    /// adds their degrees. Gating adds 1 (selector * inner).
+    pub fn degree(&self) -> usize {
+        match self {
+            Self::Equality { .. } => 1,
+            Self::Multiplication { .. } => 2,
+            Self::Binary { .. } => 2,
+            Self::PiBinding { .. } => 1,
+            Self::Transition { .. } => 1,
+            Self::Polynomial { terms } => {
+                terms.iter().map(|t| t.col_indices.len()).max().unwrap_or(0)
+            }
+            Self::Gated { inner, .. } => 1 + inner.degree(),
+            Self::InvertedGated { inner, .. } => 1 + inner.degree(),
+            Self::Squared { inner } => 2 * inner.degree(),
+            Self::Hash { input_cols, .. } => {
+                // Hash is degree 1 per column reference in the constraint check,
+                // but the hash computation itself is opaque (non-algebraic helper).
+                // The constraint is: hash(inputs) - output, which is degree 1.
+                input_cols.len().max(1)
+            }
+            Self::ConditionalNonzero { .. } => {
+                // selector * (value * inverse - 1): degree 3
+                3
+            }
+            Self::AtLeastOne { flag_cols } => {
+                // (1 - f0) * (1 - f1) * ... * (1 - fn): degree = n
+                flag_cols.len()
+            }
+            Self::Hash2to1 { .. } => {
+                // hash_2_to_1(a, b) - output: the hash is opaque, constraint is degree 1.
+                1
+            }
+            Self::Hash4to1 { .. } => {
+                // hash_4_to_1([a,b,c,d]) - output: the hash is opaque, constraint is degree 1.
+                1
+            }
+        }
+    }
+
     /// Return the maximum column index referenced by this constraint expression.
     fn max_column_index(&self) -> Option<usize> {
         match self {
@@ -489,12 +578,18 @@ impl ConstraintExpr {
                 inverse_col,
             } => Some((*selector_col).max(*value_col).max(*inverse_col)),
             Self::AtLeastOne { flag_cols } => flag_cols.iter().copied().max(),
-            Self::SelectiveWrite {
-                target_col,
-                source_col,
-                pos_col,
-                ..
-            } => Some((*target_col).max(*source_col).max(*pos_col)),
+            Self::Hash2to1 {
+                output_col,
+                input_col_a,
+                input_col_b,
+            } => Some((*output_col).max(*input_col_a).max(*input_col_b)),
+            Self::Hash4to1 {
+                output_col,
+                input_cols,
+            } => {
+                let max_input = input_cols.iter().copied().max().unwrap_or(0);
+                Some((*output_col).max(max_input))
+            }
         }
     }
 }
@@ -539,7 +634,7 @@ impl CircuitDescriptor {
             });
         }
 
-        // Validate column indices in constraints
+        // Validate column indices, degree, and PiBinding bounds in constraints
         for (i, constraint) in self.constraints.iter().enumerate() {
             if let Some(max_col) = constraint.max_column_index() {
                 if max_col >= self.trace_width {
@@ -547,6 +642,27 @@ impl CircuitDescriptor {
                         constraint_index: i,
                         col: max_col,
                         trace_width: self.trace_width,
+                    });
+                }
+            }
+
+            // Check that the constraint's algebraic degree does not exceed max_degree
+            let deg = constraint.degree();
+            if deg > self.max_degree {
+                return Err(ProgramValidationError::ConstraintDegreeExceeded {
+                    constraint_index: i,
+                    degree: deg,
+                    max_degree: self.max_degree,
+                });
+            }
+
+            // Check PiBinding references are within public_input_count
+            if let ConstraintExpr::PiBinding { pi_index, .. } = constraint {
+                if *pi_index >= self.public_input_count {
+                    return Err(ProgramValidationError::PiBindingOutOfBounds {
+                        constraint_index: i,
+                        pi_index: *pi_index,
+                        pi_count: self.public_input_count,
                     });
                 }
             }

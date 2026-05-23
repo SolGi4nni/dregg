@@ -1,47 +1,32 @@
-//! Temporal predicate expressed as a CircuitDescriptor.
+//! Temporal predicate expressed as a CircuitDescriptor — complete replacement for
+//! `circuit/src/temporal_predicate_air.rs`.
 //!
-//! Demonstrates the DSL runtime's ability to handle MULTI-ROW proofs with
-//! row-to-row (transition) constraints. This is the key test for proving that
-//! the `ConstraintExpr::Transition` variant correctly enforces relationships
-//! between consecutive rows.
-//!
-//! # What this proves
-//!
-//! "Attribute X >= threshold for N consecutive blocks."
+//! Proves that a property held CONTINUOUSLY over a range of steps in the IVC chain.
+//! The proof is bound to the chain state via state roots at each step and exposes
+//! all relevant parameters as public inputs for verifier inspection.
 //!
 //! # Trace layout (per row)
 //!
-//! | Column | Name           | Description                              |
-//! |--------|----------------|------------------------------------------|
-//! | 0      | value          | The attribute value at this block        |
-//! | 1      | threshold      | Constant threshold across all rows       |
-//! | 2      | diff           | value - threshold                        |
-//! | 3..32  | diff_bits[0..29] | Bit decomposition proving diff >= 0   |
-//! | 33     | accumulator    | Running step counter (1, 2, ..., N)      |
-//! | 34     | step_index     | Step index (0, 1, ..., N-1)              |
-//! | 35     | acc_plus_one   | accumulator + 1 (auxiliary for transition)|
-//! | 36     | step_plus_one  | step_index + 1 (auxiliary for transition) |
+//! | Column | Name           | Description                                    |
+//! |--------|----------------|------------------------------------------------|
+//! | 0      | value          | The attribute value at this block               |
+//! | 1      | threshold      | Constant threshold across all rows              |
+//! | 2      | diff           | Computed difference (depends on predicate_type) |
+//! | 3..32  | diff_bits[0..29] | Bit decomposition proving diff >= 0          |
+//! | 33     | accumulator    | Running step counter (1, 2, ..., N)            |
+//! | 34     | step_index     | Step index (0, 1, ..., N-1)                    |
+//! | 35     | state_root     | The state root at this step (IVC chain binding)|
+//! | 36     | acc_plus_one   | accumulator + 1 (auxiliary for transition)     |
+//! | 37     | step_plus_one  | step_index + 1 (auxiliary for transition)      |
+//! | 38     | diff_inv       | Inverse of diff (for Neq predicate only)       |
+//! | 39     | neq_selector   | 1 when Neq predicate is active, 0 otherwise   |
 //!
-//! # Constraints
+//! # Public Inputs
 //!
-//! Per-row:
-//! - diff = value - threshold (Polynomial)
-//! - Each diff_bit is binary (Binary)
-//! - Bit reconstruction: sum(diff_bits[i] * 2^i) = diff (Polynomial)
-//! - High bit is zero: diff_bits[29] = 0 (proves diff < 2^30, i.e., non-negative)
-//! - acc_plus_one = accumulator + 1 (Polynomial)
-//! - step_plus_one = step_index + 1 (Polynomial)
-//!
-//! Transition:
-//! - next[accumulator] = local[acc_plus_one] (Transition)
-//! - next[step_index] = local[step_plus_one] (Transition)
-//!
-//! Boundary:
-//! - row(0).accumulator = 1 (Fixed)
-//! - row(last).accumulator = num_steps (PiBinding to public_input[0])
-//! - row(0).step_index = 0 (Fixed)
+//! `[threshold, num_steps, initial_state_root, final_state_root]`
 
 use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use pyana_circuit::predicate_air::PredicateType;
 use pyana_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
@@ -57,26 +42,69 @@ pub const DIFF_BITS_START: usize = 3;
 pub const NUM_DIFF_BITS: usize = 30;
 pub const ACCUMULATOR: usize = DIFF_BITS_START + NUM_DIFF_BITS; // 33
 pub const STEP_INDEX: usize = ACCUMULATOR + 1; // 34
-pub const ACC_PLUS_ONE: usize = STEP_INDEX + 1; // 35
-pub const STEP_PLUS_ONE: usize = ACC_PLUS_ONE + 1; // 36
-pub const TRACE_WIDTH: usize = STEP_PLUS_ONE + 1; // 37
+pub const STATE_ROOT: usize = STEP_INDEX + 1; // 35
+pub const ACC_PLUS_ONE: usize = STATE_ROOT + 1; // 36
+pub const STEP_PLUS_ONE: usize = ACC_PLUS_ONE + 1; // 37
+pub const DIFF_INV: usize = STEP_PLUS_ONE + 1; // 38
+pub const NEQ_SELECTOR: usize = DIFF_INV + 1; // 39
+pub const TRACE_WIDTH: usize = NEQ_SELECTOR + 1; // 40
 
-/// Public input layout: [num_steps]
-pub const PI_NUM_STEPS: usize = 0;
-pub const PUBLIC_INPUT_COUNT: usize = 1;
+pub const PI_THRESHOLD: usize = 0;
+pub const PI_NUM_STEPS: usize = 1;
+pub const PI_INITIAL_STATE_ROOT: usize = 2;
+pub const PI_FINAL_STATE_ROOT: usize = 3;
+pub const PUBLIC_INPUT_COUNT: usize = 4;
+
+// ============================================================================
+// Predicate type encoding
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalPredicateKind {
+    Gte,
+    Lte,
+    Gt,
+    Lt,
+    Neq,
+    InRangeLow,
+    InRangeHigh,
+}
+
+impl From<PredicateType> for TemporalPredicateKind {
+    fn from(pt: PredicateType) -> Self {
+        match pt {
+            PredicateType::Gte => Self::Gte,
+            PredicateType::Lte => Self::Lte,
+            PredicateType::Gt => Self::Gt,
+            PredicateType::Lt => Self::Lt,
+            PredicateType::Neq => Self::Neq,
+            PredicateType::InRangeLow => Self::InRangeLow,
+            PredicateType::InRangeHigh => Self::InRangeHigh,
+        }
+    }
+}
+
+impl From<TemporalPredicateKind> for PredicateType {
+    fn from(kind: TemporalPredicateKind) -> Self {
+        match kind {
+            TemporalPredicateKind::Gte => Self::Gte,
+            TemporalPredicateKind::Lte => Self::Lte,
+            TemporalPredicateKind::Gt => Self::Gt,
+            TemporalPredicateKind::Lt => Self::Lt,
+            TemporalPredicateKind::Neq => Self::Neq,
+            TemporalPredicateKind::InRangeLow => Self::InRangeLow,
+            TemporalPredicateKind::InRangeHigh => Self::InRangeHigh,
+        }
+    }
+}
 
 // ============================================================================
 // Descriptor construction
 // ============================================================================
 
-/// Build the temporal predicate `CircuitDescriptor`.
-///
-/// This descriptor encodes:
-/// - Per-row arithmetic (diff computation, binary checks, bit reconstruction)
-/// - Transition constraints (accumulator/step increment via auxiliary columns)
-/// - Boundary constraints (first row initialization, last row public input binding)
-pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
+pub fn temporal_predicate_descriptor(predicate_kind: TemporalPredicateKind) -> CircuitDescriptor {
     let neg_one = BabyBear::new(BABYBEAR_P - 1);
+    let is_neq = predicate_kind == TemporalPredicateKind::Neq;
 
     let mut columns = Vec::with_capacity(TRACE_WIDTH);
     columns.push(ColumnDef {
@@ -112,6 +140,11 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
         kind: ColumnKind::Value,
     });
     columns.push(ColumnDef {
+        name: "state_root".into(),
+        index: STATE_ROOT,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
         name: "acc_plus_one".into(),
         index: ACC_PLUS_ONE,
         kind: ColumnKind::Value,
@@ -121,71 +154,158 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
         index: STEP_PLUS_ONE,
         kind: ColumnKind::Value,
     });
+    columns.push(ColumnDef {
+        name: "diff_inv".into(),
+        index: DIFF_INV,
+        kind: ColumnKind::Value,
+    });
+    columns.push(ColumnDef {
+        name: "neq_selector".into(),
+        index: NEQ_SELECTOR,
+        kind: ColumnKind::Selector,
+    });
 
     let mut constraints = Vec::new();
 
-    // ─── C1: diff = value - threshold ────────────────────────────────────────
-    // Expressed as: diff - value + threshold == 0
-    // => +1*diff + (-1)*value + (+1)*threshold == 0
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![DIFF],
-            },
-            PolyTerm {
-                coeff: neg_one,
-                col_indices: vec![VALUE],
-            },
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![THRESHOLD],
-            },
-        ],
-    });
+    // C1: diff computation
+    match predicate_kind {
+        TemporalPredicateKind::Gte
+        | TemporalPredicateKind::InRangeLow
+        | TemporalPredicateKind::Neq => {
+            constraints.push(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![DIFF],
+                    },
+                    PolyTerm {
+                        coeff: neg_one,
+                        col_indices: vec![VALUE],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![THRESHOLD],
+                    },
+                ],
+            });
+        }
+        TemporalPredicateKind::Lte | TemporalPredicateKind::InRangeHigh => {
+            constraints.push(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![DIFF],
+                    },
+                    PolyTerm {
+                        coeff: neg_one,
+                        col_indices: vec![THRESHOLD],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![VALUE],
+                    },
+                ],
+            });
+        }
+        TemporalPredicateKind::Gt => {
+            constraints.push(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![DIFF],
+                    },
+                    PolyTerm {
+                        coeff: neg_one,
+                        col_indices: vec![VALUE],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![THRESHOLD],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![],
+                    },
+                ],
+            });
+        }
+        TemporalPredicateKind::Lt => {
+            constraints.push(ConstraintExpr::Polynomial {
+                terms: vec![
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![DIFF],
+                    },
+                    PolyTerm {
+                        coeff: neg_one,
+                        col_indices: vec![THRESHOLD],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![VALUE],
+                    },
+                    PolyTerm {
+                        coeff: BabyBear::ONE,
+                        col_indices: vec![],
+                    },
+                ],
+            });
+        }
+    }
 
-    // ─── C2: Each diff_bit is binary ─────────────────────────────────────────
+    // C2: diff_bits binary
     for i in 0..NUM_DIFF_BITS {
         constraints.push(ConstraintExpr::Binary {
             col: DIFF_BITS_START + i,
         });
     }
 
-    // ─── C3: Bit reconstruction matches diff ─────────────────────────────────
-    // sum(diff_bits[i] * 2^i) - diff == 0
-    // => +2^0 * bit_0 + 2^1 * bit_1 + ... + 2^29 * bit_29 + (-1) * diff == 0
+    // C3: bit reconstruction (gated off for Neq)
     {
         let mut terms = Vec::with_capacity(NUM_DIFF_BITS + 1);
-        let mut power_of_two = 1u32;
+        let mut pow2 = 1u32;
         for i in 0..NUM_DIFF_BITS {
             terms.push(PolyTerm {
-                coeff: BabyBear::new(power_of_two),
+                coeff: BabyBear::new(pow2),
                 col_indices: vec![DIFF_BITS_START + i],
             });
-            power_of_two = power_of_two.wrapping_mul(2);
-            // Keep within BabyBear field -- all powers of 2 up to 2^29 fit in u32
+            pow2 = pow2.wrapping_mul(2);
         }
-        // Subtract diff
         terms.push(PolyTerm {
             coeff: neg_one,
             col_indices: vec![DIFF],
         });
-        constraints.push(ConstraintExpr::Polynomial { terms });
+        if is_neq {
+            constraints.push(ConstraintExpr::InvertedGated {
+                selector_col: NEQ_SELECTOR,
+                inner: Box::new(ConstraintExpr::Polynomial { terms }),
+            });
+        } else {
+            constraints.push(ConstraintExpr::Polynomial { terms });
+        }
     }
 
-    // ─── C4: High bit is zero (range proof: diff < 2^30) ────────────────────
-    // diff_bits[29] == 0 is equivalent to a Polynomial with a single term.
-    // We use Binary on bit 29 is already covered above (bit*(bit-1)==0), but
-    // we also need bit_29 == 0 specifically. Express as: +1 * diff_bits[29] == 0.
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![DIFF_BITS_START + NUM_DIFF_BITS - 1],
-        }],
-    });
+    // C4: high bit zero (gated off for Neq)
+    if is_neq {
+        constraints.push(ConstraintExpr::InvertedGated {
+            selector_col: NEQ_SELECTOR,
+            inner: Box::new(ConstraintExpr::Polynomial {
+                terms: vec![PolyTerm {
+                    coeff: BabyBear::ONE,
+                    col_indices: vec![DIFF_BITS_START + NUM_DIFF_BITS - 1],
+                }],
+            }),
+        });
+    } else {
+        constraints.push(ConstraintExpr::Polynomial {
+            terms: vec![PolyTerm {
+                coeff: BabyBear::ONE,
+                col_indices: vec![DIFF_BITS_START + NUM_DIFF_BITS - 1],
+            }],
+        });
+    }
 
-    // ─── C5: acc_plus_one = accumulator + 1 ─────────────────────────────────
-    // acc_plus_one - accumulator - 1 == 0
+    // C5: acc_plus_one = accumulator + 1
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
             PolyTerm {
@@ -199,12 +319,11 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
             PolyTerm {
                 coeff: neg_one,
                 col_indices: vec![],
-            }, // constant -1
+            },
         ],
     });
 
-    // ─── C6: step_plus_one = step_index + 1 ─────────────────────────────────
-    // step_plus_one - step_index - 1 == 0
+    // C6: step_plus_one = step_index + 1
     constraints.push(ConstraintExpr::Polynomial {
         terms: vec![
             PolyTerm {
@@ -218,48 +337,72 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
             PolyTerm {
                 coeff: neg_one,
                 col_indices: vec![],
-            }, // constant -1
+            },
         ],
     });
 
-    // ─── C7: Transition: next[accumulator] == local[acc_plus_one] ────────────
+    // C7: threshold = pi[0]
+    constraints.push(ConstraintExpr::PiBinding {
+        col: THRESHOLD,
+        pi_index: PI_THRESHOLD,
+    });
+
+    // C8: Neq nonzero proof
+    if is_neq {
+        constraints.push(ConstraintExpr::ConditionalNonzero {
+            selector_col: NEQ_SELECTOR,
+            value_col: DIFF,
+            inverse_col: DIFF_INV,
+        });
+    }
+
+    // C9: neq_selector binary
+    constraints.push(ConstraintExpr::Binary { col: NEQ_SELECTOR });
+
+    // C10/C11: transitions
     constraints.push(ConstraintExpr::Transition {
         next_col: ACCUMULATOR,
         local_col: ACC_PLUS_ONE,
     });
-
-    // ─── C8: Transition: next[step_index] == local[step_plus_one] ────────────
     constraints.push(ConstraintExpr::Transition {
         next_col: STEP_INDEX,
         local_col: STEP_PLUS_ONE,
     });
 
-    // ─── Boundaries ──────────────────────────────────────────────────────────
     let boundaries = vec![
-        // First row: accumulator = 1
         BoundaryDef::Fixed {
             row: BoundaryRow::First,
             col: ACCUMULATOR,
             value: BabyBear::ONE,
         },
-        // First row: step_index = 0
         BoundaryDef::Fixed {
             row: BoundaryRow::First,
             col: STEP_INDEX,
             value: BabyBear::ZERO,
         },
-        // Last row: accumulator = num_steps (public input 0)
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: STATE_ROOT,
+            pi_index: PI_INITIAL_STATE_ROOT,
+        },
         BoundaryDef::PiBinding {
             row: BoundaryRow::Last,
             col: ACCUMULATOR,
             pi_index: PI_NUM_STEPS,
         },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Last,
+            col: STATE_ROOT,
+            pi_index: PI_FINAL_STATE_ROOT,
+        },
     ];
 
+    let max_degree = if is_neq { 3 } else { 2 };
+
     CircuitDescriptor {
-        name: "pyana-temporal-predicate-dsl-v1".into(),
+        name: "pyana-temporal-predicate-dsl-v2".into(),
         trace_width: TRACE_WIDTH,
-        max_degree: 2,
+        max_degree,
         columns,
         constraints,
         boundaries,
@@ -271,66 +414,178 @@ pub fn temporal_predicate_descriptor() -> CircuitDescriptor {
 // Trace generation
 // ============================================================================
 
-/// Generate a valid temporal predicate trace.
-///
-/// Each row represents one block where `value >= threshold`.
-/// The trace must have at least 2 rows (STARK requirement) and be a power of 2.
-///
-/// Returns `(trace, public_inputs)`.
 pub fn generate_temporal_trace(
     values: &[u32],
+    state_roots: &[BabyBear],
     threshold: u32,
+    predicate_kind: TemporalPredicateKind,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let num_steps = values.len();
     assert!(num_steps >= 1, "need at least 1 step");
+    assert_eq!(
+        values.len(),
+        state_roots.len(),
+        "values and state_roots must have same length"
+    );
 
-    // Pad to power of 2, minimum 2.
+    let is_neq = predicate_kind == TemporalPredicateKind::Neq;
     let padded_len = num_steps.next_power_of_two().max(2);
-
     let mut trace = Vec::with_capacity(padded_len);
 
     for step in 0..padded_len {
         let mut row = vec![BabyBear::ZERO; TRACE_WIDTH];
-
-        // For padding rows beyond num_steps, repeat the last real row's value.
         let val = if step < num_steps {
             values[step]
         } else {
             values[num_steps - 1]
         };
+        let sr = if step < num_steps {
+            state_roots[step]
+        } else {
+            *state_roots.last().unwrap()
+        };
 
-        row[VALUE] = BabyBear::new(val);
-        row[THRESHOLD] = BabyBear::new(threshold);
+        let val_field = BabyBear::new(val);
+        let thresh_field = BabyBear::new(threshold);
+        row[VALUE] = val_field;
+        row[THRESHOLD] = thresh_field;
+        row[STATE_ROOT] = sr;
 
-        // diff = value - threshold (wraps in field if value < threshold)
-        let diff = val.wrapping_sub(threshold);
-        row[DIFF] = BabyBear::new(diff);
+        let diff_field = match predicate_kind {
+            TemporalPredicateKind::Gte
+            | TemporalPredicateKind::InRangeLow
+            | TemporalPredicateKind::Neq => val_field - thresh_field,
+            TemporalPredicateKind::Lte | TemporalPredicateKind::InRangeHigh => {
+                thresh_field - val_field
+            }
+            TemporalPredicateKind::Gt => val_field - thresh_field - BabyBear::ONE,
+            TemporalPredicateKind::Lt => thresh_field - val_field - BabyBear::ONE,
+        };
+        row[DIFF] = diff_field;
 
-        // Bit decomposition of diff
-        for i in 0..NUM_DIFF_BITS {
-            row[DIFF_BITS_START + i] = BabyBear::new((diff >> i) & 1);
+        if !is_neq {
+            let dv = diff_field.as_u32();
+            for i in 0..NUM_DIFF_BITS {
+                row[DIFF_BITS_START + i] = BabyBear::new((dv >> i) & 1);
+            }
         }
 
-        // Accumulator: 1-indexed (step 0 -> acc = 1, step 1 -> acc = 2, ...)
+        if is_neq {
+            row[NEQ_SELECTOR] = BabyBear::ONE;
+            if let Some(inv) = diff_field.inverse() {
+                row[DIFF_INV] = inv;
+            }
+        }
+
         let acc = (step + 1) as u32;
         row[ACCUMULATOR] = BabyBear::new(acc);
-
-        // Step index: 0-indexed
         row[STEP_INDEX] = BabyBear::new(step as u32);
-
-        // Auxiliary: acc + 1
         row[ACC_PLUS_ONE] = BabyBear::new(acc + 1);
-
-        // Auxiliary: step + 1
         row[STEP_PLUS_ONE] = BabyBear::new(step as u32 + 1);
-
         trace.push(row);
     }
 
-    // Public inputs: the padded trace length is what the last-row boundary checks.
-    let public_inputs = vec![BabyBear::new(padded_len as u32)];
-
+    let public_inputs = vec![
+        BabyBear::new(threshold),
+        BabyBear::new(padded_len as u32),
+        state_roots[0],
+        *state_roots.last().unwrap(),
+    ];
     (trace, public_inputs)
+}
+
+// ============================================================================
+// Intent integration
+// ============================================================================
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TemporalRequirement {
+    pub attribute: String,
+    pub predicate_kind: TemporalPredicateKind,
+    pub threshold: u32,
+    pub min_duration_steps: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct TemporalProofClaim {
+    pub predicate_kind: TemporalPredicateKind,
+    pub threshold: u32,
+    pub num_steps: u32,
+    pub padded_len: u32,
+    pub initial_state_root: BabyBear,
+    pub final_state_root: BabyBear,
+}
+
+impl TemporalRequirement {
+    pub fn is_satisfied_by(&self, claim: &TemporalProofClaim) -> bool {
+        claim.predicate_kind == self.predicate_kind
+            && claim.threshold >= self.threshold
+            && claim.num_steps >= self.min_duration_steps
+    }
+}
+
+// ============================================================================
+// Prove / Verify
+// ============================================================================
+
+pub fn is_satisfiable(values: &[u32], threshold: u32, pk: TemporalPredicateKind) -> bool {
+    if values.is_empty() {
+        return false;
+    }
+    values.iter().all(|&v| match pk {
+        TemporalPredicateKind::Gte | TemporalPredicateKind::InRangeLow => v >= threshold,
+        TemporalPredicateKind::Lte | TemporalPredicateKind::InRangeHigh => v <= threshold,
+        TemporalPredicateKind::Gt => v > threshold,
+        TemporalPredicateKind::Lt => v < threshold,
+        TemporalPredicateKind::Neq => v != threshold,
+    })
+}
+
+pub fn prove_temporal(
+    values: &[u32],
+    state_roots: &[BabyBear],
+    threshold: u32,
+    pk: TemporalPredicateKind,
+) -> Option<TemporalProofClaim> {
+    use pyana_circuit::stark;
+    use pyana_dsl_runtime::circuit::DslCircuit;
+    if values.len() != state_roots.len() {
+        return None;
+    }
+    if !is_satisfiable(values, threshold, pk) {
+        return None;
+    }
+    let num_steps = values.len() as u32;
+    let circuit = DslCircuit::new(temporal_predicate_descriptor(pk));
+    let (trace, pi) = generate_temporal_trace(values, state_roots, threshold, pk);
+    let padded_len = trace.len() as u32;
+    let proof = stark::prove(&circuit, &trace, &pi);
+    if stark::verify(&circuit, &proof, &pi).is_err() {
+        return None;
+    }
+    Some(TemporalProofClaim {
+        predicate_kind: pk,
+        threshold,
+        num_steps,
+        padded_len,
+        initial_state_root: state_roots[0],
+        final_state_root: *state_roots.last().unwrap(),
+    })
+}
+
+pub fn verify_temporal(
+    claim: &TemporalProofClaim,
+    threshold: u32,
+    num_steps: u32,
+    initial_root: BabyBear,
+    final_root: BabyBear,
+) -> bool {
+    claim.threshold == threshold
+        && claim.num_steps == num_steps
+        && claim.initial_state_root == initial_root
+        && claim.final_state_root == final_root
+        && claim.padded_len >= claim.num_steps
+        && claim.padded_len.is_power_of_two()
 }
 
 // ============================================================================
@@ -343,227 +598,413 @@ mod tests {
     use pyana_circuit::stark::{self, StarkAir};
     use pyana_dsl_runtime::circuit::DslCircuit;
 
-    // ========================================================================
-    // Test 1: Valid trace -- all constraints evaluate to zero
-    // ========================================================================
-
-    #[test]
-    fn test_temporal_dsl_valid_trace() {
-        let descriptor = temporal_predicate_descriptor();
-        assert!(descriptor.validate().is_ok(), "descriptor should be valid");
-
-        let circuit = DslCircuit::new(descriptor);
-
-        // 3 steps, value=100, threshold=50 => diff=50 for all rows
-        let values = vec![100u32, 100, 100];
-        let threshold = 50u32;
-        let (trace, public_inputs) = generate_temporal_trace(&values, threshold);
-
-        // Padded to 4 rows (next power of 2 from 3).
-        assert_eq!(trace.len(), 4);
-
-        // Verify per-row + transition constraints evaluate to zero.
-        let alpha = BabyBear::new(7);
-        for i in 0..trace.len() - 1 {
-            let result = circuit.eval_constraints(&trace[i], &trace[i + 1], &public_inputs, alpha);
-            assert_eq!(
-                result,
-                BabyBear::ZERO,
-                "Constraint nonzero at row {i} (valid trace)"
-            );
-        }
-
-        // Verify accumulator reaches expected value at last row.
-        let last_acc = trace.last().unwrap()[ACCUMULATOR];
-        assert_eq!(
-            last_acc,
-            BabyBear::new(4),
-            "accumulator should reach padded_len=4"
-        );
-
-        // Full STARK prove/verify cycle.
-        let proof = stark::prove(&circuit, &trace, &public_inputs);
-        let result = stark::verify(&circuit, &proof, &public_inputs);
-        assert!(
-            result.is_ok(),
-            "STARK verify failed on valid trace: {:?}",
-            result.err()
-        );
+    fn test_state_roots(n: usize) -> Vec<BabyBear> {
+        (0..n).map(|i| BabyBear::new(1000 + i as u32)).collect()
     }
 
-    // ========================================================================
-    // Test 2: Invalid trace -- value < threshold at step 2
-    // ========================================================================
+    #[test]
+    fn test_temporal_dsl_valid_trace_gte() {
+        let pk = TemporalPredicateKind::Gte;
+        let d = temporal_predicate_descriptor(pk);
+        assert!(d.validate().is_ok());
+        let c = DslCircuit::new(d);
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
+        assert_eq!(trace.len(), 4);
+        let alpha = BabyBear::new(7);
+        for i in 0..trace.len() - 1 {
+            assert_eq!(
+                c.eval_constraints(&trace[i], &trace[i + 1], &pi, alpha),
+                BabyBear::ZERO,
+                "row {i}"
+            );
+        }
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
 
     #[test]
     fn test_temporal_dsl_invalid_value_below_threshold() {
-        let descriptor = temporal_predicate_descriptor();
-        let circuit = DslCircuit::new(descriptor);
-
-        // Step 1: value=100 (ok), Step 2: value=30 (BAD: 30 < 50), Step 3: value=100
-        let values = vec![100u32, 30, 100];
-        let threshold = 50u32;
-
-        // Generate trace manually (the generator naively computes, we check constraints)
-        let (trace, public_inputs) = generate_temporal_trace(&values, threshold);
-
-        // Row 1 (index 1) has value=30, threshold=50.
-        // diff = 30 - 50 = wrapping subtraction in u32 = a huge number.
-        // The bit decomposition of that huge number will have bit 29 set (since it
-        // represents a number >= 2^30 in the field). The "high bit zero" constraint
-        // will be nonzero.
-        let alpha = BabyBear::new(7);
-        let row1_result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
+        let pk = TemporalPredicateKind::Gte;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 30, 100], &sr, 50, pk);
         assert_ne!(
-            row1_result,
-            BabyBear::ZERO,
-            "Constraint should be nonzero at row 1 where value < threshold"
+            c.eval_constraints(&trace[1], &trace[2], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
         );
     }
-
-    // ========================================================================
-    // Test 3: Invalid trace -- accumulator gap (skip step)
-    // ========================================================================
 
     #[test]
     fn test_temporal_dsl_invalid_accumulator_gap() {
-        let descriptor = temporal_predicate_descriptor();
-        let circuit = DslCircuit::new(descriptor);
-
-        // Build a valid trace, then corrupt the accumulator at row 2
-        // to create a gap (skip from acc=2 to acc=4).
-        let values = vec![100u32, 100, 100];
-        let threshold = 50u32;
-        let (mut trace, public_inputs) = generate_temporal_trace(&values, threshold);
-
-        // Corrupt row 2: set accumulator to 4 instead of 3
+        let pk = TemporalPredicateKind::Gte;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (mut trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
         trace[2][ACCUMULATOR] = BabyBear::new(4);
-        // Also update acc_plus_one to be consistent with the corrupt accumulator
         trace[2][ACC_PLUS_ONE] = BabyBear::new(5);
-
-        // The transition constraint at row 1 -> row 2 checks:
-        // next[ACCUMULATOR] == local[ACC_PLUS_ONE]
-        // local[ACC_PLUS_ONE] at row 1 = 3 (since acc at row 1 = 2, so 2+1=3)
-        // next[ACCUMULATOR] at row 2 = 4 (corrupted)
-        // => Transition evaluates to 4 - 3 = 1 (nonzero!)
-        let alpha = BabyBear::new(7);
-        let result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Transition constraint should be nonzero when accumulator has a gap"
+            c.eval_constraints(&trace[1], &trace[2], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
         );
-
-        // Additionally, the per-row constraint at row 2 for acc_plus_one is satisfied
-        // (we fixed it up), but the transition from row 1 catches the discontinuity.
-        // Verify that row 0 -> row 1 is still fine.
-        let result_01 = circuit.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
         assert_eq!(
-            result_01,
-            BabyBear::ZERO,
-            "Rows 0->1 should still be valid (corruption is at row 2)"
+            c.eval_constraints(&trace[0], &trace[1], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
         );
     }
-
-    // ========================================================================
-    // Test 4: Descriptor validates successfully
-    // ========================================================================
 
     #[test]
     fn test_temporal_descriptor_validation() {
-        let descriptor = temporal_predicate_descriptor();
-        let result = descriptor.validate();
-        assert!(
-            result.is_ok(),
-            "Descriptor validation failed: {:?}",
-            result.err()
-        );
-
-        // Check structural properties
-        assert_eq!(descriptor.trace_width, TRACE_WIDTH);
-        assert_eq!(descriptor.max_degree, 2);
-        assert_eq!(descriptor.public_input_count, PUBLIC_INPUT_COUNT);
-        assert_eq!(descriptor.name, "pyana-temporal-predicate-dsl-v1");
-
-        // Check we have the expected constraint count:
-        // 1 (diff) + 30 (binary) + 1 (reconstruction) + 1 (high bit) +
-        // 1 (acc_plus_one) + 1 (step_plus_one) + 2 (transitions) = 37
-        assert_eq!(descriptor.constraints.len(), 37);
-
-        // Check boundary count: 3 (first acc, first step, last acc)
-        assert_eq!(descriptor.boundaries.len(), 3);
+        let d = temporal_predicate_descriptor(TemporalPredicateKind::Gte);
+        assert!(d.validate().is_ok());
+        assert_eq!(d.trace_width, TRACE_WIDTH);
+        assert_eq!(d.public_input_count, 4);
+        assert_eq!(d.name, "pyana-temporal-predicate-dsl-v2");
     }
-
-    // ========================================================================
-    // Test 5: Transition constraint is specifically a Transition variant
-    // ========================================================================
 
     #[test]
     fn test_temporal_has_transition_constraints() {
-        let descriptor = temporal_predicate_descriptor();
-
-        let transition_count = descriptor
-            .constraints
-            .iter()
-            .filter(|c| matches!(c, ConstraintExpr::Transition { .. }))
-            .count();
-
+        let d = temporal_predicate_descriptor(TemporalPredicateKind::Gte);
         assert_eq!(
-            transition_count, 2,
-            "Should have exactly 2 transition constraints (accumulator + step_index)"
+            d.constraints
+                .iter()
+                .filter(|c| matches!(c, ConstraintExpr::Transition { .. }))
+                .count(),
+            2
         );
     }
-
-    // ========================================================================
-    // Test 6: Step index transition detected
-    // ========================================================================
 
     #[test]
     fn test_temporal_dsl_invalid_step_index_gap() {
-        let descriptor = temporal_predicate_descriptor();
-        let circuit = DslCircuit::new(descriptor);
-
-        let values = vec![100u32, 100, 100];
-        let threshold = 50u32;
-        let (mut trace, public_inputs) = generate_temporal_trace(&values, threshold);
-
-        // Corrupt row 2: set step_index to 5 instead of 2
+        let pk = TemporalPredicateKind::Gte;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (mut trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
         trace[2][STEP_INDEX] = BabyBear::new(5);
-        // Fix up step_plus_one to match the corrupt step_index
         trace[2][STEP_PLUS_ONE] = BabyBear::new(6);
-
-        // Row 1 -> Row 2 transition: next[STEP_INDEX]=5, local[STEP_PLUS_ONE]=2
-        // (step at row 1 is 1, so step_plus_one at row 1 is 2)
-        // => 5 - 2 = 3 (nonzero!)
-        let alpha = BabyBear::new(7);
-        let result = circuit.eval_constraints(&trace[1], &trace[2], &public_inputs, alpha);
         assert_ne!(
-            result,
-            BabyBear::ZERO,
-            "Transition constraint should catch step_index gap"
+            c.eval_constraints(&trace[1], &trace[2], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
         );
     }
 
-    // ========================================================================
-    // Test 7: Full STARK prove/verify rejects tampered public inputs
-    // ========================================================================
-
     #[test]
     fn test_temporal_dsl_stark_rejects_wrong_num_steps() {
-        let descriptor = temporal_predicate_descriptor();
-        let circuit = DslCircuit::new(descriptor.clone());
+        let pk = TemporalPredicateKind::Gte;
+        let d = temporal_predicate_descriptor(pk);
+        let c = DslCircuit::new(d.clone());
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        let wrong = vec![BabyBear::new(50), BabyBear::new(8), sr[0], sr[2]];
+        assert!(stark::verify(&DslCircuit::new(d), &proof, &wrong).is_err());
+    }
 
-        let values = vec![100u32, 100, 100];
-        let threshold = 50u32;
-        let (trace, public_inputs) = generate_temporal_trace(&values, threshold);
+    #[test]
+    fn test_temporal_dsl_state_root_in_public_inputs() {
+        let pk = TemporalPredicateKind::Gte;
+        let d = temporal_predicate_descriptor(pk);
+        let c = DslCircuit::new(d.clone());
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
+        assert_eq!(pi[PI_INITIAL_STATE_ROOT], sr[0]);
+        assert_eq!(pi[PI_FINAL_STATE_ROOT], sr[2]);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(
+            stark::verify(
+                &DslCircuit::new(d.clone()),
+                &proof,
+                &vec![pi[0], pi[1], BabyBear::new(99999), pi[3]]
+            )
+            .is_err()
+        );
+        assert!(
+            stark::verify(
+                &DslCircuit::new(d),
+                &proof,
+                &vec![pi[0], pi[1], pi[2], BabyBear::new(99999)]
+            )
+            .is_err()
+        );
+    }
 
-        // Prove with correct public inputs
-        let proof = stark::prove(&circuit, &trace, &public_inputs);
+    #[test]
+    fn test_temporal_dsl_threshold_in_public_inputs() {
+        let pk = TemporalPredicateKind::Gte;
+        let d = temporal_predicate_descriptor(pk);
+        let c = DslCircuit::new(d.clone());
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 100, 100], &sr, 50, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(
+            stark::verify(
+                &DslCircuit::new(d),
+                &proof,
+                &vec![BabyBear::new(99), pi[1], pi[2], pi[3]]
+            )
+            .is_err()
+        );
+    }
 
-        // Verify with wrong num_steps should fail
-        let wrong_pi = vec![BabyBear::new(8)]; // claims 8 steps instead of 4
-        let circuit2 = DslCircuit::new(descriptor);
-        let result = stark::verify(&circuit2, &proof, &wrong_pi);
-        assert!(result.is_err(), "Should reject proof with wrong num_steps");
+    #[test]
+    fn test_temporal_dsl_lte_valid() {
+        let pk = TemporalPredicateKind::Lte;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(4);
+        let (trace, pi) = generate_temporal_trace(&[50, 30, 100, 100], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
+
+    #[test]
+    fn test_temporal_dsl_lte_violation_detected() {
+        let pk = TemporalPredicateKind::Lte;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[50, 101, 80], &sr, 100, pk);
+        assert_ne!(
+            c.eval_constraints(&trace[1], &trace[2], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
+        );
+    }
+
+    #[test]
+    fn test_temporal_dsl_gt_edge_case() {
+        let pk = TemporalPredicateKind::Gt;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(2);
+        let (trace, pi) = generate_temporal_trace(&[100, 100], &sr, 100, pk);
+        assert_ne!(
+            c.eval_constraints(&trace[0], &trace[1], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
+        );
+    }
+
+    #[test]
+    fn test_temporal_dsl_gt_valid() {
+        let pk = TemporalPredicateKind::Gt;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[101, 200, 150], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
+
+    #[test]
+    fn test_temporal_dsl_lt_valid() {
+        let pk = TemporalPredicateKind::Lt;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[50, 30, 99], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
+
+    #[test]
+    fn test_temporal_dsl_lt_edge_case() {
+        let pk = TemporalPredicateKind::Lt;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(2);
+        let (trace, pi) = generate_temporal_trace(&[100, 50], &sr, 100, pk);
+        assert_ne!(
+            c.eval_constraints(&trace[0], &trace[1], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
+        );
+    }
+
+    #[test]
+    fn test_temporal_dsl_neq_valid() {
+        let pk = TemporalPredicateKind::Neq;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[99, 101, 200], &sr, 100, pk);
+        let alpha = BabyBear::new(7);
+        for i in 0..trace.len() - 1 {
+            assert_eq!(
+                c.eval_constraints(&trace[i], &trace[i + 1], &pi, alpha),
+                BabyBear::ZERO,
+                "row {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_temporal_dsl_neq_violation() {
+        let pk = TemporalPredicateKind::Neq;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[99, 100, 200], &sr, 100, pk);
+        assert_ne!(
+            c.eval_constraints(&trace[1], &trace[2], &pi, BabyBear::new(7)),
+            BabyBear::ZERO
+        );
+    }
+
+    #[test]
+    fn test_prove_verify_temporal_gte() {
+        let sr = test_state_roots(4);
+        let claim =
+            prove_temporal(&[200, 150, 300, 100], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        assert_eq!(claim.num_steps, 4);
+        assert!(verify_temporal(&claim, 100, 4, sr[0], sr[3]));
+    }
+
+    #[test]
+    fn test_prove_temporal_violation_returns_none() {
+        let sr = test_state_roots(3);
+        assert!(prove_temporal(&[200, 50, 300], &sr, 100, TemporalPredicateKind::Gte).is_none());
+    }
+
+    #[test]
+    fn test_verify_temporal_wrong_threshold_rejected() {
+        let sr = test_state_roots(3);
+        let claim = prove_temporal(&[200, 150, 300], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        assert!(!verify_temporal(&claim, 50, 3, sr[0], sr[2]));
+    }
+
+    #[test]
+    fn test_verify_temporal_wrong_state_root_rejected() {
+        let sr = test_state_roots(3);
+        let claim = prove_temporal(&[200, 150, 300], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        assert!(!verify_temporal(
+            &claim,
+            100,
+            3,
+            BabyBear::new(99999),
+            sr[2]
+        ));
+        assert!(!verify_temporal(
+            &claim,
+            100,
+            3,
+            sr[0],
+            BabyBear::new(99999)
+        ));
+    }
+
+    #[test]
+    fn test_temporal_requirement_satisfied() {
+        let sr = test_state_roots(30);
+        let claim = prove_temporal(&vec![200; 30], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let req = TemporalRequirement {
+            attribute: "balance".into(),
+            predicate_kind: TemporalPredicateKind::Gte,
+            threshold: 100,
+            min_duration_steps: 30,
+        };
+        assert!(req.is_satisfied_by(&claim));
+    }
+
+    #[test]
+    fn test_temporal_requirement_insufficient_duration() {
+        let sr = test_state_roots(10);
+        let claim = prove_temporal(&vec![200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let req = TemporalRequirement {
+            attribute: "balance".into(),
+            predicate_kind: TemporalPredicateKind::Gte,
+            threshold: 100,
+            min_duration_steps: 30,
+        };
+        assert!(!req.is_satisfied_by(&claim));
+    }
+
+    #[test]
+    fn test_temporal_requirement_wrong_predicate_type() {
+        let sr = test_state_roots(10);
+        let claim = prove_temporal(&vec![200; 10], &sr, 100, TemporalPredicateKind::Gte).unwrap();
+        let req = TemporalRequirement {
+            attribute: "balance".into(),
+            predicate_kind: TemporalPredicateKind::Gt,
+            threshold: 100,
+            min_duration_steps: 5,
+        };
+        assert!(!req.is_satisfied_by(&claim));
+    }
+
+    #[test]
+    fn test_temporal_dsl_fabricated_duration_rejected() {
+        let pk = TemporalPredicateKind::Gte;
+        let d = temporal_predicate_descriptor(pk);
+        let c = DslCircuit::new(d.clone());
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[200, 150, 300], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        let fake = vec![BabyBear::new(100), BabyBear::new(10), sr[0], sr[2]];
+        assert!(stark::verify(&DslCircuit::new(d), &proof, &fake).is_err());
+    }
+
+    #[test]
+    fn test_temporal_dsl_has_4_public_inputs() {
+        assert_eq!(
+            temporal_predicate_descriptor(TemporalPredicateKind::Gte).public_input_count,
+            4
+        );
+    }
+
+    #[test]
+    fn test_temporal_dsl_boundary_count() {
+        assert_eq!(
+            temporal_predicate_descriptor(TemporalPredicateKind::Gte)
+                .boundaries
+                .len(),
+            5
+        );
+    }
+
+    #[test]
+    fn test_temporal_all_predicate_kinds_validate() {
+        for kind in [
+            TemporalPredicateKind::Gte,
+            TemporalPredicateKind::Lte,
+            TemporalPredicateKind::Gt,
+            TemporalPredicateKind::Lt,
+            TemporalPredicateKind::Neq,
+            TemporalPredicateKind::InRangeLow,
+            TemporalPredicateKind::InRangeHigh,
+        ] {
+            assert!(
+                temporal_predicate_descriptor(kind).validate().is_ok(),
+                "{:?}",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_temporal_dsl_in_range_low() {
+        let pk = TemporalPredicateKind::InRangeLow;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[100, 200, 150], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
+
+    #[test]
+    fn test_temporal_dsl_in_range_high() {
+        let pk = TemporalPredicateKind::InRangeHigh;
+        let c = DslCircuit::new(temporal_predicate_descriptor(pk));
+        let sr = test_state_roots(3);
+        let (trace, pi) = generate_temporal_trace(&[50, 100, 80], &sr, 100, pk);
+        let proof = stark::prove(&c, &trace, &pi);
+        assert!(stark::verify(&c, &proof, &pi).is_ok());
+    }
+
+    #[test]
+    fn test_temporal_mismatched_lengths() {
+        assert!(
+            prove_temporal(
+                &[200, 150],
+                &test_state_roots(3),
+                100,
+                TemporalPredicateKind::Gte
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_temporal_empty_returns_none() {
+        assert!(prove_temporal(&[], &[], 100, TemporalPredicateKind::Gte).is_none());
     }
 }

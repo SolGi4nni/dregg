@@ -19,7 +19,7 @@ pub enum CellMode {
 
 impl Default for CellMode {
     fn default() -> Self {
-        CellMode::Hosted
+        CellMode::Sovereign
     }
 }
 
@@ -80,9 +80,103 @@ pub struct Cell {
     pub mode: CellMode,
 }
 
+/// Configuration for creating a new cell.
+///
+/// Allows choosing mode, initial balance, permissions, and program at creation time.
+#[derive(Clone, Debug)]
+pub struct CellConfig {
+    /// Whether the cell is hosted or sovereign.
+    pub mode: CellMode,
+    /// Initial balance (computrons).
+    pub balance: u64,
+    /// Permissions (defaults to Permissions::default() if None).
+    pub permissions: Option<Permissions>,
+    /// Cell program (defaults to CellProgram::None if None).
+    pub program: Option<CellProgram>,
+    /// Verification key (optional).
+    pub verification_key: Option<VerificationKey>,
+}
+
+impl Default for CellConfig {
+    fn default() -> Self {
+        CellConfig {
+            mode: CellMode::Sovereign,
+            balance: 0,
+            permissions: None,
+            program: None,
+            verification_key: None,
+        }
+    }
+}
+
+impl CellConfig {
+    /// Create a config for a hosted cell.
+    pub fn hosted() -> Self {
+        CellConfig {
+            mode: CellMode::Hosted,
+            ..Default::default()
+        }
+    }
+
+    /// Create a config for a sovereign cell.
+    pub fn sovereign() -> Self {
+        CellConfig {
+            mode: CellMode::Sovereign,
+            ..Default::default()
+        }
+    }
+
+    /// Set the initial balance.
+    pub fn with_balance(mut self, balance: u64) -> Self {
+        self.balance = balance;
+        self
+    }
+
+    /// Set the permissions.
+    pub fn with_permissions(mut self, permissions: Permissions) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
+    /// Set the cell program.
+    pub fn with_program(mut self, program: CellProgram) -> Self {
+        self.program = Some(program);
+        self
+    }
+
+    /// Set the verification key.
+    pub fn with_verification_key(mut self, vk: VerificationKey) -> Self {
+        self.verification_key = Some(vk);
+        self
+    }
+}
+
 impl Cell {
     /// Create a new cell with default permissions and the given public key and token domain.
+    ///
+    /// Defaults to `CellMode::Sovereign` (Phase 4). Use `Cell::new_hosted()` for
+    /// explicit hosted creation.
     pub fn new(public_key: [u8; 32], token_id: [u8; 32]) -> Self {
+        let id = CellId::derive_raw(&public_key, &token_id);
+        Cell {
+            id,
+            public_key,
+            state: CellState::default(),
+            permissions: Permissions::default(),
+            verification_key: None,
+            delegate: None,
+            delegation: None,
+            token_id,
+            capabilities: CapabilitySet::new(),
+            program: CellProgram::None,
+            mode: CellMode::Sovereign,
+        }
+    }
+
+    /// Create a new hosted cell explicitly.
+    ///
+    /// This is the pre-Phase-4 behavior where the federation stores full cell state.
+    pub fn new_hosted(public_key: [u8; 32], token_id: [u8; 32]) -> Self {
         let id = CellId::derive_raw(&public_key, &token_id);
         Cell {
             id,
@@ -100,6 +194,8 @@ impl Cell {
     }
 
     /// Create a new cell with a specific initial balance.
+    ///
+    /// Remains hosted for backward compatibility with existing tests.
     pub fn with_balance(public_key: [u8; 32], token_id: [u8; 32], balance: u64) -> Self {
         let id = CellId::derive_raw(&public_key, &token_id);
         Cell {
@@ -114,6 +210,24 @@ impl Cell {
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,
             mode: CellMode::Hosted,
+        }
+    }
+
+    /// Create a new cell from a configuration.
+    pub fn from_config(public_key: [u8; 32], token_id: [u8; 32], config: CellConfig) -> Self {
+        let id = CellId::derive_raw(&public_key, &token_id);
+        Cell {
+            id,
+            public_key,
+            state: CellState::new(config.balance),
+            permissions: config.permissions.unwrap_or_default(),
+            verification_key: config.verification_key,
+            delegate: None,
+            delegation: None,
+            token_id,
+            capabilities: CapabilitySet::new(),
+            program: config.program.unwrap_or(CellProgram::None),
+            mode: config.mode,
         }
     }
 

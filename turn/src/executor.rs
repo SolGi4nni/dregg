@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
-    AuthRequired, Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Preconditions,
-    RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
+    AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
+    Preconditions, RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
     note_bridge::{BridgedNullifierSet, PendingBridgeSet},
     preconditions::EvalContext,
     state::STATE_SLOTS,
@@ -194,6 +194,12 @@ pub struct TurnExecutor {
     /// record intentionally does not store the cleartext amount. Only the executor knows
     /// this mapping; it is NOT exposed to observers.
     pub committed_escrow_amounts: Mutex<HashMap<[u8; 32], u64>>,
+    /// Factory registry: deployed factory descriptors and per-epoch creation counts.
+    /// When a `CreateCellFromFactory` effect is processed, the factory's constraints
+    /// are validated and budget is checked/recorded.
+    /// Uses `RefCell` for interior mutability: `apply_effect` takes `&self` but
+    /// factory validation needs `&mut` for recording budget usage.
+    pub factory_registry: std::cell::RefCell<pyana_cell::FactoryRegistry>,
 }
 
 impl TurnExecutor {
@@ -219,6 +225,7 @@ impl TurnExecutor {
             escrows: Mutex::new(HashMap::new()),
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
+            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
         }
     }
 
@@ -248,6 +255,7 @@ impl TurnExecutor {
             escrows: Mutex::new(HashMap::new()),
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
+            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
         }
     }
 
@@ -273,6 +281,7 @@ impl TurnExecutor {
             escrows: Mutex::new(HashMap::new()),
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
+            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
         }
     }
 
@@ -422,6 +431,16 @@ impl TurnExecutor {
     /// Get a mutable reference to the program registry (for deploying programs).
     pub fn program_registry_mut(&mut self) -> &mut ProgramRegistry {
         &mut self.program_registry
+    }
+
+    /// Get a mutable reference to the factory registry (for deploying factories).
+    pub fn factory_registry_mut(&mut self) -> std::cell::RefMut<'_, pyana_cell::FactoryRegistry> {
+        self.factory_registry.borrow_mut()
+    }
+
+    /// Deploy a factory into the executor's registry.
+    pub fn deploy_factory(&mut self, descriptor: pyana_cell::FactoryDescriptor) -> [u8; 32] {
+        self.factory_registry.borrow_mut().deploy(descriptor)
     }
 
     /// Verify a STARK execution proof for a sovereign cell and update its commitment.
@@ -3774,6 +3793,33 @@ impl TurnExecutor {
                     }
                 }
 
+                // Facet enforcement: if the capability has an allowed_effects mask,
+                // verify that every inner effect's kind is permitted by the mask.
+                // This implements E-language facets — a restricted view of the target
+                // cell's interface through this capability.
+                if let Some(mask) = cap.allowed_effects {
+                    if mask != 0 {
+                        for inner_effect in inner_effects.iter() {
+                            let effect_bit = inner_effect.effect_kind_mask();
+                            if effect_bit & mask == 0 {
+                                return Err((
+                                    TurnError::FacetViolation {
+                                        actor: *actor,
+                                        target: cap_target,
+                                        cap_slot: *cap_slot,
+                                        attempted_effect: format!(
+                                            "{:?}",
+                                            std::mem::discriminant(inner_effect)
+                                        ),
+                                        allowed_mask: mask,
+                                    },
+                                    path.to_vec(),
+                                ));
+                            }
+                        }
+                    }
+                }
+
                 // Execute each inner effect against the capability's target cell.
                 for inner_effect in inner_effects {
                     self.apply_effect(inner_effect, ledger, path, &cap_target, actor, journal)?;
@@ -4186,6 +4232,78 @@ impl TurnExecutor {
                 })?;
                 Ok(())
             }
+
+            Effect::CreateCellFromFactory {
+                factory_vk,
+                owner_pubkey,
+                token_id,
+                params,
+            } => {
+                // Validate the factory exists in the registry and the creation is within
+                // the factory's declared constraints (program VK, capabilities, fields, mode, budget).
+                self.factory_registry
+                    .borrow_mut()
+                    .validate_and_record(factory_vk, params)
+                    .map_err(|e| {
+                        (
+                            TurnError::InvalidEffect {
+                                reason: format!("factory creation failed: {}", e),
+                            },
+                            path.to_vec(),
+                        )
+                    })?;
+
+                // Create the cell.
+                let new_cell_id = CellId::derive_raw(owner_pubkey, token_id);
+                let mut new_cell = match params.mode {
+                    pyana_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
+                    pyana_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
+                };
+
+                // Set initial fields.
+                for (idx, val) in &params.initial_fields {
+                    let idx = *idx as usize;
+                    if idx < pyana_cell::state::STATE_SLOTS {
+                        // Zero-pad to 32 bytes.
+                        let mut field = [0u8; 32];
+                        field[..8].copy_from_slice(&val.to_le_bytes());
+                        new_cell.state.fields[idx] = field;
+                    }
+                }
+
+                // Install program VK if specified.
+                if let Some(vk_hash) = &params.program_vk {
+                    new_cell.verification_key = Some(pyana_cell::VerificationKey::from_parts(
+                        *vk_hash,
+                        vk_hash.to_vec(), // Minimal VK data — the hash IS the identifier
+                    ));
+                }
+
+                // Grant initial capabilities.
+                for cap_grant in &params.initial_caps {
+                    let target_id = match &cap_grant.target {
+                        pyana_cell::factory::CapTarget::SelfCell => new_cell_id,
+                        pyana_cell::factory::CapTarget::Specific(id) => *id,
+                        pyana_cell::factory::CapTarget::Any => {
+                            // "Any" in a grant means self for initial caps.
+                            new_cell_id
+                        }
+                    };
+                    new_cell
+                        .capabilities
+                        .grant(target_id, cap_grant.max_permissions.clone());
+                }
+
+                // Insert into ledger.
+                ledger.insert_cell(new_cell).map_err(|_| {
+                    (
+                        TurnError::CellAlreadyExists { id: new_cell_id },
+                        path.to_vec(),
+                    )
+                })?;
+                journal.record_create_cell(new_cell_id);
+                Ok(())
+            }
         }
     }
 
@@ -4362,6 +4480,7 @@ impl TurnExecutor {
             | Effect::ReleaseCommittedEscrow { .. }
             | Effect::RefundCommittedEscrow { .. } => self.costs.effect_base,
             Effect::MakeSovereign { .. } => self.costs.effect_base,
+            Effect::CreateCellFromFactory { .. } => self.costs.create_cell,
         };
         base.saturating_add(extra)
             .saturating_add((effect.data_bytes() as u64).saturating_mul(self.costs.per_byte))
@@ -4572,7 +4691,7 @@ impl TurnExecutor {
     fn verify_output_range_proof_effect(effect: &Effect) -> Result<(), TurnError> {
         match effect {
             Effect::NoteCreate {
-                value_commitment: Some(_),
+                value_commitment: Some(vc_bytes),
                 range_proof,
                 ..
             } => {
@@ -4587,6 +4706,21 @@ impl TurnExecutor {
                         reason: "NoteCreate range_proof is empty".into(),
                     });
                 }
+                // Deserialize the value commitment from the 32-byte compressed point.
+                let vc = ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).ok_or_else(
+                    || TurnError::CommittedConservationFailed {
+                        reason: "NoteCreate value_commitment is not a valid Ristretto point".into(),
+                    },
+                )?;
+                // Deserialize and verify the Bulletproof range proof.
+                let bulletproof = BulletproofRangeProof {
+                    proof_bytes: rp.clone(),
+                };
+                bulletproof.verify_range(&vc).map_err(|e| {
+                    TurnError::CommittedConservationFailed {
+                        reason: format!("NoteCreate range proof verification failed: {}", e),
+                    }
+                })?;
                 Ok(())
             }
             Effect::ExerciseViaCapability { inner_effects, .. } => {
@@ -5374,7 +5508,8 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             | Effect::CreateCommittedEscrow { .. }
             | Effect::ReleaseCommittedEscrow { .. }
             | Effect::RefundCommittedEscrow { .. }
-            | Effect::MakeSovereign { .. } => {}
+            | Effect::MakeSovereign { .. }
+            | Effect::CreateCellFromFactory { .. } => {}
         }
     }
 }
@@ -5754,4 +5889,279 @@ pub fn execute_pipeline_result(
         PipelineResult::AllCommitted { committed: ci }
     };
     (fr, outcome)
+}
+
+// =============================================================================
+// Multi-Party Atomic Proofs
+// =============================================================================
+
+/// A single sovereign cell's proof entry in an atomic multi-party turn.
+///
+/// Each entry binds a cell to its STARK proof and commitment transition.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AtomicProofEntry {
+    /// The sovereign cell ID.
+    pub cell_id: CellId,
+    /// The serialized STARK proof bytes.
+    pub proof: Vec<u8>,
+    /// The old state commitment (must match what the federation stores).
+    pub old_commitment: [u8; 32],
+    /// The new state commitment (will be stored after verification).
+    pub new_commitment: [u8; 32],
+    /// The BLAKE3 hash of effects this cell is applying.
+    pub effects_hash: [u8; 32],
+    /// Net balance change for this cell (positive = receives, negative = sends).
+    /// Used for cross-cell conservation check.
+    pub balance_delta: i64,
+}
+
+/// An atomic multi-party sovereign turn: multiple sovereign cells each provide
+/// a STARK proof of their individual state transition. The executor verifies ALL
+/// proofs atomically and checks cross-cell conservation (the sum of all balance
+/// deltas must be zero).
+///
+/// This enables multi-party transactions (e.g., Alice sends to Bob) where each
+/// party proves their own transition independently, and the federation verifies
+/// that the overall conservation law holds.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AtomicSovereignTurn {
+    /// The agent submitting this atomic turn (pays fee, provides nonce).
+    pub agent: CellId,
+    /// Nonce for replay protection (from the agent cell).
+    pub nonce: u64,
+    /// Fee in computrons (deducted from agent's balance).
+    pub fee: u64,
+    /// The proof entries: one per sovereign cell involved.
+    pub proofs: Vec<AtomicProofEntry>,
+}
+
+/// Errors specific to atomic sovereign turn verification.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AtomicTurnError {
+    /// No proof entries provided.
+    EmptyProofs,
+    /// A cell is not registered as sovereign.
+    NotSovereign(CellId),
+    /// The stored commitment does not match the entry's old_commitment.
+    CommitmentMismatch {
+        cell: CellId,
+        expected: [u8; 32],
+        got: [u8; 32],
+    },
+    /// A STARK proof failed verification.
+    ProofFailed { cell: CellId, reason: String },
+    /// Cross-cell conservation violated: balance deltas do not sum to zero.
+    ConservationViolation { net_excess: i64 },
+    /// Agent cell not found (for fee/nonce).
+    AgentNotFound(CellId),
+    /// Insufficient balance for fee.
+    InsufficientFee { available: u64, required: u64 },
+    /// Nonce mismatch.
+    NonceMismatch { expected: u64, got: u64 },
+    /// Duplicate cell in proof entries.
+    DuplicateCell(CellId),
+}
+
+impl core::fmt::Display for AtomicTurnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::EmptyProofs => write!(f, "atomic turn has no proof entries"),
+            Self::NotSovereign(id) => write!(f, "cell {} is not sovereign", id),
+            Self::CommitmentMismatch {
+                cell,
+                expected,
+                got,
+            } => write!(
+                f,
+                "commitment mismatch for cell {}: expected {:02x}{:02x}..., got {:02x}{:02x}...",
+                cell, expected[0], expected[1], got[0], got[1]
+            ),
+            Self::ProofFailed { cell, reason } => {
+                write!(f, "proof failed for cell {}: {}", cell, reason)
+            }
+            Self::ConservationViolation { net_excess } => {
+                write!(
+                    f,
+                    "cross-cell conservation violated: net excess = {}",
+                    net_excess
+                )
+            }
+            Self::AgentNotFound(id) => write!(f, "agent cell not found: {}", id),
+            Self::InsufficientFee {
+                available,
+                required,
+            } => {
+                write!(
+                    f,
+                    "insufficient fee: available {}, required {}",
+                    available, required
+                )
+            }
+            Self::NonceMismatch { expected, got } => {
+                write!(f, "nonce mismatch: expected {}, got {}", expected, got)
+            }
+            Self::DuplicateCell(id) => write!(f, "duplicate cell in proof entries: {}", id),
+        }
+    }
+}
+
+impl std::error::Error for AtomicTurnError {}
+
+impl TurnExecutor {
+    /// Execute an atomic multi-party sovereign turn.
+    ///
+    /// This verifies ALL proofs atomically and checks cross-cell conservation:
+    /// the sum of all `balance_delta` values across entries must be zero.
+    ///
+    /// On success, all sovereign commitments are updated simultaneously.
+    /// On failure (any proof invalid or conservation violated), no state changes.
+    pub fn execute_atomic_sovereign(
+        &self,
+        atomic_turn: &AtomicSovereignTurn,
+        ledger: &mut Ledger,
+    ) -> Result<Vec<[u8; 32]>, AtomicTurnError> {
+        use pyana_circuit::SovereignTransitionAir;
+        use pyana_circuit::field::BabyBear;
+        use pyana_circuit::stark;
+
+        // 0. Basic validation.
+        if atomic_turn.proofs.is_empty() {
+            return Err(AtomicTurnError::EmptyProofs);
+        }
+
+        // Check for duplicate cells.
+        let mut seen_cells = std::collections::HashSet::new();
+        for entry in &atomic_turn.proofs {
+            if !seen_cells.insert(entry.cell_id) {
+                return Err(AtomicTurnError::DuplicateCell(entry.cell_id));
+            }
+        }
+
+        // 1. Agent validation (fee + nonce).
+        let agent_cell = ledger
+            .get(&atomic_turn.agent)
+            .ok_or(AtomicTurnError::AgentNotFound(atomic_turn.agent))?;
+        if agent_cell.state.nonce != atomic_turn.nonce {
+            return Err(AtomicTurnError::NonceMismatch {
+                expected: agent_cell.state.nonce,
+                got: atomic_turn.nonce,
+            });
+        }
+        if agent_cell.state.balance < atomic_turn.fee {
+            return Err(AtomicTurnError::InsufficientFee {
+                available: agent_cell.state.balance,
+                required: atomic_turn.fee,
+            });
+        }
+
+        // 2. Cross-cell conservation check.
+        let net_excess: i64 = atomic_turn.proofs.iter().map(|e| e.balance_delta).sum();
+        if net_excess != 0 {
+            return Err(AtomicTurnError::ConservationViolation { net_excess });
+        }
+
+        // 3. Verify each proof entry.
+        let air = SovereignTransitionAir;
+        let mut new_commitments: Vec<(CellId, [u8; 32])> =
+            Vec::with_capacity(atomic_turn.proofs.len());
+
+        for entry in &atomic_turn.proofs {
+            // Check cell is sovereign.
+            let stored_commitment = if let Some(c) = ledger.get_sovereign_commitment(&entry.cell_id)
+            {
+                *c
+            } else if let Some(reg) = ledger.get_sovereign_registration(&entry.cell_id) {
+                reg.commitment
+            } else {
+                return Err(AtomicTurnError::NotSovereign(entry.cell_id));
+            };
+
+            // Verify old_commitment matches stored.
+            if entry.old_commitment != stored_commitment {
+                return Err(AtomicTurnError::CommitmentMismatch {
+                    cell: entry.cell_id,
+                    expected: stored_commitment,
+                    got: entry.old_commitment,
+                });
+            }
+
+            // Deserialize proof.
+            let proof = stark::proof_from_bytes(&entry.proof).map_err(|e| {
+                AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: e,
+                }
+            })?;
+
+            // Compute cell_id hash.
+            let cell_id_hash = *blake3::hash(entry.cell_id.as_bytes()).as_bytes();
+
+            // Build expected public inputs.
+            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(32);
+            public_inputs.extend(Self::bytes32_to_babybear(&entry.old_commitment));
+            public_inputs.extend(Self::bytes32_to_babybear(&entry.new_commitment));
+            public_inputs.extend(Self::bytes32_to_babybear(&entry.effects_hash));
+            public_inputs.extend(Self::bytes32_to_babybear(&cell_id_hash));
+
+            // Verify public inputs match.
+            if proof.public_inputs.len() < 32 {
+                return Err(AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: format!(
+                        "proof has {} public inputs, expected at least 32",
+                        proof.public_inputs.len()
+                    ),
+                });
+            }
+            for (i, expected_bb) in public_inputs.iter().enumerate() {
+                let got = BabyBear(proof.public_inputs[i]);
+                if got != *expected_bb {
+                    return Err(AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: "public input mismatch".to_string(),
+                    });
+                }
+            }
+
+            // Verify the STARK proof.
+            stark::verify(&air, &proof, &public_inputs).map_err(|e| {
+                AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: e,
+                }
+            })?;
+
+            new_commitments.push((entry.cell_id, entry.new_commitment));
+        }
+
+        // 4. All proofs verified + conservation holds. Commit atomically.
+        // Deduct fee and increment nonce.
+        {
+            let agent = ledger.get_mut(&atomic_turn.agent).unwrap();
+            agent.state.balance -= atomic_turn.fee;
+            agent.state.increment_nonce();
+        }
+
+        // Update all sovereign commitments.
+        let mut resulting_commitments = Vec::with_capacity(new_commitments.len());
+        for (cell_id, new_commitment) in &new_commitments {
+            if ledger.is_sovereign(cell_id) {
+                let _ = ledger.update_sovereign_commitment(cell_id, *new_commitment);
+            } else {
+                let old = ledger
+                    .get_sovereign_registration(cell_id)
+                    .map(|r| r.commitment)
+                    .unwrap_or([0u8; 32]);
+                let _ = ledger.update_sovereign_registration_commitment(
+                    cell_id,
+                    old,
+                    *new_commitment,
+                    self.block_height,
+                );
+            }
+            resulting_commitments.push(*new_commitment);
+        }
+
+        Ok(resulting_commitments)
+    }
 }

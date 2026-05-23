@@ -16,11 +16,20 @@
 //! runtime via proof-carrying turns.
 
 pub mod circuit;
+pub mod composition;
 
 // Re-export primary smart contract runtime types.
 pub use circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
     ConstraintExpr, DslCircuit, PolyTerm, ProgramError, ProgramRegistry, ProgramValidationError,
+};
+
+// Re-export composition primitives.
+pub use composition::{
+    AttachedSubProof, ComposedCircuitDescriptor, ComposedDslCircuit, ComposedProof,
+    ComposedVerification, IvcBinding, SubProofBinding, compose_aggregate, compose_and,
+    compose_chain, compose_or, compute_descriptor_vk_elements, generate_and_trace,
+    generate_chain_trace, verify_composed,
 };
 
 /// Error returned when a caveat constraint is violated at runtime.

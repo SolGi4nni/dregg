@@ -178,6 +178,18 @@ pub enum TurnError {
 
     /// The cell targeted by a proof-carrying turn has no stored sovereign commitment.
     SovereignNotRegistered { cell: CellId },
+
+    /// A faceted capability was exercised with an effect type not permitted by its mask.
+    ///
+    /// In E-language terms, this is a facet violation: the capability holder tried to
+    /// invoke a method not exposed by the faceted view of the target object.
+    FacetViolation {
+        actor: CellId,
+        target: CellId,
+        cap_slot: u32,
+        attempted_effect: String,
+        allowed_mask: u32,
+    },
 }
 
 impl core::fmt::Display for TurnError {
@@ -399,6 +411,19 @@ impl core::fmt::Display for TurnError {
                 write!(
                     f,
                     "sovereign cell {cell} not registered (no stored commitment)"
+                )
+            }
+            TurnError::FacetViolation {
+                actor,
+                target,
+                cap_slot,
+                attempted_effect,
+                allowed_mask,
+            } => {
+                write!(
+                    f,
+                    "facet violation: actor {actor} tried {attempted_effect} on target {target} \
+                     via cap slot {cap_slot}, but capability mask 0x{allowed_mask:08x} does not permit it"
                 )
             }
         }

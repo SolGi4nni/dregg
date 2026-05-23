@@ -1,0 +1,25 @@
+[package]
+name = "pyana-stablecoin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-app-framework = { path = "../../app-framework" }
+pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+pyana-dsl-runtime = { path = "../../pyana-dsl-runtime" }
+pyana-turn = { path = "../../turn" }
+pyana-cell = { path = "../../cell", default-features = false }
+pyana-types = { path = "../../types" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
+blake3 = "1"
+thiserror = { workspace = true }
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
+
+[lints]
+workspace = true

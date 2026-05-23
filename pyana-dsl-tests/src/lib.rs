@@ -1,18 +1,27 @@
 use pyana_dsl::{pyana_caveat, pyana_effect};
 
 pub mod accumulator_dsl;
+pub mod advanced_circuits;
+pub mod arithmetic_predicate_dsl;
 pub mod block_transition_dsl;
 pub mod compound_predicate_dsl;
 pub mod derivation_dsl;
+pub mod factory_dsl;
 pub mod fold_dsl;
 pub mod garbled_dsl;
 pub mod gpu_worker;
 pub mod merkle_dsl;
+pub mod merkle_poseidon2_dsl;
 pub mod multi_step_dsl;
+pub mod native_signature_dsl;
 pub mod non_revocation_dsl;
 pub mod note_spending_dsl;
+pub mod poseidon2_dsl;
+pub mod predicate_dsl;
 pub mod presentation_dsl;
 pub mod pyana_definitions;
+pub mod relational_predicate_dsl;
+pub mod schnorr_dsl;
 pub mod sovereign_transition_dsl;
 pub mod temporal_dsl;
 pub mod temporal_macro;

@@ -1,0 +1,23 @@
+[package]
+name = "pyana-amm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-app-framework = { path = "../../app-framework" }
+pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+pyana-dsl-runtime = { path = "../../pyana-dsl-runtime" }
+pyana-turn = { path = "../../turn" }
+pyana-cell = { path = "../../cell" }
+pyana-types = { path = "../../types" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = "1"
+
+[[example]]
+name = "swap_demo"
+path = "examples/swap_demo.rs"
+
+[lints]
+workspace = true

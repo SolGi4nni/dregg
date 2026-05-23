@@ -450,6 +450,131 @@ pub fn verify_any_tier(
     ))
 }
 
+/// Verify a committed threshold proof at the SDK level.
+///
+/// This is the verifier-side convenience function for anonymous credential gates.
+/// Given a serialized `CommittedThresholdProof`, a threshold commitment, and a fact
+/// commitment, this function verifies that the prover holds a value >= the committed
+/// threshold without revealing the actual value.
+///
+/// # Arguments
+///
+/// * `proof_bytes` - Serialized `CommittedThresholdProof` bytes (via postcard).
+/// * `threshold_commitment` - The 32-byte commitment to the threshold value.
+///   Only the first 4 bytes are used (BabyBear field element, little-endian).
+/// * `fact_commitment` - The 32-byte commitment to the fact value being proven.
+///   Only the first 4 bytes are used (BabyBear field element, little-endian).
+///
+/// # Returns
+///
+/// `Ok(true)` if the proof verifies (the prover's value meets the threshold),
+/// `Ok(false)` if verification fails, or `Err(...)` if deserialization fails.
+///
+/// # Example
+///
+/// ```no_run
+/// use pyana_sdk::verify_committed_threshold;
+///
+/// let proof_bytes: Vec<u8> = /* received from prover */ vec![];
+/// let threshold_commitment: [u8; 32] = /* public parameter */ [0u8; 32];
+/// let fact_commitment: [u8; 32] = /* from the credential */ [0u8; 32];
+///
+/// match verify_committed_threshold(&proof_bytes, &threshold_commitment, &fact_commitment) {
+///     Ok(true) => println!("Threshold met!"),
+///     Ok(false) => println!("Proof invalid or threshold not met"),
+///     Err(e) => println!("Error: {}", e),
+/// }
+/// ```
+pub fn verify_committed_threshold(
+    proof_bytes: &[u8],
+    threshold_commitment: &[u8; 32],
+    fact_commitment: &[u8; 32],
+) -> Result<bool, SdkError> {
+    use pyana_circuit::BabyBear;
+
+    // Deserialize the proof.
+    let proof: pyana_circuit::CommittedThresholdProof =
+        postcard::from_bytes(proof_bytes).map_err(|_| {
+            SdkError::Wire("committed threshold proof bytes could not be deserialized".into())
+        })?;
+
+    // Convert 32-byte commitments to BabyBear field elements (first 4 bytes, LE).
+    let threshold_bb = BabyBear::new(u32::from_le_bytes([
+        threshold_commitment[0],
+        threshold_commitment[1],
+        threshold_commitment[2],
+        threshold_commitment[3],
+    ]));
+    let fact_bb = BabyBear::new(u32::from_le_bytes([
+        fact_commitment[0],
+        fact_commitment[1],
+        fact_commitment[2],
+        fact_commitment[3],
+    ]));
+
+    Ok(pyana_circuit::verify_committed_threshold(
+        &proof,
+        threshold_bb,
+        fact_bb,
+    ))
+}
+
+/// Build a federation Merkle tree from member public keys and return the root.
+///
+/// This is the verifier-side helper for constructing the federation tree that
+/// anonymous credential gates need. Given a list of member Ed25519 public keys,
+/// this builds the same Merkle tree structure used by `authorize_anonymously` and
+/// returns the root hash.
+///
+/// # Arguments
+///
+/// * `member_keys` - Slice of 32-byte Ed25519 public keys for federation members.
+///
+/// # Returns
+///
+/// The 32-byte Merkle root that can be used as the `federation_root` parameter
+/// when verifying ring membership proofs.
+pub fn build_federation_tree(member_keys: &[[u8; 32]]) -> [u8; 32] {
+    if member_keys.is_empty() {
+        return *blake3::hash(b"pyana-federation:empty").as_bytes();
+    }
+
+    // Hash each member key to produce leaves.
+    let mut leaves: Vec<[u8; 32]> = member_keys
+        .iter()
+        .map(|key| {
+            let mut hasher = blake3::Hasher::new_derive_key("pyana-federation-leaf-v1");
+            hasher.update(key);
+            *hasher.finalize().as_bytes()
+        })
+        .collect();
+
+    // Sort for deterministic ordering.
+    leaves.sort();
+
+    // Build binary Merkle tree.
+    if leaves.len() == 1 {
+        return leaves[0];
+    }
+
+    // Pad to next power of two.
+    let next_pow2 = leaves.len().next_power_of_two();
+    leaves.resize(next_pow2, [0u8; 32]);
+
+    let mut current_level = leaves;
+    while current_level.len() > 1 {
+        let mut next_level = Vec::with_capacity(current_level.len() / 2);
+        for chunk in current_level.chunks(2) {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&chunk[0]);
+            hasher.update(&chunk[1]);
+            next_level.push(*hasher.finalize().as_bytes());
+        }
+        current_level = next_level;
+    }
+    current_level[0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>moons' gallery</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1 class="logo">moons' gallery</h1>
+            <nav>
+                <a href="#" class="nav-link active" data-view="gallery">Gallery</a>
+                <a href="#" class="nav-link" data-view="auctions">Auctions</a>
+                <a href="#" class="nav-link" data-view="register">Register</a>
+            </nav>
+            <div class="wallet-status" id="wallet-status">
+                <span class="dot disconnected"></span>
+                <span id="wallet-label">Connect Wallet</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Gallery View -->
+        <section id="view-gallery" class="view active">
+            <div class="section-header">
+                <h2>Artworks</h2>
+                <div class="filter-bar">
+                    <input type="text" id="search-input" placeholder="Search artworks...">
+                </div>
+            </div>
+            <div class="artwork-grid" id="artwork-grid">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Auctions View -->
+        <section id="view-auctions" class="view">
+            <div class="section-header">
+                <h2>Active Auctions</h2>
+            </div>
+            <div class="auction-list" id="auction-list">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Register View -->
+        <section id="view-register" class="view">
+            <div class="section-header">
+                <h2>Register Artwork</h2>
+            </div>
+            <form id="register-form" class="form-panel">
+                <div class="form-group">
+                    <label for="reg-title">Title</label>
+                    <input type="text" id="reg-title" required placeholder="Artwork title">
+                </div>
+                <div class="form-group">
+                    <label for="reg-description">Description</label>
+                    <textarea id="reg-description" rows="4" required placeholder="Describe your artwork"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="reg-image">Image File</label>
+                    <input type="file" id="reg-image" accept="image/*">
+                    <small>Image will be hashed (BLAKE3) for content-addressed storage</small>
+                </div>
+                <div class="form-group">
+                    <label for="reg-reserve">Reserve Price</label>
+                    <input type="number" id="reg-reserve" min="1" required placeholder="Minimum bid">
+                </div>
+                <div class="form-group">
+                    <label for="reg-tags">Tags (comma-separated)</label>
+                    <input type="text" id="reg-tags" placeholder="digital, landscape, abstract">
+                </div>
+                <button type="submit" class="btn btn-primary">Register Artwork</button>
+            </form>
+        </section>
+
+        <!-- Auction Detail Modal -->
+        <div id="auction-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <button class="modal-close">&times;</button>
+                <div id="auction-detail">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <span>Powered by <strong>pyana</strong> federation protocol</span>
+            <span class="ws-status" id="ws-status">WS: disconnected</span>
+        </div>
+    </footer>
+
+    <script src="wallet.js"></script>
+    <script src="bid.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
