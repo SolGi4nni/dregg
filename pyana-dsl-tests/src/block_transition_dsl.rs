@@ -412,11 +412,9 @@ mod tests {
     fn wrong_pre_state_root_pi_detected() {
         let (trace, mut pi) = generate_valid_block_trace();
         let circuit = block_transition_dsl_circuit();
-        let alpha = BabyBear::new(7);
 
         // Tamper pi[0] (pre_state_root) -- this only affects boundary constraints,
         // not eval_constraints. The boundary is checked separately by the STARK verifier.
-        // However, let's verify this via STARK prove/verify.
         let proof = stark::prove(&circuit, &trace, &pi);
 
         pi[0] = BabyBear::new(54321); // wrong pre_state_root
