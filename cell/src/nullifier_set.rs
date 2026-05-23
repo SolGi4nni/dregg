@@ -4,6 +4,14 @@
 //! Double-spend detection is simply checking set membership. The set also
 //! supports non-membership proofs (proving a note is NOT spent) via a
 //! Merkle tree over the nullifier hashes.
+//!
+//! # Performance
+//!
+//! Uses `BTreeSet<Nullifier>` internally for O(log N) insert and lookup.
+//! Previous implementation used `Vec::insert` at a binary-search position
+//! which was O(N) due to element shifting on every insert.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -47,18 +55,21 @@ pub struct NonMembershipProof {
 
 /// Append-only set of revealed nullifiers.
 /// Supports efficient membership checks and non-membership proofs.
+///
+/// Uses `BTreeSet` for O(log N) insert and contains operations.
+/// For non-membership proofs, the set is materialized into a sorted vec
+/// on demand (the BTreeSet iterator yields elements in sorted order).
 #[derive(Clone, Debug)]
 pub struct NullifierSet {
-    /// All nullifiers ever published, kept sorted for binary search
-    /// and adjacent-neighbor non-membership proofs.
-    nullifiers: Vec<Nullifier>,
+    /// All nullifiers ever published, kept in a BTreeSet for O(log N) operations.
+    nullifiers: BTreeSet<Nullifier>,
 }
 
 impl NullifierSet {
     /// Create an empty nullifier set.
     pub fn new() -> Self {
         Self {
-            nullifiers: Vec::new(),
+            nullifiers: BTreeSet::new(),
         }
     }
 
@@ -73,76 +84,85 @@ impl NullifierSet {
     }
 
     /// Add a nullifier (note is now spent). Returns error if already present (double-spend).
+    ///
+    /// O(log N) via BTreeSet insertion.
     pub fn insert(&mut self, nullifier: Nullifier) -> Result<(), NoteError> {
-        // Binary search for insertion point.
-        match self.nullifiers.binary_search_by(|n| n.0.cmp(&nullifier.0)) {
-            Ok(_) => Err(NoteError::DoubleSpend { nullifier }),
-            Err(idx) => {
-                self.nullifiers.insert(idx, nullifier);
-                Ok(())
-            }
+        if !self.nullifiers.insert(nullifier) {
+            Err(NoteError::DoubleSpend { nullifier })
+        } else {
+            Ok(())
         }
     }
 
     /// Check if a nullifier is in the set (note is spent).
+    ///
+    /// O(log N) via BTreeSet contains.
     pub fn contains(&self, nullifier: &Nullifier) -> bool {
-        self.nullifiers
-            .binary_search_by(|n| n.0.cmp(&nullifier.0))
-            .is_ok()
+        self.nullifiers.contains(nullifier)
+    }
+
+    /// Get the sorted list of nullifiers (materializes from BTreeSet iterator).
+    /// Used internally for Merkle tree construction and non-membership proofs.
+    fn sorted_vec(&self) -> Vec<Nullifier> {
+        self.nullifiers.iter().copied().collect()
     }
 
     /// Prove non-membership (note is NOT spent).
     /// Returns None if the nullifier IS in the set.
     pub fn prove_non_membership(&self, nullifier: &Nullifier) -> Option<NonMembershipProof> {
-        match self.nullifiers.binary_search_by(|n| n.0.cmp(&nullifier.0)) {
-            Ok(_) => None, // It IS in the set, can't prove non-membership.
-            Err(idx) => {
-                let left_neighbor = if idx > 0 {
-                    Some(self.nullifiers[idx - 1])
-                } else {
-                    None
-                };
-                let right_neighbor = if idx < self.nullifiers.len() {
-                    Some(self.nullifiers[idx])
-                } else {
-                    None
-                };
-                let left_membership_proof = if idx > 0 {
-                    Some(self.prove_membership(idx - 1))
-                } else {
-                    None
-                };
-                let right_membership_proof = if idx < self.nullifiers.len() {
-                    Some(self.prove_membership(idx))
-                } else {
-                    None
-                };
-                Some(NonMembershipProof {
-                    absent: *nullifier,
-                    left_neighbor,
-                    right_neighbor,
-                    left_membership_proof,
-                    right_membership_proof,
-                    root: self.root(),
-                })
-            }
+        if self.nullifiers.contains(nullifier) {
+            return None; // It IS in the set, can't prove non-membership.
         }
+
+        let sorted = self.sorted_vec();
+        // Binary search in the sorted vec to find the adjacent neighbors.
+        let idx = sorted.binary_search(nullifier).unwrap_err();
+
+        let left_neighbor = if idx > 0 {
+            Some(sorted[idx - 1])
+        } else {
+            None
+        };
+        let right_neighbor = if idx < sorted.len() {
+            Some(sorted[idx])
+        } else {
+            None
+        };
+        let left_membership_proof = if idx > 0 {
+            Some(self.prove_membership_from_sorted(&sorted, idx - 1))
+        } else {
+            None
+        };
+        let right_membership_proof = if idx < sorted.len() {
+            Some(self.prove_membership_from_sorted(&sorted, idx))
+        } else {
+            None
+        };
+        Some(NonMembershipProof {
+            absent: *nullifier,
+            left_neighbor,
+            right_neighbor,
+            left_membership_proof,
+            right_membership_proof,
+            root: self.root(),
+        })
     }
 
-    /// Generate a Merkle membership proof for the element at the given index.
+    /// Generate a Merkle membership proof for the element at the given index
+    /// in the sorted nullifier list.
     ///
     /// The Merkle tree is built over the sorted list of nullifier hashes as leaves.
     /// Each leaf is: BLAKE3("pyana-nullifier-leaf v1", nullifier).
     /// Internal nodes are: BLAKE3("pyana-nullifier-node v1", left || right).
-    fn prove_membership(&self, index: usize) -> MerkleMembershipProof {
-        let leaves: Vec<[u8; 32]> = self
-            .nullifiers
-            .iter()
-            .map(|n| Self::leaf_hash(&n.0))
-            .collect();
+    fn prove_membership_from_sorted(
+        &self,
+        sorted: &[Nullifier],
+        index: usize,
+    ) -> MerkleMembershipProof {
+        let leaves: Vec<[u8; 32]> = sorted.iter().map(|n| Self::leaf_hash(&n.0)).collect();
         let siblings = Self::merkle_path(&leaves, index);
         MerkleMembershipProof {
-            element: self.nullifiers[index],
+            element: sorted[index],
             index,
             siblings,
         }
@@ -227,13 +247,14 @@ impl NullifierSet {
 
     /// Current root of the nullifier set (Merkle tree root over all nullifier hashes).
     ///
-    /// Leaves are domain-separated hashes of each nullifier. Internal nodes hash
-    /// their two children. This produces a proper Merkle tree that supports
-    /// membership proofs for non-membership verification.
+    /// Leaves are domain-separated hashes of each nullifier (in sorted order).
+    /// Internal nodes hash their two children. This produces a proper Merkle tree
+    /// that supports membership proofs for non-membership verification.
     pub fn root(&self) -> [u8; 32] {
         if self.nullifiers.is_empty() {
             return [0u8; 32];
         }
+        // BTreeSet iterates in sorted order, matching the old Vec behavior.
         let leaves: Vec<[u8; 32]> = self
             .nullifiers
             .iter()

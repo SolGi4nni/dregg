@@ -163,5 +163,5 @@ jobs:
           git config user.email "federation@pyana.dev"
           git add site/discovery.json
           git commit -m "chore(federation): update discovery.json [skip ci]"
-          git push origin federation-state
+          git push origin main
         continue-on-error: true

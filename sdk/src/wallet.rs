@@ -965,7 +965,7 @@ impl AgentWallet {
             // Root token holder: derive the proof key and look it up in the tree.
             let derived = Self::derive_proof_key(token.root_key());
             federation_tree.membership_proof(&derived)
-        } else { token.membership_proof.as_ref().map(|pre_existing| pre_existing.clone()) };
+        } else { token.membership_proof.clone() };
 
         // Compute the caveat chain hash from the HMAC-verified attenuated token.
         let caveat_chain_hash = {

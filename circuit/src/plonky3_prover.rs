@@ -162,6 +162,7 @@ const POSEIDON2_AUX_COLS: usize = (TOTAL_ROUNDS + 1) * ROUND_COLS; // 352
 /// - 5 witness columns: current, sib0, sib1, sib2, position
 /// - 352 auxiliary columns for Poseidon2 states
 /// - 1 parent column (== final_state[0])
+///
 /// Total: 358
 pub const P3_TRACE_WIDTH: usize = 5 + POSEIDON2_AUX_COLS + 1; // 358
 

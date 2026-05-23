@@ -471,6 +471,7 @@ define_ec_witness_helpers!(
 /// - Producing 128 output bits in the order EndoMul expects (MSB first, 4 per row)
 /// - Verifying that `a * endo_scalar + b == challenge_value` (the constraint the
 ///   step circuit's Poseidon transcript replay guarantees)
+///
 /// Encode a 128-bit prechallenge as MSB-first bits for EndoMul.
 ///
 /// This implements the bit extraction for the EndoMul gate's GLV-optimized

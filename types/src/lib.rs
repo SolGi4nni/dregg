@@ -20,7 +20,6 @@ pub mod causal;
 use std::collections::HashSet;
 use std::fmt;
 
-use ed25519_dalek::Verifier;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 

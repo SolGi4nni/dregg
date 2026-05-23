@@ -65,7 +65,7 @@ use crate::stark::{
 };
 
 #[cfg(feature = "mina")]
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 
 #[cfg(feature = "mina")]
 use mina_curves::pasta::{Fp, Vesta};

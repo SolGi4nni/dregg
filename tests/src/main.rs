@@ -3,6 +3,10 @@
 //! This test crate exercises all security-critical boundaries of the system
 //! with malicious inputs, Byzantine behavior, and edge cases.
 
+// This is a test-only crate; helper functions are used within submodules
+// but not exported, which triggers dead_code warnings.
+#![allow(dead_code)]
+
 #[cfg(feature = "__legacy_tests")]
 mod budget;
 #[cfg(feature = "__legacy_tests")]

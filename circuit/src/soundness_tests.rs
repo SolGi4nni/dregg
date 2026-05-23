@@ -304,7 +304,7 @@ mod note_spending_soundness {
         // Verify valid proof works
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, &valid_proof).is_ok(),
+            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
             "Baseline: valid spending proof must verify"
         );
 
@@ -321,7 +321,7 @@ mod note_spending_soundness {
 
         // A proof generated with the wrong key CANNOT verify against the correct nullifier
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, &wrong_proof);
+        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong spending key MUST fail against correct nullifier"
@@ -366,7 +366,7 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, &valid_proof).is_ok(),
+            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -390,7 +390,7 @@ mod note_spending_soundness {
 
         // Proof with wrong preimage cannot verify against correct root
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, &wrong_proof);
+        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong value/asset_type MUST be rejected"
@@ -432,7 +432,7 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, &valid_proof).is_ok(),
+            verify_note_spend(correct_nullifier, correct_root, witness.value, witness.asset_type, &valid_proof).is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -487,7 +487,7 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, &valid_proof).is_ok(),
+            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -508,7 +508,7 @@ mod note_spending_soundness {
 
         // Proof with wrong Merkle path cannot verify against correct root
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, &wrong_proof);
+        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong Merkle siblings MUST be rejected"

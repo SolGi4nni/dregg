@@ -52,7 +52,7 @@ use crate::field::{BABYBEAR_P, BabyBear};
 use crate::poseidon_stark::{FpSer, PoseidonStarkProof};
 
 #[cfg(feature = "mina")]
-use ark_ff::{Field, One, PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
 
 #[cfg(feature = "mina")]
 use kimchi::circuits::{

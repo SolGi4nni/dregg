@@ -17,7 +17,7 @@
 //! - Equality: coeffs[0]=1, coeffs[1]=-1 -> w[0] = w[1]
 //! - Constant: coeffs[0]=1, coeffs[COLUMNS-1]=-k -> w[0] = k
 //! - Multiplication (non-zero check): coeffs[3]=1, coeffs[COLUMNS-1]=-1 -> w[0]*w[1] = 1
-use ark_ff::{Field, One, Zero};
+use ark_ff::{One, Zero};
 use groupmap::GroupMap;
 use kimchi::{
     circuits::{

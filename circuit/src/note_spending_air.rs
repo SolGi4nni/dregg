@@ -39,13 +39,17 @@
 //!
 //! - `nullifier`: The revealed nullifier (verifier sees this)
 //! - `merkle_root`: The Merkle tree root (verifier sees this)
+//! - `value`: The note value (verifier sees this — prevents value inflation)
+//! - `asset_type`: The note asset type (verifier sees this — prevents asset substitution)
 //!
 //! # Security properties
 //!
 //! - The spending key is 248 bits (8 × 31-bit BabyBear limbs), requiring ~2^248 brute-force attempts
 //! - The spending key is private (only in the witness, never in public inputs)
-//! - The note contents (owner, value, asset_type) are private
-//! - Only the nullifier and merkle_root are public
+//! - The note owner is private (only in the witness)
+//! - Value and asset_type are public inputs, bound by boundary constraints to the
+//!   trace columns that participate in commitment recomputation. A spender cannot
+//!   claim a different value/asset_type than what is committed in the note.
 //! - Soundness: a cheating prover must break Poseidon2 collision resistance
 
 use crate::field::BabyBear;
@@ -98,6 +102,10 @@ pub mod pi {
     pub const NULLIFIER: usize = 0;
     /// The Merkle root (what the verifier sees).
     pub const MERKLE_ROOT: usize = 1;
+    /// The note value (what the verifier sees — prevents value inflation).
+    pub const VALUE: usize = 2;
+    /// The note asset type (what the verifier sees — prevents asset type substitution).
+    pub const ASSET_TYPE: usize = 3;
 }
 
 /// Witness for a note spending proof.
@@ -336,7 +344,7 @@ impl NoteSpendingAir {
             trace.push(row);
         }
 
-        let public_inputs = vec![nullifier, merkle_root];
+        let public_inputs = vec![nullifier, merkle_root, witness.value, witness.asset_type];
         (trace, public_inputs)
     }
 }
@@ -458,7 +466,7 @@ impl StarkAir for NoteSpendingAir {
         trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         let mut constraints = vec![];
-        if public_inputs.len() >= 2 {
+        if public_inputs.len() >= 4 {
             // Row 0, col NULLIFIER (14) = public_inputs[0] (nullifier)
             // This binds the trace's computed nullifier to the claimed public input.
             constraints.push(BoundaryConstraint {
@@ -473,6 +481,22 @@ impl StarkAir for NoteSpendingAir {
                 row: trace_len - 1,
                 col: merkle_col::CURRENT,
                 value: public_inputs[pi::MERKLE_ROOT],
+            });
+            // Row 0, col VALUE = public_inputs[2] (value)
+            // CRITICAL: This prevents value inflation — the verifier sees the actual
+            // value committed in the note, not a declared value in the effect.
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::VALUE,
+                value: public_inputs[pi::VALUE],
+            });
+            // Row 0, col ASSET_TYPE = public_inputs[3] (asset_type)
+            // CRITICAL: This prevents asset type substitution — the verifier sees the
+            // actual asset type committed in the note.
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::ASSET_TYPE,
+                value: public_inputs[pi::ASSET_TYPE],
             });
         }
         constraints
@@ -492,15 +516,23 @@ pub fn prove_note_spend(witness: &NoteSpendingWitness) -> StarkProof {
 
 /// Verify a note spending proof.
 ///
-/// The verifier only needs:
+/// The verifier needs:
 /// - `nullifier`: the revealed nullifier (to check against double-spend set)
 /// - `merkle_root`: the committed note tree root
+/// - `value`: the note value (prevents value inflation attacks)
+/// - `asset_type`: the note asset type (prevents asset type substitution)
 /// - `proof`: the STARK proof
+///
+/// SECURITY: The value and asset_type are now public inputs bound by boundary
+/// constraints. A spender cannot claim a different value/asset_type than what
+/// is actually committed in the note — the proof will fail verification.
 ///
 /// Returns Ok(()) if the proof is valid, Err with reason otherwise.
 pub fn verify_note_spend(
     nullifier: BabyBear,
     merkle_root: BabyBear,
+    value: BabyBear,
+    asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
     // Reconstruct the depth from the trace length.
@@ -519,7 +551,7 @@ pub fn verify_note_spend(
     let depth = (trace_len - 1).max(MIN_MERKLE_DEPTH);
     let air = NoteSpendingAir::new(depth);
 
-    let public_inputs = vec![nullifier, merkle_root];
+    let public_inputs = vec![nullifier, merkle_root, value, asset_type];
     stark::verify(&air, proof, &public_inputs)
 }
 
@@ -652,10 +684,12 @@ mod tests {
             assert_eq!(row.len(), NOTE_SPENDING_WIDTH);
         }
 
-        // Public inputs: [nullifier, merkle_root]
-        assert_eq!(public_inputs.len(), 2);
+        // Public inputs: [nullifier, merkle_root, value, asset_type]
+        assert_eq!(public_inputs.len(), 4);
         assert_eq!(public_inputs[pi::NULLIFIER], witness.nullifier());
         assert_eq!(public_inputs[pi::MERKLE_ROOT], witness.merkle_root());
+        assert_eq!(public_inputs[pi::VALUE], witness.value);
+        assert_eq!(public_inputs[pi::ASSET_TYPE], witness.asset_type);
     }
 
     #[test]
@@ -809,8 +843,8 @@ mod tests {
         // Generate proof
         let proof = prove_note_spend(&witness);
 
-        // Verify proof
-        let result = verify_note_spend(nullifier, merkle_root, &proof);
+        // Verify proof (now includes value + asset_type to prevent inflation)
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof);
         assert!(
             result.is_ok(),
             "Note spending proof verification failed: {:?}",
@@ -841,7 +875,7 @@ mod tests {
 
         // Try to verify with wrong nullifier
         let wrong_nullifier = BabyBear::new(999999);
-        let result = verify_note_spend(wrong_nullifier, merkle_root, &proof);
+        let result = verify_note_spend(wrong_nullifier, merkle_root, witness.value, witness.asset_type, &proof);
         assert!(result.is_err(), "Should reject wrong nullifier");
     }
 
@@ -861,7 +895,7 @@ mod tests {
 
         // Try to verify with wrong Merkle root
         let wrong_root = BabyBear::new(888888);
-        let result = verify_note_spend(nullifier, wrong_root, &proof);
+        let result = verify_note_spend(nullifier, wrong_root, witness.value, witness.asset_type, &proof);
         assert!(result.is_err(), "Should reject wrong Merkle root");
     }
 
@@ -892,6 +926,8 @@ mod tests {
         let result = verify_note_spend(
             witness_correct.nullifier(),
             witness_correct.merkle_root(),
+            witness_correct.value,
+            witness_correct.asset_type,
             &proof_wrong,
         );
         assert!(
@@ -918,7 +954,7 @@ mod tests {
         // Tamper with trace commitment
         proof.trace_commitment[0] ^= 0xFF;
 
-        let result = verify_note_spend(nullifier, merkle_root, &proof);
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof);
         assert!(result.is_err(), "Tampered proof should be rejected");
     }
 
@@ -937,7 +973,7 @@ mod tests {
         let merkle_root = witness.merkle_root();
         let proof = prove_note_spend(&witness);
 
-        let result = verify_note_spend(nullifier, merkle_root, &proof);
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof);
         assert!(
             result.is_ok(),
             "Depth-8 note spending proof should verify: {:?}",
@@ -983,6 +1019,8 @@ mod tests {
         let result = verify_note_spend(
             witness_correct.nullifier(),
             witness_correct.merkle_root(),
+            witness_correct.value,
+            witness_correct.asset_type,
             &proof,
         );
         assert!(
@@ -1011,7 +1049,7 @@ mod tests {
         let proof2 = stark::proof_from_bytes(&bytes).unwrap();
 
         // Verify the deserialized proof
-        let result = verify_note_spend(nullifier, merkle_root, &proof2);
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof2);
         assert!(result.is_ok(), "Deserialized proof should verify");
     }
 
@@ -1063,6 +1101,55 @@ mod tests {
         // Deterministic
         let limbs2 = key_to_field_elements(&external_key);
         assert_eq!(limbs, limbs2);
+    }
+
+    #[test]
+    fn wrong_value_rejected() {
+        // CRITICAL: This test verifies the value inflation fix.
+        // A spender cannot claim a higher value than what the note actually contains.
+        let key = test_spending_key(0xDEAD_BEEF);
+        let witness = create_test_witness(
+            BabyBear::new(1000),
+            BabyBear::new(500), // actual value = 500
+            BabyBear::new(1),
+            key,
+            4,
+        );
+
+        let nullifier = witness.nullifier();
+        let merkle_root = witness.merkle_root();
+        let proof = prove_note_spend(&witness);
+
+        // Attempt to verify with inflated value (999999 instead of 500)
+        let inflated_value = BabyBear::new(999999);
+        let result = verify_note_spend(nullifier, merkle_root, inflated_value, witness.asset_type, &proof);
+        assert!(result.is_err(), "Should reject inflated value");
+
+        // Correct value should work
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, witness.asset_type, &proof);
+        assert!(result.is_ok(), "Correct value should verify");
+    }
+
+    #[test]
+    fn wrong_asset_type_rejected() {
+        // A spender cannot claim a different asset type than what the note contains.
+        let key = test_spending_key(0xDEAD_BEEF);
+        let witness = create_test_witness(
+            BabyBear::new(1000),
+            BabyBear::new(500),
+            BabyBear::new(1), // actual asset_type = 1
+            key,
+            4,
+        );
+
+        let nullifier = witness.nullifier();
+        let merkle_root = witness.merkle_root();
+        let proof = prove_note_spend(&witness);
+
+        // Attempt to verify with wrong asset type
+        let wrong_asset = BabyBear::new(42);
+        let result = verify_note_spend(nullifier, merkle_root, witness.value, wrong_asset, &proof);
+        assert!(result.is_err(), "Should reject wrong asset type");
     }
 
     #[test]

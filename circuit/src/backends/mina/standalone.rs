@@ -38,6 +38,7 @@ use super::*;
 /// # Returns
 /// A `StandaloneRecursiveProof` requiring only batch_dlog_accumulator_check
 /// from the external verifier.
+#[allow(deprecated)] // TODO: migrate to dual-curve step/wrap architecture
 pub fn prove_standalone_recursive_step(
     previous: &PicklesRecursiveProof,
     transition: &PicklesStateTransition,
@@ -278,6 +279,7 @@ pub struct StandaloneRecursiveProof {
 /// Accepts proofs with any num_steps because the circuit itself contains
 /// the IPA verifier gadget (unlike `verify_recursive_proof` which rejects
 /// multi-step proofs).
+#[allow(deprecated)] // TODO: migrate to dual-curve step/wrap architecture
 pub fn verify_standalone_recursive_proof(
     proof: &StandaloneRecursiveProof,
     expected_initial_pre_hash: Option<&[u8; 32]>,
@@ -380,6 +382,7 @@ pub fn verify_standalone_recursive_proof(
 }
 
 /// Print circuit layout statistics for the IPA verifier.
+#[allow(deprecated)] // TODO: migrate to dual-curve step/wrap architecture
 pub fn ipa_verifier_circuit_stats() -> String {
     let (_, public_count, layout) = build_ipa_verifier_circuit(IPA_ROUNDS);
     format!(

@@ -12,7 +12,7 @@ description = "Agent cell model — capability-secure isolated execution context
 [features]
 default = ["crypto"]
 crypto = ["dep:chacha20poly1305", "dep:curve25519-dalek", "dep:ed25519-dalek", "dep:getrandom", "dep:x25519-dalek", "dep:zeroize"]
-zkvm = []
+zkvm = ["dep:pyana-circuit"]
 
 [dependencies]
 blake3 = "1"
@@ -21,6 +21,7 @@ curve25519-dalek = { version = "4", features = ["alloc"], optional = true }
 ed25519-dalek = { version = "2", features = ["hazmat"], optional = true }
 getrandom = { workspace = true, optional = true }
 postcard = { version = "1", features = ["alloc"] }
+pyana-circuit = { path = "../circuit", default-features = false, optional = true }
 pyana-types = { path = "../types" }
 serde = { version = "1", features = ["derive", "std"] }
 serde_json = { workspace = true }

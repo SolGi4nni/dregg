@@ -5950,6 +5950,7 @@ dependencies = [
  "getrandom 0.3.4",
  "postcard",
  "proptest",
+ "pyana-circuit",
  "pyana-types",
  "serde",
  "serde_json",

@@ -804,8 +804,13 @@ pub async fn run_federation_sync(
 
 /// Process an incoming turn from the gossip network.
 ///
-/// P1 Fix: Deserialize the turn, verify its signature, execute it via TurnExecutor,
-/// and commit the receipt (not just emit a WS event).
+/// When federation consensus is active (multi-node), gossip-delivered turns are
+/// NOT executed immediately. They are validated and buffered into the consensus
+/// queue so that Morpheus consensus determines the execution order. This prevents
+/// non-deterministic ledger states from different gossip delivery orderings.
+///
+/// In single-node devnet mode (federation_configured == false), turns are executed
+/// immediately in arrival order since there is no ordering ambiguity.
 async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::PublishTurn {
@@ -846,7 +851,31 @@ async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerM
                 return;
             }
 
-            // Execute the turn against the local ledger with properly configured executor.
+            // Check whether federation consensus is active. If so, buffer the turn
+            // for consensus ordering rather than executing immediately. This ensures
+            // all nodes execute turns in the same deterministic order.
+            {
+                let s = state.read().await;
+                if s.federation_configured {
+                    // Federation is active: buffer this validated turn for consensus.
+                    // The Morpheus consensus driver will drain the consensus_queue and
+                    // propose these turns in blocks. After finalization, they are
+                    // executed in the consensus-determined order via execute_consensus_turn.
+                    drop(s);
+                    let mut s = state.write().await;
+                    s.consensus_queue.push(signed_turn.clone());
+                    info!(
+                        from = %from,
+                        turn_hash = %hash_hex,
+                        queue_len = s.consensus_queue.len(),
+                        "buffered gossiped turn for consensus ordering"
+                    );
+                    return;
+                }
+            }
+
+            // Single-node devnet mode: no federation consensus active, execute immediately.
+            // This is safe because a single node has no ordering ambiguity.
             let mut s = state.write().await;
             let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
 
@@ -1709,7 +1738,20 @@ fn spawn_morpheus_driver(
             // periodically (every 10 finalized blocks).
             let finalized_count = process.index.finalized.len() as u64;
             if finalized_count > 1 && finalized_count % 10 == 0 {
-                update_attested_root_from_consensus(&state, finalized_count).await;
+                // Extract the QC from the latest finalized block for the attested root.
+                // The QC proves that n-f validators agreed on this block, which is
+                // what makes the root "attested" (not just locally computed).
+                let latest_finalized_qc = process.index.finalized.iter()
+                    .rev()
+                    .find_map(|bk| process.index.blocks.get(bk))
+                    .map(|block| block.data.one.clone());
+                let quorum_threshold = (n - f) as usize;
+                update_attested_root_from_consensus(
+                    &state,
+                    finalized_count,
+                    latest_finalized_qc,
+                    quorum_threshold,
+                ).await;
             }
 
             tokio::time::sleep(tick_interval).await;
@@ -1853,7 +1895,21 @@ async fn execute_consensus_turn(state: &NodeState, tx: &ConsensusTx) {
 /// Computes the current merkle root from the store and persists it as a new
 /// attested root at the given height. The merkle root is derived from the
 /// note tree root (which incorporates all committed notes).
-async fn update_attested_root_from_consensus(state: &NodeState, height: u64) {
+///
+/// The `finalized_qc` carries the Morpheus threshold signature proving that
+/// n-f validators finalized the block at this height. This QC is serialized
+/// into the `ThresholdQC` field so that peers can verify the root is backed
+/// by actual consensus agreement, not just a local assertion.
+///
+/// Additionally, the node signs the root with its own Ed25519 key and includes
+/// it in `quorum_signatures` so peers receiving this root via gossip can verify
+/// the sender's identity.
+async fn update_attested_root_from_consensus(
+    state: &NodeState,
+    height: u64,
+    finalized_qc: Option<pyana_morpheus::FinishedQC>,
+    quorum_threshold: usize,
+) {
     let s = state.read().await;
     let merkle_root = match s.store.note_tree_root() {
         Ok(r) => r,
@@ -1865,19 +1921,54 @@ async fn update_attested_root_from_consensus(state: &NodeState, height: u64) {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
+    // Serialize the Morpheus threshold QC into the ThresholdQC opaque bytes.
+    // This is the aggregated BLS signature proving n-f validators finalized the block.
+    let threshold_qc = finalized_qc.and_then(|qc| {
+        use ark_serialize::CanonicalSerialize;
+        let mut qc_bytes = Vec::new();
+        match qc.signature.serialize_compressed(&mut qc_bytes) {
+            Ok(()) => Some(pyana_types::ThresholdQC(qc_bytes)),
+            Err(e) => {
+                warn!(error = %e, "failed to serialize finalized QC for attested root");
+                None
+            }
+        }
+    });
+
+    // Sign the attested root with this node's Ed25519 key.
+    // This allows peers to verify the root came from a known federation member.
+    let signing_key = s.wallet.gossip_signing_key();
+    let public_key = s.wallet.public_key();
+
+    // Compute the canonical signing message (same format as StoredAttestedRoot::signing_message).
+    let mut signing_message = Vec::new();
+    signing_message.extend_from_slice(b"pyana-attested-root-v1");
+    signing_message.extend_from_slice(&merkle_root);
+    signing_message.extend_from_slice(&height.to_le_bytes());
+    signing_message.extend_from_slice(&now.to_le_bytes());
+
+    let signature = pyana_types::sign(&signing_key, &signing_message);
+
     let root = pyana_store::StoredAttestedRoot {
         merkle_root,
         note_tree_root: s.store.note_tree_root().ok(),
         nullifier_set_root: s.store.nullifier_set_root().ok(),
         height,
         timestamp: now,
-        quorum_signatures: vec![],
-        threshold_qc: None,
-        threshold: 0,
+        quorum_signatures: vec![(public_key, signature)],
+        threshold_qc,
+        threshold: quorum_threshold,
     };
 
     if let Err(e) = s.store.store_attested_root(&root) {
         warn!(error = %e, height = height, "failed to persist consensus attested root");
+    } else {
+        info!(
+            height = height,
+            has_threshold_qc = root.threshold_qc.is_some(),
+            threshold = quorum_threshold,
+            "persisted consensus attested root with QC"
+        );
     }
 }
 

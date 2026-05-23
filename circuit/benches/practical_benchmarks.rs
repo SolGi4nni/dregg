@@ -142,7 +142,12 @@ fn bench_token_operations(c: &mut Criterion) {
             };
             tok = tok.attenuate(&att).unwrap();
         }
-        let req = AuthRequest::default();
+        // Request must match at least one of the caveats
+        let req = AuthRequest {
+            app_id: Some("app-0".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
         group.bench_with_input(
             BenchmarkId::new("verify_hmac_chain", depth),
             &depth,

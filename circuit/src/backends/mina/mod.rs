@@ -71,7 +71,6 @@ pub(crate) use kimchi::{
         wires::{COLUMNS, Wire},
     },
     curve::KimchiCurve,
-    plonk_sponge::FrSponge as KimchiFrSponge,
     proof::{ProverProof, RecursionChallenge},
     verifier,
 };

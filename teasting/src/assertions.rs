@@ -3,8 +3,9 @@
 //! These go beyond simple `assert_eq!` to provide domain-specific failure messages
 //! that make debugging integration test failures tractable.
 
-use pyana_bridge::BridgePresentationProof;
+#[allow(deprecated)] // test helpers intentionally use the simpler legacy verification API
 use pyana_bridge::present::verify_presentation;
+use pyana_bridge::BridgePresentationProof;
 use pyana_circuit::BabyBear;
 use pyana_circuit::predicate_air::PredicateProof;
 
@@ -19,6 +20,7 @@ pub fn assert_proof_valid(proof: &BridgePresentationProof) {
 }
 
 /// Assert that a presentation proof verifies against a given federation root.
+#[allow(deprecated)]
 pub fn assert_proof_verifies(proof: &BridgePresentationProof, federation_root: &[u8; 32]) {
     assert!(
         verify_presentation(proof, federation_root),
@@ -28,6 +30,7 @@ pub fn assert_proof_verifies(proof: &BridgePresentationProof, federation_root: &
 }
 
 /// Assert that a presentation proof does NOT verify (expected failure case).
+#[allow(deprecated)]
 pub fn assert_proof_rejects(proof: &BridgePresentationProof, federation_root: &[u8; 32]) {
     assert!(
         !verify_presentation(proof, federation_root),

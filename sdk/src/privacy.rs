@@ -737,15 +737,19 @@ pub fn verify_accumulator_non_membership(
 /// The verifier needs:
 /// - The nullifier (to check against the double-spend set).
 /// - The Merkle root (the committed note tree root).
+/// - The value (prevents value inflation attacks).
+/// - The asset type (prevents asset type substitution attacks).
 /// - The STARK proof.
 ///
 /// Returns `Ok(())` if valid.
 pub fn verify_note_spending(
     nullifier: BabyBear,
     merkle_root: BabyBear,
+    value: BabyBear,
+    asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
-    pyana_circuit::note_spending_air::verify_note_spend(nullifier, merkle_root, proof)
+    pyana_circuit::note_spending_air::verify_note_spend(nullifier, merkle_root, value, asset_type, proof)
 }
 
 // =============================================================================

@@ -1923,7 +1923,8 @@ impl TurnExecutor {
                 nullifier,
                 note_tree_root,
                 spending_proof,
-                ..
+                value,
+                asset_type,
             } => {
                 // Validate nullifier is well-formed (non-zero).
                 if nullifier.0.iter().all(|&b| b == 0) {
@@ -1963,10 +1964,20 @@ impl TurnExecutor {
                         path.to_vec(),
                     )
                 })?;
-                // Public inputs for the note spending STARK: nullifier || note_tree_root.
-                let mut public_inputs = Vec::with_capacity(64);
+                // Public inputs for the note spending STARK:
+                // nullifier || note_tree_root || value || asset_type
+                //
+                // SECURITY: value and asset_type are now included in the public inputs.
+                // The STARK proof binds these via boundary constraints to the actual
+                // note preimage columns. A spender cannot claim a different value/asset_type
+                // than what is committed in the note — the proof verification will fail.
+                // The conservation check uses these STARK-proven values, not the declared
+                // effect fields (which are now the same thing, cryptographically bound).
+                let mut public_inputs = Vec::with_capacity(80);
                 public_inputs.extend_from_slice(&nullifier.0);
                 public_inputs.extend_from_slice(note_tree_root);
+                public_inputs.extend_from_slice(&value.to_le_bytes());
+                public_inputs.extend_from_slice(&asset_type.to_le_bytes());
                 if !verifier.verify(spending_proof, "note-spend", "note-tree", &public_inputs) {
                     return Err((
                         TurnError::InvalidEffect {

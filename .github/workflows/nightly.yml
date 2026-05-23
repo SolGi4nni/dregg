@@ -10,17 +10,6 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  binius:
-    name: Check (binius)
-    runs-on: ubuntu-latest
-    # Binius requires nightly Rust toolchain — tested separately
-    if: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p pyana-circuit --features binius
-
   plonky3:
     name: Test (plonky3)
     runs-on: ubuntu-latest

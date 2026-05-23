@@ -27,7 +27,7 @@ pub struct NoteCommitment(pub [u8; 32]);
 /// Only the owner can compute this. Publishing it "spends" the note.
 /// Derived from note-intrinsic data only — no tree position — so the same note
 /// produces the same nullifier regardless of which tree it lives in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Nullifier(pub [u8; 32]);
 
 /// The content of a note (known only to the owner).
@@ -199,6 +199,59 @@ impl Note {
     /// Get the asset type (fields[0]).
     pub fn asset_type(&self) -> u64 {
         self.fields[0]
+    }
+
+    /// Compute the ZK-compatible Poseidon2 commitment for this note.
+    ///
+    /// This is the commitment used in the NOTE TREE (Poseidon2 Merkle tree) and
+    /// verified inside the STARK circuit. It differs from `commitment()` which uses
+    /// BLAKE3 for non-ZK use cases (simple hash-based lookups, encryption key derivation).
+    ///
+    /// The Poseidon2 commitment is authoritative for:
+    /// - Note tree membership proofs (ZK Merkle paths)
+    /// - STARK spending proofs (the circuit recomputes this from witness columns)
+    /// - Nullifier derivation inside the circuit
+    ///
+    /// The BLAKE3 commitment (`commitment()`) is authoritative for:
+    /// - Cleartext note identity / deduplication
+    /// - Non-ZK lookups and indexing
+    /// - Encryption key derivation
+    ///
+    /// # Field mapping
+    ///
+    /// The Poseidon2 commitment maps note fields to BabyBear as follows:
+    /// - owner: first 4 bytes of self.owner as little-endian u32, reduced mod p
+    /// - value: self.fields[1] as u32, reduced mod p
+    /// - asset_type: self.fields[0] as u32, reduced mod p
+    /// - creation_nonce: first 4 bytes of self.creation_nonce as LE u32, reduced mod p
+    /// - randomness: first 4 bytes of self.randomness as LE u32, reduced mod p
+    #[cfg(feature = "zkvm")]
+    pub fn poseidon2_commitment(&self) -> pyana_circuit::field::BabyBear {
+        use pyana_circuit::field::BabyBear;
+        use pyana_circuit::poseidon2::hash_many;
+
+        let owner = BabyBear::new_canonical(u32::from_le_bytes([
+            self.owner[0],
+            self.owner[1],
+            self.owner[2],
+            self.owner[3],
+        ]));
+        let value = BabyBear::new_canonical(self.fields[1] as u32);
+        let asset_type = BabyBear::new_canonical(self.fields[0] as u32);
+        let creation_nonce = BabyBear::new_canonical(u32::from_le_bytes([
+            self.creation_nonce[0],
+            self.creation_nonce[1],
+            self.creation_nonce[2],
+            self.creation_nonce[3],
+        ]));
+        let randomness = BabyBear::new_canonical(u32::from_le_bytes([
+            self.randomness[0],
+            self.randomness[1],
+            self.randomness[2],
+            self.randomness[3],
+        ]));
+
+        hash_many(&[owner, value, asset_type, creation_nonce, randomness])
     }
 
     /// Position this note in the tree.
