@@ -385,6 +385,7 @@ async fn create_order(
         max_fill_amount: req.max_fill_hours,
         fill_or_kill: req.fill_or_kill,
         remaining_after_fill: None,
+        generation: 0,
     };
 
     let commitment_hash = compute_order_commitment(&order_id, &secret);

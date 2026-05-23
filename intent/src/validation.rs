@@ -465,6 +465,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let intent = Intent::new_with_fill(
             IntentKind::Need,
@@ -502,6 +503,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let intent = Intent::new_with_fill(
             IntentKind::Need,
@@ -538,6 +540,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let intent = Intent::new_with_fill(
             IntentKind::Need,

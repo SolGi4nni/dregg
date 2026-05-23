@@ -112,6 +112,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
 
         assert_eq!(
@@ -162,6 +163,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
 
         assert_eq!(

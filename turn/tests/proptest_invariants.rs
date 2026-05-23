@@ -358,6 +358,7 @@ proptest! {
                         valid_until: None,
                         previous_receipt_hash: None,
                         depends_on: vec![],
+            conservation_proof: None,
                     };
 
                     let result = executor.execute(&turn, &mut ledger);
@@ -429,6 +430,7 @@ fn build_receipt_chain(
             valid_until: None,
             previous_receipt_hash,
             depends_on: vec![],
+            conservation_proof: None,
         };
 
         let result = executor.execute(&turn, ledger);
@@ -583,6 +585,7 @@ proptest! {
                 valid_until: None,
                 previous_receipt_hash: None,
                 depends_on: vec![],
+            conservation_proof: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -644,6 +647,7 @@ proptest! {
                 valid_until: None,
                 previous_receipt_hash: None,
                 depends_on: vec![],
+            conservation_proof: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -694,6 +698,7 @@ proptest! {
                 valid_until: None,
                 previous_receipt_hash: None,
                 depends_on: vec![],
+            conservation_proof: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);

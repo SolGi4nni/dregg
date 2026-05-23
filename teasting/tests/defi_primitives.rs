@@ -58,6 +58,7 @@ fn make_fill_intent(min: u64, max: u64, fill_or_kill: bool) -> Intent {
         max_fill_amount: max,
         fill_or_kill,
         remaining_after_fill: None,
+        generation: 0,
     };
     Intent::new_with_fill(
         IntentKind::Need,

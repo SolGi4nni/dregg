@@ -559,6 +559,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         }
     }
 
@@ -602,6 +603,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         }
     }
 
@@ -753,6 +755,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let turn_hash = turn.hash();
 
@@ -840,6 +843,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         }
     }
 
