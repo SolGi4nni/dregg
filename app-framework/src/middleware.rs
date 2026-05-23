@@ -307,6 +307,8 @@ fn extract_str_header(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
 pub fn verify_any_tier_presentation(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
+    expected_action: &str,
+    expected_resource: &str,
 ) -> Result<pyana_circuit::VerifiedProof, pyana_sdk::SdkError> {
-    pyana_sdk::verify_any_tier(proof_bytes, federation_root)
+    pyana_sdk::verify_any_tier(proof_bytes, federation_root, expected_action, expected_resource)
 }

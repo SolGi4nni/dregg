@@ -12,9 +12,12 @@ path = "src/main.rs"
 pyana-circuit = { path = "../circuit" }
 pyana-turn = { path = "../turn" }
 pyana-cell = { path = "../cell" }
+pyana-sdk = { path = "../sdk" }
+pyana-bridge = { path = "../bridge" }
 token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 blake3 = "1"
 getrandom = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
 proptest = { workspace = true }
 
 [lints]

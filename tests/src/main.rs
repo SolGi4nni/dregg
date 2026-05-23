@@ -29,3 +29,6 @@ mod adversarial_boundaries;
 
 // End-to-end adversarial integration tests: full pipeline with tampering detection
 mod adversarial_pipeline;
+
+// Wire format end-to-end: wallet.authorize() -> postcard -> PyanaEngine::verify
+mod wire_format_e2e;

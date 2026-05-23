@@ -33,8 +33,10 @@ use crate::error::SdkError;
 ///
 /// let proof_bytes: Vec<u8> = /* received from presenter */ vec![];
 /// let federation_root: [u8; 32] = /* known public parameter */ [0u8; 32];
+/// let expected_action = "read";
+/// let expected_resource = "api/v1/users";
 ///
-/// match verify_authorization_proof(&proof_bytes, &federation_root) {
+/// match verify_authorization_proof(&proof_bytes, &federation_root, expected_action, expected_resource) {
 ///     Ok(true) => println!("Authorization verified!"),
 ///     Ok(false) => println!("Proof invalid"),
 ///     Err(e) => println!("Deserialization error: {}", e),
@@ -43,6 +45,8 @@ use crate::error::SdkError;
 pub fn verify_authorization_proof(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
+    expected_action: &str,
+    expected_resource: &str,
 ) -> Result<bool, SdkError> {
     use pyana_circuit::BabyBear;
     use pyana_circuit::stark;
@@ -81,6 +85,21 @@ pub fn verify_authorization_proof(
 
     if pi[1] != expected_root {
         return Ok(false);
+    }
+
+    // SECURITY: Verify action/resource binding.
+    // The action binding occupies pi[2..6] (4 elements, 124-bit collision resistance).
+    // Recompute the expected binding from the caller-supplied action and resource strings,
+    // then compare against the proof's committed binding. This ensures a proof generated
+    // for action A cannot be accepted when action B is requested.
+    if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        return Ok(false);
+    }
+    let expected_binding = pyana_circuit::compute_action_binding(expected_action, expected_resource);
+    for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi[2 + i] != expected_binding[i] {
+            return Ok(false); // Proof not bound to this (action, resource)
+        }
     }
 
     // SECURITY: Only accept Poseidon2 AIR proofs (production-grade, collision-resistant).
@@ -144,6 +163,8 @@ pub fn verify_authorization_proof(
 pub fn verify_selective_disclosure(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
+    expected_action: &str,
+    expected_resource: &str,
     revealed_facts: &[pyana_trace::Fact],
 ) -> Result<bool, SdkError> {
     use pyana_circuit::BabyBear;
@@ -178,6 +199,17 @@ pub fn verify_selective_disclosure(
 
     if pi[1] != expected_root {
         return Ok(false);
+    }
+
+    // 2b. Verify action/resource binding (pi[2..6]).
+    if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        return Ok(false);
+    }
+    let expected_binding = pyana_circuit::compute_action_binding(expected_action, expected_resource);
+    for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi[2 + i] != expected_binding[i] {
+            return Ok(false); // Proof not bound to this (action, resource)
+        }
     }
 
     // 3. Verify the STARK proof cryptographically.
@@ -348,11 +380,13 @@ pub fn verify_validated_ivc_proof(proof_bytes: &[u8]) -> Result<bool, SdkError> 
 pub fn verify_production(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
+    expected_action: &str,
+    expected_resource: &str,
 ) -> Result<pyana_circuit::VerifiedProof, SdkError> {
     use pyana_circuit::proof_tier;
 
-    // Perform the standard verification.
-    let valid = verify_authorization_proof(proof_bytes, federation_root)?;
+    // Perform the standard verification (including action/resource binding).
+    let valid = verify_authorization_proof(proof_bytes, federation_root, expected_action, expected_resource)?;
     if !valid {
         return Err(SdkError::Wire("proof verification failed".into()));
     }
@@ -389,10 +423,12 @@ pub fn verify_production(
 pub fn verify_any_tier(
     proof_bytes: &[u8],
     federation_root: &[u8; 32],
+    expected_action: &str,
+    expected_resource: &str,
 ) -> Result<pyana_circuit::VerifiedProof, SdkError> {
     use pyana_circuit::proof_tier;
 
-    let valid = verify_authorization_proof(proof_bytes, federation_root)?;
+    let valid = verify_authorization_proof(proof_bytes, federation_root, expected_action, expected_resource)?;
     if !valid {
         return Err(SdkError::Wire("proof verification failed".into()));
     }
@@ -501,7 +537,7 @@ mod tests {
         // For a full end-to-end test, we test that the function rejects wrong facts
         // even when the proof has the right structure.
         let result =
-            verify_selective_disclosure(&proof_bytes, &federation_root_bytes, &wrong_facts);
+            verify_selective_disclosure(&proof_bytes, &federation_root_bytes, "", "", &wrong_facts);
 
         // The function should return Ok(false) because either:
         // 1. STARK verification fails (synthetic proof), OR
@@ -549,7 +585,7 @@ mod tests {
         let mut federation_root_bytes = [0u8; 32];
         federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
 
-        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes);
+        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes, "", "");
 
         // Must return Ok(false): membership-only proof without composition commitment
         // does not prove authorization concluded "Allow".
@@ -605,7 +641,7 @@ mod tests {
         let mut federation_root_bytes = [0u8; 32];
         federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
 
-        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes);
+        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes, "", "");
 
         // Must return Ok(false): zeroed composition commitment means no derivation binding.
         match result {
@@ -655,7 +691,7 @@ mod tests {
         let mut federation_root_bytes = [0u8; 32];
         federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
 
-        let result = verify_selective_disclosure(&proof_bytes, &federation_root_bytes, &facts);
+        let result = verify_selective_disclosure(&proof_bytes, &federation_root_bytes, "", "", &facts);
 
         // Must NOT return Ok(true): the proof has no commitment bound.
         match result {

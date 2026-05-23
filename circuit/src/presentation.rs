@@ -476,8 +476,11 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_many(&[final_root, w.presentation_randomness, w.verifier_nonce]);
+        let presentation_tag = crate::binding::compute_presentation_tag_narrow(
+            final_root,
+            w.presentation_randomness,
+            w.verifier_nonce,
+        );
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -649,8 +652,11 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_many(&[final_root, w.presentation_randomness, w.verifier_nonce]);
+        let presentation_tag = crate::binding::compute_presentation_tag_narrow(
+            final_root,
+            w.presentation_randomness,
+            w.verifier_nonce,
+        );
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -759,8 +765,11 @@ impl PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_many(&[final_root, w.presentation_randomness, w.verifier_nonce]);
+        let presentation_tag = crate::binding::compute_presentation_tag_narrow(
+            final_root,
+            w.presentation_randomness,
+            w.verifier_nonce,
+        );
 
         let public_inputs = PresentationPublicInputs {
             federation_root: w.federation_root,
@@ -927,8 +936,11 @@ impl Air for PresentationAir {
             w.derivation.state_root
         };
 
-        let presentation_tag =
-            crate::poseidon2::hash_many(&[final_root, w.presentation_randomness, w.verifier_nonce]);
+        let presentation_tag = crate::binding::compute_presentation_tag_narrow(
+            final_root,
+            w.presentation_randomness,
+            w.verifier_nonce,
+        );
 
         let row = vec![
             w.federation_root,

@@ -22,7 +22,7 @@ let restricted = wallet.attenuate(&root, &Attenuation {
     ..Default::default()
 }).unwrap();
 
-let proof = wallet.authorize(&root, &request, VerificationMode::FullyPrivate)?;
+let proof = wallet.authorize(&restricted, &request, VerificationMode::FullyPrivate)?;
 ```
 
 The token is an HMAC-chained macaroon. Attenuation is local and offline -- no

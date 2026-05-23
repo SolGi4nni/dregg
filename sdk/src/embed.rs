@@ -43,7 +43,7 @@
 //! ## CLI tool (generate proof, output bytes)
 //!
 //! ```ignore
-//! let engine = PyanaEngine::new(EngineConfig::default());
+//! let engine = PyanaEngine::new(EngineConfig::for_testing());
 //! let token = engine.mint_token(b"my-root-key-32-bytes-exactly!!!!", "my-service").unwrap();
 //! let proof = engine.prove_presentation(&token, "read", "my-service").unwrap();
 //! std::fs::write("proof.bin", &proof).unwrap();
@@ -124,8 +124,13 @@ impl From<SdkError> for EmbedError {
 
 /// Configuration for the no-I/O engine.
 ///
-/// All fields have sensible defaults for a minimal embedding. Callers can
-/// customize metering costs, federation identity, and proof verification.
+/// This struct intentionally does NOT implement `Default`. The `timestamp` field
+/// is critical for proof verification: a zero timestamp causes wallet-generated
+/// proofs to appear "from the future" and engine-generated proofs to be rejected
+/// as expired. Callers MUST provide a real wall-clock timestamp.
+///
+/// Use [`EngineConfig::new()`] for production (requires explicit timestamp) or
+/// [`EngineConfig::for_testing()`] for test contexts where timestamp doesn't matter.
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     /// Computron cost table for turn metering.
@@ -136,6 +141,10 @@ pub struct EngineConfig {
     /// Initial block height.
     pub block_height: u64,
     /// Initial timestamp (unix seconds).
+    ///
+    /// **IMPORTANT**: This must be set to the current wall-clock time for proof
+    /// freshness checks to work correctly. A timestamp of 0 will cause all
+    /// verification to fail silently.
     pub timestamp: i64,
     /// Maximum age of a presentation proof in seconds for freshness checks.
     ///
@@ -145,8 +154,42 @@ pub struct EngineConfig {
     pub max_proof_age_secs: i64,
 }
 
-impl Default for EngineConfig {
-    fn default() -> Self {
+impl EngineConfig {
+    /// Create a new engine configuration with an explicit timestamp.
+    ///
+    /// This is the recommended constructor for production use. The timestamp
+    /// should be the current wall-clock time (unix seconds).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pyana_sdk::embed::EngineConfig;
+    /// use std::time::SystemTime;
+    ///
+    /// let now = SystemTime::now()
+    ///     .duration_since(SystemTime::UNIX_EPOCH)
+    ///     .unwrap()
+    ///     .as_secs() as i64;
+    /// let config = EngineConfig::new(now);
+    /// ```
+    pub fn new(timestamp: i64) -> Self {
+        Self {
+            costs: ComputronCosts::default_costs(),
+            federation_id: [0u8; 32],
+            block_height: 0,
+            timestamp,
+            max_proof_age_secs: present::DEFAULT_MAX_PROOF_AGE_SECS,
+        }
+    }
+
+    /// Create a configuration suitable for testing only.
+    ///
+    /// Uses timestamp 0 and default values. Proofs generated or verified with
+    /// this config will NOT pass freshness checks against real-world timestamps.
+    ///
+    /// **Do not use in production.** Use [`EngineConfig::new()`] with a real
+    /// wall-clock timestamp instead.
+    pub fn for_testing() -> Self {
         Self {
             costs: ComputronCosts::default_costs(),
             federation_id: [0u8; 32],
@@ -698,14 +741,14 @@ mod tests {
 
     #[test]
     fn engine_default_creation() {
-        let engine = PyanaEngine::new(EngineConfig::default());
+        let engine = PyanaEngine::new(EngineConfig::for_testing());
         assert_eq!(engine.federation_root(), [0u8; 32]);
         assert!(engine.ledger().is_empty());
     }
 
     #[test]
     fn mint_and_attenuate_roundtrip() {
-        let engine = PyanaEngine::new(EngineConfig::default());
+        let engine = PyanaEngine::new(EngineConfig::for_testing());
 
         let root_key = b"test-root-key-32-bytes-exactly!!";
         let encoded = engine.mint_token(root_key, "my-service").unwrap();
@@ -726,7 +769,7 @@ mod tests {
 
     #[test]
     fn state_snapshot_roundtrip() {
-        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
         // Insert a cell into the ledger for a non-trivial state.
         let cell = pyana_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
         engine.ledger_mut().insert_cell(cell).unwrap();
@@ -735,7 +778,7 @@ mod tests {
         assert!(!snapshot.is_empty());
 
         // Create a fresh engine and load the snapshot.
-        let mut engine2 = PyanaEngine::new(EngineConfig::default());
+        let mut engine2 = PyanaEngine::new(EngineConfig::for_testing());
         engine2.load_state(&snapshot).unwrap();
         assert!(!engine2.ledger().is_empty());
     }
@@ -755,7 +798,7 @@ mod tests {
 
     #[test]
     fn process_hello_message() {
-        let engine = PyanaEngine::new(EngineConfig::default());
+        let engine = PyanaEngine::new(EngineConfig::for_testing());
         let hello = WireMessage::Hello {
             node_id: [0xaa; 32],
             node_name: "test-client".into(),
@@ -772,7 +815,7 @@ mod tests {
 
     #[test]
     fn process_ping_message() {
-        let engine = PyanaEngine::new(EngineConfig::default());
+        let engine = PyanaEngine::new(EngineConfig::for_testing());
         let ping = WireMessage::Ping {
             seq: 7,
             timestamp: 100,
@@ -787,7 +830,7 @@ mod tests {
 
     #[test]
     fn federation_root_management() {
-        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
         assert_eq!(engine.federation_root(), [0u8; 32]);
 
         let new_root = [0x42u8; 32];
@@ -797,7 +840,7 @@ mod tests {
 
     #[test]
     fn verify_rejects_garbage() {
-        let engine = PyanaEngine::new(EngineConfig::default());
+        let engine = PyanaEngine::new(EngineConfig::for_testing());
         // Garbage bytes should fail to decode or not verify.
         let result = engine.verify_presentation_bytes(&[0u8; 100], "read", "api/v1/users");
         // Either returns Err (decode failure) or Ok(false) (verification failure).
@@ -806,7 +849,7 @@ mod tests {
 
     #[test]
     fn load_state_rejects_tampered_snapshot() {
-        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
         let cell = pyana_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
         engine.ledger_mut().insert_cell(cell).unwrap();
 
@@ -817,7 +860,7 @@ mod tests {
         snapshot[0] ^= 0xFF;
 
         // Loading the tampered snapshot must fail with IntegrityCheckFailed.
-        let mut engine2 = PyanaEngine::new(EngineConfig::default());
+        let mut engine2 = PyanaEngine::new(EngineConfig::for_testing());
         let result = engine2.load_state(&snapshot);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -830,7 +873,7 @@ mod tests {
     #[test]
     fn load_state_rejects_truncated_snapshot() {
         // A snapshot shorter than 32 bytes cannot contain a valid hash.
-        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
         let result = engine.load_state(&[0u8; 16]);
         assert!(result.is_err());
     }
@@ -839,7 +882,7 @@ mod tests {
     fn load_state_rejects_hash_only_snapshot() {
         // A snapshot of exactly 32 bytes (just the hash, no data) should either
         // fail integrity or fail deserialization of the empty data portion.
-        let mut engine = PyanaEngine::new(EngineConfig::default());
+        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
         let empty_data = &[];
         let hash = blake3::hash(empty_data);
         let snapshot: Vec<u8> = hash.as_bytes().to_vec();

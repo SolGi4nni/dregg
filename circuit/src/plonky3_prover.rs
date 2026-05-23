@@ -101,7 +101,15 @@ pub fn create_config() -> PyanaStarkConfig {
 
     let challenge_mmcs = ExtensionMmcs::<P3BabyBear, EF, _>::new(val_mmcs.clone());
 
-    let fri_params = FriParameters::new_testing(challenge_mmcs, 0);
+    let fri_params = FriParameters {
+        log_blowup: 2,
+        log_final_poly_len: 0,
+        max_log_arity: 3,
+        num_queries: 2,
+        commit_proof_of_work_bits: 1,
+        query_proof_of_work_bits: 1,
+        mmcs: challenge_mmcs,
+    };
 
     let dft = Radix2DitParallel::default();
     let pcs = TwoAdicFriPcs::new(dft, val_mmcs, fri_params);
@@ -894,11 +902,11 @@ mod tests {
     #[test]
     #[ignore]
     fn plonky3_minimal_degree7_more_rows() {
-        // Try with 16 rows to see if trace size matters
+        // Try with 256 rows to rule out small-trace issues
         let config = create_config();
         let air = MinimalDegree7Air;
 
-        let values: Vec<P3BabyBear> = (1u32..=16)
+        let values: Vec<P3BabyBear> = (1u32..=256)
             .flat_map(|v| {
                 let x = P3BabyBear::new(v * 7 + 3);
                 let x7 = x.exp_const_u64::<7>();
@@ -912,7 +920,7 @@ mod tests {
         let result = verify(&config, &air, &proof, &public);
         assert!(
             result.is_ok(),
-            "Minimal degree-7 AIR (16 rows) failed: {:?}",
+            "Minimal degree-7 AIR (256 rows) failed: {:?}",
             result.err()
         );
     }

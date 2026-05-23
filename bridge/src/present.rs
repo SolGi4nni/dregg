@@ -2390,11 +2390,10 @@ pub fn verify_proof_complete(
             real.derivation_proof.public_inputs[0]
         };
         let presentation_tag = wire_proof.circuit_proof.public_inputs.presentation_tag;
-        let tag_hash = poseidon2::hash_many(&[presentation_tag]);
 
         let recomputed = WideHash::from_poseidon2(
             "pyana-composition-v1",
-            &[fold_chain_commitment, derivation_state_root, tag_hash],
+            &[fold_chain_commitment, derivation_state_root, presentation_tag],
         );
 
         if recomputed != wire_proof.composition_commitment {

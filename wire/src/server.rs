@@ -61,7 +61,7 @@ impl ProofVerifier for StarkVerifier {
 
         // Verify action binding: public_inputs[2..6] must be the canonical commitment
         // to (action, resource) via compute_action_binding (4 elements, 124-bit security).
-        // Layout: [leaf_hash, merkle_root, action_binding[0..4], composition_commitment]
+        // Layout: [leaf_hash, merkle_root, action_binding[0..4], composition_commitment[0..4]]
         // The bridge verifier (bridge/src/verifier.rs) also uses pi[2..6].
         let expected_binding = pyana_circuit::compute_action_binding(action, resource);
         if public_inputs.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
@@ -71,6 +71,22 @@ impl ProofVerifier for StarkVerifier {
             if public_inputs[2 + i] != expected_binding[i] {
                 return Ok(false); // Proof not bound to this (action, resource)
             }
+        }
+
+        // SECURITY: Verify composition commitment is present and non-zero.
+        // The composition commitment occupies pi[6..10] (4 elements). It binds the
+        // issuer membership STARK to the derivation proof that concluded "Allow".
+        // Without this check, a federation member could present a valid membership
+        // proof even when their authorization was DENIED.
+        let composition_start = 2 + pyana_circuit::ACTION_BINDING_WIDTH; // index 6
+        if public_inputs.len() < composition_start + 4 {
+            return Ok(false); // No composition commitment present
+        }
+        let has_nonzero_composition = public_inputs[composition_start..composition_start + 4]
+            .iter()
+            .any(|&v| v != pyana_circuit::field::BabyBear::ZERO);
+        if !has_nonzero_composition {
+            return Ok(false); // Zeroed composition = no authorization binding
         }
 
         // Production verification only accepts the Poseidon2 AIR. The legacy
@@ -161,9 +177,10 @@ pub struct SiloConfig {
     pub handshake_timeout: Duration,
     /// The proof verifier used to check incoming presentation proofs.
     pub verifier: Arc<dyn ProofVerifier>,
-    /// Authorized revocation authorities. If non-empty, only these public keys
-    /// are permitted to submit revocations. If empty, any valid signature is accepted
-    /// (for backward compatibility in tests/single-node deployments).
+    /// Authorized revocation authorities. Only these public keys are permitted to
+    /// submit revocations. If empty (the default), ALL revocations are rejected
+    /// (fail-closed). Callers MUST configure at least one authority for revocations
+    /// to be accepted.
     pub revocation_authorities: Vec<PublicKey>,
     /// Maximum age (in seconds) for request timestamps. Requests older than this
     /// are rejected as stale.
@@ -229,8 +246,9 @@ impl SiloConfig {
 
     /// Set the authorized revocation authorities.
     ///
-    /// When non-empty, only these public keys may submit revocations.
-    /// When empty (the default), any valid signature is accepted.
+    /// Only these public keys may submit revocations. When empty (the default),
+    /// ALL revocations are rejected (fail-closed). Callers MUST configure at least
+    /// one authority for revocations to be accepted.
     pub fn with_revocation_authorities(mut self, authorities: Vec<PublicKey>) -> Self {
         self.revocation_authorities = authorities;
         self
@@ -1327,10 +1345,17 @@ impl SiloServer {
                     }
                 }
 
-                // --- Issue 4: Authority whitelist check ---
-                if !config.revocation_authorities.is_empty()
-                    && !config.revocation_authorities.contains(&authority)
-                {
+                // SECURITY: Authority whitelist check.
+                // An empty revocation_authorities list means NO authorities are trusted,
+                // which is the fail-closed default. Previously this accepted ANY signature
+                // when the list was empty, which is an insecure open-by-default posture.
+                if config.revocation_authorities.is_empty() {
+                    return Some(WireMessage::Error {
+                        code: crate::message::error_codes::INVALID_SIGNATURE,
+                        message: "no revocation authorities configured (fail-closed)".to_string(),
+                    });
+                }
+                if !config.revocation_authorities.contains(&authority) {
                     return Some(WireMessage::Error {
                         code: crate::message::error_codes::INVALID_SIGNATURE,
                         message: "authority not in revocation whitelist".to_string(),
@@ -1868,7 +1893,12 @@ mod tests {
 
     #[tokio::test]
     async fn server_handles_revocation() {
-        let config = SiloConfig::new("revoker").with_verifier(Arc::new(NoopVerifier));
+        // Generate the keypair FIRST so we can add it to the whitelist.
+        let (sk, pk) = pyana_types::generate_keypair();
+
+        let config = SiloConfig::new("revoker")
+            .with_verifier(Arc::new(NoopVerifier))
+            .with_revocation_authorities(vec![pk]);
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
 
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
@@ -1892,9 +1922,6 @@ mod tests {
             .await
             .unwrap();
         let _welcome = client.recv().await.unwrap();
-
-        // Generate a real keypair so the signature verifies.
-        let (sk, pk) = pyana_types::generate_keypair();
         let token_id = "tok-revoke-me";
 
         let mut nonce = [0u8; 16];

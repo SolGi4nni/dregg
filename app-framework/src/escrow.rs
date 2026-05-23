@@ -52,7 +52,7 @@ impl std::error::Error for EscrowError {}
 /// use pyana_sdk::embed::{PyanaEngine, EngineConfig};
 /// use pyana_turn::escrow::EscrowCondition;
 ///
-/// let mut engine = PyanaEngine::new(EngineConfig::default());
+/// let mut engine = PyanaEngine::new(EngineConfig::for_testing());
 /// let mut mgr = EscrowManager::new(&mut engine);
 ///
 /// let escrow_id = mgr.create_payment_escrow(

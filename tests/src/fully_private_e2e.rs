@@ -174,8 +174,9 @@ fn test_fully_private_end_to_end() {
     // Phase 5: Verify through the SDK's standalone verifier
     // =========================================================================
     // The SDK's verify_authorization_proof is the user-facing API for verifiers.
+    // It now requires the expected action and resource to verify action binding.
     let verification_result =
-        verify_authorization_proof(&proof_bytes, &federation_root_bytes);
+        verify_authorization_proof(&proof_bytes, &federation_root_bytes, "r", "storage");
     assert!(
         verification_result.is_ok(),
         "verify_authorization_proof should not error: {:?}",
@@ -380,7 +381,7 @@ fn test_fully_private_end_to_end() {
     if tampered_bytes.len() > 50 {
         tampered_bytes[50] ^= 0xFF;
     }
-    let tampered_result = verify_authorization_proof(&tampered_bytes, &federation_root_bytes);
+    let tampered_result = verify_authorization_proof(&tampered_bytes, &federation_root_bytes, "r", "storage");
     // Either deserialization fails (Err) or verification fails (Ok(false))
     match tampered_result {
         Ok(true) => panic!("tampered proof should NOT verify as true"),
@@ -412,7 +413,7 @@ fn test_fully_private_end_to_end() {
     );
 
     let wrong_root_bytes = bb_to_bytes(wrong_root_bb);
-    let wrong_root_result = verify_authorization_proof(&proof_bytes, &wrong_root_bytes);
+    let wrong_root_result = verify_authorization_proof(&proof_bytes, &wrong_root_bytes, "r", "storage");
     match wrong_root_result {
         Ok(true) => panic!("proof should NOT verify against wrong federation root"),
         Ok(false) => {} // expected
@@ -545,8 +546,8 @@ fn test_fully_private_deterministic_conclusion() {
     let federation_root_bb = compute_federation_root_poseidon2(&root_key);
     let federation_root_bytes = bb_to_bytes(federation_root_bb);
 
-    let v1 = verify_authorization_proof(&proof1, &federation_root_bytes);
-    let v2 = verify_authorization_proof(&proof2, &federation_root_bytes);
+    let v1 = verify_authorization_proof(&proof1, &federation_root_bytes, "r", "dns");
+    let v2 = verify_authorization_proof(&proof2, &federation_root_bytes, "r", "dns");
     assert!(v1.unwrap(), "first proof should verify");
     assert!(v2.unwrap(), "second proof should verify");
 }

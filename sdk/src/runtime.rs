@@ -380,6 +380,13 @@ impl AgentRuntime {
             issuer_key,
         );
 
+        // Derive proof key from issuer key for the sub-agent's ZK proof capability.
+        let proof_key = if issuer_key != [0u8; 32] {
+            Some(blake3::derive_key("pyana-proof-key-v1", &issuer_key))
+        } else {
+            None
+        };
+
         sub_wallet.receive_delegation(DelegatedToken {
             token_bytes: encoded,
             service: token.service.clone(),
@@ -387,6 +394,7 @@ impl AgentRuntime {
             id: token_id,
             delegatee: sub_pk,
             restrictions: restrictions.clone(),
+            proof_key,
         })?;
 
         // Create the sub-agent's cell in the ledger.

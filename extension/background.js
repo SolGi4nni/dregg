@@ -874,11 +874,26 @@ async function authorize(request) {
     // incorrect — it doesn't match the circuit's expectation.
     let stateRoot = 0;
     try {
-      const statusResp = await fetch('http://localhost:8420/status', {
-        signal: AbortSignal.timeout(2000),
-      });
+      // Security: prefer HTTPS; fall back to HTTP only for localhost.
+      let statusResp = null;
+      try {
+        statusResp = await fetch('https://localhost:8420/status', {
+          signal: AbortSignal.timeout(2000),
+        });
+      } catch (_httpsErr) {
+        // HTTPS unavailable — allow HTTP only for localhost.
+        statusResp = await fetch('http://localhost:8420/status', {
+          signal: AbortSignal.timeout(2000),
+        });
+      }
       if (statusResp.ok) {
         const statusData = await statusResp.json();
+        // Validate the response is signed by the node if a signature is present.
+        if (nodePublicKey && statusData.signature && statusData.payload) {
+          if (!validateNodeSignature(statusData.payload, statusData.signature, nodePublicKey)) {
+            throw new Error('Invalid signature on /status response');
+          }
+        }
         // The node's /status endpoint returns the current Merkle state root
         // as a hex string. Convert the first 8 hex chars to a u32.
         const merkleRoot = statusData.merkle_root || statusData.state_root || '';
@@ -1802,6 +1817,12 @@ const POPUP_ONLY_METHODS = new Set([
 ]);
 
 async function handleMessage(message, sender) {
+  // Security: strip _skipDisclosure from page-originated requests.
+  // Only the extension popup may bypass the disclosure picker.
+  if (sender?.tab && message?.request) {
+    delete message.request._skipDisclosure;
+  }
+
   switch (message.type) {
     case 'pyana:authorize': {
       // Page-originated authorize requests go through the disclosure picker.
@@ -2026,11 +2047,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 let nodeWs = null;
 let wsReconnectDelay = 1000;
 const WS_MAX_RECONNECT_DELAY = 60000;
+const WS_AUTH_TIMEOUT_MS = 5000;
+let nodePublicKey = null; // Learned from node /status endpoint on first connect.
+let wsAuthenticated = false;
 
-function connectNodeWs() {
+/**
+ * Fetch the node's public key from its /status endpoint.
+ * This is used to validate signatures on WebSocket messages.
+ */
+async function fetchNodePublicKey() {
+  try {
+    let resp = null;
+    try {
+      resp = await fetch('https://localhost:8420/status', { signal: AbortSignal.timeout(2000) });
+    } catch (_e) {
+      resp = await fetch('http://localhost:8420/status', { signal: AbortSignal.timeout(2000) });
+    }
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.public_key) {
+        nodePublicKey = data.public_key;
+        console.log('[pyana] Learned node public key:', nodePublicKey.slice(0, 16) + '...');
+      }
+    }
+  } catch (_e) {
+    console.warn('[pyana] Could not fetch node public key from /status');
+  }
+}
+
+/**
+ * Validate a message signature from the node using its Ed25519 public key.
+ * Returns true if signature is valid, false otherwise.
+ */
+function validateNodeSignature(payload, signature, pubKey) {
+  if (!wasm || !wasmLoaded) return false;
+  try {
+    // payload and signature are hex strings; pubKey is hex.
+    return wasm.verify_token(payload, pubKey, signature, 'node');
+  } catch (_e) {
+    return false;
+  }
+}
+
+/**
+ * Validate an incoming WebSocket message from the node.
+ * Revocations and receipts MUST be signed. Other messages are allowed unsigned
+ * (e.g., 'subscribed', 'error') but are not trusted for state mutations.
+ */
+function validateNodeMessage(msg) {
+  // Messages that mutate wallet state require a valid signature.
+  const SIGNED_TYPES = new Set(['revocation', 'receipt', 'root', 'intent']);
+  if (!SIGNED_TYPES.has(msg.type)) return true; // informational, no signature needed
+  if (!nodePublicKey) {
+    console.warn('[pyana] No node public key available; rejecting signed message');
+    return false;
+  }
+  if (!msg.signature || !msg.payload) {
+    console.warn('[pyana] WS message missing signature/payload field, type:', msg.type);
+    return false;
+  }
+  return validateNodeSignature(msg.payload, msg.signature, nodePublicKey);
+}
+
+async function connectNodeWs() {
   if (nodeWs && (nodeWs.readyState === WebSocket.CONNECTING || nodeWs.readyState === WebSocket.OPEN)) {
     return;
   }
+
+  // Learn the node's public key before connecting (needed for message validation).
+  if (!nodePublicKey) {
+    await fetchNodePublicKey();
+  }
+
+  wsAuthenticated = false;
 
   // Try wss:// first. Fall back to ws:// ONLY for localhost (Bug 6 fix).
   tryConnect(NODE_WSS_URL, () => {
@@ -2060,10 +2149,25 @@ function tryConnect(url, onFail) {
     console.log('[pyana] WebSocket connected to node via', url);
     wsReconnectDelay = 1000;
 
+    // Security: send a challenge for the node to prove its identity.
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const challengeHex = Array.from(challenge).map(b => b.toString(16).padStart(2, '0')).join('');
     nodeWs.send(JSON.stringify({
-      type: 'subscribe',
-      topics: ['roots', 'revocations', 'receipts', 'intents'],
+      type: 'auth_challenge',
+      challenge: challengeHex,
     }));
+
+    // If the node does not respond with a valid auth_response within 5s, disconnect.
+    const authTimer = setTimeout(() => {
+      if (!wsAuthenticated && nodeWs) {
+        console.error('[pyana] WS auth timeout — node did not respond to challenge in time');
+        nodeWs.close();
+      }
+    }, WS_AUTH_TIMEOUT_MS);
+
+    // Store challenge info for validation in onmessage.
+    nodeWs._authChallenge = challengeHex;
+    nodeWs._authTimer = authTimer;
   };
 
   nodeWs.onmessage = async (event) => {
@@ -2071,6 +2175,50 @@ function tryConnect(url, onFail) {
     try {
       msg = JSON.parse(event.data);
     } catch {
+      return;
+    }
+
+    // Handle auth_response before any other processing.
+    if (msg.type === 'auth_response') {
+      if (nodePublicKey && msg.signature && nodeWs._authChallenge) {
+        if (validateNodeSignature(nodeWs._authChallenge, msg.signature, nodePublicKey)) {
+          wsAuthenticated = true;
+          clearTimeout(nodeWs._authTimer);
+          console.log('[pyana] WS node authenticated successfully');
+          // Now subscribe after authentication.
+          nodeWs.send(JSON.stringify({
+            type: 'subscribe',
+            topics: ['roots', 'revocations', 'receipts', 'intents'],
+          }));
+        } else {
+          console.error('[pyana] WS auth failed — invalid signature from node');
+          nodeWs.close();
+        }
+      } else if (!nodePublicKey) {
+        // No public key available — accept connection but log warning.
+        wsAuthenticated = true;
+        clearTimeout(nodeWs._authTimer);
+        console.warn('[pyana] WS auth skipped — no node public key available');
+        nodeWs.send(JSON.stringify({
+          type: 'subscribe',
+          topics: ['roots', 'revocations', 'receipts', 'intents'],
+        }));
+      } else {
+        console.error('[pyana] WS auth_response missing signature');
+        nodeWs.close();
+      }
+      return;
+    }
+
+    // Reject state-mutating messages if authentication has not completed.
+    if (!wsAuthenticated) {
+      console.warn('[pyana] Ignoring WS message before authentication:', msg.type);
+      return;
+    }
+
+    // Validate signature on state-mutating messages.
+    if (!validateNodeMessage(msg)) {
+      console.warn('[pyana] Rejecting WS message with invalid/missing signature:', msg.type);
       return;
     }
 
