@@ -33,8 +33,10 @@ use ark_ff::{One, PrimeField, Zero};
 use groupmap::GroupMap;
 use kimchi::circuits::{
     gate::{CircuitGate, GateType},
+    polynomials::poseidon::generate_witness as poseidon_generate_witness,
     wires::{COLUMNS, Wire},
 };
+use kimchi::curve::KimchiCurve;
 use kimchi::proof::ProverProof;
 use mina_curves::pasta::{Fp, Vesta};
 use mina_poseidon::pasta::FULL_ROUNDS;
@@ -46,6 +48,50 @@ use super::{
     BaseSponge, KimchiNativeCircuitType, KimchiNativeProof, ScalarSponge, VestaOpeningProof,
     fp_to_bytes32, verify_kimchi_proof,
 };
+
+// ============================================================================
+// Poseidon gate constants and helpers
+// ============================================================================
+
+/// Number of Poseidon gate rows per permutation (FULL_ROUNDS / 5 = 55/5 = 11)
+const POS_ROWS: usize = FULL_ROUNDS / 5;
+/// Total rows consumed by one Poseidon gadget (11 Poseidon rows + 1 zero/output row)
+const POS_GADGET_ROWS: usize = POS_ROWS + 1;
+
+/// Compute Poseidon permutation output for witness generation.
+fn poseidon_perm_output(input: [Fp; 3]) -> [Fp; 3] {
+    use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
+    let p = Vesta::sponge_params();
+    let mut sponge = ArithmeticSponge::<Fp, super::SpongeParams, FULL_ROUNDS>::new(p);
+    sponge.state = input.to_vec();
+    for round in 0..FULL_ROUNDS {
+        sponge.full_round(round);
+    }
+    [sponge.state[0], sponge.state[1], sponge.state[2]]
+}
+
+/// Compute the Kimchi-native Poseidon hash of N input elements.
+///
+/// Uses the same sponge construction as `hash_many_fp`:
+/// - State width = 3, rate = 2 (state[0], state[1] are rate, state[2] is capacity)
+/// - For each block: add elements into state[0] and state[1], then permute
+/// - Output = state[0] after all permutations
+fn poseidon_hash_n(inputs: &[Fp]) -> Fp {
+    let num_blocks = inputs.len().div_ceil(2).max(1);
+    let mut state = [Fp::zero(); 3];
+
+    for block in 0..num_blocks {
+        let idx = block * 2;
+        if idx < inputs.len() {
+            state[0] = state[0] + inputs[idx];
+        }
+        if idx + 1 < inputs.len() {
+            state[1] = state[1] + inputs[idx + 1];
+        }
+        state = poseidon_perm_output(state);
+    }
+    state[0]
+}
 
 // ============================================================================
 // Mirror types for CircuitDescriptor's constraint language
@@ -702,21 +748,74 @@ fn compile_constraint(
             compile_constraint(gates, inner, _trace_width)?;
         }
 
-        DslConstraint::Hash { .. }
-        | DslConstraint::Hash2to1 { .. }
-        | DslConstraint::Hash4to1 { .. } => {
-            // TODO: Poseidon gate integration for hash constraints.
-            // For now, emit a placeholder Generic gate. The prover must ensure
-            // the hash relationship holds in the witness. Full soundness requires
-            // Poseidon round gates (like the derivation circuit uses).
-            //
-            // The Kimchi Poseidon gadget uses `CircuitGate::create_poseidon_gadget`
-            // which emits FULL_ROUNDS/5 = 11 rows of Poseidon gates plus 1 output row.
-            // Integrating this properly requires knowing the round constants and
-            // wiring the input/output columns correctly.
+        DslConstraint::Hash {
+            output_col: _,
+            input_cols,
+        } => {
+            // Poseidon sponge hash: uses ceil(N/2) Poseidon gadgets + 1 output binding gate.
+            // Each gadget enforces one permutation over the 3-element state.
+            let rc = &Vesta::sponge_params().round_constants;
+            let num_blocks = input_cols.len().div_ceil(2).max(1);
+            for _ in 0..num_blocks {
+                let s = gates.len();
+                let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+                    s,
+                    [Wire::for_row(s), Wire::for_row(s + POS_ROWS)],
+                    rc,
+                );
+                gates.extend(pg);
+            }
+            // Output binding gate: computed_hash (state[0] after perms) == output_col value
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
-            // Equality check: w[0] (computed hash) = w[1] (output col)
+            c[0] = Fp::one();
+            c[1] = -Fp::one();
+            gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
+        }
+
+        DslConstraint::Hash2to1 {
+            output_col: _,
+            input_col_a: _,
+            input_col_b: _,
+        } => {
+            // Poseidon hash of 2 inputs: exactly 1 Poseidon gadget + output binding.
+            // perm([a, b, 0]) -> output = state[0]
+            let rc = &Vesta::sponge_params().round_constants;
+            let s = gates.len();
+            let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+                s,
+                [Wire::for_row(s), Wire::for_row(s + POS_ROWS)],
+                rc,
+            );
+            gates.extend(pg);
+            // Output binding gate
+            let r = gates.len();
+            let mut c = vec![Fp::zero(); COLUMNS];
+            c[0] = Fp::one();
+            c[1] = -Fp::one();
+            gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
+        }
+
+        DslConstraint::Hash4to1 {
+            output_col: _,
+            input_cols: _,
+        } => {
+            // Poseidon hash of 4 inputs: 2 Poseidon gadgets + output binding.
+            // Block 1: perm([in[0], in[1], 0])
+            // Block 2: perm([state[0]+in[2], state[1]+in[3], state[2]])
+            let rc = &Vesta::sponge_params().round_constants;
+            for _ in 0..2 {
+                let s = gates.len();
+                let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
+                    s,
+                    [Wire::for_row(s), Wire::for_row(s + POS_ROWS)],
+                    rc,
+                );
+                gates.extend(pg);
+            }
+            // Output binding gate
+            let r = gates.len();
+            let mut c = vec![Fp::zero(); COLUMNS];
             c[0] = Fp::one();
             c[1] = -Fp::one();
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
@@ -1102,35 +1201,108 @@ fn fill_constraint_witness(
             output_col,
             input_cols,
         } => {
-            // Hash gate: w[0] = computed hash (from witness), w[1] = output col value
-            // The prover must compute the correct hash externally and place it.
-            // For now, we trust the trace: output_col already holds the correct hash.
-            let output_val = get_col(*output_col);
-            witness[0][row_idx] = output_val; // hash output
-            witness[1][row_idx] = output_val; // should be equal
-            let _ = input_cols;
-            Ok(row_idx + 1)
+            // Poseidon sponge hash with N inputs using ceil(N/2) Poseidon gadgets.
+            // Sponge state: rate=2 (state[0], state[1]), capacity=1 (state[2]).
+            // Each block absorbs 2 elements into state[0], state[1] then permutes.
+            let inputs: Vec<Fp> = input_cols.iter().map(|&c| get_col(c)).collect();
+            let num_blocks = inputs.len().div_ceil(2).max(1);
+            let mut state = [Fp::zero(); 3];
+            let mut cur = row_idx;
+
+            for block in 0..num_blocks {
+                let idx = block * 2;
+                if idx < inputs.len() {
+                    state[0] = state[0] + inputs[idx];
+                }
+                if idx + 1 < inputs.len() {
+                    state[1] = state[1] + inputs[idx + 1];
+                }
+                // Fill the Poseidon gadget witness for this permutation
+                if cur + POS_GADGET_ROWS <= num_rows {
+                    poseidon_generate_witness(cur, Vesta::sponge_params(), witness, state);
+                }
+                state = poseidon_perm_output(state);
+                cur += POS_GADGET_ROWS;
+            }
+
+            // Output binding gate: w[0]=computed_hash (state[0]), w[1]=output_col value
+            if cur < num_rows {
+                let computed_hash = state[0];
+                witness[0][cur] = computed_hash;
+                witness[1][cur] = get_col(*output_col);
+                cur += 1;
+            }
+            Ok(cur)
         }
 
         DslConstraint::Hash2to1 {
             output_col,
-            input_col_a: _,
-            input_col_b: _,
+            input_col_a,
+            input_col_b,
         } => {
-            let output_val = get_col(*output_col);
-            witness[0][row_idx] = output_val;
-            witness[1][row_idx] = output_val;
-            Ok(row_idx + 1)
+            // Single Poseidon permutation: perm([a, b, 0]) -> output = state[0]
+            let a = get_col(*input_col_a);
+            let b = get_col(*input_col_b);
+            let state = [a, b, Fp::zero()];
+            let mut cur = row_idx;
+
+            if cur + POS_GADGET_ROWS <= num_rows {
+                poseidon_generate_witness(cur, Vesta::sponge_params(), witness, state);
+            }
+            let output_state = poseidon_perm_output(state);
+            cur += POS_GADGET_ROWS;
+
+            // Output binding gate
+            if cur < num_rows {
+                witness[0][cur] = output_state[0];
+                witness[1][cur] = get_col(*output_col);
+                cur += 1;
+            }
+            Ok(cur)
         }
 
         DslConstraint::Hash4to1 {
             output_col,
-            input_cols: _,
+            input_cols,
         } => {
-            let output_val = get_col(*output_col);
-            witness[0][row_idx] = output_val;
-            witness[1][row_idx] = output_val;
-            Ok(row_idx + 1)
+            // Two Poseidon permutations for 4 inputs (sponge with rate=2).
+            // Block 1: state = perm([in[0], in[1], 0])
+            // Block 2: state = perm([state[0]+in[2], state[1]+in[3], state[2]])
+            let ins: [Fp; 4] = [
+                get_col(input_cols[0]),
+                get_col(input_cols[1]),
+                get_col(input_cols[2]),
+                get_col(input_cols[3]),
+            ];
+            let mut cur = row_idx;
+
+            // Block 1
+            let state1 = [ins[0], ins[1], Fp::zero()];
+            if cur + POS_GADGET_ROWS <= num_rows {
+                poseidon_generate_witness(cur, Vesta::sponge_params(), witness, state1);
+            }
+            let state_after_1 = poseidon_perm_output(state1);
+            cur += POS_GADGET_ROWS;
+
+            // Block 2: absorb ins[2], ins[3] into state
+            let state2 = [
+                state_after_1[0] + ins[2],
+                state_after_1[1] + ins[3],
+                state_after_1[2],
+            ];
+            if cur + POS_GADGET_ROWS <= num_rows {
+                poseidon_generate_witness(cur, Vesta::sponge_params(), witness, state2);
+            }
+            let state_after_2 = poseidon_perm_output(state2);
+            cur += POS_GADGET_ROWS;
+
+            // Output binding gate
+            if cur < num_rows {
+                witness[0][cur] = state_after_2[0];
+                witness[1][cur] = get_col(*output_col);
+                cur += 1;
+            }
+            Ok(cur)
         }
     }
 }

@@ -16,6 +16,7 @@ pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-types = { path = "../types" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["hazmat"] }
+hex = "0.4"
 postcard = { version = "1", features = ["alloc"] }
 serde = { workspace = true }
 

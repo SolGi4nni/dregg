@@ -312,17 +312,122 @@ The number of sub-proofs in a non-recursive presentation leaks the _structure_ (
 
 Recursive composition eliminates this leakage: the final proof is constant-size and reveals only the conclusion bit. This is why recursive verification is architecturally critical---not merely a performance optimization, but a privacy requirement.
 
-== Proof Backend Agility
+== Proof Backend Agility: The Constraint DSL
+
+Rather than manually implementing circuits for each proof system, Pyana provides a constraint DSL (`#[pyana_caveat]` and `#[pyana_effect]` proc macros) that compiles a single `CircuitDescriptor` into 8 code generation backends:
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (left, left, left),
+    table.header([*Backend*], [*Output*], [*Use Case*]),
+    [Rust], [Runtime evaluator function], [Trusted-mode fast path],
+    [AIR], [Constraint descriptor for custom STARK], [Primary proof generation],
+    [Datalog], [Rule fragment for policy evaluation], [Lightweight authorization],
+    [Kimchi], [Gate descriptor for Pasta-curve circuits], [Mina-compatible recursion],
+    [STARK], [Compile-time AIR impl (`StarkAir` trait)], [Custom prover integration],
+    [Midnight/ZKIR v3], [Program for Midnight contracts], [Cardano/Midnight interop],
+    [Plonky3], [Native `Air` trait impl for p3-uni-stark], [Production proving],
+    [SP1], [RISC-V guest program for Succinct's zkVM], [EVM bridge (Groth16)],
+  ),
+  caption: [DSL code generation backends. All backends prove the same logical statement; the choice is made at prove-time based on deployment requirements.],
+)
+
+The DSL supports composition operators that combine multiple circuit proofs:
+
+- `compose_and(A, B)`: Both A and B must verify; shared public inputs are linked.
+- `compose_or(A, B)`: At least one verifies (with a selector column).
+- `compose_chain(proofs)`: Sequential IVC chain---each step verifies the previous.
+- `compose_aggregate(set)`: All verify; public inputs are merged.
+
+Sub-proofs are cryptographically bound via VK hashes and public-input linking columns in the composed trace.
+
+== Three Production Provers
 
 #figure(
   table(
     columns: (auto, auto, auto, auto, auto),
     align: (left, left, center, center, center),
-    table.header([*Backend*], [*Field/Curve*], [*Proof Size*], [*PQ?*], [*Recursion*]),
-    [BabyBear STARK], [$FF_(2^(31)-2^(27)+1)$ + FRI], [$tilde$24 KiB], [Yes], [Planned],
-    [Binius], [GF(2) tower + Groestl-256], [$tilde$1--4 KiB], [Yes], [No],
-    [Halo2], [BN254 / Pasta + KZG], [$tilde$1--5 KiB], [No], [Yes],
-    [Nova], [Pasta cycle (Pallas/Vesta)], [$tilde$10 KiB], [No], [IVC native],
+    table.header([*Prover*], [*Field/Curve*], [*Proof Size*], [*PQ?*], [*Recursion*]),
+    [Custom STARK (BabyBear/FRI)], [$FF_(2^(31)-2^(27)+1)$ + FRI], [$tilde$24 KiB], [Yes], [Via Plonky3],
+    [Plonky3 (p3-uni-stark)], [BabyBear + FRI], [$tilde$24 KiB], [Yes], [Operational],
+    [Kimchi/Pickles (Pasta)], [Pallas/Vesta + IPA], [$tilde$10 KiB], [No], [Native (assisted)],
   ),
-  caption: [Proof backend characteristics. All prove the same logical statement against the same data model.],
+  caption: [Production proof system characteristics. The custom STARK and Plonky3 backends share the BabyBear field; Kimchi/Pickles uses the Pasta curve cycle for constant-size recursive proofs.],
+)
+
+=== STARK-in-Pickles Composition
+
+The STARK-in-Pickles pipeline wraps a BabyBear STARK proof in a Kimchi verifier circuit (~30K gates) to produce a Pickles recursive SNARK (constant-size, Pasta curves). The pipeline:
+
++ Generate STARK proof over BabyBear (fast, PQ-secure, ~24 KiB).
++ Commit the STARK proof via Poseidon2 (pre-hash and post-hash binding).
++ Verify the STARK algebraically inside a Kimchi circuit (FRI folding + Fiat-Shamir replay).
++ Produce a Pickles recursive proof (constant-size, Mina-compatible).
+
+This enables Mina-native verification of Pyana proofs and constant-size proof accumulation regardless of the number of underlying STARK proofs.
+
+=== EVM Bridge via SP1
+
+For Ethereum/Base settlement, the SP1 backend wraps Pyana STARKs in Groth16:
+
++ Pyana STARK proof (large, not EVM-friendly).
++ SP1 guest program verifies the STARK inside a RISC-V zkVM.
++ SP1 produces a Groth16 proof (~200K gas on EVM).
++ On-chain verification via Succinct's deployed SP1 Verifier Gateway.
+
+The EVM bridge includes a VK registry with governance, an incremental Merkle tree for deposits ($O(log n)$ insertions), and frontrunning protection. *Status:* The chain crate is implemented but the guest program requires regeneration against the current Plonky3 backend (in development).
+
+== Effect VM <sec-effect-vm>
+
+The Effect VM is a multi-row AIR circuit that proves arbitrary turns---one STARK per turn regardless of effect count. Rather than a general-purpose CPU emulator, it is a domain-specific VM whose instruction set matches Pyana's effect types (SetField, Transfer, GrantCapability, CreateCell, NoteSpend, etc.).
+
+Each row of the Effect VM trace encodes one effect's execution:
+
+- Pre-state commitment (hash of cell state before this effect)
+- Effect opcode and operands
+- Post-state commitment (hash of cell state after this effect)
+- Conservation accumulator (running sum of value changes)
+- Authority witness (proof that the actor held permission for this effect)
+
+The VM enforces:
+- *State continuity*: Each effect's post-state equals the next effect's pre-state.
+- *Conservation*: The final accumulator equals zero (no value created or destroyed).
+- *Authority*: Each effect's EffectMask is a subset of the actor's mask.
+- *Atomicity*: All effects in a turn succeed or all roll back (proven via a completion flag).
+
+The Effect VM handles turns of arbitrary length in a single proof, eliminating the per-effect proof overhead that would otherwise make complex turns (e.g., flash-loan factory spawning, multi-party swaps) prohibitively expensive. *Status:* Implemented and tested (1,411 lines); conservation and state-continuity constraints are operational; authority witness integration is in progress.
+
+== 21+ AIR Circuits
+
+The circuit crate implements the following AIR circuits, all ported to the DSL with full parity:
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Circuit*], [*Purpose*]),
+    [Poseidon2Air], [Hash permutation verification],
+    [MerkleAir], [4-ary Merkle membership proof],
+    [FoldAir], [Monotonic capability attenuation],
+    [MultiStepAir], [N-step Datalog derivation],
+    [IvcAir], [Fold chain accumulation (constant-size)],
+    [NoteSpendingAir], [Private note spending + nullifier],
+    [NonRevocationAir], [Credential non-revocation proof],
+    [NonMembershipAir], [Set non-membership (nullifier freshness)],
+    [RecursiveVerifierAir], [STARK-in-STARK recursive verification],
+    [PresentationAir], [Full private credential presentation],
+    [BlockTransitionAir], [Block state transition validity],
+    [TurnValidityAir], [Single turn state transition],
+    [SovereignTransitionAir], [Sovereign cell state transition],
+    [EffectVmAir], [Multi-effect turn proving],
+    [PredicateAir], [Arbitrary predicate evaluation],
+    [TemporalPredicateAir], [Time-bounded predicate proofs],
+    [ArithmeticPredicateAir], [Arithmetic range/comparison proofs],
+    [RelationalPredicateAir], [Cross-field relational constraints],
+    [CompoundPredicateAir], [Boolean composition of predicates],
+    [SchnorrAir], [Schnorr signature verification in-circuit],
+    [NativeSignatureAir], [Ed25519 signature verification],
+  ),
+  caption: [Implemented AIR circuits. All support the custom STARK prover; most additionally support Plonky3 and DSL compilation.],
 )

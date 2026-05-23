@@ -16,6 +16,29 @@ A _cell_ is the fundamental unit of isolated state, analogous to a Mina zkApp ac
 
 Cells are confined: a cell can only reference capabilities in its c-list, and capability transfer respects the confinement invariant.
 
+=== Sovereign Cells
+
+Cells are _sovereign_ by default: the federation stores only a 32-byte state commitment per cell, not the cell's full state. The cell's owner maintains full state locally and proves state transitions via STARK proofs. Sovereignty provides:
+
+- *Self-custody of state*: The agent controls its own data; the federation cannot inspect or withhold cell contents.
+- *On-demand federation interaction*: Sovereign cells register with a federation to participate in ordering (nullifier publication, discovery), and deregister when they no longer need it.
+- *Peer-to-peer operation*: Two sovereign cells can interact directly via STARK proofs without requiring any federation round-trip, provided they share a recent root for freshness anchoring.
+- *TTL-based registration*: Sovereign registrations carry a time-to-live. The federation garbage-collects expired registrations without explicit deregistration.
+
+A cell transitions from sovereign to hosted (federation stores full state) by submitting its current state. The reverse transition---hosted to sovereign---requires proving current state ownership and extracting a commitment.
+
+=== Faceted Capabilities and EffectMask
+
+Each capability carries an _EffectMask_---a 32-bit bitmask of permitted effects (set field, transfer, grant capability, revoke, emit event, create cell, seal, bridge, introduce, etc.). Delegation can only _narrow_ the mask (bitwise AND with the parent's mask), enforcing monotonic attenuation at the effect level. This provides fine-grained control beyond predicate-based attenuation:
+
+$ "EffectMask"_"child" = "EffectMask"_"parent" & "mask"_"delegation" $
+
+The narrowing invariant is enforced both by the runtime (for trusted-mode evaluation) and provable in zero knowledge (for STARK presentations).
+
+=== Bearer Capabilities
+
+In addition to c-list-mediated capabilities, Pyana supports _bearer capabilities_: tokens that grant authority immediately upon presentation, without requiring storage in the recipient's c-list. Bearer capabilities follow E-semantics for immediate grants---useful for one-shot authorizations, tickets, and ephemeral access tokens. A bearer capability is consumed on exercise; it does not persist in any c-list.
+
 == Turns
 
 A _turn_ is an atomic transaction over one or more cells, analogous to a Mina ZkappCommand or an E turn. A turn contains:
@@ -29,7 +52,21 @@ If any action in the call forest fails, all effects are rolled back via journal 
 
 == Silos and Federations
 
-A _silo_ is a node that holds cells, executes turns, and participates in federation consensus. A _federation_ is a committee of 3--64 silos sharing a trust root. Federation members run Morpheus @morpheus adaptive BFT consensus to agree on attested Merkle roots, revocation tree updates, and budget rebalancing epochs. The honest-majority assumption is standard: tolerate $< n\/3$ Byzantine members.
+A _silo_ is a node that participates in federation consensus, verifies proofs, and anchors state roots. For hosted cells, a silo stores full state; for sovereign cells (the default), it stores only the 32-byte commitment. A _federation_ is a committee of 3--64 silos sharing a trust root. Federation members run Morpheus @morpheus adaptive BFT consensus to agree on attested Merkle roots, revocation tree updates, and budget rebalancing epochs. The honest-majority assumption is standard: tolerate $< n\/3$ Byzantine members.
+
+The federation's role is deliberately minimal: ordering, nullifier deduplication, root anchoring, and discovery. It is NOT an execution layer for sovereign cells---verification only. Sovereign cells prove their own state transitions; the federation merely attests that proofs were valid at a given height.
+
+== EROS-Style Factories
+
+A _factory_ is a cell program that constrains what new cells it can create. Inspired by EROS's constructor transparency @eros, a factory publishes a `FactoryDescriptor` that is the complete constructor contract---anyone can inspect exactly what capabilities the factory grants to its creations, what verification keys they will use, and what initial state they receive.
+
+Factory-created cells have _computable child verification keys_:
+
+- *Fixed*: Every child uses the same VK (the factory's own).
+- *Derived*: Child VK is deterministically computed from factory VK and creation parameters: $"child_vk" = "BLAKE3"("pyana-derived-child-vk" || "factory_vk" || "param_hash")$.
+- *FromSet*: Child VK must be a member of a pre-approved set.
+
+Factory creation is a composable effect within atomic turns---enabling flash-loan-style patterns where a factory spawns a child cell, the child performs work, and the parent observes the result, all within a single atomic turn with journal-based rollback on failure. Provenance tracking records which factory created each cell, enabling machine-auditable supply chains of cell construction.
 
 == Trust Assumptions
 

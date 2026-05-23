@@ -63,7 +63,6 @@ export async function getBlocks() {
 
 /** Get a single block (attested root) by height. */
 export async function getBlock(height) {
-  // The roots endpoint returns all; filter client-side.
   const roots = await getBlocks();
   return roots.find(r => r.height === height) || null;
 }
@@ -116,6 +115,16 @@ export async function getPirInfo() {
 /** Get wallet status. */
 export async function getWallet() {
   return get('/wallet');
+}
+
+/** Get federation status (combines status + roots + checkpoint). */
+export async function getFederationStatus() {
+  const [status, roots, checkpoint] = await Promise.all([
+    getStatus(),
+    getBlocks().catch(() => []),
+    getCheckpoint().catch(() => null),
+  ]);
+  return { ...status, roots, checkpoint, node_count: (status.peer_count || 0) + 1 };
 }
 
 /** Ping the node to test connectivity. Returns true if reachable. */

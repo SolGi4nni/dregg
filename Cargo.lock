@@ -6670,6 +6670,7 @@ dependencies = [
  "blake3",
  "curve25519-dalek",
  "ed25519-dalek",
+ "hex",
  "postcard",
  "proptest",
  "pyana-cell",
