@@ -7,11 +7,9 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use pyana_cell::factory::FactoryCreationParams;
 use pyana_cell::facet::{FacetBuilder, describe_mask};
-use pyana_intent::sse::{
-    SealedBox, generate_search_token, seal_decrypt, seal_encrypt,
-};
+use pyana_cell::factory::FactoryCreationParams;
+use pyana_intent::sse::{SealedBox, generate_search_token, seal_decrypt, seal_encrypt};
 
 // ============================================================================
 // Stealth Addresses
@@ -180,11 +178,7 @@ pub fn check_stealth_ownership(
     }
 
     // If it's ours, derive the one-time private key: scalar (the extension adds spend_privkey).
-    let privkey = if is_ours {
-        Some(scalar.to_vec())
-    } else {
-        None
-    };
+    let privkey = if is_ours { Some(scalar.to_vec()) } else { None };
 
     let result = OwnershipResult {
         is_ours,
@@ -634,8 +628,7 @@ pub fn create_from_factory(
         initial_caps: vec![],
     };
     let param_hash = pyana_cell::factory::ChildVkStrategy::compute_param_hash(&params);
-    let child_vk =
-        pyana_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
+    let child_vk = pyana_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
 
     #[derive(Serialize)]
     struct FactoryCreateResult {

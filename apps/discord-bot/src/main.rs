@@ -16,9 +16,7 @@ mod wallet;
 use std::sync::Arc;
 
 use serenity::Client;
-use serenity::all::{
-    Command, Context, EventHandler, GatewayIntents, Interaction, Presence, Ready,
-};
+use serenity::all::{Command, Context, EventHandler, GatewayIntents, Interaction, Presence, Ready};
 use serenity::async_trait;
 use tokio::sync::Mutex;
 use tracing::{error, info};
@@ -136,7 +134,12 @@ async fn main() {
     info!("Presence tracker initialized");
 
     // Build shared state.
-    let state = Arc::new(BotState { config, db, devnet, presence });
+    let state = Arc::new(BotState {
+        config,
+        db,
+        devnet,
+        presence,
+    });
 
     // Build Discord client (GUILD_PRESENCES required for presence tracking).
     let intents = GatewayIntents::GUILD_PRESENCES;

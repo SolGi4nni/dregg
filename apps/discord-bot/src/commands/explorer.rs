@@ -67,12 +67,8 @@ pub fn register() -> CreateCommand {
                 "Look up a block by height",
             )
             .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::Integer,
-                    "height",
-                    "Block height",
-                )
-                .required(true),
+                CreateCommandOption::new(CommandOptionType::Integer, "height", "Block height")
+                    .required(true),
             ),
         )
         .add_option(
@@ -97,12 +93,8 @@ pub fn register() -> CreateCommand {
                 "Look up proof metadata by hash",
             )
             .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::String,
-                    "hash",
-                    "Proof hash",
-                )
-                .required(true),
+                CreateCommandOption::new(CommandOptionType::String, "hash", "Proof hash")
+                    .required(true),
             ),
         )
         .add_option(
@@ -170,12 +162,8 @@ pub fn register() -> CreateCommand {
                 "Get DM'd on activity for a cell",
             )
             .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::String,
-                    "cell_id",
-                    "Cell ID to watch",
-                )
-                .required(true),
+                CreateCommandOption::new(CommandOptionType::String, "cell_id", "Cell ID to watch")
+                    .required(true),
             ),
         )
         .add_option(
@@ -272,11 +260,8 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     match state.devnet.get_cell_details(&cell_id).await {
         Ok(cell) => {
-            let explorer_url = format!(
-                "{}/cell/{}",
-                state.devnet.explorer_base_url(),
-                cell.cell_id
-            );
+            let explorer_url =
+                format!("{}/cell/{}", state.devnet.explorer_base_url(), cell.cell_id);
             let short_id = truncate(&cell.cell_id, 16);
             let short_vk = cell
                 .program_vk
@@ -449,11 +434,7 @@ async fn handle_note(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
             let embed = embeds::pyana_embed("Note Status")
                 .field("Commitment", format!("`{short_commitment}...`"), false)
-                .field(
-                    "Status",
-                    format!("{status_icon} {}", note.status),
-                    true,
-                )
+                .field("Status", format!("{status_icon} {}", note.status), true)
                 .field(
                     "Nullifier",
                     if note.nullifier_exists {
@@ -632,16 +613,8 @@ async fn handle_stats(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     ),
                     true,
                 )
-                .field(
-                    "Turns (epoch)",
-                    stats.turns_this_epoch.to_string(),
-                    true,
-                )
-                .field(
-                    "Active Auctions",
-                    stats.active_auctions.to_string(),
-                    true,
-                )
+                .field("Turns (epoch)", stats.turns_this_epoch.to_string(), true)
+                .field("Active Auctions", stats.active_auctions.to_string(), true)
                 .field("AMM TVL", format!("{} PYN", stats.amm_tvl), true)
                 .field("Active Orders", stats.active_orders.to_string(), true)
                 .field("Open CDPs", stats.open_cdps.to_string(), true)
@@ -649,9 +622,7 @@ async fn handle_stats(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     "Federation",
                     format!(
                         "{} ({}/{})",
-                        federation_health,
-                        stats.federation_nodes_up,
-                        stats.federation_nodes_total
+                        federation_health, stats.federation_nodes_up, stats.federation_nodes_total
                     ),
                     true,
                 );
@@ -760,10 +731,8 @@ async fn handle_watch(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 .await;
         }
         Ok(false) => {
-            let embed = embeds::warning_embed(
-                "Already Watching",
-                "You are already watching this cell.",
-            );
+            let embed =
+                embeds::warning_embed("Already Watching", "You are already watching this cell.");
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -794,10 +763,7 @@ async fn handle_unwatch(ctx: &Context, command: &CommandInteraction, state: &Bot
                 .await;
         }
         Ok(false) => {
-            let embed = embeds::warning_embed(
-                "Not Watching",
-                "You were not watching this cell.",
-            );
+            let embed = embeds::warning_embed("Not Watching", "You were not watching this cell.");
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -814,9 +780,7 @@ async fn handle_unwatch(ctx: &Context, command: &CommandInteraction, state: &Bot
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Extract suboption values from the first option (which is the subcommand).
-fn get_sub_options(
-    command: &CommandInteraction,
-) -> Vec<serenity::all::CommandDataOption> {
+fn get_sub_options(command: &CommandInteraction) -> Vec<serenity::all::CommandDataOption> {
     match &command.data.options[0].value {
         CommandDataOptionValue::SubCommand(opts) => opts.clone(),
         _ => Vec::new(),
@@ -859,7 +823,7 @@ fn event_icon(event_type: &str) -> &'static str {
         s if s.contains("liquidat") || s.contains("slash") => {
             "\u{1f534}" // red circle
         }
-        _ => "\u{26aa}" // white circle
+        _ => "\u{26aa}", // white circle
     }
 }
 
@@ -876,11 +840,7 @@ async fn defer_ephemeral(ctx: &Context, command: &CommandInteraction) {
 }
 
 /// Send an ephemeral embed response.
-async fn respond_ephemeral(
-    ctx: &Context,
-    command: &CommandInteraction,
-    embed: CreateEmbed,
-) {
+async fn respond_ephemeral(ctx: &Context, command: &CommandInteraction, embed: CreateEmbed) {
     let msg = CreateInteractionResponseMessage::new()
         .embed(embed)
         .ephemeral(true);

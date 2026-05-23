@@ -212,12 +212,7 @@ impl CellState {
         let fields = [BabyBear::ZERO; 8];
         let capability_root = BabyBear::ZERO;
         // Initial state commitment is hash of all state elements.
-        let state_commitment = Self::compute_commitment(
-            balance,
-            nonce,
-            &fields,
-            capability_root,
-        );
+        let state_commitment = Self::compute_commitment(balance, nonce, &fields, capability_root);
         Self {
             balance,
             nonce,
@@ -246,25 +241,21 @@ impl CellState {
 
     /// Recompute and update the state commitment.
     pub fn refresh_commitment(&mut self) {
-        self.state_commitment = Self::compute_commitment(
-            self.balance,
-            self.nonce,
-            &self.fields,
-            self.capability_root,
-        );
+        self.state_commitment =
+            Self::compute_commitment(self.balance, self.nonce, &self.fields, self.capability_root);
     }
 
     /// Encode state into trace columns (14 elements).
     fn to_trace_cols(&self) -> Vec<BabyBear> {
         let (lo, hi) = split_u64(self.balance);
         let mut cols = Vec::with_capacity(state::SIZE);
-        cols.push(lo);                          // balance_lo
-        cols.push(hi);                          // balance_hi
-        cols.push(BabyBear::new(self.nonce));   // nonce
-        cols.extend_from_slice(&self.fields);   // field_values[0..8]
-        cols.push(self.capability_root);        // cap_root
-        cols.push(self.state_commitment);       // state_commit
-        cols.push(BabyBear::ZERO);             // reserved
+        cols.push(lo); // balance_lo
+        cols.push(hi); // balance_hi
+        cols.push(BabyBear::new(self.nonce)); // nonce
+        cols.extend_from_slice(&self.fields); // field_values[0..8]
+        cols.push(self.capability_root); // cap_root
+        cols.push(self.state_commitment); // state_commit
+        cols.push(BabyBear::ZERO); // reserved
         assert_eq!(cols.len(), state::SIZE);
         cols
     }
@@ -278,7 +269,7 @@ impl CellState {
 /// Both values fit in BabyBear (< 2^31).
 fn split_u64(val: u64) -> (BabyBear, BabyBear) {
     let lo = (val & 0x3FFF_FFFF) as u32; // lower 30 bits
-    let hi = (val >> 30) as u32;          // upper 34 bits (fits in u32 since val < 2^64)
+    let hi = (val >> 30) as u32; // upper 34 bits (fits in u32 since val < 2^64)
     (BabyBear::new(lo), BabyBear::new(hi))
 }
 
@@ -676,7 +667,9 @@ impl StarkAir for EffectVmAir {
         // Since old_commitment in PI is 8 elements (from a 32-byte hash), and the trace
         // stores a single Poseidon2 hash, we bind the state_commit column.
         // The public input encodes the commitment as a single field element (hash of the 8 elements).
-        let old_commit_hash = hash_many(&public_inputs[pi::OLD_COMMIT_BASE..pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN]);
+        let old_commit_hash = hash_many(
+            &public_inputs[pi::OLD_COMMIT_BASE..pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN],
+        );
         constraints.push(BoundaryConstraint {
             row: 0,
             col: STATE_BEFORE_BASE + state::STATE_COMMIT,
@@ -796,8 +789,7 @@ pub fn generate_effect_vm_trace(
             Effect::GrantCapability { cap_entry } => {
                 row[PARAM_BASE + param::CAP_ENTRY] = *cap_entry;
 
-                new_state.capability_root =
-                    hash_2_to_1(current_state.capability_root, *cap_entry);
+                new_state.capability_root = hash_2_to_1(current_state.capability_root, *cap_entry);
                 new_state.nonce += 1;
             }
             Effect::NoteSpend { nullifier, value } => {
@@ -950,7 +942,11 @@ mod tests {
         let air = EffectVmAir::new(trace.len());
         let proof = prove(&air, &trace, &public_inputs);
         let result = verify(&air, &proof, &public_inputs);
-        assert!(result.is_ok(), "Single transfer should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Single transfer should verify: {:?}",
+            result.err()
+        );
 
         // Check delta.
         let delta = extract_net_delta(&public_inputs).unwrap();
@@ -969,7 +965,11 @@ mod tests {
         let air = EffectVmAir::new(trace.len());
         let proof = prove(&air, &trace, &public_inputs);
         let result = verify(&air, &proof, &public_inputs);
-        assert!(result.is_ok(), "Incoming transfer should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Incoming transfer should verify: {:?}",
+            result.err()
+        );
 
         let delta = extract_net_delta(&public_inputs).unwrap();
         assert_eq!(delta, 200);
@@ -1296,12 +1296,7 @@ mod tests {
             let alpha = BabyBear::new(alpha_val);
             for i in 0..trace.len() {
                 let next_idx = (i + 1) % trace.len();
-                let c = air.eval_constraints(
-                    &trace[i],
-                    &trace[next_idx],
-                    &public_inputs,
-                    alpha,
-                );
+                let c = air.eval_constraints(&trace[i], &trace[next_idx], &public_inputs, alpha);
                 assert_eq!(
                     c,
                     BabyBear::ZERO,

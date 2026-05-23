@@ -151,10 +151,7 @@ impl DevnetClient {
     }
 
     /// Get events since a given block height (for the activity feed poller).
-    pub async fn get_events_since(
-        &self,
-        since_height: u64,
-    ) -> Result<EventsResponse, DevnetError> {
+    pub async fn get_events_since(&self, since_height: u64) -> Result<EventsResponse, DevnetError> {
         let url = format!("{}/api/events?since={}", self.base_url, since_height);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
@@ -226,12 +223,7 @@ impl DevnetClient {
     /// Search for entities by prefix.
     pub async fn explorer_search(&self, query: &str) -> Result<Vec<SearchResult>, DevnetError> {
         let url = format!("{}/api/node/search", self.base_url);
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("q", query)])
-            .send()
-            .await?;
+        let resp = self.client.get(&url).query(&[("q", query)]).send().await?;
         if !resp.status().is_success() {
             return Err(DevnetError::Api(format!("status {}", resp.status())));
         }

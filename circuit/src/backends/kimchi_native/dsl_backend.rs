@@ -2140,7 +2140,11 @@ mod tests {
         let num_rows = gates.len();
 
         // We expect: 1 PI row + POS_GADGET_ROWS (Poseidon) + 1 binding gate = 14 rows
-        assert_eq!(num_rows, 1 + POS_GADGET_ROWS + 1, "Expected PI + Poseidon + binding rows");
+        assert_eq!(
+            num_rows,
+            1 + POS_GADGET_ROWS + 1,
+            "Expected PI + Poseidon + binding rows"
+        );
 
         // Build witness directly with Fp values (bypassing u32 trace)
         let trace_row: Vec<Fp> = vec![input_a, input_b, hash_out];
@@ -2153,18 +2157,21 @@ mod tests {
 
         // Fill hash constraint witness
         let constraint = &desc.constraints[0];
-        let end_row = fill_constraint_witness(
-            &mut witness, pc, constraint, &trace_row, &next_row, &pi_fp
-        ).unwrap();
+        let end_row =
+            fill_constraint_witness(&mut witness, pc, constraint, &trace_row, &next_row, &pi_fp)
+                .unwrap();
         assert_eq!(end_row, num_rows, "Witness should fill all rows");
 
         // Prove using raw infrastructure
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates.clone(), pc
+            gates.clone(),
+            pc,
         );
         let gm = <Vesta as CommitmentCurve>::Map::setup();
         let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-            BaseSponge, ScalarSponge, _
+            BaseSponge,
+            ScalarSponge,
+            _,
         >(&gm, witness, &[], &index, &mut OsRng);
         assert!(proof.is_ok(), "Hash2to1 prove failed: {:?}", proof.err());
 
@@ -2172,7 +2179,11 @@ mod tests {
         let proof = proof.unwrap();
         let public_inputs = vec![Fp::zero()];
         let verified = verify_kimchi_proof(&proof, gates, &public_inputs, pc);
-        assert!(verified.is_ok(), "Hash2to1 verify error: {:?}", verified.err());
+        assert!(
+            verified.is_ok(),
+            "Hash2to1 verify error: {:?}",
+            verified.err()
+        );
         assert!(verified.unwrap(), "Hash2to1 proof did not verify");
     }
 
@@ -2206,18 +2217,26 @@ mod tests {
         witness[0][0] = Fp::zero();
 
         let _ = fill_constraint_witness(
-            &mut witness, pc, &desc.constraints[0], &trace_row, &next_row, &pi_fp
+            &mut witness,
+            pc,
+            &desc.constraints[0],
+            &trace_row,
+            &next_row,
+            &pi_fp,
         );
 
         // Prove should fail (or produce an invalid proof that doesn't verify)
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates.clone(), pc
+            gates.clone(),
+            pc,
         );
         let gm = <Vesta as CommitmentCurve>::Map::setup();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-                BaseSponge, ScalarSponge, _
+                BaseSponge,
+                ScalarSponge,
+                _,
             >(&gm, witness, &[], &index, &mut OsRng);
             // If prover doesn't panic, verification must fail
             if let Ok(proof) = proof {
@@ -2265,22 +2284,34 @@ mod tests {
         witness[0][0] = Fp::zero();
 
         let end_row = fill_constraint_witness(
-            &mut witness, pc, &desc.constraints[0], &trace_row, &next_row, &pi_fp
-        ).unwrap();
+            &mut witness,
+            pc,
+            &desc.constraints[0],
+            &trace_row,
+            &next_row,
+            &pi_fp,
+        )
+        .unwrap();
         assert_eq!(end_row, num_rows);
 
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates.clone(), pc
+            gates.clone(),
+            pc,
         );
         let gm = <Vesta as CommitmentCurve>::Map::setup();
         let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-            BaseSponge, ScalarSponge, _
+            BaseSponge,
+            ScalarSponge,
+            _,
         >(&gm, witness, &[], &index, &mut OsRng);
         assert!(proof.is_ok(), "Hash4to1 prove failed: {:?}", proof.err());
 
         let proof = proof.unwrap();
         let verified = verify_kimchi_proof(&proof, gates, &[Fp::zero()], pc);
-        assert!(verified.is_ok() && verified.unwrap(), "Hash4to1 didn't verify");
+        assert!(
+            verified.is_ok() && verified.unwrap(),
+            "Hash4to1 didn't verify"
+        );
     }
 
     #[test]
@@ -2315,22 +2346,34 @@ mod tests {
         witness[0][0] = Fp::zero();
 
         let end_row = fill_constraint_witness(
-            &mut witness, pc, &desc.constraints[0], &trace_row, &next_row, &pi_fp
-        ).unwrap();
+            &mut witness,
+            pc,
+            &desc.constraints[0],
+            &trace_row,
+            &next_row,
+            &pi_fp,
+        )
+        .unwrap();
         assert_eq!(end_row, num_rows);
 
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates.clone(), pc
+            gates.clone(),
+            pc,
         );
         let gm = <Vesta as CommitmentCurve>::Map::setup();
         let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-            BaseSponge, ScalarSponge, _
+            BaseSponge,
+            ScalarSponge,
+            _,
         >(&gm, witness, &[], &index, &mut OsRng);
         assert!(proof.is_ok(), "Hash(5) prove failed: {:?}", proof.err());
 
         let proof = proof.unwrap();
         let verified = verify_kimchi_proof(&proof, gates, &[Fp::zero()], pc);
-        assert!(verified.is_ok() && verified.unwrap(), "Hash(5) didn't verify");
+        assert!(
+            verified.is_ok() && verified.unwrap(),
+            "Hash(5) didn't verify"
+        );
     }
 
     #[test]
@@ -2363,23 +2406,37 @@ mod tests {
                 std::array::from_fn(|_| vec![Fp::zero(); num_rows]);
             witness[0][0] = Fp::zero();
             let _ = fill_constraint_witness(
-                &mut witness, pc, &desc.constraints[0], &trace_row, &next_row, &pi_fp
+                &mut witness,
+                pc,
+                &desc.constraints[0],
+                &trace_row,
+                &next_row,
+                &pi_fp,
             );
 
             let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-                gates.clone(), pc
+                gates.clone(),
+                pc,
             );
             let gm = <Vesta as CommitmentCurve>::Map::setup();
             let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-                BaseSponge, ScalarSponge, _
+                BaseSponge,
+                ScalarSponge,
+                _,
             >(&gm, witness, &[], &index, &mut OsRng);
-            assert!(proof.is_ok(), "Trial {} prove failed: {:?}", trial, proof.err());
+            assert!(
+                proof.is_ok(),
+                "Trial {} prove failed: {:?}",
+                trial,
+                proof.err()
+            );
 
             let proof = proof.unwrap();
             let verified = verify_kimchi_proof(&proof, gates, &[Fp::zero()], pc);
             assert!(
                 verified.is_ok() && verified.unwrap(),
-                "Trial {} didn't verify", trial
+                "Trial {} didn't verify",
+                trial
             );
         }
     }
@@ -2406,10 +2463,7 @@ mod tests {
                     input_col_a: 0,
                     input_col_b: 1,
                 },
-                DslConstraint::Equality {
-                    col_a: 2,
-                    col_b: 3,
-                },
+                DslConstraint::Equality { col_a: 2, col_b: 3 },
             ],
             public_input_count: 1,
         };
@@ -2427,23 +2481,35 @@ mod tests {
         let mut cur = pc;
         for constraint in &desc.constraints {
             cur = fill_constraint_witness(
-                &mut witness, cur, constraint, &trace_row, &next_row, &pi_fp
-            ).unwrap();
+                &mut witness,
+                cur,
+                constraint,
+                &trace_row,
+                &next_row,
+                &pi_fp,
+            )
+            .unwrap();
         }
         assert_eq!(cur, num_rows);
 
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
-            gates.clone(), pc
+            gates.clone(),
+            pc,
         );
         let gm = <Vesta as CommitmentCurve>::Map::setup();
         let proof = ProverProof::<Vesta, VestaOpeningProof, FULL_ROUNDS>::create::<
-            BaseSponge, ScalarSponge, _
+            BaseSponge,
+            ScalarSponge,
+            _,
         >(&gm, witness, &[], &index, &mut OsRng);
         assert!(proof.is_ok(), "Merkle prove failed: {:?}", proof.err());
 
         let proof = proof.unwrap();
         let verified = verify_kimchi_proof(&proof, gates, &[Fp::zero()], pc);
-        assert!(verified.is_ok() && verified.unwrap(), "Merkle proof didn't verify");
+        assert!(
+            verified.is_ok() && verified.unwrap(),
+            "Merkle proof didn't verify"
+        );
     }
 
     #[test]

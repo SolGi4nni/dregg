@@ -85,19 +85,15 @@ impl Database {
             sqlx::query_as("SELECT value FROM kv WHERE key = 'last_block_height'")
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row
-            .and_then(|(v,)| v.parse::<u64>().ok())
-            .unwrap_or(0))
+        Ok(row.and_then(|(v,)| v.parse::<u64>().ok()).unwrap_or(0))
     }
 
     /// Set last processed block height.
     pub async fn set_last_block_height(&self, height: u64) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO kv (key, value) VALUES ('last_block_height', ?)",
-        )
-        .bind(height.to_string())
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT OR REPLACE INTO kv (key, value) VALUES ('last_block_height', ?)")
+            .bind(height.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -107,13 +103,11 @@ impl Database {
         guild_id: &str,
         channel_id: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO feed_channels (guild_id, channel_id) VALUES (?, ?)",
-        )
-        .bind(guild_id)
-        .bind(channel_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT OR REPLACE INTO feed_channels (guild_id, channel_id) VALUES (?, ?)")
+            .bind(guild_id)
+            .bind(channel_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -130,38 +124,30 @@ impl Database {
 
     /// Add a watch subscription.
     pub async fn add_watch(&self, discord_id: &str, cell_id: &str) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            "INSERT OR IGNORE INTO watchers (user_id, cell_id) VALUES (?, ?)",
-        )
-        .bind(discord_id)
-        .bind(cell_id)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("INSERT OR IGNORE INTO watchers (user_id, cell_id) VALUES (?, ?)")
+            .bind(discord_id)
+            .bind(cell_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
     /// Remove a watch subscription.
-    pub async fn remove_watch(
-        &self,
-        discord_id: &str,
-        cell_id: &str,
-    ) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM watchers WHERE user_id = ? AND cell_id = ?")
-                .bind(discord_id)
-                .bind(cell_id)
-                .execute(&self.pool)
-                .await?;
+    pub async fn remove_watch(&self, discord_id: &str, cell_id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM watchers WHERE user_id = ? AND cell_id = ?")
+            .bind(discord_id)
+            .bind(cell_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
     /// Get users watching a specific cell.
     pub async fn get_watchers_for_cell(&self, cell_id: &str) -> Result<Vec<String>, sqlx::Error> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT user_id FROM watchers WHERE cell_id = ?")
-                .bind(cell_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM watchers WHERE cell_id = ?")
+            .bind(cell_id)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }

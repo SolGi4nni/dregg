@@ -123,7 +123,10 @@ fn batch_events(events: &[RecentEvent]) -> Vec<CreateEmbed> {
 
             for event in chunk {
                 let icon = event_icon(&event.event_type);
-                description.push_str(&format!("{icon} **{}**: {}\n", event.event_type, event.summary));
+                description.push_str(&format!(
+                    "{icon} **{}**: {}\n",
+                    event.event_type, event.summary
+                ));
                 if let Some(hash) = &event.tx_hash {
                     let short = if hash.len() > 12 { &hash[..12] } else { hash };
                     description.push_str(&format!(
@@ -173,9 +176,7 @@ fn event_to_embed(event: &RecentEvent) -> CreateEmbed {
         };
         embed = embed.field(
             "Cell",
-            format!(
-                "[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/cell/{cell_id})"
-            ),
+            format!("[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/cell/{cell_id})"),
             true,
         );
     }
@@ -188,9 +189,7 @@ fn event_to_embed(event: &RecentEvent) -> CreateEmbed {
         };
         embed = embed.field(
             "Transaction",
-            format!(
-                "[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/tx/{tx_hash})"
-            ),
+            format!("[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/tx/{tx_hash})"),
             true,
         );
     }
@@ -204,9 +203,7 @@ fn event_color(event_type: &str) -> u32 {
         s if s.contains("transfer") || s.contains("settlement") || s.contains("settled") => {
             COLOR_GREEN
         }
-        s if s.contains("cell") || s.contains("register") || s.contains("sovereign") => {
-            COLOR_BLUE
-        }
+        s if s.contains("cell") || s.contains("register") || s.contains("sovereign") => COLOR_BLUE,
         s if s.contains("auction") || s.contains("order") || s.contains("swap") => COLOR_AMBER,
         s if s.contains("liquidat") || s.contains("slash") => COLOR_RED,
         _ => COLOR_BLUE,
@@ -228,7 +225,7 @@ fn event_icon(event_type: &str) -> &'static str {
         s if s.contains("liquidat") || s.contains("slash") => {
             "\u{1f534}" // red circle
         }
-        _ => "\u{26aa}" // white circle
+        _ => "\u{26aa}", // white circle
     }
 }
 

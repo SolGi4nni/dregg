@@ -1316,7 +1316,6 @@ mod tests {
         wire_labels[borrow_init_wire] = Some(all_labels[borrow_init_wire].0);
 
         // Evaluate each gate pair.
-        let mut current_borrow_wire = borrow_init_wire;
         for bit_idx in 0..bit_width {
             let topo_idx = bit_idx * 2;
             let (borrow_wire, a_wire, borrow_out_wire) = topology[topo_idx];
@@ -1337,7 +1336,6 @@ mod tests {
             );
 
             wire_labels[borrow_out_wire] = Some(out);
-            current_borrow_wire = borrow_out_wire;
         }
 
         // Check result: color_bit == 0 means no borrow = a >= b.

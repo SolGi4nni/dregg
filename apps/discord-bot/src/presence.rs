@@ -285,13 +285,21 @@ fn claim_satisfies(attested: &PresenceClaim, required: &PresenceClaim) -> bool {
         (PresenceClaim::CurrentlyOnline, PresenceClaim::OnlineWithin { .. }) => true,
         // OnlineForAtLeast(N) satisfies OnlineForAtLeast(M) if N >= M
         (
-            PresenceClaim::OnlineForAtLeast { duration_secs: attested_dur },
-            PresenceClaim::OnlineForAtLeast { duration_secs: required_dur },
+            PresenceClaim::OnlineForAtLeast {
+                duration_secs: attested_dur,
+            },
+            PresenceClaim::OnlineForAtLeast {
+                duration_secs: required_dur,
+            },
         ) => attested_dur >= required_dur,
         // OnlineWithin(N) satisfies OnlineWithin(M) if N <= M (tighter window is stronger)
         (
-            PresenceClaim::OnlineWithin { window_secs: attested_window },
-            PresenceClaim::OnlineWithin { window_secs: required_window },
+            PresenceClaim::OnlineWithin {
+                window_secs: attested_window,
+            },
+            PresenceClaim::OnlineWithin {
+                window_secs: required_window,
+            },
         ) => attested_window <= required_window,
         // CurrentlyOnline does NOT satisfy OnlineForAtLeast (different semantic)
         (PresenceClaim::CurrentlyOnline, PresenceClaim::OnlineForAtLeast { .. }) => false,
@@ -369,11 +377,7 @@ impl PresenceTracker {
 
     /// Create with custom TTL and rate limit.
     #[allow(dead_code)]
-    pub fn with_config(
-        signing_key: [u8; 32],
-        rate_limit_secs: i64,
-        default_ttl_secs: i64,
-    ) -> Self {
+    pub fn with_config(signing_key: [u8; 32], rate_limit_secs: i64, default_ttl_secs: i64) -> Self {
         Self {
             statuses: HashMap::new(),
             signing_key,
@@ -404,14 +408,17 @@ impl PresenceTracker {
         let now = Self::now();
         let old_status = self.statuses.get(&user_id).map(|r| r.status);
 
-        let record = self.statuses.entry(user_id).or_insert_with(|| PresenceRecord {
-            user_id,
-            status: PresenceStatus::Offline,
-            last_online: None,
-            last_changed: now,
-            online_duration_secs: 0,
-            session_start: None,
-        });
+        let record = self
+            .statuses
+            .entry(user_id)
+            .or_insert_with(|| PresenceRecord {
+                user_id,
+                status: PresenceStatus::Offline,
+                last_online: None,
+                last_changed: now,
+                online_duration_secs: 0,
+                session_start: None,
+            });
 
         // If status didn't change, nothing to do.
         if record.status == new_status {
@@ -455,7 +462,7 @@ impl PresenceTracker {
             self.history.drain(..drop_count);
         }
 
-        (Some(old), new_status)
+        (old_status, new_status)
     }
 
     /// Get the presence record for a user.
@@ -501,9 +508,7 @@ impl PresenceTracker {
 
         // Rate limit check.
         if let Err(wait_secs) = self.rate_limiter.check_and_record(user_id, now) {
-            return Err(format!(
-                "Rate limited. Try again in {wait_secs} second(s)."
-            ));
+            return Err(format!("Rate limited. Try again in {wait_secs} second(s)."));
         }
 
         // Validate the claim against current state.
@@ -529,10 +534,9 @@ impl PresenceTracker {
 
     /// Validate that the bot can truthfully attest to the given claim.
     fn validate_claim(&self, user_id: u64, claim: &PresenceClaim, now: i64) -> Result<(), String> {
-        let record = self
-            .statuses
-            .get(&user_id)
-            .ok_or_else(|| "No presence data for this user. The bot has not seen you online yet.".to_string())?;
+        let record = self.statuses.get(&user_id).ok_or_else(|| {
+            "No presence data for this user. The bot has not seen you online yet.".to_string()
+        })?;
 
         match claim {
             PresenceClaim::CurrentlyOnline => {
@@ -572,16 +576,14 @@ impl PresenceTracker {
                     ));
                 }
             }
-            PresenceClaim::OnlineWithin { window_secs } => {
-                match record.last_online {
-                    Some(last) if (now - last) <= *window_secs as i64 => {}
-                    _ => {
-                        return Err(format!(
-                            "Not seen online within the last {window_secs} seconds."
-                        ));
-                    }
+            PresenceClaim::OnlineWithin { window_secs } => match record.last_online {
+                Some(last) if (now - last) <= *window_secs as i64 => {}
+                _ => {
+                    return Err(format!(
+                        "Not seen online within the last {window_secs} seconds."
+                    ));
                 }
-            }
+            },
         }
 
         Ok(())
@@ -901,12 +903,20 @@ mod tests {
     #[test]
     fn test_claim_satisfies_duration_stronger() {
         assert!(claim_satisfies(
-            &PresenceClaim::OnlineForAtLeast { duration_secs: 7200 },
-            &PresenceClaim::OnlineForAtLeast { duration_secs: 3600 },
+            &PresenceClaim::OnlineForAtLeast {
+                duration_secs: 7200
+            },
+            &PresenceClaim::OnlineForAtLeast {
+                duration_secs: 3600
+            },
         ));
         assert!(!claim_satisfies(
-            &PresenceClaim::OnlineForAtLeast { duration_secs: 3600 },
-            &PresenceClaim::OnlineForAtLeast { duration_secs: 7200 },
+            &PresenceClaim::OnlineForAtLeast {
+                duration_secs: 3600
+            },
+            &PresenceClaim::OnlineForAtLeast {
+                duration_secs: 7200
+            },
         ));
     }
 

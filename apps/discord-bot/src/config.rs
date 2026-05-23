@@ -32,8 +32,8 @@ impl Config {
             .parse()
             .expect("DISCORD_APP_ID must be a valid u64");
 
-        let secret_hex =
-            env::var("BOT_SECRET").expect("BOT_SECRET environment variable required (64 hex chars)");
+        let secret_hex = env::var("BOT_SECRET")
+            .expect("BOT_SECRET environment variable required (64 hex chars)");
         let secret_bytes = hex::decode(&secret_hex).expect("BOT_SECRET must be valid hex");
         let bot_secret: [u8; 32] = secret_bytes
             .try_into()
@@ -42,8 +42,7 @@ impl Config {
         let devnet_url = env::var("DEVNET_URL")
             .unwrap_or_else(|_| "https://devnet.pyana.fg-goose.online".to_string());
 
-        let database_url =
-            env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string());
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string());
 
         Self {
             discord_token,
