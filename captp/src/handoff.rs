@@ -27,6 +27,8 @@ use pyana_cell::{AuthRequired, EffectMask};
 use pyana_types::{CellId, PublicKey, Signature, SigningKey, sign};
 use serde::{Deserialize, Serialize};
 
+// TODO(unified-lace): migrate FederationId to StrandId for introducer identity,
+// and GroupId for known_federations. Phase B of unified lace migration.
 use crate::FederationId;
 use crate::sturdy::SwissTable;
 

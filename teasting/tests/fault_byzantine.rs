@@ -213,8 +213,8 @@ fn test_byzantine_fabricated_captp_messages() {
     // Byzantine attack 1: DropRef for a cell that federation C doesn't hold
     // (C is not even in this session)
     let fake_drop = WireMessage::DropRemoteRef {
-        from_strand: fed_c_id().0, // C is not a party to this session
-        cell_id: test_cell(0xFF).0,    // doesn't exist
+        from_strand: fed_c_id().0,  // C is not a party to this session
+        cell_id: test_cell(0xFF).0, // doesn't exist
         session_epoch: 0,
     };
 

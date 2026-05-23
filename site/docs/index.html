@@ -31,10 +31,11 @@
 <div class="page-header">
   <h1>Pyana Documentation</h1>
   <p>
-    Pyana is a sovereign capability runtime. Agents own their state, prove
-    authorization with ZK STARKs, and interact peer-to-peer when possible.
-    The federation acts as a notary -- providing ordering, double-spend prevention,
-    and discovery -- not as a state host.
+    Pyana is a sovereign capability runtime built on a single DAG (the blocklace).
+    Agents own cells, execute turns locally, and prove state transitions with STARKs.
+    The federation provides ordering and double-spend prevention via tau consensus --
+    it stores 32-byte commitments, not your data. Capabilities flow via CapTP with
+    sturdy references, handoff certificates, and distributed GC.
   </p>
 </div>
 
@@ -45,44 +46,44 @@
 
   <div class="audience-grid">
 
-    <a class="audience-card" href="users/index.html">
-      <span class="audience-card__label">for users</span>
-      <span class="audience-card__title">Using Pyana</span>
+    <a class="audience-card" href="users/quickstart.html">
+      <span class="audience-card__label">getting started</span>
+      <span class="audience-card__title">Quickstart</span>
       <span class="audience-card__desc">
-        Install the browser extension, create an agent identity, manage tokens,
-        authorize actions, and discover capabilities in the intent marketplace.
+        Install the CLI, connect to a node, check your balance, and export
+        your first capability. Five minutes to productive.
       </span>
       <span class="audience-card__link">Get started &#8594;</span>
     </a>
 
-    <a class="audience-card" href="operators/index.html">
+    <a class="audience-card" href="architecture/overview.html">
+      <span class="audience-card__label">for architects</span>
+      <span class="audience-card__title">Architecture Overview</span>
+      <span class="audience-card__desc">
+        The unified DAG, Effect VM (32 effects, 371 AIR columns), CapTP sessions,
+        programmable storage, intent solving, and the trust model.
+      </span>
+      <span class="audience-card__link">Deep dive &#8594;</span>
+    </a>
+
+    <a class="audience-card" href="operators/running-a-node.html">
       <span class="audience-card__label">for operators</span>
       <span class="audience-card__title">Running a Node</span>
       <span class="audience-card__desc">
-        Set up a pyana-node, join a federation as a notary/ordering service,
-        run a cross-federation bridge, and deploy devnet clusters.
+        Multi-group participation, relay operation, monitoring,
+        genesis configuration, and deployment.
       </span>
       <span class="audience-card__link">Node setup &#8594;</span>
     </a>
 
-    <a class="audience-card" href="developers/index.html">
+    <a class="audience-card" href="developers/building-apps.html">
       <span class="audience-card__label">for developers</span>
-      <span class="audience-card__title">Building on Pyana</span>
+      <span class="audience-card__title">Building Apps</span>
       <span class="audience-card__desc">
-        Use the Rust SDK to mint tokens, generate STARK proofs, submit turns,
-        integrate with AI agents via MCP, and build browser extensions.
+        Use the AppServer framework, register in the nameservice, accept CapTP
+        connections, consume validated queues, and join ring trades.
       </span>
-      <span class="audience-card__link">SDK quickstart &#8594;</span>
-    </a>
-
-    <a class="audience-card" href="architecture/index.html">
-      <span class="audience-card__label">for architects</span>
-      <span class="audience-card__title">System Architecture</span>
-      <span class="audience-card__desc">
-        The sovereign cell model, three interaction modes (peer-to-peer,
-        federation-mediated, hosted), privacy stack, and proof architecture.
-      </span>
-      <span class="audience-card__link">Deep dive &#8594;</span>
+      <span class="audience-card__link">Build &#8594;</span>
     </a>
 
   </div>
@@ -91,53 +92,29 @@
 <section class="section">
   <h2 class="section__title">Quick Links</h2>
   <div class="link-cards">
-    <a class="link-card" href="users/quickstart.html">
-      <span class="link-card__title">Quickstart (5 min)</span>
-      <span class="link-card__desc">Install the extension and authorize your first action.</span>
-    </a>
-    <a class="link-card" href="users/captp.html">
-      <span class="link-card__title">CapTP: Share Capabilities</span>
-      <span class="link-card__desc">Delegate, accept, revoke caps. Offline delivery via sealed boxes.</span>
-    </a>
     <a class="link-card" href="users/cli.html">
       <span class="link-card__title">CLI Reference</span>
-      <span class="link-card__desc">Full pyana command: cell, turn, cap, wallet, federation, namespace, storage.</span>
+      <span class="link-card__desc">Full pyana command: cell, turn, cap, wallet, node, namespace, storage, proof.</span>
     </a>
     <a class="link-card" href="developers/sdk.html">
       <span class="link-card__title">SDK Reference</span>
-      <span class="link-card__desc">Rust API: AgentWallet, tokens, proofs, turns.</span>
+      <span class="link-card__desc">Rust API: AgentWallet, PyanaEngine, turns, proofs, privacy.</span>
     </a>
-    <a class="link-card" href="developers/service-mesh.html">
-      <span class="link-card__title">Service Mesh</span>
-      <span class="link-card__desc">Mount, discover, and resolve services via governed namespaces.</span>
+    <a class="link-card" href="users/captp.html">
+      <span class="link-card__title">CapTP Sessions</span>
+      <span class="link-card__desc">Sturdy refs, handoff certificates, distributed GC, offline delegation.</span>
     </a>
     <a class="link-card" href="developers/bridges.html">
-      <span class="link-card__title">Bridges (Mina/EVM)</span>
-      <span class="link-card__desc">Bridge to Mina (Pickles), EVM (Groth16), and Midnight.</span>
+      <span class="link-card__title">Bridges (Mina/EVM/Midnight)</span>
+      <span class="link-card__desc">Pickles recursion, SP1 Groth16, Midnight observation bridge.</span>
     </a>
     <a class="link-card" href="developers/storage.html">
-      <span class="link-card__title">Storage and Quotas</span>
-      <span class="link-card__desc">Space banks, inboxes, erasure coding, rent economics.</span>
+      <span class="link-card__title">Storage</span>
+      <span class="link-card__desc">Programmable queues, inboxes, blinded, KZG commitments.</span>
     </a>
-    <a class="link-card" href="developers/tutorial-first-app.html">
-      <span class="link-card__title">Tutorial: First App</span>
-      <span class="link-card__desc">Build an API key service with mint, attenuate, verify, and revoke.</span>
-    </a>
-    <a class="link-card" href="operators/setup.html">
-      <span class="link-card__title">Node Setup</span>
-      <span class="link-card__desc">pyana-node init, run, and federation join.</span>
-    </a>
-    <a class="link-card" href="architecture/overview.html">
-      <span class="link-card__title">Architecture Overview</span>
-      <span class="link-card__desc">How the 44 crates fit together.</span>
-    </a>
-    <a class="link-card" href="../explorer/">
-      <span class="link-card__title">Explorer</span>
-      <span class="link-card__desc">Browse federation state, blocks, and receipts.</span>
-    </a>
-    <a class="link-card" href="../playground/">
-      <span class="link-card__title">Playground</span>
-      <span class="link-card__desc">Experiment with tokens and proofs in your browser.</span>
+    <a class="link-card" href="../paper.html">
+      <span class="link-card__title">Paper</span>
+      <span class="link-card__desc">The formal specification of pyana's capability model and proof architecture.</span>
     </a>
   </div>
 </section>

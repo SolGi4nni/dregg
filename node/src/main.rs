@@ -8,7 +8,9 @@
 
 mod api;
 mod blocklace_sync;
-mod bridge;
+// The old `bridge` module is removed. Cross-group communication now happens
+// via multi_group.rs (unified blocklace cross-references + interest-based dissemination).
+// See: `pyana-node run --groups` for multi-group participation.
 mod genesis;
 pub mod gossip;
 mod mcp;
@@ -19,7 +21,6 @@ mod routing_table;
 mod state;
 mod ws;
 
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
@@ -209,57 +210,6 @@ enum Command {
         #[arg(long, default_value = "1000")]
         subscription_fee: u64,
     },
-
-    /// Run as a cross-federation bridge node.
-    ///
-    /// Connects to multiple federations' gossip networks and relays messages
-    /// between them: attested roots, revocations, receipts, and conditional
-    /// proof completions. Enables cross-federation token operations.
-    Bridge {
-        /// Data directory for persistent state.
-        #[arg(long, default_value = "~/.pyana")]
-        data_dir: String,
-
-        /// Local federation peer addresses (host:port), comma-separated.
-        #[arg(long, value_delimiter = ',')]
-        federation_peers: Vec<String>,
-
-        /// Remote federation peer addresses (federation_id_hex:host:port), comma-separated.
-        /// The federation_id is a 64-character hex string identifying the remote federation.
-        #[arg(long, value_delimiter = ',')]
-        remote_peers: Vec<String>,
-
-        /// Port for the bridge's local HTTP API (status/admin).
-        #[arg(long, default_value = "8421")]
-        port: u16,
-
-        /// Disable relay of attested roots between federations.
-        #[arg(long)]
-        no_relay_roots: bool,
-
-        /// Disable relay of revocations between federations.
-        #[arg(long)]
-        no_relay_revocations: bool,
-
-        /// Disable relay of receipts between federations.
-        #[arg(long)]
-        no_relay_receipts: bool,
-
-        /// Disable relay of conditional proof completions.
-        #[arg(long)]
-        no_relay_conditionals: bool,
-
-        /// Maximum age (seconds) for accepting remote attested roots. Default: 3600.
-        #[arg(long, default_value = "3600")]
-        max_remote_root_age: u64,
-
-        /// Path to a JSON file containing trusted public keys for remote federations.
-        /// Format: `{"<federation_id_hex>": ["<pubkey_hex>", ...], ...}`.
-        /// If not provided, the node's known federation keys are used as a fallback.
-        /// The bridge refuses to start in relay mode if no trusted keys are available.
-        #[arg(long)]
-        remote_keys: Option<PathBuf>,
-    },
 }
 
 #[tokio::main]
@@ -353,31 +303,6 @@ async fn main() {
                 default_min_deposit,
                 min_message_deposit,
                 subscription_fee,
-            )
-            .await
-        }
-        Command::Bridge {
-            data_dir,
-            federation_peers,
-            remote_peers,
-            port: _port,
-            no_relay_roots,
-            no_relay_revocations,
-            no_relay_receipts,
-            no_relay_conditionals,
-            max_remote_root_age,
-            remote_keys,
-        } => {
-            run_bridge(
-                &data_dir,
-                federation_peers,
-                remote_peers,
-                no_relay_roots,
-                no_relay_revocations,
-                no_relay_receipts,
-                no_relay_conditionals,
-                max_remote_root_age,
-                remote_keys,
             )
             .await
         }
@@ -762,127 +687,6 @@ async fn run_relay(
     };
 
     relay_service::run_relay_service(config).await;
-}
-
-/// Run the cross-federation bridge node.
-async fn run_bridge(
-    data_dir: &str,
-    federation_peers: Vec<String>,
-    remote_peers: Vec<String>,
-    no_relay_roots: bool,
-    no_relay_revocations: bool,
-    no_relay_receipts: bool,
-    no_relay_conditionals: bool,
-    max_remote_root_age: u64,
-    remote_keys: Option<PathBuf>,
-) {
-    let data_path = expand_path(data_dir);
-
-    if !data_path.exists() {
-        error!(
-            "data directory does not exist: {}. Run `pyana-node init` first.",
-            data_path.display()
-        );
-        std::process::exit(1);
-    }
-
-    // Initialize node state (bridge uses the same local state as a regular node).
-    let node_state = match state::NodeState::new(&data_path, federation_peers.clone()) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("failed to initialize node state: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Start local federation sync if peers are configured.
-    if !federation_peers.is_empty() {
-        let _sync_state = node_state.clone();
-        tokio::spawn(async move {
-            // Bridge mode uses default gossip port.
-        });
-    }
-
-    // Load trusted remote federation keys from file or node state.
-    let remote_federation_keys: HashMap<[u8; 32], Vec<pyana_types::PublicKey>> = if let Some(
-        keys_path,
-    ) = remote_keys
-    {
-        match std::fs::read_to_string(&keys_path) {
-            Ok(json_str) => {
-                // Parse JSON: { "federation_id_hex": ["pubkey_hex", ...], ... }
-                match serde_json::from_str::<HashMap<String, Vec<String>>>(&json_str) {
-                    Ok(raw) => {
-                        let mut result = HashMap::new();
-                        for (fed_hex, key_hexes) in raw {
-                            if fed_hex.len() != 64 {
-                                error!(
-                                    federation = %fed_hex,
-                                    "invalid federation ID (expected 64 hex chars), skipping"
-                                );
-                                continue;
-                            }
-                            let fed_id = match hex_decode_32(&fed_hex) {
-                                Some(id) => id,
-                                None => {
-                                    error!(federation = %fed_hex, "invalid hex for federation ID");
-                                    continue;
-                                }
-                            };
-                            let keys: Vec<pyana_types::PublicKey> = key_hexes
-                                .iter()
-                                .filter_map(|kh| hex_decode_32(kh).map(pyana_types::PublicKey))
-                                .collect();
-                            if !keys.is_empty() {
-                                result.insert(fed_id, keys);
-                            }
-                        }
-                        result
-                    }
-                    Err(e) => {
-                        error!(error = %e, "failed to parse remote keys JSON");
-                        std::process::exit(1);
-                    }
-                }
-            }
-            Err(e) => {
-                error!(path = %keys_path.display(), error = %e, "failed to read remote keys file");
-                std::process::exit(1);
-            }
-        }
-    } else {
-        HashMap::new()
-    };
-
-    // Build relay configuration from CLI flags.
-    let relay_config = bridge::RelayConfig {
-        relay_roots: !no_relay_roots,
-        relay_revocations: !no_relay_revocations,
-        relay_receipts: !no_relay_receipts,
-        relay_conditionals: !no_relay_conditionals,
-        max_remote_root_age_secs: max_remote_root_age,
-        max_cached_roots: 100,
-    };
-
-    info!(
-        data_dir = %data_path.display(),
-        local_peers = federation_peers.len(),
-        remote_peers = remote_peers.len(),
-        relay_roots = relay_config.relay_roots,
-        relay_revocations = relay_config.relay_revocations,
-        relay_receipts = relay_config.relay_receipts,
-        relay_conditionals = relay_config.relay_conditionals,
-        "starting cross-federation bridge node"
-    );
-
-    // Run the bridge (blocks forever).
-    bridge::run_bridge(
-        node_state,
-        remote_peers,
-        relay_config,
-        remote_federation_keys,
-    )
-    .await;
 }
 
 /// Decode a 64-char hex string into a [u8; 32].

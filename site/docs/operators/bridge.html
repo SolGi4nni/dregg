@@ -47,41 +47,17 @@
       <span>Bridge Nodes</span>
     </div>
 
-    <h1>Cross-Federation Bridge Nodes</h1>
+    <h1>Inter-Chain Bridges</h1>
 
-    <p>
-      A bridge node connects to multiple federations' gossip networks and relays
-      messages between them: attested roots, revocations, receipts, and conditional
-      proof completions. This enables cross-federation token operations.
-    </p>
-
-    <h2 id="running">Running a Bridge</h2>
-
-    <pre><code>pyana-node bridge \
-  --data-dir ~/.pyana \
-  --federation-peers "local1:8420,local2:8420" \
-  --remote-peers "abcdef01...:remote1.other-fed.io:8420" \
-  --port 8421</code></pre>
-
-    <p>
-      The <code>--remote-peers</code> format is <code>federation_id_hex:host:port</code>,
-      where the federation ID is the 64-character hex identifier of the remote federation.
-    </p>
-
-    <h2 id="relay-config">Relay Configuration</h2>
-
-    <table class="comparison">
-      <thead>
-        <tr><th>Flag</th><th>Default</th><th>What it relays</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><code>--no-relay-roots</code></td><td>relay enabled</td><td>Attested root commitments</td></tr>
-        <tr><td><code>--no-relay-revocations</code></td><td>relay enabled</td><td>Token revocation notices</td></tr>
-        <tr><td><code>--no-relay-receipts</code></td><td>relay enabled</td><td>Turn receipts (state proofs)</td></tr>
-        <tr><td><code>--no-relay-conditionals</code></td><td>relay enabled</td><td>Conditional proof completions</td></tr>
-        <tr><td><code>--max-remote-root-age</code></td><td>3600s</td><td>Maximum age for accepting remote roots</td></tr>
-      </tbody>
-    </table>
+    <div class="callout callout--note">
+      <p>
+        Cross-group communication within pyana now uses multi-group participation
+        (<code>pyana-node run --groups</code>) with interest-based dissemination
+        and cryptographic cross-references. The old <code>pyana-node bridge</code>
+        command has been removed. This page documents inter-chain bridges to
+        external networks (EVM, Mina, Midnight).
+      </p>
+    </div>
 
     <h2 id="evm-bridge">EVM Bridge (Base Sepolia)</h2>
 

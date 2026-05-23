@@ -6,7 +6,9 @@
 
 use std::collections::VecDeque;
 
-use pyana_captp::{CapSession, ExportGcManager, FederationId as GroupId, ImportGcManager, PyanaUri, SwissTable};
+use pyana_captp::{
+    CapSession, ExportGcManager, FederationId as GroupId, ImportGcManager, PyanaUri, SwissTable,
+};
 use pyana_cell::AuthRequired;
 use pyana_types::CellId;
 use pyana_wire::message::WireMessage;

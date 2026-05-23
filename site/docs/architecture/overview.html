@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>System Design - Pyana Architecture</title>
+  <title>Architecture Overview - Pyana</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../../assets/style.css">
   <link rel="stylesheet" href="../style.css">
@@ -29,8 +29,8 @@
     <div class="docs-sidebar__section">
       <p class="docs-sidebar__heading">Architecture</p>
       <div class="docs-sidebar__list">
-        <a class="docs-sidebar__link" href="index.html">Overview</a>
-        <a class="docs-sidebar__link docs-sidebar__link--active" href="overview.html">System Design</a>
+        <a class="docs-sidebar__link" href="index.html">Index</a>
+        <a class="docs-sidebar__link docs-sidebar__link--active" href="overview.html">Overview</a>
         <a class="docs-sidebar__link" href="consensus.html">Consensus</a>
         <a class="docs-sidebar__link" href="cryptography.html">Cryptography</a>
         <a class="docs-sidebar__link" href="capabilities.html">Capabilities</a>
@@ -47,211 +47,140 @@
       <span class="docs-breadcrumb__sep">/</span>
       <a href="index.html">Architecture</a>
       <span class="docs-breadcrumb__sep">/</span>
-      <span>System Design</span>
+      <span>Overview</span>
     </div>
 
-    <h1>System Design</h1>
+    <h1>Architecture Overview</h1>
 
     <p>
-      Pyana is structured as a Rust workspace of 44 crates. The core architecture
-      follows the sovereign cell model: agents maintain their own state and execute
-      transitions locally. The federation verifies proofs and provides ordering --
-      it does not store or execute on behalf of agents (in sovereign mode). The Effect VM
-      proves arbitrary turns in a single STARK (14 effects, Custom dispatch for CellPrograms).
-      A backend-agnostic constraint DSL compiles circuit specifications to any target proof system from a single source.
+      Pyana is a sovereign capability runtime. Agents own cells, execute
+      transitions locally, and prove validity with STARKs. The federation is a
+      notary: it orders, detects double-spends, and anchors 32-byte
+      commitments. It never sees cell contents.
     </p>
 
-    <h2 id="layers">Layer Architecture</h2>
-
-    <pre><code>Applications           Stablecoin | AMM | Orderbook | Lending | Identity
-                       Gallery (provenance) | Compute Exchange | Bounty Board
-                       Discord bot (19 commands + explorer + presence attestation)
-  ---------------------------------------------------------------
-Browser Extension (wallet UI)
-  window.pyana: authorize | postIntent | offerCapability | provision
-  ---------------------------------------------------------------
-SDK Layer              Rust SDK (86 fns) | TypeScript SDK | WASM (20 exports)
-                       Extension (14 methods) | MCP (37 tools for AI assistants)
-  ---------------------------------------------------------------
-DSL                    #[pyana_caveat] | #[pyana_effect] | write once, backend-portable
-  Backends:            Rust | AIR | Datalog | Kimchi | Midnight | Plonky3 | SP1 | STARK
-  Composition:         compose_and | compose_or | compose_chain | compose_aggregate
-  ---------------------------------------------------------------
-Intent Engine          Gossip broadcast | local Datalog matching | STARK fulfillment
-  ---------------------------------------------------------------
-Network                QUIC P2P | Plumtree gossip | Dandelion++ (unlinkable relay)
-                       Cordial dissemination (reactive push, frontier exchange)
-                       Chunked sync (100 blocks/push) | Checkpoint serving (fast-sync)
-  ---------------------------------------------------------------
-Consensus              Blocklace (CRDT DAG, equivocation detection, quiescent)
-                       Cordial Miners tau (total ordering, 3-round finality)
-                       Constitutional Consensus (democratic membership, h-rule)
-  ---------------------------------------------------------------
-Three-Tier Execution   Sovereign (PCO) --> Optimistic (Stingray COD) --> Ordered
-                       2PC atomic coordination | bounded counters
-  ---------------------------------------------------------------
-Execution              Sovereign Cells (hosted OR sovereign) | Turns (atomic txns)
-                       Effect VM (14 effects, Custom CellProgram dispatch)
-                       EROS-style factories | Faceted capabilities | Bearer caps
-                       Eventual sends | Pipeline composition | Routing directives
-  ---------------------------------------------------------------
-Privacy                Stealth addresses | Pedersen commitments | Dandelion++
-                       Private Vickrey (garbled + OT + threshold + ring + stealth)
-                       Encrypted turns | Sealer/Unsealer | Private predicates (3 tiers)
-  ---------------------------------------------------------------
-Proof                  Effect VM (one STARK per turn, 14 effects)
-                       DSL circuits: CircuitDescriptor --> multi-backend
-                       STARK-in-Pickles (recursive, constant-size)
-                       Kimchi (Mina) | SP1 zkVM | Plonky3 native | IVC compression
-  ---------------------------------------------------------------
-Bridge                 EVM: SP1 Groth16 (~200k gas) | Base Sepolia
-                       Midnight: Attestation bridge + ZKIR compilation path
-                       Mina: Native Pickles recursion
-  ---------------------------------------------------------------
-Commitment             4-ary Merkle trees (BLAKE3 fast / Poseidon2 ZK)
-  ---------------------------------------------------------------
-Policy                 Datalog evaluator | Macaroon HMAC + Biscuit Ed25519
-                       Facet masks (E-style restricted views)
-  ---------------------------------------------------------------
-Persistence            redb (ACID, WAL, crash-safe)
-                       Blocklace blocks (incremental) | Ledger checkpoints (every 100)
-                       App state (JSON atomic snapshots) | OS keychain
-                       Note commitment tree | Nullifier set | Audit log</code></pre>
-
-    <h2 id="crates">Crate Map</h2>
-
-    <h3>Core Primitives</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-types</code></td><td>PublicKey, Signature, SigningKey -- shared type definitions</td></tr>
-        <tr><td><code>pyana-token</code></td><td>Macaroon token minting, attenuation, verification, Datalog evaluator</td></tr>
-        <tr><td><code>pyana-cell</code></td><td>Cell model: sovereign/hosted objects with c-lists, factories, facets, stealth, sealers</td></tr>
-        <tr><td><code>pyana-turn</code></td><td>Turn execution: atomic state transitions, eventual sends, pipelines, call forests</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Constraint DSL</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-dsl</code></td><td>Proc-macro DSL: #[pyana_caveat] / #[pyana_effect] compiles to all supported proof systems</td></tr>
-        <tr><td><code>pyana-dsl-runtime</code></td><td>Runtime support types for DSL-generated code</td></tr>
-        <tr><td><code>pyana-dsl-tests</code></td><td>Integration tests for DSL compilation and execution</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Cryptographic Layer</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-circuit</code></td><td>DSL-only circuits, Effect VM (14 effects), 3 proof backends (STARK/Plonky3/Kimchi), IVC</td></tr>
-        <tr><td><code>pyana-bridge</code></td><td>Bridge between SDK types and circuit types, presentation proof builder</td></tr>
-        <tr><td><code>pyana-chain</code></td><td>EVM bridge: SP1 Groth16 wrapping, Base Sepolia verification, deposit/withdraw</td></tr>
-        <tr><td><code>pyana-trace</code></td><td>Authorization trace representation (facts, steps, conclusions)</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Consensus, Federation, and Network</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-blocklace</code></td><td>Blocklace DAG + Cordial Miners (total ordering) + Constitutional Consensus</td></tr>
-        <tr><td><code>pyana-federation</code></td><td>Consensus orchestration, attested roots, revocation trees</td></tr>
-        <tr><td><code>pyana-net</code></td><td>QUIC P2P, Plumtree gossip, Dandelion++ routing, cordial dissemination</td></tr>
-        <tr><td><code>pyana-wire</code></td><td>Wire protocol framing (postcard + length-prefixed)</td></tr>
-      </tbody>
-    </table>
-
-    <h3>SDK and Applications</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-sdk</code></td><td>Unified agent SDK: wallet, runtime, privacy APIs, discovery</td></tr>
-        <tr><td><code>pyana-node</code></td><td>Node binary: HTTP API, federation sync, MCP server, bridge</td></tr>
-        <tr><td><code>pyana-wasm</code></td><td>WebAssembly build for browser extension and playground</td></tr>
-        <tr><td><code>pyana-demo-agent</code></td><td>End-to-end demo exercising the full stack</td></tr>
-        <tr><td><code>pyana-app-framework</code></td><td>Shared framework for building pyana applications</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Applications (apps/)</h3>
-    <table class="comparison">
-      <thead><tr><th>Crate</th><th>Role</th></tr></thead>
-      <tbody>
-        <tr><td><code>pyana-stablecoin</code></td><td>CDP-based stablecoin with ZK liquidation proofs</td></tr>
-        <tr><td><code>pyana-amm</code></td><td>Constant-product AMM with LP tokens and router</td></tr>
-        <tr><td><code>pyana-orderbook</code></td><td>Privacy orderbook: commit-reveal, escrow, verified matching</td></tr>
-        <tr><td><code>pyana-lending</code></td><td>Supply/borrow/liquidation with ZK collateral proofs</td></tr>
-        <tr><td><code>pyana-identity</code></td><td>Anonymous credentials: issuer/holder/verifier, revocation</td></tr>
-        <tr><td><code>pyana-gallery</code></td><td>Provenance gallery with sealed-bid auctions</td></tr>
-        <tr><td><code>pyana-compute-exchange</code></td><td>Compute resource marketplace with qualification proofs</td></tr>
-        <tr><td><code>pyana-bounty-board</code></td><td>Capability-gated task marketplace</td></tr>
-      </tbody>
-    </table>
-
-    <h2 id="data-flow">Data Flow: Authorization Proof</h2>
-
-    <ol>
-      <li><strong>SDK</strong>: <code>wallet.authorize(token, request, mode)</code> is called.</li>
-      <li><strong>Policy</strong>: Datalog evaluator runs locally, producing a trace of derived facts.</li>
-      <li><strong>Bridge</strong>: Trace is compiled to circuit witness (BabyBear field elements).</li>
-      <li><strong>Circuit</strong>: AIR constraint system generates a STARK proof (~24 KiB).</li>
-      <li><strong>SDK</strong>: Returns <code>AuthorizationPresentation</code> with proof + selected facts.</li>
-      <li><strong>Verifier</strong>: Checks proof against attested federation root (~2ms).</li>
-    </ol>
-
-    <h2 id="data-flow-turn">Data Flow: Turn Execution (Sovereign Mode)</h2>
-
-    <ol>
-      <li><strong>SDK</strong>: Build a <code>Turn</code> with a call forest targeting cells.</li>
-      <li><strong>Agent</strong>: Execute the turn locally with the local <code>TurnExecutor</code>.</li>
-      <li><strong>Circuit</strong>: Generate a STARK proof that the state transition is valid.</li>
-      <li><strong>Submit</strong>: Send <code>(turn_hash, new_commitment, proof)</code> to the federation.</li>
-      <li><strong>Federation</strong>: Verify proof, update 32-byte commitment, order if needed.</li>
-      <li><strong>Wallet</strong>: <code>wallet.append_receipt(receipt)</code> extends the proof chain.</li>
-    </ol>
-
-    <h2 id="data-flow-p2p">Data Flow: Peer-to-Peer (No Federation)</h2>
-
-    <ol>
-      <li><strong>Alice</strong>: Executes transition locally, produces STARK proof of validity.</li>
-      <li><strong>Alice</strong>: Sends <code>(old_commitment, new_commitment, proof, signature)</code> to Bob.</li>
-      <li><strong>Bob</strong>: Verifies proof, checks signature, updates his local view of Alice's state.</li>
-      <li>Federation is never contacted. Storage cost on the network: 0 bytes.</li>
-    </ol>
-
-    <h2 id="data-flow-hosted">Data Flow: Hosted Mode (Legacy)</h2>
-
-    <ol>
-      <li><strong>SDK</strong>: Build a <code>Turn</code> with a call forest targeting cells.</li>
-      <li><strong>Wallet</strong>: Sign the turn with <code>wallet.sign_turn(&turn)</code>.</li>
-      <li><strong>Node API</strong>: Submit signed turn to <code>POST /api/turn</code>.</li>
-      <li><strong>Execution</strong>: Federation executes effects atomically (commit or rollback).</li>
-      <li><strong>Consensus</strong>: Federation commits the turn and produces a <code>TurnReceipt</code>.</li>
-      <li><strong>Wallet</strong>: <code>wallet.append_receipt(receipt)</code> extends the proof chain.</li>
-    </ol>
-
-    <h2 id="core-insight">Core Insight</h2>
+    <h2 id="unified-fabric">The Unified Fabric</h2>
 
     <p>
-      <strong>Capability attenuation is incrementally verifiable computation.</strong>
+      All state lives on a single DAG -- the <strong>blocklace</strong>. Nodes
+      participate in one or more <strong>reference groups</strong>. Within each
+      group, the Cordial Miners protocol computes a total ordering via the
+      <strong>tau function</strong> (3-round leaderless BFT finality).
+      Cross-group communication uses interest-based dissemination with
+      cryptographic cross-references, not bridges.
     </p>
 
     <p>
-      Each delegation step is a fold over a committed fact set. The fact set tracks
-      which permissions exist, which are narrowed, and the derivation rules that
-      produced them. The STARK proves that this fold chain is valid from root to leaf,
-      without revealing any intermediate step. This is why verification is
-      O(1) regardless of chain length.
+      Constitutional Consensus governs group membership democratically. The
+      h-rule determines supermajority thresholds; equivocation is detected and
+      penalized on-DAG.
     </p>
+
+    <h2 id="effect-vm">The Effect VM</h2>
+
+    <p>
+      Every turn is proven by the Effect VM -- a single STARK circuit with
+      <strong>371 AIR columns</strong> and <strong>32 effects</strong>:
+    </p>
+
+    <ul>
+      <li>State: SetField, CreateCell, IncrementNonce, SetPermissions, SetVerificationKey</li>
+      <li>Transfer: Transfer (computrons between cells)</li>
+      <li>Capabilities: GrantCapability, RevokeCapability, RevokeDelegation, SpawnWithDelegation</li>
+      <li>Events: EmitEvent</li>
+      <li>Privacy: NoteSpend, NoteCreate (shielded notes with Pedersen commitments)</li>
+      <li>Sealing: CreateSealPair, Seal, Unseal (E-rights pattern)</li>
+      <li>Messaging: Introduce (three-party), PipelinedSend, CreateObligation</li>
+      <li>Bridge: BridgeMint, BridgeLock, BridgeFinalize, BridgeCancel</li>
+    </ul>
+
+    <p>
+      The DSL (<code>#[pyana_caveat]</code> / <code>#[pyana_effect]</code>)
+      compiles constraints to 8 backends from a single source: Rust, AIR,
+      Datalog, Kimchi, Midnight ZKIR, Plonky3, SP1, and native STARK.
+    </p>
+
+    <h2 id="captp">CapTP (Capability Transfer Protocol)</h2>
+
+    <p>
+      Capabilities flow between cells via CapTP sessions:
+    </p>
+
+    <ul>
+      <li><strong>Sturdy refs</strong> -- durable <code>pyana://</code> URIs with swiss numbers. Survive disconnection.</li>
+      <li><strong>Live refs</strong> -- ephemeral handles within an active session.</li>
+      <li><strong>Strands</strong> -- logical communication channels within a session, identified by StrandId.</li>
+      <li><strong>Handoff</strong> -- offline three-party introduction with Ed25519-signed certificates.</li>
+      <li><strong>Distributed GC</strong> -- unreachable capabilities are reclaimed across sessions.</li>
+    </ul>
+
+    <p>
+      Sessions run over QUIC with Plumtree gossip and Dandelion++ for
+      unlinkable relay. Cordial dissemination provides reactive push with
+      frontier exchange.
+    </p>
+
+    <h2 id="storage">Storage</h2>
+
+    <ul>
+      <li><strong>Programmable queues</strong> -- validated input buffers with custom acceptance predicates.</li>
+      <li><strong>Inboxes</strong> -- store-and-forward message delivery (relay operators host these).</li>
+      <li><strong>Blinded storage</strong> -- content-addressed data where the node cannot read contents.</li>
+      <li><strong>KZG commitments</strong> -- polynomial commitments for efficient data availability proofs.</li>
+      <li><strong>Space banks</strong> -- quota accounting; rent economics bound storage growth.</li>
+    </ul>
+
+    <p>
+      Persistence uses redb (ACID, WAL, crash-safe). Checkpoints every N blocks
+      enable fast-sync for new nodes.
+    </p>
+
+    <h2 id="intent-solving">Intent Solving</h2>
+
+    <p>
+      The generalized intent solver finds multi-party settlements involving
+      heterogeneous items -- assets, capabilities, services, storage, and
+      namespace entries -- in a single ring trade:
+    </p>
+
+    <ol>
+      <li>Each participant declares offers and wants (typed <code>ExchangeItem</code> values).</li>
+      <li>Edge A-&gt;B exists if A's offers satisfy some or all of B's wants.</li>
+      <li>Cycle detection finds rings where every participant is satisfied.</li>
+      <li>Settlement is atomic: escrow-commit-reveal with STARK proofs of fulfillment.</li>
+    </ol>
+
+    <p>
+      No global pricing -- satisfaction is structural and boolean. DFA routing
+      shards intents by namespace zone. Cross-zone rings use bridge intents.
+    </p>
+
+    <h2 id="trust-model">Trust Model</h2>
+
+    <pre><code>CRYPTOGRAPHIC (no trust required):
+  - State transition validity (STARK proof)
+  - Capability chain validity (IVC fold proof, O(1) verification)
+  - Double-spend prevention (nullifier set, Merkle inclusion)
+  - Handoff integrity (Ed25519 signature on certificate)
+  - Privacy (Pedersen commitments, stealth addresses, shielded notes)
+
+EXECUTOR-TRUSTED (trust the federation for):
+  - Ordering (tau function over the blocklace -- BFT, not cryptographic)
+  - Liveness (group must have 2f+1 honest nodes online)
+  - Discovery (intent gossip relay -- can censor, cannot forge)
+  - Checkpoint anchoring (periodic roots attested by quorum signature)
+
+SELF-SOVEREIGN (trust nobody):
+  - Peer-to-peer mode: Alice proves directly to Bob, federation never contacted
+  - Offline operation: turn execution is local, proof is local
+  - State custody: you hold your cells, only commitments are public</code></pre>
 
     <div class="callout callout--note">
       <p>
-        For the cryptographic details of how this fold is committed and proven,
-        see <a href="cryptography.html">Cryptographic Foundations</a>.
-        For the capability semantics (cells, turns, c-lists), see
+        For cryptographic details see <a href="cryptography.html">Cryptographic Foundations</a>.
+        For the capability semantics (cells, turns, c-lists) see
         <a href="capabilities.html">Object-Capability Model</a>.
+        For consensus specifics see <a href="consensus.html">Consensus</a>.
       </p>
     </div>
 

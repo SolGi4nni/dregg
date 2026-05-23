@@ -557,10 +557,7 @@ mod tests {
         let coord = ShutdownCoordinator::new([0xBB; 32], Duration::from_secs(5));
         let msg = coord.goodbye_message();
         match msg {
-            WireMessage::CapGoodbye {
-                group_id,
-                reason,
-            } => {
+            WireMessage::CapGoodbye { group_id, reason } => {
                 assert_eq!(group_id, [0xBB; 32]);
                 assert_eq!(reason, Some("server shutting down".to_string()));
             }

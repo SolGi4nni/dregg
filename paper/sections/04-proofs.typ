@@ -12,7 +12,7 @@ Pyana uses quaternary Merkle trees: each internal node hashes 4 children via $"P
 
 === Multi-Hash Roots
 
-The federation publishes roots under multiple commitment schemes:
+The reference group publishes roots under multiple commitment schemes:
 
 $ R_"STARK" &= "Poseidon2Root"(F) \
   R_"Binius" &= "Groestl256Root"(F) \
@@ -29,14 +29,14 @@ A _fold delta_ records a monotonic state transition: $Delta_(i -> i+1) = { f in 
 The STARK proves:
 
 #quote(block: true)[
-  "There exists a sequence of fact sets $F_0 supset.eq F_1 supset.eq ... supset.eq F_k$ such that $F_0$ is committed under a federation-attested root, each $F_(i+1) = F_i backslash Delta_i$ for valid removal sets $Delta_i$, and evaluating the standard policy rules over $F_k$ with the given request yields `allow`."
+  "There exists a sequence of fact sets $F_0 supset.eq F_1 supset.eq ... supset.eq F_k$ such that $F_0$ is committed under a group-attested root, each $F_(i+1) = F_i backslash Delta_i$ for valid removal sets $Delta_i$, and evaluating the standard policy rules over $F_k$ with the given request yields `allow`."
 ]
 
 The AIR has three constraint families: membership (facts are valid leaves), fold (removals are correct), and derivation (Datalog steps are valid).
 
 == Public Inputs and Zero-Knowledge
 
-The verifier receives: federation root $R$, authorization request $(A, S, "Act")$, current time $t$, and the proof $pi$ ($tilde$24 KiB). From these, verification produces a single bit. The verifier learns nothing about chain length, intermediate delegators, other capabilities, or the issuer's identity.
+The verifier receives: group root $R$, authorization request $(A, S, "Act")$, current time $t$, and the proof $pi$ ($tilde$24 KiB). From these, verification produces a single bit. The verifier learns nothing about chain length, intermediate delegators, other capabilities, or the issuer's identity.
 
 All STARK proofs use real Poseidon2 constraints over BabyBear4 (degree-4 extension field, providing 124-bit security). There are no vacuous or mock constraints in the production path.
 
@@ -73,6 +73,18 @@ where children $(c_0, ..., c_3)$ are determined by Lagrange interpolation on pos
 
 *Soundness:* Finding a false membership proof requires either (a) a Poseidon2 collision (finding two distinct inputs that hash to the same output), or (b) forging a valid low-degree polynomial that satisfies the degree-7 hash constraint at random evaluation points. Both reduce to collision resistance of Poseidon2 over $FF_p$.
 
+=== Body Membership Proof
+
+*Public inputs:* Body fact hash $h in FF_p$, state root $R_0 in FF_p$.
+
+*Private witness:* Merkle path from $h$ to $R_0$ (siblings and positions at each level).
+
+*Statement:* The body fact with hash $h$ is a valid leaf in the 4-ary Poseidon2 Merkle tree committed under $R_0$.
+
+*Constraints:* Identical to the general Merkle membership proof above, instantiated with the state root as target. The body membership proof is required for every body atom in a Datalog derivation---the derivation AIR's `body_root` column must equal the public state root $R_0$ for every active row.
+
+*Why this is separate:* Body membership was previously implicit in the derivation proof (body facts were assumed present). The explicit body membership requirement ensures that a prover cannot claim derivation from facts not committed in the state tree---closing a soundness gap where a prover could introduce phantom facts into the derivation witness.
+
 === Note Spending Proof
 
 *Public inputs:* Nullifier $nu in FF_p$, Merkle root $r in FF_p$.
@@ -96,6 +108,18 @@ $ "commitment" &= "Poseidon2"(o, v, a, n, rho) \
 - Spend without the spending key: producing a valid $nu$ requires knowing $k$ (Poseidon2 preimage resistance).
 - Spend a nonexistent note: the commitment must exist in the tree (Merkle soundness).
 - Double-spend: the nullifier $nu$ is deterministic given $(k, "commitment", n)$; the verifier maintains a nullifier set and rejects duplicates.
+
+=== Balance Range Check
+
+*Public inputs:* None (embedded within the Effect VM conservation check).
+
+*Statement:* The balance after a transfer is non-negative: $"balance"_"post" >= 0$.
+
+*Constraint:* A boolean decomposition enforces non-negativity without revealing the exact value:
+
+$ "balance"_"post" = sum_(j=0)^(30) b_j dot 2^j, quad b_j dot (b_j - 1) = 0 quad forall j $
+
+The 31-bit decomposition with each $b_j$ constrained to ${0, 1}$ guarantees the value fits in $[0, 2^(31) - 1]$. This replaces the previous approach of checking only the high bit, which suffered from a truncation bug where negative values with the high bit clear could pass validation.
 
 === Multi-Step Datalog Derivation Proof
 
@@ -186,14 +210,14 @@ Full Authorization Proof =
     Derivation Proof (N rule steps -> ALLOW)
   + Body Membership Proofs (each body fact in tree under R_0)
   + Fold Chain Proof (R_issuer -> R_0 via attenuation)
-  + Issuer Membership Proof (issuer in federation Merkle tree)
+  + Issuer Membership Proof (issuer in group Merkle tree)
 ```
 ]]
 
 The binding between components uses shared public inputs:
 - The derivation proof's `initial_state_root` = the fold chain's `final_root` $R_0$
 - The fold chain's `initial_root` = the issuer's committed capability root
-- The issuer membership proof's root = the federation's attested root
+- The issuer membership proof's root = the reference group's attested root
 
 === Note Spending Proof
 
@@ -208,10 +232,11 @@ Note Spending Proof =
     Spending Key Knowledge (nullifier = H(commitment || key || nonce))
   + Commitment Preimage (commitment = H(owner || value || asset || nonce || rand))
   + Merkle Membership (commitment in note tree under root r)
+  + Balance Range Check (post-transfer balance >= 0 via boolean decomposition)
 ```
 ]]
 
-All three sub-statements are enforced in a _single_ AIR with 12 columns. The commitment row (row 0) handles key knowledge and preimage; subsequent rows handle Merkle membership. A row-type flag gates which constraints apply. This avoids composition overhead---one proof, one FRI invocation.
+All sub-statements are enforced in a _single_ AIR with 12 columns. The commitment row (row 0) handles key knowledge and preimage; subsequent rows handle Merkle membership. A row-type flag gates which constraints apply. This avoids composition overhead---one proof, one FRI invocation.
 
 === Full Private Presentation
 
@@ -229,11 +254,12 @@ Full Private Presentation =
 IVC-Compressed Presentation =
     IVC Fold Chain (constant-size, covers N attenuation steps)
   + Derivation Proof (final state -> ALLOW)
-  + Issuer Membership Proof (issuer in federation)
+  + Body Membership Proofs (all body facts under state root)
+  + Issuer Membership Proof (issuer in group)
 ```
 ]]
 
-The verifier of a Full Private Presentation receives only: a federation root $R_F$, a conclusion bit, and the proof(s). It learns nothing about delegation chain length, intermediate authorities, or the agent's other capabilities.
+The verifier of a Full Private Presentation receives only: a group root $R_F$, a conclusion bit, and the proof(s). It learns nothing about delegation chain length, intermediate authorities, or the agent's other capabilities.
 
 === Receipt Chain with IVC
 
@@ -342,6 +368,17 @@ The DSL supports composition operators that combine multiple circuit proofs:
 
 Sub-proofs are cryptographically bound via VK hashes and public-input linking columns in the composed trace.
 
+=== DSL Lookup Tables
+
+The DSL now supports _lookup table constraints_---a column can be constrained to contain only values that appear in a committed table. Lookup tables are used for:
+
+- *DFA routing*: Each $(q_i, c_i, q_(i+1))$ transition is checked against the committed DFA transition table.
+- *Opcode dispatch*: Effect VM opcode validity is enforced via a 24-entry opcode table.
+- *Permission sets*: EffectMask validation uses a lookup into the permitted effects table.
+- *Predefined constants*: Round constants for Poseidon2 are committed as a lookup table rather than hardcoded in constraints.
+
+Lookup arguments use the log-derivative technique (LogUp): the prover demonstrates that a multiset of trace values is a subset of the table via a running sum that must equal zero at the trace boundary. This adds one auxiliary column per lookup relation.
+
 == Three Production Provers
 
 #figure(
@@ -380,7 +417,7 @@ The EVM bridge includes a VK registry with governance, an incremental Merkle tre
 
 == Effect VM: The Sovereign Proof Mechanism <sec-effect-vm>
 
-The Effect VM is the primary proof mechanism for sovereign cells. It is a multi-row AIR circuit that proves arbitrary turns---one STARK per turn regardless of effect count. Rather than a general-purpose CPU emulator, it is a domain-specific VM whose 14-effect instruction set matches Pyana's state transition primitives:
+The Effect VM is the primary proof mechanism for sovereign cells. It is a multi-row AIR circuit that proves arbitrary turns---one STARK per turn regardless of effect count. The 71-column trace encodes state transitions for a 24-opcode instruction set:
 
 #figure(
   table(
@@ -401,27 +438,60 @@ The Effect VM is the primary proof mechanism for sovereign cells. It is a multi-
     [Bridge], [Cross-chain attestation emission],
     [Invoke], [CellProgram invocation (calls DSL-generated circuits)],
     [Custom], [Dispatch to arbitrary CellProgram-defined logic],
+    [Enqueue], [Push a message to a programmable queue],
+    [Dequeue], [Pop a message from a programmable queue (with KZG proof)],
+    [ExportSturdyRef], [Register a swiss number for CapTP export],
+    [EnlivenRef], [Resolve a sturdy ref into a live reference],
+    [DropRef], [Release a remote reference (GC decrement)],
+    [ValidateHandoff], [Verify a three-party handoff certificate],
+    [BatchGamma], [Fiat-Shamir challenge for KZG batch verification],
+    [LookupAssert], [Verify a value exists in a committed lookup table],
+    [QueueCommit], [Compute KZG polynomial commitment over queue state],
+    [Noop], [Padding row (no state change, satisfies all constraints trivially)],
   ),
-  caption: [Effect VM instruction set. Each effect maps to a constrained state transition row in the STARK trace.],
+  caption: [Effect VM instruction set (24 opcodes). Each maps to a constrained state transition row in the 71-column STARK trace.],
 )
 
 Each row of the Effect VM trace encodes one effect's execution:
 
-- Pre-state commitment (hash of cell state before this effect)
+- Pre-state commitment (Poseidon2 hash of cell state before this effect)
 - Effect opcode and operands
-- Post-state commitment (hash of cell state after this effect)
+- Post-state commitment (Poseidon2 hash of cell state after this effect)
 - Conservation accumulator (running sum of value changes)
 - Authority witness (proof that the actor held permission for this effect)
+- Queue polynomial state (KZG commitment for queue operations)
+- Lookup auxiliary columns (LogUp running sums for table lookups)
 
 The VM enforces:
 - *State continuity*: Each effect's post-state equals the next effect's pre-state.
 - *Conservation*: The final accumulator equals zero (no value created or destroyed).
 - *Authority*: Each effect's EffectMask is a subset of the actor's mask.
 - *Atomicity*: All effects in a turn succeed or all roll back (proven via a completion flag).
+- *Queue correctness*: Enqueue/Dequeue operations maintain valid KZG polynomial commitments.
 
 The `Custom` effect enables dispatch to DSL-generated CellProgram circuits---any application-specific logic compiled through the constraint DSL can be invoked as a single Effect VM step. IVC compression then chains multiple turn proofs into a constant-size attestation covering the cell's entire history.
 
-The Effect VM handles turns of arbitrary length in a single proof, eliminating the per-effect proof overhead that would otherwise make complex turns (e.g., flash-loan factory spawning, multi-party swaps) prohibitively expensive. *Status:* Implemented and tested; conservation, state-continuity, and authority constraints are operational. The Effect VM is the default proof path for all sovereign cell transitions.
+=== KZG Polynomial Commitments for Queues
+
+Queue state is committed via KZG polynomial commitments over BLS12-381:
+
+$ C_Q = [q(tau)]_1 quad "where" quad q(x) = sum_(i=0)^(n-1) m_i dot L_i (x) $
+
+Each queue message $m_i$ is a coefficient in the queue polynomial. Enqueue appends a term; Dequeue proves evaluation at a specific point and removes it. The KZG commitment enables:
+
+- Constant-size queue state (one group element regardless of queue length).
+- Efficient membership proofs ($O(1)$ verification via pairing check).
+- Batch verification via the gamma Fiat-Shamir technique (see below).
+
+=== Batch Gamma Fiat-Shamir (KZG Audit Fix)
+
+KZG batch opening verification uses a random linear combination:
+
+$ sum_(i=0)^(k-1) gamma^i dot (C_i - [y_i]_1) = [sum_(i=0)^(k-1) gamma^i dot pi_i]_1 dot [tau - z_i]_2 $
+
+The challenge $gamma$ must be derived via Fiat-Shamir from ALL commitments and claimed evaluations---not from a subset. An audit finding identified that an earlier implementation derived $gamma$ from only the first commitment, enabling a prover to open the remaining commitments at arbitrary values. The fix: $gamma = "BLAKE3"(C_0 || ... || C_(k-1) || y_0 || ... || y_(k-1) || z_0 || ... || z_(k-1))$, binding all batch elements.
+
+The Effect VM handles turns of arbitrary length in a single proof, eliminating the per-effect proof overhead that would otherwise make complex turns (e.g., flash-loan factory spawning, multi-party swaps) prohibitively expensive. *Status:* Implemented and tested; conservation, state-continuity, authority, and queue constraints are operational. The Effect VM is the default proof path for all sovereign cell transitions.
 
 == Formal Verification <sec-formal-verification>
 
@@ -459,7 +529,7 @@ The proof system provides 11 formally stated cryptographic guarantees:
     [State continuity], [Hash chain: each effect's post-state = next effect's pre-state],
     [Authority confinement], [EffectMask subset check per effect (monotonic narrowing)],
     [Non-replayability], [Nullifier uniqueness (deterministic derivation + set non-membership)],
-    [Issuer validity], [Issuer membership proof under federation-attested root],
+    [Issuer validity], [Issuer membership proof under group-attested root],
     [Derivation soundness], [N-step Datalog derivation with accumulated hash chain],
     [Revocation freshness], [Non-membership proof against revocation set root],
     [IVC integrity], [Root continuity + step-count binding in accumulated hash],
@@ -479,7 +549,7 @@ The proof system operates under 7 explicit trust assumptions:
 + *Field arithmetic correctness*: BabyBear and BabyBear4 field operations are correctly implemented.
 + *Honest verifier*: The verifier follows the protocol (does not leak challenges prematurely).
 + *Correct constraint generation*: The DSL compiler produces constraints faithful to the logical specification.
-+ *Availability of federation-attested roots*: Verifiers can obtain a recent attested root (for freshness anchoring).
++ *Availability of group-attested roots*: Verifiers can obtain a recent attested root (for freshness anchoring).
 
 Any violation of assumptions 1--4 would compromise soundness. Assumptions 5--7 are operational requirements. The system is designed so that assumptions 1--4 are well-studied cryptographic conjectures, not novel assumptions.
 
@@ -494,15 +564,18 @@ All proof logic is now defined exclusively through the constraint DSL (`circuit/
     table.header([*Descriptor*], [*Purpose*], [*Backends*]),
     [Poseidon2], [Hash permutation verification], [All 8],
     [MerkleMembership], [4-ary Merkle path proof], [All 8],
+    [BodyMembership], [Body fact existence under state root], [All 8],
     [FoldChain], [Monotonic capability attenuation], [All 8],
     [MultiStepDerivation], [N-step Datalog derivation], [All 8],
     [IvcAccumulation], [Fold chain compression (constant-size)], [STARK, Plonky3, Kimchi],
     [NoteSpending], [Private note spending + nullifier], [All 8],
+    [BalanceRangeCheck], [Non-negative balance via boolean decomposition], [All 8],
     [NonRevocation], [Credential non-revocation proof], [All 8],
     [NonMembership], [Set non-membership (nullifier freshness)], [All 8],
     [RecursiveVerifier], [STARK-in-STARK recursive verification], [STARK, Plonky3],
     [Presentation], [Full private credential presentation], [All 8],
-    [EffectVm], [Multi-effect turn proving (14 effects)], [STARK, Plonky3, Kimchi],
+    [EffectVm], [Multi-effect turn proving (24 opcodes, 71 columns)], [STARK, Plonky3, Kimchi],
+    [QueueCommitment], [KZG polynomial commitment for queue state], [STARK, Plonky3],
     [Predicate], [Arbitrary predicate evaluation], [All 8],
     [TemporalPredicate], [Time-bounded predicate proofs], [All 8],
     [ArithmeticPredicate], [Arithmetic range/comparison proofs], [All 8],
@@ -513,8 +586,14 @@ All proof logic is now defined exclusively through the constraint DSL (`circuit/
     [SovereignTransition], [Sovereign cell state transition], [STARK, Plonky3, Kimchi],
     [BlockTransition], [Block state transition validity], [STARK, Plonky3],
     [TurnValidity], [Single turn state transition], [STARK, Plonky3],
+    [DfaLookup], [DFA transition table lookup proof], [All 8],
+    [BatchGammaVerify], [KZG batch opening Fiat-Shamir correctness], [STARK, Plonky3],
+    [BlindedMembership], [Ring membership proof (issuer anonymity)], [All 8],
+    [NullifierDerivation], [Deterministic nullifier computation], [All 8],
+    [CapTPHandoff], [Three-party handoff certificate validation], [STARK, Plonky3],
+    [IntentSatisfaction], [Intent constraint satisfaction proof], [All 8],
   ),
-  caption: [DSL circuit descriptors. Each compiles to trace generators and constraint evaluators for the indicated backends via code generation. "All 8" = Rust, AIR, Datalog, Kimchi, Midnight/ZKIR, Plonky3, SP1, STARK.],
+  caption: [DSL circuit descriptors (30 total). Each compiles to trace generators and constraint evaluators for the indicated backends via code generation. "All 8" = Rust, AIR, Datalog, Kimchi, Midnight/ZKIR, Plonky3, SP1, STARK.],
 )
 
 The Effect VM is the primary sovereign proof mechanism: a single STARK proves an entire turn regardless of effect count. The DSL descriptors above provide the component circuits that the Effect VM dispatches to via `Custom` CellProgram effects.

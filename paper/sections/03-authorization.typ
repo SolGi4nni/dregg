@@ -4,6 +4,26 @@
 
 = Authorization Semantics
 
+== Multi-Modal Authorization
+
+Pyana supports five authorization modes, each suited to different trust contexts:
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (left, left, left),
+    table.header([*Mode*], [*Mechanism*], [*Use Case*]),
+    [Signature], [Ed25519 over turn hash], [Standard agent-initiated turns],
+    [Proof], [STARK proof of authorization (Datalog evaluation)], [Cross-boundary, privacy-preserving],
+    [Breadstuff], [Macaroon HMAC chain with caveats], [Attenuated delegation within a trust domain],
+    [Bearer], [BearerCapProof (signed or STARK delegation chain)], [One-shot tokens, tickets, ephemeral access],
+    [Unchecked], [No verification (genesis only)], [System bootstrap],
+  ),
+  caption: [Authorization modes. A turn declares which mode it uses; the executor validates accordingly.],
+)
+
+The Bearer mode carries a `BearerCapProof`: either a signed Ed25519 delegation chain (fast, non-private) or a STARK proof that a valid delegation chain exists (private, post-quantum). The choice is made at delegation time based on the desired privacy/performance tradeoff.
+
 == Capabilities as Datalog Facts
 
 Authorization state is encoded as a set of Datalog facts. A fact is a ground atom $"fact" := "predicate"("term"_1, ..., "term"_k)$. Attenuation transforms a fact set $F$ into $F' subset.eq F$ by removing facts. The HMAC chain in a macaroon token makes removal of caveats cryptographically impossible---attenuation is irreversible.
@@ -41,7 +61,7 @@ The key intellectual distinction:
     [Tree structure], [In-kernel data structure], [Merkle-committed proof tree],
     [Revocation], [Kernel walks tree synchronously], [Verifiable revocation claim],
     [Latency], [Instantaneous (same address space)], [Bounded staleness],
-    [Distribution], [Single machine], [Cross-federation],
+    [Distribution], [Single machine], [Cross-group],
     [Trust model], [Kernel is TCB], [Hash function is TCB],
     [Verification], [Hardware-enforced access], [STARK proof of non-membership],
   ),
@@ -62,9 +82,9 @@ The child acts offline using the snapshot. Acceptors (remote verifiers) reject p
 
 For applications requiring instant revocation (high-value credentials, safety-critical access), Pyana provides an opt-in synchrony primitive: the _RevocationChannel_. A capability enrolled in a RevocationChannel is checked against a real-time revocation feed before acceptance. This restores seL4-like instant revocation at the cost of requiring channel liveness.
 
-A `RevocationChannel` is a circuit breaker between a revoker and one or more subjects. Subjects voluntarily subscribe and check channel state before exercising delegated capabilities. The channel is a leaf in a federation-attested Merkle tree (the "channel tree").
+A `RevocationChannel` is a circuit breaker between a revoker and one or more subjects. Subjects voluntarily subscribe and check channel state before exercising delegated capabilities. The channel is a leaf in a group-attested Merkle tree (the "channel tree").
 
-The lifecycle is: (1) Revoker creates a channel. (2) Subject subscribes by adding `channel_id` to their `DelegatedRef`. (3) Before exercising a gated capability, the subject checks `channel_state == Active`---one hash lookup in local state. (4) Revoker trips the channel via a signed `TripEvent`. (5) Federation includes the trip in the next block; the attested root updates. (6) Gossip propagates the new attestation. Connected subjects learn of the trip within one consensus round.
+The lifecycle is: (1) Revoker creates a channel. (2) Subject subscribes by adding `channel_id` to their `DelegatedRef`. (3) Before exercising a gated capability, the subject checks `channel_state == Active`---one hash lookup in local state. (4) Revoker trips the channel via a signed `TripEvent`. (5) Reference group includes the trip in the next block; the attested root updates. (6) Gossip propagates the new attestation. Connected subjects learn of the trip within one consensus round.
 
 #figure(
   table(
@@ -81,15 +101,52 @@ The lifecycle is: (1) Revoker creates a channel. (2) Subject subscribes by addin
 
 The design philosophy: instant revocation is not free in a distributed system. Rather than pretending it is (and failing under partition), Pyana makes the cost explicit and lets applications choose their revocation tier.
 
-=== RevocationChannel vs. Epoch Bumps
+== Provable CapTP Effects
 
-The existing `delegation_epoch` mechanism requires the child to _poll_ for staleness. The child discovers a bump only when it checks, creating an action window up to `max_staleness`. Channels improve on this in three ways:
+Four CapTP operations are encoded as provable effects in the Effect VM, enabling STARK proofs of protocol correctness:
 
-+ *Push via gossip.* The trip is carried by federation attestation gossip. A connected subject learns within one consensus round.
-+ *Provably visible.* A verifier can require "your action must include a channel-active proof at height >= H." Third-party verification becomes possible.
-+ *Targeted.* A channel gates a single delegation without disturbing others. Epoch bumps revoke ALL children.
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (left, left, left),
+    table.header([*Effect*], [*What the STARK Proves*], [*Public Inputs*]),
+    [ExportSturdyRef], [Swiss number correctly registered; capability exported with valid EffectMask], [Target hash, export epoch],
+    [EnlivenRef], [Sturdy ref resolved; swiss number valid; live reference correctly issued], [Session ID, import slot],
+    [DropRef], [Reference correctly released; refcount decremented; session epoch valid], [Session epoch, export ID],
+    [ValidateHandoff], [Handoff certificate valid: Ed25519 signature verifies, recipient matches, one-time use], [Introducer key, recipient key],
+  ),
+  caption: [CapTP effects as provable operations. Each can be composed with authorization proofs into a single STARK.],
+)
 
-Channels are a policy choice at delegation time, not a protocol mandate. A `DelegatedRef` without a `channel_id` behaves as today: epoch-based, poll-on-staleness.
+These effects enable fully trustless CapTP: a sovereign cell can prove it correctly performed a distributed capability operation without trusting the executor.
+
+== Generalized Intent Solver
+
+=== The Discovery Problem
+
+Object-capability systems solve authorization but not discovery: if you need a capability to communicate, how do you find someone who holds the capability you need? Traditional answers (directories, service registries) violate the principle of least authority by publishing capability inventories.
+
+=== Five Item Types
+
+The intent solver operates over 5 exchangeable item types:
+
++ *Fungible tokens*: Computrons, stablecoins, LP tokens (divisible, interchangeable).
++ *Non-fungible tokens*: Unique identifiers (cell IDs, credential hashes).
++ *Capabilities*: Attenuated bearer tokens (service access, compute budgets).
++ *Compute*: CPU/GPU time commitments (inference slots, proof generation).
++ *Data*: Content-addressed blobs (models, datasets, query results).
+
+=== Ring Trades
+
+When no bilateral match exists, the solver finds multi-party cycles. A ring trade $(A -> B -> C -> A)$ satisfies all three parties simultaneously. The solver uses Johnson's algorithm bounded to cycle length $k <= 5$ over a directed compatibility graph.
+
+=== Trustless 7-Layer Protocol
+
+Intent fulfillment follows a 7-layer trustless protocol: SUBMIT (threshold-encrypted), BATCH (consensus-determined boundary), DECRYPT (threshold ceremony after batch seal), SOLVE (open competition with bonds), PROVE (STARK validity proof per solution), SELECT (deterministic scoring + challenge window), SETTLE (atomic compound turn). Front-running is structurally impossible: intents are encrypted until after the batch boundary is finalized. See @sec-intents for the full protocol.
+
+== Nameservice as Capability Discovery <sec-nameservice-auth>
+
+Nameservice resolution is a form of authorization: resolving a name yields a capability reference (specifically, a sturdy ref). The petname architecture (local petnames, edge names, proposed names) provides human-readable paths to capabilities without global naming authority. Resolution through the DFA-governed namespace requires proving route validity and ACL satisfaction---making name lookup itself a provable operation.
 
 == Sealer/Unsealer Pairs
 
@@ -112,25 +169,3 @@ This enables a form of offline capability delegation that neither UCAN (requires
 === Relationship to Rights Amplification
 
 In E, sealer/unsealer pairs enable brand-checking: "only the holder of this specific unsealer can access this data." Pyana extends this pattern cryptographically---the sealed box carries a BLAKE3 commitment that binds the ciphertext to the capability without revealing it, enabling verification that the box contains a well-formed capability even without unsealing.
-
-== Privacy-Preserving Intent Marketplace
-
-=== The Discovery Problem
-
-Object-capability systems solve authorization but not discovery: if you need a capability to communicate, how do you find someone who holds the capability you need? Traditional answers (directories, service registries) violate the principle of least authority by publishing capability inventories.
-
-=== Architecture
-
-The intent engine inverts discovery. Rather than revealing held capabilities, agents broadcast _needs_ and privately evaluate whether they can satisfy others' needs:
-
-+ *Public intents*: A page broadcasts "I need capability matching spec $S$" as a content-addressed `Intent` identified by a blinded `CommitmentId`. The intent reveals the _shape_ of needed capability without revealing the requester's identity.
-+ *Private matching*: Wallets evaluate intents locally using Datalog: "does any token in my wallet satisfy spec $S$?" This evaluation never leaves the wallet.
-+ *STARK fulfillment*: If a match exists, the wallet generates a STARK proof of capability satisfaction---proving "I hold a token that satisfies $S$" without revealing which token, what delegation chain, or what else it holds.
-
-=== Anti-Frontrunning via Commit-Reveal
-
-Intent fulfillment uses a commit-reveal protocol: the satisfier first publishes a commitment $C = H("intent_id" || "satisfier_secret")$, then reveals the proof. This prevents a frontrunner from observing a match proof in the gossip network and racing to submit their own fulfillment.
-
-=== What This Solves
-
-The intent marketplace enables capability discovery without a capability directory. The requester learns only that _someone_ can satisfy their need. The satisfier reveals only that they _can_ satisfy it (via STARK), not what they hold. The gossip network sees intents (public needs) but never capabilities (private holdings).

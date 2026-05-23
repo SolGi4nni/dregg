@@ -1417,8 +1417,7 @@ impl TurnExecutor {
                         } else {
                             BabyBear::ZERO
                         };
-                        let sink_new =
-                            pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
+                        let sink_new = pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
                         vm_effects.push(VmEffect::PipelineStep {
                             pipeline_id: pipeline_bb,
                             source_old_root: source_root,

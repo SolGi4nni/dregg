@@ -37,6 +37,8 @@ use std::collections::HashMap;
 use pyana_types::CellId;
 use serde::{Deserialize, Serialize};
 
+// TODO(unified-lace): migrate FederationId to StrandId throughout this module.
+// Pipeline sessions are bilateral (strand-to-strand), not group-wide.
 use crate::FederationId;
 
 // =============================================================================

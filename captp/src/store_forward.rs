@@ -21,6 +21,8 @@ use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+// TODO(unified-lace): migrate FederationId to StrandId/FabricAddress.
+// Destinations should be FabricAddress; queues should be keyed by StrandId.
 use crate::FederationId;
 
 // =============================================================================
