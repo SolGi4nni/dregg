@@ -605,7 +605,7 @@ pub fn verify_bearer_cap(
 pub fn create_from_factory(
     factory_vk_hex: &str,
     owner_pubkey_hex: &str,
-    initial_balance: u64,
+    _initial_balance: u64,
 ) -> Result<JsValue, JsError> {
     let factory_vk = hex_decode_32(factory_vk_hex)?;
     let owner_pubkey = hex_decode_32(owner_pubkey_hex)?;

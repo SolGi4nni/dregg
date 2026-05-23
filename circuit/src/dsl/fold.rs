@@ -711,6 +711,7 @@ pub fn fold_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: FOLD_DSL_PI_COUNT,
+        lookup_tables: vec![],
     }
 }
 

@@ -49,6 +49,9 @@ pub struct Constitution {
     /// membership changes are frozen (no evictions). This assumes a network
     /// partition rather than mass node failure. Default: true.
     pub partition_detection: bool,
+    /// Commitment to the current routing DFA (Blake3 hash of transition table).
+    /// None = no governance-controlled routing (permissive).
+    pub routes_commitment: Option<[u8; 32]>,
 }
 
 impl Constitution {
@@ -69,6 +72,7 @@ impl Constitution {
             rejoin_grace_waves: timeout_waves.saturating_mul(2),
             min_membership_duration: timeout_waves / 2,
             partition_detection: true,
+            routes_commitment: None,
         }
     }
 
@@ -93,6 +97,8 @@ impl Constitution {
                 // H-rule: need max(current, new) votes
                 std::cmp::max(self.threshold, *new_threshold)
             }
+            // Route amendments use the current threshold (same as membership changes).
+            MembershipProposal::AmendRoutes { .. } => self.threshold,
             _ => self.threshold,
         }
     }
@@ -141,6 +147,15 @@ impl Constitution {
                 self.version += 1;
                 true
             }
+            MembershipProposal::AmendRoutes {
+                new_routes_commitment,
+                description: _,
+            } => {
+                // Update the routes commitment. Applied immediately (no grace period).
+                self.routes_commitment = Some(*new_routes_commitment);
+                self.version += 1;
+                true
+            }
         }
     }
 
@@ -181,6 +196,15 @@ pub enum MembershipProposal {
     /// Amend the supermajority threshold.
     /// The H-rule applies: changing from T to T' requires max(T, T') votes.
     AmendThreshold { new_threshold: usize },
+    /// Amend the federation's routing table commitment.
+    /// Cannot be combined with membership changes in the same proposal (separation of concerns).
+    /// Applied immediately after threshold is reached (no grace period).
+    AmendRoutes {
+        /// Blake3 hash of the new DFA transition table.
+        new_routes_commitment: [u8; 32],
+        /// Human-readable description of what changed.
+        description: String,
+    },
 }
 
 /// Reason for a participant leaving the federation.
@@ -680,6 +704,18 @@ impl ConstitutionManager {
     /// Get the timeout threshold in waves.
     pub fn timeout_waves(&self) -> u64 {
         self.current.timeout_waves
+    }
+
+    /// Get the current routes commitment (None = no governance routing).
+    pub fn routes_commitment(&self) -> Option<[u8; 32]> {
+        self.current.routes_commitment
+    }
+
+    /// Check if a given routes commitment matches the current governance state.
+    ///
+    /// Returns false if there is no routes commitment set (permissive mode).
+    pub fn verify_routes_commitment(&self, commitment: &[u8; 32]) -> bool {
+        self.current.routes_commitment.as_ref() == Some(commitment)
     }
 }
 
@@ -1385,5 +1421,205 @@ mod tests {
         mgr.record_activity(&make_node_key(2), 8);
         let proposals3 = mgr.advance_wave(8);
         assert!(proposals3.is_empty());
+    }
+
+    // ─── Route Governance ───────────────────────────────────────────────────
+
+    #[test]
+    fn route_amendment_propose_vote_passes_at_threshold() {
+        let participants = make_participants(3);
+        let mut mgr =
+            ConstitutionManager::from_participants(participants.clone(), TEST_TIMEOUT_WAVES);
+
+        // threshold for 3 participants = 3
+        assert_eq!(mgr.threshold(), 3);
+
+        let new_routes = [0xAB; 32];
+        let proposal = MembershipProposal::AmendRoutes {
+            new_routes_commitment: new_routes,
+            description: "add /api/v2 routes".to_string(),
+        };
+        let proposal_block = BlockId([0xA0; 32]);
+        mgr.submit_proposal(proposal_block, proposal);
+
+        let vote = MembershipVote {
+            proposal_block,
+            approve: true,
+        };
+
+        // Two votes not enough
+        mgr.submit_vote(&vote, make_node_key(1));
+        let result = mgr.submit_vote(&vote, make_node_key(2));
+        assert_eq!(result, None);
+
+        // Third vote passes (threshold = 3)
+        let result = mgr.submit_vote(&vote, make_node_key(3));
+        assert_eq!(result, Some(proposal_block));
+
+        // Apply
+        assert!(mgr.apply_if_passed(&proposal_block));
+    }
+
+    #[test]
+    fn route_commitment_updates_after_passage() {
+        let participants = make_participants(3);
+        let mut mgr =
+            ConstitutionManager::from_participants(participants.clone(), TEST_TIMEOUT_WAVES);
+
+        // Initially no routes commitment
+        assert_eq!(mgr.routes_commitment(), None);
+
+        let new_routes = [0xCD; 32];
+        let proposal = MembershipProposal::AmendRoutes {
+            new_routes_commitment: new_routes,
+            description: "initial routing table".to_string(),
+        };
+        let proposal_block = BlockId([0xA1; 32]);
+        mgr.submit_proposal(proposal_block, proposal);
+
+        let vote = MembershipVote {
+            proposal_block,
+            approve: true,
+        };
+        mgr.submit_vote(&vote, make_node_key(1));
+        mgr.submit_vote(&vote, make_node_key(2));
+        mgr.submit_vote(&vote, make_node_key(3));
+        mgr.apply_if_passed(&proposal_block);
+
+        // Routes commitment updated
+        assert_eq!(mgr.routes_commitment(), Some(new_routes));
+        assert_eq!(mgr.current.routes_commitment, Some(new_routes));
+    }
+
+    #[test]
+    fn route_amendment_requires_same_threshold_as_membership() {
+        let participants = make_participants(4);
+        let mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
+
+        // threshold for 4 = 3
+        assert_eq!(mgr.threshold(), 3);
+
+        let route_proposal = MembershipProposal::AmendRoutes {
+            new_routes_commitment: [0x11; 32],
+            description: "test".to_string(),
+        };
+        let join_proposal = MembershipProposal::Join {
+            node_key: make_node_key(5),
+            justification: vec![],
+        };
+
+        // Both require the same threshold
+        assert_eq!(mgr.current.required_votes_for(&route_proposal), 3);
+        assert_eq!(mgr.current.required_votes_for(&join_proposal), 3);
+    }
+
+    #[test]
+    fn route_history_preserved_in_constitution_history() {
+        let participants = make_participants(3);
+        let mut mgr =
+            ConstitutionManager::from_participants(participants.clone(), TEST_TIMEOUT_WAVES);
+
+        // Version 0: no routes
+        assert_eq!(mgr.version(), 0);
+        let v0 = mgr.constitution_at_version(0).unwrap();
+        assert_eq!(v0.routes_commitment, None);
+
+        // Amend routes
+        let routes_v1 = [0xDE; 32];
+        let proposal = MembershipProposal::AmendRoutes {
+            new_routes_commitment: routes_v1,
+            description: "v1 routes".to_string(),
+        };
+        let proposal_block = BlockId([0xA2; 32]);
+        mgr.submit_proposal(proposal_block, proposal);
+
+        let vote = MembershipVote {
+            proposal_block,
+            approve: true,
+        };
+        mgr.submit_vote(&vote, make_node_key(1));
+        mgr.submit_vote(&vote, make_node_key(2));
+        mgr.submit_vote(&vote, make_node_key(3));
+        mgr.apply_if_passed(&proposal_block);
+
+        // Version 1: routes set
+        assert_eq!(mgr.version(), 1);
+        let v1 = mgr.constitution_at_version(1).unwrap();
+        assert_eq!(v1.routes_commitment, Some(routes_v1));
+
+        // Original version still shows None
+        let v0_again = mgr.constitution_at_version(0).unwrap();
+        assert_eq!(v0_again.routes_commitment, None);
+
+        // Amend routes again
+        let routes_v2 = [0xEF; 32];
+        let proposal2 = MembershipProposal::AmendRoutes {
+            new_routes_commitment: routes_v2,
+            description: "v2 routes".to_string(),
+        };
+        let proposal_block2 = BlockId([0xA3; 32]);
+        mgr.submit_proposal(proposal_block2, proposal2);
+
+        let vote2 = MembershipVote {
+            proposal_block: proposal_block2,
+            approve: true,
+        };
+        mgr.submit_vote(&vote2, make_node_key(1));
+        mgr.submit_vote(&vote2, make_node_key(2));
+        mgr.submit_vote(&vote2, make_node_key(3));
+        mgr.apply_if_passed(&proposal_block2);
+
+        assert_eq!(mgr.version(), 2);
+        let v2 = mgr.constitution_at_version(2).unwrap();
+        assert_eq!(v2.routes_commitment, Some(routes_v2));
+
+        // v1 still preserved
+        let v1_again = mgr.constitution_at_version(1).unwrap();
+        assert_eq!(v1_again.routes_commitment, Some(routes_v1));
+    }
+
+    #[test]
+    fn initial_constitution_has_no_routes_commitment() {
+        let participants = make_participants(5);
+        let mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
+
+        assert_eq!(mgr.routes_commitment(), None);
+        assert_eq!(mgr.current.routes_commitment, None);
+    }
+
+    #[test]
+    fn verify_routes_commitment_returns_true_false_correctly() {
+        let participants = make_participants(3);
+        let mut mgr =
+            ConstitutionManager::from_participants(participants.clone(), TEST_TIMEOUT_WAVES);
+
+        let commitment = [0x42; 32];
+        let wrong_commitment = [0x99; 32];
+
+        // Before any route is set, verify returns false for anything
+        assert!(!mgr.verify_routes_commitment(&commitment));
+        assert!(!mgr.verify_routes_commitment(&wrong_commitment));
+
+        // Set routes
+        let proposal = MembershipProposal::AmendRoutes {
+            new_routes_commitment: commitment,
+            description: "set routes".to_string(),
+        };
+        let proposal_block = BlockId([0xA4; 32]);
+        mgr.submit_proposal(proposal_block, proposal);
+
+        let vote = MembershipVote {
+            proposal_block,
+            approve: true,
+        };
+        mgr.submit_vote(&vote, make_node_key(1));
+        mgr.submit_vote(&vote, make_node_key(2));
+        mgr.submit_vote(&vote, make_node_key(3));
+        mgr.apply_if_passed(&proposal_block);
+
+        // Now verify returns true for the correct commitment
+        assert!(mgr.verify_routes_commitment(&commitment));
+        // And false for a wrong commitment
+        assert!(!mgr.verify_routes_commitment(&wrong_commitment));
     }
 }

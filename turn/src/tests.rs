@@ -7494,6 +7494,7 @@ fn test_custom_program_proof_carrying_turn() {
         ],
         boundaries: vec![],
         public_input_count: 32,
+        lookup_tables: vec![],
     };
 
     let program = CellProgram::new(descriptor, 1);

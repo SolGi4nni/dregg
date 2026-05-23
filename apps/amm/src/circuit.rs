@@ -404,6 +404,7 @@ pub fn amm_swap_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 8,
+        lookup_tables: vec![],
     }
 }
 
@@ -634,6 +635,7 @@ pub fn add_liquidity_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 8,
+        lookup_tables: vec![],
     }
 }
 

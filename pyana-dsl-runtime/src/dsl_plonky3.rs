@@ -268,6 +268,10 @@ where
         ConstraintExpr::Hash { .. }
         | ConstraintExpr::Hash2to1 { .. }
         | ConstraintExpr::Hash4to1 { .. } => (AB::Expr::ZERO, false),
+        // Lookup constraints are verified via membership check (non-algebraic).
+        // In a full Plonky3 deployment, this would compile to a LogUp argument.
+        // For now, return ZERO (the constraint checker handles verification).
+        ConstraintExpr::Lookup { .. } => (AB::Expr::ZERO, false),
     }
 }
 
@@ -421,6 +425,7 @@ mod tests {
             ],
             boundaries: vec![],
             public_input_count: 32,
+            lookup_tables: vec![],
         }
     }
 
@@ -513,6 +518,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let result = prove_dsl_plonky3(&d, &vec![vec![BabyBear::ZERO; 4]; 2], &[]);
         assert!(result.is_err() && result.unwrap_err().contains("Hash"));
@@ -543,6 +549,7 @@ mod tests {
                 pi_index: 0,
             }],
             public_input_count: 1,
+            lookup_tables: vec![],
         };
         let val = BabyBear::new(42);
         let proof = prove_dsl_plonky3(&d, &vec![vec![val, val]; 2], &[val]).expect("prove");
@@ -573,6 +580,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let trace = vec![
             vec![BabyBear::new(10), BabyBear::new(20)],
@@ -614,6 +622,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let v = BabyBear::new(7);
         let inv = v.inverse().expect("nonzero");
@@ -653,6 +662,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let trace = vec![
             vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO],
@@ -715,6 +725,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let trace = vec![
             vec![BabyBear::ONE, BabyBear::new(42), BabyBear::new(42)],
@@ -753,6 +764,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let trace = vec![
             vec![BabyBear::ZERO, BabyBear::new(42), BabyBear::new(42)],
@@ -776,6 +788,7 @@ mod tests {
             }],
             boundaries: vec![],
             public_input_count: 0,
+            lookup_tables: vec![],
         };
         let trace = vec![
             vec![BabyBear::new(7), BabyBear::new(6), BabyBear::new(42)],

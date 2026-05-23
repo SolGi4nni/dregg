@@ -348,6 +348,7 @@ pub fn fri_query_verifier_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count,
+        lookup_tables: vec![],
     }
 }
 

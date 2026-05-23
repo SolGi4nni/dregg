@@ -196,6 +196,7 @@ pub fn merkle_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: MERKLE_DSL_PUBLIC_INPUTS,
+        lookup_tables: vec![],
     }
 }
 

@@ -721,6 +721,7 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 5, // state_root, derived_hash, not_after, org_id, budget
+        lookup_tables: vec![],
     }
 }
 

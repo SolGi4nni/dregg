@@ -296,8 +296,8 @@ async fn run_node(
     data_dir: &str,
     key_file: &str,
     gossip_port: u16,
-    node_index: usize,
-    federation_size: usize,
+    _node_index: usize,
+    _federation_size: usize,
     enable_pruning: bool,
     checkpoint_interval: u64,
     enable_faucet: bool,
@@ -614,7 +614,7 @@ async fn run_bridge(
 
     // Start local federation sync if peers are configured.
     if !federation_peers.is_empty() {
-        let sync_state = node_state.clone();
+        let _sync_state = node_state.clone();
         tokio::spawn(async move {
             // Bridge mode uses default gossip port.
         });

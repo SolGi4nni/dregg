@@ -186,6 +186,7 @@ pub fn health_factor_circuit_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: HEALTH_FACTOR_PI_COUNT,
+        lookup_tables: vec![],
     }
 }
 
@@ -339,6 +340,7 @@ pub fn interest_accrual_circuit_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: INTEREST_ACCRUAL_PI_COUNT,
+        lookup_tables: vec![],
     }
 }
 

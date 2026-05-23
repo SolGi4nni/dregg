@@ -161,6 +161,7 @@ pub fn block_transition_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 2, // [pre_state_root, post_state_root]
+        lookup_tables: vec![],
     }
 }
 

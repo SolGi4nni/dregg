@@ -162,6 +162,7 @@ pub fn presentation_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: PRESENTATION_PI_COUNT,
+        lookup_tables: vec![],
     }
 }
 
@@ -265,6 +266,7 @@ pub fn membership_circuit_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: 2,
+        lookup_tables: vec![],
     }
 }
 
@@ -306,6 +308,7 @@ pub fn predicate_circuit_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: 2,
+        lookup_tables: vec![],
     }
 }
 
@@ -347,6 +350,7 @@ pub fn temporal_step_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: 2,
+        lookup_tables: vec![],
     }
 }
 

@@ -3439,11 +3439,11 @@ impl AgentWallet {
             .clone();
 
         // 2. Compute old commitment.
-        let old_commitment = cell_state.state_commitment();
+        let _old_commitment = cell_state.state_commitment();
 
         // 3. Determine transfer parameters from the effects.
         // Phase 2 MVP: only supports a single Transfer effect.
-        let (transfer_amount, direction) = Self::extract_transfer_params(cell_id, &effects)?;
+        let (_transfer_amount, _direction) = Self::extract_transfer_params(cell_id, &effects)?;
 
         // 4. Apply effects locally to get the new state.
         let mut new_cell_state = cell_state.clone();
@@ -3475,10 +3475,10 @@ impl AgentWallet {
         let new_commitment = new_cell_state.state_commitment();
 
         // 6. Compute effects hash (must match what the executor computes).
-        let effects_hash = Self::compute_sovereign_effects_hash(&effects);
+        let _effects_hash = Self::compute_sovereign_effects_hash(&effects);
 
         // 7. Compute cell_id hash (must match executor's format).
-        let cell_id_hash = *blake3::hash(cell_id.as_bytes()).as_bytes();
+        let _cell_id_hash = *blake3::hash(cell_id.as_bytes()).as_bytes();
 
         // 8. Generate the STARK proof using EffectVmAir (DSL cutover).
         let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);

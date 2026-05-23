@@ -199,6 +199,7 @@ pub fn temporal_absence_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 

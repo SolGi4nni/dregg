@@ -14,11 +14,11 @@
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
 use pyana_cell::{Cell, CellId, Ledger};
+use pyana_circuit::dsl::{CellProgram, DslCircuit, ProgramRegistry};
 use pyana_circuit::field::{BABYBEAR_P, BabyBear};
 use pyana_circuit::stark::{self, StarkAir};
 use pyana_dsl_runtime::circuit::{
-    BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
-    ConstraintExpr, DslCircuit, PolyTerm, ProgramRegistry,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
 use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
@@ -216,6 +216,7 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 

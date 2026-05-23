@@ -399,6 +399,7 @@ pub mod credit_score {
             constraints,
             boundaries,
             public_input_count: PUBLIC_INPUT_COUNT,
+            lookup_tables: vec![],
         }
     }
 
@@ -784,6 +785,7 @@ pub mod atomic_swap {
             constraints,
             boundaries,
             public_input_count: PUBLIC_INPUT_COUNT,
+            lookup_tables: vec![],
         }
     }
 
@@ -1063,6 +1065,7 @@ pub mod reputation {
             constraints,
             boundaries,
             public_input_count: PUBLIC_INPUT_COUNT,
+            lookup_tables: vec![],
         }
     }
 
@@ -1310,6 +1313,7 @@ pub mod multi_asset {
             constraints,
             boundaries,
             public_input_count: PUBLIC_INPUT_COUNT,
+            lookup_tables: vec![],
         }
     }
 
@@ -1619,6 +1623,7 @@ pub mod conditional_execution {
             constraints,
             boundaries,
             public_input_count: PUBLIC_INPUT_COUNT,
+            lookup_tables: vec![],
         }
     }
 

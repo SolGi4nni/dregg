@@ -1656,7 +1656,7 @@ impl GossipNetwork {
         payload: Vec<u8>,
         received_from: SocketAddr,
         state: &Arc<RwLock<GossipState>>,
-        outgoing_tx: &mpsc::UnboundedSender<OutgoingGossip>,
+        _outgoing_tx: &mpsc::UnboundedSender<OutgoingGossip>,
         signing_key: &SigningKey,
         node_id: NodeId,
     ) {

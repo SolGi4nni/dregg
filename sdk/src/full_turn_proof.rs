@@ -221,6 +221,7 @@ fn effect_vm_circuit_descriptor() -> CircuitDescriptor {
         constraints: vec![], // Constraints are in the StarkAir impl
         boundaries: vec![],  // Boundaries are in the StarkAir impl
         public_input_count: effect_vm::pi::BASE_COUNT,
+        lookup_tables: vec![],
     }
 }
 
@@ -371,7 +372,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // ========================================================================
     let composed_descriptor = build_full_turn_descriptor(&components);
     let composed_circuit = ComposedDslCircuit::new(composed_descriptor.clone());
-    let total_width = composed_circuit.total_width();
+    let _total_width = composed_circuit.total_width();
 
     // Build the composition trace: one row with all merged PIs as column values,
     // plus VK hashes and proof hashes in the binding regions.

@@ -218,7 +218,7 @@ fn emit_zkir_statements(
 
 fn emit_zkir_requirement(
     kind: &RequirementKind,
-    ir: &ConstraintIr,
+    _ir: &ConstraintIr,
     out: &mut Vec<ZkirInstr>,
     wires: &mut WireCounter,
 ) {

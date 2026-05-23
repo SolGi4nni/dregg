@@ -291,6 +291,7 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 4, // [nullifier, merkle_root, value, asset_type]
+        lookup_tables: vec![],
     }
 }
 

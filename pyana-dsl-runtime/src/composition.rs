@@ -391,6 +391,7 @@ pub fn compose_and(
         constraints,
         boundaries,
         public_input_count: shared_count.max(1),
+        lookup_tables: vec![],
     };
 
     ComposedCircuitDescriptor {
@@ -516,6 +517,7 @@ pub fn compose_or(
         constraints,
         boundaries,
         public_input_count: 1, // selector is the only PI
+        lookup_tables: vec![],
     };
 
     ComposedCircuitDescriptor {
@@ -651,6 +653,7 @@ pub fn compose_chain(circuits: &[&CircuitDescriptor]) -> ComposedCircuitDescript
         constraints,
         boundaries,
         public_input_count: 4, // step_count, initial_state, final_state, accumulated_hash
+        lookup_tables: vec![],
     };
 
     ComposedCircuitDescriptor {
@@ -728,6 +731,7 @@ pub fn compose_aggregate(circuits: &[&CircuitDescriptor]) -> ComposedCircuitDesc
         constraints,
         boundaries,
         public_input_count: total_pi.max(1),
+        lookup_tables: vec![],
     };
 
     ComposedCircuitDescriptor {
@@ -1058,6 +1062,7 @@ mod tests {
                 pi_index: 0,
             }],
             public_input_count: 2,
+            lookup_tables: vec![],
         }
     }
 
@@ -1084,6 +1089,7 @@ mod tests {
                 pi_index: 0,
             }],
             public_input_count: 2,
+            lookup_tables: vec![],
         }
     }
 

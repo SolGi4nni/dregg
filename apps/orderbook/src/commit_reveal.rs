@@ -25,7 +25,7 @@
 //! - A matcher who delays reveals or reorders them is detectable (proofs reference
 //!   the commitment sequence in the state commitment).
 
-use crate::order::{Order, OrderId};
+use crate::order::Order;
 use serde::{Deserialize, Serialize};
 
 /// Number of blocks between commit and allowed reveal.

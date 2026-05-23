@@ -793,6 +793,7 @@ pub fn build_arithmetic_predicate_descriptor(
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     };
 
     (descriptor, layout, compiled_a, compiled_b, diff_kind)

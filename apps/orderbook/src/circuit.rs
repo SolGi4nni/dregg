@@ -336,6 +336,7 @@ pub fn match_proof_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 6,
+        lookup_tables: vec![],
     }
 }
 

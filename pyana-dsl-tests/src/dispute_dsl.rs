@@ -517,6 +517,7 @@ pub fn dispute_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: DISPUTE_DSL_PI_COUNT,
+        lookup_tables: vec![],
     }
 }
 

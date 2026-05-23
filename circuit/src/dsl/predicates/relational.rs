@@ -371,6 +371,7 @@ pub fn relational_predicate_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 

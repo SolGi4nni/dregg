@@ -31,8 +31,8 @@ pub mod tiered_revocation;
 // Re-export primary smart contract runtime types.
 pub use circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
-    ConstraintExpr, DslCircuit, PolyTerm, ProgramError, ProgramRegistry, ProgramValidationError,
-    intern_air_name,
+    ConstraintExpr, DslCircuit, LookupTable, PolyTerm, ProgramError, ProgramRegistry,
+    ProgramValidationError, intern_air_name,
 };
 
 // Re-export production garbled circuit evaluation API.

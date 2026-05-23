@@ -407,6 +407,7 @@ pub fn temporal_predicate_descriptor(predicate_kind: TemporalPredicateKind) -> C
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 

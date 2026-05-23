@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::AmmRegistry;
-use crate::pool::{LiquidityPool, PoolId};
+use crate::pool::LiquidityPool;
 
 // =============================================================================
 // Application State

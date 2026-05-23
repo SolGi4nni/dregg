@@ -465,6 +465,7 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 1, // [revocation_root]
+        lookup_tables: vec![],
     }
 }
 

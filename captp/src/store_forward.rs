@@ -307,6 +307,21 @@ fn x25519_scalar_mult_base(scalar: &[u8; 32]) -> [u8; 32] {
     x25519_scalar_mult(scalar, &basepoint)
 }
 
+/// Generate an X25519 keypair (secret, public) using a random secret key.
+///
+/// The secret key is clamped per the X25519 specification and the public key
+/// is computed as `secret * basepoint`. This is suitable for use with
+/// [`encrypt_for_destination`] and [`decrypt_from_sender`].
+pub fn generate_x25519_keypair() -> ([u8; 32], [u8; 32]) {
+    let mut secret = [0u8; 32];
+    getrandom::fill(&mut secret).expect("getrandom failed");
+    secret[0] &= 248;
+    secret[31] &= 127;
+    secret[31] |= 64;
+    let public = x25519_scalar_mult_base(&secret);
+    (secret, public)
+}
+
 // =============================================================================
 // Field element arithmetic for GF(2^255 - 19)
 // =============================================================================

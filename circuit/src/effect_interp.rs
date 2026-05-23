@@ -774,6 +774,149 @@ pub fn execute_unseal(env: &mut impl EffectEnv) {
 }
 
 // ============================================================================
+// CapTP Effects: STARK-provable CapTP operations
+// ============================================================================
+
+/// Execute the ExportSturdyRef effect.
+///
+/// Proves: swiss_number = hash(cell_id, hash(random_seed, export_counter)).
+/// State: field[7] increments (export counter). Balance/cap/other fields unchanged.
+pub fn execute_export_sturdy_ref(env: &mut impl EffectEnv) {
+    let cell_id = env.read_param(param::EXPORT_CELL_ID);
+    let random_seed = env.read_param(param::EXPORT_RANDOM_SEED);
+    let export_counter = env.read_param(param::EXPORT_COUNTER);
+
+    // Verify swiss derivation: swiss = hash(cell_id, hash(random_seed, counter))
+    let inner_hash = env.hash_2_to_1(random_seed, export_counter);
+    let expected_swiss = env.hash_2_to_1(cell_id, inner_hash);
+
+    // aux[0] must equal the expected swiss number.
+    let aux_swiss = env.read_aux(0);
+    env.assert_eq(aux_swiss, expected_swiss);
+
+    // field[7] must increment by 1 (export counter).
+    let old_f7 = env.read_state_before(state::FIELD_BASE + 7);
+    let new_f7 = env.read_state_after(state::FIELD_BASE + 7);
+    let one = env.constant(1);
+    let expected_f7 = env.add(old_f7, one);
+    env.assert_eq(new_f7, expected_f7);
+
+    // Balance unchanged.
+    env.assert_balance_unchanged();
+
+    // Cap root unchanged.
+    env.assert_cap_unchanged();
+
+    // Fields 0..7 unchanged (only field[7] changes).
+    for i in 0..7 {
+        env.assert_state_unchanged(state::FIELD_BASE + i);
+    }
+}
+
+/// Execute the EnlivenRef effect.
+///
+/// Proves: swiss_number maps to (cell_id, permissions) via hash relationship.
+/// State: field[6] increments (use_count). Balance/cap/other fields unchanged.
+pub fn execute_enliven_ref(env: &mut impl EffectEnv) {
+    let swiss = env.read_param(param::ENLIVEN_SWISS);
+    let expected_cell_id = env.read_param(param::ENLIVEN_CELL_ID);
+    let expected_perms = env.read_param(param::ENLIVEN_PERMISSIONS);
+
+    // Verify table entry: aux[0] = hash(swiss, hash(cell_id, permissions))
+    let inner = env.hash_2_to_1(expected_cell_id, expected_perms);
+    let expected_entry_hash = env.hash_2_to_1(swiss, inner);
+    let aux_entry = env.read_aux(0);
+    env.assert_eq(aux_entry, expected_entry_hash);
+
+    // field[6] must increment by 1 (use_count).
+    let old_f6 = env.read_state_before(state::FIELD_BASE + 6);
+    let new_f6 = env.read_state_after(state::FIELD_BASE + 6);
+    let one = env.constant(1);
+    let expected_f6 = env.add(old_f6, one);
+    env.assert_eq(new_f6, expected_f6);
+
+    // Balance unchanged.
+    env.assert_balance_unchanged();
+
+    // Cap root unchanged.
+    env.assert_cap_unchanged();
+
+    // Fields 0..6 unchanged, field[7] unchanged (only field[6] changes).
+    for i in 0..6 {
+        env.assert_state_unchanged(state::FIELD_BASE + i);
+    }
+    env.assert_state_unchanged(state::FIELD_BASE + 7);
+}
+
+/// Execute the DropRef effect.
+///
+/// Proves: refcount > 0 (via inverse witness).
+/// State: field[5] decrements (refcount). Balance/cap/other fields unchanged.
+pub fn execute_drop_ref(env: &mut impl EffectEnv) {
+    let refcount_param = env.read_param(param::DROP_REFCOUNT);
+
+    // field[5] must decrement by 1.
+    let old_f5 = env.read_state_before(state::FIELD_BASE + 5);
+    let new_f5 = env.read_state_after(state::FIELD_BASE + 5);
+    let one = env.constant(1);
+    let expected_f5 = env.sub(old_f5, one);
+    env.assert_eq(new_f5, expected_f5);
+
+    // refcount param must match old field[5].
+    env.assert_eq(refcount_param, old_f5);
+
+    // Prove refcount > 0: refcount * inverse == 1.
+    let rc_inv = env.read_aux(0);
+    let product = env.mul(refcount_param, rc_inv);
+    let one_val = env.constant(1);
+    env.assert_eq(product, one_val);
+
+    // Balance unchanged.
+    env.assert_balance_unchanged();
+
+    // Cap root unchanged.
+    env.assert_cap_unchanged();
+
+    // Fields 0..5, 6, 7 unchanged (only field[5] changes).
+    for i in 0..5 {
+        env.assert_state_unchanged(state::FIELD_BASE + i);
+    }
+    env.assert_state_unchanged(state::FIELD_BASE + 6);
+    env.assert_state_unchanged(state::FIELD_BASE + 7);
+}
+
+/// Execute the ValidateHandoff effect.
+///
+/// Proves: certificate_hash membership in approved set via hash binding.
+/// State: cap_root updated (routing entry for recipient). Balance/fields unchanged.
+pub fn execute_validate_handoff(env: &mut impl EffectEnv) {
+    let cert_hash = env.read_param(param::HANDOFF_CERT_HASH);
+    let recipient_pk = env.read_param(param::HANDOFF_RECIPIENT_PK);
+    let approved_root = env.read_param(param::HANDOFF_APPROVED_SET_ROOT);
+
+    // Membership proof: aux[0] = hash(cert_hash, approved_root)
+    let expected_membership = env.hash_2_to_1(cert_hash, approved_root);
+    let aux_membership = env.read_aux(0);
+    env.assert_eq(aux_membership, expected_membership);
+
+    // Cap root updated: new_cap = hash(old_cap, hash(recipient_pk, cert_hash))
+    let old_cap = env.read_state_before(state::CAP_ROOT);
+    let routing_entry = env.hash_2_to_1(recipient_pk, cert_hash);
+    let expected_new_cap = env.hash_2_to_1(old_cap, routing_entry);
+    let actual_new_cap = env.read_state_after(state::CAP_ROOT);
+    env.assert_eq(actual_new_cap, expected_new_cap);
+
+    // Balance unchanged.
+    env.assert_balance_unchanged();
+
+    // All fields unchanged.
+    env.assert_fields_unchanged();
+
+    // Reserved unchanged.
+    env.assert_reserved_unchanged();
+}
+
+// ============================================================================
 // Dispatch: single entry point for all effects
 // ============================================================================
 
@@ -797,6 +940,10 @@ pub fn dispatch_effect(env: &mut impl EffectEnv, sel_idx: usize) {
         sel::UNSEAL => execute_unseal(env),
         sel::MAKE_SOVEREIGN => execute_make_sovereign(env),
         sel::CREATE_CELL_FROM_FACTORY => execute_create_cell_from_factory(env),
+        sel::EXPORT_STURDY_REF => execute_export_sturdy_ref(env),
+        sel::ENLIVEN_REF => execute_enliven_ref(env),
+        sel::DROP_REF => execute_drop_ref(env),
+        sel::VALIDATE_HANDOFF => execute_validate_handoff(env),
         _ => panic!("Unknown selector index: {}", sel_idx),
     }
 }

@@ -2502,7 +2502,7 @@ fn prove_ring_membership(
 fn verify_ring_membership(proof_bytes: &[u8], blinded_leaf: BabyBear, ring_root: BabyBear) -> bool {
     use pyana_circuit::binding::WideHash;
     use pyana_circuit::stark;
-    use pyana_dsl_runtime::garbled::{garbled_dsl_circuit, verify_garbled_evaluation_dsl};
+    use pyana_dsl_runtime::garbled::garbled_dsl_circuit;
 
     // Reconstruct the commitment and output hashes
     let commit_elems = vec![ring_root, blinded_leaf];

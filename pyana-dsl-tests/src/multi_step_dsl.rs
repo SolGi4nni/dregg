@@ -318,6 +318,7 @@ pub fn multi_step_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 6, // initial_state_root, request_hash, conclusion, num_steps, final_acc_hash, policy_root
+        lookup_tables: vec![],
     }
 }
 

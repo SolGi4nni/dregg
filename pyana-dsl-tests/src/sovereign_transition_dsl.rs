@@ -138,6 +138,7 @@ pub fn sovereign_transition_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: SOVEREIGN_DSL_PUBLIC_INPUTS,
+        lookup_tables: vec![],
     }
 }
 

@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 use crate::OrderbookEngine;
 use crate::book::TradingPair;
-use crate::order::{Order, OrderId, OrderStatus, OrderType, Side, TimeInForce};
+use crate::order::{Order, OrderStatus, OrderType, Side, TimeInForce};
 
 // =============================================================================
 // Application State

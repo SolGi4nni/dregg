@@ -3299,6 +3299,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "governed-namespace"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "pyana-app-framework",
+ "pyana-captp",
+ "pyana-cell",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "groestl"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

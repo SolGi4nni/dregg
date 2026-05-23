@@ -172,6 +172,7 @@ pub fn merkle_poseidon2_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: MERKLE_PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 
@@ -310,6 +311,7 @@ pub fn blinded_merkle_poseidon2_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: MERKLE_PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 
@@ -631,6 +633,7 @@ pub fn non_revocation_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 1,
+        lookup_tables: vec![],
     }
 }
 

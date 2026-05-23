@@ -411,6 +411,7 @@ pub fn compound_predicate_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: pi::COUNT,
+        lookup_tables: vec![],
     }
 }
 

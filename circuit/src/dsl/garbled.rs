@@ -340,6 +340,7 @@ pub fn garbled_extended_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 8,
+        lookup_tables: vec![],
     }
 }
 

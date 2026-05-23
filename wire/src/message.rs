@@ -582,6 +582,46 @@ mod tests {
                 code: error_codes::MALFORMED_MESSAGE,
                 message: "bad frame".to_string(),
             },
+            // CapTP variants
+            WireMessage::CapHello {
+                federation_id: [0xF0; 32],
+                initial_exports: vec![[0xF1; 32], [0xF2; 32]],
+            },
+            WireMessage::CapGoodbye {
+                federation_id: [0xF0; 32],
+                reason: Some("shutting down".to_string()),
+            },
+            WireMessage::EnlivenSturdyRef {
+                uri_bytes: vec![0xAA; 96],
+                requester_height: 500,
+            },
+            WireMessage::EnlivenResponse {
+                success: true,
+                cell_id: Some([0xBB; 32]),
+                permissions_tag: 1,
+                error: None,
+            },
+            WireMessage::DropRemoteRef {
+                from_federation: [0xCC; 32],
+                cell_id: [0xDD; 32],
+            },
+            WireMessage::PipelinedMsg {
+                target_promise_id: 42,
+                method: "transfer".to_string(),
+                args: vec![1, 2, 3],
+                authorization: vec![0xDE, 0xAD],
+                result_promise_id: Some(99),
+                sender_federation: [0xEE; 32],
+            },
+            WireMessage::PresentHandoff {
+                presentation_bytes: vec![0x11; 200],
+                introducer_pk: [0x22; 32],
+            },
+            WireMessage::HandoffAccepted {
+                routing_token: [0x33; 32],
+                cell_id: [0x44; 32],
+                permissions_tag: 2,
+            },
         ];
 
         for msg in messages {

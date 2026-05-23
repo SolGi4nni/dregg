@@ -127,7 +127,7 @@ impl LiveRef {
     /// Returns an [`EventualRef`] representing the async result. The action is
     /// queued for delivery to the remote cell; the result promise will be
     /// resolved when the action completes.
-    pub fn send(&self, action: PipelinedAction) -> EventualRef {
+    pub fn send(&self, _action: PipelinedAction) -> EventualRef {
         let promise_id = {
             let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
             registry.create_promise()

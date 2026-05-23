@@ -363,6 +363,7 @@ pub fn schnorr_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: pi::TOTAL, // 48
+        lookup_tables: vec![],
     }
 }
 

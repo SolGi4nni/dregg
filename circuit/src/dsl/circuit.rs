@@ -21,6 +21,21 @@ use serde::{Deserialize, Serialize};
 // Descriptor types
 // ============================================================================
 
+/// A preprocessed lookup table: a fixed set of valid tuples committed once at setup time.
+///
+/// Lookup tables enable efficient table-driven computation in circuits (DFA routing,
+/// range checks, bytecode dispatch). A `Lookup` constraint asserts that a query tuple
+/// drawn from trace columns appears in the named table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LookupTable {
+    /// Unique identifier for this table.
+    pub id: String,
+    /// Column width of each entry tuple.
+    pub width: usize,
+    /// The valid tuples (each inner Vec has `width` elements).
+    pub entries: Vec<Vec<u32>>,
+}
+
 /// A complete description of an AIR circuit — trace layout, constraints, boundaries.
 ///
 /// This is the core type for user-defined cell programs. It is serializable for
@@ -34,6 +49,9 @@ pub struct CircuitDescriptor {
     pub constraints: Vec<ConstraintExpr>,
     pub boundaries: Vec<BoundaryDef>,
     pub public_input_count: usize,
+    /// Preprocessed lookup tables available for `ConstraintExpr::Lookup` constraints.
+    #[serde(default)]
+    pub lookup_tables: Vec<LookupTable>,
 }
 
 /// Metadata for a single trace column.
@@ -122,6 +140,19 @@ pub enum ConstraintExpr {
         output_col: usize,
         input_cols: [usize; 4],
     },
+    /// Lookup constraint: asserts that the tuple of values at `query_columns` in the
+    /// current row appears in the named lookup table.
+    ///
+    /// This is NOT algebraic in the traditional sense; in the constraint checker it is
+    /// verified by membership test. In a real STARK prover, it would be compiled to a
+    /// log-derivative (LogUp) or permutation argument. The constraint evaluator returns
+    /// zero when the tuple is found and non-zero otherwise.
+    Lookup {
+        /// Which table to look up in (must match a `LookupTable::id` in the descriptor).
+        table_id: String,
+        /// Which trace columns form the query tuple (indices into the trace row).
+        query_columns: Vec<usize>,
+    },
     // NOTE: SelectiveWrite was removed -- it used a non-algebraic Rust if/else branch
     // which is unsound in a STARK (constraints must be evaluatable as polynomials over
     // the entire domain). Users should instead use a Gated constraint with an explicit
@@ -170,7 +201,24 @@ pub enum BoundaryRow {
 
 impl ConstraintExpr {
     /// Evaluate this constraint expression given the current and next row.
+    ///
+    /// NOTE: `Lookup` constraints always return zero from this method (no table context).
+    /// Use [`evaluate_with_tables`] when lookup tables are available.
     pub fn evaluate(&self, local: &[BabyBear], next: &[BabyBear], pi: &[BabyBear]) -> BabyBear {
+        self.evaluate_with_tables(local, next, pi, &[])
+    }
+
+    /// Evaluate this constraint expression with access to lookup tables.
+    ///
+    /// For `Lookup` constraints, checks that the query tuple appears in the named table.
+    /// Returns `BabyBear::ZERO` if satisfied, `BabyBear::ONE` if the lookup fails.
+    pub fn evaluate_with_tables(
+        &self,
+        local: &[BabyBear],
+        next: &[BabyBear],
+        pi: &[BabyBear],
+        lookup_tables: &[LookupTable],
+    ) -> BabyBear {
         match self {
             Self::Equality { col_a, col_b } => local[*col_a] - local[*col_b],
             Self::Multiplication { a, b, output } => local[*a] * local[*b] - local[*output],
@@ -194,13 +242,16 @@ impl ConstraintExpr {
             Self::Gated {
                 selector_col,
                 inner,
-            } => local[*selector_col] * inner.evaluate(local, next, pi),
+            } => local[*selector_col] * inner.evaluate_with_tables(local, next, pi, lookup_tables),
             Self::InvertedGated {
                 selector_col,
                 inner,
-            } => (BabyBear::ONE - local[*selector_col]) * inner.evaluate(local, next, pi),
+            } => {
+                (BabyBear::ONE - local[*selector_col])
+                    * inner.evaluate_with_tables(local, next, pi, lookup_tables)
+            }
             Self::Squared { inner } => {
-                let v = inner.evaluate(local, next, pi);
+                let v = inner.evaluate_with_tables(local, next, pi, lookup_tables);
                 v * v
             }
             Self::Hash {
@@ -252,6 +303,25 @@ impl ConstraintExpr {
                 ];
                 let expected = crate::poseidon2::hash_4_to_1(&children);
                 expected - local[*output_col]
+            }
+            Self::Lookup {
+                table_id,
+                query_columns,
+            } => {
+                // Find the named table in the provided lookup tables.
+                if let Some(table) = lookup_tables.iter().find(|t| &t.id == table_id) {
+                    // Extract the query tuple from the current row.
+                    let query: Vec<u32> = query_columns.iter().map(|&c| local[c].0).collect();
+                    // Check membership: zero if found, one if not.
+                    if table.entries.iter().any(|entry| entry == &query) {
+                        BabyBear::ZERO
+                    } else {
+                        BabyBear::ONE
+                    }
+                } else {
+                    // Table not found — treat as unsatisfied.
+                    BabyBear::ONE
+                }
             }
         }
     }
@@ -328,7 +398,12 @@ impl StarkAir for DslCircuit {
         let mut result = BabyBear::ZERO;
         let mut alpha_power = BabyBear::ONE;
         for constraint in &self.descriptor.constraints {
-            let value = constraint.evaluate(local, next, public_inputs);
+            let value = constraint.evaluate_with_tables(
+                local,
+                next,
+                public_inputs,
+                &self.descriptor.lookup_tables,
+            );
             result = result + alpha_power * value;
             alpha_power = alpha_power * alpha;
         }
@@ -532,6 +607,10 @@ impl ConstraintExpr {
                 // hash_4_to_1([a,b,c,d]) - output: the hash is opaque, constraint is degree 1.
                 1
             }
+            Self::Lookup { query_columns, .. } => {
+                // Lookup is non-algebraic (membership test). Degree is 1 per column reference.
+                query_columns.len().max(1)
+            }
         }
     }
 
@@ -590,6 +669,7 @@ impl ConstraintExpr {
                 let max_input = input_cols.iter().copied().max().unwrap_or(0);
                 Some((*output_col).max(max_input))
             }
+            Self::Lookup { query_columns, .. } => query_columns.iter().copied().max(),
         }
     }
 }
@@ -1082,6 +1162,7 @@ mod tests {
             ],
             boundaries: vec![],
             public_input_count: 32,
+            lookup_tables: vec![],
         }
     }
 
@@ -1568,5 +1649,260 @@ mod tests {
             }
             other => panic!("Expected InvalidProof, got: {:?}", other),
         }
+    }
+
+    // ========================================================================
+    // Lookup Table Tests
+    // ========================================================================
+
+    /// Build a small DFA transition table: (state, byte, next_state) triples.
+    /// States: 0, 1, 2, 3. Bytes: 0x61='a', 0x62='b'.
+    /// DFA recognizes strings matching a*b (one or more 'a' then one 'b').
+    fn dfa_lookup_table() -> LookupTable {
+        LookupTable {
+            id: "dfa_transitions".into(),
+            width: 3,
+            entries: vec![
+                // state 0 + 'a' -> state 1 (start reading a's)
+                vec![0, 0x61, 1],
+                // state 1 + 'a' -> state 1 (more a's)
+                vec![1, 0x61, 1],
+                // state 1 + 'b' -> state 2 (accept)
+                vec![1, 0x62, 2],
+                // state 2 + 'a' -> state 3 (dead/reject, but valid transition)
+                vec![2, 0x61, 3],
+                // state 2 + 'b' -> state 3
+                vec![2, 0x62, 3],
+            ],
+        }
+    }
+
+    /// Build a circuit descriptor with a DFA lookup constraint.
+    /// Trace width = 3 columns: [state, byte, next_state]
+    /// The Lookup constraint asserts (state, byte, next_state) is in the table.
+    fn dfa_lookup_descriptor() -> CircuitDescriptor {
+        CircuitDescriptor {
+            name: "test-dfa-lookup-v1".into(),
+            trace_width: 3,
+            max_degree: 3,
+            columns: vec![
+                ColumnDef {
+                    name: "state".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "byte".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "next_state".into(),
+                    index: 2,
+                    kind: ColumnKind::Value,
+                },
+            ],
+            constraints: vec![ConstraintExpr::Lookup {
+                table_id: "dfa_transitions".into(),
+                query_columns: vec![0, 1, 2],
+            }],
+            boundaries: vec![],
+            public_input_count: 0,
+            lookup_tables: vec![dfa_lookup_table()],
+        }
+    }
+
+    #[test]
+    fn lookup_valid_dfa_trace() {
+        // Trace for "aab": state 0->1->1->2
+        let trace = vec![
+            vec![BabyBear::new(0), BabyBear::new(0x61), BabyBear::new(1)], // (0,'a') -> 1
+            vec![BabyBear::new(1), BabyBear::new(0x61), BabyBear::new(1)], // (1,'a') -> 1
+            vec![BabyBear::new(1), BabyBear::new(0x62), BabyBear::new(2)], // (1,'b') -> 2
+            // Pad to power-of-two: repeat last valid row
+            vec![BabyBear::new(1), BabyBear::new(0x62), BabyBear::new(2)],
+        ];
+
+        let dsl = DslCircuit::new(dfa_lookup_descriptor());
+        let pi: Vec<BabyBear> = vec![];
+
+        // Check each row individually
+        for (i, row) in trace.iter().enumerate() {
+            let next = if i + 1 < trace.len() {
+                &trace[i + 1]
+            } else {
+                row
+            };
+            let result = dsl.eval_constraints(row, next, &pi, BabyBear::new(7));
+            assert_eq!(
+                result,
+                BabyBear::ZERO,
+                "Row {} should satisfy the lookup constraint",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_invalid_dfa_trace_detected() {
+        // Row with an INVALID transition: (0, 'b', 1) is NOT in the table.
+        let invalid_row = vec![BabyBear::new(0), BabyBear::new(0x62), BabyBear::new(1)];
+        let dummy_next = vec![BabyBear::new(0); 3];
+        let pi: Vec<BabyBear> = vec![];
+
+        let dsl = DslCircuit::new(dfa_lookup_descriptor());
+        let result = dsl.eval_constraints(&invalid_row, &dummy_next, &pi, BabyBear::new(7));
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Invalid lookup (0,'b',1) must produce a non-zero constraint"
+        );
+    }
+
+    #[test]
+    fn lookup_constraint_evaluator_directly() {
+        let table = dfa_lookup_table();
+        let tables = vec![table];
+
+        let constraint = ConstraintExpr::Lookup {
+            table_id: "dfa_transitions".into(),
+            query_columns: vec![0, 1, 2],
+        };
+
+        // Valid tuple: (1, 0x61, 1)
+        let valid_row = vec![BabyBear::new(1), BabyBear::new(0x61), BabyBear::new(1)];
+        let result = constraint.evaluate_with_tables(&valid_row, &valid_row, &[], &tables);
+        assert_eq!(
+            result,
+            BabyBear::ZERO,
+            "Valid tuple should evaluate to zero"
+        );
+
+        // Invalid tuple: (3, 0x61, 0) - state 3 has no transitions in the table
+        let invalid_row = vec![BabyBear::new(3), BabyBear::new(0x61), BabyBear::new(0)];
+        let result = constraint.evaluate_with_tables(&invalid_row, &invalid_row, &[], &tables);
+        assert_eq!(
+            result,
+            BabyBear::ONE,
+            "Invalid tuple should evaluate to one"
+        );
+    }
+
+    #[test]
+    fn lookup_missing_table_fails() {
+        // Constraint references a table that doesn't exist
+        let constraint = ConstraintExpr::Lookup {
+            table_id: "nonexistent_table".into(),
+            query_columns: vec![0],
+        };
+
+        let row = vec![BabyBear::new(42)];
+        let result = constraint.evaluate_with_tables(&row, &row, &[], &[]);
+        assert_eq!(
+            result,
+            BabyBear::ONE,
+            "Missing table should produce a non-zero (failing) result"
+        );
+    }
+
+    #[test]
+    fn lookup_gated_constraint() {
+        // A gated lookup: only check the lookup when selector is non-zero
+        let table = dfa_lookup_table();
+
+        let descriptor = CircuitDescriptor {
+            name: "test-gated-lookup-v1".into(),
+            trace_width: 4, // [state, byte, next_state, selector]
+            max_degree: 4,
+            columns: vec![
+                ColumnDef {
+                    name: "state".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "byte".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "next_state".into(),
+                    index: 2,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "selector".into(),
+                    index: 3,
+                    kind: ColumnKind::Binary,
+                },
+            ],
+            constraints: vec![ConstraintExpr::Gated {
+                selector_col: 3,
+                inner: Box::new(ConstraintExpr::Lookup {
+                    table_id: "dfa_transitions".into(),
+                    query_columns: vec![0, 1, 2],
+                }),
+            }],
+            boundaries: vec![],
+            public_input_count: 0,
+            lookup_tables: vec![table],
+        };
+
+        let dsl = DslCircuit::new(descriptor);
+        let pi: Vec<BabyBear> = vec![];
+
+        // Invalid tuple BUT selector is 0 => constraint should pass (gated off)
+        let row_gated_off = vec![
+            BabyBear::new(99),
+            BabyBear::new(99),
+            BabyBear::new(99),
+            BabyBear::ZERO, // selector off
+        ];
+        let result = dsl.eval_constraints(&row_gated_off, &row_gated_off, &pi, BabyBear::new(7));
+        assert_eq!(
+            result,
+            BabyBear::ZERO,
+            "Gated-off lookup should not trigger"
+        );
+
+        // Invalid tuple with selector = 1 => constraint should FAIL
+        let row_gated_on = vec![
+            BabyBear::new(99),
+            BabyBear::new(99),
+            BabyBear::new(99),
+            BabyBear::ONE, // selector on
+        ];
+        let result = dsl.eval_constraints(&row_gated_on, &row_gated_on, &pi, BabyBear::new(7));
+        assert_ne!(
+            result,
+            BabyBear::ZERO,
+            "Gated-on invalid lookup should fail"
+        );
+    }
+
+    #[test]
+    fn lookup_descriptor_validates() {
+        let desc = dfa_lookup_descriptor();
+        assert!(
+            desc.validate().is_ok(),
+            "DFA lookup descriptor should validate"
+        );
+    }
+
+    #[test]
+    fn lookup_descriptor_serialization_roundtrip() {
+        let desc = dfa_lookup_descriptor();
+        let serialized = postcard::to_allocvec(&desc).unwrap();
+        let deserialized: CircuitDescriptor = postcard::from_bytes(&serialized).unwrap();
+
+        assert_eq!(deserialized.lookup_tables.len(), 1);
+        assert_eq!(deserialized.lookup_tables[0].id, "dfa_transitions");
+        assert_eq!(deserialized.lookup_tables[0].width, 3);
+        assert_eq!(deserialized.lookup_tables[0].entries.len(), 5);
+
+        // VK hash should match
+        let vk_before = CellProgram::compute_vk_hash(&desc);
+        let vk_after = CellProgram::compute_vk_hash(&deserialized);
+        assert_eq!(vk_before, vk_after);
     }
 }

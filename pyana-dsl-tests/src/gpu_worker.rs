@@ -398,6 +398,7 @@ pub fn gpu_worker_accumulator_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: PUBLIC_INPUT_COUNT,
+        lookup_tables: vec![],
     }
 }
 

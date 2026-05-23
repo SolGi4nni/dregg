@@ -307,6 +307,7 @@ pub fn cdp_circuit_descriptor() -> CircuitDescriptor {
             },
         ],
         public_input_count: CDP_PUBLIC_INPUTS,
+        lookup_tables: vec![],
     }
 }
 

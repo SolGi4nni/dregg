@@ -33,7 +33,7 @@ use std::sync::Arc;
 use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::request::Parts;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use pyana_sdk::embed::PyanaEngine;
 

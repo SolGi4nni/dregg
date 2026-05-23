@@ -423,6 +423,7 @@ pub fn accumulator_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: 9, // Acc(4) + alpha(4) + num_ancestors(1)
+        lookup_tables: vec![],
     }
 }
 

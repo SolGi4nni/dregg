@@ -6,6 +6,7 @@
 //!   3. Executor verifies the proof and updates commitment (no re-execution)
 
 use pyana_cell::{Cell, CellId, CellMode, Ledger};
+use pyana_circuit::CellState as VmCellState;
 use pyana_sdk::AgentWallet;
 use pyana_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
 
@@ -19,8 +20,11 @@ fn setup_sovereign_cell(balance: u64) -> (AgentWallet, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id;
 
-    // Compute the initial state commitment.
-    let commitment = cell.state_commitment();
+    // Compute the initial state commitment using the Effect VM's Poseidon2 scheme.
+    // The executor converts stored commitments to BabyBear for proof verification,
+    // so we must store the Poseidon2-based commitment (not blake3).
+    let vm_state = VmCellState::new(balance, cell.state.nonce as u32);
+    let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
 
     // Store the cell state in the wallet.
     let mut wallet = wallet;
@@ -32,8 +36,9 @@ fn setup_sovereign_cell(balance: u64) -> (AgentWallet, CellId, Ledger) {
     ledger.register_sovereign_cell(cell_id, commitment).unwrap();
 
     // The executor also needs the agent cell to exist for fee/nonce.
-    // Create a hosted version of the agent cell for the ledger's agent tracking.
-    let agent_cell = Cell::with_balance(pub_key, token_id, 10_000);
+    // Use a different token_id to avoid conflicting with the sovereign cell's CellId.
+    let agent_token_id = *blake3::hash(b"test-domain-agent").as_bytes();
+    let agent_cell = Cell::with_balance(pub_key, agent_token_id, 10_000);
     let _ = ledger.insert_cell(agent_cell);
 
     (wallet, cell_id, ledger)
@@ -157,7 +162,8 @@ fn test_backward_compat_witness_path_still_works() {
 
     let mut ledger = Ledger::new();
     ledger.register_sovereign_cell(cell_id, commitment).unwrap();
-    let agent_cell = Cell::with_balance(pub_key, token_id, 10_000);
+    let agent_token_id = *blake3::hash(b"test-domain-agent").as_bytes();
+    let agent_cell = Cell::with_balance(pub_key, agent_token_id, 10_000);
     let _ = ledger.insert_cell(agent_cell);
 
     let dest_key = [44u8; 32];

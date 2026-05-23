@@ -59,7 +59,7 @@ pub use pipeline::{
 pub use session::CapSession;
 pub use store_forward::{
     BlocklaceEnvelope, DecryptError, MessagePriority, MessageRelay, QueuedMessage, RelayError,
-    RelayInfo, SendResult, StoreForwardClient,
+    RelayInfo, SendResult, StoreForwardClient, generate_x25519_keypair,
 };
 pub use sturdy::{EnlivenError, SwissEntry, SwissTable};
 pub use uri::{PyanaUri, UriError};

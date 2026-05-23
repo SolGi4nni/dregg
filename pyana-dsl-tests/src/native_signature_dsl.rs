@@ -213,6 +213,7 @@ pub fn native_signature_circuit_descriptor() -> CircuitDescriptor {
         constraints,
         boundaries,
         public_input_count: pi::TOTAL, // 9
+        lookup_tables: vec![],
     }
 }
 
