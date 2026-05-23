@@ -366,12 +366,9 @@ impl AgentRuntime {
 
         // SECURITY: The sub-agent receives an attenuated token with zeroed root_key.
         // It cannot mint new root tokens or bypass the attenuation chain.
-        // However, it carries the issuer_key for ZK proof generation.
-        let issuer_key = if token.can_mint() {
-            *token.root_key()
-        } else {
-            *token.issuer_key()
-        };
+        // However, it carries the derived issuer_key for ZK proof generation.
+        // The issuer_key is always the derived proof key (never the raw root key).
+        let issuer_key = *token.issuer_key();
         let delegated_token = HeldToken::new_attenuated(
             delegated_label.clone(),
             token.service.clone(),
@@ -380,11 +377,11 @@ impl AgentRuntime {
             issuer_key,
         );
 
-        // Derive a proof key from the issuer key via BLAKE3 key derivation.
-        // This gives the sub-agent proof capability without leaking the raw issuer key.
-        // Must match the derivation in AgentWallet::delegate().
+        // Pass through the issuer_key as the proof_key for the sub-agent's delegation.
+        // Since issuer_key is already a one-way derivation (never the raw root key),
+        // it's safe to transmit to the sub-agent.
         let proof_key = if issuer_key != [0u8; 32] {
-            Some(AgentWallet::derive_proof_key(&issuer_key))
+            Some(issuer_key)
         } else {
             None
         };

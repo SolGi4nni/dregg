@@ -3234,10 +3234,10 @@ mod tests {
     /// cannot prove without explicit issuer_key provision.
     #[test]
     fn test_delegated_token_cannot_prove_without_proof_key() {
-        let mut holder_wallet = AgentWallet::new();
+        let holder_wallet = AgentWallet::new();
 
         // Simulate receiving a legacy delegation without proof_key.
-        let delegated = DelegatedToken {
+        let _delegated = DelegatedToken {
             token_bytes: "em2_test".to_string(), // will fail parse but tests the path
             service: "api".to_string(),
             label: "legacy".to_string(),

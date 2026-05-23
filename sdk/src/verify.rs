@@ -595,6 +595,8 @@ mod tests {
             boundary_commitment: None,
             boundary_query_values: vec![],
             boundary_query_paths: vec![],
+            pow_nonce: 0,
+            pow_bits: 0,
         };
 
         let proof_bytes = stark::proof_to_bytes(&proof);
@@ -651,6 +653,8 @@ mod tests {
             boundary_commitment: None,
             boundary_query_values: vec![],
             boundary_query_paths: vec![],
+            pow_nonce: 0,
+            pow_bits: 0,
         };
 
         let proof_bytes = stark::proof_to_bytes(&proof);
@@ -701,6 +705,8 @@ mod tests {
             boundary_commitment: None,
             boundary_query_values: vec![],
             boundary_query_paths: vec![],
+            pow_nonce: 0,
+            pow_bits: 0,
         };
 
         let proof_bytes = stark::proof_to_bytes(&proof);

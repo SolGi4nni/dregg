@@ -1964,7 +1964,7 @@ mod tests {
     #[tokio::test]
     async fn server_rejects_revocation_with_invalid_signature() {
         // Generate a valid keypair and configure it as the only authority.
-        let (sk, pk) = pyana_types::generate_keypair();
+        let (_sk, pk) = pyana_types::generate_keypair();
         let config = SiloConfig::new("revoker")
             .with_verifier(Arc::new(NoopVerifier))
             .with_revocation_authorities(vec![pk]);

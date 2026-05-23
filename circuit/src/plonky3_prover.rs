@@ -90,10 +90,7 @@ pub type PyanaStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
 pub type PyanaProof = Proof<PyanaStarkConfig>;
 
 pub fn create_config() -> PyanaStarkConfig {
-    use rand::SeedableRng;
-    use rand::rngs::SmallRng;
-    let mut rng = SmallRng::seed_from_u64(1);
-    let perm16 = Perm16::new_from_rng_128(&mut rng);
+    let perm16 = default_babybear_poseidon2_16();
 
     let hash = PaddingFreeSponge::new(perm16.clone());
     let compress = TruncatedPermutation::new(perm16.clone());
@@ -740,8 +737,11 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(not(debug_assertions))]
     fn plonky3_forged_parent_rejected() {
         // Key soundness test: a malicious prover forges a hash step.
+        // NOTE: In debug builds, Plonky3's prover panics on constraint violation
+        // before producing a proof. This test requires release mode.
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);
 
