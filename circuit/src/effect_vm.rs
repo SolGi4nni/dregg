@@ -99,17 +99,17 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 37 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 96.
+/// Layout: 40 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 99.
 /// (aux[8..10] = state commitment intermediates;
 ///  aux[11] = cumulative custom-effect count (sum-check, Stage 1);
 ///  aux[12..20] = old_reserved bit-decomposition for sealing honesty (Stage 2);
 ///  aux[20] = mode_flag bit;
 ///  aux[21] = ResizeQueue delta sign (Stage 2: 0=grow, 1=shrink);
 ///  aux[22] = ResizeQueue |delta| magnitude (Stage 2))
-pub const EFFECT_VM_WIDTH: usize = 96;
+pub const EFFECT_VM_WIDTH: usize = 99;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 37;
+pub const NUM_EFFECTS: usize = 40;
 
 /// Selector column indices.
 pub mod sel {
@@ -209,6 +209,17 @@ pub mod sel {
     /// dispatching cell's state doesn't change (the dispatch is deferred);
     /// passthrough with hash(target ‖ action_hash).
     pub const PIPELINED_SEND: usize = 36;
+    /// CreateEscrow: actor locks `amount` from balance into an escrow.
+    /// Balance debit (mirror NoteCreate's constraint shape).
+    pub const CREATE_ESCROW: usize = 37;
+    /// BridgeLock: actor locks `value` from balance into a cross-federation
+    /// bridge. Balance debit.
+    pub const BRIDGE_LOCK: usize = 38;
+    /// CreateCommittedEscrow: actor opens a privacy-preserving escrow
+    /// (value hidden in Pedersen commitment). Passthrough — the AIR can't
+    /// verify the debit amount without opening the commitment, which
+    /// requires its own range proof outside the Effect VM scope.
+    pub const CREATE_COMMITTED_ESCROW: usize = 39;
 }
 
 /// State column offsets (relative to state start).
@@ -620,6 +631,16 @@ pub enum Effect {
     /// PipelinedSend: dispatch a future action against an EventualRef.
     /// Passthrough; `send_hash` = BLAKE3(target.source_turn ‖ target.output_slot ‖ action.hash()).
     PipelinedSend { send_hash: BabyBear },
+    /// CreateEscrow: actor's balance debits by `amount_lo`. Mirrors NoteCreate.
+    /// `escrow_hash` = BLAKE3(recipient ‖ condition) binds the escrow target.
+    CreateEscrow { amount_lo: BabyBear, escrow_hash: BabyBear },
+    /// BridgeLock: actor's balance debits by `value_lo`. Mirrors NoteCreate.
+    /// `lock_hash` = BLAKE3(nullifier ‖ destination ‖ asset_type) binds the lock.
+    BridgeLock { value_lo: BabyBear, lock_hash: BabyBear },
+    /// CreateCommittedEscrow: passthrough; the locked amount is hidden in a
+    /// Pedersen commitment that's verified outside this AIR.
+    /// `commit_hash` = BLAKE3(creator_commit ‖ value_commit ‖ recipient_commit ‖ condition_commit).
+    CreateCommittedEscrow { commit_hash: BabyBear },
     /// Spend a note (reveal nullifier, credit balance).
     NoteSpend { nullifier: BabyBear, value: u64 },
     /// Create a note (create commitment, debit balance).
@@ -1077,6 +1098,20 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
             Effect::PipelinedSend { send_hash } => {
                 hasher_inputs.push(BabyBear::new(36));
                 hasher_inputs.push(*send_hash);
+            }
+            Effect::CreateEscrow { amount_lo, escrow_hash } => {
+                hasher_inputs.push(BabyBear::new(37));
+                hasher_inputs.push(*amount_lo);
+                hasher_inputs.push(*escrow_hash);
+            }
+            Effect::BridgeLock { value_lo, lock_hash } => {
+                hasher_inputs.push(BabyBear::new(38));
+                hasher_inputs.push(*value_lo);
+                hasher_inputs.push(*lock_hash);
+            }
+            Effect::CreateCommittedEscrow { commit_hash } => {
+                hasher_inputs.push(BabyBear::new(39));
+                hasher_inputs.push(*commit_hash);
             }
             Effect::NoteSpend { nullifier, value } => {
                 hasher_inputs.push(BabyBear::new(4));
@@ -1837,6 +1872,7 @@ impl StarkAir for EffectVmAir {
             sel::EXERCISE_VIA_CAPABILITY,
             sel::INTRODUCE,
             sel::PIPELINED_SEND,
+            sel::CREATE_COMMITTED_ESCROW,
         ] {
             let s_v = local[s_sel_idx];
             let c_bal_lo = s_v * (new_bal_lo - old_bal_lo);
@@ -1926,6 +1962,30 @@ impl StarkAir for EffectVmAir {
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
             alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- CreateEscrow / BridgeLock: balance debit (mirror NoteCreate) --
+        // param0 = id_hash, param1 = amount_lo. Same shape: balance_lo
+        // debits by amount_lo, balance_hi / cap_root / fields all unchanged.
+        for s_sel_idx in [sel::CREATE_ESCROW, sel::BRIDGE_LOCK] {
+            let s_v = local[s_sel_idx];
+            let amount_lo = local[PARAM_BASE + 1];
+            let c_bal = s_v * (new_bal_lo - old_bal_lo + amount_lo);
+            combined = combined + alpha_pow * c_bal;
+            alpha_pow = alpha_pow * alpha;
+            let c_bal_hi = s_v * (new_bal_hi - old_bal_hi);
+            combined = combined + alpha_pow * c_bal_hi;
+            alpha_pow = alpha_pow * alpha;
+            let c_cap = s_v * (new_cap_root - old_cap_root);
+            combined = combined + alpha_pow * c_cap;
+            alpha_pow = alpha_pow * alpha;
+            for i in 0..8 {
+                let c = s_v
+                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+                combined = combined + alpha_pow * c;
+                alpha_pow = alpha_pow * alpha;
+            }
         }
 
         // -- CreateObligation: balance debit + cap_root extended --
@@ -3514,6 +3574,9 @@ pub fn generate_effect_vm_trace_ext(
             Effect::ExerciseViaCapability { .. } => sel::EXERCISE_VIA_CAPABILITY,
             Effect::Introduce { .. } => sel::INTRODUCE,
             Effect::PipelinedSend { .. } => sel::PIPELINED_SEND,
+            Effect::CreateEscrow { .. } => sel::CREATE_ESCROW,
+            Effect::BridgeLock { .. } => sel::BRIDGE_LOCK,
+            Effect::CreateCommittedEscrow { .. } => sel::CREATE_COMMITTED_ESCROW,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -3624,6 +3687,28 @@ pub fn generate_effect_vm_trace_ext(
             }
             Effect::PipelinedSend { send_hash } => {
                 row[PARAM_BASE + 0] = *send_hash;
+                new_state.nonce += 1;
+            }
+            Effect::CreateEscrow { amount_lo, escrow_hash } => {
+                // Mirror NoteCreate: param0 = escrow_hash, param1 = amount_lo
+                row[PARAM_BASE + 0] = *escrow_hash;
+                row[PARAM_BASE + 1] = *amount_lo;
+                let amount_u64 = amount_lo.as_u32() as u64;
+                new_state.balance = new_state.balance.saturating_sub(amount_u64);
+                net_delta -= amount_u64 as i64;
+                new_state.nonce += 1;
+            }
+            Effect::BridgeLock { value_lo, lock_hash } => {
+                // Mirror CreateEscrow: balance debit by value_lo.
+                row[PARAM_BASE + 0] = *lock_hash;
+                row[PARAM_BASE + 1] = *value_lo;
+                let value_u64 = value_lo.as_u32() as u64;
+                new_state.balance = new_state.balance.saturating_sub(value_u64);
+                net_delta -= value_u64 as i64;
+                new_state.nonce += 1;
+            }
+            Effect::CreateCommittedEscrow { commit_hash } => {
+                row[PARAM_BASE + 0] = *commit_hash;
                 new_state.nonce += 1;
             }
             Effect::NoteSpend { nullifier, value } => {
@@ -4770,6 +4855,39 @@ mod tests {
                 alpha_val,
                 c.0
             );
+        }
+    }
+
+    #[test]
+    fn test_balance_debit_variants_verify() {
+        // CreateEscrow and BridgeLock both debit balance by amount_lo.
+        // Mirror NoteCreate's test pattern.
+        for effect in [
+            Effect::CreateEscrow {
+                amount_lo: BabyBear::new(100),
+                escrow_hash: BabyBear::new(0xE5C),
+            },
+            Effect::BridgeLock {
+                value_lo: BabyBear::new(50),
+                lock_hash: BabyBear::new(0xB10),
+            },
+        ] {
+            let state = make_initial_state(1000);
+            let effects = vec![effect.clone()];
+            let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+            let air = EffectVmAir::new(trace.len());
+            let proof = prove(&air, &trace, &public_inputs);
+            let result = verify(&air, &proof, &public_inputs);
+            assert!(
+                result.is_ok(),
+                "Balance-debit variant {:?} should verify: {:?}",
+                effect,
+                result.err()
+            );
+            // Verify balance actually decreased.
+            let old_bal = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
+            let new_bal = trace[0][STATE_AFTER_BASE + state::BALANCE_LO];
+            assert_ne!(old_bal, new_bal, "balance must decrease on debit variant");
         }
     }
 

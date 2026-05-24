@@ -1868,8 +1868,20 @@ impl TurnExecutor {
                     Effect::BridgeMint { .. } => {
                         push_pending_shim(vm_effects, 0x201u32);
                     }
-                    Effect::BridgeLock { .. } => {
-                        push_pending_shim(vm_effects, 0x202u32);
+                    Effect::BridgeLock { nullifier, destination, value, asset_type, .. } => {
+                        // Stage 3: real AIR coverage. Balance debit.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(nullifier);
+                        hasher.update(destination);
+                        hasher.update(&asset_type.to_le_bytes());
+                        let lock_hash_bytes = hasher.finalize();
+                        let value_lo = pyana_circuit::field::BabyBear::new(
+                            (*value & ((1u64 << 30) - 1)) as u32,
+                        );
+                        vm_effects.push(VmEffect::BridgeLock {
+                            value_lo,
+                            lock_hash: hash_to_bb(lock_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::BridgeFinalize { .. } => {
                         push_pending_shim(vm_effects, 0x203u32);
@@ -1916,8 +1928,23 @@ impl TurnExecutor {
                             send_hash: hash_to_bb(send_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::CreateEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x401u32);
+                    Effect::CreateEscrow { cell, recipient, amount, condition, .. } if cell == cell_id => {
+                        // Stage 3: real AIR coverage. Mirror NoteCreate's
+                        // balance debit constraint shape.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(recipient.as_bytes());
+                        let cond_bytes = postcard::to_allocvec(condition)
+                            .unwrap_or_default();
+                        hasher.update(&cond_bytes);
+                        let escrow_hash_bytes = hasher.finalize();
+                        // Truncate amount to u32 for the field element.
+                        let amount_lo = pyana_circuit::field::BabyBear::new(
+                            (*amount & ((1u64 << 30) - 1)) as u32,
+                        );
+                        vm_effects.push(VmEffect::CreateEscrow {
+                            amount_lo,
+                            escrow_hash: hash_to_bb(escrow_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::ReleaseEscrow { .. } => {
                         push_pending_shim(vm_effects, 0x402u32);
@@ -1925,8 +1952,25 @@ impl TurnExecutor {
                     Effect::RefundEscrow { .. } => {
                         push_pending_shim(vm_effects, 0x403u32);
                     }
-                    Effect::CreateCommittedEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x404u32);
+                    Effect::CreateCommittedEscrow {
+                        creator_commitment,
+                        recipient_commitment,
+                        value_commitment,
+                        condition_commitment,
+                        ..
+                    } => {
+                        // Stage 3: passthrough. Value is hidden in a Pedersen
+                        // commitment that the AIR can't open; the executor
+                        // verifies the range proof separately.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(creator_commitment);
+                        hasher.update(recipient_commitment);
+                        hasher.update(&value_commitment.0);
+                        hasher.update(condition_commitment);
+                        let commit_hash_bytes = hasher.finalize();
+                        vm_effects.push(VmEffect::CreateCommittedEscrow {
+                            commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::ReleaseCommittedEscrow { .. } => {
                         push_pending_shim(vm_effects, 0x405u32);
