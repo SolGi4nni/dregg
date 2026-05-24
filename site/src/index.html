@@ -2,16 +2,17 @@
 
 <header class="hero">
   <div class="hero__inner">
-    <p class="hero__eyebrow">A capability-secure distributed runtime</p>
-    <h1>Your phone is a node. <em>Your proofs are your passport.</em></h1>
+    <p class="hero__eyebrow">object-capabilities + zero-knowledge proofs + blocklace consensus</p>
+    <h1>Your agents prove what they can do &mdash; without revealing <em>how they got there.</em></h1>
     <p class="hero__sub">
-      Pyana is a unified fabric where agents own their state, prove their actions,
-      and move freely between sovereign operation and shared consensus.
-      No fixed federations. No forced migration. Just cells, turns, and proofs.
+      Pyana is a sovereign capability runtime. Agents hold unforgeable references, delegate
+      with attenuation, prove turns with STARKs, and carry their own state as receipt chains.
+      The federation is a notary, not a host: it orders, anchors roots, detects equivocation.
+      Your cells stay on your machine. The fabric is one DAG.
     </p>
     <div class="hero__cta">
       <a class="btn btn--primary" href="/demo.html">Try the Demos</a>
-      <a class="btn btn--secondary" href="/apps.html">See the Apps</a>
+      <a class="btn btn--secondary" href="/paper.html">Read the Paper</a>
       <a class="btn btn--secondary" href="/learn.html">Get Started</a>
     </div>
   </div>
@@ -19,42 +20,56 @@
 
 <main class="main--compact">
 
-<!-- ==================== WHAT IS THIS ==================== -->
+<!-- ==================== PROBLEM / SOLUTION ==================== -->
 <section class="section wrap section--compact">
-  <span class="section__label">What is Pyana?</span>
-  <h2 class="section__title">A few ideas, taken seriously</h2>
+  <span class="section__label">The Problem</span>
+  <h2 class="section__title">Authorization is broken for autonomous agents</h2>
   <div class="problems">
     <div class="problem">
-      <p class="problem__label problem__label--solve">Sovereignty spectrum</p>
+      <p class="problem__label problem__label--pain">Pain</p>
       <p class="problem__text">
-        Run a full node on your laptop. Delegate offline-capable snapshots to your phone.
-        Join a reference group for ordering and discovery. Switch modes without ceremony.
-        Your state is yours — always verifiable, always portable.
+        Delegation chains leak organizational structure. Every verifier sees who delegated
+        to whom, through which intermediaries, and what other capabilities exist in the chain.
+        Your org chart is your authorization model.
       </p>
     </div>
     <div class="problem">
-      <p class="problem__label problem__label--solve">Proof-carrying state</p>
+      <p class="problem__label problem__label--pain">Pain</p>
       <p class="problem__text">
-        Every turn is proven by a 24-effect VM in a single STARK. BabyBear field + FRI,
-        sub-second generation, post-quantum secure. You don't trust a validator — you
-        verify a proof. Offline, on-chain, or anywhere in between.
+        Offline verification is impossible in most systems. If your agents cannot reach the
+        authorization server, they cannot prove anything. Liveness dependency kills autonomy
+        and makes every interaction a privacy leak.
       </p>
     </div>
     <div class="problem">
-      <p class="problem__label problem__label--solve">Capabilities everywhere</p>
+      <p class="problem__label problem__label--pain">Pain</p>
       <p class="problem__text">
-        CapTP carries unforgeable references across the fabric. Sturdy refs survive
-        reboots. Three-party handoff lets Alice introduce Bob to Carol without a directory.
-        Distributed GC cleans up when references drop. It's object-capability networking,
-        end to end.
+        Exit a platform and you lose your history, your credentials, your proof of work.
+        The federation owns your state. Migration is not a checkbox &mdash; it&rsquo;s a rebuild.
       </p>
     </div>
     <div class="problem">
-      <p class="problem__label problem__label--solve">Privacy by design</p>
+      <p class="problem__label problem__label--solve">Pyana</p>
       <p class="problem__text">
-        Three verification modes from the same Datalog rules: trusted, selective disclosure,
-        or fully private. Stealth addresses, Pedersen commitments, ring membership proofs.
-        You choose what to reveal. The verifier learns only what you decide.
+        Authorization presentations are STARKs over Datalog derivation traces. The verifier
+        can learn exactly what you choose to reveal &mdash; from full disclosure down to one
+        bit. No delegation chain, no intermediate identities, no metadata leakage.
+      </p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--solve">Pyana</p>
+      <p class="problem__text">
+        Verification is fully offline once you hold an attested root. A STARK proof plus a
+        receipt chain is complete. Hash-based crypto end to end; no liveness dependency on
+        any federation between presentation and check.
+      </p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--solve">Pyana</p>
+      <p class="problem__text">
+        Agents own their cells. Every committed turn produces a TurnReceipt. The chain is
+        your state proof; IVC compresses it to constant size. Leave any federation at any
+        time, carrying your full history.
       </p>
     </div>
   </div>
@@ -62,74 +77,242 @@
 
 <!-- ==================== HOW IT WORKS ==================== -->
 <section class="section wrap section--compact">
-  <span class="section__label">How it works</span>
+  <span class="section__label">How It Works</span>
   <h2 class="section__title">Cells, turns, proofs</h2>
   <div class="flow">
     <div class="flow__step">
       <span class="flow__n">01 / Cells</span>
-      <p class="flow__name">Isolated objects with capability lists</p>
-      <p class="flow__desc">Each cell holds a c-list, balance, nonce, and optional programs. Cells are confined: they can only reference what is in their c-list.</p>
+      <p class="flow__name">Isolated objects with c-lists</p>
+      <p class="flow__desc">Each cell holds a capability list, a balance, a nonce, optional program predicates, and private notes. Cells are confined: they can only reference what is in their c-list. Sovereign cells live on your machine.</p>
     </div>
     <div class="flow__step">
       <span class="flow__n">02 / Turns</span>
       <p class="flow__name">Atomic state transitions</p>
-      <p class="flow__desc">A call forest executes depth-first. Multi-party turns compose across cells. If any action fails, everything rolls back.</p>
+      <p class="flow__desc">A call forest executes depth-first. Multi-party turns compose across cells. Either everything commits or everything rolls back. Conservation is enforced; authority must be in-list.</p>
     </div>
     <div class="flow__step">
       <span class="flow__n">03 / Effect VM</span>
-      <p class="flow__name">24 effects, one STARK per turn</p>
-      <p class="flow__desc">Transfer, seal, factory creation, CapTP handoff, queue operations — all proven in a single trace. Sub-second generation.</p>
+      <p class="flow__name">One STARK per turn</p>
+      <p class="flow__desc">Transfer, seal, factory creation, CapTP introduction, queue operations, bridge phases &mdash; proven in a single BabyBear+FRI trace. Sub-second generation on a laptop.</p>
     </div>
     <div class="flow__step">
       <span class="flow__n">04 / Fabric</span>
-      <p class="flow__name">Emergent reference groups</p>
-      <p class="flow__desc">The blocklace is one DAG. Groups form from mutual acknowledgment. Finality emerges from supermajority within a group.</p>
+      <p class="flow__name">Blocklace + Cordial Miners</p>
+      <p class="flow__desc">The federation runs one DAG. Cordial Miners closes rounds in 3 messages. Equivocation is structurally detectable on the DAG itself &mdash; no accusation protocol, no voting.</p>
+    </div>
+  </div>
+
+  <div class="privacy-modes">
+    <div class="privacy-mode">
+      <p class="privacy-mode__name">Trusted Mode</p>
+      <p class="privacy-mode__desc">Full cleartext token + Datalog trace. Same trust domain, internal calls.</p>
+      <p class="privacy-mode__latency">~8 us verification</p>
+    </div>
+    <div class="privacy-mode">
+      <p class="privacy-mode__name">Selective Disclosure</p>
+      <p class="privacy-mode__desc">Per-fact reveal / predicate / committed-threshold / hidden, bound by STARK.</p>
+      <p class="privacy-mode__latency">~2 ms verification</p>
+    </div>
+    <div class="privacy-mode">
+      <p class="privacy-mode__name">Fully Private</p>
+      <p class="privacy-mode__desc">One bit (allow/deny) + STARK. Optional unlinkable blinding per presentation.</p>
+      <p class="privacy-mode__latency">~2 ms verification</p>
     </div>
   </div>
 </section>
 
-<!-- ==================== APPS ==================== -->
+<!-- ==================== ARCHITECTURE ==================== -->
 <section class="section wrap section--compact">
-  <span class="section__label">Built on Pyana</span>
-  <h2 class="section__title">Real applications, real proofs</h2>
-  <p class="section__intro">
-    Eleven production applications exercise the full stack — from private DeFi to
-    anonymous credentials to federated compute markets. Every app generates real STARKs.
+  <span class="section__label">Architecture</span>
+  <h2 class="section__title">Layered design, clean separation</h2>
+  <div class="arch">
+    <pre><code>Browser Extension (wallet)
+  window.pyana: authorize | postIntent | offerCapability | provision
+  ────────────────────────────────────────────────────────────────────
+SDK Layer                AgentWallet | AgentRuntime | PyanaEngine
+                         typed ActionBuilder | typestate authorization
+  ────────────────────────────────────────────────────────────────────
+Intent Engine            gossip broadcast | trustless solver | ring trades
+                         heterogeneous ExchangeItems | STARK fulfillment
+  ────────────────────────────────────────────────────────────────────
+CapTP                    sturdy refs (pyana://) | sessions | strands
+                         three-party handoff | distributed GC | pipelining
+  ────────────────────────────────────────────────────────────────────
+Wire                     QUIC + Plumtree gossip | Dandelion++ unlinkable relay
+                         postcard framing | store-and-forward envelopes
+  ────────────────────────────────────────────────────────────────────
+Federation               Blocklace DAG | Cordial Miners (3-round BFT)
+                         Constitutional Consensus (h-rule membership)
+                         BLS12-381 ThresholdQC over attested roots
+  ────────────────────────────────────────────────────────────────────
+Execution                Cells (isolated objects + c-lists)
+                         Turns (atomic call forests)
+                         Sovereign / Optimistic (Stingray COD) / Ordered tiers
+  ────────────────────────────────────────────────────────────────────
+Proof                    BabyBear STARK + FRI (~38 KiB Effect VM proofs)
+                         Poseidon2 in-circuit | Plonky3 + Kimchi backends
+                         IVC fold chains | SP1/Groth16 for EVM
+  ────────────────────────────────────────────────────────────────────
+Commitment               4-ary Merkle trees (BLAKE3 fast / Poseidon2 ZK)
+                         typed Commitment&lt;T&gt; framework
+  ────────────────────────────────────────────────────────────────────
+Policy                   Datalog evaluator | Macaroon HMAC + Biscuit Ed25519
+                         X25519-ChaCha20Poly1305 seal/unseal
+  ────────────────────────────────────────────────────────────────────
+Storage                  redb ACID | programmable queues with custom predicates
+                         MerkleQueue inboxes | erasure-coded availability
+                         note commitment tree | nullifier set | audit log</code></pre>
+  </div>
+  <p class="arch__caption">
+    <strong>Core insight:</strong> capability attenuation <em>is</em> incrementally verifiable
+    computation. Each delegation is a fold over a committed fact set. The prover demonstrates
+    a valid chain of attenuations; the verifier checks a single STARK proof against an attested
+    root. The same shape covers turn execution, intent fulfillment, and ring settlement.
   </p>
+</section>
+
+<!-- ==================== USE CASES ==================== -->
+<section class="section wrap section--compact">
+  <span class="section__label">Use Cases</span>
+  <h2 class="section__title">Where pyana fits</h2>
   <div class="usecases">
     <div class="usecase">
-      <p class="usecase__icon">stablecoin</p>
-      <p class="usecase__title">CDP Stablecoin</p>
-      <p class="usecase__desc">Collateralized debt positions with ZK liquidation proofs. Oracle integration, minimum collateralization enforced in-circuit.</p>
+      <p class="usecase__icon">agents</p>
+      <p class="usecase__title">AI Agent Fleets</p>
+      <p class="usecase__desc">Orchestrate thousands of agents across organizational boundaries. Each agent carries proof of its authority. No central authorization server bottleneck, no shared secrets in transit.</p>
     </div>
     <div class="usecase">
-      <p class="usecase__icon">amm</p>
-      <p class="usecase__title">AMM + LP Tokens</p>
-      <p class="usecase__desc">Constant-product market maker with router, LP token minting, and pool management. All swaps proved.</p>
+      <p class="usecase__icon">privacy</p>
+      <p class="usecase__title">Private Capability Exchange</p>
+      <p class="usecase__desc">Broadcast intents ("I need read access to X") without revealing your identity. The trustless solver finds rings; fulfillment is a STARK that leaks nothing about the satisfier&rsquo;s other capabilities.</p>
     </div>
     <div class="usecase">
-      <p class="usecase__icon">orderbook</p>
-      <p class="usecase__title">Privacy Orderbook</p>
-      <p class="usecase__desc">Commit-reveal trading with private orders. Verified matching engine, escrow settlement.</p>
+      <p class="usecase__icon">federation</p>
+      <p class="usecase__title">Cross-Org Collaboration</p>
+      <p class="usecase__desc">Multiple organizations share authorization proofs without exposing internal delegation structures. Selective disclosure lets each party control exactly what they reveal &mdash; per-fact.</p>
     </div>
     <div class="usecase">
-      <p class="usecase__icon">identity</p>
-      <p class="usecase__title">Anonymous Credentials</p>
-      <p class="usecase__desc">Issuer/holder/verifier. Selective disclosure, revocation, anonymous proof of attributes via ring membership.</p>
-    </div>
-    <div class="usecase">
-      <p class="usecase__icon">gallery</p>
-      <p class="usecase__title">Privacy-Preserving Gallery</p>
-      <p class="usecase__desc">Sealed-bid art auctions with garbled circuits and oblivious transfer. Provenance tracked as capability chains.</p>
-    </div>
-    <div class="usecase">
-      <p class="usecase__icon">compute</p>
-      <p class="usecase__title">Compute Exchange</p>
-      <p class="usecase__desc">Marketplace for compute resources. SLA bonds, qualification proofs, and optimistic settlement with dispute windows.</p>
+      <p class="usecase__icon">sovereignty</p>
+      <p class="usecase__title">Agent Autonomy and Exit</p>
+      <p class="usecase__desc">Cells live on your machine. Exit any federation at any time carrying your full history as a constant-size IVC proof. No lock-in, no data hostage, no censorship vector.</p>
     </div>
   </div>
-  <p style="margin-top: var(--s5);">
-    <a href="/apps.html" class="btn btn--secondary">See all 11 apps &rarr;</a>
+</section>
+
+<!-- ==================== PRIMITIVES ==================== -->
+<section class="section wrap section--compact">
+  <span class="section__label">Primitives</span>
+  <h2 class="section__title">Core abstractions</h2>
+  <div class="primitives">
+    <div class="primitive">
+      <p class="primitive__name">Cells</p>
+      <p class="primitive__desc">Isolated objects with capability lists, balance, nonce, program predicates, and private notes. Sovereign (local + STARK) or hosted (federation-executed). The unit of identity and state.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">Turns</p>
+      <p class="primitive__desc">Atomic state transitions from call forests. A turn either fully commits or fully rolls back. Multi-party turns compose across cells. Receipts chain via previous_receipt_hash.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">Capabilities</p>
+      <p class="primitive__desc">Unforgeable references between cells. Created by introduction or minting. Only narrowed, never amplified. Attenuation is the delegation primitive; macaroons and biscuits are wire encodings.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">CapTP</p>
+      <p class="primitive__desc">Sturdy refs (pyana:// URIs with swiss numbers), sessions, strands, three-party handoff with signed certificates, distributed GC, promise pipelining, store-and-forward over X25519.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">Intents</p>
+      <p class="primitive__desc">Heterogeneous offers and wants &mdash; assets, capabilities, services, storage, namespace entries. Trustless solver finds rings; settlement is escrow-commit-reveal with STARK fulfillment proofs.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">Sealer / Unsealer</p>
+      <p class="primitive__desc">X25519 + ChaCha20-Poly1305 keypairs. Encrypt under a capability token; only the holder of the matching unsealer can recover plaintext. E-rights pattern, end to end.</p>
+    </div>
+    <div class="primitive">
+      <p class="primitive__name">Receipt Chains</p>
+      <p class="primitive__desc">Every committed turn produces a TurnReceipt with BLAKE3 chain links. Federation receipts add BLS12-381 ThresholdQC aggregation. The chain IS your state proof &mdash; portable across federations.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== COMPARISON ==================== -->
+<section class="section wrap section--compact">
+  <span class="section__label">Landscape</span>
+  <h2 class="section__title">What pyana adds</h2>
+  <table class="comparison">
+    <thead>
+      <tr>
+        <th>System</th>
+        <th>Pyana&rsquo;s contribution</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>UCAN / Biscuit</td>
+        <td>UCAN delegation chains are transparent. Pyana proves the same authorization as a STARK over the Datalog derivation &mdash; the verifier learns only the facts you reveal. Biscuit is supported as a wire format.</td>
+      </tr>
+      <tr>
+        <td>Cap&rsquo;n Proto / OCapN</td>
+        <td>Cap&rsquo;n Proto is serialization + RPC. Pyana adds ocap semantics end to end: cells, turns, three-party handoff, distributed GC, and STARK-verifiable execution that binds the protocol to provable state transitions.</td>
+      </tr>
+      <tr>
+        <td>Mina Protocol</td>
+        <td>Shared DNA &mdash; zkApp model, call forests, recursive proofs. Pyana applies this shape to authorization and distributed object semantics, not just financial transactions. Pickles is one of our recursion paths.</td>
+      </tr>
+      <tr>
+        <td>Midnight / Cardano</td>
+        <td>Privacy DeFi on Cardano. Pyana is a general-purpose ocap runtime where &ldquo;value&rdquo; is one kind of capability. We bridge to Midnight via ZKIR v3 (designed) and attestation (implemented).</td>
+      </tr>
+      <tr>
+        <td>Cosmos IBC</td>
+        <td>IBC requires active relayer liveness. Pyana verification is fully offline once an attested root is held; the capability model replaces channel-based permissions and the bridge has explicit Lock/Mint/Finalize/Cancel phases.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================== STATUS ==================== -->
+<section class="section wrap section--compact">
+  <span class="section__label">Status</span>
+  <h2 class="section__title">What works today, what&rsquo;s in flight</h2>
+  <p class="section__intro">
+    Pyana is two-day-old infrastructure under rapid remediation. We&rsquo;d rather you knew the
+    state of the system than read marketing copy about it.
+  </p>
+  <div class="problems">
+    <div class="problem">
+      <p class="problem__label problem__label--solve">Works</p>
+      <p class="problem__text">
+        Blocklace + Cordial Miners consensus. BabyBear STARK over Plonky3 and Kimchi. CapTP
+        offline data structures, sturdy refs, handoff certificates, distributed GC. Macaroon
+        + Biscuit tokens. Datalog evaluator. Wallet (extension + SDK) with mnemonic recovery.
+        Programmable queues, MerkleQueue inboxes. Eleven runnable apps.
+      </p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--pain">In flight</p>
+      <p class="problem__text">
+        Effect VM Shape A: the runtime has 41 effect variants; the AIR covers 24. The plan is
+        complete coverage of all variants in a single STARK with a sum-check binding custom
+        effect counts. State commitments are being widened from ~31-bit BabyBear to 4-BabyBear
+        (~124-bit). The DSL is being rebuilt around typestate authorization.
+      </p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--pain">Designed, not built</p>
+      <p class="problem__text">
+        Pipelined send as an AIR variant. IBC-style bridge phases (Lock/Mint/Finalize/Cancel)
+        for the Midnight bridge. Level 2 Midnight proof-carrying bridge via ZKIR v3. Full
+        heterogeneous AIR composition (derivation + fold + membership + Effect VM in one
+        recursive proof).
+      </p>
+    </div>
+  </div>
+  <p style="margin-top: var(--s5); color: var(--fg-dim);">
+    The design docs live in the repo root: <code>EFFECT-VM-SHAPE-A.md</code>,
+    <code>DESIGN-receipts.md</code>, <code>DESIGN-captp-integration.md</code>,
+    <code>DESIGN-dsl.md</code>, <code>DESIGN-commitment-framework.md</code>,
+    <code>DESIGN-pipelined-send.md</code>. Audits are <code>AUDIT-*.md</code>.
   </p>
 </section>
 
@@ -151,12 +334,12 @@
       <p class="stat__label">Tests</p>
     </div>
     <div class="stat">
-      <p class="stat__number">24</p>
-      <p class="stat__label">Effect VM Opcodes</p>
+      <p class="stat__number">41 / 24</p>
+      <p class="stat__label">Runtime / AIR Effects</p>
     </div>
     <div class="stat">
       <p class="stat__number">~38 KiB</p>
-      <p class="stat__label">Proof Size</p>
+      <p class="stat__label">Effect VM Proof</p>
     </div>
     <div class="stat">
       <p class="stat__number">&lt;1s</p>
@@ -174,7 +357,7 @@
       <div class="quickstart__step">
         <span class="quickstart__n">1</span>
         <div>
-          <p>Clone and build:</p>
+          <p>Clone and build the workspace:</p>
           <pre><code class="language-bash">git clone https://github.com/emberian/pyana && cd pyana
 cargo build</code></pre>
         </div>
@@ -182,16 +365,15 @@ cargo build</code></pre>
       <div class="quickstart__step">
         <span class="quickstart__n">2</span>
         <div>
-          <p>Run a node:</p>
+          <p>Run a single-node federation:</p>
           <pre><code class="language-bash">cargo run -p pyana-node run</code></pre>
         </div>
       </div>
       <div class="quickstart__step">
         <span class="quickstart__n">3</span>
         <div>
-          <p>Try the CLI:</p>
-          <pre><code class="language-bash">pyana cell list
-pyana cell create --name my-agent
+          <p>Drive it from the CLI:</p>
+          <pre><code class="language-bash">pyana cell create --name my-agent
 pyana cap grant &lt;cell-id&gt; --service storage --actions read
 pyana namespace register alice --target &lt;cell-id&gt;</code></pre>
         </div>
@@ -199,10 +381,24 @@ pyana namespace register alice --target &lt;cell-id&gt;</code></pre>
       <div class="quickstart__step">
         <span class="quickstart__n">4</span>
         <div>
-          <p>Run the full demo pipeline:</p>
-          <pre><code class="language-bash">cargo run -p pyana-demo-agent</code></pre>
+          <p>Or use the SDK directly:</p>
+          <pre><code class="language-rust">use pyana_sdk::{AgentWallet, Attenuation, VerificationMode, AuthRequest};
+
+let mut wallet = AgentWallet::new();
+let root = wallet.mint_token(b"secret-key-material-32-bytes!!!!", "inventory");
+let child = wallet.attenuate(&amp;root, &amp;Attenuation {
+    services: vec![("inventory".into(), "read".into())],
+    max_ttl: Some(std::time::Duration::from_secs(3600)),
+    ..Default::default()
+}).unwrap();
+
+// The verifier learns ONE BIT: authorized or not.
+let req = AuthRequest { service: Some("inventory".into()),
+                        action: Some("read".into()), ..Default::default() };
+let proof = wallet.authorize(&amp;child, &amp;req, VerificationMode::FullyPrivate).unwrap();</code></pre>
           <p style="margin-top: var(--s2);">
-            <a href="/learn/developers/tutorial-first-app.html">Full tutorial</a> |
+            <a href="/learn/developers/tutorial-first-app.html">Full tutorial</a> &middot;
+            <a href="/learn/users/quickstart.html">CLI quickstart</a> &middot;
             <a href="/playground/">Browser playground</a>
           </p>
         </div>

@@ -15,46 +15,82 @@
 <h1>Intent Marketplace</h1>
 
     <p>
-      The intent marketplace is pyana's privacy-preserving capability exchange.
-      Agents broadcast what they need ("intents") without revealing their identity.
-      Other agents discover matching intents privately and fulfill them with STARK proofs.
+      The intent marketplace is the discovery layer for the pyana fabric. Agents declare
+      what they offer and what they want as <em>typed exchange items</em> &mdash; assets,
+      capabilities, services, storage allocations, namespace entries. The trustless solver
+      finds matching <em>rings</em> (cyclic settlements where every participant&rsquo;s
+      wants are covered) and proposes atomic settlements. Fulfillment is a STARK proof,
+      not a trust assertion.
     </p>
-
-    <div class="stub-notice">
-      <p>This page covers the intent marketplace from a user perspective. Full content is being written.</p>
-    </div>
 
     <h2 id="posting">Posting an Intent</h2>
 
     <p>
-      An intent describes a capability need: "I need read access to service X" or
-      "I want to delegate compute tokens to an agent that can prove reputation >= 50."
-      Intents are broadcast via gossip to federation nodes.
+      An intent is a structured offer/want pair. There is no global pricing: satisfaction
+      is structural and boolean. A few shapes:
+    </p>
+
+    <ul>
+      <li>&ldquo;I offer 1000 USDC, I want compute capable of proving inference on model M.&rdquo;</li>
+      <li>&ldquo;I offer read access to dataset D for 24 hours, I want a verifiable credential
+        proving reputation &gt;= 50.&rdquo;</li>
+      <li>&ldquo;I offer a namespace entry under <code>builders/*</code>, I want any cell
+        that can prove membership in the apprentice ring.&rdquo;</li>
+    </ul>
+
+    <p>
+      Intents are broadcast over gossip to federation nodes, optionally with predicate
+      requirements that the fulfiller must prove. The DFA routing table shards intents by
+      namespace zone, so most queries never leave their local subgraph.
     </p>
 
     <h2 id="discovery">Discovering Offers</h2>
 
     <p>
-      Discovery uses 2-server information-theoretic PIR (Private Information Retrieval).
-      You query the intent index by capability tag without revealing which tag you searched
-      for. Neither PIR server learns your query (assuming non-collusion).
+      Discovery uses two complementary mechanisms:
     </p>
 
-    <h2 id="fulfillment">Fulfilling Intents</h2>
+    <ul>
+      <li><strong>Gossip:</strong> The default path. Intents flood through the federation&rsquo;s
+        Plumtree spanning tree; you receive what is reachable from your reference group.</li>
+      <li><strong>Private query:</strong> 2-server information-theoretic PIR over the intent
+        index lets you query by capability tag without revealing the tag to either server
+        (under a non-collusion assumption).</li>
+    </ul>
+
+    <h2 id="ring-trades">Ring Trades</h2>
+
+    <p>
+      A &ldquo;ring&rdquo; is a directed cycle in the offer/want graph: A &rarr; B &rarr;
+      C &rarr; A, where each edge means &ldquo;A&rsquo;s offer satisfies some of B&rsquo;s
+      wants.&rdquo; The trustless solver finds such cycles and proposes an atomic settlement.
+      The settlement uses escrow + commit-reveal: every participant locks their offer into
+      a deterministic escrow cell, then reveals fulfillment proofs in a single coordinated
+      turn. If any leg fails, every leg reverts.
+    </p>
+    <p>
+      No party needs to trust any other party. The federation orders the reveal; the STARK
+      proves the legs add up. Pricing &mdash; if any &mdash; is in the offer/want shape, not
+      in a global ledger.
+    </p>
+
+    <h2 id="fulfillment">Fulfilling an Intent</h2>
 
     <p>
       When you can satisfy an intent, fulfillment is a STARK proof that you hold the
-      required capability. The intent poster receives proof of fulfillment without
-      learning your identity or other capabilities.
+      required capability or asset. The poster learns &ldquo;your offer is valid for this
+      intent&rdquo; and nothing else &mdash; not your identity, not your other capabilities,
+      not the rest of your portfolio.
     </p>
 
     <h2 id="predicate-requirements">Predicate Requirements</h2>
 
     <p>
-      Intents can specify predicate requirements: "prove balance >= 1000" or
-      "prove reputation >= 50". Fulfillment generates unlinkable predicate proofs
-      (fresh blinding each time) so the same agent can fulfill multiple intents
-      without being correlated.
+      Intents can require predicate proofs: &ldquo;prove balance &gt;= 1000&rdquo;,
+      &ldquo;prove reputation &gt;= 50&rdquo;, &ldquo;prove membership in approved-vendors
+      ring without revealing which entry.&rdquo; Fulfillment generates unlinkable predicate
+      proofs (fresh blinding per presentation, BlindedMerkle ring membership) so the same
+      agent can fulfill many intents without being correlated across them.
     </p>
 
     <div class="callout callout--note">

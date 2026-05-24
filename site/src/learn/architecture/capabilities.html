@@ -42,21 +42,53 @@
 
     <h2 id="delegation">Delegation (Attenuation)</h2>
     <p>
-      Capabilities are delegated via cryptographic attenuation. Each attenuation step
-      appends a caveat (restriction) to the macaroon token chain. The resulting token
-      is strictly less powerful than the parent.
+      Capabilities are delegated by cryptographic attenuation: each step appends a caveat
+      (a restriction predicate) to the token chain. Pyana supports two wire encodings &mdash;
+      macaroons (HMAC-chained) and biscuits (Ed25519-signed) &mdash; and both fold into the
+      same Datalog derivation when presented. The resulting token is strictly less powerful
+      than the parent: no caveat can be removed, and presentation proofs check the entire
+      chain.
+    </p>
+    <p>
+      In the proof system, attenuation appears as the <em>Fold AIR</em>: each step is a
+      fold over a committed fact set, and the chain is incrementally verifiable. That is
+      what makes &ldquo;present a capability&rdquo; equivalent to &ldquo;prove a STARK
+      against an attested root&rdquo; &mdash; the verifier never sees the chain itself.
     </p>
 
     <h2 id="introduction">Three-Party Introduction</h2>
     <p>
-      When cell A wants to introduce cell B to cell C, A sends a capability reference
-      for C to B. B can then invoke C directly. This is the standard ocap introduction
-      pattern, implemented via routing directives in the call forest.
+      The classic ocap pattern: A holds references to B and to C, and wants to introduce
+      them. A emits an <code>Introduce</code> effect in a turn; B receives a routing
+      directive (and, in the CapTP case, a signed handoff certificate) that lets it talk
+      to C directly. A is no longer in the loop. New communication paths are always
+      introduced &mdash; there is no global directory and no ambient namespace.
+    </p>
+    <p>
+      For the offline case, <code>HandoffCertificate</code> (signed by the introducer) and
+      <code>HandoffPresentation</code> (recipient signs the nonce) carry the introduction
+      through store-and-forward delivery. The CapTP layer (see <a href="/learn/users/captp.html">CapTP</a>)
+      makes sturdy refs the durable form: <code>pyana://</code> URIs with swiss numbers
+      that survive disconnection, serialization, and process restart.
     </p>
 
-    <div class="stub-notice">
-      <p>Detailed capability discipline rules, confinement proofs, and comparison with E/Mark Miller's ocap work are being written.</p>
-    </div>
+    <h2 id="confinement">Confinement</h2>
+    <p>
+      The discipline is enforced structurally: a cell can only invoke references in its
+      c-list, the c-list is itself part of the cell&rsquo;s state, and the Effect VM proves
+      that every reference the turn touched was in-list at turn start. No ambient authority
+      means no &ldquo;sudo&rdquo;: there is nowhere for a confused-deputy attack to land.
+    </p>
+
+    <h2 id="lineage">Lineage</h2>
+    <p>
+      Pyana&rsquo;s execution model descends from Mark Miller&rsquo;s E and the broader
+      object-capability lineage (Joe-E, Caja, Cap&rsquo;n Proto, Spritely Goblins, OCapN).
+      The contributions on top are: STARK-verifiable presentation; the Effect VM as the
+      single proof artifact for a turn; receipt chains as portable state proofs; and
+      CapTP sturdy refs unified with capability tokens so the same delegation primitive
+      covers in-session and across-session.
+    </p>
 
   </div>
   </main>

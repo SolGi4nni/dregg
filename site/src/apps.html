@@ -4,9 +4,11 @@
   <div class="page-header">
     <h1>Applications</h1>
     <p>
-      Eleven production applications built on the Pyana runtime. Each one exercises
-      a different slice of the stack — from private DeFi to federated compute markets.
-      All generate real STARK proofs. All are runnable from the repo.
+      A growing catalog of apps built on the Pyana runtime &mdash; each exercises a
+      different slice of the stack: private DeFi, anonymous credentials, federated
+      compute markets, governance, namespacing. All generate real STARK proofs.
+      All are runnable from the repo. Maturity varies; treat the list as a working
+      surface, not a product showcase.
     </p>
   </div>
 
@@ -126,6 +128,53 @@
           <span class="app-card__tag">petnames</span>
           <span class="app-card__tag">cross-fed</span>
           <span class="app-card__tag">delegation</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <span class="section__label">Governance &amp; Coordination</span>
+    <h2 class="section__title">Collective decisions, privately</h2>
+    <div class="app-grid">
+      <div class="app-card">
+        <p class="app-card__port">&mdash;</p>
+        <p class="app-card__title">DAO Treasury</p>
+        <p class="app-card__desc">Multi-party treasury with threshold proposal execution and STARK-attested quorum. Spending is a turn against the treasury cell; the proof binds vote tally to action.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">treasury</span>
+          <span class="app-card__tag">threshold</span>
+          <span class="app-card__tag">quorum proofs</span>
+        </div>
+      </div>
+      <div class="app-card">
+        <p class="app-card__port">&mdash;</p>
+        <p class="app-card__title">Privacy Voting</p>
+        <p class="app-card__desc">Anonymous voting with nullifier-protected ballots and tally proofs. Each ballot proves &ldquo;I am an eligible voter and have not voted yet&rdquo; without revealing identity.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">nullifiers</span>
+          <span class="app-card__tag">tally proofs</span>
+          <span class="app-card__tag">ring membership</span>
+        </div>
+      </div>
+      <div class="app-card">
+        <p class="app-card__port">&mdash;</p>
+        <p class="app-card__title">Prediction Market</p>
+        <p class="app-card__desc">Outcome-conditional shares with LMSR pricing. Settlement uses oracle attestations; payouts are STARK-verified against the recorded outcome.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">LMSR</span>
+          <span class="app-card__tag">oracle</span>
+          <span class="app-card__tag">settlement</span>
+        </div>
+      </div>
+      <div class="app-card">
+        <p class="app-card__port">&mdash;</p>
+        <p class="app-card__title">Subscription</p>
+        <p class="app-card__desc">Recurring capability rentals: a provider issues attenuated time-bounded caps that auto-renew until cancelled. Programmable queues validate renewals before the provider sees them.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">recurring</span>
+          <span class="app-card__tag">TTL caps</span>
+          <span class="app-card__tag">programmable queues</span>
         </div>
       </div>
     </div>

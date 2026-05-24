@@ -22,11 +22,13 @@
       not bolted on afterward.
     </p>
     <p class="paper-abstract">
-      The system achieves sub-second proof generation (~24 KiB STARK proofs in 300–560ms),
-      sub-millisecond verification, offline operation without blockchain liveness, and
-      post-quantum security for external interfaces through exclusively hash-based
-      verification. Agents carry their own state as receipt chains that compress to
-      constant size via IVC, enabling censorship-resistant exit from any federation.
+      The system achieves sub-second proof generation (~38 KiB Effect VM STARK proofs),
+      ~2 ms verification, offline operation once an attested root is held, and post-quantum
+      security through hash-based verification. Agents carry their own state as receipt
+      chains that compress to constant size via IVC, enabling exit from any federation
+      without losing history. The Effect VM Shape A plan (in flight in the repository)
+      defines the path to full single-STARK coverage of all 41 runtime effect variants
+      under one trace.
     </p>
   </section>
 

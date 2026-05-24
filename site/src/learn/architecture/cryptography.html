@@ -27,9 +27,13 @@
     <h2 id="field">BabyBear Field</h2>
 
     <p>
-      The BabyBear prime field (p = 2^31 - 2^27 + 1 = 2013265921) is optimized for
-      STARK arithmetic. 32-bit limbs mean native CPU word operations with no carries
-      for addition/subtraction in most cases.
+      The BabyBear prime field (p = 2&#94;31 &minus; 2&#94;27 + 1 = 2,013,265,921) is the
+      working field for the entire STARK stack. It fits in a 32-bit machine word, so
+      addition and subtraction lower to native CPU instructions with cheap reductions.
+      A single BabyBear element carries about 31 bits of entropy &mdash; not enough on
+      its own to bind a cryptographic commitment, which is why state commitments are
+      being widened to a 4-BabyBear digest (~124-bit binding, Stage 1 in flight per
+      <code>EFFECT-VM-SHAPE-A.md</code>).
     </p>
 
     <h2 id="poseidon2">Poseidon2</h2>
@@ -65,32 +69,52 @@
 
     <p>
       The Effect VM is the sovereign proof mechanism. It proves an entire turn in a single
-      STARK regardless of how many effects the turn contains. The 14 supported effects:
+      STARK regardless of how many effects the turn contains. The runtime defines
+      <strong>41 effect variants</strong>; the AIR currently constrains 24, with the rest
+      tracked under the Shape A coverage plan (see callout below). Effects break down by
+      group:
     </p>
 
     <ul>
-      <li><strong>SetField</strong> -- Mutate a cell state slot</li>
-      <li><strong>Transfer</strong> -- Move value between cells (conservation-checked)</li>
-      <li><strong>GrantCapability</strong> -- Delegate with monotonic narrowing</li>
-      <li><strong>RevokeCapability</strong> -- Remove from c-list</li>
-      <li><strong>CreateCell</strong> -- Factory-spawned cell creation</li>
-      <li><strong>DestroyCell</strong> -- Provable cell removal</li>
-      <li><strong>NoteSpend</strong> -- Private note consumption (nullifier)</li>
-      <li><strong>NoteCreate</strong> -- Private note minting (commitment)</li>
-      <li><strong>EmitEvent</strong> -- Observable side-effect</li>
-      <li><strong>Seal</strong> -- Encrypt under sealer capability</li>
-      <li><strong>Introduce</strong> -- Three-party capability introduction</li>
-      <li><strong>Bridge</strong> -- Cross-chain attestation</li>
-      <li><strong>Invoke</strong> -- CellProgram invocation (calls DSL circuits)</li>
-      <li><strong>Custom</strong> -- Dispatch to arbitrary CellProgram-defined logic</li>
+      <li><strong>State / authority:</strong> SetField, CreateCell, IncrementNonce,
+        SetPermissions, SetVerificationKey, GrantCapability, RevokeCapability,
+        RevokeDelegation, SpawnWithDelegation</li>
+      <li><strong>Value:</strong> Transfer (conservation-checked), NoteCreate, NoteSpend
+        (with nullifier)</li>
+      <li><strong>Sealing:</strong> CreateSealPair, Seal, Unseal</li>
+      <li><strong>Messaging / CapTP:</strong> Introduce (three-party), PipelinedSend,
+        CreateObligation, FulfillObligation, SlashObligation, ExportSturdyRef, EnlivenRef,
+        DropRef, ValidateHandoff</li>
+      <li><strong>Bridge:</strong> BridgeLock, BridgeMint, BridgeFinalize, BridgeCancel</li>
+      <li><strong>Escrow (×6):</strong> deposit, claim, refund, dispute, resolve, expire</li>
+      <li><strong>Queues / events:</strong> EmitEvent, EnqueueMessage, DequeueMessage,
+        ResizeQueue, AtomicQueueTx, PipelineStep</li>
+      <li><strong>Sovereignty:</strong> MakeSovereign, CreateCellFromFactory,
+        ExerciseViaCapability</li>
+      <li><strong>Custom:</strong> dispatch to CellProgram-defined logic (up to
+        MAX_CUSTOM_EFFECTS per turn)</li>
     </ul>
 
     <p>
-      The VM enforces state continuity (each effect's post-state = next pre-state),
-      conservation (final accumulator = 0), authority (EffectMask subset), and atomicity
-      (all-or-nothing via completion flag). IVC compression chains turn proofs into
-      constant-size attestations.
+      The VM enforces state continuity (each effect&rsquo;s post-state = next pre-state),
+      conservation (final accumulator = 0), authority (EffectMask subset of the actor&rsquo;s
+      c-list), and atomicity (all-or-nothing via completion flag). IVC compression chains
+      turn proofs into constant-size attestations.
     </p>
+
+    <div class="callout callout--warning">
+      <p>
+        <strong>Coverage status.</strong> The Effect VM Shape A plan
+        (<code>EFFECT-VM-SHAPE-A.md</code>) is the canonical roadmap for full coverage.
+        Today, the executor projects 31 of 41 runtime variants to <code>NoOp</code> in
+        the AIR; seven variants have working AIR but are not wired through projection
+        (pure plumbing); 23 variants lack AIR coverage entirely. Five AIR-only orphans
+        (<code>Custom</code>, <code>ExportSturdyRef</code>, <code>EnlivenRef</code>,
+        <code>DropRef</code>, <code>ValidateHandoff</code>) have no runtime emitter yet,
+        and two of them are tautological as constraints. We&rsquo;d rather you know this
+        than read a different number on each page.
+      </p>
+    </div>
 
     <h2 id="dsl">DSL Circuit Architecture</h2>
 
@@ -170,11 +194,13 @@
     </ol>
 
     <p>
-      <strong>Status:</strong> BabyBear hash-chain IVC is operational. Pickles assisted recursion
-      (unbounded depth) is operational. STARK-in-Pickles wrapping produces constant-size
-      recursive SNARKs. Full heterogeneous AIR composition (derivation + fold + membership +
-      Effect VM in one recursive proof) is structurally supported but not yet end-to-end
-      operational for arbitrary combinations.
+      <strong>Status:</strong> BabyBear hash-chain IVC is operational. Pickles assisted
+      recursion (unbounded depth) is operational for individual STARK circuits. The
+      STARK-in-Pickles wrapping path exists and produces constant-size recursive SNARKs
+      for the implemented circuits. Full heterogeneous AIR composition &mdash; derivation,
+      fold, membership, and the Effect VM together in one recursive proof &mdash; is
+      structurally supported but not yet end-to-end operational for arbitrary
+      combinations; this is gated on Effect VM Shape A landing.
     </p>
 
     <h2 id="signatures">Signature Schemes</h2>
