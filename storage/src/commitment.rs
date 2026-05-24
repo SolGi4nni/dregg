@@ -87,13 +87,20 @@ pub trait CommitmentSchema: 'static {
 /// structure that itself has 124-bit security (e.g., a Merkle leaf whose
 /// root carries the security). For standalone authoritative identifiers,
 /// use [`Commitment4`].
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Commitment<T: CommitmentSchema> {
     pub blake3: [u8; 32],
     pub poseidon2: BabyBear,
     #[serde(skip)]
     _phantom: PhantomData<fn() -> T>,
 }
+
+// Manual Clone/Copy impls because the marker `T` is uninhabited and doesn't
+// derive Clone; the derive macro would gate Clone on T: Clone which fails.
+impl<T: CommitmentSchema> Clone for Commitment<T> {
+    fn clone(&self) -> Self { *self }
+}
+impl<T: CommitmentSchema> Copy for Commitment<T> {}
 
 impl<T: CommitmentSchema> core::fmt::Debug for Commitment<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -159,13 +166,18 @@ impl<T: CommitmentSchema> Commitment<T> {
 /// Used where the Poseidon2 form stands alone as an authoritative identifier
 /// (blinded item commitments, nullifiers — anything the AIR consumes as a
 /// primary key).
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Commitment4<T: CommitmentSchema> {
     pub blake3: [u8; 32],
     pub poseidon2: [BabyBear; 4],
     #[serde(skip)]
     _phantom: PhantomData<fn() -> T>,
 }
+
+impl<T: CommitmentSchema> Clone for Commitment4<T> {
+    fn clone(&self) -> Self { *self }
+}
+impl<T: CommitmentSchema> Copy for Commitment4<T> {}
 
 impl<T: CommitmentSchema> core::fmt::Debug for Commitment4<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -299,13 +311,18 @@ impl<T: CommitmentSchema> Default for Accumulator<T> {
 /// two parallel trees; producers compute both and emit them together.
 /// Verifiers select the form appropriate to context (BLAKE3 for off-chain
 /// dedup; Poseidon2 for STARK PI / lookup).
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct MerkleRoot<T: CommitmentSchema> {
     pub blake3_root: [u8; 32],
     pub poseidon2_root: [BabyBear; 4],
     #[serde(skip)]
     _phantom: PhantomData<fn() -> T>,
 }
+
+impl<T: CommitmentSchema> Clone for MerkleRoot<T> {
+    fn clone(&self) -> Self { *self }
+}
+impl<T: CommitmentSchema> Copy for MerkleRoot<T> {}
 
 impl<T: CommitmentSchema> core::fmt::Debug for MerkleRoot<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
