@@ -1,12 +1,24 @@
 # pyana cell-model spec (TLA+)
 
-A first-cut formal specification of pyana's three most-fundamental cell-model
-invariants. The goal is an honest, audit-against-Rust foundation — a reader
-should be able to point at each TLA+ predicate and find the corresponding code
-in `cell/src/*` and `turn/src/*`.
+A formal specification of pyana's cell-model invariants. The goal is an
+honest, audit-against-Rust foundation — a reader should be able to point at
+each TLA+ predicate and find the corresponding code in `cell/src/*` and
+`turn/src/*`.
 
 This is intentionally small (a few hundred lines of TLA+). It does not try to
-model the whole system.
+model the whole system. The first increment covered identity, nonce, and the
+attenuation lattice; the second increment adds **balance conservation** and
+**receipt-chain causal soundness**.
+
+### Where do the increments live?
+
+Both the original increment (I1–I3) and the new increment (I4–I5) live in
+one module, `spec/CellModel.tla`. The new properties are tightly coupled to
+the existing turn actions (a successful turn must atomically increment the
+nonce, transfer value, *and* append a receipt), so splitting into separate
+modules would have meant duplicating the turn machinery or stitching
+together state predicates across modules. Keeping it monolithic keeps the
+"one successful turn = one atomic state transition" reading honest.
 
 ## What is modeled
 
@@ -73,6 +85,59 @@ lattice is partial:
 - Rust analog: `pyana_cell::is_attenuation` callsites in
   `turn/src/executor.rs:4265` and `:5980`.
 
+### I4. Balance conservation across a turn
+
+Each cell carries a `balance : 0..MaxBalance`. A new symbolic sink
+`burned : Nat` counts fees burned. Two flavors of successful turn exist:
+
+- `SuccessfulTurnNop(id, nonce)` — nonce++ only, no value movement, appends
+  a `<<"Nop">>` receipt.
+- `SuccessfulTurnTransfer(id, nonce, to, amount, fee)` — debits
+  `id.balance` by `amount + fee`, credits `to.balance` by `amount`, adds
+  `fee` to `burned`, increments the nonce, appends a `<<"Transfer", to,
+  amount, fee>>` receipt to `id`'s chain. Requires `cells[id].balance >=
+  amount + fee` (no overdraft) and `cells[to].balance + amount <=
+  MaxBalance` (model bound).
+
+The state invariant `BalanceConservation` asserts that, at every reachable
+state, `sum(cells[i].balance) + burned == |cells| * InitialEndowment`. The
+companion action property `TurnConservesBalanceProperty` says the
+conserved quantity (total balance + burned − endowments) is unchanged
+across every step.
+
+Rust analog: `pyana-protocol-tests/src/invariants/balance_conservation.rs`.
+
+### I5. Receipt-chain causal soundness
+
+Each cell carries a `receipts : Seq(Receipt)`. A receipt has fields:
+
+- `seq` — 1-based position in the chain;
+- `prev_hash` — `GenesisPrevHash = "0"` for the first receipt, otherwise
+  the `Hash` of the immediately preceding receipt;
+- `payload` — a tagged tuple identifying the turn shape (`<<"Nop">>` or
+  `<<"Transfer", to, amount, fee>>`).
+
+`Hash(r)` is modeled as the structural tuple `<<r.seq, r.prev_hash,
+r.payload>>` — injective by construction, mirroring the BLAKE3
+collision-resistance assumption that `node/src/mcp.rs` makes on
+`previous_receipt_hash`.
+
+State invariant `ReceiptChainIntegrity` requires both
+`ChainSeqWellFormed` (`receipts[i].seq = i`) and `ChainWellLinked`
+(`receipts[1].prev_hash = GenesisPrevHash` and, for `i > 1`,
+`receipts[i].prev_hash = Hash(receipts[i-1])`).
+
+Action property `ReceiptChainAppendOnlyProperty` requires that for every
+cell that existed in the prior state, the new state's chain is a prefix
+extension of the old chain — no insertion, removal, reorder, or rewrite.
+
+Action property `TurnAppendsOneReceiptProperty` requires that every
+successful turn appends exactly one receipt to exactly one cell's chain
+and touches no other cell's chain.
+
+Rust analogs: the `previous_receipt_hash` threading in `node/src/mcp.rs`
+(commit `818bbd62`) and `verify_receipt_chain` in `turn/src/`.
+
 ## What is deliberately abstracted
 
 This spec is the first increment. The following are not modeled here:
@@ -86,10 +151,19 @@ This spec is the first increment. The following are not modeled here:
   access). Each action has its own `AuthRequired`, but they all use the same
   lattice — modeling one axis suffices for the lattice invariant. A future
   increment can split per-action.
-- **Effect VM, receipts, journal, conflict / fast-path / eventual semantics.**
-  These are large enough to deserve their own spec module(s).
-- **Balances, value commitments, notes, nullifiers, escrow, obligations,
-  bridge effects.** Conservation laws for these are the obvious next spec.
+- **Effect VM, journal, conflict / fast-path / eventual semantics.** These
+  are large enough to deserve their own spec module(s). Receipts are now
+  modeled (I5) but only as a per-cell append-only chain; the cross-cell
+  journal is not.
+- **Value commitments, notes, nullifiers, escrow, obligations, bridge
+  effects.** Plain balances are now modeled (I4); the more elaborate
+  zk-commitment and bridge structures are not.
+- **Bearer-cap delegation temporal soundness.** The current `Redelegate`
+  action requires the holder to hold the cap *now*, which gives most of
+  the chain-of-attenuation property by induction. A stricter "exercised
+  in turn T must originate from a turn T' < T" formulation would tag
+  every cap with the turn it was minted in and require the chain to be
+  monotone in turn-time. That is left to a next increment.
 - **Facets (`EffectMask`), expiry, breadstuff tokens.** Faceted attenuation
   is a strictly stronger version of the same lattice rule and would extend
   `IsAttenuation` to a pair `(authNarrower, maskSubset)`.
@@ -121,56 +195,90 @@ java -cp /path/to/tla2tools.jar tlc2.TLC \
     spec/CellModel.tla
 ```
 
-You should see TLC report something like:
+### Last clean run (this branch)
 
 ```
+TLC2 Version 2.19 of 08 August 2024
 Model checking completed. No error has been found.
-  Estimates of the probability that TLC did not check all reachable states
-  ...
+47,142,403 states generated, 1,108,860 distinct states found,
+0 states left on queue.
+The depth of the complete state graph search is 12.
+Finished in 02min 09s.
 ```
 
-The state space under the cfg constants (2 public keys, 2 token ids,
-MaxNonce = 2, MaxTurns = 3, |caps| <= 6) is small enough to enumerate fully
-on a laptop in seconds.
+Config: `PublicKeys = {pk1,pk2}, TokenIds = {tA}, MaxNonce = 2,
+MaxTurns = 2, MaxBalance = 2, InitialEndowment = 2, |caps| <= 3,
+|cells| <= 2`. INVARIANT: `Invariant` (TypeOK ∧ IdentityIntegrity ∧
+NonceWellFormed ∧ AttenuationSoundness ∧ BalanceConservation ∧
+ReceiptChainIntegrity). PROPERTY: MonotonicNonce, NoAmplificationProperty,
+TurnConservesBalanceProperty, ReceiptChainAppendOnlyProperty,
+TurnAppendsOneReceiptProperty.
 
 ## Sanity check: showing the invariants bite
 
-Two ways to convince yourself the invariants actually constrain behavior:
+The following deliberate breaks were run on this branch, then reverted.
+Each break is a one-line perturbation; TLC was invoked with the same cfg.
 
 1. **Remove the precondition in `Redelegate`.** Delete the
-   `IsAttenuation(fromPerm, narrowerPerm)` line. TLC will report the
-   `Invariant` (which includes `AttenuationSoundness`) violated and
-   produce a short counterexample where a `Signature`-restricted cap is
-   re-delegated as a `None`-restricted (more permissive) cap. We verified
-   this manually: TLC finds the counterexample in <1s at depth 3.
+   `IsAttenuation(fromPerm, narrowerPerm)` line. TLC reports
+   `AttenuationSoundness` violated and produces a short counterexample
+   where a `Signature`-restricted cap is re-delegated as a
+   `None`-restricted (more permissive) cap. Counterexample depth ~3.
+   (Verified against the previous spec increment.)
 
-2. **Change `SuccessfulTurn` to allow `providedNonce <= cells[id].nonce`.**
-   TLC will report `MonotonicNonce` violated and produce a trace where the
-   same nonce is used twice (replay) and the ledger nonce decreases.
+2. **Change `SuccessfulTurnNop` / `SuccessfulTurnTransfer` to allow
+   `providedNonce <= cells[id].nonce`.** TLC reports `MonotonicNonce`
+   violated; the counterexample replays the same nonce.
+
+3. **(I4 break — balance leak.)** Edit `SuccessfulTurnTransfer` to debit
+   the sender by `amount + fee` but *not* credit the recipient. TLC
+   reports `Invariant` (specifically `BalanceConservation`) violated in
+   under a second; counterexample depth 5 — two `CreateCell`s, then a
+   single `SuccessfulTurnTransfer` with `amount = 1, fee = 0` makes total
+   balance go from `4` to `3` while `burned` stays at `0`. Sample trace
+   captured at `/tmp/tlc-break1.log` during validation.
+
+4. **(I5 break — receipt linkage.)** Edit `NextReceipt` to always set
+   `prev_hash := GenesisPrevHash` (i.e. forget to chain to the prior
+   head). TLC reports invariant evaluation failure (an equality check
+   between `"0"` and a tuple hash mismatches the type at the second
+   receipt), which is the model-checker form of "the chain is broken at
+   receipt 2." Counterexample depth 5.
+
+5. **(I5 break — receipt truncation.)** Edit `SuccessfulTurnNop` to
+   replace the chain (`receipts := <<r>>`) instead of appending
+   (`Append(@, r)`). TLC reports `Invariant` (specifically
+   `ChainSeqWellFormed`) violated in under a second; counterexample
+   depth 5 — two successful nop turns on the same cell produce a final
+   chain `<<[seq=2, ...]>>` whose seq does not match its position.
 
 ## Next spec increments
 
-In rough priority order:
+Increments 1 and 2 from the previous list are now landed (I4 balance
+conservation, I5 receipt-chain causal soundness). Remaining priorities:
 
-1. **Balance conservation.** Add a `balance` field to `CellRecord`, a
-   `Transfer(from, to, amount)` action, and the invariant
-   `sum(cells[i].balance) = initial total` (modulo mint/burn actions, if any).
-2. **Receipt-chain causal soundness.** Model `RECEIPT_CHAIN` as a sequence
-   per cell with hash linkage, and assert: the parent hash of receipt `n+1`
-   equals the hash of receipt `n`. Add `Reorder` and `Replay` adversary
-   actions; show they violate the invariant.
-3. **Per-action permission split.** Replace single `perm` with the full
+1. **Bearer-cap delegation temporal soundness.** Tag every cap with the
+   turn it was minted in. Require that any cap exercised in turn `T` has
+   a delegation chain originating from a cell that held the capability
+   at some turn `T' < T`, with attenuation at every link. (The current
+   `Redelegate` action enforces holding-now and attenuation-now; what is
+   missing is the monotone-in-turn-time chain.)
+2. **Per-action permission split.** Replace single `perm` with the full
    8-axis `Permissions` record; encode `Effect::SetPermissions`'s "applied
    last" rule and prove an action cannot weaken its own permission check.
-4. **Facet attenuation.** Add `EffectMask` as a bitset over a small finite
+3. **Facet attenuation.** Add `EffectMask` as a bitset over a small finite
    universe; extend `IsAttenuation` to require subset on the mask.
-5. **CapTP three-party introduction.** Two cells already holding caps to
+4. **CapTP three-party introduction.** Two cells already holding caps to
    each other; introduce a third. Show the introduction can only grant
    attenuated rights and cannot forge a cap to a cell the introducer
    doesn't hold.
-6. **Sovereign cell upgrade.** Model `SetVerificationKey` with
+5. **Sovereign cell upgrade.** Model `SetVerificationKey` with
    `AuthRequired = Proof` and assert that pre-image VK is bound to
    post-image VK by the upgrade proof statement.
+6. **Cross-cell receipt journal.** I5 only models per-cell append-only
+   chains. The real journal cross-links sender and receiver chains;
+   modeling that would let us state "for every transfer there is a
+   paired pair of linked receipts."
 7. **Effect VM.** Once the above are stable, lift to a small operational
    semantics that processes an `Effect` list end-to-end. This is the
    biggest piece and probably wants its own module
@@ -190,9 +298,12 @@ In rough priority order:
 | `IsNarrowerOrEqual`              | `AuthRequired::is_narrower_or_equal` in `cell/src/permissions.rs` |
 | `IsAttenuation`                  | `is_attenuation` in `cell/src/capability.rs`            |
 | `CreateCell` action              | `Effect::CreateCell` in `turn/src/action.rs`            |
-| `SuccessfulTurn`                 | `Effect::IncrementNonce` + nonce check in `turn/src/executor.rs` |
+| `SuccessfulTurnNop` / `SuccessfulTurnTransfer` | `Effect::IncrementNonce` + transfer + receipt-emit path in `turn/src/executor.rs` |
 | `GrantFromOwn` / `Redelegate`    | `Effect::GrantCapability`, `CapabilitySet::attenuate` in `cell/src/capability.rs` |
 | `Revoke`                         | `Effect::RevokeCapability` in `turn/src/action.rs`      |
 | `IdentityIntegrity` invariant    | `pub(crate) id`/`public_key`/`token_id` sealing in `cell/src/cell.rs` |
 | `MonotonicNonce` property        | nonce-replay rejection in `turn/src/executor.rs`        |
 | `AttenuationSoundness` invariant | `is_attenuation` callsites in `turn/src/executor.rs`    |
+| `BalanceConservation` invariant  | `pyana-protocol-tests/src/invariants/balance_conservation.rs` |
+| `ReceiptChainIntegrity` invariant| `verify_receipt_chain` in `turn/src/`, `previous_receipt_hash` threading in `node/src/mcp.rs` (commit `818bbd62`) |
+| `Hash(r)` / `GenesisPrevHash`    | `BLAKE3` over receipt content / all-zero sentinel in `node/src/mcp.rs` |

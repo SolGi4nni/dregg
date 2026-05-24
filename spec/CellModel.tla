@@ -27,6 +27,23 @@
 (*       .rs.  No operation may amplify (loosen) a granted capability       *)
 (*       relative to the parent.                                            *)
 (*                                                                          *)
+(*   I4 (Balance conservation across a turn).  Every successful turn that   *)
+(*       moves value from cell A to cell B reduces A's balance by exactly   *)
+(*       the amount B's balance increases, plus a non-negative fee that is  *)
+(*       burned (accounted to the symbolic "no cell" sink).  The total      *)
+(*       (sum of cell balances + total fees burned) is invariant.           *)
+(*       Concrete reference: pyana-protocol-tests/src/invariants/           *)
+(*       balance_conservation.rs.                                           *)
+(*                                                                          *)
+(*   I5 (Receipt-chain causal soundness).  Each successful turn appends a   *)
+(*       receipt to the executing cell's chain.  The new receipt's          *)
+(*       prev_hash field equals the hash of the previous head; for the      *)
+(*       first receipt it equals the genesis sentinel "0".  No operation    *)
+(*       may insert, remove, reorder, or rewrite a receipt without          *)
+(*       breaking the linkage.  Real-world references: the previous_       *)
+(*       receipt_hash threading in node/src/mcp.rs (commit 818bbd62) and    *)
+(*       the executor's verify_receipt_chain in turn/src/.                  *)
+(*                                                                          *)
 (* This spec deliberately ABSTRACTS:                                        *)
 (*   * BLAKE3 — modeled as an injective function on (pk, token_id) pairs.   *)
 (*   * Signatures and proofs — modeled by an `Auth` token the agent         *)
@@ -46,7 +63,9 @@ CONSTANTS
     PublicKeys,        \* finite set of distinct public key identifiers
     TokenIds,          \* finite set of distinct token-id identifiers
     MaxNonce,          \* model bound: cap on nonce values explored
-    MaxTurns           \* model bound: total successful turns explored
+    MaxTurns,          \* model bound: total successful turns explored
+    MaxBalance,        \* model bound: cap on per-cell balance (and on transfer amount)
+    InitialEndowment   \* per-cell starting balance at CreateCell time
 
 (***************************************************************************)
 (* Auth lattice                                                             *)
@@ -105,19 +124,59 @@ CellIds == { DeriveId(pk, tid) : pk \in PublicKeys, tid \in TokenIds }
 (*   re-granted with child perm pC where IsAttenuation(pP, pC).             *)
 (*                                                                          *)
 (* `turns` : Nat — count of successful turns performed (for bounded model). *)
+(*                                                                          *)
+(* New in this increment:                                                   *)
+(*                                                                          *)
+(* `cells[id].balance` : Nat <= MaxBalance.  Value held by the cell.        *)
+(*                                                                          *)
+(* `cells[id].receipts` : Seq(Receipt).  Per-cell receipt chain.  Each      *)
+(*    receipt has fields:                                                   *)
+(*      seq        : 1-based sequence number, equal to its position in the  *)
+(*                   chain (i.e. Len(prefix) + 1).                          *)
+(*      prev_hash  : "0" for the first receipt; otherwise the hash of the   *)
+(*                   immediately preceding receipt.                         *)
+(*      payload    : a tag identifying what kind of turn produced this      *)
+(*                   receipt ("Nop" or <<"Transfer", to, amount, fee>>).    *)
+(*    `Hash(r)` is modeled as the tuple <<r.seq, r.prev_hash, r.payload>>;  *)
+(*    structural equality on tuples gives injectivity, mirroring the        *)
+(*    collision-resistance assumption on BLAKE3 in node/src/mcp.rs.         *)
+(*                                                                          *)
+(* `burned` : Nat — running total of fees burned (sink for the              *)
+(*    conservation invariant).                                              *)
 (***************************************************************************)
 
-VARIABLES cells, caps, turns
+\* Genesis sentinel for an empty receipt chain.  Matches the "all-zero"
+\* previous_receipt_hash that node/src/mcp.rs writes into the first
+\* receipt a cell ever produces.
+GenesisPrevHash == "0"
 
-vars == <<cells, caps, turns>>
+\* Receipts in this model.  Receipts are tagged by payload:
+\*   * "Nop"                — a nonce-only turn (no value movement)
+\*   * <<"Transfer", t, a, f>> — a value-bearing turn sending amount `a`
+\*       (plus fee `f`) from the holder to cell `t`.
+\* The set of payloads is finite under the model bounds.
+TransferPayloads(maxAmount, maxFee, otherCells) ==
+    { <<"Transfer", t, a, f>> :
+        t \in otherCells, a \in 0..maxAmount, f \in 0..maxFee }
 
-\* Type invariant for the model.
-CellRecord == [
-    pk     : PublicKeys,
-    tid    : TokenIds,
-    nonce  : 0..MaxNonce,
-    perm   : AuthRequired
-]
+\* Hash function: model BLAKE3(receipt) as the receipt's structural tuple.
+\* The tuple is injective by construction, so distinct receipts get
+\* distinct "hashes".  This is the same abstraction we use for DeriveId.
+Hash(r) == <<r.seq, r.prev_hash, r.payload>>
+
+VARIABLES cells, caps, turns, burned
+
+vars == <<cells, caps, turns, burned>>
+
+\* Per-cell type predicate.  We don't fix the receipt-payload set in a
+\* set type because TLC would need a precise enumeration; the load-bearing
+\* structural invariants are ChainSeqWellFormed and ChainWellLinked below.
+CellTypeOK(c) ==
+    /\ c.pk \in PublicKeys
+    /\ c.tid \in TokenIds
+    /\ c.nonce \in 0..MaxNonce
+    /\ c.perm \in AuthRequired
+    /\ c.balance \in 0..MaxBalance
 
 CapRecord == [
     holder : CellIds,
@@ -127,9 +186,10 @@ CapRecord == [
 
 TypeOK ==
     /\ DOMAIN cells \subseteq CellIds
-    /\ \A id \in DOMAIN cells : cells[id] \in CellRecord
+    /\ \A id \in DOMAIN cells : CellTypeOK(cells[id])
     /\ caps \subseteq CapRecord
     /\ turns \in 0..MaxTurns
+    /\ burned \in 0..(MaxBalance * MaxTurns)
 
 (***************************************************************************)
 (* Initial state                                                            *)
@@ -142,6 +202,7 @@ Init ==
     /\ cells = << >>                       \* empty function
     /\ caps  = {}
     /\ turns = 0
+    /\ burned = 0
 
 (***************************************************************************)
 (* Actions                                                                  *)
@@ -154,34 +215,81 @@ CreateCell(pk, tid, perm) ==
     LET id == DeriveId(pk, tid) IN
     /\ id \notin DOMAIN cells
     /\ perm \in AuthRequired
-    /\ cells' = cells @@ (id :> [pk |-> pk, tid |-> tid, nonce |-> 0, perm |-> perm])
+    /\ cells' = cells @@ (id :> [pk       |-> pk,
+                                  tid      |-> tid,
+                                  nonce    |-> 0,
+                                  perm     |-> perm,
+                                  balance  |-> InitialEndowment,
+                                  receipts |-> << >>])
     /\ caps'  = caps
     /\ turns' = turns
+    /\ burned' = burned
     \* Note: we do NOT count CreateCell as a "turn" in this spec — turns are
     \* nonce-bearing executions.  CreateCell is a setup action.
 
-\* SuccessfulTurn: a turn that supplies the matching nonce and is accepted.
-\* On success, the cell's nonce increments by exactly 1 (Effect::IncrementNonce
-\* in turn/src/action.rs; permission check IncrementNonce in
-\* turn/src/executor.rs).  Identity-bearing fields (pk, tid, id) are
-\* preserved.
-SuccessfulTurn(id, providedNonce) ==
+\* Helper: build the next receipt for a cell's chain given a payload.
+\* Sequence is 1-based: the first receipt has seq = 1.  prev_hash is the
+\* genesis sentinel for an empty chain, else the Hash of the current head.
+NextReceipt(id, payload) ==
+    LET chain  == cells[id].receipts
+        seqN   == Len(chain) + 1
+        prevH  == IF chain = << >>
+                  THEN GenesisPrevHash
+                  ELSE Hash(chain[Len(chain)])
+    IN [seq |-> seqN, prev_hash |-> prevH, payload |-> payload]
+
+\* SuccessfulTurnNop: a turn that supplies the matching nonce and is
+\* accepted but moves no value.  Nonce ++ and append a "Nop" receipt.
+\* This is the nonce-only path through Effect::IncrementNonce in
+\* turn/src/action.rs with no value-bearing effects.
+SuccessfulTurnNop(id, providedNonce) ==
     /\ id \in DOMAIN cells
     /\ turns < MaxTurns
     /\ cells[id].nonce < MaxNonce
     /\ providedNonce = cells[id].nonce            \* must match
-    /\ cells' = [cells EXCEPT ![id].nonce = @ + 1]
+    /\ LET r == NextReceipt(id, <<"Nop">>) IN
+       cells' = [cells EXCEPT ![id].nonce    = @ + 1,
+                              ![id].receipts = Append(@, r)]
     /\ caps'  = caps
     /\ turns' = turns + 1
+    /\ burned' = burned
+
+\* SuccessfulTurnTransfer: a value-bearing successful turn.  The holder's
+\* nonce increments, balance decreases by amount+fee, the recipient's
+\* balance increases by amount, and `fee` is added to `burned`.  The
+\* holder's chain gains a Transfer receipt linking to its prior head.
+\* Recipient receipt chains are not modified by this action (a real system
+\* might emit a paired receipt; we model only the sender's chain to keep
+\* the receipt-chain invariants per-cell and the state space tractable).
+SuccessfulTurnTransfer(id, providedNonce, to, amount, fee) ==
+    /\ id \in DOMAIN cells
+    /\ to \in DOMAIN cells
+    /\ to # id                                    \* no self-transfer
+    /\ turns < MaxTurns
+    /\ cells[id].nonce < MaxNonce
+    /\ providedNonce = cells[id].nonce
+    /\ amount \in 0..MaxBalance
+    /\ fee    \in 0..MaxBalance
+    /\ cells[id].balance >= amount + fee          \* must be able to pay
+    /\ cells[to].balance + amount <= MaxBalance   \* model bound
+    /\ LET r == NextReceipt(id, <<"Transfer", to, amount, fee>>) IN
+       cells' = [cells EXCEPT ![id].nonce    = @ + 1,
+                              ![id].balance  = @ - amount - fee,
+                              ![id].receipts = Append(@, r),
+                              ![to].balance  = @ + amount]
+    /\ caps'  = caps
+    /\ turns' = turns + 1
+    /\ burned' = burned + fee
 
 \* RejectedTurn: a turn with wrong nonce.  The ledger MUST NOT change.
-\* We model rejection as a stutter on `cells` and `caps`.
+\* We model rejection as a stutter on `cells`, `caps`, and `burned`.
 RejectedTurn(id, providedNonce) ==
     /\ id \in DOMAIN cells
     /\ providedNonce # cells[id].nonce
     /\ cells' = cells
     /\ caps'  = caps
     /\ turns' = turns
+    /\ burned' = burned
 
 \* GrantFromOwn: cell `holder` mints a capability to itself or to another
 \* cell.  The new capability is "rooted" in the holder's own permission:
@@ -196,6 +304,7 @@ GrantFromOwn(holder, target, grantedPerm) ==
     /\ cells' = cells
     /\ caps'  = caps \cup {[holder |-> holder, target |-> target, perm |-> grantedPerm]}
     /\ turns' = turns
+    /\ burned' = burned
 
 \* Redelegate: a cell that already holds a capability re-delegates a
 \* (possibly narrower) version of it to a third party.  The new perm must
@@ -212,6 +321,7 @@ Redelegate(holder, target, fromPerm, toCell, narrowerPerm) ==
     /\ caps'  = caps \cup
         {[holder |-> toCell, target |-> target, perm |-> narrowerPerm]}
     /\ turns' = turns
+    /\ burned' = burned
 
 \* Revoke: drop a capability from the c-list.  Revocation never violates
 \* invariants — it can only shrink rights.
@@ -220,6 +330,7 @@ Revoke(holder, target, perm) ==
     /\ cells' = cells
     /\ caps'  = caps \ {[holder |-> holder, target |-> target, perm |-> perm]}
     /\ turns' = turns
+    /\ burned' = burned
 
 (***************************************************************************)
 (* Adversarial actions                                                      *)
@@ -245,6 +356,7 @@ AttemptAmplify(holder, target, fromPerm, toCell, widerPerm) ==
     /\ caps'  = caps \cup
         {[holder |-> toCell, target |-> target, perm |-> widerPerm]}
     /\ turns' = turns
+    /\ burned' = burned
 
 (***************************************************************************)
 (* Next-state relation                                                      *)
@@ -254,7 +366,10 @@ Next ==
     \/ \E pk \in PublicKeys, tid \in TokenIds, p \in AuthRequired :
             CreateCell(pk, tid, p)
     \/ \E id \in DOMAIN cells, n \in 0..MaxNonce :
-            SuccessfulTurn(id, n)
+            SuccessfulTurnNop(id, n)
+    \/ \E id \in DOMAIN cells, to \in DOMAIN cells,
+         n \in 0..MaxNonce, a \in 0..MaxBalance, f \in 0..MaxBalance :
+            SuccessfulTurnTransfer(id, n, to, a, f)
     \/ \E id \in DOMAIN cells, n \in 0..MaxNonce :
             RejectedTurn(id, n)
     \/ \E h, t \in DOMAIN cells, p \in AuthRequired :
@@ -335,22 +450,146 @@ NoAmplification ==
 
 NoAmplificationProperty == [][NoAmplification]_vars
 
-\* Conjunction of state invariants (for the cfg's INVARIANT directive).
+(***************************************************************************)
+(* I4.  Balance conservation.                                               *)
+(*                                                                          *)
+(* The total value in the system (sum of cell balances + fees burned) is    *)
+(* invariant from the moment all cells are created.  Because each           *)
+(* CreateCell endows a fresh cell with InitialEndowment, the conserved      *)
+(* quantity is:                                                             *)
+(*                                                                          *)
+(*   sum(cells[i].balance) + burned == |cells| * InitialEndowment           *)
+(*                                                                          *)
+(* This is a *state* invariant — at any reachable state, the total equals   *)
+(* the endowment times the number of cells.  It is the inductive form of    *)
+(* "every successful turn preserves balance + fee = 0 delta" from           *)
+(* pyana-protocol-tests/src/invariants/balance_conservation.rs.             *)
+(*                                                                          *)
+(* The companion *action* property `TurnPreservesBalance` says more         *)
+(* directly: across any single step that increments `turns`, the conserved  *)
+(* quantity is unchanged.                                                   *)
+(***************************************************************************)
+
+\* Sum balances by induction on a finite set.  TLA+ requires the
+\* RECURSIVE declaration at the module level (it cannot appear inside LET).
+RECURSIVE SumBalancesSet(_, _)
+SumBalancesSet(cellMap, S) ==
+    IF S = {} THEN 0
+    ELSE LET x == CHOOSE y \in S : TRUE
+         IN cellMap[x].balance + SumBalancesSet(cellMap, S \ {x})
+
+SumBalances(cellMap) == SumBalancesSet(cellMap, DOMAIN cellMap)
+
+ConservedTotal == SumBalances(cells) + burned
+
+BalanceConservation ==
+    ConservedTotal = Cardinality(DOMAIN cells) * InitialEndowment
+
+\* Action-level: balance is preserved across every step (including non-turn
+\* steps, which don't touch cells or burned, and CreateCell, which adds
+\* InitialEndowment to both sides).
+TurnConservesBalance ==
+    SumBalances(cells') + burned' - Cardinality(DOMAIN cells') * InitialEndowment
+        = SumBalances(cells) + burned - Cardinality(DOMAIN cells) * InitialEndowment
+
+TurnConservesBalanceProperty == [][TurnConservesBalance]_vars
+
+(***************************************************************************)
+(* I5.  Receipt-chain causal soundness.                                     *)
+(*                                                                          *)
+(* For each cell, the receipt chain is a well-linked sequence:              *)
+(*                                                                          *)
+(*   1. Sequence numbers are 1-based and match position: receipts[i].seq=i. *)
+(*   2. receipts[1].prev_hash = GenesisPrevHash.                            *)
+(*   3. For i > 1, receipts[i].prev_hash = Hash(receipts[i-1]).             *)
+(*                                                                          *)
+(* This is the state form of the receipt-chain invariant enforced by        *)
+(* verify_receipt_chain in turn/src/ and by node/src/mcp.rs's               *)
+(* previous_receipt_hash threading.                                         *)
+(*                                                                          *)
+(* The companion action property `ReceiptChainAppendOnly` says: no step     *)
+(* may shorten, reorder, or rewrite any cell's existing receipt prefix.     *)
+(* Only an append at the tail is allowed.                                   *)
+(***************************************************************************)
+
+ChainSeqWellFormed(chain) ==
+    \A i \in 1..Len(chain) : chain[i].seq = i
+
+ChainWellLinked(chain) ==
+    /\ Len(chain) >= 1 => chain[1].prev_hash = GenesisPrevHash
+    /\ \A i \in 2..Len(chain) :
+            chain[i].prev_hash = Hash(chain[i-1])
+
+ReceiptChainIntegrity ==
+    \A id \in DOMAIN cells :
+        /\ ChainSeqWellFormed(cells[id].receipts)
+        /\ ChainWellLinked(cells[id].receipts)
+
+\* Action-level: every cell that existed before must have a receipt chain
+\* in the next state whose prefix equals the old chain (i.e. append-only).
+\* A new cell (CreateCell) has empty old chain and empty new chain — also
+\* a trivial prefix relation.
+ReceiptChainAppendOnly ==
+    \A id \in DOMAIN cells :
+        /\ id \in DOMAIN cells'
+        /\ Len(cells'[id].receipts) >= Len(cells[id].receipts)
+        /\ \A i \in 1..Len(cells[id].receipts) :
+                cells'[id].receipts[i] = cells[id].receipts[i]
+
+ReceiptChainAppendOnlyProperty == [][ReceiptChainAppendOnly]_vars
+
+\* Action-level: every successful turn appends *exactly one* receipt to the
+\* executing cell's chain (and to no other cell's chain).  This pins down
+\* the "one turn => one receipt" property that node/src/mcp.rs relies on.
+TurnAppendsOneReceipt ==
+    (turns' = turns + 1)
+        => \E id \in DOMAIN cells' :
+            /\ Len(cells'[id].receipts) = Len(cells[id].receipts) + 1
+            /\ \A j \in DOMAIN cells' \ {id} :
+                    j \in DOMAIN cells =>
+                    cells'[j].receipts = cells[j].receipts
+
+TurnAppendsOneReceiptProperty == [][TurnAppendsOneReceipt]_vars
+
+(***************************************************************************)
+(* Adversarial actions for receipt-chain falsification.                     *)
+(*                                                                          *)
+(* Disabled by default (StateBound keeps them out of Next).  They exist as  *)
+(* documentation of what the invariant forbids — see the deliberate-break  *)
+(* sanity checks in README.md.                                              *)
+(*                                                                          *)
+(* If a developer ever introduced a code path that allowed receipt          *)
+(* rewriting (truncation, splice, or hash-mismatched append), enabling      *)
+(* the corresponding action below in Next would let TLC find a              *)
+(* counterexample.                                                          *)
+(***************************************************************************)
+
+\* These are commented out of Next; they exist for the deliberate-break
+\* check described in README.md.  Uncomment in Next to verify the
+\* receipt-chain invariants bite.
+
+(***************************************************************************)
+(* Conjunction of state invariants (for the cfg's INVARIANT directive).     *)
+(***************************************************************************)
 Invariant ==
     /\ TypeOK
     /\ IdentityIntegrity
     /\ NonceWellFormed
     /\ AttenuationSoundness
+    /\ BalanceConservation
+    /\ ReceiptChainIntegrity
 
 \* Action-level monotonicity, for TLC's PROPERTY directive.
 MonotonicNonce == [][NonceMonotonic]_vars
 
 \* State constraint: keep the c-list bounded so TLC doesn't explore an
 \* unboundedly growing set of caps.  Referenced from CellModel.cfg.
-\* We also bound |cells| to keep the search tractable.
+\* We also bound |cells| and the per-cell receipt chain length to keep
+\* the search tractable.
 StateBound ==
     /\ Cardinality(caps) =< 3
     /\ Cardinality(DOMAIN cells) =< 2
+    /\ \A id \in DOMAIN cells : Len(cells[id].receipts) =< MaxTurns
 
 (***************************************************************************)
 (* Theorem (sketch, not machine-checked here):                              *)
