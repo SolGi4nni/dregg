@@ -2553,8 +2553,8 @@ mod tests {
         // Verify the transfer happened in the ledger.
         let payer_state = ledger.get(&payer_cell).unwrap();
         let recipient_state = ledger.get(&recipient_cell).unwrap();
-        assert!(payer_state.state.balance < 100_000); // Fee + transfer deducted.
-        assert_eq!(recipient_state.state.balance, 1000); // Received payment.
+        assert!(payer_state.state.balance() < 100_000); // Fee + transfer deducted.
+        assert_eq!(recipient_state.state.balance(), 1000); // Received payment.
     }
 
     #[test]

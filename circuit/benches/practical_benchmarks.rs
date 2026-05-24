@@ -475,7 +475,7 @@ fn bench_federation_ops(c: &mut Criterion) {
             delegate: AuthRequired::None,
             access: AuthRequired::None,
         };
-        let sender_id = sender.id;
+        let sender_id = sender.id();
 
         let mut receiver = Cell::with_balance(receiver_pk, token_id, 0);
         receiver.permissions = Permissions {
@@ -488,7 +488,7 @@ fn bench_federation_ops(c: &mut Criterion) {
             delegate: AuthRequired::None,
             access: AuthRequired::None,
         };
-        let receiver_id = receiver.id;
+        let receiver_id = receiver.id();
 
         // Grant capability so sender can act on receiver
         sender.capabilities.grant(receiver_id, AuthRequired::None);

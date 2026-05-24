@@ -4312,12 +4312,14 @@ impl AgentWallet {
             match effect {
                 Effect::Transfer { from, to, amount } => {
                     if from == cell_id {
-                        new_cell_state.state.balance =
-                            new_cell_state.state.balance.saturating_sub(*amount);
+                        new_cell_state
+                            .state
+                            .set_balance(new_cell_state.state.balance().saturating_sub(*amount));
                     }
                     if to == cell_id {
-                        new_cell_state.state.balance =
-                            new_cell_state.state.balance.saturating_add(*amount);
+                        new_cell_state
+                            .state
+                            .set_balance(new_cell_state.state.balance().saturating_add(*amount));
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
@@ -4326,7 +4328,7 @@ impl AgentWallet {
                     }
                 }
                 Effect::IncrementNonce { cell } if cell == cell_id => {
-                    new_cell_state.state.nonce += 1;
+                    let _ = new_cell_state.state.increment_nonce();
                 }
                 _ => {}
             }
@@ -4335,7 +4337,7 @@ impl AgentWallet {
         // 5. Generate the STARK proof using EffectVmAir (DSL cutover).
         let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
         let initial_vm_state =
-            pyana_circuit::CellState::new(cell_state.state.balance, cell_state.state.nonce as u32);
+            pyana_circuit::CellState::new(cell_state.state.balance(), cell_state.state.nonce() as u32);
         let (trace, public_inputs) =
             pyana_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
 
@@ -4561,7 +4563,7 @@ impl AgentWallet {
     /// Call this after transitioning a cell to sovereign mode. The wallet keeps
     /// the full cell state locally and provides it as a witness in future turns.
     pub fn store_sovereign_state(&mut self, cell: Cell) {
-        self.sovereign_cells.insert(cell.id, cell);
+        self.sovereign_cells.insert(cell.id(), cell);
     }
 
     /// Get our local copy of a sovereign cell's state.
@@ -4595,13 +4597,15 @@ impl AgentWallet {
                     }
                 }
                 Effect::Transfer { to, amount, .. } if to == cell_id => {
-                    cell.state.balance = cell.state.balance.saturating_add(*amount);
+                    cell.state
+                        .set_balance(cell.state.balance().saturating_add(*amount));
                 }
                 Effect::Transfer { from, amount, .. } if from == cell_id => {
-                    cell.state.balance = cell.state.balance.saturating_sub(*amount);
+                    cell.state
+                        .set_balance(cell.state.balance().saturating_sub(*amount));
                 }
                 Effect::IncrementNonce { cell: target } if target == cell_id => {
-                    cell.state.nonce += 1;
+                    let _ = cell.state.increment_nonce();
                 }
                 _ => {
                     // Other effects (GrantCapability, RevokeCapability, EmitEvent, etc.)
@@ -6295,7 +6299,7 @@ mod tests {
         let pk = wallet.public_key().0;
         let token_id = *blake3::hash(b"test").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, 1000);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
 
         // Store sovereign state.
         wallet.store_sovereign_state(cell.clone());
@@ -6327,7 +6331,7 @@ mod tests {
         let pk = wallet.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, 500);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
 
         // Initially empty.
         assert_eq!(wallet.sovereign_cell_count(), 0);
@@ -6339,8 +6343,8 @@ mod tests {
 
         // Retrieve.
         let retrieved = wallet.sovereign_state(&cell_id).unwrap();
-        assert_eq!(retrieved.id, cell_id);
-        assert_eq!(retrieved.state.balance, 500);
+        assert_eq!(retrieved.id(), cell_id);
+        assert_eq!(retrieved.state.balance(), 500);
     }
 
     #[test]
@@ -6349,7 +6353,7 @@ mod tests {
         let pk = wallet.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, 1000);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
 
         wallet.store_sovereign_state(cell);
 
@@ -6367,8 +6371,8 @@ mod tests {
         wallet.apply_sovereign_effects(&cell_id, &effects).unwrap();
 
         let state = wallet.sovereign_state(&cell_id).unwrap();
-        assert_eq!(state.state.balance, 700);
-        assert_eq!(state.state.nonce, 1);
+        assert_eq!(state.state.balance(), 700);
+        assert_eq!(state.state.nonce(), 1);
     }
 
     #[test]
@@ -6377,7 +6381,7 @@ mod tests {
         let pk = wallet.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, 100);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
 
         wallet.store_sovereign_state(cell);
 
@@ -6390,7 +6394,7 @@ mod tests {
         wallet.apply_sovereign_effects(&cell_id, &effects).unwrap();
 
         let state = wallet.sovereign_state(&cell_id).unwrap();
-        assert_eq!(state.state.balance, 600);
+        assert_eq!(state.state.balance(), 600);
     }
 
     #[test]
@@ -6410,12 +6414,12 @@ mod tests {
         // Store two sovereign cells.
         let token_id_a = *blake3::hash(b"domain-a").as_bytes();
         let cell_a = pyana_cell::Cell::with_balance(pk, token_id_a, 100);
-        let id_a = cell_a.id;
+        let id_a = cell_a.id();
         wallet.store_sovereign_state(cell_a);
 
         let token_id_b = *blake3::hash(b"domain-b").as_bytes();
         let cell_b = pyana_cell::Cell::with_balance(pk, token_id_b, 200);
-        let id_b = cell_b.id;
+        let id_b = cell_b.id();
         wallet.store_sovereign_state(cell_b);
 
         assert_eq!(wallet.sovereign_cell_count(), 2);
@@ -6429,8 +6433,8 @@ mod tests {
         wallet2.import_sovereign_state(&exported).unwrap();
 
         assert_eq!(wallet2.sovereign_cell_count(), 2);
-        assert_eq!(wallet2.sovereign_state(&id_a).unwrap().state.balance, 100);
-        assert_eq!(wallet2.sovereign_state(&id_b).unwrap().state.balance, 200);
+        assert_eq!(wallet2.sovereign_state(&id_a).unwrap().state.balance(), 100);
+        assert_eq!(wallet2.sovereign_state(&id_b).unwrap().state.balance(), 200);
     }
 
     #[test]

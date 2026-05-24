@@ -149,7 +149,7 @@ impl PyanaRuntime {
 
         // Create the cell in the ledger.
         let cell = Cell::with_balance(public_key, token_id, initial_balance);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
         self.ledger.insert_cell(cell).unwrap();
 
         // Derive commitment ID for intent matching.
@@ -230,7 +230,7 @@ impl PyanaRuntime {
         let nonce = self
             .ledger
             .get(&cell_id)
-            .map(|c| c.state.nonce)
+            .map(|c| c.state.nonce())
             .unwrap_or(0);
 
         let mut builder = TurnBuilder::new(cell_id, nonce);
@@ -406,7 +406,7 @@ impl PyanaRuntime {
         let nonce = self
             .ledger
             .get(&cell_id)
-            .map(|c| c.state.nonce)
+            .map(|c| c.state.nonce())
             .unwrap_or(0);
 
         let mut builder = TurnBuilder::new(cell_id, nonce);

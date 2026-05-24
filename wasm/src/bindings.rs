@@ -102,7 +102,7 @@ pub fn create_cell(
         let pk = hex_decode_32(owner_pk_hex)?;
         let token_id = *blake3::hash(b"pyana-wasm-default-domain").as_bytes();
         let cell = pyana_cell::Cell::with_balance(pk, token_id, initial_balance);
-        let cell_id = cell.id;
+        let cell_id = cell.id();
         rt.ledger.insert_cell(cell).map_err(|e| format!("{e}"))?;
 
         #[derive(Serialize)]
@@ -150,10 +150,10 @@ pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsErr
         }
 
         let result = CellStateView {
-            cell_id: hex_encode(&cell.id.0),
-            public_key: hex_encode(&cell.public_key),
-            balance: cell.state.balance,
-            nonce: cell.state.nonce,
+            cell_id: hex_encode(&cell.id().0),
+            public_key: hex_encode(&cell.public_key()),
+            balance: cell.state.balance(),
+            nonce: cell.state.nonce(),
             fields: cell.state.fields.iter().map(|f| hex_encode(f)).collect(),
             num_capabilities: cell.capabilities.len(),
             permissions: PermissionsView {
@@ -164,8 +164,8 @@ pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsErr
                 delegate: format!("{:?}", cell.permissions.delegate),
                 access: format!("{:?}", cell.permissions.access),
             },
-            proved_state: cell.state.proved_state,
-            delegation_epoch: cell.state.delegation_epoch,
+            proved_state: cell.state.proved_state(),
+            delegation_epoch: cell.state.delegation_epoch(),
         };
         serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
     })
@@ -188,8 +188,8 @@ pub fn get_all_cells(handle: usize) -> Result<JsValue, JsError> {
             .iter()
             .map(|(id, cell)| CellSummary {
                 cell_id: hex_encode(&id.0),
-                balance: cell.state.balance,
-                nonce: cell.state.nonce,
+                balance: cell.state.balance(),
+                nonce: cell.state.nonce(),
                 num_capabilities: cell.capabilities.len(),
             })
             .collect();
