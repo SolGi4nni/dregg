@@ -4428,8 +4428,21 @@ impl AgentWallet {
     /// Convert turn-level Effects into circuit-level effect_vm::Effects for STARK proving.
     ///
     /// Maps each turn-level `Effect` to the corresponding `effect_vm::Effect` for the
-    /// circuit. Effects not targeting this cell are skipped. Unmapped effect types become
-    /// NoOps (their domain constraints are handled externally or are not balance-relevant).
+    /// circuit. Effects not targeting this cell are skipped.
+    ///
+    /// Stage 1 (`EFFECT-VM-SHAPE-A.md` D): mirrors the executor's
+    /// `convert_turn_effects_to_vm`. Variants without AIR coverage are gated
+    /// behind the `effect-vm-pending-shim` feature on the executor side;
+    /// the wallet side intentionally keeps them as NoOp because the wallet
+    /// is the trust root and should never sign a turn whose proof cannot be
+    /// soundly verified by a production executor.
+    ///
+    /// AUDIT[P1-1]: most per-effect operands below truncate 32-byte hashes
+    /// to 4 bytes via `hash_to_bb` / `field_element_to_bb`. The widening
+    /// landed at the *commitment* layer (OLD_COMMIT / NEW_COMMIT now 4 felts
+    /// via `commitment_to_4bb`); per-effect parameter widening is deferred
+    /// to Stages 3–6 of the master plan, where each variant's AIR is
+    /// rewritten to consume wider operand slots.
     pub fn convert_effects_to_vm(
         cell_id: &CellId,
         effects: &[Effect],
@@ -4437,13 +4450,15 @@ impl AgentWallet {
         use pyana_circuit::effect_vm::Effect as VmEffect;
         use pyana_circuit::field::BabyBear;
 
-        /// Encode the first 4 bytes of a 32-byte field element as a BabyBear value.
+        // AUDIT[P1-1]: 4-byte truncation. See trait-level audit note above.
+        // Stage 1 widens commitment slots only; per-effect parameter slots
+        // remain 31-bit until the per-variant AIR rewrites in Stages 3–6.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
             BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
         }
 
-        /// Encode a 32-byte hash as a BabyBear value (first 4 bytes, mod p).
+        // AUDIT[P1-1]: 4-byte truncation.
         fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
             BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)

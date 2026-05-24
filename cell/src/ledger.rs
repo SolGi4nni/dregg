@@ -245,6 +245,18 @@ pub struct SovereignRegistration {
     /// program in the ProgramRegistry identified by this VK hash.
     #[serde(default)]
     pub verification_key_hash: Option<[u8; 32]>,
+    /// Stage 1 (`DESIGN-max-custom-effects.md`): per-cell maximum number of
+    /// `Effect::Custom` slots allowed in a single turn. The verifier enforces
+    /// `PI[CUSTOM_EFFECT_COUNT] <= max_custom_effects`; the AIR's Stage 1
+    /// sum-check (Group 7) makes `PI[CUSTOM_EFFECT_COUNT]` algebraically
+    /// binding to the trace.
+    ///
+    /// Default (when `None`):
+    /// [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4).
+    /// Hard cap: [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP`]
+    /// (=64).
+    #[serde(default)]
+    pub max_custom_effects: Option<u8>,
 }
 
 /// Default TTL for sovereign cell registrations (in blocks).
@@ -1040,6 +1052,7 @@ impl Ledger {
                 ttl_blocks,
                 last_activity: current_height,
                 verification_key_hash,
+                max_custom_effects: None,
             },
         );
         Ok(())

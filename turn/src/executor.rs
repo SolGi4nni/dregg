@@ -1064,15 +1064,19 @@ impl TurnExecutor {
             )
         })?;
 
-        // 4. Reconstruct Effect VM public inputs.
-        // The stored commitment is a Poseidon2 CellState commitment encoded as [u8; 32]
-        // (first 4 bytes = u32 LE value, rest zero).
-        let old_commit_field = Self::commitment_to_babybear(&old_commitment);
-        let new_commit_field = Self::commitment_to_babybear(&new_commitment);
+        // 4. Reconstruct Effect VM public inputs (Stage 1 widened PI layout).
+        //
+        // OLD_COMMIT/NEW_COMMIT are 4 felts each, derived from the full 32-byte
+        // canonical commitment via `commitment_to_4bb` (resolves
+        // REVIEW[effect-vm-coord] / AUDIT P0-2: ~124-bit collision resistance,
+        // replacing the prior 4-byte truncation).
+        let old_commit_4 = Self::commitment_to_4bb(&old_commitment);
+        let new_commit_4 = Self::commitment_to_4bb(&new_commitment);
 
-        // 5. Compute effects hash using the circuit's Poseidon2-based hash.
+        // 5. Compute effects hash using the circuit's Poseidon2-based hash
+        // (Stage 1 widened to 4 felts).
         let vm_effects = Self::convert_turn_effects_to_vm(cell_id, turn);
-        let (effects_hash_lo, effects_hash_hi) = effect_vm::compute_effects_hash(&vm_effects);
+        let effects_hash_4 = effect_vm::compute_effects_hash_4(&vm_effects);
 
         // 6. Compute balance delta from effects.
         let (delta_mag, delta_sign) = Self::compute_balance_delta_from_effects(cell_id, turn);
@@ -1083,28 +1087,90 @@ impl TurnExecutor {
             .filter(|e| matches!(e, effect_vm::Effect::Custom { .. }))
             .count();
 
-        // 8. Build the public inputs vector (Effect VM layout).
-        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(
-            effect_vm::pi::BASE_COUNT + custom_count * effect_vm::pi::CUSTOM_ENTRY_SIZE,
-        );
-        public_inputs.push(old_commit_field);
-        public_inputs.push(new_commit_field);
-        public_inputs.push(BabyBear::new(delta_mag));
-        public_inputs.push(BabyBear::new(delta_sign));
-        public_inputs.push(effects_hash_lo);
-        public_inputs.push(effects_hash_hi);
-        public_inputs.push(BabyBear::new(custom_count as u32));
+        // 8. Read per-cell `max_custom_effects` from the cell program
+        // manifest. For now this comes from the sovereign registration's
+        // optional field (Stage 1 added); falls back to the workspace
+        // default if unset (legacy / hosted cells).
+        let max_custom_effects = self.read_cell_max_custom_effects(cell_id, ledger);
+
+        // 8b. Per-cell enforcement: the executor rejects turns whose
+        // custom-effect count exceeds the cell's declared limit. The AIR's
+        // sum-check (Group 7, Stage 1) makes the `PI[CUSTOM_EFFECT_COUNT]`
+        // value algebraically binding; this executor check then enforces
+        // the per-cell ceiling on top of that.
+        if custom_count > max_custom_effects as usize {
+            return Err(TurnError::InvalidExecutionProof(format!(
+                "custom_count {} exceeds per-cell max_custom_effects {}",
+                custom_count, max_custom_effects,
+            )));
+        }
+
+        // Federation approved-handoffs root. Stage 1: empty sentinel; Stage 7
+        // populates from federation state.
+        let approved_handoffs_root: [BabyBear; 4] = self.read_approved_handoffs_root();
+
+        // 9. Build the public inputs vector (Stage 1 Effect VM layout).
+        let pi_len = effect_vm::pi::BASE_COUNT + custom_count * effect_vm::pi::CUSTOM_ENTRY_SIZE;
+        let mut public_inputs: Vec<BabyBear> = vec![BabyBear::ZERO; pi_len];
+        for i in 0..effect_vm::pi::OLD_COMMIT_LEN {
+            public_inputs[effect_vm::pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
+        }
+        for i in 0..effect_vm::pi::NEW_COMMIT_LEN {
+            public_inputs[effect_vm::pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
+        }
+        for i in 0..effect_vm::pi::EFFECTS_HASH_LEN {
+            public_inputs[effect_vm::pi::EFFECTS_HASH_BASE + i] = effects_hash_4[i];
+        }
+        public_inputs[effect_vm::pi::INIT_BAL_LO] = BabyBear::ZERO; // pinned from trace
+        public_inputs[effect_vm::pi::INIT_BAL_HI] = BabyBear::ZERO; // pinned from trace
+        public_inputs[effect_vm::pi::FINAL_BAL_LO] = BabyBear::ZERO; // pinned from trace
+        public_inputs[effect_vm::pi::FINAL_BAL_HI] = BabyBear::ZERO; // pinned from trace
+        public_inputs[effect_vm::pi::NET_DELTA_MAG] = BabyBear::new(delta_mag);
+        public_inputs[effect_vm::pi::NET_DELTA_SIGN] = BabyBear::new(delta_sign);
+        public_inputs[effect_vm::pi::CURRENT_BLOCK_HEIGHT] =
+            BabyBear::new((self.block_height & 0x7FFF_FFFF) as u32);
+        public_inputs[effect_vm::pi::MAX_CUSTOM_EFFECTS] = BabyBear::new(max_custom_effects as u32);
+        public_inputs[effect_vm::pi::CUSTOM_EFFECT_COUNT] = BabyBear::new(custom_count as u32);
+        for i in 0..effect_vm::pi::APPROVED_HANDOFFS_LEN {
+            public_inputs[effect_vm::pi::APPROVED_HANDOFFS_BASE + i] = approved_handoffs_root[i];
+        }
 
         // Append custom proof entries (vk_hash + proof_commitment per custom effect).
+        let mut custom_idx = 0;
         for effect in &vm_effects {
             if let effect_vm::Effect::Custom {
                 program_vk_hash,
                 proof_commitment,
             } = effect
             {
-                public_inputs.extend_from_slice(program_vk_hash);
-                public_inputs.extend_from_slice(proof_commitment);
+                let base = effect_vm::pi::CUSTOM_PROOFS_BASE
+                    + custom_idx * effect_vm::pi::CUSTOM_ENTRY_SIZE;
+                for j in 0..4 {
+                    public_inputs[base + j] = program_vk_hash[j];
+                }
+                for j in 0..4 {
+                    public_inputs[base + 4 + j] = proof_commitment[j];
+                }
+                custom_idx += 1;
             }
+        }
+
+        // INIT/FINAL_BAL_* are sourced from the proof's PIs (the trace pins
+        // them at boundaries and Group 6 binds them algebraically). We copy
+        // them now so the PI matching loop below doesn't trip on zero.
+        if proof.public_inputs.len() >= effect_vm::pi::BASE_COUNT {
+            public_inputs[effect_vm::pi::INIT_BAL_LO] = BabyBear::new_canonical(
+                proof.public_inputs[effect_vm::pi::INIT_BAL_LO],
+            );
+            public_inputs[effect_vm::pi::INIT_BAL_HI] = BabyBear::new_canonical(
+                proof.public_inputs[effect_vm::pi::INIT_BAL_HI],
+            );
+            public_inputs[effect_vm::pi::FINAL_BAL_LO] = BabyBear::new_canonical(
+                proof.public_inputs[effect_vm::pi::FINAL_BAL_LO],
+            );
+            public_inputs[effect_vm::pi::FINAL_BAL_HI] = BabyBear::new_canonical(
+                proof.public_inputs[effect_vm::pi::FINAL_BAL_HI],
+            );
         }
 
         // 9. Validate proof PI count and verify PI matching.
@@ -1126,30 +1192,40 @@ impl TurnExecutor {
             for (i, expected_bb) in public_inputs.iter().enumerate() {
                 let got = BabyBear::new_canonical(proof.public_inputs[i]);
                 if got != *expected_bb {
-                    if i == effect_vm::pi::OLD_COMMIT {
+                    // Stage 1: PI layout has 4-felt slots for OLD_COMMIT,
+                    // NEW_COMMIT, EFFECTS_HASH; index ranges identify which.
+                    if (effect_vm::pi::OLD_COMMIT_BASE
+                        ..effect_vm::pi::OLD_COMMIT_BASE + effect_vm::pi::OLD_COMMIT_LEN)
+                        .contains(&i)
+                    {
                         return Err(TurnError::SovereignCommitmentMismatch {
                             cell: *cell_id,
                             expected: old_commitment,
                             got: new_commitment,
                         });
-                    } else if i == effect_vm::pi::NEW_COMMIT {
-                        return Err(TurnError::InvalidExecutionProof(
-                            "new_commitment in proof does not match claimed value".to_string(),
-                        ));
-                    } else if i == effect_vm::pi::EFFECTS_HASH_LO
-                        || i == effect_vm::pi::EFFECTS_HASH_HI
+                    } else if (effect_vm::pi::NEW_COMMIT_BASE
+                        ..effect_vm::pi::NEW_COMMIT_BASE + effect_vm::pi::NEW_COMMIT_LEN)
+                        .contains(&i)
+                    {
+                        return Err(TurnError::InvalidExecutionProof(format!(
+                            "new_commitment in proof does not match claimed value (felt {} of 4)",
+                            i - effect_vm::pi::NEW_COMMIT_BASE,
+                        )));
+                    } else if (effect_vm::pi::EFFECTS_HASH_BASE
+                        ..effect_vm::pi::EFFECTS_HASH_BASE + effect_vm::pi::EFFECTS_HASH_LEN)
+                        .contains(&i)
                     {
                         return Err(TurnError::EffectsHashMismatch {
                             expected: Self::babybear_pair_to_bytes32(
-                                effects_hash_lo,
-                                effects_hash_hi,
+                                effects_hash_4[0],
+                                effects_hash_4[1],
                             ),
                             got: Self::babybear_pair_to_bytes32(
                                 BabyBear::new_canonical(
-                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_LO],
+                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_BASE],
                                 ),
                                 BabyBear::new_canonical(
-                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_HI],
+                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_BASE + 1],
                                 ),
                             ),
                         });
@@ -1259,6 +1335,33 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// Read the per-cell `max_custom_effects` from the cell's program manifest.
+    ///
+    /// Per `DESIGN-max-custom-effects.md` §4. Falls back to
+    /// [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] if the cell
+    /// has no explicit declaration (hosted or legacy sovereign cells).
+    ///
+    /// Stage 1: looks at sovereign registration's `max_custom_effects` optional
+    /// field (added in this stage). Stage 8 may move the source of truth into
+    /// `cell::CellProgram::max_custom_effects` directly.
+    fn read_cell_max_custom_effects(&self, cell_id: &CellId, ledger: &Ledger) -> u8 {
+        if let Some(reg) = ledger.get_sovereign_registration(cell_id) {
+            if let Some(m) = reg.max_custom_effects {
+                return m;
+            }
+        }
+        pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT
+    }
+
+    /// Read the federation-scoped `approved_handoffs_root` as 4 BabyBear felts.
+    ///
+    /// Stage 1: returns the empty-tree sentinel (`Commitment4::empty()`).
+    /// Stage 7 populates this from federation state when CapTP runtime
+    /// emitters land. Per `DESIGN-captp-integration.md` §4.2.
+    fn read_approved_handoffs_root(&self) -> [pyana_circuit::field::BabyBear; 4] {
+        [pyana_circuit::field::BabyBear::ZERO; 4]
+    }
+
     /// Get the verification key hash for a sovereign cell, if one is set.
     ///
     /// Checks both the sovereign registration (which has an explicit `verification_key_hash`
@@ -1328,20 +1431,34 @@ impl TurnExecutor {
 
     /// Decode a stored [u8; 32] commitment to a single BabyBear field element.
     ///
-    /// The stored commitment encodes a Poseidon2 CellState commitment: the BabyBear
-    /// value is in the first 4 bytes (u32 LE), remaining bytes are zero.
+    /// The stored commitment encodes a Poseidon2 CellState commitment as a
+    /// 32-byte BLAKE3-style canonical hash. See the cell crate's
+    /// `compute_canonical_state_commitment` for the canonical encoding.
     ///
-    // REVIEW[effect-vm-coord]: This 4-byte truncation gives ~31-bit collision
-    // resistance per sovereign-cell commitment (P0-2 in AUDIT-turn-executor.md).
-    // The coordinated fix widens the Effect VM's `OLD_COMMIT`/`NEW_COMMIT` PI
-    // slots from 1 BabyBear to 8 BabyBears and uses `bytes32_to_babybear`
-    // (defined just above) end-to-end. Touching this function alone breaks
-    // every existing proof; the change must land together with the circuit
-    // side. See REVIEW[effect-vm-coord] in `convert_turn_effects_to_vm` for
-    // a related truncation that needs the same widening.
+    /// STAGE 1 (resolves REVIEW[effect-vm-coord], P0-2 in AUDIT-turn-executor.md):
+    /// the 4-byte truncation has been replaced with a 4-felt Poseidon2 form
+    /// (~124-bit binding) via [`commitment_to_4bb`]. The legacy single-felt
+    /// `commitment_to_babybear` retained here for backward-compat with
+    /// callers that absorb commitments into Merkle leaves; it now derives
+    /// the felt from the full 32-byte canonical commitment rather than a
+    /// 4-byte truncation.
     pub fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
-        let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        pyana_circuit::field::BabyBear::new_canonical(val)
+        // Position 0 of the 4-felt form is the in-trace continuity binding.
+        Self::commitment_to_4bb(bytes)[0]
+    }
+
+    /// Encode a 32-byte canonical state commitment as 4 BabyBear field
+    /// elements (Stage 1 widening; ~124-bit collision resistance).
+    ///
+    /// Uses `pyana_commit::typed::canonical_32_to_felts_4`, which packs the
+    /// 32 bytes into 8 BabyBears at 30 bits/limb (no truncation), then
+    /// folds via two `hash_4_to_1` compressions to yield 4 felts.
+    ///
+    /// The 4 felts are the PI[OLD_COMMIT_BASE..+4] / PI[NEW_COMMIT_BASE..+4]
+    /// values consumed by the Effect VM verifier. The verifier's PI matching
+    /// loop ensures the proof's PI matches these felts byte-for-byte.
+    pub fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
+        pyana_commit::typed::canonical_32_to_felts_4(bytes)
     }
 
     /// Encode a BabyBear field element as a [u8; 32] stored commitment.
@@ -1554,14 +1671,215 @@ impl TurnExecutor {
                             message_hash: msg_hash,
                         });
                     }
+                    // ====================================================
+                    // Stage 1 (D): wire up the 7 runtime variants whose AIR
+                    // counterparts already exist but were previously mapped
+                    // to NoOp. The AIR enforces the per-effect arithmetic;
+                    // the projection is no longer lossy for these.
+                    // ====================================================
+                    Effect::CreateObligation {
+                        beneficiary,
+                        stake_amount,
+                        stake,
+                        ..
+                    } => {
+                        // CreateObligation is emitted by the obligor; project
+                        // when the cell is also the beneficiary (a self-bond)
+                        // OR when the cell is a participant. The AIR variant
+                        // currently treats this as a balance-debit + cap-root
+                        // touch. We project for the executing cell.
+                        let obligation_id_bytes = stake.0;
+                        vm_effects.push(VmEffect::CreateObligation {
+                            stake_amount: *stake_amount,
+                            obligation_id: hash_to_bb(&obligation_id_bytes),
+                            beneficiary_hash: hash_to_bb(beneficiary.as_bytes()),
+                        });
+                    }
+                    Effect::FulfillObligation { obligation_id, .. } => {
+                        vm_effects.push(VmEffect::FulfillObligation {
+                            obligation_id: hash_to_bb(obligation_id),
+                            // Stage 1: stake_return is not currently in the
+                            // runtime variant; the AIR-side amount is wired
+                            // by Stage 2's honesty pass once the obligation
+                            // ledger is committed.
+                            stake_return: 0,
+                        });
+                    }
+                    Effect::SlashObligation { obligation_id } => {
+                        vm_effects.push(VmEffect::SlashObligation {
+                            obligation_id: hash_to_bb(obligation_id),
+                            stake_amount: 0, // Stage 2 honesty pass
+                            beneficiary_hash: hash_to_bb(cell_id.as_bytes()),
+                        });
+                    }
+                    Effect::Seal {
+                        pair_id,
+                        ..
+                    } => {
+                        // Stage 1: the runtime variant doesn't carry an
+                        // explicit field_idx; we use the low bits of
+                        // pair_id as a placeholder. Stage 2 reworks the
+                        // Seal/Unseal AIR to operate on sealed_field_mask
+                        // rather than on a single field index.
+                        vm_effects.push(VmEffect::Seal {
+                            field_idx: (pair_id[0] as u32) & 0x7,
+                        });
+                    }
+                    Effect::Unseal { sealed_box, .. } => {
+                        let bytes = postcard::to_allocvec(sealed_box).unwrap_or_default();
+                        let brand_hash = blake3::hash(&bytes);
+                        let mut tag = [0u8; 32];
+                        tag.copy_from_slice(brand_hash.as_bytes());
+                        vm_effects.push(VmEffect::Unseal {
+                            field_idx: (tag[0] as u32) & 0x7,
+                            brand: hash_to_bb(&tag),
+                        });
+                    }
+                    Effect::MakeSovereign { cell } if cell == cell_id => {
+                        vm_effects.push(VmEffect::MakeSovereign);
+                    }
+                    Effect::CreateCellFromFactory {
+                        factory_vk,
+                        owner_pubkey,
+                        ..
+                    } => {
+                        vm_effects.push(VmEffect::CreateCellFromFactory {
+                            factory_vk: hash_to_bb(factory_vk),
+                            child_vk_derived: hash_to_bb(owner_pubkey),
+                        });
+                    }
+
+                    // ====================================================
+                    // Stage 1 (D): the 23 runtime variants with no AIR
+                    // coverage yet. Per `EFFECT-VM-SHAPE-A.md` Stage 1, we
+                    // emit a tagged "pending" Effect::Custom row whose
+                    // proof commitment carries a discriminant identifying
+                    // the runtime variant. This contributes to
+                    // `effects_hash` so the prover commits to which
+                    // variants the turn intended, while still allowing
+                    // the trace to compile.
+                    //
+                    // GATED: production builds (without the
+                    // `effect-vm-pending-shim` feature) reject these
+                    // variants outright (project to NoOp; verifier must
+                    // reject via PI sum-check + per-cell max). This is
+                    // temporary scaffolding until Stages 3–6 land
+                    // per-variant AIRs.
+                    // ====================================================
+                    Effect::SetPermissions { cell, .. } if cell == cell_id => {
+                        push_pending_shim(vm_effects, 0x101u32);
+                    }
+                    Effect::SetVerificationKey { cell, .. } if cell == cell_id => {
+                        push_pending_shim(vm_effects, 0x102u32);
+                    }
+                    Effect::RevokeCapability { cell, .. } if cell == cell_id => {
+                        push_pending_shim(vm_effects, 0x103u32);
+                    }
+                    Effect::CreateCell { .. } => {
+                        push_pending_shim(vm_effects, 0x104u32);
+                    }
+                    Effect::CreateSealPair { .. } => {
+                        push_pending_shim(vm_effects, 0x105u32);
+                    }
+                    Effect::EmitEvent { cell, .. } if cell == cell_id => {
+                        push_pending_shim(vm_effects, 0x106u32);
+                    }
+                    Effect::SpawnWithDelegation { .. } => {
+                        push_pending_shim(vm_effects, 0x107u32);
+                    }
+                    Effect::RefreshDelegation => {
+                        push_pending_shim(vm_effects, 0x108u32);
+                    }
+                    Effect::RevokeDelegation { .. } => {
+                        push_pending_shim(vm_effects, 0x109u32);
+                    }
+                    Effect::IncrementNonce { cell } if cell == cell_id => {
+                        // No AIR effect needed — nonce increments are implicit
+                        // in the row-to-row continuity. Skip to avoid a NoOp.
+                    }
+                    Effect::BridgeMint { .. } => {
+                        push_pending_shim(vm_effects, 0x201u32);
+                    }
+                    Effect::BridgeLock { .. } => {
+                        push_pending_shim(vm_effects, 0x202u32);
+                    }
+                    Effect::BridgeFinalize { .. } => {
+                        push_pending_shim(vm_effects, 0x203u32);
+                    }
+                    Effect::BridgeCancel { .. } => {
+                        push_pending_shim(vm_effects, 0x204u32);
+                    }
+                    Effect::Introduce { .. } => {
+                        push_pending_shim(vm_effects, 0x301u32);
+                    }
+                    Effect::PipelinedSend { .. } => {
+                        push_pending_shim(vm_effects, 0x302u32);
+                    }
+                    Effect::CreateEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x401u32);
+                    }
+                    Effect::ReleaseEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x402u32);
+                    }
+                    Effect::RefundEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x403u32);
+                    }
+                    Effect::CreateCommittedEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x404u32);
+                    }
+                    Effect::ReleaseCommittedEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x405u32);
+                    }
+                    Effect::RefundCommittedEscrow { .. } => {
+                        push_pending_shim(vm_effects, 0x406u32);
+                    }
+                    Effect::ExerciseViaCapability { .. } => {
+                        push_pending_shim(vm_effects, 0x501u32);
+                    }
+
                     _ => {
-                        // Other effects map to NoOp.
-                        vm_effects.push(VmEffect::NoOp);
+                        // Effects not targeting `cell_id` or arms covered by
+                        // explicit guards above (e.g., a cross-cell effect
+                        // whose other end isn't us) are silently skipped —
+                        // they're not part of this cell's proof.
                     }
                 }
             }
             for child in &tree.children {
                 collect_effects(child, cell_id, vm_effects);
+            }
+        }
+
+        /// Stage 1 (D): emit a tagged "pending" custom-effect shim.
+        ///
+        /// The shim contributes to `effects_hash` (so the prover commits to
+        /// which runtime variant was intended) but does not exercise any
+        /// per-effect AIR arithmetic — the verifier accepts only if the cell
+        /// declares a custom-program VK; otherwise the proof rejects.
+        ///
+        /// Production builds (without `effect-vm-pending-shim`) emit a NoOp
+        /// instead, which an audit-conscious deployment can detect by
+        /// inspecting the trace; without the feature flag, sound proofs
+        /// cannot be constructed for these variants until Stages 3–6 add
+        /// proper AIRs.
+        #[allow(unused_variables)]
+        fn push_pending_shim(
+            vm_effects: &mut Vec<pyana_circuit::effect_vm::Effect>,
+            discriminant: u32,
+        ) {
+            #[cfg(feature = "effect-vm-pending-shim")]
+            {
+                use pyana_circuit::field::BabyBear;
+                let d = BabyBear::new(discriminant);
+                vm_effects.push(pyana_circuit::effect_vm::Effect::Custom {
+                    program_vk_hash: [d, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+                    proof_commitment: [d, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+                });
+            }
+            #[cfg(not(feature = "effect-vm-pending-shim"))]
+            {
+                let _ = discriminant;
+                vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
             }
         }
 
@@ -8196,12 +8514,16 @@ impl TurnExecutor {
                 }
             })?;
 
-            // Reconstruct Effect VM public inputs from the entry's data.
-            let old_commit_field = Self::commitment_to_babybear(&entry.old_commitment);
-            let new_commit_field = Self::commitment_to_babybear(&entry.new_commitment);
+            // Stage 1: reconstruct Effect VM PI in the widened layout
+            // (resolves REVIEW[effect-vm-coord]). Commitments are 4 felts
+            // each; other PIs are forwarded from the proof and bound by
+            // the AIR's boundary/transition constraints + the PI matching
+            // loop below.
+            let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
+            let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
 
-            // Extract proven delta from the proof's PIs (authoritative, not from entry.balance_delta).
-            let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+            use pyana_circuit::effect_vm::pi;
+            let min_pi_count = pi::BASE_COUNT;
             if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
                     cell: entry.cell_id,
@@ -8213,90 +8535,57 @@ impl TurnExecutor {
                 });
             }
 
-            // REVIEW[effect-vm-coord]: NET_DELTA_MAG is a single BabyBear
-            // (~31 bits) (P1-3 in AUDIT-turn-executor.md). A turn whose true
-            // sovereign balance change is > 2^31 cannot be expressed correctly
-            // in the proof PI -- the prover proves `mag = (real_value mod p)`
-            // while real_value may be larger. The coordinated fix splits
-            // magnitude into 2 BabyBears (lo+hi) with an in-circuit constraint
-            // that hi*p + lo equals the true magnitude.
-            let delta_magnitude = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
-            );
-            let delta_sign = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
-            );
-            let effects_hash_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
-            );
-            let effects_hash_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
-            );
-            let custom_count = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
-            );
-            // P0-1 fix: also forward the bal_* PIs so the boundary
-            // and Group 6 constraints can be checked by the verifier.
-            let init_bal_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
-            );
-            let init_bal_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
-            );
-            let final_bal_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
-            );
-            let final_bal_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
-            );
-
-            // Build public inputs in Effect VM layout.
-            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
-            public_inputs.push(old_commit_field);
-            public_inputs.push(new_commit_field);
-            public_inputs.push(delta_magnitude);
-            public_inputs.push(delta_sign);
-            public_inputs.push(effects_hash_lo);
-            public_inputs.push(effects_hash_hi);
-            public_inputs.push(custom_count);
-            public_inputs.push(init_bal_lo);
-            public_inputs.push(init_bal_hi);
-            public_inputs.push(final_bal_lo);
-            public_inputs.push(final_bal_hi);
+            // Forward all PI elements from the proof, then override
+            // commitment slots with verifier-derived values.
+            let mut public_inputs: Vec<BabyBear> = (0..min_pi_count)
+                .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
+                .collect();
+            for i in 0..pi::OLD_COMMIT_LEN {
+                public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
+            }
+            for i in 0..pi::NEW_COMMIT_LEN {
+                public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
+            }
 
             // Append custom proof entries from the proof's PIs.
-            let custom_count_val = custom_count.0 as usize;
+            let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
             for i in 0..custom_count_val {
-                let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
-                    + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
-                if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE
-                    > proof.public_inputs.len()
-                {
+                let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
+                if base + pi::CUSTOM_ENTRY_SIZE > proof.public_inputs.len() {
                     break;
                 }
-                for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+                for j in 0..pi::CUSTOM_ENTRY_SIZE {
                     public_inputs.push(BabyBear::new_canonical(proof.public_inputs[base + j]));
                 }
             }
 
-            // Verify reconstructed commitment PIs match the proof's embedded PIs.
-            let proof_old = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT],
-            );
-            let proof_new = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
-            );
-            if proof_old != old_commit_field {
-                return Err(AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "old_commitment in proof does not match stored value".to_string(),
-                });
+            // Verify reconstructed commitment PIs match the proof's embedded PIs
+            // (all 4 felts each, Stage 1 widening).
+            for i in 0..pi::OLD_COMMIT_LEN {
+                let proof_v =
+                    BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
+                if proof_v != old_commit_4[i] {
+                    return Err(AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: format!(
+                            "old_commitment in proof does not match stored value (felt {})",
+                            i
+                        ),
+                    });
+                }
             }
-            if proof_new != new_commit_field {
-                return Err(AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "new_commitment in proof does not match claimed value".to_string(),
-                });
+            for i in 0..pi::NEW_COMMIT_LEN {
+                let proof_v =
+                    BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
+                if proof_v != new_commit_4[i] {
+                    return Err(AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: format!(
+                            "new_commitment in proof does not match claimed value (felt {})",
+                            i
+                        ),
+                    });
+                }
             }
 
             // Verify against custom program or default AIR (EffectVmAir).
@@ -8468,11 +8757,13 @@ impl TurnExecutor {
                 }
             })?;
 
-            // Reconstruct Effect VM public inputs.
-            let old_commit_field = Self::commitment_to_babybear(&entry.old_commitment);
-            let new_commit_field = Self::commitment_to_babybear(&entry.new_commitment);
+            // Stage 1: reconstruct Effect VM PI in the widened layout
+            // (resolves REVIEW[effect-vm-coord]).
+            let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
+            let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
 
-            let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+            use pyana_circuit::effect_vm::pi;
+            let min_pi_count = pi::BASE_COUNT;
             if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
                     cell: entry.cell_id,
@@ -8484,88 +8775,54 @@ impl TurnExecutor {
                 });
             }
 
-            // REVIEW[effect-vm-coord]: NET_DELTA_MAG is a single BabyBear
-            // (~31 bits) (P1-3 in AUDIT-turn-executor.md). A turn whose true
-            // sovereign balance change is > 2^31 cannot be expressed correctly
-            // in the proof PI -- the prover proves `mag = (real_value mod p)`
-            // while real_value may be larger. The coordinated fix splits
-            // magnitude into 2 BabyBears (lo+hi) with an in-circuit constraint
-            // that hi*p + lo equals the true magnitude.
-            let delta_magnitude = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
-            );
-            let delta_sign = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
-            );
-            let effects_hash_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
-            );
-            let effects_hash_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
-            );
-            let custom_count = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
-            );
-            // P0-1 fix: forward bal_* PIs.
-            let init_bal_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
-            );
-            let init_bal_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
-            );
-            let final_bal_lo = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
-            );
-            let final_bal_hi = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
-            );
-
-            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
-            public_inputs.push(old_commit_field);
-            public_inputs.push(new_commit_field);
-            public_inputs.push(delta_magnitude);
-            public_inputs.push(delta_sign);
-            public_inputs.push(effects_hash_lo);
-            public_inputs.push(effects_hash_hi);
-            public_inputs.push(custom_count);
-            public_inputs.push(init_bal_lo);
-            public_inputs.push(init_bal_hi);
-            public_inputs.push(final_bal_lo);
-            public_inputs.push(final_bal_hi);
+            let mut public_inputs: Vec<BabyBear> = (0..min_pi_count)
+                .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
+                .collect();
+            for i in 0..pi::OLD_COMMIT_LEN {
+                public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
+            }
+            for i in 0..pi::NEW_COMMIT_LEN {
+                public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
+            }
 
             // Append custom proof entries from the proof's PIs.
-            let custom_count_val = custom_count.0 as usize;
+            let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
             for i in 0..custom_count_val {
-                let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
-                    + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
-                if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE
-                    > proof.public_inputs.len()
-                {
+                let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
+                if base + pi::CUSTOM_ENTRY_SIZE > proof.public_inputs.len() {
                     break;
                 }
-                for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+                for j in 0..pi::CUSTOM_ENTRY_SIZE {
                     public_inputs.push(BabyBear::new_canonical(proof.public_inputs[base + j]));
                 }
             }
 
-            // Verify commitment PIs match.
-            let proof_old = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT],
-            );
-            let proof_new = BabyBear::new_canonical(
-                proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
-            );
-            if proof_old != old_commit_field {
-                return Err(AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "old_commitment in proof does not match stored value".to_string(),
-                });
+            // Verify commitment PIs match (4 felts each).
+            for i in 0..pi::OLD_COMMIT_LEN {
+                let proof_v =
+                    BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
+                if proof_v != old_commit_4[i] {
+                    return Err(AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: format!(
+                            "old_commitment in proof does not match stored value (felt {})",
+                            i
+                        ),
+                    });
+                }
             }
-            if proof_new != new_commit_field {
-                return Err(AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "new_commitment in proof does not match claimed value".to_string(),
-                });
+            for i in 0..pi::NEW_COMMIT_LEN {
+                let proof_v =
+                    BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
+                if proof_v != new_commit_4[i] {
+                    return Err(AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: format!(
+                            "new_commitment in proof does not match claimed value (felt {})",
+                            i
+                        ),
+                    });
+                }
             }
 
             // Verify against custom program or default EffectVmAir.

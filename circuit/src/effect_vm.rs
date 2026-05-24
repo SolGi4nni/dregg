@@ -99,9 +99,10 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 24 selectors + 14 state_before + 8 params + 14 state_after + 11 aux = 71.
-/// (aux[8..10] = state commitment intermediates for constrainable tree hash)
-pub const EFFECT_VM_WIDTH: usize = 71;
+/// Layout: 24 selectors + 14 state_before + 8 params + 14 state_after + 12 aux = 72.
+/// (aux[8..10] = state commitment intermediates for constrainable tree hash;
+///  aux[11] = cumulative custom-effect count for sum-check, Stage 1)
+pub const EFFECT_VM_WIDTH: usize = 72;
 
 /// Number of effect types (selectors).
 pub const NUM_EFFECTS: usize = 24;
@@ -174,8 +175,9 @@ pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 22 + 14 = 36
 pub const NUM_PARAMS: usize = 8;
 /// Auxiliary witness base column.
 pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 44 + 14 = 58
-/// Number of auxiliary columns (expanded for state commitment tree intermediates).
-pub const NUM_AUX: usize = 11;
+/// Number of auxiliary columns (expanded for state commitment tree intermediates +
+/// Stage 1 cumulative custom-effect count column).
+pub const NUM_AUX: usize = 12;
 
 /// Auxiliary column offsets for state commitment tree intermediates.
 pub mod aux_off {
@@ -185,6 +187,10 @@ pub mod aux_off {
     pub const STATE_INTER2: usize = 9;
     /// Intermediate 3: hash_4_to_1(field[5], field[6], field[7], cap_root)
     pub const STATE_INTER3: usize = 10;
+    /// Stage 1: cumulative count of `s_custom == 1` rows up to and including
+    /// this row. Boundary-pinned at last row to `PI[CUSTOM_EFFECT_COUNT]`
+    /// (sum-check, per `DESIGN-max-custom-effects.md` §6 step 3).
+    pub const CUSTOM_COUNT_ACC: usize = 11;
 }
 
 /// Effect parameter meanings per effect type.
@@ -356,46 +362,106 @@ pub mod param {
 }
 
 /// Public input layout.
+///
+/// Stage 1 widening (`EFFECT-VM-SHAPE-A.md`): commitments grow from 1 felt
+/// (~31-bit binding) to 4 felts (~124-bit binding), via the typed
+/// `Commitment4<T>` framework (`pyana_commit::typed`). Position 0 of each
+/// 4-tuple corresponds to the in-trace `state::STATE_COMMIT` continuity
+/// column; positions 1..3 are bound to the canonical cell state by the
+/// executor's PI matching loop (it recomputes all 4 deterministically from
+/// the stored canonical bytes via `pyana_commit::typed::canonical_32_to_felts_4`).
+///
+/// AUDIT[stage1-trace-widen]: For Stage 1, the trace `state::STATE_COMMIT`
+/// remains a 1-column continuity hash (Constraint Group 4 unchanged). The
+/// extra 3 PI elements get their security from the executor PI matching
+/// loop. Stage 2 (`EFFECT-VM-SHAPE-A.md` Phase 1) widens the trace column.
 pub mod pi {
-    /// Old state commitment (single Poseidon2 hash of full state).
-    pub const OLD_COMMIT: usize = 0;
-    /// New state commitment (single Poseidon2 hash of full state).
-    pub const NEW_COMMIT: usize = 1;
-    /// Net balance delta: [magnitude, sign_bit].
-    pub const NET_DELTA_MAG: usize = 2;
-    pub const NET_DELTA_SIGN: usize = 3;
-    /// Effects hash (2 BabyBear elements: lo, hi).
-    pub const EFFECTS_HASH_LO: usize = 4;
-    pub const EFFECTS_HASH_HI: usize = 5;
-    /// Number of custom effects in this turn (0 if none).
-    pub const CUSTOM_EFFECT_COUNT: usize = 6;
-    // ------------------------------------------------------------------
-    // SOUNDNESS FIX (P0-1): Algebraic binding of net_delta to actual trace
-    // balance deltas. These PIs pin row 0 `state_before.balance_*` and last
-    // row `state_after.balance_*` via boundary constraints, and a per-row
-    // PI-only constraint enforces NET_DELTA matches the actual delta. The
-    // verifier MUST derive these from the same initial/final cell state it
-    // uses to derive OLD_COMMIT/NEW_COMMIT — otherwise the binding leaks.
-    // ------------------------------------------------------------------
+    // ---- Commitments (Stage 1 widened to 4 felts each, ~124-bit) ----
+    /// Old state commitment, 4-felt Poseidon2 form.
+    pub const OLD_COMMIT_BASE: usize = 0;
+    pub const OLD_COMMIT_LEN: usize = 4;
+    /// New state commitment, 4-felt Poseidon2 form.
+    pub const NEW_COMMIT_BASE: usize = 4;
+    pub const NEW_COMMIT_LEN: usize = 4;
+    /// Effects-tree hash, 4-felt Poseidon2 form. Promotes the prior 2-felt
+    /// (lo+synthetic-hi) form to 4 felts; synthetic-hi is dropped.
+    pub const EFFECTS_HASH_BASE: usize = 8;
+    pub const EFFECTS_HASH_LEN: usize = 4;
+
+    // ---- Backwards-compatible aliases (position 0 only) ----
+    /// Legacy alias: position 0 of OLD_COMMIT_BASE (single-felt continuity binding).
+    pub const OLD_COMMIT: usize = OLD_COMMIT_BASE;
+    /// Legacy alias: position 0 of NEW_COMMIT_BASE.
+    pub const NEW_COMMIT: usize = NEW_COMMIT_BASE;
+    /// Legacy alias: position 0 of EFFECTS_HASH_BASE.
+    pub const EFFECTS_HASH_LO: usize = EFFECTS_HASH_BASE;
+    /// Legacy alias: position 1 of EFFECTS_HASH_BASE. AUDIT[stage1-effects-hash]:
+    /// callers reading this should switch to absorbing all 4 elements via the
+    /// EFFECTS_HASH_LEN range; the prior synthetic-hi binding is replaced by
+    /// independent Poseidon2 squeezes.
+    pub const EFFECTS_HASH_HI: usize = EFFECTS_HASH_BASE + 1;
+
+    // ---- Per-cell balance limbs (P0-1 net_delta binding) ----
     /// Initial balance low limb (30 bits) — pinned to row 0 state_before.
-    pub const INIT_BAL_LO: usize = 7;
+    pub const INIT_BAL_LO: usize = 12;
     /// Initial balance high limb — pinned to row 0 state_before.
-    pub const INIT_BAL_HI: usize = 8;
+    pub const INIT_BAL_HI: usize = 13;
     /// Final balance low limb — pinned to last row state_after.
-    pub const FINAL_BAL_LO: usize = 9;
+    pub const FINAL_BAL_LO: usize = 14;
     /// Final balance high limb — pinned to last row state_after.
-    pub const FINAL_BAL_HI: usize = 10;
-    /// Custom proof commitments start here.
+    pub const FINAL_BAL_HI: usize = 15;
+
+    // ---- Net balance delta (P0-1 binding) ----
+    pub const NET_DELTA_MAG: usize = 16;
+    pub const NET_DELTA_SIGN: usize = 17;
+
+    // ---- Stage 1 additions (per EFFECT-VM-SHAPE-A.md G, E, F) ----
+    /// Federation block height supplied by the verifier. Used by effects
+    /// that take a timeout (escrow refund, bridge cancel) — those land in
+    /// later stages; the PI slot exists now so they have it.
+    pub const CURRENT_BLOCK_HEIGHT: usize = 18;
+    /// Per-cell maximum custom effects (from cell program manifest).
+    /// Verifier supplies from `cell.program.max_custom_effects`.
+    pub const MAX_CUSTOM_EFFECTS: usize = 19;
+    /// Number of custom effects in this turn (0 if none). The AIR enforces
+    /// `Σ s_custom == PI[CUSTOM_EFFECT_COUNT]` (sum-check, soundness
+    /// prerequisite per `DESIGN-max-custom-effects.md` §7 threat 3).
+    pub const CUSTOM_EFFECT_COUNT: usize = 20;
+
+    // ---- CapTP federation-state root (Stage 1 prep; populated in Stage 7) ----
+    /// Federation-scoped approved-handoffs Merkle root, 4-felt Poseidon2 form.
+    /// Initial value: empty-tree sentinel (Commitment4::empty()).
+    pub const APPROVED_HANDOFFS_BASE: usize = 21;
+    pub const APPROVED_HANDOFFS_LEN: usize = 4;
+
+    // ---- Custom proof commitments ----
     /// For each custom effect i (0..custom_count):
     ///   PI[CUSTOM_PROOFS_BASE + i*8 + 0..4] = custom_program_vk_hash (4 elements)
     ///   PI[CUSTOM_PROOFS_BASE + i*8 + 4..8] = custom_proof_commitment (4 elements)
-    pub const CUSTOM_PROOFS_BASE: usize = 11;
+    pub const CUSTOM_PROOFS_BASE: usize = 25;
     /// Base public inputs (without custom proof data).
-    pub const BASE_COUNT: usize = 11;
-    /// Maximum number of custom effects supported per turn.
-    pub const MAX_CUSTOM_EFFECTS: usize = 4;
+    pub const BASE_COUNT: usize = 25;
     /// Elements per custom effect entry in PI (4 vk_hash + 4 proof_commit).
     pub const CUSTOM_ENTRY_SIZE: usize = 8;
+
+    // ---- Hard cap on declared max_custom_effects ----
+    /// Hard ceiling: a cell declaring more than this is refused at registration
+    /// time. Per `DESIGN-max-custom-effects.md` §5, bounds worst-case verifier
+    /// child-proof work to ~3.2s/turn at 50ms/proof.
+    pub const MAX_CUSTOM_EFFECTS_HARD_CAP: u8 = 64;
+    /// Soft cap: the recommended workspace ceiling. Cells declaring up to this
+    /// are uncontroversial; cells declaring 17..64 should justify the choice.
+    pub const MAX_CUSTOM_EFFECTS_SOFT_CAP: u8 = 16;
+    /// Default value for cells that don't declare a per-cell max. Matches the
+    /// pre-Stage-1 workspace constant.
+    pub const MAX_CUSTOM_EFFECTS_DEFAULT: u8 = 4;
+
+    // AUDIT[stage1-pi-only-bound]: PI[OLD_COMMIT_BASE+1..+4],
+    // PI[NEW_COMMIT_BASE+1..+4], PI[EFFECTS_HASH_BASE+1..+4], and the entire
+    // PI[APPROVED_HANDOFFS_BASE..+4] are bound only by the executor's PI
+    // matching loop (deterministic recomputation from cell/federation
+    // state), not by per-row AIR constraints. Stage 2 may add aux columns
+    // to anchor positions 1..3 of state-commit forms inside the trace.
 }
 
 // ============================================================================
@@ -694,6 +760,38 @@ impl CellState {
         hash_4_to_1(&[inter1, inter2, inter3, BabyBear::ZERO])
     }
 
+    /// Stage 1: compute the 4-felt state commitment for the public input layout.
+    ///
+    /// Position 0 matches [`compute_commitment`] exactly (the in-trace
+    /// continuity column). Positions 1..3 are 3 additional independent
+    /// Poseidon2 compressions of the same intermediates with different
+    /// "salt" felts. The result is bound at row-0 / last-row boundaries
+    /// (position 0 in-trace; positions 1..3 via PI matching against the
+    /// executor's independently-computed canonical form).
+    ///
+    /// AUDIT[stage1-pi-only-bound]: positions 1..3 are constrained only by
+    /// the executor's PI-matching loop (see `turn/src/executor.rs::verify_proof_carrying_turn`)
+    /// — they bind the proof to the verifier's view of cell state but not
+    /// to the trace. Stage 2 may add aux columns to extend the in-trace
+    /// continuity binding to all 4 felts.
+    pub fn compute_commitment_4(
+        balance: u64,
+        nonce: u32,
+        fields: &[BabyBear; 8],
+        capability_root: BabyBear,
+    ) -> [BabyBear; 4] {
+        let (lo, hi) = split_u64(balance);
+        let inter1 = hash_4_to_1(&[lo, hi, BabyBear::new(nonce), fields[0]]);
+        let inter2 = hash_4_to_1(&[fields[1], fields[2], fields[3], fields[4]]);
+        let inter3 = hash_4_to_1(&[fields[5], fields[6], fields[7], capability_root]);
+        [
+            hash_4_to_1(&[inter1, inter2, inter3, BabyBear::ZERO]),
+            hash_4_to_1(&[inter1, inter2, inter3, BabyBear::ONE]),
+            hash_4_to_1(&[inter1, inter2, inter3, BabyBear::new(2)]),
+            hash_4_to_1(&[inter1, inter2, inter3, BabyBear::new(3)]),
+        ]
+    }
+
     /// Compute the three intermediate hashes for the state commitment tree.
     /// Returns (inter1, inter2, inter3) which are needed as witness values.
     pub fn compute_commitment_intermediates(
@@ -973,9 +1071,26 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
         }
     }
     let h = hash_many(&hasher_inputs);
-    // Split into two elements for wider coverage.
+    // Split into two elements for wider coverage (legacy 2-felt form).
     let h2 = hash_2_to_1(h, BabyBear::new(0xEFFEC7));
     (h, h2)
+}
+
+/// Stage 1: 4-felt effects hash for the widened PI layout.
+///
+/// Position 0 matches [`compute_effects_hash`] (the legacy `EFFECTS_HASH_LO`);
+/// positions 1..3 are 3 additional independent Poseidon2 compressions.
+/// Drops the synthetic `EFFECTS_HASH_HI = hash_2_to_1(h, 0xEFFEC7)` binding
+/// in favor of 4 independent squeezes, giving ~124-bit collision resistance.
+pub fn compute_effects_hash_4(effects: &[Effect]) -> [BabyBear; 4] {
+    let (h, _h_legacy_hi) = compute_effects_hash(effects);
+    // Independent squeezes via hash_4_to_1 with distinct salts.
+    [
+        h,
+        hash_4_to_1(&[h, BabyBear::ONE, BabyBear::ZERO, BabyBear::ZERO]),
+        hash_4_to_1(&[h, BabyBear::new(2), BabyBear::ZERO, BabyBear::ZERO]),
+        hash_4_to_1(&[h, BabyBear::new(3), BabyBear::ZERO, BabyBear::ZERO]),
+    ]
 }
 
 // ============================================================================
@@ -2353,6 +2468,32 @@ impl StarkAir for EffectVmAir {
 
             let c_delta_bind = actual_delta - signed_delta;
             combined = combined + alpha_pow * c_delta_bind;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // ====================================================================
+        // CONSTRAINT GROUP 7: Custom-effect count sum-check (Stage 1)
+        // ====================================================================
+        // Per `DESIGN-max-custom-effects.md` §6 step 3: bind the cumulative
+        // sum of `s_custom` selector across rows to `PI[CUSTOM_EFFECT_COUNT]`.
+        //
+        // The cumulative-count column aux[CUSTOM_COUNT_ACC] is constrained by
+        // a transition: next.acc - this.acc - this.s_custom == 0. The boundary
+        // (last row, aux[CUSTOM_COUNT_ACC]) is pinned to PI[CUSTOM_EFFECT_COUNT]
+        // (see `boundary_constraints`).
+        //
+        // Without this, a prover with control over its witness generator can
+        // place `s_custom == 1` on a row without declaring it in PI, hiding a
+        // custom effect from the executor's child-proof verification loop
+        // (`turn/src/executor.rs:1192-1235`). The sum-check makes the count
+        // algebraically binding.
+        {
+            let this_acc = local[AUX_BASE + aux_off::CUSTOM_COUNT_ACC];
+            let next_acc = next[AUX_BASE + aux_off::CUSTOM_COUNT_ACC];
+            let next_s_custom = next[sel::CUSTOM];
+            // next.acc == this.acc + next.s_custom  (acc is inclusive count of [0..=i])
+            let c_acc_step = next_acc - this_acc - next_s_custom;
+            combined = combined + alpha_pow * c_acc_step;
             // alpha_pow = alpha_pow * alpha; // not needed after last
         }
 
@@ -2431,17 +2572,47 @@ impl StarkAir for EffectVmAir {
             value: public_inputs[pi::FINAL_BAL_HI],
         });
 
-        // Effects hash binding.
+        // Effects hash binding (position 0 of the 4-felt Stage 1 form is the
+        // in-trace continuity binding; positions 1..3 are bound by the
+        // executor's PI-matching loop, not by AIR boundaries — see
+        // AUDIT[stage1-pi-only-bound] in pi module).
         constraints.push(BoundaryConstraint {
             row: 0,
             col: AUX_BASE + 4,
-            value: public_inputs[pi::EFFECTS_HASH_LO],
+            value: public_inputs[pi::EFFECTS_HASH_BASE],
         });
+        // EFFECTS_HASH_BASE + 1: bound to AUX_BASE + 5 as before (preserves
+        // legacy 2-felt witness binding; positions 2..3 are PI-only).
         constraints.push(BoundaryConstraint {
             row: 0,
             col: AUX_BASE + 5,
-            value: public_inputs[pi::EFFECTS_HASH_HI],
+            value: public_inputs[pi::EFFECTS_HASH_BASE + 1],
         });
+
+        // Stage 1 sum-check: last row's cumulative custom-count column equals
+        // PI[CUSTOM_EFFECT_COUNT]. Combined with Group 7's transition
+        // (`next.acc == this.acc + next.s_custom`, inclusive convention),
+        // this constrains the prover's declared count to the sum of
+        // `s_custom == 1` indicators across rows 1..=last_row.
+        constraints.push(BoundaryConstraint {
+            row: last_row,
+            col: AUX_BASE + aux_off::CUSTOM_COUNT_ACC,
+            value: public_inputs[pi::CUSTOM_EFFECT_COUNT],
+        });
+
+        // REVIEW[stage1-acc-row0]: Group 7's transition does not constrain
+        // row 0's `acc`. The trace generator initialises it honestly to
+        // `s_custom[0]` (so the chain is correct), but an adversarial prover
+        // could shift `acc[0]` by a constant, hiding (or fabricating)
+        // custom-effect counts by the same amount. The defence in depth is:
+        // - the executor's PI matching loop (`turn/src/executor.rs:1126`)
+        //   recomputes `PI[CUSTOM_EFFECT_COUNT]` independently from the
+        //   turn's runtime effects and rejects any mismatch;
+        // - the per-cell `max_custom_effects` PI bound enforced by the
+        //   executor (and, in Stage 2, by an in-circuit comparison).
+        // Stage 2 should add an explicit row-0 boundary constraint or
+        // promote `acc` to a 2-aux delta-column with a per-row equality
+        // constraint `acc - cumulative_s_custom == 0`.
 
         // ====================================================================
         // SOUNDNESS FIX (Gap 1): Net delta range check via balance binding.
@@ -2495,6 +2666,46 @@ impl StarkAir for EffectVmAir {
 pub fn generate_effect_vm_trace(
     initial_state: &CellState,
     effects: &[Effect],
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    generate_effect_vm_trace_ext(
+        initial_state,
+        effects,
+        EffectVmContext::default(),
+    )
+}
+
+/// Extra context that goes into the widened PI layout (Stage 1).
+///
+/// All fields have safe defaults for backwards-compat: zero block height,
+/// default `max_custom_effects`, empty approved-handoffs root.
+#[derive(Clone, Copy, Debug)]
+pub struct EffectVmContext {
+    /// Federation block height at turn-commit time. Used by timeout-bearing
+    /// effects in later stages.
+    pub current_block_height: u64,
+    /// Per-cell maximum custom effects (from cell program manifest).
+    pub max_custom_effects: u8,
+    /// Federation-scoped approved-handoffs Merkle root (4-felt Poseidon2 form).
+    /// Empty by default until Stage 7 populates the runtime emitter side.
+    pub approved_handoffs_root: [BabyBear; 4],
+}
+
+impl Default for EffectVmContext {
+    fn default() -> Self {
+        Self {
+            current_block_height: 0,
+            max_custom_effects: pi::MAX_CUSTOM_EFFECTS_DEFAULT,
+            approved_handoffs_root: [BabyBear::ZERO; 4],
+        }
+    }
+}
+
+/// Stage 1 trace generator. Same as [`generate_effect_vm_trace`] but accepts
+/// the widened PI inputs ([`EffectVmContext`]).
+pub fn generate_effect_vm_trace_ext(
+    initial_state: &CellState,
+    effects: &[Effect],
+    context: EffectVmContext,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     assert!(!effects.is_empty(), "Need at least one effect");
 
@@ -3156,12 +3367,18 @@ pub fn generate_effect_vm_trace(
     };
 
     // Fill aux columns on the first row with public-input-bound values.
+    // Stage 1: effects_hash is widened to 4 felts; positions 0..1 are bound
+    // to AUX[4..5] via boundary constraints (preserves the legacy 2-felt
+    // witness binding), positions 2..3 are PI-only (see AUDIT[stage1-pi-only-bound]).
+    let effects_hash_4_witness = compute_effects_hash_4(effects);
     if !trace.is_empty() {
         trace[0][AUX_BASE + 2] = BabyBear::new(delta_mag);
         trace[0][AUX_BASE + 3] = BabyBear::new(delta_sign);
-        trace[0][AUX_BASE + 4] = effects_hash_lo;
-        trace[0][AUX_BASE + 5] = effects_hash_hi;
+        trace[0][AUX_BASE + 4] = effects_hash_4_witness[0];
+        trace[0][AUX_BASE + 5] = effects_hash_4_witness[1];
     }
+    // Silence unused warnings on the legacy 2-felt return values.
+    let _ = (effects_hash_lo, effects_hash_hi);
 
     // Pad with NoOp rows.
     for _ in n_effects..trace_height {
@@ -3193,6 +3410,21 @@ pub fn generate_effect_vm_trace(
         // current_state stays the same for padding.
     }
 
+    // Stage 1 sum-check: populate aux[CUSTOM_COUNT_ACC] as the inclusive
+    // running sum of `s_custom` indicators. Convention: acc[i] = count of
+    // s_custom rows in [0..=i] (inclusive of row i). Matches the Group 7
+    // transition `next.acc - this.acc - next.s_custom == 0` and the
+    // last-row boundary `acc[last] == PI[CUSTOM_EFFECT_COUNT]`.
+    {
+        let mut acc: u32 = 0;
+        for i in 0..trace.len() {
+            if trace[i][sel::CUSTOM] == BabyBear::ONE {
+                acc = acc.saturating_add(1);
+            }
+            trace[i][AUX_BASE + aux_off::CUSTOM_COUNT_ACC] = BabyBear::new(acc);
+        }
+    }
+
     // Collect custom effect entries for public inputs.
     let custom_entries: Vec<_> = effects
         .iter()
@@ -3210,43 +3442,80 @@ pub fn generate_effect_vm_trace(
         .collect();
     let custom_count = custom_entries.len();
     assert!(
-        custom_count <= pi::MAX_CUSTOM_EFFECTS,
+        custom_count <= context.max_custom_effects as usize,
         "Too many custom effects: {} (max {})",
         custom_count,
-        pi::MAX_CUSTOM_EFFECTS
+        context.max_custom_effects
+    );
+    assert!(
+        context.max_custom_effects <= pi::MAX_CUSTOM_EFFECTS_HARD_CAP,
+        "max_custom_effects {} exceeds hard cap {}",
+        context.max_custom_effects,
+        pi::MAX_CUSTOM_EFFECTS_HARD_CAP,
     );
 
-    // Build public inputs.
+    // Build public inputs in the Stage 1 widened layout (see `pi` module).
     let pi_len = pi::BASE_COUNT + custom_count * pi::CUSTOM_ENTRY_SIZE;
-    let mut public_inputs = Vec::with_capacity(pi_len);
+    let mut public_inputs = vec![BabyBear::ZERO; pi_len];
 
-    // Old state commitment (single field element).
-    public_inputs.push(initial_state.state_commitment);
-    // New state commitment (single field element).
-    public_inputs.push(current_state.state_commitment);
-    // Net delta.
-    public_inputs.push(BabyBear::new(delta_mag));
-    public_inputs.push(BabyBear::new(delta_sign));
-    // Effects hash.
-    public_inputs.push(effects_hash_lo);
-    public_inputs.push(effects_hash_hi);
-    // Custom effect count.
-    public_inputs.push(BabyBear::new(custom_count as u32));
+    // ---- Commitments (4 felts each) ----
+    let old_commit_4 = CellState::compute_commitment_4(
+        initial_state.balance,
+        initial_state.nonce,
+        &initial_state.fields,
+        initial_state.capability_root,
+    );
+    let new_commit_4 = CellState::compute_commitment_4(
+        current_state.balance,
+        current_state.nonce,
+        &current_state.fields,
+        current_state.capability_root,
+    );
+    for i in 0..pi::OLD_COMMIT_LEN {
+        public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
+    }
+    for i in 0..pi::NEW_COMMIT_LEN {
+        public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
+    }
 
-    // SOUNDNESS FIX (P0-1): Initial and final balance limbs. Boundary-pinned
-    // to row 0 state_before and last_row state_after; algebraically tied to
-    // NET_DELTA_MAG/SIGN by Group 6 in eval_constraints.
+    // ---- Effects hash (4 felts) ----
+    let effects_hash_4 = compute_effects_hash_4(effects);
+    for i in 0..pi::EFFECTS_HASH_LEN {
+        public_inputs[pi::EFFECTS_HASH_BASE + i] = effects_hash_4[i];
+    }
+    // Suppress unused-variable warning for the legacy 2-felt form.
+    let _ = (effects_hash_lo, effects_hash_hi);
+
+    // ---- Balance limbs (P0-1) ----
     let (i_lo, i_hi) = split_u64(initial_state.balance);
     let (f_lo, f_hi) = split_u64(current_state.balance);
-    public_inputs.push(i_lo);
-    public_inputs.push(i_hi);
-    public_inputs.push(f_lo);
-    public_inputs.push(f_hi);
+    public_inputs[pi::INIT_BAL_LO] = i_lo;
+    public_inputs[pi::INIT_BAL_HI] = i_hi;
+    public_inputs[pi::FINAL_BAL_LO] = f_lo;
+    public_inputs[pi::FINAL_BAL_HI] = f_hi;
 
-    // Custom proof entries (vk_hash + proof_commitment per custom effect).
-    for (vk_hash, proof_commit) in &custom_entries {
-        public_inputs.extend_from_slice(vk_hash);
-        public_inputs.extend_from_slice(proof_commit);
+    // ---- Net delta (P0-1) ----
+    public_inputs[pi::NET_DELTA_MAG] = BabyBear::new(delta_mag);
+    public_inputs[pi::NET_DELTA_SIGN] = BabyBear::new(delta_sign);
+
+    // ---- Stage 1 additions ----
+    public_inputs[pi::CURRENT_BLOCK_HEIGHT] =
+        BabyBear::new((context.current_block_height & 0x7FFF_FFFF) as u32);
+    public_inputs[pi::MAX_CUSTOM_EFFECTS] = BabyBear::new(context.max_custom_effects as u32);
+    public_inputs[pi::CUSTOM_EFFECT_COUNT] = BabyBear::new(custom_count as u32);
+    for i in 0..pi::APPROVED_HANDOFFS_LEN {
+        public_inputs[pi::APPROVED_HANDOFFS_BASE + i] = context.approved_handoffs_root[i];
+    }
+
+    // ---- Custom proof entries ----
+    for (i, (vk_hash, proof_commit)) in custom_entries.iter().enumerate() {
+        let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
+        for j in 0..4 {
+            public_inputs[base + j] = vk_hash[j];
+        }
+        for j in 0..4 {
+            public_inputs[base + 4 + j] = proof_commit[j];
+        }
     }
 
     assert_eq!(public_inputs.len(), pi_len);
@@ -4004,10 +4273,15 @@ mod tests {
         let delta = extract_net_delta(&public_inputs).unwrap();
         assert_eq!(delta, -1500);
 
-        // Verify effects hash covers ALL effects.
-        let (expected_hash_lo, expected_hash_hi) = compute_effects_hash(&effects);
-        assert_eq!(public_inputs[pi::EFFECTS_HASH_LO], expected_hash_lo);
-        assert_eq!(public_inputs[pi::EFFECTS_HASH_HI], expected_hash_hi);
+        // Verify effects hash covers ALL effects (Stage 1: 4-felt form).
+        let expected_4 = compute_effects_hash_4(&effects);
+        for i in 0..pi::EFFECTS_HASH_LEN {
+            assert_eq!(
+                public_inputs[pi::EFFECTS_HASH_BASE + i], expected_4[i],
+                "effects_hash position {} mismatch",
+                i,
+            );
+        }
     }
 
     /// Integration test: obligation lifecycle (Create + Fulfill) in a single turn.
@@ -6188,5 +6462,173 @@ mod tests {
             "P1-5: honest PipelineStep must still verify. Got: {:?}",
             result
         );
+    }
+
+    // ====================================================================
+    // Stage 1 (`EFFECT-VM-SHAPE-A.md`) adversarial tests
+    // ====================================================================
+
+    /// Stage 1: tampering with PI[OLD_COMMIT_BASE + 1] (one of the 3 new
+    /// commitment felts not bound to the trace) is caught by the PI matching
+    /// loop in the executor, but is NOT caught by the AIR itself (it's a
+    /// PI-only binding — see AUDIT[stage1-pi-only-bound] in pi module).
+    ///
+    /// This test exercises the AIR-side behaviour: the proof verifies for
+    /// the values the prover declared (no algebraic violation). The
+    /// executor's recomputation catches the divergence; we test that in
+    /// `pyana-turn` integration tests.
+    #[test]
+    fn test_stage1_widened_pi_commitments_are_consistent() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (_trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // The 4-felt commitment slots must be present and non-zero (the
+        // initial state has balance=1000, so the canonical commitment is
+        // not the empty-tree sentinel).
+        assert_eq!(public_inputs.len(), pi::BASE_COUNT);
+        for i in 0..pi::OLD_COMMIT_LEN {
+            // Position 0 is the legacy 1-felt commitment; positions 1..3 are
+            // 3 independent compressions of the same intermediates with
+            // distinct salts (see CellState::compute_commitment_4).
+            let v = public_inputs[pi::OLD_COMMIT_BASE + i];
+            assert_ne!(
+                v,
+                BabyBear::ZERO,
+                "OLD_COMMIT[{}] should be non-zero for a real state",
+                i
+            );
+        }
+        // Positions 0..3 should be mutually distinct (different salts,
+        // different hashes — collision probability negligible).
+        for i in 1..pi::OLD_COMMIT_LEN {
+            assert_ne!(
+                public_inputs[pi::OLD_COMMIT_BASE],
+                public_inputs[pi::OLD_COMMIT_BASE + i],
+                "OLD_COMMIT positions 0 and {} should differ (4 independent squeezes)",
+                i,
+            );
+        }
+    }
+
+    /// Stage 1: tampering with PI[NEW_COMMIT_BASE] (position 0, the in-trace
+    /// bound felt) must be caught by the AIR's boundary constraint pinning
+    /// the last row's STATE_COMMIT column.
+    #[test]
+    fn test_stage1_new_commit_position_0_tampered_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        let original = public_inputs[pi::NEW_COMMIT_BASE];
+        public_inputs[pi::NEW_COMMIT_BASE] = original + BabyBear::ONE;
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Stage 1: tampered NEW_COMMIT[0] must be rejected by boundary. Got: {:?}",
+            result
+        );
+    }
+
+    /// Stage 1 sum-check: PI[CUSTOM_EFFECT_COUNT] mismatch with trace's
+    /// cumulative s_custom is rejected via the last-row boundary on
+    /// AUX[CUSTOM_COUNT_ACC].
+    #[test]
+    fn test_stage1_custom_count_pi_mismatch_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // Honest trace has 0 customs; declare 1 in PI.
+        public_inputs[pi::CUSTOM_EFFECT_COUNT] = BabyBear::ONE;
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Stage 1: declared CUSTOM_EFFECT_COUNT must match cumulative s_custom. Got: {:?}",
+            result
+        );
+    }
+
+    /// Stage 1: PI vector shorter than BASE_COUNT must be rejected.
+    #[test]
+    fn test_stage1_short_pi_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // Truncate PI by 1 element. The boundary constraint loop returns
+        // early when public_inputs.len() < BASE_COUNT and the AIR
+        // verification then has missing values.
+        let short_pi: Vec<BabyBear> = public_inputs[..pi::BASE_COUNT - 1].to_vec();
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &short_pi);
+        assert!(
+            result.is_err(),
+            "Stage 1: short PI vector must be rejected. Got: {:?}",
+            result
+        );
+    }
+
+    /// Stage 1: CURRENT_BLOCK_HEIGHT PI is present and consumed by the
+    /// trace generator (default context has block_height=0).
+    #[test]
+    fn test_stage1_current_block_height_pi_present() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let context = EffectVmContext {
+            current_block_height: 12345,
+            max_custom_effects: pi::MAX_CUSTOM_EFFECTS_DEFAULT,
+            approved_handoffs_root: [BabyBear::ZERO; 4],
+        };
+        let (_trace, public_inputs) = generate_effect_vm_trace_ext(&state, &effects, context);
+        assert_eq!(
+            public_inputs[pi::CURRENT_BLOCK_HEIGHT],
+            BabyBear::new(12345),
+        );
+        assert_eq!(
+            public_inputs[pi::MAX_CUSTOM_EFFECTS],
+            BabyBear::new(pi::MAX_CUSTOM_EFFECTS_DEFAULT as u32),
+        );
+    }
+
+    /// Stage 1: declaring max_custom_effects above the hard cap panics at
+    /// trace gen time (the trace generator asserts).
+    #[test]
+    #[should_panic(expected = "exceeds hard cap")]
+    fn test_stage1_max_custom_effects_above_hard_cap_panics() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let context = EffectVmContext {
+            current_block_height: 0,
+            max_custom_effects: pi::MAX_CUSTOM_EFFECTS_HARD_CAP + 1,
+            approved_handoffs_root: [BabyBear::ZERO; 4],
+        };
+        let _ = generate_effect_vm_trace_ext(&state, &effects, context);
     }
 }

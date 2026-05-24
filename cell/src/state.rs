@@ -68,6 +68,20 @@ pub struct CellState {
     /// `delegation_epoch()`.
     #[serde(default)]
     pub(crate) delegation_epoch: u64,
+    /// Stage 1 / `DESIGN-captp-integration.md` §4.1: per-cell CapTP swiss
+    /// table Merkle root. Initialised to the empty-tree sentinel; populated
+    /// by `Effect::ExportSturdyRef` and `Effect::EnlivenRef` in Stage 7.
+    ///
+    /// Included in `compute_canonical_state_commitment` so the cell's
+    /// state commitment binds its CapTP exports.
+    #[serde(default)]
+    pub swiss_table_root: [u8; 32],
+    /// Stage 1 / `DESIGN-captp-integration.md` §4.3: per-cell CapTP refcount
+    /// table Merkle root (cross-federation reference counts). Initialised
+    /// to the empty-tree sentinel; populated by `Effect::ExportSturdyRef`
+    /// and `Effect::DropRef` in Stage 7.
+    #[serde(default)]
+    pub refcount_table_root: [u8; 32],
 }
 
 /// The public view of a field — either the actual value (if public) or its commitment hash.
@@ -213,6 +227,9 @@ impl CellState {
             balance,
             proved_state: false,
             delegation_epoch: 0,
+            // Stage 1 CapTP-prep: empty-tree sentinels.
+            swiss_table_root: [0u8; 32],
+            refcount_table_root: [0u8; 32],
         }
     }
 

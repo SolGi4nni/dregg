@@ -185,6 +185,11 @@ fn hash_cell_state_into(hasher: &mut blake3::Hasher, state: &CellState) {
     }
     hasher.update(&[state.proved_state as u8]);
     hasher.update(&state.delegation_epoch.to_le_bytes());
+    // Stage 1: CapTP-prep committed roots (`DESIGN-captp-integration.md` §4).
+    // These are part of authority-bearing state because they gate enliven /
+    // drop-ref / handoff operations.
+    hasher.update(&state.swiss_table_root);
+    hasher.update(&state.refcount_table_root);
 }
 
 fn hash_permissions_into(hasher: &mut blake3::Hasher, perms: &Permissions) {

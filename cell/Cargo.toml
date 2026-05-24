@@ -12,7 +12,7 @@ description = "Agent cell model — capability-secure isolated execution context
 [features]
 default = ["crypto"]
 crypto = ["dep:bulletproofs", "dep:chacha20poly1305", "dep:curve25519-dalek", "dep:ed25519-dalek", "dep:getrandom", "dep:merlin", "dep:x25519-dalek", "dep:zeroize"]
-zkvm = ["dep:pyana-circuit", "dep:pyana-dsl-runtime"]
+zkvm = ["dep:pyana-circuit", "dep:pyana-commit", "dep:pyana-dsl-runtime"]
 
 [dependencies]
 blake3 = "1"
@@ -24,6 +24,7 @@ getrandom = { workspace = true, optional = true }
 merlin = { version = "3", optional = true }
 postcard = { version = "1", features = ["alloc"] }
 pyana-circuit = { path = "../circuit", optional = true }
+pyana-commit = { path = "../commit", optional = true }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime", optional = true }
 pyana-types = { path = "../types" }
 serde = { version = "1", features = ["derive", "std"] }

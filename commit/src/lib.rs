@@ -52,6 +52,7 @@ pub mod merkle;
 pub mod poseidon2_tree;
 pub mod state;
 pub mod symbol;
+pub mod typed;
 
 // Re-export primary types at crate root for convenience.
 pub use accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};

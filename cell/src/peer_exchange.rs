@@ -287,13 +287,13 @@ impl PeerExchange {
         let proof = stark::proof_from_bytes(proof_bytes)
             .map_err(|e| PeerExchangeError::InvalidTransitionProof(e))?;
 
-        // The stored commitment encodes the Poseidon2 CellState commitment as [u8; 32]
-        // (first 4 bytes = u32 LE value).
-        let old_commit_field = Self::commitment_to_babybear(old_commitment);
-        let new_commit_field = Self::commitment_to_babybear(new_commitment);
+        // Stage 1 (`EFFECT-VM-SHAPE-A.md`): widen commitment to 4 BabyBears.
+        let old_commit_4 = Self::commitment_to_4bb(old_commitment);
+        let new_commit_4 = Self::commitment_to_4bb(new_commitment);
 
         // Validate minimum PI count.
-        let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+        use pyana_circuit::effect_vm::pi;
+        let min_pi_count = pi::BASE_COUNT;
         if proof.public_inputs.len() < min_pi_count {
             return Err(PeerExchangeError::InvalidTransitionProof(format!(
                 "proof has {} public inputs, expected at least {}",
@@ -302,77 +302,52 @@ impl PeerExchange {
             )));
         }
 
-        // Extract remaining PIs from the proof (delta, effects hash, custom count).
-        let delta_mag = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
-        );
-        let delta_sign = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
-        );
-        let effects_hash_lo = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
-        );
-        let effects_hash_hi = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
-        );
-        let custom_count = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
-        );
-        // P0-1 fix: forward bal_* PIs so Group 6 / boundary constraints check.
-        let init_bal_lo = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
-        );
-        let init_bal_hi = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
-        );
-        let final_bal_lo = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
-        );
-        let final_bal_hi = BabyBear::new_canonical(
-            proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
-        );
-
-        // Build the public inputs vector in Effect VM layout.
-        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
-        public_inputs.push(old_commit_field);
-        public_inputs.push(new_commit_field);
-        public_inputs.push(delta_mag);
-        public_inputs.push(delta_sign);
-        public_inputs.push(effects_hash_lo);
-        public_inputs.push(effects_hash_hi);
-        public_inputs.push(custom_count);
-        public_inputs.push(init_bal_lo);
-        public_inputs.push(init_bal_hi);
-        public_inputs.push(final_bal_lo);
-        public_inputs.push(final_bal_hi);
+        // Build the public inputs vector in Stage 1 Effect VM layout.
+        // Most PIs are sourced from the proof (peer trusts the prover's
+        // declared values; the AIR's boundary + transition constraints
+        // bind them to the trace); commitments are independently checked.
+        let mut public_inputs: Vec<BabyBear> = (0..min_pi_count)
+            .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
+            .collect();
+        // Override the commitment slots with verifier-derived values from
+        // the stored commitments. PI matching below catches any divergence.
+        for i in 0..pi::OLD_COMMIT_LEN {
+            public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
+        }
+        for i in 0..pi::NEW_COMMIT_LEN {
+            public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
+        }
 
         // Append custom proof entries from the proof's PIs.
-        let custom_count_val = custom_count.0 as usize;
+        let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
         for i in 0..custom_count_val {
-            let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
-                + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
-            if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE > proof.public_inputs.len() {
+            let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
+            if base + pi::CUSTOM_ENTRY_SIZE > proof.public_inputs.len() {
                 break;
             }
-            for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+            for j in 0..pi::CUSTOM_ENTRY_SIZE {
                 public_inputs.push(BabyBear::new_canonical(proof.public_inputs[base + j]));
             }
         }
 
-        // Verify commitment PIs match what we expect.
-        let proof_old =
-            BabyBear::new_canonical(proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT]);
-        let proof_new =
-            BabyBear::new_canonical(proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT]);
-        if proof_old != old_commit_field {
-            return Err(PeerExchangeError::InvalidTransitionProof(
-                "old_commitment in proof does not match expected value".to_string(),
-            ));
+        // Verify commitment PIs match what we expect (all 4 felts each).
+        for i in 0..pi::OLD_COMMIT_LEN {
+            let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
+            if proof_v != old_commit_4[i] {
+                return Err(PeerExchangeError::InvalidTransitionProof(format!(
+                    "old_commitment in proof does not match expected value (felt {})",
+                    i
+                )));
+            }
         }
-        if proof_new != new_commit_field {
-            return Err(PeerExchangeError::InvalidTransitionProof(
-                "new_commitment in proof does not match expected value".to_string(),
-            ));
+        for i in 0..pi::NEW_COMMIT_LEN {
+            let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
+            if proof_v != new_commit_4[i] {
+                return Err(PeerExchangeError::InvalidTransitionProof(format!(
+                    "new_commitment in proof does not match expected value (felt {})",
+                    i
+                )));
+            }
         }
 
         // Verify the STARK proof using EffectVmAir.
@@ -383,12 +358,14 @@ impl PeerExchange {
         Ok(())
     }
 
-    /// Decode a stored [u8; 32] commitment to a single BabyBear field element.
-    /// The stored commitment encodes a Poseidon2 CellState commitment (first 4 bytes = u32 LE).
+    /// Stage 1: encode a stored [u8; 32] commitment as 4 BabyBear felts.
+    ///
+    /// Replaces the prior 4-byte truncation (~31-bit binding) with a
+    /// full 32-byte-derived 4-felt form (~124-bit binding) via
+    /// `pyana_commit::typed::canonical_32_to_felts_4`.
     #[cfg(feature = "zkvm")]
-    fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
-        let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        pyana_circuit::field::BabyBear::new_canonical(val)
+    fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
+        pyana_commit::typed::canonical_32_to_felts_4(bytes)
     }
 
     /// Get our current view of a peer's state commitment.
