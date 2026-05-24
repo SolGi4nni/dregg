@@ -173,13 +173,77 @@ fn emit_sp1_statements(statements: &[Statement], lines: &mut Vec<String>, indent
                             v, bits, bits
                         )
                     }
-                    RequirementKind::MerkleAtPosition { .. } => {
-                        // Stub: SP1 guest Merkle gadget not yet wired.
-                        "// merkle_at_position: stub (not yet implemented in SP1 guest)".to_string()
+                    RequirementKind::MerkleAtPosition {
+                        root,
+                        leaf,
+                        position,
+                        siblings,
+                        depth,
+                    } => {
+                        // Real Merkle inclusion check in the SP1 guest.
+                        //
+                        // We compute a Poseidon2 hash chain from the leaf up to the
+                        // claimed root, branching left/right at each level based on
+                        // the bits of `position`. The check `assert!(current == root)`
+                        // executes inside the RISC-V zkVM, so the proof attests to
+                        // the actual hash computation.
+                        //
+                        // The hash-pair primitive `pyana_sp1_runtime::poseidon2_hash_pair`
+                        // is expected to be provided by the host's SP1 guest crate. It
+                        // takes two `[u8; 32]` digests and returns a `[u8; 32]` digest
+                        // bit-compatible with the rest of the system's Poseidon2 use.
+                        let root_s = quote::quote!(#root).to_string();
+                        let leaf_s = quote::quote!(#leaf).to_string();
+                        let pos_s = quote::quote!(#position).to_string();
+                        let sib_s = quote::quote!(#siblings).to_string();
+                        let d = *depth as usize;
+                        format!(
+                            "{{ let mut __cur: [u8; 32] = {leaf};\n\
+                             {pad}    let __pos: u64 = ({pos}) as u64;\n\
+                             {pad}    for __i in 0..{depth}usize {{\n\
+                             {pad}        let __bit = ((__pos >> __i) & 1) == 1;\n\
+                             {pad}        let __sib: [u8; 32] = {sib}[__i];\n\
+                             {pad}        __cur = if __bit {{\n\
+                             {pad}            pyana_sp1_runtime::poseidon2_hash_pair(&__sib, &__cur)\n\
+                             {pad}        }} else {{\n\
+                             {pad}            pyana_sp1_runtime::poseidon2_hash_pair(&__cur, &__sib)\n\
+                             {pad}        }};\n\
+                             {pad}    }}\n\
+                             {pad}    assert!(__cur == {root}, \"merkle_at_position: chain != root (depth={depth})\");\n\
+                             {pad}}}",
+                            leaf = leaf_s,
+                            pos = pos_s,
+                            sib = sib_s,
+                            depth = d,
+                            root = root_s,
+                            pad = pad,
+                        )
                     }
-                    RequirementKind::Poseidon2Hash { .. } => {
-                        // Stub: SP1 guest Poseidon2 not yet wired.
-                        "// poseidon2_hash: stub (not yet implemented in SP1 guest)".to_string()
+                    RequirementKind::Poseidon2Hash { inputs, output } => {
+                        // Real Poseidon2 hash assertion in the SP1 guest.
+                        //
+                        // Concatenate the input digests into a slice and assert that
+                        // `pyana_sp1_runtime::poseidon2_hash_many(&inputs) == output`.
+                        // The guest crate is expected to provide this helper; the
+                        // assertion executes inside the zkVM so the proof attests
+                        // to the actual hash.
+                        let out_s = quote::quote!(#output).to_string();
+                        let input_refs: Vec<String> = inputs
+                            .iter()
+                            .map(|e| format!("&{}", quote::quote!(#e)))
+                            .collect();
+                        let inputs_arr = input_refs.join(", ");
+                        let arity = inputs.len();
+                        format!(
+                            "{{ let __ins: [&[u8; 32]; {arity}] = [{ins}];\n\
+                             {pad}    let __h = pyana_sp1_runtime::poseidon2_hash_many(&__ins);\n\
+                             {pad}    assert!(__h == {out}, \"poseidon2_hash: hash != claimed output\");\n\
+                             {pad}}}",
+                            arity = arity,
+                            ins = inputs_arr,
+                            out = out_s,
+                            pad = pad,
+                        )
                     }
                 };
                 lines.push(format!("{}{}", pad, check));
