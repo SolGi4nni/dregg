@@ -215,6 +215,15 @@ pub struct SiloConfig {
     pub max_root_age_secs: Option<u64>,
     /// Production hardening configuration (rate limits, heartbeat, backpressure, etc.).
     pub hardening: HardeningConfig,
+    /// Optional DFA-based ingress pre-filter. Per
+    /// `DFA-RATIONALIZATION-DESIGN.md` §7, this sits in front of the
+    /// swiss-table fast path and lets the operator atomically install a
+    /// governance-bound table that drops messages matching configured
+    /// blocked-pattern namespaces before they reach the dispatcher.
+    ///
+    /// `None` (the default) preserves legacy behavior — every message is
+    /// allowed through the pre-filter.
+    pub ingress_filter: Option<Arc<crate::dfa_router::IngressFilter>>,
 }
 
 impl SiloConfig {
@@ -239,7 +248,16 @@ impl SiloConfig {
             nonce_cache_capacity: MAX_NONCE_CACHE_SIZE,
             max_root_age_secs: None,
             hardening: HardeningConfig::default(),
+            ingress_filter: None,
         }
+    }
+
+    /// Install a DFA-based ingress pre-filter. The filter sits in front of
+    /// the dispatcher and drops messages whose route key resolves to
+    /// `RouteTarget::Drop` in the configured table.
+    pub fn with_ingress_filter(mut self, filter: Arc<crate::dfa_router::IngressFilter>) -> Self {
+        self.ingress_filter = Some(filter);
+        self
     }
 
     /// Set the nonce cache capacity.
@@ -1024,6 +1042,41 @@ impl CapTpState {
     /// the promise id on that federation's side that has broken).
     pub fn drain_pending_broken_promises(&mut self) -> Vec<pyana_captp::BrokenPromiseNotification> {
         std::mem::take(&mut self.pending_broken_promises)
+    }
+
+    /// Drain pending broken-promise notifications and convert each into a
+    /// ready-to-send `(notify_federation, WireMessage::PromiseBroken)` pair.
+    /// The node tick uses this when it wants the wire-encoded form directly
+    /// (saves a join with the session table).
+    ///
+    /// `local_federation` is the sender's federation id, stamped on the
+    /// outbound message so the receiver can attribute it. The current
+    /// session epoch for `notify_federation` is stamped onto each message so
+    /// the receiver can reject stale-epoch breakage. Notifications whose
+    /// `notify_federation` has no live session get epoch 0 (the legacy
+    /// sentinel), preserving the receive-side fallback.
+    pub fn drain_pending_broken_promises_as_wire(
+        &mut self,
+        local_federation: [u8; 32],
+    ) -> Vec<(FederationId, WireMessage)> {
+        let notifs = self.drain_pending_broken_promises();
+        notifs
+            .into_iter()
+            .map(|n| {
+                let epoch = self
+                    .sessions
+                    .get(&n.notify_federation)
+                    .map(|s| s.epoch)
+                    .unwrap_or(0);
+                let msg = WireMessage::PromiseBroken {
+                    promise_id: n.promise_id,
+                    reason: n.reason,
+                    sender_federation: local_federation,
+                    session_epoch: epoch,
+                };
+                (n.notify_federation, msg)
+            })
+            .collect()
     }
 
     /// Drain pending inbound `AttestedRootPush` messages.
@@ -2066,6 +2119,19 @@ impl SiloServer {
                 };
                 let _ = crate::codec::write_message(&mut writer, &err_msg).await;
                 continue;
+            }
+
+            // --- DFA ingress pre-filter (per DFA-RATIONALIZATION-DESIGN §7) ---
+            //
+            // If the operator configured an ingress filter, classify the
+            // route key for this message. A `Drop` decision silently
+            // discards the message (no error response — same posture as a
+            // dropped malformed packet); `Allow` and `NoMatch` fall through.
+            if let Some(filter) = &config.ingress_filter {
+                let route_key = crate::dfa_router::wire_message_route_key(&msg);
+                if filter.check(&route_key) == crate::dfa_router::IngressDecision::Drop {
+                    continue;
+                }
             }
 
             // --- Federation Boundary: Message filtering by role ---

@@ -134,6 +134,39 @@ impl RingSolver {
         }
     }
 
+    /// Filter a ring's participants through a `WitnessedPredicate`
+    /// registry. Each `(participant_index, predicate, input, proof)`
+    /// requirement is verified before the ring is considered valid.
+    /// Returns `Ok(ring)` if every requirement verifies, otherwise
+    /// `Err((index, reason))` naming the failing requirement.
+    ///
+    /// This is the "predicate-attested intent matching" entry point —
+    /// solvers reject counterparties whose attached predicates don't
+    /// verify. Used by the trustless engine before promoting a ring
+    /// to a `SolverSubmission` (composes with the proof verifier,
+    /// which is separately enforced).
+    pub fn validate_predicates(
+        ring: &RingTrade,
+        verifier: &crate::predicate::IntentPredicateVerifier,
+        requirements: &[(
+            crate::predicate::WitnessedPredicate,
+            crate::predicate::PredicateInput<'_>,
+            Vec<u8>,
+        )],
+    ) -> Result<(), crate::predicate::IntentPredicateError> {
+        let _ = ring;
+        // Collect proof references for verify_all.
+        let refs: Vec<(
+            crate::predicate::WitnessedPredicate,
+            crate::predicate::PredicateInput<'_>,
+            &[u8],
+        )> = requirements
+            .iter()
+            .map(|(wp, input, proof)| (wp.clone(), input.clone(), proof.as_slice()))
+            .collect();
+        verifier.verify_all(&refs)
+    }
+
     /// Build the intent compatibility graph from active intents.
     pub fn build_graph(&self, intents: &[IntentNode]) -> IntentGraph {
         let mut edges: Vec<Vec<(usize, f64)>> = vec![Vec::new(); intents.len()];

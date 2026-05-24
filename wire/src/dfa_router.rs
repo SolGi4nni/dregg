@@ -143,6 +143,165 @@ pub fn dispatch_path(router: &Router, path: &[u8]) -> DispatchDecision {
 }
 
 // ---------------------------------------------------------------------------
+// Ingress pre-filter
+// ---------------------------------------------------------------------------
+
+/// Decision returned by [`IngressFilter::check`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IngressDecision {
+    /// Allow the message to proceed to the normal dispatcher.
+    Allow,
+    /// Drop the message silently (counts toward an "ingress filtered" metric).
+    Drop,
+    /// No DFA match; defaults to `Allow` for backward compatibility (the
+    /// caller can elect to drop if desired).
+    NoMatch,
+}
+
+impl IngressDecision {
+    pub fn permits(&self) -> bool {
+        matches!(self, IngressDecision::Allow | IngressDecision::NoMatch)
+    }
+}
+
+/// Wire-ingress pre-filter wrapping a [`GovernedRouter`].
+///
+/// This is the keystone-fast-path companion described in
+/// `DFA-RATIONALIZATION-DESIGN.md` §7: the swiss-table stays as the primary
+/// dispatch, the DFA wraps it as a pre-filter at the wire ingress.
+///
+/// The filter operates on a `route_key: Vec<u8>` that the caller extracts
+/// from each incoming `WireMessage`. The caller chooses what the key looks
+/// like — typically a short namespace prefix like `b"captp:cap_hello:"`
+/// followed by a discriminator — and configures the route table accordingly.
+///
+/// `RouteTarget::Drop` → drop the message. Any other accepting target →
+/// allow. No match → `NoMatch` (caller decides).
+#[derive(Clone, Debug)]
+pub struct IngressFilter {
+    router: Router,
+    commitment: [u8; 32],
+}
+
+impl IngressFilter {
+    /// Build a filter from a compiled [`RouteTable`].
+    pub fn new(table: RouteTable) -> Self {
+        let commitment = table.commitment;
+        IngressFilter {
+            router: Router::new(table),
+            commitment,
+        }
+    }
+
+    /// Build a filter from a [`GovernedRouter`] (lifts a snapshot of its
+    /// table; subsequent governance updates require re-instantiation).
+    pub fn from_governed(governed: &GovernedRouter) -> Self {
+        let table = governed.router().table().clone();
+        IngressFilter::new(table)
+    }
+
+    /// Apply the filter to a route key extracted from a wire message.
+    pub fn check(&self, route_key: &[u8]) -> IngressDecision {
+        match self.router.classify(route_key) {
+            Some(c) => match c.target {
+                RouteTarget::Drop => IngressDecision::Drop,
+                _ => IngressDecision::Allow,
+            },
+            None => IngressDecision::NoMatch,
+        }
+    }
+
+    /// Underlying route table commitment.
+    pub fn commitment(&self) -> &[u8; 32] {
+        &self.commitment
+    }
+}
+
+/// Sentinel namespace prefixes the wire ingress uses when constructing the
+/// route key for the [`IngressFilter`]. Apps that compile route tables for
+/// the ingress filter should use these to anchor their patterns.
+pub mod ingress_keys {
+    /// CapTP framing prefix (the first bytes of a `WireMessage::CapHello`,
+    /// `CapTpForward`, etc.). The dispatcher prepends `"captp:"` plus the
+    /// variant discriminator before classification.
+    pub const CAPTP_NAMESPACE: &[u8] = b"captp:";
+    /// Token-presentation framing.
+    pub const PRESENT_NAMESPACE: &[u8] = b"present:";
+    /// Federation handshake (Hello, PeerAuth, etc.).
+    pub const HANDSHAKE_NAMESPACE: &[u8] = b"handshake:";
+    /// Ping/pong heartbeat.
+    pub const HEARTBEAT_NAMESPACE: &[u8] = b"heartbeat:";
+}
+
+/// Build the route key the [`IngressFilter`] classifies for a given
+/// [`crate::WireMessage`]. The key is a short stable byte string of the form
+/// `<namespace>:<variant>` so operators can write patterns like
+/// `"captp:*"` or `"handshake:hello"` to selectively block.
+pub fn wire_message_route_key(msg: &crate::WireMessage) -> Vec<u8> {
+    let variant: &str = msg.variant_name();
+    let ns: &[u8] = match variant {
+        "Hello" | "Welcome" | "PeerChallenge" | "PeerAuthResponse" | "PeerAuthenticated" => {
+            ingress_keys::HANDSHAKE_NAMESPACE
+        }
+        "Ping" | "Pong" => ingress_keys::HEARTBEAT_NAMESPACE,
+        "PresentToken"
+        | "PresentationResult"
+        | "RequestAttestedRoot"
+        | "AttestedRoot"
+        | "AttestedRootPush"
+        | "SubmitRevocation"
+        | "RevocationAck"
+        | "RequestNonMembership"
+        | "NonMembershipResponse" => ingress_keys::PRESENT_NAMESPACE,
+        "CapHello" | "CapGoodbye" | "EnlivenSturdyRef" | "EnlivenResponse" | "DropRemoteRef"
+        | "PipelinedMsg" | "PromiseBroken" | "PresentHandoff" | "HandoffAccepted" => {
+            ingress_keys::CAPTP_NAMESPACE
+        }
+        _ => b"control:",
+    };
+    let mut out = Vec::with_capacity(ns.len() + variant.len());
+    out.extend_from_slice(ns);
+    // ns already ends with ":"; append the variant name lowercased
+    for b in variant.bytes() {
+        // Lowercase ASCII to align with userspace pattern conventions
+        // (e.g. `"captp:cap_hello"`). Non-ASCII (cannot happen for these
+        // variant names) is passed through unchanged.
+        if b.is_ascii_uppercase() {
+            out.push(b + 32);
+        } else {
+            out.push(b);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod ingress_tests {
+    use super::*;
+
+    #[test]
+    fn ingress_filter_drops_blocked_namespace() {
+        let table = compile_routes(&[
+            ("captp:cap_hello:*", RouteTarget::handler("captp")),
+            ("present:*", RouteTarget::handler("present")),
+            ("blocked:*", RouteTarget::Drop),
+        ]);
+        let f = IngressFilter::new(table);
+        assert_eq!(f.check(b"captp:cap_hello:abc"), IngressDecision::Allow);
+        assert_eq!(f.check(b"blocked:malformed"), IngressDecision::Drop);
+        assert_eq!(f.check(b"unknown:msg"), IngressDecision::NoMatch);
+    }
+
+    #[test]
+    fn ingress_filter_commitment_matches_table() {
+        let table = compile_routes(&[("captp:*", RouteTarget::handler("captp"))]);
+        let commitment = table.commitment;
+        let f = IngressFilter::new(table);
+        assert_eq!(*f.commitment(), commitment);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

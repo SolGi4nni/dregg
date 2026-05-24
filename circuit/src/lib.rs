@@ -168,6 +168,12 @@ pub mod plonky3_verifier_air;
 #[cfg(feature = "recursion")]
 pub mod plonky3_recursion_impl;
 
+/// Stage 7-γ.2 Phase 2 joint bilateral aggregation AIR. Consumes N per-cell
+/// γ.2 PI vectors and the schedule-derived projection; emits a single outer
+/// proof attesting bilateral consistency. See module docs and
+/// `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`.
+pub mod bilateral_aggregation_air;
+
 /// Effect-VM-shape bridge AIR for the `p3-recursion` path. See module
 /// docs — this is a *shape* mirror of `effect_vm::EffectVmAir` used to
 /// measure that the recursion library accepts the Effect VM's column and

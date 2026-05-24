@@ -3,7 +3,7 @@
 //! Demonstrates two peer nodes connecting via QUIC, exchanging turns
 //! with causal ordering, and gossiping revocations.
 
-use pyana_net::causal::{CausalDag, DagEntry};
+use pyana_net::causal::{DagEntry, EntryDag};
 // GossipNetwork is available for topic-based pub/sub (see src/gossip.rs)
 #[allow(unused_imports)]
 use pyana_net::gossip::GossipNetwork;
@@ -87,8 +87,8 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     // ─── Step 3: Turn dissemination with causal chaining ────────────────────
     println!("[3/5] Turn dissemination (causal chaining)...");
 
-    let mut dag_a = CausalDag::new();
-    let mut dag_b = CausalDag::new();
+    let mut dag_a = EntryDag::new();
+    let mut dag_b = EntryDag::new();
 
     // Node A creates Turn T1 (genesis, no deps)
     let t1_data = b"turn-1: initialize cell state";

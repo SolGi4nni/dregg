@@ -5830,6 +5830,46 @@ impl TurnExecutor {
             // local-federation-id check, this closes the cross-federation
             // replay trapdoor (see AUDIT-nullifiers.md §5).
             Effect::BridgeMint { portable_proof } => {
+                // PROOF-TO-ACTION BINDING (Lane Bridge-Implementation).
+                //
+                // Previously, the bridge proof verification path serialized
+                // (nullifier || root || value || asset_type || destination_federation)
+                // into a byte buffer and passed it to `ProofVerifier::verify(..)`
+                // as the `vk` argument. That argument is consumed as a 32-byte
+                // verification key (the first 4 bytes are treated as a BabyBear
+                // felt for the federation-root check), so all 112 typed PI bytes
+                // were silently truncated — the four cryptographic bindings the
+                // AIR enforces (nullifier, value, asset_type, destination) were
+                // never compared against the proof's embedded PI vector.
+                //
+                // The fix: skip the generic `ProofVerifier` trait entirely for
+                // bridge mints and call the typed `verify_note_spend_dsl_with_destination`
+                // entry point. This verifier:
+                //
+                //   * deserializes the STARK proof,
+                //   * recomputes the AIR's boundary constraints over the typed PI
+                //     (nullifier, merkle_root, value, asset_type, destination_federation),
+                //   * algebraically rejects any proof whose trace columns at row 0
+                //     (col::NULLIFIER, col::VALUE, col::ASSET_TYPE,
+                //     col::DESTINATION_FEDERATION) do not match the PI vector that
+                //     the executor supplies from the `PortableNoteProof`.
+                //
+                // Combined with `verify_portable_note`'s local-federation-id check
+                // and `BridgedNullifierSet::insert`'s replay protection, this
+                // closes the cross-federation replay, value-inflation, asset-type
+                // confusion, and recipient-substitution trapdoors (AUDIT-nullifiers.md
+                // §5; BACKWATER-CRATES-AUDIT.md bridge/ open issue).
+                //
+                // PI encoding convention (provers MUST match):
+                //   * nullifier, merkle_root, destination_federation: 32-byte values
+                //     compressed into one BabyBear via
+                //     `BabyBear::encode_hash(bytes)` → Poseidon2 `hash_many` →
+                //     single field element (the same `bytes_to_babybear`
+                //     compression used by `bridge::present` and the SDK).
+                //   * value, asset_type: low-30 bits of the u64 reduced mod the
+                //     BabyBear prime as a canonical `BabyBear::new` element. The
+                //     prover must place the same value into `witness.value` /
+                //     `witness.asset_type` to satisfy the boundary constraint.
                 let verify_stark = |nullifier: &[u8; 32],
                                     root: &[u8; 32],
                                     dest_federation: &[u8; 32],
@@ -5837,42 +5877,47 @@ impl TurnExecutor {
                                     asset_type: u64,
                                     proof_bytes: &[u8]|
                  -> Result<(), String> {
-                    match &self.proof_verifier {
-                        Some(verifier) => {
-                            // Build the advisory PI byte buffer in canonical
-                            // (post-upgrade) order: nullifier || root || value ||
-                            // asset_type || destination_federation. The
-                            // wire-side verifier consumes the proof's embedded
-                            // PI list (BabyBear felts) for the boundary check;
-                            // this buffer is used by verifiers that re-derive
-                            // typed PI from byte input.
-                            let mut public_inputs = Vec::with_capacity(112);
-                            public_inputs.extend_from_slice(nullifier);
-                            public_inputs.extend_from_slice(root);
-                            public_inputs.extend_from_slice(&value.to_le_bytes());
-                            public_inputs.extend_from_slice(&asset_type.to_le_bytes());
-                            public_inputs.extend_from_slice(dest_federation);
-                            // Use well-known constants for bridge-mint proofs so the
-                            // verifier can distinguish them from authorization proofs.
-                            // action = "bridge-mint", resource = hex(destination_federation).
-                            let dest_hex: String =
-                                dest_federation.iter().map(|b| format!("{b:02x}")).collect();
-                            if verifier.verify(
-                                proof_bytes,
-                                "bridge-mint",
-                                &dest_hex,
-                                &public_inputs,
-                            ) {
-                                Ok(())
-                            } else {
-                                Err("STARK spending proof verification failed".to_string())
-                            }
-                        }
-                        None => {
-                            Err("no proof verifier configured for bridge mint verification"
-                                .to_string())
-                        }
+                    use pyana_circuit::BabyBear;
+                    use pyana_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
+                    use pyana_circuit::poseidon2;
+                    use pyana_circuit::stark::proof_from_bytes;
+
+                    // Compress a 32-byte value to a single BabyBear via Poseidon2 of 8 limbs.
+                    // Matches `bridge::present::bytes_to_babybear` so prover and verifier agree.
+                    fn compress(bytes: &[u8; 32]) -> BabyBear {
+                        let limbs = BabyBear::encode_hash(bytes);
+                        poseidon2::hash_many(&limbs)
                     }
+                    // Reduce a u64 to a canonical BabyBear (low 30 bits, then mod p).
+                    // The prover must use the same reduction for its witness scalars.
+                    fn u64_to_bb(v: u64) -> BabyBear {
+                        BabyBear::new((v & ((1u64 << 30) - 1)) as u32)
+                    }
+
+                    let stark_proof = proof_from_bytes(proof_bytes)
+                        .map_err(|e| format!("STARK proof deserialization failed: {e}"))?;
+
+                    let nullifier_bb = compress(nullifier);
+                    let root_bb = compress(root);
+                    let dest_bb = compress(dest_federation);
+                    let value_bb = u64_to_bb(value);
+                    let asset_bb = u64_to_bb(asset_type);
+
+                    // SECURITY: This call rejects any proof whose embedded PI vector
+                    // does not match (nullifier_bb, root_bb, value_bb, asset_bb,
+                    // dest_bb). The AIR's boundary constraints at row 0 columns
+                    // {NULLIFIER, VALUE, ASSET_TYPE, DESTINATION_FEDERATION} and at
+                    // the last row col CURRENT (merkle root) pin the prover's trace
+                    // to whatever the verifier passes here.
+                    verify_note_spend_dsl_with_destination(
+                        nullifier_bb,
+                        root_bb,
+                        value_bb,
+                        asset_bb,
+                        dest_bb,
+                        &stark_proof,
+                    )
+                    .map_err(|e| format!("STARK spending proof verification failed: {e}"))
                 };
 
                 pyana_cell::note_bridge::verify_portable_note(

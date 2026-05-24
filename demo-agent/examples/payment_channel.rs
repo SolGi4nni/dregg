@@ -310,6 +310,13 @@ fn main() {
     let alice_signing_key = *blake3::hash(&alice_silo).as_bytes();
     let alice_slice = budget.silo_states.get(&alice_silo).unwrap();
     let alice_cert = alice_slice.certificate(alice_silo, &alice_signing_key);
+    // Register Alice's pubkey on the coordinator for signature verification.
+    budget.register_silo_pubkey(
+        alice_silo,
+        ed25519_dalek::SigningKey::from_bytes(&alice_signing_key)
+            .verifying_key()
+            .to_bytes(),
+    );
 
     println!("  Alice's spending certificate:");
     println!(
@@ -325,15 +332,33 @@ fn main() {
     let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
     let bob_slice = budget.silo_states.get(&bob_silo).unwrap();
     let bob_cert = bob_slice.certificate(bob_silo, &bob_signing_key);
+    budget.register_silo_pubkey(
+        bob_silo,
+        ed25519_dalek::SigningKey::from_bytes(&bob_signing_key)
+            .verifying_key()
+            .to_bytes(),
+    );
 
     // Witnesses also spent nothing
     let w1_signing_key = *blake3::hash(&witness_1).as_bytes();
     let w1_slice = budget.silo_states.get(&witness_1).unwrap();
     let w1_cert = w1_slice.certificate(witness_1, &w1_signing_key);
+    budget.register_silo_pubkey(
+        witness_1,
+        ed25519_dalek::SigningKey::from_bytes(&w1_signing_key)
+            .verifying_key()
+            .to_bytes(),
+    );
 
     let w2_signing_key = *blake3::hash(&witness_2).as_bytes();
     let w2_slice = budget.silo_states.get(&witness_2).unwrap();
     let w2_cert = w2_slice.certificate(witness_2, &w2_signing_key);
+    budget.register_silo_pubkey(
+        witness_2,
+        ed25519_dalek::SigningKey::from_bytes(&w2_signing_key)
+            .verifying_key()
+            .to_bytes(),
+    );
 
     // Rebalance (settlement)
     let total_spent = budget

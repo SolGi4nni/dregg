@@ -719,7 +719,17 @@ impl NodeStateInner {
         silos: Vec<SiloId>,
         byzantine_tolerance: usize,
     ) -> Result<(), BudgetError> {
-        let coordinator = BudgetCoordinator::new(agent, total_balance, silos, byzantine_tolerance)?;
+        let mut coordinator =
+            BudgetCoordinator::new(agent, total_balance, silos, byzantine_tolerance)?;
+
+        // Register THIS node's silo pubkey so the coordinator can verify our
+        // own spending certificates at rebalance time. Remote silos' pubkeys
+        // must be registered separately before their certificates / unlock
+        // votes will be accepted (fail-closed). Wiring that registry from
+        // federation membership is out of scope for this lane.
+        let my_pubkey = *self.wallet.public_key().as_bytes();
+        coordinator.register_silo_pubkey(self.silo_id, my_pubkey);
+
         self.budget_coordinators.insert(agent, coordinator);
 
         // Initialize fast unlock manager if not already present.
@@ -730,8 +740,11 @@ impl NodeStateInner {
                 .next()
                 .map(|c| c.silos.len())
                 .unwrap_or(4);
-            self.fast_unlock_manager =
-                Some(FastUnlockManager::new(byzantine_tolerance, total_silos));
+            let mut mgr = FastUnlockManager::new(byzantine_tolerance, total_silos);
+            mgr.register_silo_pubkey(self.silo_id, my_pubkey);
+            self.fast_unlock_manager = Some(mgr);
+        } else if let Some(mgr) = self.fast_unlock_manager.as_mut() {
+            mgr.register_silo_pubkey(self.silo_id, my_pubkey);
         }
 
         Ok(())

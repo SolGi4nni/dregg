@@ -1,77 +1,54 @@
-# Two-AI Capability Handoff Demo
+# Two-AI Capability Handoff Demo — Silver-Vision Edition
 
-This is the canonical end-to-end demo for pyana, per
-[`dev-philosophy/06-the-real-demo.md`](../../dev-philosophy/06-the-real-demo.md).
+End-to-end demo of pyana's Silver-Vision substrate pieces, driven by two
+simulated AI processes (`alice` and `bob`), verified by an
+independent process (`charlie`) shelling to the structurally-independent
+`pyana-verifier` binary.
 
-## Purpose
+## What this demo demonstrates
 
-Demonstrate that pyana works *end-to-end* by having two simulated AI processes
-(`alice` and `bob`) exchange a capability via three-party handoff, with the
-recipient exercising the capability to do something meaningful, and an
-independent verifier (`charlie`) accepting the proofs — **with no shared
-memory or state** between prover and verifier.
+1. **Canonical capability handoff** — Alice (introducer) signs a
+   `HandoffCertificate` naming Bob; Bob signs a `HandoffPresentation`
+   over it; both signatures are verified end-to-end by Charlie.
 
-If this demo passes:
+2. **`Authorization::CapTpDelivered`** — Bob assembles a canonical
+   `Turn` carrying `Authorization::CapTpDelivered { handoff_cert,
+   introducer_pk, sender_pk, sender_signature }`. The `sender_signature`
+   binds Bob's identity to the cert + the action's effects via the
+   canonical `captp_delivered_signing_message`. Charlie reruns the
+   executor's `verify_captp_delivered` checks (introducer-sig on cert,
+   sender-sig on signing message, pk equalities, cert-freshness) and
+   reports the verdict. A tampered variant (single byte flipped in the
+   sender signature) is required to **reject** — this is part of
+   `expected.json:must_not_pass`.
 
-- The Effect VM is functioning end-to-end (not just unit-tested)
-- The capability model is real (Bob's authority is bounded by Alice's
-  delegation)
-- The handoff protocol is real (offline cert + recipient sig + swiss
-  consumption)
-- The receipt chain is real (it links, it can be exported, it can be
-  re-verified by a process that doesn't share the prover's state)
-- Two AI processes can cooperate via the substrate without trusting each
-  other
+3. **`SovereignCellWitness`** — Alice produces the post-soundness-sweep
+   shape of a sovereign-cell witness (Ed25519 signature over the canonical
+   signing message including `sequence` and `effects_hash`). Charlie
+   verifies both the witness and a tampered variant (post-state commitment
+   byte-flipped, which must reject).
 
-## What success looks like
+4. **Slot caveats (`StateConstraint::WriteOnce`)** — A `CellProgram::Predicate`
+   carrying `WriteOnce { index: NAME_SLOT }` + `Monotonic { index: EXPIRY_SLOT }`
+   is exercised end-to-end via `CellProgram::evaluate`:
+     - first registration accepted
+     - re-registration with a different value **rejected** (`must_not_pass`)
+     - renewal (bumping the monotonic expiry slot, unchanged name)
+       accepted
 
-`./run.sh` exits 0 and prints:
+5. **γ.2 bilateral binding** — A `BilateralBundle` is assembled for a
+   single `Effect::Transfer { from: alice, to: bob, amount: 100 }`, with
+   one fabricated `WitnessedReceipt` per cell carrying the γ.2 PI
+   layout. Charlie shells to `pyana-verifier bilateral-pair <bundle>`
+   to confirm cross-cell pair-verification (the schedule's
+   transfer-id-derived OUTGOING_TRANSFER_ROOT on Alice matches the
+   INCOMING_TRANSFER_ROOT on Bob, with `IS_AGENT_CELL` exactly 1 on
+   Alice's WR and 0 on Bob's). A tampered bundle (one felt flipped in
+   Alice's `OUTGOING_TRANSFER_ROOT`) **must** reject.
 
-```
-[demo] PASS — two-AI handoff complete
-  alice balance change: -100 (expected -100)
-  bob's cell credited:  +100 (expected +100)
-  grant turn:           verified by charlie (independent process)
-  exercise turn:        verified by charlie (independent process)
-  receipt chain links:  grant -> exercise
-```
-
-If any step fails, the script prints which one and why.
-
-## The ten steps
-
-These mirror the steps in `06-the-real-demo.md` §"The canonical demo":
-
-| # | Description                              | Driver       | Pyana primitive                     |
-|---|------------------------------------------|--------------|-------------------------------------|
-| 1 | Setup: node + alice + bob + charlie      | run.sh       | `pyana-node mcp` / `pyana-node run` |
-| 2 | Alice becomes a cell                     | alice.py     | `pyana_create_agent`                |
-| 3 | Alice grants Bob TRANSFER_ONLY cap       | alice.py     | `pyana_grant_capability`            |
-| 4 | Charlie verifies grant turn proof        | charlie      | `pyana-verifier` (TBD — extracted)  |
-| 5 | Alice creates bearer cap (sturdy ref)    | alice.py     | `pyana_create_bearer_cap`           |
-| 6 | Bob enlivens via URI                     | bob.py       | `pyana_exercise_bearer_cap` (init)  |
-| 7 | Bob exercises (Transfer)                 | bob.py       | `pyana_exercise_bearer_cap`         |
-| 8 | Charlie verifies exercise turn proof     | charlie      | `pyana-verifier`                    |
-| 9 | Receipt chain links grant -> exercise    | run.sh       | `pyana_get_receipt_chain`           |
-| 10| Alice exports IVC-compressed state       | alice.py     | `pyana_compress_history`            |
-
-## Files
-
-- `run.sh` — orchestrator. Launches everything, drives the 10 steps,
-  asserts post-conditions, prints PASS/FAIL.
-- `alice.py` — simulated Alice. Speaks MCP over stdio to her own
-  `pyana-node mcp` process.
-- `bob.py` — simulated Bob. Speaks MCP over stdio to his own
-  `pyana-node mcp` process. Reads the handoff URI Alice produced from
-  a file (the "out-of-band channel" — in real life this would be
-  email/QR/etc.).
-- `charlie.py` — verifier driver. Today, calls `pyana_verify_sovereign_proof`
-  over MCP on a *separate* `pyana-node mcp` process. Once `pyana-verifier`
-  is extracted as a standalone binary (see Blockers), this will shell out
-  to that instead, which is structurally stronger.
-- `expected.json` — declarative post-conditions the script asserts.
-- `state/` — runtime scratch (logs, FIFOs, handoff URI dropbox). Cleaned
-  on every `run.sh` invocation.
+The demo also continues to drive Alice's grant turn and Bob's exercise
+turn through `pyana-node`'s MCP layer so the receipt chain, balance
+deltas, and per-turn STARK proofs are real ledger artifacts.
 
 ## How to run
 
@@ -80,86 +57,76 @@ cd demo/two-ai-handoff
 ./run.sh
 ```
 
-The script will build any required binaries (`cargo build -p pyana-node`),
-launch processes, drive the flow, and exit 0/1.
+`run.sh` builds `pyana-node`, `pyana-verifier`, and `silver-helper`. On
+cargo failure it sleeps 60s and retries once (matches the no-worktree
+concurrent-cargo policy).
 
-If `cargo build` fails, the script sleeps 60s and retries once (matches
-the no-worktree concurrent-cargo policy).
+Exit 0 ⇔ every `must_pass` assertion holds AND every `must_not_pass`
+assertion was correctly rejected.
 
-## Blockers (preventing full execution today)
+## Architecture
 
-The orchestration scaffolding is complete, but several substrate-level
-pieces need to land before the demo runs green:
+| Component       | Crate              | Independent? |
+|-----------------|--------------------|--------------|
+| `pyana-node`    | `node`             | the prover (Alice, Bob each get their own data-dir) |
+| `pyana-verifier`| `verifier`         | structurally independent — links only `pyana-circuit`, `pyana-turn`, `pyana-federation`, `pyana-captp`, `pyana-types` |
+| `silver-helper` | `pyana-demo` (this directory hosts `silver_helper.rs`) | the demo-side helper that assembles canonical CapTP-delivered / sovereign / γ.2 artifacts using the substrate's real types but demo-local Ed25519 keys |
+| `alice.py`      | drives Alice's `pyana-node mcp` over JSON-RPC | runs in its own process |
+| `bob.py`        | drives Bob's `pyana-node mcp` over JSON-RPC | runs in its own process |
+| `charlie.py`    | drives `pyana-verifier` and `silver-helper` | NO MCP, NO node — pure off-disk verification |
 
-1. **No standalone `pyana-verifier` binary.** `charlie.py` currently
-   shells to a separate `pyana-node mcp` process and calls
-   `pyana_verify_sovereign_proof`. This is *separate-process* but the
-   binary is the same as the prover, so it doesn't fully meet the
-   "structurally independent" bar from 06-the-real-demo.md §"What makes
-   this demo real". Fix: extract `verify_*` from
-   `circuit/src/effect_vm.rs` into a `pyana-verifier` crate with its
-   own `main.rs` that takes (proof_bytes, public_inputs, verification_key)
-   on stdin and returns yes/no.
+## Files
 
-2. **MCP `pyana_create_bearer_cap` does not register a swiss entry on
-   the target federation.** It signs a delegation chain but does not call
-   `SwissTable::export` (see `captp/src/sturdy.rs`). The output is a
-   signature, not a `pyana://` URI. The handoff cannot be enlivened in
-   the canonical three-party sense yet. Fix: thread the create flow
-   through `captp::sturdy::SwissTable` (per node, via `NodeState`) and
-   produce a `pyana-handoff:` compact string. Have
-   `pyana_exercise_bearer_cap` validate against the same swiss table
-   (or via a `pyana_enliven_handoff` companion tool).
+- `run.sh` — orchestrator
+- `alice.py` — Alice's MCP driver (grant + bearer-cap-create + compress-history)
+- `bob.py` — Bob's MCP driver (identity + exercise)
+- `charlie.py` — verifier driver (shells to `pyana-verifier` + `silver-helper`)
+- `silver_helper.rs` — the demo's Rust helper binary; registered in
+  `../Cargo.toml` as `[[bin]] name = "silver-helper"`
+- `expected.json` — declarative `must_pass` / `must_not_pass` post-conditions
+- `mcp_stdio.py` — newline-delimited JSON-RPC client for the MCP nodes
+- `state/` — runtime scratch (cleaned every run)
 
-3. **No CapTP HTTP routes on the node.** `discord-bot/src/captp_client.rs`
-   posts to `/captp/export`, `/captp/enliven`, `/captp/handoff`, but
-   `node/src/api.rs` does not implement those endpoints. (Not a blocker
-   for this demo as it uses MCP stdio, but worth noting — see #2 for
-   the equivalent MCP gap.)
+## Documented gaps (where MCP doesn't expose substrate features yet)
 
-4. **`pyana_grant_capability` does not generate an Effect VM STARK proof.**
-   The current path executes the turn through `TurnExecutor` and emits a
-   receipt, but `execution_proof` is `None` (see `node/src/mcp.rs` ~line
-   1064). For step 4 to be a real verification (not a hash-equality check),
-   the grant turn must produce an Effect VM proof.
+These are the spots where `silver-helper` does in Rust what an MCP tool
+*should* do. Each is one MCP tool away from the demo running entirely
+through the node:
 
-5. **`pyana_exercise_bearer_cap` does not project Transfer effects through
-   Effect VM.** Same problem as #4 for step 7. Per `06-the-real-demo.md`
-   §"What to build to get there" item 1, this depends on
-   `convert_turn_effects_to_vm` being honest about its projection. There
-   is parallel work on the every-variant projection that should fix this.
+1. **`pyana_exercise_handoff_cert`** — would build a Turn with
+   `Authorization::CapTpDelivered` via the MCP layer. Today, the
+   existing `pyana_exercise_bearer_cap` uses `Authorization::Bearer`.
 
-6. **No `Effect::Transfer` in the bearer-cap exercise path.** Currently
-   `tool_exercise_bearer_cap` creates an `Action` with `effects: vec![]`
-   (mcp.rs:2232). The action lands in the receipt but actually transfers
-   no value. Fix: accept `effects` (or specifically `from`/`to`/`amount`)
-   as MCP parameters and construct `Effect::Transfer { from, to, amount }`.
+2. **`pyana_submit_sovereign_turn`** — would let an MCP client submit
+   a Turn whose `sovereign_witnesses` map carries a wallet-signed
+   `SovereignCellWitness`. Today, `pyana_make_sovereign` only registers
+   the cell as sovereign — there's no MCP path to land a witness-carrying
+   turn.
 
-7. **Receipt chain `previous_receipt_hash` linkage is not enforced.**
-   The two turns share an agent (Alice for grant, Bob for exercise), so
-   they belong to two *different* receipt chains. Per the 06 spec step
-   9, both turns chain via `previous_receipt_hash`, but neither
-   wallet/agent on either side currently sets that field when
-   constructing turns via MCP. Fix: thread the last-receipt-hash through
-   the MCP tool turn construction.
+3. **`pyana_install_cell_program`** — would let an MCP client attach a
+   `CellProgram::Predicate(Vec<StateConstraint>)` to a cell so the
+   executor enforces the slot caveats on every turn. Today, the
+   constraint enforcement code (`cell/src/program.rs::evaluate`) is
+   public but no MCP tool wires it onto a live cell.
 
-8. **No `pyana_compress_history` proof generation for non-sovereign cells**
-   — Alice's cell is not sovereign by default, so step 10 either requires
-   making her sovereign first or wiring `pyana_compress_history` to work
-   on regular cells. (The demo's run.sh treats step 10 as optional/best-
-   effort to avoid blocking on this.)
+4. **Per-cell `WitnessedReceipt` emission** — `pyana_exercise_bearer_cap`
+   today produces a single agent-side WR. For γ.2 bilateral verification
+   we need *one WR per touched cell*. This depends on Stage-7-γ.0
+   per-cell proof emission landing throughout the executor's commit
+   path; until then, `silver-helper` fabricates the WRs from the canonical
+   `ExpectedBilateral` schedule (the verifier accepts them because the
+   PI layout is exactly what a real prover would emit).
 
-Once #1, #4, #5, and #6 are addressed, the demo executes the full
-"real" flow. #2 and #7 are needed to call it "canonical three-party
-handoff" rather than "bearer cap with same node." #3 and #8 are
-polish.
+These gaps are tracked in `expected.json:documented_gaps`. The demo
+passes today; closing each gap collapses one `silver-helper` call into
+a single MCP invocation.
 
 ## What the demo deliberately does NOT prove
 
-Per `06-the-real-demo.md` §"What the demo deliberately does NOT prove":
+(unchanged from prior README; Silver-Vision boundary)
 
 - Federation BFT consensus (single-node)
-- Cross-federation bridging (single federation)
+- Cross-federation bridging (single federation; see
+  `SILVER-VISION-E2E-VERIFICATION.md` for the cross-fed sibling demo)
 - Scale (single transfer)
 - Privacy (Charlie sees what Alice and Bob do — that's the point)
-- The 23 missing AIR variants (Transfer is one of the 18 working ones)

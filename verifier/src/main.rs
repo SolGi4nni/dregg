@@ -27,8 +27,8 @@
 
 use pyana_verifier::{
     CommitteeDescriptor, JsonRequest, ReplayEntry, VerifierOutput, exit_code,
-    parse_public_inputs_json, replay_chain, verify_bilateral_bundle_json, verify_cross_fed_bundle,
-    verify_effect_vm_proof,
+    parse_public_inputs_json, replay_chain, verify_aggregated_bundle_json,
+    verify_bilateral_bundle_json, verify_cross_fed_bundle, verify_effect_vm_proof,
 };
 use std::{
     env,
@@ -48,6 +48,9 @@ fn main() {
     }
     if args.len() >= 2 && (args[1] == "bilateral-pair" || args[1] == "bilateral-bundle") {
         run_bilateral_pair(&args[2..]);
+    }
+    if args.len() >= 2 && (args[1] == "aggregated-bundle" || args[1] == "aggregate-bilateral") {
+        run_aggregated_bundle(&args[2..]);
     }
 
     // Detect JSON-stdin mode: no args, or stdin is not a tty.
@@ -341,6 +344,44 @@ fn run_bilateral_pair(args: &[String]) -> ! {
     };
 
     let verdict = verify_bilateral_bundle_json(&text);
+    let json = serde_json::to_string_pretty(&verdict)
+        .unwrap_or_else(|_| r#"{"verified":false,"reason":"serialisation error"}"#.to_string());
+    println!("{}", json);
+    let code = if verdict.verified {
+        exit_code::VERIFIED
+    } else {
+        exit_code::REJECTED
+    };
+    process::exit(code);
+}
+
+// ---------------------------------------------------------------------------
+// aggregated-bundle subcommand (Stage 7-γ.2 Phase 2)
+// ---------------------------------------------------------------------------
+
+/// `pyana-verifier aggregated-bundle <bundle.json>`
+///
+/// Reads a JSON-encoded `pyana_turn::AggregatedBundle` and runs the Phase-2
+/// joint aggregation verifier (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`).
+/// Exit code: 0 = verified, 1 = rejected, 2 = read / parse error.
+fn run_aggregated_bundle(args: &[String]) -> ! {
+    let path = match args.first() {
+        Some(p) => p,
+        None => {
+            eprintln!("Usage: pyana-verifier aggregated-bundle <bundle.json>");
+            process::exit(exit_code::ERROR);
+        }
+    };
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("cannot read {}: {}", path, e);
+            process::exit(exit_code::ERROR);
+        }
+    };
+
+    let verdict = verify_aggregated_bundle_json(&text);
     let json = serde_json::to_string_pretty(&verdict)
         .unwrap_or_else(|_| r#"{"verified":false,"reason":"serialisation error"}"#.to_string());
     println!("{}", json);

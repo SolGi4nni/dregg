@@ -11,7 +11,8 @@
 //!
 //! - [`PeerNode`] wraps a quinn `Endpoint` for direct QUIC connections between pyana nodes.
 //! - [`GossipNetwork`] provides topic-based pub/sub using simple eager-push gossip.
-//! - [`CausalDag`] tracks happened-before ordering between turns.
+//! - [`EntryDag`] tracks happened-before ordering between turns,
+//!   layered on `pyana_types::CausalDag`.
 //! - [`PeerMessage`] defines the wire protocol for pyana-specific exchanges.
 //!
 //! # Note on iroh
@@ -26,7 +27,7 @@ pub mod gossip;
 pub mod message;
 pub mod node;
 
-pub use causal::{CausalDag, CausalError, DagEntry, HashMismatch};
+pub use causal::{CausalError, DagEntry, EntryDag, HashMismatch};
 pub use gossip::{GossipEvent, GossipNetwork, MessagePhase, MessageStream, TopicHandle};
 pub use message::PeerMessage;
 pub use node::{

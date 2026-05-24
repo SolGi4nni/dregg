@@ -213,6 +213,20 @@ fn main() {
     let cert_c = coord.silo_states[&silo_c].certificate(silo_c, &key_c);
     let cert_d = coord.silo_states[&silo_d].certificate(silo_d, &key_d);
 
+    // Register each silo's Ed25519 pubkey so the coordinator can verify the
+    // signed spending certificates at rebalance time (Stingray signature gate).
+    for (silo, key) in [
+        (silo_a, &key_a),
+        (silo_b, &key_b),
+        (silo_c, &key_c),
+        (silo_d, &key_d),
+    ] {
+        let pubkey = ed25519_dalek::SigningKey::from_bytes(key)
+            .verifying_key()
+            .to_bytes();
+        coord.register_silo_pubkey(silo, pubkey);
+    }
+
     println!(
         "    Silo A certificate: spent {} ({} debits)",
         cert_a.total_spent,

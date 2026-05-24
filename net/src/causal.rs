@@ -29,24 +29,26 @@ pub struct DagEntry {
     pub node_id: [u8; 32],
 }
 
-/// The causal DAG tracks turns and their happened-before relationships.
+/// Per-entry DAG that tracks turns and their happened-before relationships.
 ///
-/// Wraps the shared `pyana_types::CausalDag` graph with per-entry metadata
-/// storage needed by the gossip network layer.
+/// Wraps the shared `pyana_types::CausalDag` graph (imported here as
+/// `DagGraph`) with per-entry metadata storage needed by the gossip
+/// network layer. Use `pyana_types::CausalDag` directly if you only need
+/// the graph topology; use `EntryDag` if you need the `DagEntry` metadata.
 ///
 /// Invariants:
 /// - Every entry's deps must be present in the DAG before (or at) insertion time.
 /// - No duplicate hashes.
 /// - The graph is always a DAG (no cycles).
 #[derive(Debug, Clone)]
-pub struct CausalDag {
+pub struct EntryDag {
     /// The underlying graph structure (shared with pyana-coord).
     graph: DagGraph,
     /// All turns indexed by their hash (entry metadata).
     turns: HashMap<[u8; 32], DagEntry>,
 }
 
-impl CausalDag {
+impl EntryDag {
     /// Create a new empty causal DAG.
     pub fn new() -> Self {
         Self {
@@ -176,7 +178,7 @@ impl CausalDag {
     }
 }
 
-impl Default for CausalDag {
+impl Default for EntryDag {
     fn default() -> Self {
         Self::new()
     }
@@ -219,7 +221,7 @@ mod tests {
 
     #[test]
     fn empty_dag() {
-        let dag = CausalDag::new();
+        let dag = EntryDag::new();
         assert!(dag.is_empty());
         assert_eq!(dag.len(), 0);
         assert!(dag.latest().is_empty());
@@ -228,7 +230,7 @@ mod tests {
 
     #[test]
     fn insert_genesis() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"turn-1", vec![], 1);
         dag.insert(t1.clone()).unwrap();
 
@@ -240,7 +242,7 @@ mod tests {
 
     #[test]
     fn causal_chain() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"turn-1", vec![], 1);
         let t2 = make_turn(b"turn-2", vec![t1.turn_hash], 2);
         let t3 = make_turn(b"turn-3", vec![t2.turn_hash], 1);
@@ -266,7 +268,7 @@ mod tests {
 
     #[test]
     fn concurrent_turns_diamond() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"genesis", vec![], 1);
         // Two concurrent turns depending on genesis
         let t2a = make_turn(b"branch-a", vec![t1.turn_hash], 1);
@@ -295,7 +297,7 @@ mod tests {
 
     #[test]
     fn missing_deps_rejected() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let fake_dep = [0xaa; 32];
         let t = make_turn(b"orphan", vec![fake_dep], 1);
 
@@ -305,7 +307,7 @@ mod tests {
 
     #[test]
     fn duplicate_rejected() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"turn-1", vec![], 1);
         dag.insert(t1.clone()).unwrap();
 
@@ -316,17 +318,17 @@ mod tests {
     #[test]
     fn hash_verification() {
         let t = make_turn(b"hello", vec![], 1);
-        assert!(CausalDag::verify_hash(&t).is_ok());
+        assert!(EntryDag::verify_hash(&t).is_ok());
 
         let mut bad = t.clone();
         bad.turn_hash = [0xff; 32];
-        assert!(CausalDag::verify_hash(&bad).is_err());
+        assert!(EntryDag::verify_hash(&bad).is_err());
     }
 
     #[test]
     fn merge_frontier_deterministic() {
-        let mut dag1 = CausalDag::new();
-        let mut dag2 = CausalDag::new();
+        let mut dag1 = EntryDag::new();
+        let mut dag2 = EntryDag::new();
 
         let t1 = make_turn(b"turn-1", vec![], 1);
         let t2 = make_turn(b"turn-2", vec![], 2);
@@ -344,7 +346,7 @@ mod tests {
 
     #[test]
     fn ancestors_and_descendants() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"t1", vec![], 1);
         let t2 = make_turn(b"t2", vec![t1.turn_hash], 2);
         let t3 = make_turn(b"t3", vec![t2.turn_hash], 1);
@@ -366,7 +368,7 @@ mod tests {
 
     #[test]
     fn try_insert_buffering() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"t1", vec![], 1);
         let t2 = make_turn(b"t2", vec![t1.turn_hash], 2);
 
@@ -386,7 +388,7 @@ mod tests {
 
     #[test]
     fn happened_before_and_concurrent() {
-        let mut dag = CausalDag::new();
+        let mut dag = EntryDag::new();
         let t1 = make_turn(b"t1", vec![], 1);
         let t2 = make_turn(b"t2", vec![t1.turn_hash], 1);
         let t3 = make_turn(b"t3", vec![t1.turn_hash], 2);

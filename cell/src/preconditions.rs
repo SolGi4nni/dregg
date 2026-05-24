@@ -158,14 +158,15 @@ impl Default for EvalContext {
 /// Per PREDICATE-INVENTORY §4.3 case 1, this is the canonical home for
 /// what was previously a duplicate enum at
 /// `pyana_turn::preconditions::Precondition`. The turn-side module
-/// re-exports this directly so callers compile unchanged.
+/// no longer exists; userspace constructs preconditions via this enum
+/// and [`Preconditions::builder`] directly.
 ///
 /// The clause lowers onto the underlying [`Preconditions`] fields via
-/// [`PreconditionClause::apply`]. The verifier-side check lives in
+/// [`Precondition::apply_to`]. The verifier-side check lives in
 /// [`Preconditions::evaluate`] / [`CellStatePrecondition::evaluate`]:
 /// there is **one** evaluator, not two parallel ones.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreconditionClause {
+pub enum Precondition {
     /// The cell's storage slot at `index` must equal `value`.
     SlotEquals { index: usize, value: FieldElement },
     /// The cell's storage slot at `index` must be zero (the all-zero
@@ -178,26 +179,34 @@ pub enum PreconditionClause {
     Witnessed(WitnessedPredicate),
 }
 
-impl PreconditionClause {
+/// Deprecated alias retained during the surface-collapse transition.
+/// Prefer [`Precondition`].
+#[deprecated(
+    since = "next",
+    note = "renamed to `Precondition` as the canonical clause name"
+)]
+pub type PreconditionClause = Precondition;
+
+impl Precondition {
     /// Apply this clause onto a mutable [`Preconditions`].
     pub fn apply_to(&self, pre: &mut Preconditions) {
         match self {
-            PreconditionClause::SlotEquals { index, value } => {
+            Precondition::SlotEquals { index, value } => {
                 let cs = pre.cell_state.get_or_insert_with(Default::default);
                 cs.field_equals.push((*index, *value));
             }
-            PreconditionClause::SlotZero { index } => {
+            Precondition::SlotZero { index } => {
                 let cs = pre.cell_state.get_or_insert_with(Default::default);
                 cs.field_equals.push((*index, [0u8; 32]));
             }
-            PreconditionClause::NonceAtLeast(n) => {
+            Precondition::NonceAtLeast(n) => {
                 let cs = pre.cell_state.get_or_insert_with(Default::default);
                 cs.min_nonce = Some(match cs.min_nonce {
                     Some(prev) => prev.max(*n),
                     None => *n,
                 });
             }
-            PreconditionClause::Witnessed(wp) => {
+            Precondition::Witnessed(wp) => {
                 pre.witnessed.push(wp.clone());
             }
         }
@@ -217,13 +226,13 @@ impl PreconditionsBuilder {
     }
 
     /// Add one clause.
-    pub fn push(mut self, clause: PreconditionClause) -> Self {
+    pub fn push(mut self, clause: Precondition) -> Self {
         clause.apply_to(&mut self.inner);
         self
     }
 
     /// Add many clauses.
-    pub fn extend(mut self, clauses: &[PreconditionClause]) -> Self {
+    pub fn extend(mut self, clauses: &[Precondition]) -> Self {
         for c in clauses {
             c.apply_to(&mut self.inner);
         }
@@ -238,14 +247,14 @@ impl PreconditionsBuilder {
 
 impl Preconditions {
     /// Entry-point for ergonomic clause-shaped construction. Replaces
-    /// the parallel `pyana_turn::preconditions::build` / `extend`
-    /// helpers; the turn-side wrappers now delegate here.
+    /// the deleted `pyana_turn::preconditions::build` / `extend`
+    /// helpers from the pre-collapse era.
     pub fn builder() -> PreconditionsBuilder {
         PreconditionsBuilder::new()
     }
 
     /// Apply a slice of clauses to this `Preconditions` in place.
-    pub fn extend_clauses(&mut self, clauses: &[PreconditionClause]) {
+    pub fn extend_clauses(&mut self, clauses: &[Precondition]) {
         for c in clauses {
             c.apply_to(self);
         }
@@ -472,4 +481,153 @@ pub enum PreconditionError {
         expected: bool,
         actual: bool,
     },
+}
+
+#[cfg(test)]
+mod clause_tests {
+    //! Clause-shaped construction tests (migrated from the deleted
+    //! `pyana_turn::preconditions` module per PREDICATE-INVENTORY §4.3
+    //! case 1). Verifies that `Precondition::{SlotEquals, SlotZero,
+    //! NonceAtLeast, Witnessed}` lower correctly onto the canonical
+    //! [`Preconditions`] fields and round-trip through
+    //! [`Preconditions::evaluate`].
+    use super::*;
+    use crate::state::CellState;
+
+    fn build(items: &[Precondition]) -> Preconditions {
+        Preconditions::builder().extend(items).build()
+    }
+
+    fn state_with(nonce: u64, fields: &[(usize, FieldElement)]) -> CellState {
+        let mut s = CellState::new(0);
+        s.set_nonce(nonce);
+        for &(i, v) in fields {
+            assert!(s.set_field(i, v), "slot {i} must be within STATE_SLOTS");
+        }
+        s
+    }
+
+    fn ctx() -> EvalContext {
+        EvalContext {
+            block_height: 0,
+            timestamp: 0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn slot_equals_pass_and_fail() {
+        let value = [7u8; 32];
+        let pre = build(&[Precondition::SlotEquals { index: 3, value }]);
+        let state_ok = state_with(0, &[(3, value)]);
+        assert!(pre.evaluate(&state_ok, &ctx()).is_ok());
+        let state_bad = state_with(0, &[(3, [9u8; 32])]);
+        assert!(pre.evaluate(&state_bad, &ctx()).is_err());
+    }
+
+    #[test]
+    fn slot_zero_rejects_nonzero() {
+        let pre = build(&[Precondition::SlotZero { index: 5 }]);
+        let state_ok = state_with(0, &[(5, [0u8; 32])]);
+        assert!(pre.evaluate(&state_ok, &ctx()).is_ok());
+        let state_bad = state_with(0, &[(5, [1u8; 32])]);
+        assert!(pre.evaluate(&state_bad, &ctx()).is_err());
+    }
+
+    #[test]
+    fn nonce_at_least_pass_and_fail() {
+        let pre = build(&[Precondition::NonceAtLeast(10)]);
+        let state_ok = state_with(10, &[]);
+        assert!(pre.evaluate(&state_ok, &ctx()).is_ok());
+        let state_ok2 = state_with(11, &[]);
+        assert!(pre.evaluate(&state_ok2, &ctx()).is_ok());
+        let state_bad = state_with(9, &[]);
+        assert!(pre.evaluate(&state_bad, &ctx()).is_err());
+    }
+
+    #[test]
+    fn multiple_preconditions_combine() {
+        let value = [3u8; 32];
+        let pre = build(&[
+            Precondition::SlotEquals { index: 2, value },
+            Precondition::SlotZero { index: 4 },
+            Precondition::NonceAtLeast(5),
+        ]);
+        let state_ok = state_with(7, &[(2, value), (4, [0u8; 32])]);
+        assert!(pre.evaluate(&state_ok, &ctx()).is_ok());
+
+        // Fail on nonce
+        let state_bad_nonce = state_with(3, &[(2, value), (4, [0u8; 32])]);
+        assert!(pre.evaluate(&state_bad_nonce, &ctx()).is_err());
+
+        // Fail on slot equals
+        let state_bad_slot = state_with(7, &[(2, [9u8; 32]), (4, [0u8; 32])]);
+        assert!(pre.evaluate(&state_bad_slot, &ctx()).is_err());
+    }
+
+    #[test]
+    fn nonce_at_least_takes_max_when_repeated() {
+        let pre = build(&[Precondition::NonceAtLeast(3), Precondition::NonceAtLeast(7)]);
+        let cs = pre.cell_state.as_ref().expect("cell_state present");
+        assert_eq!(cs.min_nonce, Some(7));
+    }
+
+    #[test]
+    fn witnessed_clause_appends_to_witnessed_field() {
+        use crate::predicate::{InputRef, WitnessedPredicate};
+        let wp = WitnessedPredicate::dfa([1u8; 32], InputRef::Sender, 0);
+        let pre = build(&[Precondition::Witnessed(wp.clone())]);
+        assert_eq!(pre.witnessed.len(), 1);
+        assert_eq!(pre.witnessed[0], wp);
+    }
+
+    #[test]
+    fn eval_context_carries_lane_g_fields() {
+        // Verifies the EvalContext consolidation per
+        // SLOT-CAVEATS-EVALUATION.md §7.3 q1: the canonical context
+        // exposes block_height/timestamp AND sender, sender_epoch_count,
+        // revealed_preimage, current_epoch.
+        let ctx = EvalContext {
+            block_height: 42,
+            timestamp: 1_700_000_000,
+            current_epoch: 3,
+            sender: Some([0xab; 32]),
+            sender_epoch_count: 7,
+            revealed_preimage: Some([0xcd; 32]),
+        };
+        assert_eq!(ctx.block_height, 42);
+        assert_eq!(ctx.timestamp, 1_700_000_000);
+        assert_eq!(ctx.current_epoch, 3);
+        assert_eq!(ctx.sender, Some([0xab; 32]));
+        assert_eq!(ctx.sender_epoch_count, 7);
+        assert_eq!(ctx.revealed_preimage, Some([0xcd; 32]));
+    }
+
+    #[test]
+    fn eval_context_minimal_defaults_lane_g_fields() {
+        let ctx = EvalContext::minimal(100, 12345);
+        assert_eq!(ctx.block_height, 100);
+        assert_eq!(ctx.timestamp, 12345);
+        assert_eq!(ctx.current_epoch, 0);
+        assert_eq!(ctx.sender, None);
+        assert_eq!(ctx.sender_epoch_count, 0);
+        assert_eq!(ctx.revealed_preimage, None);
+    }
+
+    #[test]
+    fn preconditions_roundtrip_postcard() {
+        // Round-trip the canonical Preconditions through postcard to
+        // ensure the wire shape is stable across the
+        // turn→cell collapse.
+        let value = [11u8; 32];
+        let pre = build(&[
+            Precondition::SlotEquals { index: 1, value },
+            Precondition::SlotZero { index: 2 },
+            Precondition::NonceAtLeast(99),
+        ]);
+        let bytes = postcard::to_allocvec(&pre).expect("encode");
+        let decoded: Preconditions = postcard::from_bytes(&bytes).expect("decode");
+        assert_eq!(pre, decoded);
+        assert_eq!(pre.hash(), decoded.hash());
+    }
 }

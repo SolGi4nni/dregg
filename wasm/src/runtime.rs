@@ -18,6 +18,9 @@ use pyana_cell::{
     AuthRequired, Cell, CellId, Ledger, Note, NoteCommitment, Nullifier, NullifierSet,
     PeerExchange, RevocationChannel, RevocationChannelSet,
 };
+use pyana_cell::factory::{
+    CellMode, FactoryCreationParams, FactoryDescriptor,
+};
 use pyana_intent::matcher::{HeldCapability, MatchResult, Sensitivity, match_intent};
 use pyana_intent::{
     ActionPattern, CommitmentId, Constraint, Intent, IntentKind, MatchSpec, VerificationMode,

@@ -56,6 +56,7 @@
 //! - [`builder`]: TurnBuilder, ActionBuilder
 
 pub mod action;
+pub mod aggregate_bilateral_prover;
 pub mod bilateral_schedule;
 pub mod budget_gate;
 pub mod builder;
@@ -75,7 +76,6 @@ pub mod forest;
 pub(crate) mod journal;
 pub mod obligation;
 pub mod pending;
-pub mod preconditions;
 pub mod presence_discharge;
 pub mod queue_programs;
 pub mod routing;
@@ -139,13 +139,17 @@ pub use pending::{
     BrokenReason, PendingEntry, PendingHandle, PendingStatus, PendingTurnRegistry,
     ResolutionCondition, ResolutionEvent, ResolutionOutcome,
 };
-pub use preconditions::{
-    Precondition, build as build_preconditions, extend as extend_preconditions,
+// `Precondition` and friends collapsed into `pyana_cell::preconditions`
+// per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any
+// callers that still reach for them through the turn crate root.
+pub use aggregate_bilateral_prover::{
+    AggregatedBundle, prove_aggregated_bundle, verify_aggregated_bundle,
 };
 pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,
     PresenceDischargeError, verify_presence_discharge,
 };
+pub use pyana_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use queue_programs::{
     EnqueueValidationContext, QueueConstraint, QueueProgram, QueueProgramError,
     QueueProgramRegistry, ValidationResult, compute_validation_hash, validate_enqueue,

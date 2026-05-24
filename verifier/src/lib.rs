@@ -27,8 +27,12 @@ use pyana_circuit::stark::StarkAir;
 use pyana_circuit::{EffectVmAir, field::BabyBear, stark};
 use serde::{Deserialize, Serialize};
 
+pub mod aggregated_bundle;
 pub mod bilateral_pair;
 pub mod cross_fed;
+pub use aggregated_bundle::{
+    AggregatedBundleVerdict, verify_aggregated_bundle_json, verify_aggregated_bundle_struct,
+};
 pub use bilateral_pair::{
     BilateralBundle, BilateralEntry, BilateralVerdict, fabricate_witnessed_receipt,
     verify_bilateral_bundle, verify_bilateral_bundle_json,

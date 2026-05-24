@@ -18,7 +18,7 @@
 use std::time::Instant;
 
 use pyana_cell::CellId;
-use pyana_coord::budget::{BudgetCoordinator, SpendingCertificate};
+use pyana_coord::budget::BudgetCoordinator;
 use pyana_turn::turn::TurnReceipt;
 use pyana_turn::verify::verify_receipt_chain;
 
@@ -339,36 +339,29 @@ fn main() {
     let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
     let w1_signing_key = *blake3::hash(&witness_1).as_bytes();
     let w2_signing_key = *blake3::hash(&witness_2).as_bytes();
+    let bob_signing_key = *blake3::hash(&bob_silo).as_bytes();
 
     // Alice's silo has spent 1000 (100 payments of 10 each)
     let alice_cert =
         coordinator.silo_states[&alice_silo].certificate(alice_silo, &alice_signing_key);
 
-    // Bob and witnesses spent nothing (they only receive/observe)
-    let bob_cert = SpendingCertificate {
-        silo: bob_silo,
-        agent: alice_cell_id,
-        version: coordinator.version,
-        total_spent: 0,
-        debits: vec![],
-        signature: [0u8; 64], // In production, signed by Bob's key
-    };
-    let w1_cert = SpendingCertificate {
-        silo: witness_1,
-        agent: alice_cell_id,
-        version: coordinator.version,
-        total_spent: 0,
-        debits: vec![],
-        signature: [0u8; 64],
-    };
-    let w2_cert = SpendingCertificate {
-        silo: witness_2,
-        agent: alice_cell_id,
-        version: coordinator.version,
-        total_spent: 0,
-        debits: vec![],
-        signature: [0u8; 64],
-    };
+    // Bob and witnesses spent nothing — each signs their own (zero-spend) cert.
+    let bob_cert = coordinator.silo_states[&bob_silo].certificate(bob_silo, &bob_signing_key);
+    let w1_cert = coordinator.silo_states[&witness_1].certificate(witness_1, &w1_signing_key);
+    let w2_cert = coordinator.silo_states[&witness_2].certificate(witness_2, &w2_signing_key);
+
+    // Register every silo's pubkey on the coordinator for signature verification.
+    for (silo, key) in [
+        (alice_silo, &alice_signing_key),
+        (bob_silo, &bob_signing_key),
+        (witness_1, &w1_signing_key),
+        (witness_2, &w2_signing_key),
+    ] {
+        let pubkey = ed25519_dalek::SigningKey::from_bytes(key)
+            .verifying_key()
+            .to_bytes();
+        coordinator.register_silo_pubkey(silo, pubkey);
+    }
 
     println!("  Spending certificates submitted:");
     println!(

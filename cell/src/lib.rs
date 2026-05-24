@@ -97,8 +97,10 @@ pub use oblivious_transfer::{
 #[cfg(feature = "crypto")]
 pub use peer_exchange::{PeerCellView, PeerExchange, PeerExchangeError, PeerStateTransition};
 pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
+#[allow(deprecated)]
+pub use preconditions::PreconditionClause;
 pub use preconditions::{
-    CellStatePrecondition, EvalContext, NetworkPrecondition, PreconditionClause, Preconditions,
+    CellStatePrecondition, EvalContext, NetworkPrecondition, Precondition, Preconditions,
     PreconditionsBuilder, TimeRange,
 };
 pub use predicate::{
