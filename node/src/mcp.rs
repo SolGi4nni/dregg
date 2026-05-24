@@ -1712,12 +1712,25 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
     }
 
     let cell_id = pyana_cell::CellId(cell_id_bytes);
-    let found = s.ledger.get(&cell_id).is_some();
+    let cell_opt = s.ledger.get(&cell_id);
+    let is_sovereign = s.ledger.is_sovereign(&cell_id);
+    let (found, balance, nonce, capability_count) = match cell_opt {
+        Some(c) => (
+            true,
+            Some(c.state.balance()),
+            Some(c.state.nonce()),
+            Some(c.capabilities.len()),
+        ),
+        None => (false, None, None, None),
+    };
 
     McpToolResult::json(&serde_json::json!({
         "cell_id": cell_id_hex,
         "found": found,
-        "balance": null,
+        "balance": balance,
+        "nonce": nonce,
+        "capability_count": capability_count,
+        "is_sovereign": is_sovereign,
     }))
 }
 
