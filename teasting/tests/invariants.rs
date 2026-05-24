@@ -88,7 +88,7 @@ fn test_conservation_invariant_transfers() {
         };
         let token_id = [0xFE; 32];
         let mut cell = Cell::new_hosted(pk, token_id);
-        cell.state.balance = initial_balance;
+        cell.state.set_balance(initial_balance);
         let id = ledger.insert_cell(cell).unwrap();
         cell_ids.push(id);
     }
@@ -107,7 +107,7 @@ fn test_conservation_invariant_transfers() {
         let from_id = cell_ids[from_idx];
         let to_id = cell_ids[to_idx];
 
-        let from_balance = ledger.get(&from_id).unwrap().state.balance;
+        let from_balance = ledger.get(&from_id).unwrap().state.balance();
         if from_balance == 0 {
             continue;
         }
@@ -137,7 +137,7 @@ fn test_conservation_invariant_with_creation() {
         let balance = rng.gen_range(0, 500);
 
         let mut cell = Cell::new_hosted(pk, token_id);
-        cell.state.balance = balance;
+        cell.state.set_balance(balance);
         ledger.insert_cell(cell).unwrap();
         expected_total += balance;
 

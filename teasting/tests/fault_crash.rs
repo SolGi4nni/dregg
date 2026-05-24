@@ -42,14 +42,14 @@ fn test_crash_mid_turn_no_partial_state() {
     let target_cell = harness.ledger.create_cell([0x02; 32], [0x20; 32]);
 
     // Fund the cells
-    harness.ledger.get_mut(&agent_cell).unwrap().state.balance = 1000;
-    harness.ledger.get_mut(&target_cell).unwrap().state.balance = 500;
+    harness.ledger.get_mut(&agent_cell).unwrap().state.set_balance(1000);
+    harness.ledger.get_mut(&target_cell).unwrap().state.set_balance(500);
     let initial_total = 1500u64;
 
     // Record pre-turn state
-    let pre_nonce = harness.ledger.get(&agent_cell).unwrap().state.nonce;
-    let pre_balance_agent = harness.ledger.get(&agent_cell).unwrap().state.balance;
-    let pre_balance_target = harness.ledger.get(&target_cell).unwrap().state.balance;
+    let pre_nonce = harness.ledger.get(&agent_cell).unwrap().state.nonce();
+    let pre_balance_agent = harness.ledger.get(&agent_cell).unwrap().state.balance();
+    let pre_balance_target = harness.ledger.get(&target_cell).unwrap().state.balance();
 
     // Simulate: turn submitted, node crashes before committing
     // We model this by NOT applying the turn — the node crashed mid-execution.
@@ -58,17 +58,17 @@ fn test_crash_mid_turn_no_partial_state() {
 
     // Verify: state hasn't advanced (no partial effects)
     assert_eq!(
-        harness.ledger.get(&agent_cell).unwrap().state.nonce,
+        harness.ledger.get(&agent_cell).unwrap().state.nonce(),
         pre_nonce,
         "Nonce should not have advanced — turn was not committed"
     );
     assert_eq!(
-        harness.ledger.get(&agent_cell).unwrap().state.balance,
+        harness.ledger.get(&agent_cell).unwrap().state.balance(),
         pre_balance_agent,
         "Agent balance should be unchanged"
     );
     assert_eq!(
-        harness.ledger.get(&target_cell).unwrap().state.balance,
+        harness.ledger.get(&target_cell).unwrap().state.balance(),
         pre_balance_target,
         "Target balance should be unchanged"
     );

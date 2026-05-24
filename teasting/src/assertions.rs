@@ -97,7 +97,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// After any sequence of transfers, balance must be conserved (no creation/destruction).
 pub fn assert_conservation_invariant(ledger: &Ledger, expected_total: u64) {
-    let actual_total: u64 = ledger.iter().map(|(_, cell)| cell.state.balance).sum();
+    let actual_total: u64 = ledger.iter().map(|(_, cell)| cell.state.balance()).sum();
     assert_eq!(
         actual_total,
         expected_total,
@@ -123,7 +123,7 @@ pub fn assert_conservation_invariant(ledger: &Ledger, expected_total: u64) {
 /// if any nonce went backward.
 pub fn assert_nonce_monotonicity(ledger: &Ledger, observed_nonces: &mut HashMap<CellId, u64>) {
     for (cell_id, cell) in ledger.iter() {
-        let current_nonce = cell.state.nonce;
+        let current_nonce = cell.state.nonce();
         if let Some(&prev_nonce) = observed_nonces.get(cell_id) {
             assert!(
                 current_nonce >= prev_nonce,

@@ -56,7 +56,7 @@ fn test_byzantine_bad_state_root_rejected() {
 
     // Create some state
     let cell = harness.ledger.create_cell([0x01; 32], [0x10; 32]);
-    harness.ledger.get_mut(&cell).unwrap().state.balance = 1000;
+    harness.ledger.get_mut(&cell).unwrap().state.set_balance(1000);
 
     // Run consensus to finalize
     for _ in 0..3 {

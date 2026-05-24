@@ -89,20 +89,20 @@ fn test_atomic_swap_across_federations() {
     // Alice has 5000 in Fed A, 0 in Fed B
     let mut alice_a = Cell::with_balance([0xA1; 32], token_id, 5000);
     alice_a.permissions = open_permissions();
-    let alice_a_id = alice_a.id;
+    let alice_a_id = alice_a.id();
 
     let mut alice_b = Cell::with_balance([0xA2; 32], token_id, 0);
     alice_b.permissions = open_permissions();
-    let alice_b_id = alice_b.id;
+    let alice_b_id = alice_b.id();
 
     // Bob has 0 in Fed A, 3000 in Fed B
     let mut bob_a = Cell::with_balance([0xB1; 32], token_id, 0);
     bob_a.permissions = open_permissions();
-    let bob_a_id = bob_a.id;
+    let bob_a_id = bob_a.id();
 
     let mut bob_b = Cell::with_balance([0xB2; 32], token_id, 3000);
     bob_b.permissions = open_permissions();
-    let bob_b_id = bob_b.id;
+    let bob_b_id = bob_b.id();
 
     // Grant capabilities so transfers succeed
     alice_a.capabilities.grant(bob_a_id, AuthRequired::None);
@@ -233,14 +233,14 @@ fn test_atomic_swap_across_federations() {
     // Fed A: Alice 5000 -> 4000, Bob 0 -> 1000
     let alice_a_final = fed_a_ledger.get(&alice_a_id).unwrap();
     let bob_a_final = fed_a_ledger.get(&bob_a_id).unwrap();
-    assert_eq!(alice_a_final.state.balance, 4000);
-    assert_eq!(bob_a_final.state.balance, 1000);
+    assert_eq!(alice_a_final.state.balance(), 4000);
+    assert_eq!(bob_a_final.state.balance(), 1000);
 
     // Fed B: Bob 3000 -> 1500, Alice 0 -> 1500
     let alice_b_final = fed_b_ledger.get(&alice_b_id).unwrap();
     let bob_b_final = fed_b_ledger.get(&bob_b_id).unwrap();
-    assert_eq!(alice_b_final.state.balance, 1500);
-    assert_eq!(bob_b_final.state.balance, 1500);
+    assert_eq!(alice_b_final.state.balance(), 1500);
+    assert_eq!(bob_b_final.state.balance(), 1500);
 
     // --- Step 9: Verify proof nullifier prevents replay ---
     // Alice's preimage is now consumed in Fed A's nullifier set

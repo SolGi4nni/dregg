@@ -56,7 +56,7 @@ fn insert_permissive_cell(ledger: &mut Ledger, owner: [u8; 32], balance: u64) ->
     let token_id = [0u8; 32];
     let mut cell = Cell::with_balance(owner, token_id, balance);
     cell.permissions = permissive_permissions();
-    let id = cell.id;
+    let id = cell.id();
     ledger.insert_cell(cell).unwrap();
     id
 }
@@ -70,7 +70,7 @@ fn insert_permissive_cell_domain(
 ) -> CellId {
     let mut cell = Cell::with_balance(owner, token_id, balance);
     cell.permissions = permissive_permissions();
-    let id = cell.id;
+    let id = cell.id();
     ledger.insert_cell(cell).unwrap();
     id
 }
@@ -302,7 +302,7 @@ fn test_fast_path_executes_immediately() {
     // Verify the ledger was updated (nonce bumped).
     let cell = ledger.get(&alice_id).expect("alice cell should exist");
     assert_eq!(
-        cell.state.nonce, 1,
+        cell.state.nonce(), 1,
         "nonce should be bumped after execution"
     );
     // Verify the field was set.
@@ -355,7 +355,7 @@ fn test_consensus_path_waits_for_finalization() {
     // The turn should NOT have executed — ledger state unchanged.
     let bob_cell = ledger.get(&bob_id).expect("bob cell should exist");
     assert_eq!(
-        bob_cell.state.nonce, 0,
+        bob_cell.state.nonce(), 0,
         "bob's cell should not have been modified"
     );
     assert!(table.is_empty(), "no locks should have been acquired");
@@ -431,11 +431,11 @@ fn test_both_paths_deterministic() {
     let cell_consensus = ledger_consensus.get(&alice_id_consensus).unwrap();
 
     // Same nonce (both bumped once).
-    assert_eq!(cell_fast.state.nonce, cell_consensus.state.nonce);
+    assert_eq!(cell_fast.state.nonce(), cell_consensus.state.nonce());
     // Same field values (both set field 0 to [42; 32]).
     assert_eq!(cell_fast.state.fields, cell_consensus.state.fields);
     // Same balance (both deducted the same fee of 0 since ComputronCosts::zero()).
-    assert_eq!(cell_fast.state.balance, cell_consensus.state.balance);
+    assert_eq!(cell_fast.state.balance(), cell_consensus.state.balance());
 }
 
 /// Conflict detection: two concurrent fast-path turns on the same cell conflict.

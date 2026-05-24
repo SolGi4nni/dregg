@@ -46,7 +46,7 @@ fn create_funded_cell(ledger: &mut Ledger, seed: u8, balance: u64) -> CellId {
         delegate: AuthRequired::None,
         access: AuthRequired::None,
     };
-    let id = cell.id;
+    let id = cell.id();
     ledger.insert_cell(cell).unwrap();
     id
 }
@@ -115,7 +115,7 @@ fn test_escrow_create_and_release_happy_path() {
         result
     );
     // Alice's balance decreased by 500.
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 9_500);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_500);
 
     // Release escrow: Bob presents a valid proof (first byte == magic).
     let valid_proof = vec![magic, 0, 0, 0];
@@ -131,9 +131,9 @@ fn test_escrow_create_and_release_happy_path() {
         result
     );
     // Bob received the escrowed 500.
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 500);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 500);
     // Alice balance unchanged (already deducted at creation).
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 9_500);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_500);
 }
 
 /// Adversarial: release with invalid proof is rejected.
@@ -180,7 +180,7 @@ fn test_escrow_release_bad_proof_rejected() {
         result
     );
     // Bob should NOT have received funds.
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 0);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 0);
 }
 
 /// Timeout path: refund after timeout returns funds to creator.
@@ -213,7 +213,7 @@ fn test_escrow_refund_on_timeout() {
     };
     let result = exec_turn(&executor, &mut ledger, alice, 0, 0, vec![create]);
     assert!(matches!(result, TurnResult::Committed { .. }));
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 9_200);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_200);
 
     // Advance past timeout.
     executor.set_block_height(51);
@@ -227,9 +227,9 @@ fn test_escrow_refund_on_timeout() {
         result
     );
     // Alice's funds are returned.
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 10_000);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 10_000);
     // Bob received nothing.
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 0);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 0);
 }
 
 /// Adversarial: refund BEFORE timeout is rejected.
@@ -272,7 +272,7 @@ fn test_escrow_refund_before_timeout_rejected() {
         result
     );
     // Alice's balance unchanged (still locked).
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 9_400);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_400);
 }
 
 /// Double-release: releasing an already-resolved escrow is rejected.
@@ -309,7 +309,7 @@ fn test_escrow_double_release_rejected() {
         proof: Some(valid_proof.clone()),
     };
     exec_turn(&executor, &mut ledger, alice, 1, 0, vec![release]);
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 200);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 200);
 
     // Attempt second release → should be rejected (already resolved).
     let release2 = Effect::ReleaseEscrow {
@@ -323,7 +323,7 @@ fn test_escrow_double_release_rejected() {
         result
     );
     // Bob still has only 200 (no double-credit).
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 200);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 200);
 }
 
 // ─── Obligation tests ────────────────────────────────────────────────────────
@@ -356,7 +356,7 @@ fn test_obligation_create_and_fulfill() {
         result
     );
     // Alice's balance decreased by stake_amount.
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 9_000);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_000);
 
     // Derive the obligation ID (same derivation as executor).
     let obligation_id = {
@@ -381,9 +381,9 @@ fn test_obligation_create_and_fulfill() {
         result
     );
     // Alice's stake is returned.
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 10_000);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 10_000);
     // Bob did NOT receive the stake (obligation was fulfilled, not slashed).
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 0);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 0);
 }
 
 /// Adversarial: miss deadline + slash → stake transferred to beneficiary.
@@ -408,7 +408,7 @@ fn test_obligation_slash_after_deadline() {
 
     let result = exec_turn(&executor, &mut ledger, alice, 0, 0, vec![create]);
     assert!(matches!(result, TurnResult::Committed { .. }));
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 8_000);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 8_000);
 
     let obligation_id = {
         let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
@@ -431,9 +431,9 @@ fn test_obligation_slash_after_deadline() {
         result
     );
     // Bob received the slashed stake.
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 2000);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 2000);
     // Alice does NOT get the stake back.
-    assert_eq!(ledger.get(&alice).unwrap().state.balance, 8_000);
+    assert_eq!(ledger.get(&alice).unwrap().state.balance(), 8_000);
 }
 
 /// Adversarial: slash BEFORE deadline is rejected.
@@ -476,7 +476,7 @@ fn test_obligation_slash_before_deadline_rejected() {
         result
     );
     // Bob received nothing.
-    assert_eq!(ledger.get(&bob).unwrap().state.balance, 0);
+    assert_eq!(ledger.get(&bob).unwrap().state.balance(), 0);
 }
 
 /// Adversarial: fulfill AFTER deadline is rejected.
