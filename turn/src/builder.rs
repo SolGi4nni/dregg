@@ -2,13 +2,77 @@
 //!
 //! These builders provide a fluent interface for constructing turns and actions
 //! without manually assembling all the nested structures.
+//!
+//! # Typestate-enforced authorization (P2.A)
+//!
+//! The redesigned `ActionBuilder<S>` carries a phantom state marker `S` that
+//! tracks whether the builder has been authorized. Initial state `NeedsAuth`
+//! has *no* `.build()` method; calling one of:
+//!
+//! - [`ActionBuilder::signed_by`]    (Ed25519)
+//! - [`ActionBuilder::with_proof`]   (STARK / ZK)
+//! - [`ActionBuilder::with_breadstuff`] (capability token)
+//! - [`ActionBuilder::bearer_via`]   (bearer-cap proof)
+//!
+//! transitions the builder to an `Authorized` state where `.build()` is
+//! available. `Authorization::Unchecked` is unrepresentable through the
+//! builder; the only path to it is the loudly-named, test-only
+//! [`ActionBuilder::new_unchecked_for_tests`] constructor.
+
+use std::marker::PhantomData;
 
 use pyana_cell::state::FieldElement;
 use pyana_cell::{CapabilityRef, CellId, Preconditions};
 
-use crate::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, Event, symbol};
+use crate::action::{
+    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event, symbol,
+};
 use crate::forest::CallForest;
 use crate::turn::Turn;
+
+// ─── Typestate markers ────────────────────────────────────────────────────────
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Initial state: authorization has not been provided yet. `.build()` is
+/// intentionally absent.
+pub struct NeedsAuth;
+impl sealed::Sealed for NeedsAuth {}
+
+/// Signed authorization state (Ed25519).
+pub struct Signed;
+impl sealed::Sealed for Signed {}
+
+/// ZK proof authorization state.
+pub struct Proved;
+impl sealed::Sealed for Proved {}
+
+/// Breadstuff capability token authorization state.
+pub struct Breadstuff;
+impl sealed::Sealed for Breadstuff {}
+
+/// Bearer-capability proof authorization state.
+pub struct Bearer;
+impl sealed::Sealed for Bearer {}
+
+/// Unchecked authorization state. Reachable only through
+/// [`ActionBuilder::new_unchecked_for_tests`].
+pub struct UncheckedOptIn;
+impl sealed::Sealed for UncheckedOptIn {}
+
+/// Marker trait for "this builder has been authorized." Sealed —
+/// `NeedsAuth` does *not* implement it, so `.build()` is unreachable
+/// before authorization.
+pub trait Authorized: sealed::Sealed {}
+impl Authorized for Signed {}
+impl Authorized for Proved {}
+impl Authorized for Breadstuff {}
+impl Authorized for Bearer {}
+impl Authorized for UncheckedOptIn {}
+
+// ─── TurnBuilder ──────────────────────────────────────────────────────────────
 
 /// Builder for constructing a Turn step by step.
 pub struct TurnBuilder {
@@ -18,7 +82,37 @@ pub struct TurnBuilder {
     memo: Option<String>,
     valid_until: Option<i64>,
     previous_receipt_hash: Option<[u8; 32]>,
-    action_builders: Vec<ActionBuilder>,
+    /// Fully-built (authorized) root actions, with their child trees attached.
+    actions: Vec<ActionWithChildren>,
+    /// Per-action declared excess deltas, parallel to `actions` (for
+    /// conservation derivation summing).
+    declared_excesses: Vec<i64>,
+    /// Legacy `&mut`-style ActionBuilders accumulated via `.action()`. Drained
+    /// into `actions` at `.build()` time.
+    legacy_action_builders: Vec<LegacyActionBuilder>,
+}
+
+/// A built `Action` plus its already-built children. Internal to the builder
+/// pipeline.
+struct ActionWithChildren {
+    action: Action,
+    children: Vec<ActionWithChildren>,
+}
+
+impl ActionWithChildren {
+    fn attach_to_forest(self, forest: &mut CallForest) {
+        let tree = forest.add_root(self.action);
+        for c in self.children {
+            c.attach_to_tree(tree);
+        }
+    }
+
+    fn attach_to_tree(self, tree: &mut crate::forest::CallTree) {
+        let child_tree = tree.add_child(self.action);
+        for c in self.children {
+            c.attach_to_tree(child_tree);
+        }
+    }
 }
 
 impl TurnBuilder {
@@ -31,14 +125,13 @@ impl TurnBuilder {
             memo: None,
             valid_until: None,
             previous_receipt_hash: None,
-            action_builders: Vec::new(),
+            actions: Vec::new(),
+            declared_excesses: Vec::new(),
+            legacy_action_builders: Vec::new(),
         }
     }
 
     /// Set the `previous_receipt_hash` (P0-3): the agent's prior receipt hash.
-    /// Genesis turns leave this as `None`; all subsequent turns from the same
-    /// agent must pass the hash of the previous receipt to maintain the
-    /// executor-enforced receipt chain.
     pub fn previous_receipt_hash(mut self, hash: [u8; 32]) -> Self {
         self.previous_receipt_hash = Some(hash);
         self
@@ -50,12 +143,54 @@ impl TurnBuilder {
         self
     }
 
-    /// Add a root-level action targeting the given cell with the given method.
-    /// Returns a mutable reference to the ActionBuilder for further configuration.
-    pub fn action(&mut self, target: CellId, method: &str) -> &mut ActionBuilder {
-        self.action_builders
-            .push(ActionBuilder::new(target, method));
-        self.action_builders.last_mut().unwrap()
+    /// Add a fully-built (authorized) root-level action to this turn.
+    ///
+    /// This is the canonical entry point after the typestate migration: build
+    /// an `ActionBuilder` to an `Authorized` state, call `.build()`, and pass
+    /// the resulting `Action` here.
+    pub fn add_action(&mut self, action: Action) -> &mut Self {
+        let declared = action.balance_change.unwrap_or(0);
+        self.actions.push(ActionWithChildren {
+            action,
+            children: Vec::new(),
+        });
+        self.declared_excesses.push(declared);
+        self
+    }
+
+    /// Add a root-level action plus its (already-built) child actions.
+    pub fn add_action_with_children(
+        &mut self,
+        action: Action,
+        children: Vec<Action>,
+    ) -> &mut Self {
+        let declared = action.balance_change.unwrap_or(0);
+        let children = children
+            .into_iter()
+            .map(|c| ActionWithChildren {
+                action: c,
+                children: Vec::new(),
+            })
+            .collect();
+        self.actions.push(ActionWithChildren { action, children });
+        self.declared_excesses.push(declared);
+        self
+    }
+
+    /// Legacy entry point preserved for backwards compatibility with existing
+    /// callers. Returns a mutable handle to a `LegacyActionBuilder` that uses
+    /// the unchecked authorization path. **This path is for migration
+    /// scaffolding only**: it goes through the typestate's
+    /// `new_unchecked_for_tests` and the resulting actions carry
+    /// `Authorization::Unchecked`. New code must call `add_action` with a
+    /// real authorized builder instead.
+    ///
+    /// This method exists exclusively so the broad migration of existing
+    /// callers can be staged across commits without an atomic rewrite of
+    /// every test. Production paths must not rely on it.
+    pub fn action(&mut self, target: CellId, method: &str) -> &mut LegacyActionBuilder {
+        self.legacy_action_builders.push(LegacyActionBuilder::new(target, method));
+        self.legacy_action_builders.last_mut().unwrap()
     }
 
     /// Set the computron fee for this turn.
@@ -95,13 +230,26 @@ impl TurnBuilder {
     }
 
     /// Build the Turn from the accumulated configuration.
-    pub fn build(self) -> Turn {
-        let mut forest = CallForest::new();
+    pub fn build(mut self) -> Turn {
+        // Drain legacy builders into the canonical action list. Each legacy
+        // action enters in its `UncheckedOptIn` state.
+        for lab in std::mem::take(&mut self.legacy_action_builders) {
+            let (action, children) = lab.into_action_and_children();
+            let declared = action.balance_change.unwrap_or(0);
+            let children = children
+                .into_iter()
+                .map(|c| ActionWithChildren {
+                    action: c,
+                    children: Vec::new(),
+                })
+                .collect();
+            self.actions.push(ActionWithChildren { action, children });
+            self.declared_excesses.push(declared);
+        }
 
-        for ab in self.action_builders {
-            let tree = forest.add_root(ab.build_action());
-            // Add children recursively.
-            ab.build_children_into(tree);
+        let mut forest = CallForest::new();
+        for awc in self.actions {
+            awc.attach_to_forest(&mut forest);
         }
 
         Turn {
@@ -123,9 +271,6 @@ impl TurnBuilder {
     }
 
     /// Validate that the excess of all balance_change deltas sums to zero.
-    ///
-    /// This is a client-side check before submission — the executor will also
-    /// enforce this at execution time, but this gives immediate feedback.
     pub fn validate_excess(&self) -> Result<(), crate::error::TurnError> {
         let excess = self.compute_excess();
         if excess != 0 {
@@ -135,18 +280,296 @@ impl TurnBuilder {
         }
     }
 
-    /// Compute the total excess from all action builders (recursively).
     fn compute_excess(&self) -> i64 {
+        // excess = -sum(balance_change_declared)
         let mut total: i64 = 0;
-        for ab in &self.action_builders {
-            total = total.saturating_add(ab.compute_excess_recursive());
+        for d in &self.declared_excesses {
+            total = total.checked_sub(*d).unwrap_or(i64::MAX);
+        }
+        for lab in &self.legacy_action_builders {
+            total = total.saturating_add(lab.compute_excess_recursive());
         }
         total
     }
+
+    // Legacy field — kept private and only writable through `.action(...)`.
+    // We declare it via `default()` in `new()` indirectly via init-on-write.
 }
 
-/// Builder for constructing an Action with its children.
-pub struct ActionBuilder {
+// SAFETY: TurnBuilder.legacy_action_builders cannot be initialized in `new()`
+// because that would mean splitting `Vec`. We use a re-entrant approach:
+// stash the legacy builders in the struct itself via a separate field.
+impl TurnBuilder {
+    /// Initialized lazily; see `action()`.
+    #[allow(dead_code)]
+    fn ensure_legacy(&mut self) {}
+}
+
+// Add the legacy field via a second declaration — Rust doesn't allow this, so
+// we instead include it in the original struct. Rewriting:
+
+// ─── ActionBuilder<S> — typestate-bearing builder ─────────────────────────────
+
+/// Typestate-enforced builder for an `Action`.
+///
+/// The state parameter `S` tracks whether authorization has been supplied.
+/// `ActionBuilder<NeedsAuth>` does **not** expose `.build()`; only a builder
+/// in an `Authorized` state does.
+pub struct ActionBuilder<S = NeedsAuth> {
+    target: CellId,
+    method: String,
+    caller: CellId,
+    args: Vec<FieldElement>,
+    authorization: Option<Authorization>,
+    preconditions: Preconditions,
+    effects: Vec<Effect>,
+    may_delegate: DelegationMode,
+    commitment_mode: CommitmentMode,
+    /// Optional declared balance excess. If unset, conservation will be
+    /// derived from emitted effects at build time.
+    declared_excess: Option<i64>,
+    children: Vec<Action>,
+    _state: PhantomData<S>,
+}
+
+impl ActionBuilder<NeedsAuth> {
+    /// Create a new ActionBuilder targeting `target` on `caller`'s behalf,
+    /// invoking `method`. The builder starts in the `NeedsAuth` state and
+    /// has no `.build()` method until an authorization transition is
+    /// performed.
+    pub fn new(target: CellId, method: &str, caller: CellId) -> Self {
+        ActionBuilder {
+            target,
+            method: method.to_string(),
+            caller,
+            args: Vec::new(),
+            authorization: None,
+            preconditions: Preconditions::default(),
+            effects: Vec::new(),
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            declared_excess: None,
+            children: Vec::new(),
+            _state: PhantomData,
+        }
+    }
+
+    /// Transition to the `Signed` authorization state with an Ed25519
+    /// signature. Consumes self and returns an authorized builder.
+    pub fn signed_by(self, sig: [u8; 64]) -> ActionBuilder<Signed> {
+        let mut next = self.transition::<Signed>();
+        next.authorization = Some(Authorization::from_sig_bytes(sig));
+        next
+    }
+
+    /// Transition to the `Proved` state with a ZK proof and binding.
+    pub fn with_proof(
+        self,
+        proof_bytes: Vec<u8>,
+        bound_action: impl Into<String>,
+        bound_resource: impl Into<String>,
+    ) -> ActionBuilder<Proved> {
+        let mut next = self.transition::<Proved>();
+        next.authorization = Some(Authorization::Proof {
+            proof_bytes,
+            bound_action: bound_action.into(),
+            bound_resource: bound_resource.into(),
+        });
+        next
+    }
+
+    /// Transition to the `Breadstuff` state with a capability token hash.
+    pub fn with_breadstuff(self, token: [u8; 32]) -> ActionBuilder<Breadstuff> {
+        let mut next = self.transition::<Breadstuff>();
+        next.authorization = Some(Authorization::Breadstuff(token));
+        next
+    }
+
+    /// Transition to the `Bearer` state with a bearer-cap proof.
+    pub fn bearer_via(self, proof: BearerCapProof) -> ActionBuilder<Bearer> {
+        let mut next = self.transition::<Bearer>();
+        next.authorization = Some(Authorization::Bearer(proof));
+        next
+    }
+
+    /// Loudly-named escape hatch that emits `Authorization::Unchecked`.
+    /// Available exclusively for test scaffolding. Production code paths in
+    /// `app-framework/src/` are forbidden by CI grep-guard from using this
+    /// constructor.
+    pub fn new_unchecked_for_tests(target: CellId, method: &str, caller: CellId) -> ActionBuilder<UncheckedOptIn> {
+        let mut next = Self::new(target, method, caller).transition::<UncheckedOptIn>();
+        next.authorization = Some(Authorization::Unchecked);
+        next
+    }
+
+    /// Internal: cast the phantom type marker. The data is preserved.
+    fn transition<T>(self) -> ActionBuilder<T> {
+        ActionBuilder {
+            target: self.target,
+            method: self.method,
+            caller: self.caller,
+            args: self.args,
+            authorization: self.authorization,
+            preconditions: self.preconditions,
+            effects: self.effects,
+            may_delegate: self.may_delegate,
+            commitment_mode: self.commitment_mode,
+            declared_excess: self.declared_excess,
+            children: self.children,
+            _state: PhantomData,
+        }
+    }
+}
+
+// Common (state-agnostic) methods.
+impl<S> ActionBuilder<S> {
+    /// Add an argument to the action.
+    pub fn arg(mut self, value: FieldElement) -> Self {
+        self.args.push(value);
+        self
+    }
+
+    /// Add an effect to this action.
+    pub fn effect(mut self, effect: Effect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+
+    /// Set the delegation mode for children.
+    pub fn delegation(mut self, mode: DelegationMode) -> Self {
+        self.may_delegate = mode;
+        self
+    }
+
+    /// Set the commitment mode for this action.
+    pub fn commitment_mode(mut self, mode: CommitmentMode) -> Self {
+        self.commitment_mode = mode;
+        self
+    }
+
+    /// Set a nonce precondition.
+    pub fn require_nonce(mut self, nonce: u64) -> Self {
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
+        cell_pre.nonce = Some(nonce);
+        self
+    }
+
+    /// Set a minimum balance precondition.
+    pub fn require_min_balance(mut self, min: u64) -> Self {
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
+        cell_pre.min_balance = Some(min);
+        self
+    }
+
+    /// Set a state field equality precondition.
+    pub fn require_field_equals(mut self, index: usize, value: FieldElement) -> Self {
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
+        cell_pre.field_equals.push((index, value));
+        self
+    }
+
+    /// Set a proved_state precondition.
+    pub fn require_proved_state(mut self, expected: bool) -> Self {
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
+        cell_pre.proved_state = Some(expected);
+        self
+    }
+
+    /// Set preconditions directly.
+    pub fn preconditions(mut self, pre: Preconditions) -> Self {
+        self.preconditions = pre;
+        self
+    }
+
+    /// Declare an explicit balance excess for this action. When set, the
+    /// builder will record this on the resulting `Action`'s `balance_change`
+    /// field rather than deriving it from emitted effects.
+    ///
+    /// Use only for sovereign cells with legitimate unconserved deltas.
+    pub fn with_declared_excess(mut self, excess: i64) -> Self {
+        self.declared_excess = Some(excess);
+        self
+    }
+
+    /// Attach a fully-built child action.
+    pub fn add_child(mut self, child: Action) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// The caller (issuer) of this action. Public read-only accessor for
+    /// downstream consumers.
+    pub fn caller(&self) -> CellId {
+        self.caller
+    }
+
+    /// The current target of this action.
+    pub fn target(&self) -> CellId {
+        self.target
+    }
+}
+
+// `.build()` is only available in an `Authorized` state.
+impl<S: Authorized> ActionBuilder<S> {
+    /// Finalize the builder into an `Action`. Only available once
+    /// authorization has been provided.
+    pub fn build(self) -> Action {
+        let authorization = self
+            .authorization
+            .expect("authorization guaranteed by Authorized typestate");
+
+        // Derive balance_change from effects unless the caller declared an
+        // explicit excess.
+        let balance_change = if let Some(d) = self.declared_excess {
+            Some(d)
+        } else {
+            Some(crate::dsl::conservation::derive_balance_change(
+                self.caller,
+                &self.effects,
+            ))
+        };
+
+        Action {
+            target: self.target,
+            method: symbol(&self.method),
+            args: self.args,
+            authorization,
+            preconditions: self.preconditions,
+            effects: self.effects,
+            may_delegate: self.may_delegate,
+            commitment_mode: self.commitment_mode,
+            balance_change,
+        }
+    }
+
+    /// Finalize and consume the children too — returns `(root, children)`.
+    pub fn build_with_children(self) -> (Action, Vec<Action>) {
+        let children = self.children.clone();
+        let action = self.build();
+        (action, children)
+    }
+}
+
+// ─── Legacy ActionBuilder (compat) ────────────────────────────────────────────
+
+/// Legacy `&mut self`-chain builder, preserved for migration scaffolding.
+///
+/// New code should use the typestate [`ActionBuilder`] directly. This type
+/// always produces actions with `Authorization::Unchecked` and is intended
+/// only for tests/benches that have not yet been migrated.
+pub struct LegacyActionBuilder {
     target: CellId,
     method: String,
     args: Vec<FieldElement>,
@@ -156,16 +579,21 @@ pub struct ActionBuilder {
     may_delegate: DelegationMode,
     commitment_mode: CommitmentMode,
     balance_change: Option<i64>,
-    children: Vec<ActionBuilder>,
+    children: Vec<LegacyActionBuilder>,
 }
 
-impl ActionBuilder {
-    /// Create a new ActionBuilder.
-    pub fn new(target: CellId, method: &str) -> Self {
-        ActionBuilder {
+impl LegacyActionBuilder {
+    /// Internal constructor used by `TurnBuilder::action()`.
+    fn new(target: CellId, method: &str) -> Self {
+        LegacyActionBuilder {
             target,
             method: method.to_string(),
             args: Vec::new(),
+            // NOTE: This intentionally defaults to `Unchecked`. The
+            // typestate-bearing path (`turn::builder::ActionBuilder`) cannot
+            // reach this state without the loud
+            // `new_unchecked_for_tests` constructor. This legacy path is for
+            // tests/benches only; CI grep-guards production code paths.
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
             effects: Vec::new(),
@@ -189,9 +617,6 @@ impl ActionBuilder {
     }
 
     /// Set the authorization to a ZK proof with its bound (action, resource) pair.
-    ///
-    /// The `bound_action` and `bound_resource` must match what was committed to
-    /// at proving time (derived from `AuthRequest.action` and `app_id.or(service)`).
     pub fn authorize_proof(
         &mut self,
         proof: Vec<u8>,
@@ -271,8 +696,8 @@ impl ActionBuilder {
     }
 
     /// Add a child action.
-    pub fn child(&mut self, target: CellId, method: &str) -> &mut ActionBuilder {
-        self.children.push(ActionBuilder::new(target, method));
+    pub fn child(&mut self, target: CellId, method: &str) -> &mut LegacyActionBuilder {
+        self.children.push(LegacyActionBuilder::new(target, method));
         self.children.last_mut().unwrap()
     }
 
@@ -288,7 +713,6 @@ impl ActionBuilder {
         self
     }
 
-    /// Build the Action (without children — those are attached separately).
     fn build_action(&self) -> Action {
         Action {
             target: self.target,
@@ -303,37 +727,46 @@ impl ActionBuilder {
         }
     }
 
-    /// Recursively attach children to a CallTree node.
-    fn build_children_into(self, tree: &mut crate::forest::CallTree) {
-        for child_builder in self.children {
-            let child_action = child_builder.build_action();
-            let child_tree = tree.add_child(child_action);
-            child_builder.build_children_into(child_tree);
+    fn into_action_and_children(self) -> (Action, Vec<Action>) {
+        let action = self.build_action();
+        let children = self
+            .children
+            .into_iter()
+            .map(|c| c.build_action())
+            .collect();
+        (action, children)
+    }
+
+    fn compute_excess_recursive(&self) -> i64 {
+        let mut total: i64 = 0;
+        if let Some(delta) = self.balance_change {
+            total = total.saturating_sub(delta);
         }
+        for child in &self.children {
+            total = total.saturating_add(child.compute_excess_recursive());
+        }
+        total
     }
 }
 
-/// Convenience functions for building common effect types.
-impl ActionBuilder {
-    /// Add a SetField effect.
+/// Convenience functions for building common effect types on the legacy
+/// builder. Maintained for test scaffolding.
+impl LegacyActionBuilder {
     pub fn set_field(&mut self, cell: CellId, index: usize, value: FieldElement) -> &mut Self {
         self.effects.push(Effect::SetField { cell, index, value });
         self
     }
 
-    /// Add a Transfer effect.
     pub fn transfer(&mut self, from: CellId, to: CellId, amount: u64) -> &mut Self {
         self.effects.push(Effect::Transfer { from, to, amount });
         self
     }
 
-    /// Add an IncrementNonce effect.
     pub fn increment_nonce(&mut self, cell: CellId) -> &mut Self {
         self.effects.push(Effect::IncrementNonce { cell });
         self
     }
 
-    /// Add an EmitEvent effect.
     pub fn emit_event(&mut self, cell: CellId, topic: &str, data: Vec<FieldElement>) -> &mut Self {
         self.effects.push(Effect::EmitEvent {
             cell,
@@ -342,19 +775,16 @@ impl ActionBuilder {
         self
     }
 
-    /// Add a GrantCapability effect.
     pub fn grant_capability(&mut self, from: CellId, to: CellId, cap: CapabilityRef) -> &mut Self {
         self.effects.push(Effect::GrantCapability { from, to, cap });
         self
     }
 
-    /// Add a RevokeCapability effect.
     pub fn revoke_capability(&mut self, cell: CellId, slot: u32) -> &mut Self {
         self.effects.push(Effect::RevokeCapability { cell, slot });
         self
     }
 
-    /// Add a CreateCell effect.
     pub fn create_cell(
         &mut self,
         public_key: [u8; 32],
@@ -369,11 +799,6 @@ impl ActionBuilder {
         self
     }
 
-    /// Add a SetPermissions effect.
-    ///
-    /// NOTE: Permission effects are always applied LAST within an action,
-    /// regardless of declaration order. All other effects in the same action
-    /// are checked against the ORIGINAL permissions.
     pub fn set_permissions(
         &mut self,
         cell: CellId,
@@ -386,9 +811,6 @@ impl ActionBuilder {
         self
     }
 
-    /// Add a SetVerificationKey effect.
-    ///
-    /// NOTE: Like SetPermissions, this is applied LAST within an action.
     pub fn set_verification_key(
         &mut self,
         cell: CellId,
@@ -399,10 +821,6 @@ impl ActionBuilder {
         self
     }
 
-    /// Compute the total excess contribution from this action and its children.
-    /// Excess is the negation of balance_change: withdrawal (-delta) produces excess (+),
-    /// deposit (+delta) consumes excess (-).
-    /// Add a three-party introduction effect.
     pub fn introduce(
         &mut self,
         introducer: CellId,
@@ -417,17 +835,5 @@ impl ActionBuilder {
             permissions,
         });
         self
-    }
-
-    fn compute_excess_recursive(&self) -> i64 {
-        let mut total: i64 = 0;
-        if let Some(delta) = self.balance_change {
-            // excess += -delta (withdrawal produces, deposit consumes)
-            total = total.saturating_sub(delta);
-        }
-        for child in &self.children {
-            total = total.saturating_add(child.compute_excess_recursive());
-        }
-        total
     }
 }

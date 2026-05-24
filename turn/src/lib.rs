@@ -59,6 +59,7 @@ pub mod action;
 pub mod budget_gate;
 pub mod builder;
 pub mod composer;
+pub mod dsl;
 pub mod conditional;
 pub mod conflict;
 pub mod economics;
@@ -88,7 +89,10 @@ pub use action::{
     Effect, Event, QueueTxOp,
 };
 pub use budget_gate::{BudgetGate, BudgetSlice};
-pub use builder::{ActionBuilder, TurnBuilder};
+pub use builder::{
+    ActionBuilder, Authorized, Bearer, Breadstuff, LegacyActionBuilder, NeedsAuth, Proved, Signed,
+    TurnBuilder, UncheckedOptIn,
+};
 pub use composer::{ComposeError, ComposedTurn, SignedFragment, TurnComposer};
 pub use conditional::{
     BASE_CONDITIONAL_DEPOSIT, ConditionProof, ConditionalResult, ConditionalTurn,
