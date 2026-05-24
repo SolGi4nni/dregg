@@ -1788,8 +1788,18 @@ impl TurnExecutor {
                     Effect::CreateSealPair { .. } => {
                         push_pending_shim(vm_effects, 0x105u32);
                     }
-                    Effect::EmitEvent { cell, .. } if cell == cell_id => {
-                        push_pending_shim(vm_effects, 0x106u32);
+                    Effect::EmitEvent { cell, event } if cell == cell_id => {
+                        // Stage 3: real AIR coverage. event_hash binds the
+                        // topic + data into effects_hash; no state changes.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(&event.topic);
+                        for d in &event.data {
+                            hasher.update(d);
+                        }
+                        let event_hash_bytes = hasher.finalize();
+                        vm_effects.push(VmEffect::EmitEvent {
+                            event_hash: hash_to_bb(event_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::SpawnWithDelegation { .. } => {
                         push_pending_shim(vm_effects, 0x107u32);
