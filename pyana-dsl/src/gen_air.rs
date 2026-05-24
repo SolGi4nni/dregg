@@ -37,6 +37,7 @@ pub fn generate_air_descriptor(ir: &ConstraintIr) -> TokenStream {
         let base = match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,            // Merkle root commitment
             ParamType::UserDefined(_) => 1, // selector column for enums
         };
@@ -131,6 +132,35 @@ fn collect_air_constraints(
                             pyana_dsl_runtime::Constraint::NonEquality {
                                 desc: concat!(#left_str, " != ", #right_str),
                                 inverse_col: #inv_col,
+                            }
+                        }
+                    }
+                    RequirementKind::MerkleAtPosition { depth, .. } => {
+                        let d = *depth as usize;
+                        *aux_width += d * 17;
+                        quote! {
+                            pyana_dsl_runtime::Constraint::Equality {
+                                desc: "merkle_at_position (stub)",
+                            }
+                        }
+                    }
+                    RequirementKind::Poseidon2Hash { inputs, .. } => {
+                        *aux_width += inputs.len().max(1);
+                        quote! {
+                            pyana_dsl_runtime::Constraint::Equality {
+                                desc: "poseidon2_hash (stub)",
+                            }
+                        }
+                    }
+                    RequirementKind::BitRange { .. } => {
+                        let diff_col = *aux_width;
+                        let bit_col = *aux_width + 1;
+                        *aux_width += 2;
+                        quote! {
+                            pyana_dsl_runtime::Constraint::RangeCheck {
+                                desc: "bit_range (stub)",
+                                diff_col: #diff_col,
+                                bit_col: #bit_col,
                             }
                         }
                     }

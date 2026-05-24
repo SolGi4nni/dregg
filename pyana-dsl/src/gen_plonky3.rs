@@ -84,6 +84,7 @@ pub fn generate_plonky3(ir: &ConstraintIr) -> TokenStream {
         .map(|p| match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,
             ParamType::UserDefined(_) => 1,
         })
@@ -152,6 +153,7 @@ fn compute_p3_layout(ir: &ConstraintIr) -> P3Layout {
         let base = match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,
             ParamType::UserDefined(_) => 1,
         };
@@ -188,6 +190,15 @@ fn count_p3_aux(statements: &[Statement], width: &mut usize) {
                 }
                 RequirementKind::Membership { .. } => {
                     *width += 1; // placeholder (unreachable due to early return)
+                }
+                RequirementKind::BitRange { .. } => {
+                    *width += 2; // stub: diff/bit columns (parity with emit_stark_impl)
+                }
+                RequirementKind::MerkleAtPosition { .. } => {
+                    *width += 3; // stub
+                }
+                RequirementKind::Poseidon2Hash { .. } => {
+                    *width += 3; // stub
                 }
             },
             Statement::Mutate(_) => {}
@@ -351,6 +362,22 @@ fn emit_p3_requirement(
         RequirementKind::Membership { .. } => {
             // Should be unreachable (guarded by has_membership check)
             *aux_idx += 1;
+            quote! { AB::Expr::ZERO }
+        }
+        RequirementKind::BitRange { .. } => {
+            // Stub: native Plonky3 bit-decomp emission not yet implemented.
+            // Reserve aux columns for parity with count_p3_aux.
+            *aux_idx += 2;
+            quote! { AB::Expr::ZERO }
+        }
+        RequirementKind::MerkleAtPosition { .. } => {
+            // Stub: native Plonky3 Merkle gadget not yet implemented.
+            *aux_idx += 3;
+            quote! { AB::Expr::ZERO }
+        }
+        RequirementKind::Poseidon2Hash { .. } => {
+            // Stub: native Plonky3 Poseidon2 gadget not yet implemented.
+            *aux_idx += 3;
             quote! { AB::Expr::ZERO }
         }
     }

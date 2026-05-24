@@ -12,6 +12,10 @@ fn param_type_tokens(ty: &ParamType) -> TokenStream {
     match ty {
         ParamType::U64 => quote! { u64 },
         ParamType::ByteArray32 => quote! { [u8; 32] },
+        ParamType::ByteMatrix32(n) => {
+            let n_lit = *n as usize;
+            quote! { [[u8; 32]; #n_lit] }
+        }
         ParamType::Set => quote! { &std::collections::HashSet<u64> },
         ParamType::UserDefined(path) => {
             // Parse the stored type path back into tokens
@@ -95,6 +99,37 @@ fn generate_statement_rust(stmt: &Statement, caveat_name: &str) -> TokenStream {
                     if !#set_ident.contains(&#elem_ident) {
                         return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
                     }
+                }
+            }
+            RequirementKind::BitRange { value, bits } => {
+                // `value < (1 << bits)`. Use u128 to handle bits up to 64
+                // without u64 shift overflow.
+                let bits_lit = *bits;
+                quote! {
+                    {
+                        let __pyana_v: u64 = #value;
+                        let __pyana_bound: u128 = 1u128 << #bits_lit;
+                        if !((__pyana_v as u128) < __pyana_bound) {
+                            return Err(pyana_dsl_runtime::ConstraintError::CaveatViolation(#caveat_name));
+                        }
+                    }
+                }
+            }
+            RequirementKind::MerkleAtPosition { .. } => {
+                // The Rust evaluator for MerkleAtPosition is deferred until
+                // the dedicated Poseidon2 runtime helper lands. The AIR-side
+                // constraint is the source of truth; the differential test
+                // skips this shape (see gen_diff_test.rs).
+                quote! {
+                    // TODO(pyana-dsl/gen_rust.rs): implement runtime Merkle
+                    // proof check for MerkleAtPosition.
+                }
+            }
+            RequirementKind::Poseidon2Hash { .. } => {
+                // Same situation as MerkleAtPosition.
+                quote! {
+                    // TODO(pyana-dsl/gen_rust.rs): implement runtime
+                    // Poseidon2 hash check.
                 }
             }
         },

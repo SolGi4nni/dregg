@@ -66,6 +66,18 @@ fn collect_datalog_predicates(statements: &[Statement], body_parts: &mut Vec<Str
                         let e = capitalize(element);
                         format!("member_of({}, {})", e, s)
                     }
+                    RequirementKind::BitRange { value, bits } => {
+                        let v = expr_to_datalog_var(value);
+                        format!("bit_range({}, {})", v, bits)
+                    }
+                    RequirementKind::MerkleAtPosition { leaf, depth, .. } => {
+                        let l = expr_to_datalog_var(leaf);
+                        format!("merkle_at_position({}, depth={})", l, depth)
+                    }
+                    RequirementKind::Poseidon2Hash { output, .. } => {
+                        let o = expr_to_datalog_var(output);
+                        format!("poseidon2_hash({})", o)
+                    }
                 };
                 body_parts.push(pred);
             }

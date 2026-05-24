@@ -97,6 +97,7 @@ fn build_zkir_json(ir: &ConstraintIr) -> String {
             let ir_type = match &p.ty {
                 ParamType::U64 => "Scalar<BLS12-381>",
                 ParamType::ByteArray32 => "Scalar<BLS12-381>",
+                ParamType::ByteMatrix32(_) => "Array<Scalar<BLS12-381>>",
                 ParamType::Set => "Scalar<BLS12-381>",
                 ParamType::UserDefined(_) => "Scalar<BLS12-381>",
             };
@@ -311,6 +312,50 @@ fn emit_zkir_requirement(
             });
             out.push(ZkirInstr {
                 json: format!(r#"{{ "op": "assert", "cond": "{}" }}"#, not_eq_wire),
+            });
+        }
+        RequirementKind::BitRange { value, bits } => {
+            // ConstrainBits(value, N) — natural Midnight bit-range constraint.
+            let value_wire = expr_to_zkir_operand(value);
+            out.push(ZkirInstr {
+                json: format!(
+                    r#"{{ "op": "constrain_bits", "val": {}, "bits": {} }}"#,
+                    value_wire, bits
+                ),
+            });
+        }
+        RequirementKind::MerkleAtPosition { root, leaf, depth, .. } => {
+            // Stub: Midnight TransientHash-based Merkle inclusion would unroll
+            // `depth` layers of hash + cond-select. Emit a placeholder
+            // constrain_eq against the root and a comment marker.
+            let root_wire = expr_to_zkir_operand(root);
+            let leaf_wire = expr_to_zkir_operand(leaf);
+            let _ = wires.alloc(); // reserve a wire for parity
+            out.push(ZkirInstr {
+                json: format!(
+                    r#"{{ "op": "merkle_at_position_stub", "root": {}, "leaf": {}, "depth": {} }}"#,
+                    root_wire, leaf_wire, depth
+                ),
+            });
+        }
+        RequirementKind::Poseidon2Hash { inputs, output } => {
+            // Stub: Midnight uses TransientHash natively, not Poseidon2. Emit a
+            // placeholder transient_hash request and a constrain_eq vs output.
+            let output_wire = expr_to_zkir_operand(output);
+            let input_wires: Vec<String> = inputs.iter().map(expr_to_zkir_operand).collect();
+            let hash_wire = wires.alloc();
+            out.push(ZkirInstr {
+                json: format!(
+                    r#"{{ "op": "transient_hash", "inputs": [{}], "output": "{}" }}"#,
+                    input_wires.join(", "),
+                    hash_wire
+                ),
+            });
+            out.push(ZkirInstr {
+                json: format!(
+                    r#"{{ "op": "constrain_eq", "a": "{}", "b": {} }}"#,
+                    hash_wire, output_wire
+                ),
             });
         }
         RequirementKind::Membership { set, element } => {

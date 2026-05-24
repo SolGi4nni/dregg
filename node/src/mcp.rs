@@ -31,6 +31,76 @@ use crate::state::NodeState;
 
 // Re-import x25519 and chacha for seal/unseal operations.
 
+/// Parse a JSON effect descriptor into a turn `Effect`.
+///
+/// Supports the subset needed for the two-AI handoff demo:
+/// - `{ "type": "transfer", "from": "<hex>", "to": "<hex>", "amount": N }`
+/// - `{ "type": "increment_nonce", "cell": "<hex>" }`
+/// - `{ "type": "set_field", "cell": "<hex>", "index": N, "value": N }`
+///
+/// Returns a human-readable error string when the descriptor is malformed.
+/// MCP-first: this is the canonical effect-parsing surface; the HTTP API
+/// would derive from it if/when it gains an effects body.
+fn parse_effect_json(value: &Value) -> Result<pyana_turn::Effect, String> {
+    let ty = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "effect missing 'type' field".to_string())?;
+
+    let get_hex_32 = |obj: &Value, field: &str| -> Result<[u8; 32], String> {
+        let s = obj
+            .get(field)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("effect.{ty} missing field '{field}'"))?;
+        hex_decode(s).map_err(|_| format!("effect.{ty}.{field}: invalid hex (expected 64 chars)"))
+    };
+
+    match ty {
+        "transfer" => {
+            let from = get_hex_32(value, "from")?;
+            let to = get_hex_32(value, "to")?;
+            let amount = value
+                .get("amount")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "effect.transfer missing 'amount'".to_string())?;
+            Ok(pyana_turn::Effect::Transfer {
+                from: pyana_cell::CellId(from),
+                to: pyana_cell::CellId(to),
+                amount,
+            })
+        }
+        "increment_nonce" => {
+            let cell = get_hex_32(value, "cell")?;
+            Ok(pyana_turn::Effect::IncrementNonce {
+                cell: pyana_cell::CellId(cell),
+            })
+        }
+        "set_field" => {
+            let cell = get_hex_32(value, "cell")?;
+            let index = value
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "effect.set_field missing 'index'".to_string())?
+                as usize;
+            let value_u32 = value
+                .get("value")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "effect.set_field missing 'value'".to_string())?
+                as u32;
+            let mut value_bytes = [0u8; 32];
+            value_bytes[..4].copy_from_slice(&value_u32.to_le_bytes());
+            Ok(pyana_turn::Effect::SetField {
+                cell: pyana_cell::CellId(cell),
+                index,
+                value: value_bytes,
+            })
+        }
+        other => Err(format!(
+            "unknown effect type '{other}' (supported: transfer, increment_nonce, set_field)"
+        )),
+    }
+}
+
 /// Build a CallForest with a single root action containing the given effects.
 fn build_forest_with_effects(target: CellId, effects: Vec<pyana_turn::Effect>) -> CallForest {
     let action = pyana_turn::Action {
@@ -216,11 +286,12 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         McpToolDef {
             name: "pyana_create_agent",
-            description: "Create a new agent identity with a wallet",
+            description: "Register this node's wallet as a cell in the local ledger (idempotent). Returns the content-addressed cell_id.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Human-readable name for the agent" }
+                    "name": { "type": "string", "description": "Human-readable label for the agent (informational only; identity is content-addressed from the wallet pubkey)" },
+                    "initial_balance": { "type": "integer", "description": "Initial computron balance for the cell when first created. Ignored on subsequent calls." }
                 },
                 "required": ["name"]
             }),
@@ -240,14 +311,19 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         McpToolDef {
             name: "pyana_submit_turn",
-            description: "Submit an atomic turn (set of actions) for execution",
+            description: "Submit an atomic turn (set of actions) for execution. Pass an `effects` array to actually perform work (transfers, set_field, etc.); omit it for a no-op turn that just chains a receipt.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "target_cell": { "type": "string", "description": "Hex-encoded 32-byte target cell ID" },
                     "method": { "type": "string", "description": "The method to invoke on the cell" },
                     "fee": { "type": "integer", "description": "Fee in computrons (default: 0)" },
-                    "memo": { "type": "string", "description": "Optional memo attached to the turn" }
+                    "memo": { "type": "string", "description": "Optional memo attached to the turn" },
+                    "effects": {
+                        "type": "array",
+                        "description": "Optional list of effects: { type: 'transfer', from, to, amount } | { type: 'increment_nonce', cell } | { type: 'set_field', cell, index, value }",
+                        "items": { "type": "object" }
+                    }
                 },
                 "required": ["target_cell", "method"]
             }),
@@ -436,7 +512,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         McpToolDef {
             name: "pyana_exercise_bearer_cap",
-            description: "Exercise a bearer capability to perform an action without c-list storage",
+            description: "Exercise a bearer capability to perform an action without c-list storage. Pass an `effects` array to actually perform work (e.g. transfer from the target cell).",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -444,7 +520,13 @@ fn tool_definitions() -> Vec<McpToolDef> {
                     "method": { "type": "string", "description": "Method to invoke on the target cell" },
                     "delegation_chain": { "type": "string", "description": "Hex-encoded delegation chain signature" },
                     "bearer_pk": { "type": "string", "description": "Hex-encoded 32-byte bearer public key" },
-                    "expires_at": { "type": "integer", "description": "Expiry height of the bearer cap" }
+                    "expires_at": { "type": "integer", "description": "Expiry height of the bearer cap" },
+                    "permissions": { "type": "string", "description": "Permission level the bearer cap commits to (default: 'signature' for backward compat)" },
+                    "effects": {
+                        "type": "array",
+                        "description": "List of effects to execute under the bearer authorization (typically a single transfer). Each effect is { type, ... } per the parse_effect_json contract.",
+                        "items": { "type": "object" }
+                    }
                 },
                 "required": ["target_cell", "method", "delegation_chain", "bearer_pk", "expires_at"]
             }),
@@ -788,27 +870,65 @@ async fn tool_get_status(state: &NodeState) -> McpToolResult {
 }
 
 async fn tool_create_agent(params: &Value, state: &NodeState) -> McpToolResult {
-    let s = state.read().await;
-    if !s.unlocked {
-        return McpToolResult::error("wallet is locked; unlock first");
-    }
-    drop(s);
-
     let name = match params.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return McpToolResult::error("missing required parameter: name"),
     };
 
-    // Generate a fresh wallet identity.
-    let wallet = pyana_sdk::AgentWallet::new();
-    let pk = wallet.public_key();
-    let pk_hex: String = pk.0.iter().map(|b| format!("{b:02x}")).collect();
+    let initial_balance = params
+        .get("initial_balance")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut s = state.write().await;
+    if !s.unlocked {
+        return McpToolResult::error("wallet is locked; unlock first");
+    }
+
+    // MCP-first identity: the calling AI process IS this node, so
+    // "create agent" means "register this node's wallet identity as a
+    // cell in the ledger so it can be granted/received capabilities and
+    // hold balance." The cell ID is content-addressed from the wallet's
+    // public key plus the zero token domain (matching how
+    // `submit_turn`, `grant_capability`, etc. derive it).
+    //
+    // Per 06-the-real-demo.md step 2 ("Alice becomes a cell"), this is
+    // what makes downstream grant/transfer/handoff actually have a
+    // target cell to land on. Previously this tool generated an
+    // ephemeral wallet and discarded it; grants against the resulting
+    // pubkey failed because no Cell existed in the ledger.
+    let pk = s.wallet.public_key();
+    let pk_bytes = pk.0;
+    let cell_id = pyana_cell::CellId::derive_raw(&pk_bytes, &[0u8; 32]);
+    let pk_hex: String = pk_bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let cell_id_hex = hex_encode(&cell_id.0);
+
+    let already_existed = s.ledger.get(&cell_id).is_some();
+
+    if !already_existed {
+        let cell = pyana_cell::Cell::with_balance(pk_bytes, [0u8; 32], initial_balance);
+        if let Err(e) = s.ledger.insert_cell(cell) {
+            return McpToolResult::error(format!("ledger insert failed: {e}"));
+        }
+    }
+
+    let (balance, nonce, cap_count) = match s.ledger.get(&cell_id) {
+        Some(c) => (c.state.balance(), c.state.nonce(), c.capabilities.len()),
+        None => (0, 0, 0),
+    };
+
+    drop(s);
 
     McpToolResult::json(&serde_json::json!({
         "name": name,
         "public_key": pk_hex,
-        "created": true,
-        "note": "Agent identity generated. Use pyana_check_capabilities to see held tokens."
+        "cell_id": cell_id_hex,
+        "balance": balance,
+        "nonce": nonce,
+        "capability_count": cap_count,
+        "created": !already_existed,
+        "already_existed": already_existed,
+        "note": "Agent cell registered in the local ledger. cell_id is content-addressed from the wallet's public key + zero token domain.",
     }))
 }
 

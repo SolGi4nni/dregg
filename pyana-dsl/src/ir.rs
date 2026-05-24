@@ -84,6 +84,9 @@ pub struct Param {
 pub enum ParamType {
     U64,
     ByteArray32,
+    /// A 2D array of bytes: `[[u8; 32]; N]`. Used as the siblings array for
+    /// Merkle membership proofs. The `u32` is the outer length (`N`).
+    ByteMatrix32(u32),
     /// A set type (for membership checks).
     Set,
     /// A user-defined type (enums like Direction). Stored as the type path string.
@@ -147,8 +150,31 @@ pub enum RequirementKind {
     Equal { left: syn::Expr, right: syn::Expr },
     /// `a != b`
     NotEqual { left: syn::Expr, right: syn::Expr },
-    /// `set.contains(element)` — set membership
+    /// `set.contains(element)` — set membership against an in-memory set.
     Membership { set: String, element: String },
+    /// `in_range!(value, N)` — i.e. `value < 2^N`, proven via bit decomp.
+    BitRange { value: syn::Expr, bits: u32 },
+    /// `merkle_member!(root, leaf, position, siblings, depth = N)` — Merkle
+    /// inclusion proof. `root` and `leaf` are 32-byte digests, `position` is
+    /// a `u64` index, and `siblings` is a `&[[u8; 32]; N]` array of length
+    /// `depth`. The proof uses Poseidon2 `hash_2_to_1` as the underlying
+    /// compression function, with sibling ordering driven by the bits of
+    /// `position` (bit 0 = leaf level, bit `depth-1` = root level).
+    MerkleAtPosition {
+        root: syn::Expr,
+        leaf: syn::Expr,
+        position: syn::Expr,
+        siblings: syn::Expr,
+        depth: u32,
+    },
+    /// `poseidon2_assert!(output, a, b, ...)` — assert
+    /// `output == poseidon2_hash([a, b, ...])` where each input and the
+    /// output is a 32-byte digest. Used for state commitments, effects
+    /// hashes, capability roots, swiss-table root binding.
+    Poseidon2Hash {
+        inputs: Vec<syn::Expr>,
+        output: syn::Expr,
+    },
 }
 
 impl RequirementKind {
@@ -160,6 +186,9 @@ impl RequirementKind {
             RequirementKind::Equal { .. } => "==",
             RequirementKind::NotEqual { .. } => "!=",
             RequirementKind::Membership { .. } => "contains",
+            RequirementKind::BitRange { .. } => "in_range",
+            RequirementKind::MerkleAtPosition { .. } => "merkle_member",
+            RequirementKind::Poseidon2Hash { .. } => "poseidon2",
         }
     }
 }

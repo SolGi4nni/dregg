@@ -26,6 +26,7 @@ pub fn generate_kimchi(ir: &ConstraintIr) -> TokenStream {
         .map(|p| match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,
             ParamType::UserDefined(_) => 1,
         })
@@ -37,6 +38,7 @@ pub fn generate_kimchi(ir: &ConstraintIr) -> TokenStream {
         let base = match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,
             ParamType::UserDefined(_) => 1,
         };
@@ -147,6 +149,56 @@ fn collect_kimchi_gates(
                         });
                     }
                     *trace_width += depth * 12; // 12 wires per Poseidon round
+                }
+                RequirementKind::BitRange { bits, .. } => {
+                    // N boolean-constraint gates + 1 reconstruction.
+                    let n = *bits as usize;
+                    for _ in 0..n {
+                        gates.push(quote! {
+                            pyana_dsl_runtime::KimchiGate {
+                                typ: pyana_dsl_runtime::KimchiGateType::Generic,
+                                coeffs: vec![-1, 0, 0, 1, 0],
+                                wires: 2,
+                            }
+                        });
+                    }
+                    gates.push(quote! {
+                        pyana_dsl_runtime::KimchiGate {
+                            typ: pyana_dsl_runtime::KimchiGateType::Generic,
+                            coeffs: vec![1, -1, 0, 0, 0],
+                            wires: 2,
+                        }
+                    });
+                    *trace_width += n + 1;
+                }
+                RequirementKind::MerkleAtPosition { depth, .. } => {
+                    // Same Poseidon-per-level pattern as Membership, but
+                    // parameterised on the IR-supplied depth.
+                    let depth = *depth as usize;
+                    for _ in 0..depth {
+                        gates.push(quote! {
+                            pyana_dsl_runtime::KimchiGate {
+                                typ: pyana_dsl_runtime::KimchiGateType::Poseidon,
+                                coeffs: vec![],
+                                wires: 12,
+                            }
+                        });
+                    }
+                    *trace_width += depth * 12;
+                }
+                RequirementKind::Poseidon2Hash { inputs, .. } => {
+                    // One Poseidon gate per absorb-permute pair.
+                    let arity = inputs.len();
+                    for _ in 0..arity.max(1) {
+                        gates.push(quote! {
+                            pyana_dsl_runtime::KimchiGate {
+                                typ: pyana_dsl_runtime::KimchiGateType::Poseidon,
+                                coeffs: vec![],
+                                wires: 12,
+                            }
+                        });
+                    }
+                    *trace_width += arity.max(1) * 12;
                 }
             },
             Statement::Mutate(mutation) => {

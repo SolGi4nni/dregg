@@ -53,6 +53,7 @@ fn compute_layout(ir: &ConstraintIr) -> TraceLayout {
         let base = match &p.ty {
             ParamType::U64 => 1,
             ParamType::ByteArray32 => 8,
+            ParamType::ByteMatrix32(n) => 8 * (*n as usize),
             ParamType::Set => 1,
             ParamType::UserDefined(_) => 1,
         };
@@ -108,6 +109,18 @@ fn count_aux_from_statements(
                     let _start = *width;
                     *width += 1; // commitment root column
                 }
+                RequirementKind::MerkleAtPosition { depth, .. } => {
+                    *width += (*depth as usize) * 17;
+                }
+                RequirementKind::Poseidon2Hash { inputs, .. } => {
+                    *width += inputs.len().max(1);
+                }
+                RequirementKind::BitRange { .. } => {
+                    let diff_col = *width;
+                    let bit_col = *width + 1;
+                    *width += 2;
+                    aux_cols.push(AuxCol::RangeCheck { diff_col, bit_col });
+                }
             },
             Statement::Mutate(_) => {
                 // Mutations are encoded into the param layout (old/new columns).
@@ -144,6 +157,9 @@ fn statement_degree(stmt: &Statement) -> usize {
             RequirementKind::Equal { .. } => 1,
             RequirementKind::NotEqual { .. } => 2, // a * inv = 1
             RequirementKind::Membership { .. } => 2,
+            RequirementKind::MerkleAtPosition { .. } => 3,
+            RequirementKind::Poseidon2Hash { .. } => 3,
+            RequirementKind::BitRange { .. } => 2,
         },
         Statement::Mutate(_) => 1,
         Statement::Match { arms, .. } => {
@@ -472,6 +488,24 @@ fn emit_requirement_expr(
                 )
             }
         }
+        RequirementKind::MerkleAtPosition { .. } => {
+            quote! { BabyBear::ZERO }
+        }
+        RequirementKind::Poseidon2Hash { .. } => {
+            quote! { BabyBear::ZERO }
+        }
+        RequirementKind::BitRange { .. } => {
+            let diff_col = layout.aux_start + *aux_idx;
+            let bit_col = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 2;
+            quote! {
+                {
+                    let diff_check = local[#diff_col];
+                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
+                    diff_check + bit_binary
+                }
+            }
+        }
     }
 }
 
@@ -711,6 +745,21 @@ fn emit_aux_fill_statements(
                 }
                 RequirementKind::Membership { .. } => {
                     *aux_idx += 1;
+                }
+                RequirementKind::MerkleAtPosition { depth, .. } => {
+                    *aux_idx += (*depth as usize) * 17;
+                }
+                RequirementKind::Poseidon2Hash { inputs, .. } => {
+                    *aux_idx += inputs.len().max(1);
+                }
+                RequirementKind::BitRange { .. } => {
+                    let diff_col = layout.aux_start + *aux_idx;
+                    let bit_col = layout.aux_start + *aux_idx + 1;
+                    *aux_idx += 2;
+                    stmts.push(quote! {
+                        row[#diff_col] = BabyBear::ZERO;
+                        row[#bit_col] = BabyBear::ZERO;
+                    });
                 }
             },
             Statement::Mutate(_) => {}

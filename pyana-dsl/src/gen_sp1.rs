@@ -76,11 +76,12 @@ fn build_sp1_guest_code(ir: &ConstraintIr) -> String {
     // Read inputs
     for p in &ir.params {
         let name = p.name.to_string();
-        let rust_type = match &p.ty {
-            ParamType::U64 => "u64",
-            ParamType::ByteArray32 => "[u8; 32]",
-            ParamType::Set => "Vec<u64>", // Sets passed as vectors for SP1
-            ParamType::UserDefined(path) => path.as_str(),
+        let rust_type: String = match &p.ty {
+            ParamType::U64 => "u64".to_string(),
+            ParamType::ByteArray32 => "[u8; 32]".to_string(),
+            ParamType::ByteMatrix32(n) => format!("[[u8; 32]; {}]", n),
+            ParamType::Set => "Vec<u64>".to_string(), // Sets passed as vectors for SP1
+            ParamType::UserDefined(path) => path.clone(),
         };
 
         if p.mutable {
@@ -164,6 +165,21 @@ fn emit_sp1_statements(statements: &[Statement], lines: &mut Vec<String>, indent
                             "assert!({}.contains(&{}), \"membership check failed\");",
                             set, element
                         )
+                    }
+                    RequirementKind::BitRange { value, bits } => {
+                        let v = quote::quote!(#value).to_string();
+                        format!(
+                            "assert!((({}) as u128) < (1u128 << {}), \"bit_range({}) violated\");",
+                            v, bits, bits
+                        )
+                    }
+                    RequirementKind::MerkleAtPosition { .. } => {
+                        // Stub: SP1 guest Merkle gadget not yet wired.
+                        "// merkle_at_position: stub (not yet implemented in SP1 guest)".to_string()
+                    }
+                    RequirementKind::Poseidon2Hash { .. } => {
+                        // Stub: SP1 guest Poseidon2 not yet wired.
+                        "// poseidon2_hash: stub (not yet implemented in SP1 guest)".to_string()
                     }
                 };
                 lines.push(format!("{}{}", pad, check));
