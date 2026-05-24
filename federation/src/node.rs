@@ -830,11 +830,26 @@ impl FederationNode {
     }
 
     /// Update the attested root after consensus finalization.
-    pub fn update_attested_root(&mut self, qc: &QuorumCertificate, nodes: &[NodeIdentity]) {
+    ///
+    /// Historically this method copied the consensus vote signatures from
+    /// `qc.votes` (signed over the `vote_message`: block_hash + height + view).
+    /// Those signatures are NOT verifiable by `AttestedRoot::is_valid`, which
+    /// re-derives a different canonical signing message
+    /// (`AttestedRoot::signing_message`: `pyana-attested-root-v1 || merkle_root
+    /// || note_tree_root_tag || nullifier_set_root_tag || height || timestamp`).
+    ///
+    /// To make `is_valid` actually verify, callers now pass `quorum_signatures`
+    /// already produced over `AttestedRoot::signing_message` (see
+    /// [`Federation::collect_attested_root_signatures`]). The QC's
+    /// `aggregate_qc` (when present) is still carried for the constant-size
+    /// BLS verification path via `verify_attested_root_with_committee`.
+    pub fn update_attested_root(
+        &mut self,
+        qc: &QuorumCertificate,
+        quorum_signatures: Vec<(PublicKey, Signature)>,
+        timestamp: i64,
+    ) {
         let merkle_root = self.revocation_tree.root();
-        let timestamp = current_timestamp();
-
-        let quorum_signatures = qc.quorum_signatures(nodes);
 
         self.attested_root = Some(AttestedRoot {
             merkle_root,
@@ -931,6 +946,43 @@ impl Federation {
         self.nodes.iter().map(|n| n.identity.clone()).collect()
     }
 
+    /// Collect Ed25519 signatures over the canonical [`AttestedRoot::signing_message`]
+    /// for the given (merkle_root, height, timestamp) tuple, signed by each
+    /// online node's signing key.
+    ///
+    /// These are the signatures that `AttestedRoot::is_valid` actually verifies.
+    /// The consensus QC's per-voter signatures sign a different message
+    /// (`pyana-federation-vote-v1 || block_hash || height || view`) and are
+    /// retained on the QC itself; we re-sign here so that downstream verifiers
+    /// who only have an `AttestedRoot` (and not the QC's block_hash/view) can
+    /// authenticate it.
+    fn collect_attested_root_signatures(
+        &self,
+        merkle_root: &[u8; 32],
+        height: u64,
+        timestamp: i64,
+    ) -> Vec<(PublicKey, Signature)> {
+        // Build a stand-in AttestedRoot just to compute the signing message.
+        // note_tree_root / nullifier_set_root are None here (matching what
+        // `FederationNode::update_attested_root` writes).
+        let probe = AttestedRoot {
+            merkle_root: *merkle_root,
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height,
+            timestamp,
+            threshold_qc: None,
+            quorum_signatures: Vec::new(),
+            threshold: 0,
+        };
+        let message = probe.signing_message();
+        self.nodes
+            .iter()
+            .filter(|n| n.is_online)
+            .map(|n| (n.identity.public_key.clone(), sign(&n.signing_key, &message)))
+            .collect()
+    }
+
     /// Submit a revocation event from a specific node.
     pub fn submit_revocation(&mut self, from_node: usize, token_id: &str) {
         let event = self.nodes[from_node].create_revocation_event(token_id);
@@ -966,11 +1018,28 @@ impl Federation {
         let (block, qc) = result;
 
         // Apply the finalized block to all online nodes.
-        let identities = self.node_identities();
         for node in &mut self.nodes {
             if node.is_online {
                 node.apply_finalized_block(&block);
-                node.update_attested_root(&qc, &identities);
+            }
+        }
+
+        // After all online nodes have applied the block they share the same
+        // merkle_root. Compute the shared (root, height, timestamp) tuple, then
+        // gather each online node's signature over the AttestedRoot's canonical
+        // signing message.
+        let timestamp = current_timestamp();
+        let shared_merkle_root: [u8; 32] = self
+            .nodes
+            .iter_mut()
+            .find(|n| n.is_online)
+            .map(|n| n.compute_state_root())
+            .unwrap_or([0u8; 32]);
+        let quorum_signatures =
+            self.collect_attested_root_signatures(&shared_merkle_root, qc.height, timestamp);
+        for node in &mut self.nodes {
+            if node.is_online {
+                node.update_attested_root(&qc, quorum_signatures.clone(), timestamp);
             }
         }
 
@@ -1055,11 +1124,26 @@ impl Federation {
         let (block, qc) = result;
 
         // Apply the finalized block to all online nodes.
-        let identities = self.node_identities();
         for node in &mut self.nodes {
             if node.is_online {
                 node.apply_finalized_block(&block);
-                node.update_attested_root(&qc, &identities);
+            }
+        }
+
+        // Sign the canonical AttestedRoot message (see `update_attested_root`
+        // docs) with each online node's signing key.
+        let timestamp = current_timestamp();
+        let shared_merkle_root: [u8; 32] = self
+            .nodes
+            .iter_mut()
+            .find(|n| n.is_online)
+            .map(|n| n.compute_state_root())
+            .unwrap_or([0u8; 32]);
+        let quorum_signatures =
+            self.collect_attested_root_signatures(&shared_merkle_root, qc.height, timestamp);
+        for node in &mut self.nodes {
+            if node.is_online {
+                node.update_attested_root(&qc, quorum_signatures.clone(), timestamp);
             }
         }
 
@@ -1098,12 +1182,25 @@ impl Federation {
         let federation_height = self.finalized_history.len();
 
         if node_height < federation_height {
-            let identities = self.node_identities();
             for i in node_height..federation_height {
                 let (block, qc) = self.finalized_history[i].clone();
                 // Apply the block to the node's revocation tree.
                 self.nodes[node_id].apply_finalized_block(&block);
-                self.nodes[node_id].update_attested_root(&qc, &identities);
+                // Build the AttestedRoot signatures over the recovered root.
+                // Note: this replay path produces signatures only from currently-
+                // online nodes (including the just-recovered one), not the
+                // historical committee — sufficient for the node to have a
+                // self-verifiable AttestedRoot, but not a perfect reproduction
+                // of the original signature set.
+                let timestamp = current_timestamp();
+                let merkle_root = self.nodes[node_id].compute_state_root();
+                let quorum_signatures =
+                    self.collect_attested_root_signatures(&merkle_root, qc.height, timestamp);
+                self.nodes[node_id].update_attested_root(
+                    &qc,
+                    quorum_signatures,
+                    timestamp,
+                );
                 // Update the node's consensus state.
                 self.consensus_states[node_id].finalize_block(block, qc);
             }
@@ -1190,6 +1287,39 @@ mod tests {
         for node in &fed.nodes {
             assert!(node.is_revoked(&t1.id));
         }
+    }
+
+    #[test]
+    fn attested_root_is_valid_against_federation_keys() {
+        // Regression: federation-produced AttestedRoots must verify under
+        // AttestedRoot::is_valid using the federation's published keys.
+        //
+        // Before the fix, update_attested_root copied consensus vote-message
+        // signatures (over `pyana-federation-vote-v1 || block_hash || height
+        // || view`) into AttestedRoot.quorum_signatures, but is_valid checks
+        // signatures over a different message (signing_message: merkle_root +
+        // height + timestamp). The signatures were authentic but on the wrong
+        // message, so is_valid returned false. This test pins the correct
+        // behavior.
+        let mut fed = Federation::new(&["a", "b", "c", "d"]);
+        let t1 = fed.mint_token(0, "Alice");
+        fed.submit_revocation(0, &t1.id);
+        let (_block, _qc) = fed.run_consensus_round().expect("consensus round");
+
+        let attested = fed.nodes[0]
+            .get_attested_root()
+            .expect("attested root after consensus");
+        let federation_keys: Vec<PublicKey> = fed
+            .nodes
+            .iter()
+            .map(|n| n.identity.public_key.clone())
+            .collect();
+        assert!(
+            attested.is_valid(&federation_keys),
+            "AttestedRoot.is_valid must return true under the federation keyset"
+        );
+        // Sanity: all online nodes signed.
+        assert_eq!(attested.quorum_signatures.len(), 4);
     }
 
     #[test]
