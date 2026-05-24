@@ -99,17 +99,17 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 27 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 86.
+/// Layout: 28 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 87.
 /// (aux[8..10] = state commitment intermediates;
 ///  aux[11] = cumulative custom-effect count (sum-check, Stage 1);
 ///  aux[12..20] = old_reserved bit-decomposition for sealing honesty (Stage 2);
 ///  aux[20] = mode_flag bit;
 ///  aux[21] = ResizeQueue delta sign (Stage 2: 0=grow, 1=shrink);
 ///  aux[22] = ResizeQueue |delta| magnitude (Stage 2))
-pub const EFFECT_VM_WIDTH: usize = 86;
+pub const EFFECT_VM_WIDTH: usize = 87;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 27;
+pub const NUM_EFFECTS: usize = 28;
 
 /// Selector column indices.
 pub mod sel {
@@ -167,6 +167,11 @@ pub mod sel {
     /// off-trace manifest), so the AIR enforces state-passthrough and binds
     /// a hash of the new permissions into effects_hash.
     pub const SET_PERMISSIONS: usize = 26;
+    /// SetVerificationKey: update the cell's circuit/predicate VK. Like
+    /// SET_PERMISSIONS, the VK lives outside the VM trace, so the AIR
+    /// enforces full state passthrough and the new VK hash is bound into
+    /// effects_hash.
+    pub const SET_VERIFICATION_KEY: usize = 27;
 }
 
 /// State column offsets (relative to state start).
@@ -544,6 +549,11 @@ pub enum Effect {
     /// `permissions_hash` parameter binds the new permissions into
     /// effects_hash so the prover commits to the specific update.
     SetPermissions { permissions_hash: BabyBear },
+    /// SetVerificationKey: update a cell's verification key (Option<VK>).
+    /// Same shape as SetPermissions: VK lives off-trace, the AIR enforces
+    /// state passthrough and `vk_hash` binds the new VK into effects_hash.
+    /// `vk_hash == 0` represents "set to None" (revoke the VK).
+    SetVerificationKey { vk_hash: BabyBear },
     /// Spend a note (reveal nullifier, credit balance).
     NoteSpend { nullifier: BabyBear, value: u64 },
     /// Create a note (create commitment, debit balance).
@@ -962,6 +972,10 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
             Effect::SetPermissions { permissions_hash } => {
                 hasher_inputs.push(BabyBear::new(26));
                 hasher_inputs.push(*permissions_hash);
+            }
+            Effect::SetVerificationKey { vk_hash } => {
+                hasher_inputs.push(BabyBear::new(27));
+                hasher_inputs.push(*vk_hash);
             }
             Effect::NoteSpend { nullifier, value } => {
                 hasher_inputs.push(BabyBear::new(4));
@@ -1684,6 +1698,25 @@ impl StarkAir for EffectVmAir {
         alpha_pow = alpha_pow * alpha;
         for i in 0..8 {
             let c = s_setperms
+                * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- SetVerificationKey: same shape as SetPermissions (passthrough) --
+        let s_setvk = local[sel::SET_VERIFICATION_KEY];
+        let c_svk_bal_lo = s_setvk * (new_bal_lo - old_bal_lo);
+        combined = combined + alpha_pow * c_svk_bal_lo;
+        alpha_pow = alpha_pow * alpha;
+        let c_svk_bal_hi = s_setvk * (new_bal_hi - old_bal_hi);
+        combined = combined + alpha_pow * c_svk_bal_hi;
+        alpha_pow = alpha_pow * alpha;
+        let c_svk_cap = s_setvk * (new_cap_root - old_cap_root);
+        combined = combined + alpha_pow * c_svk_cap;
+        alpha_pow = alpha_pow * alpha;
+        for i in 0..8 {
+            let c = s_setvk
                 * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
@@ -3337,6 +3370,7 @@ pub fn generate_effect_vm_trace_ext(
             Effect::RevokeCapability { .. } => sel::REVOKE_CAPABILITY,
             Effect::EmitEvent { .. } => sel::EMIT_EVENT,
             Effect::SetPermissions { .. } => sel::SET_PERMISSIONS,
+            Effect::SetVerificationKey { .. } => sel::SET_VERIFICATION_KEY,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -3406,6 +3440,11 @@ pub fn generate_effect_vm_trace_ext(
                 // Same shape as EmitEvent: hash in param 0; AIR forbids any
                 // state column change; nonce ticks.
                 row[PARAM_BASE + 0] = *permissions_hash;
+                new_state.nonce += 1;
+            }
+            Effect::SetVerificationKey { vk_hash } => {
+                // Same shape as SetPermissions: VK lives off-trace.
+                row[PARAM_BASE + 0] = *vk_hash;
                 new_state.nonce += 1;
             }
             Effect::NoteSpend { nullifier, value } => {
@@ -4552,6 +4591,31 @@ mod tests {
                 alpha_val,
                 c.0
             );
+        }
+    }
+
+    #[test]
+    fn test_set_verification_key_constraint() {
+        // SetVerificationKey: same shape as SetPermissions/EmitEvent.
+        let state = make_initial_state(300);
+        let effects = vec![Effect::SetVerificationKey {
+            vk_hash: BabyBear::new(0xBEEF),
+        }];
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "SetVerificationKey proof should verify: {:?}",
+            result.err()
+        );
+
+        for alpha_val in [7, 13, 17, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            let c = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
+            assert_eq!(c, BabyBear::ZERO);
         }
     }
 

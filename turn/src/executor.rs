@@ -1776,8 +1776,18 @@ impl TurnExecutor {
                             permissions_hash: hash_to_bb(perm_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::SetVerificationKey { cell, .. } if cell == cell_id => {
-                        push_pending_shim(vm_effects, 0x102u32);
+                    Effect::SetVerificationKey { cell, new_vk } if cell == cell_id => {
+                        // Stage 3: real AIR coverage. VK lives off-trace;
+                        // bind its hash into effects_hash. None → 0.
+                        let vk_hash = match new_vk {
+                            Some(vk) => {
+                                let bytes = postcard::to_allocvec(vk).unwrap_or_default();
+                                let h = blake3::hash(&bytes);
+                                hash_to_bb(h.as_bytes())
+                            }
+                            None => pyana_circuit::field::BabyBear::ZERO,
+                        };
+                        vm_effects.push(VmEffect::SetVerificationKey { vk_hash });
                     }
                     Effect::RevokeCapability { cell, slot } if cell == cell_id => {
                         // Stage 3: real AIR coverage. Mirrors GrantCapability.
