@@ -90,21 +90,22 @@ use pyana_cell::{
 
 /// State field slot at which a registered name's hash is anchored.
 ///
-/// Picked to avoid collision with `nonce` (slot 0) and `balance` (slot 1).
-/// A real deployment binds this to the registry cell's published
-/// schema; the constant is kept stable here so that:
+/// Slot indices are 0..8 (per [`pyana_cell::STATE_SLOTS`]); `nonce` and
+/// `balance` are *not* in `fields[]` (they live on separate `CellState`
+/// accessors), so all 8 slots are addressable. The constants here pin a
+/// stable schema so:
 ///
 /// - The factory descriptor's `FieldConstraint::NonZero { field_index:
 ///   NAME_HASH_SLOT as u32 }` constraint is meaningful.
 /// - The wasm-side inspector (`shared/inspectors/name.js`) can index
 ///   into the cell's state at the same slot.
-pub const NAME_HASH_SLOT: usize = 8;
+pub const NAME_HASH_SLOT: usize = 2;
 
 /// State field slot at which the registered name's owner-hash is anchored.
-pub const OWNER_HASH_SLOT: usize = 9;
+pub const OWNER_HASH_SLOT: usize = 3;
 
 /// State field slot at which the rent expiry block height is recorded.
-pub const EXPIRY_SLOT: usize = 10;
+pub const EXPIRY_SLOT: usize = 4;
 
 // =============================================================================
 // Rent / factory configuration
