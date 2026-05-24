@@ -130,6 +130,17 @@ pub struct Turn {
 }
 
 impl Turn {
+    // REVIEW[wallet-coord]: P1-1 / P2-1 (AUDIT-turn-executor.md) and P2-10
+    // (AUDIT-wallet.md) report that `Turn::hash()` excludes
+    // `execution_proof`, `execution_proof_cell`, `execution_proof_new_commitment`,
+    // `sovereign_witnesses`, `conservation_proof`, and `custom_program_proofs`.
+    // An attacker with write-access to the in-flight SignedTurn can swap any of
+    // these without invalidating the signature. The coordinated fix bumps the
+    // domain tag to `pyana-turn-v3:`, extends this hash to cover the
+    // semantically-load-bearing fields, AND updates `compute_turn_bytes` in
+    // wallet/src/signer.rs so the executor and wallet derive the same hash.
+    // Bumping the tag here without the wallet change will reject every wallet
+    // turn -- they must land together.
     pub fn hash(&self) -> [u8; 32] {
         let forest_hash = self.call_forest.compute_hash();
         let mut hasher = blake3::Hasher::new();

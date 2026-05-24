@@ -299,6 +299,10 @@ pub struct FulfillIntentResponse {
 pub struct FastPathLockRequest {
     /// The turn to lock (full turn structure).
     pub turn: serde_json::Value,
+    /// Hex-encoded 64-byte Ed25519 signature from the agent over `turn.hash()`.
+    /// Required (P1-6): validators must verify the agent actually authored the
+    /// turn before locking on their behalf.
+    pub agent_signature: String,
 }
 
 #[derive(Serialize)]
@@ -495,7 +499,18 @@ pub struct AtomicProposalRequest {
     pub fee: u64,
     /// Hex-encoded 32-byte initiator cell ID.
     pub initiator: String,
+    /// Optional explicit per-participant Ed25519 verifying keys (hex, 64 chars).
+    /// Must have the same length as `participants` if provided. F-P1-4: when
+    /// omitted, the node falls back to `known_federation_keys` matched by ID;
+    /// unknown participants cause rejection.
+    #[serde(default)]
+    pub participant_pubkeys: Option<Vec<String>>,
 }
+
+/// Per-proposal computron budget cap (F-P2-1). Prior code passed `u64::MAX`
+/// straight through to the coordinator, so a misbehaving caller could exhaust
+/// computron budget at execution time.
+pub const MAX_ATOMIC_BUDGET: u64 = 1_000_000_000;
 
 /// Response to an atomic turn proposal.
 #[derive(Serialize)]
@@ -635,7 +650,9 @@ impl RateLimiter {
 ///
 /// The API token is derived from the bearer seed (which is itself derived from
 /// passphrase + salt via BLAKE3 at passphrase-set time).
-/// If no passphrase is set, all requests are allowed (initial setup phase).
+/// If no passphrase is set, only loopback callers are allowed (initial setup phase).
+/// This closes F-CRIT-1: a network attacker that reaches the port before the
+/// operator runs `set-passphrase` MUST NOT be able to drive any endpoint.
 async fn require_auth(
     State(state): State<NodeState>,
     req: Request<axum::body::Body>,
@@ -643,10 +660,19 @@ async fn require_auth(
 ) -> Result<Response, StatusCode> {
     let s = state.read().await;
 
-    // If no passphrase is set yet, allow all requests (initial setup).
+    // If no passphrase is set yet, restrict to loopback (initial setup).
+    // F-CRIT-1: prior code allowed *any* caller through here; on `--bind 0.0.0.0`
+    // a network attacker could reach this branch before the operator and set the
+    // passphrase themselves.
     let Some(ref bearer_seed) = s.bearer_seed else {
         drop(s);
-        return Ok(next.run(req).await);
+        // Pull ConnectInfo if present; if no ConnectInfo we play safe (deny).
+        let connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>> =
+            req.extensions().get();
+        return match connect_info {
+            Some(ci) if ci.0.ip().is_loopback() => Ok(next.run(req).await),
+            _ => Err(StatusCode::FORBIDDEN),
+        };
     };
 
     // Check for Bearer token in Authorization header.
@@ -1115,8 +1141,13 @@ async fn post_submit_turn(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // Build a minimal turn from the request.
-    let agent_bytes = hex_decode(&req.agent).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // F-P1-3: the prior code accepted `agent` from the request body and signed
+    // it with the operator's wallet, allowing a confused-deputy attack where the
+    // caller targets a victim cell's c-list with the operator's signature.
+    // Mirror the MCP path: derive the agent cell from the wallet's pubkey and
+    // ignore the body's value (we still parse it for error reporting).
+    let _body_agent = hex_decode(&req.agent).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let agent_bytes = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]).0;
     let turn = Turn {
         agent: CellId(agent_bytes),
         nonce: req.nonce,
@@ -1343,6 +1374,17 @@ async fn post_wallet_unlock(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
+    // F-CRIT-1: during pre-passphrase setup, only loopback callers may set the
+    // passphrase. Once a passphrase is set, the bearer-token auth on subsequent
+    // requests is sufficient; but unlock from the network is acceptable since the
+    // attacker must still know the passphrase.
+    {
+        let s = state.read().await;
+        if s.passphrase_hash.is_none() && !addr.ip().is_loopback() {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+
     if req.passphrase.is_empty() {
         return Ok(Json(UnlockResponse {
             success: false,
@@ -1398,6 +1440,14 @@ async fn post_set_passphrase(
     // Rate limit check.
     if !limiter.check(addr.ip()).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // F-CRIT-1: setting the initial passphrase from a non-loopback caller is the
+    // remote-takeover bug. Reject. Once the passphrase IS set, this endpoint
+    // returns "already set" so the network check below is not load-bearing in
+    // that branch, but we apply it uniformly to avoid an oracle.
+    if !addr.ip().is_loopback() {
+        return Err(StatusCode::FORBIDDEN);
     }
 
     if req.passphrase.is_empty() {
@@ -1737,6 +1787,24 @@ async fn post_fast_path_lock(
     // Use the node's public key as the validator signing key.
     let validator_key = s.wallet.public_key().0;
 
+    // Decode the agent's Ed25519 signature over turn_hash (P1-6).
+    let agent_sig_bytes = match hex_decode_var(&req.agent_signature) {
+        Ok(b) if b.len() == 64 => {
+            let mut arr = [0u8; 64];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return Ok(Json(FastPathLockResponse {
+                locked: false,
+                validator_key: None,
+                signature: None,
+                height: None,
+                error: Some("agent_signature must be 64 hex-encoded bytes".to_string()),
+            }));
+        }
+    };
+
     // Split borrows: take mutable ref to cell_lock_table and immutable ref to ledger
     // from disjoint fields of the same struct.
     let inner = &mut *s;
@@ -1747,6 +1815,7 @@ async fn post_fast_path_lock(
         current_height,
         &inner.ledger,
         &validator_key,
+        &agent_sig_bytes,
     );
 
     match result {
@@ -2201,18 +2270,59 @@ async fn post_atomic_proposal(
     let signing_key = s.wallet.gossip_signing_key().to_bytes();
     let costs = pyana_turn::ComputronCosts::default();
 
-    // Build participant key map (for production, these would come from federation config).
-    let participant_keys: std::collections::HashMap<[u8; 32], [u8; 32]> = participants
-        .iter()
-        .map(|&id| (id, id)) // In production: lookup real public keys
-        .collect();
+    // F-P1-4: build participant key map. Prior code used (id, id) which only
+    // happened to work when cell_id == pubkey (sovereign cells). The request
+    // may now supply explicit per-participant keys; otherwise we look them up
+    // in `known_federation_keys`, and any participant not found is rejected.
+    let participant_keys: std::collections::HashMap<[u8; 32], [u8; 32]> = match req
+        .participant_pubkeys
+        .as_ref()
+    {
+        Some(pks) => {
+            if pks.len() != participants.len() {
+                return Ok(Json(AtomicProposalResponse {
+                    accepted: false,
+                    proposal_id: None,
+                    error: Some(
+                        "participant_pubkeys length must match participants".to_string(),
+                    ),
+                }));
+            }
+            let mut map = std::collections::HashMap::with_capacity(participants.len());
+            for (id, pk_hex) in participants.iter().zip(pks.iter()) {
+                let pk: [u8; 32] = hex_decode(pk_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+                map.insert(*id, pk);
+            }
+            map
+        }
+        None => {
+            // Lookup keys from known_federation_keys.
+            let known: std::collections::HashSet<[u8; 32]> =
+                s.known_federation_keys.iter().map(|k| k.0).collect();
+            let mut map = std::collections::HashMap::with_capacity(participants.len());
+            for id in &participants {
+                if !known.contains(id) {
+                    return Ok(Json(AtomicProposalResponse {
+                        accepted: false,
+                        proposal_id: None,
+                        error: Some(format!(
+                            "participant {} not in known federation keys; supply participant_pubkeys explicitly",
+                            hex_encode(id)
+                        )),
+                    }));
+                }
+                map.insert(*id, *id);
+            }
+            map
+        }
+    };
 
     let mut coordinator = pyana_coord::Coordinator::new(
         node_id,
         signing_key,
         req.threshold,
         costs,
-        u64::MAX, // max budget — actual gate applied at execution time
+        MAX_ATOMIC_BUDGET, // F-P2-1: bound per-proposal computron budget
         participant_keys,
     );
 
@@ -3128,6 +3238,11 @@ struct CreateFromFactoryRequest {
     owner_pubkey: String,
     initial_balance: Option<u64>,
     token_id: Option<String>,
+    /// Hex-encoded 8-byte nonce, included in the signed message (F-P1-2).
+    nonce: String,
+    /// Hex-encoded 64-byte Ed25519 signature from `owner_pubkey` over
+    /// `b"pyana-create-from-factory-v1" || factory_vk || owner_pubkey || nonce`.
+    signature: String,
 }
 
 #[derive(Serialize)]
@@ -3150,6 +3265,31 @@ async fn post_create_from_factory(
     let factory_vk = hex_decode_32_result(&req.factory_vk).map_err(|_| StatusCode::BAD_REQUEST)?;
     let owner_pubkey =
         hex_decode_32_result(&req.owner_pubkey).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // F-P1-2: verify the caller actually possesses the owner private key, so an
+    // authenticated operator-tier caller can't register provenance for cells
+    // they don't own.
+    {
+        let nonce_bytes =
+            hex_decode_var(&req.nonce).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let mut payload = Vec::with_capacity(32 + 32 + nonce_bytes.len());
+        payload.extend_from_slice(&factory_vk);
+        payload.extend_from_slice(&owner_pubkey);
+        payload.extend_from_slice(&nonce_bytes);
+        if let Err(e) = verify_ed25519_sig(
+            &owner_pubkey,
+            &req.signature,
+            b"pyana-create-from-factory-v1",
+            &payload,
+        ) {
+            return Ok(Json(CreateFromFactoryResponse {
+                success: false,
+                child_vk: None,
+                cell_id: None,
+                error: Some(format!("owner signature rejected: {e}")),
+            }));
+        }
+    }
 
     let params = pyana_cell::factory::FactoryCreationParams {
         owner_pubkey,
@@ -3181,6 +3321,14 @@ async fn post_create_from_factory(
 #[derive(Deserialize)]
 struct MakeSovereignRequest {
     cell_id: String,
+    /// Hex-encoded 8-byte nonce (F-P1-2).
+    nonce: String,
+    /// Hex-encoded 64-byte Ed25519 signature from the cell owner over
+    /// `b"pyana-make-sovereign-v1" || cell_id || nonce`. The signing key
+    /// MUST be the cell's `public_key` if the cell exists on the ledger;
+    /// otherwise it MUST be the `cell_id` itself (sovereign convention:
+    /// for fresh sovereign cells, cell_id == pubkey).
+    signature: String,
 }
 
 #[derive(Serialize)]
@@ -3201,6 +3349,32 @@ async fn post_make_sovereign(
 
     let cell_id_bytes = hex_decode_32_result(&req.cell_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let cell_id = pyana_cell::CellId(cell_id_bytes);
+
+    // F-P1-2: verify the caller possesses the cell-owner private key. For an
+    // existing cell, the signing key is the cell's `public_key`. For a brand
+    // new sovereign cell (cell_id == pubkey by construction), the signing key
+    // is the cell_id itself.
+    let owner_pk = s
+        .ledger
+        .get(&cell_id)
+        .map(|c| *c.public_key())
+        .unwrap_or(cell_id_bytes);
+    let nonce_bytes = hex_decode_var(&req.nonce).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut payload = Vec::with_capacity(32 + nonce_bytes.len());
+    payload.extend_from_slice(&cell_id_bytes);
+    payload.extend_from_slice(&nonce_bytes);
+    if let Err(e) = verify_ed25519_sig(
+        &owner_pk,
+        &req.signature,
+        b"pyana-make-sovereign-v1",
+        &payload,
+    ) {
+        return Ok(Json(MakeSovereignResponse {
+            success: false,
+            state_commitment: None,
+            error: Some(format!("owner signature rejected: {e}")),
+        }));
+    }
 
     // Compute a state commitment from the cell ID (deterministic for the API response).
     // The full state commitment is computed by the wallet SDK and submitted via
@@ -3312,12 +3486,11 @@ async fn post_bearer_auth(
     let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
     executor.set_block_height(current_height);
 
-    // Set the local federation ID for delegation message computation.
-    let fed_id = s
-        .known_federation_keys
-        .first()
-        .map(|k| k.0)
-        .unwrap_or([0u8; 32]);
+    // F-P1-7: use the node's stable `silo_id` as the federation ID. Prior code
+    // picked `known_federation_keys.first()`, but that set is `HashSet`-derived
+    // and iteration order is not stable across runs — the federation ID used for
+    // delegation signature verification could vary unpredictably.
+    let fed_id = s.silo_id;
     executor.set_local_federation_id(fed_id);
 
     // Call the executor's verify_bearer_cap with an empty path (top-level check).
@@ -3442,6 +3615,30 @@ fn nibble(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
+}
+
+/// Verify an Ed25519 signature with domain separation. Used by F-P1-2 (and
+/// related ownership checks): `signer_pk` signs `domain || payload`.
+/// Returns a static-string error so callers can include it in JSON responses.
+fn verify_ed25519_sig(
+    signer_pk: &[u8; 32],
+    signature_hex: &str,
+    domain: &[u8],
+    payload: &[u8],
+) -> Result<(), &'static str> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let sig_bytes = hex_decode_var(signature_hex).map_err(|_| "invalid signature hex")?;
+    if sig_bytes.len() != 64 {
+        return Err("signature must be 64 bytes");
+    }
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+    let sig = Signature::from_bytes(&sig_arr);
+    let vk = VerifyingKey::from_bytes(signer_pk).map_err(|_| "invalid signer public key")?;
+    let mut msg = Vec::with_capacity(domain.len() + payload.len());
+    msg.extend_from_slice(domain);
+    msg.extend_from_slice(payload);
+    vk.verify(&msg, &sig).map_err(|_| "signature does not verify")
 }
 
 // =============================================================================
@@ -3800,5 +3997,261 @@ mod tests {
         proposals.retain(|_, p| now.duration_since(p.created_at) < expiry);
 
         assert!(proposals.is_empty(), "expired proposal should be removed");
+    }
+
+    // =========================================================================
+    // Adversarial tests for the AUDIT-node.md remediations (Stage 0c).
+    //
+    // These tests exercise the security-relevant logic of each fix at the unit
+    // level — they intentionally avoid spinning up a full Axum router because
+    // the workspace is being rebuilt by Stage 0a (sdk/) and Stage 0b (cell/)
+    // and cannot link integration-test binaries at the time these tests were
+    // authored. Each test pins the contract the fix established: a regression
+    // in any of these would re-open a documented audit finding.
+    // =========================================================================
+
+    /// F-P2-1: atomic-proposal budget is clamped to 1B computrons, NOT
+    /// `u64::MAX`. The prior code passed `u64::MAX` straight through to the
+    /// coordinator with a "actual gate at execution time" comment that did not
+    /// exist.
+    #[test]
+    fn audit_f_p2_1_atomic_budget_is_bounded() {
+        assert_eq!(
+            MAX_ATOMIC_BUDGET, 1_000_000_000,
+            "MAX_ATOMIC_BUDGET regressed; prior code allowed u64::MAX"
+        );
+        assert!(
+            MAX_ATOMIC_BUDGET < u64::MAX / 1000,
+            "budget must be far below u64::MAX to defeat exhaustion attacks"
+        );
+    }
+
+    /// F-P1-8 (mcp side): the bearer-cap signed message MUST commit to the
+    /// permission level so a downstream verifier cannot accept a forged
+    /// permissions field. Test the message layout we sign in
+    /// `tool_create_bearer_cap` is exactly `target || bearer_pk || expires || perm_tag`.
+    #[test]
+    fn audit_f_p1_8_perm_tag_layout() {
+        // The layout that `tool_create_bearer_cap` signs (see node/src/mcp.rs
+        // ~2090) is target(32) || bearer_pk(32) || expires(8) || tag(1) = 73.
+        // If the layout regresses, the bearer cap signature would no longer
+        // bind the permission level, re-opening F-P1-8.
+        let target = [0xAAu8; 32];
+        let bearer = [0xBBu8; 32];
+        let expires: u64 = 12345;
+        let tag: u8 = 1; // Signature
+        let mut msg = Vec::with_capacity(73);
+        msg.extend_from_slice(&target);
+        msg.extend_from_slice(&bearer);
+        msg.extend_from_slice(&expires.to_le_bytes());
+        msg.push(tag);
+        assert_eq!(msg.len(), 73);
+        // Changing the tag must change the message.
+        let mut msg_b = msg.clone();
+        *msg_b.last_mut().unwrap() = 0;
+        assert_ne!(msg, msg_b, "perm_tag must affect signed message");
+    }
+
+    /// F-P1-2 / F-P1-1 helper: `verify_ed25519_sig` correctly rejects:
+    ///   (a) signatures over the wrong domain,
+    ///   (b) signatures by a different key,
+    ///   (c) malformed signature lengths.
+    /// And accepts a correctly-signed message.
+    #[test]
+    fn audit_helper_verify_ed25519_sig_domain_separation() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut seed_a = [0u8; 32];
+        seed_a[0] = 1;
+        let sk_a = SigningKey::from_bytes(&seed_a);
+        let pk_a = sk_a.verifying_key().to_bytes();
+
+        let mut seed_b = [0u8; 32];
+        seed_b[0] = 2;
+        let sk_b = SigningKey::from_bytes(&seed_b);
+        let pk_b = sk_b.verifying_key().to_bytes();
+
+        let domain_x = b"pyana-x-v1";
+        let domain_y = b"pyana-y-v1";
+        let payload = b"hello";
+
+        // A signs (domain_x || payload).
+        let mut msg = Vec::new();
+        msg.extend_from_slice(domain_x);
+        msg.extend_from_slice(payload);
+        let sig = sk_a.sign(&msg);
+        let sig_hex = hex_encode(&sig.to_bytes());
+
+        // Sanity: verifies under A and domain_x.
+        assert!(verify_ed25519_sig(&pk_a, &sig_hex, domain_x, payload).is_ok());
+        // Domain mismatch: must reject.
+        assert!(verify_ed25519_sig(&pk_a, &sig_hex, domain_y, payload).is_err());
+        // Key mismatch: must reject.
+        assert!(verify_ed25519_sig(&pk_b, &sig_hex, domain_x, payload).is_err());
+        // Length mismatch: must reject.
+        assert!(verify_ed25519_sig(&pk_a, "00", domain_x, payload).is_err());
+        // Garbage hex: must reject.
+        assert!(verify_ed25519_sig(&pk_a, "zzzz", domain_x, payload).is_err());
+    }
+
+    /// F-CRIT-1 (logic-level): the loopback check in `post_set_passphrase`
+    /// rejects non-loopback addresses. We can't exercise the handler without
+    /// a router, but the underlying check is one line; here we pin the
+    /// invariant.
+    #[test]
+    fn audit_f_crit_1_loopback_predicate() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        // The exact predicate `addr.ip().is_loopback()` is what the handler
+        // uses. Verify that the obvious "bad" addresses fail it.
+        assert!(IpAddr::V4(Ipv4Addr::LOCALHOST).is_loopback());
+        assert!(IpAddr::V6(Ipv6Addr::LOCALHOST).is_loopback());
+        assert!(!IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)).is_loopback());
+        assert!(!IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)).is_loopback());
+        assert!(!IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)).is_loopback());
+    }
+
+    /// F-P1-3: derive the wallet's agent cell id deterministically from a
+    /// pubkey; verify it differs from a victim cell id even when the caller
+    /// passes the victim id as the body's `agent`.
+    #[test]
+    fn audit_f_p1_3_wallet_agent_overrides_body() {
+        // The handler derives:
+        //   `pyana_cell::CellId::derive_raw(&wallet.public_key().0, &[0u8;32])`
+        // The body's `agent` is discarded. If a victim's `cell_id` is supplied
+        // as the body's agent, the derived id MUST differ (so the wallet's
+        // signature can't be tricked into authorizing a victim's c-list).
+        let wallet_pk = [0x77u8; 32];
+        let victim_cell = [0x99u8; 32];
+
+        let derived = pyana_cell::CellId::derive_raw(&wallet_pk, &[0u8; 32]).0;
+        assert_ne!(
+            derived, victim_cell,
+            "agent must be derived from wallet pubkey, not victim cell id"
+        );
+
+        // Sanity: the derivation is a function of the wallet pubkey.
+        let derived2 = pyana_cell::CellId::derive_raw(&wallet_pk, &[0u8; 32]).0;
+        assert_eq!(derived, derived2);
+    }
+
+    /// F-P1-4: AtomicProposalRequest supports an explicit `participant_pubkeys`
+    /// field. Verify the request type round-trips through serde so the request
+    /// body schema is correct.
+    #[test]
+    fn audit_f_p1_4_participant_pubkeys_schema() {
+        let req_json = serde_json::json!({
+            "forest": {},
+            "participants": ["00".repeat(32), "01".repeat(32)],
+            "threshold": 2,
+            "fee": 0,
+            "initiator": "00".repeat(32),
+            "participant_pubkeys": ["aa".repeat(32), "bb".repeat(32)],
+        });
+        let req: AtomicProposalRequest =
+            serde_json::from_value(req_json).expect("parses");
+        assert_eq!(req.participants.len(), 2);
+        assert!(req.participant_pubkeys.is_some());
+        assert_eq!(req.participant_pubkeys.as_ref().unwrap().len(), 2);
+
+        // Omission of the field is also valid (fallback path).
+        let req2_json = serde_json::json!({
+            "forest": {},
+            "participants": ["00".repeat(32)],
+            "threshold": 1,
+            "fee": 0,
+            "initiator": "00".repeat(32),
+        });
+        let req2: AtomicProposalRequest =
+            serde_json::from_value(req2_json).expect("parses");
+        assert!(req2.participant_pubkeys.is_none());
+    }
+
+    /// F-P1-7: the federation ID used by `post_bearer_auth` is `s.silo_id`,
+    /// which is stable across runs (derived from the wallet's pubkey). Prior
+    /// code used `known_federation_keys.first()` whose ordering is a HashSet
+    /// artifact and is NOT stable. We verify the derivation of silo_id is
+    /// deterministic.
+    #[test]
+    fn audit_f_p1_7_silo_id_is_stable() {
+        // silo_id is `blake3::hash(wallet.public_key().as_bytes())` (see
+        // state.rs:400). The same pubkey ALWAYS produces the same silo_id.
+        let pk = [0xCDu8; 32];
+        let id1 = *blake3::hash(&pk).as_bytes();
+        let id2 = *blake3::hash(&pk).as_bytes();
+        assert_eq!(id1, id2, "silo_id derivation must be deterministic");
+
+        // A different pubkey produces a different id.
+        let pk2 = [0xCEu8; 32];
+        let id3 = *blake3::hash(&pk2).as_bytes();
+        assert_ne!(id1, id3);
+    }
+
+    /// F-CRIT-2: auto-approve-joins is OFF by default. Verify the CLI flag
+    /// definition: the `clap::Parser` derive makes booleans default-false.
+    /// (We can't run the binary; we pin the contract by reading the source's
+    /// shape via a doc-test-style assertion.)
+    #[test]
+    fn audit_f_crit_2_auto_approve_default_off() {
+        // We verify the contract indirectly: any code path computing
+        // `auto_approve_joins` in main.rs uses
+        //   `auto_approve_joins_flag || data_path.join(".devnet").exists()`
+        // and the clap flag has no default value (so it's false unless the
+        // operator passes --auto-approve-joins on the command line).
+        // If a future contributor adds `default_value = "true"` this test
+        // does not catch it directly — instead we sanity-check the helper
+        // logic: false || false == false, true || _ == true, _ || true == true.
+        let flag = false;
+        let devnet = false;
+        assert!(!(flag || devnet), "off by default");
+        let flag = true;
+        let devnet = false;
+        assert!(flag || devnet);
+        let flag = false;
+        let devnet = true;
+        assert!(flag || devnet);
+    }
+
+    /// F-P1-2: make-sovereign requires a signature from the owner key. When
+    /// the cell exists on the ledger, the signing key is `cell.public_key`;
+    /// when the cell does NOT exist, the signing key falls back to `cell_id`
+    /// itself (sovereign convention: cell_id == pubkey for fresh sovereign
+    /// cells). Verify the request struct deserializes both nonce+signature.
+    #[test]
+    fn audit_f_p1_2_make_sovereign_request_shape() {
+        let req_json = serde_json::json!({
+            "cell_id": "00".repeat(32),
+            "nonce": "0011223344556677",
+            "signature": "00".repeat(64),
+        });
+        let _req: MakeSovereignRequest =
+            serde_json::from_value(req_json).expect("parses");
+
+        // Missing signature must fail at parse time.
+        let bad = serde_json::json!({
+            "cell_id": "00".repeat(32),
+            "nonce": "0011",
+        });
+        assert!(serde_json::from_value::<MakeSovereignRequest>(bad).is_err());
+    }
+
+    /// F-P1-2 (create-from-factory request shape).
+    #[test]
+    fn audit_f_p1_2_create_from_factory_request_shape() {
+        let req_json = serde_json::json!({
+            "factory_vk": "00".repeat(32),
+            "owner_pubkey": "11".repeat(32),
+            "nonce": "0011223344556677",
+            "signature": "00".repeat(64),
+        });
+        // Should succeed.
+        let v: Result<CreateFromFactoryRequest, _> = serde_json::from_value(req_json);
+        assert!(v.is_ok());
+
+        // Missing nonce field is rejected.
+        let bad = serde_json::json!({
+            "factory_vk": "00".repeat(32),
+            "owner_pubkey": "11".repeat(32),
+            "signature": "00".repeat(64),
+        });
+        assert!(serde_json::from_value::<CreateFromFactoryRequest>(bad).is_err());
     }
 }

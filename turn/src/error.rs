@@ -271,6 +271,31 @@ pub enum TurnError {
         program_vk: [u8; 32],
         reason: String,
     },
+
+    /// The cell is frozen for migration to another federation.
+    ///
+    /// Turns may not execute against cells in `MigrationState::Frozen` or
+    /// `AwaitingReceipt`. Migrations are a two-phase protocol; while a cell is
+    /// in a migrating state the source federation must not mutate it (otherwise
+    /// the destination's snapshot diverges).
+    CellFrozen { cell: CellId },
+
+    /// The agent's `previous_receipt_hash` does not match the prior receipt
+    /// the executor has on file for this agent. Either:
+    /// - `expected: Some(h)`, `got: Some(other)` -- chain branch / replay
+    /// - `expected: Some(h)`, `got: None` -- agent has a history but submitted
+    ///   as if genesis
+    /// - `expected: None`, `got: Some(_)` -- agent claims a prior receipt but
+    ///   the executor has none on file
+    ///
+    /// This is the executor-side enforcement of "self-bound history" (the
+    /// receipt-chain property documented on `TurnReceipt`). Prior to this
+    /// check, the property was only enforced off-chain by verifiers in
+    /// possession of the full chain.
+    ReceiptChainMismatch {
+        expected: Option<[u8; 32]>,
+        got: Option<[u8; 32]>,
+    },
 }
 
 impl core::fmt::Display for TurnError {
@@ -628,6 +653,23 @@ impl core::fmt::Display for TurnError {
                     f,
                     "custom program verification failed at index {index} (vk {:02x}{:02x}...): {reason}",
                     program_vk[0], program_vk[1]
+                )
+            }
+            TurnError::CellFrozen { cell } => {
+                write!(f, "cell {cell} is frozen for migration; no turns may execute against it")
+            }
+            TurnError::ReceiptChainMismatch { expected, got } => {
+                fn fmt_hash(o: &Option<[u8; 32]>) -> String {
+                    match o {
+                        Some(h) => format!("Some({:02x}{:02x}...)", h[0], h[1]),
+                        None => "None".to_string(),
+                    }
+                }
+                write!(
+                    f,
+                    "receipt chain mismatch: expected {}, got {}",
+                    fmt_hash(expected),
+                    fmt_hash(got)
                 )
             }
         }

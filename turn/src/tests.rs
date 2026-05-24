@@ -116,6 +116,23 @@ fn zero_cost_executor() -> TurnExecutor {
     TurnExecutor::new(ComputronCosts::zero())
 }
 
+/// Test helper: auto-chain `turn.previous_receipt_hash` from the executor's
+/// per-agent head if a prior receipt exists. This lets tests submit sequential
+/// turns from the same agent without manually plumbing receipt hashes (P0-3).
+fn execute_chained(
+    executor: &TurnExecutor,
+    turn: &Turn,
+    ledger: &mut pyana_cell::Ledger,
+) -> crate::turn::TurnResult {
+    let mut t = turn.clone();
+    if t.previous_receipt_hash.is_none() {
+        if let Some(prev) = executor.get_last_receipt_hash(&turn.agent) {
+            t.previous_receipt_hash = Some(prev);
+        }
+    }
+    executor.execute(&t, ledger)
+}
+
 /// Helper: create an executor with default costs.
 fn default_executor() -> TurnExecutor {
     TurnExecutor::new(ComputronCosts::default_costs())
@@ -1053,7 +1070,10 @@ fn test_turn_expiration() {
 fn test_receipt_deterministic() {
     let (mut ledger1, agent_id, target_id) = setup_two_open_cells(5000, 0);
     let mut ledger2 = ledger1.clone();
-    let executor = zero_cost_executor();
+    // Two separate executors so the per-agent receipt-chain state (P0-3) is
+    // independent between the two ledger replicas being compared.
+    let executor1 = zero_cost_executor();
+    let executor2 = zero_cost_executor();
 
     let build_turn = || {
         let mut builder = TurnBuilder::new(agent_id, 0);
@@ -1067,8 +1087,8 @@ fn test_receipt_deterministic() {
     let turn1 = build_turn();
     let turn2 = build_turn();
 
-    let result1 = executor.execute(&turn1, &mut ledger1);
-    let result2 = executor.execute(&turn2, &mut ledger2);
+    let result1 = executor1.execute(&turn1, &mut ledger1);
+    let result2 = executor2.execute(&turn2, &mut ledger2);
 
     let (_, receipt1, _) = result1.unwrap_committed();
     let (_, receipt2, _) = result2.unwrap_committed();
@@ -1756,7 +1776,9 @@ fn test_sequential_turns() {
             action.set_field(target_id, (i as usize) % STATE_SLOTS, val);
         }
         let turn = builder.fee(100).build();
-        let result = executor.execute(&turn, &mut ledger);
+        // P0-3: every non-first turn must chain to the previous receipt; the
+        // `execute_chained` helper handles that automatically for tests.
+        let result = execute_chained(&executor, &turn, &mut ledger);
         assert!(result.is_committed(), "turn {i} should commit");
     }
 
@@ -1978,7 +2000,7 @@ fn test_precondition_field_equals() {
     }
     let turn2 = builder2.fee(100).build();
 
-    let result2 = executor.execute(&turn2, &mut ledger);
+    let result2 = execute_chained(&executor, &turn2, &mut ledger);
     assert!(result2.is_rejected());
 
     let (error, _) = result2.unwrap_rejected();
@@ -3805,7 +3827,7 @@ fn test_proved_state_cleared_by_signature() {
         action.set_field(target_id, 0, [0xFF; 32]);
     }
     let turn = builder.fee(500).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed());
 
     // proved_state should now be false.
@@ -3860,7 +3882,7 @@ fn test_proved_state_unchanged_when_no_fields_modified() {
         action.emit_event(target_id, "hello", vec![[42u8; 32]]);
     }
     let turn = builder.fee(500).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed());
 
     // proved_state should still be true (no fields modified).
@@ -3914,7 +3936,7 @@ fn test_precondition_proved_state_true() {
         action.emit_event(target_id, "checked", vec![]);
     }
     let turn = builder.fee(500).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed());
 }
 
@@ -4742,7 +4764,7 @@ fn test_budget_gate_multiple_turns_deplete_slice() {
     // Execute 4 turns of fee=200 each (total 800, within budget).
     for i in 0..4u64 {
         let turn = make_noop_turn_with_fee(agent_id, i, 200);
-        let result = executor.execute(&turn, &mut ledger);
+        let result = execute_chained(&executor, &turn, &mut ledger);
         assert!(result.is_committed(), "turn {i} should succeed");
     }
 
@@ -4756,7 +4778,7 @@ fn test_budget_gate_multiple_turns_deplete_slice() {
 
     // 5th turn of fee=300 exceeds remaining (200).
     let turn = make_noop_turn_with_fee(agent_id, 4, 300);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_rejected());
     match result.unwrap_rejected().0 {
         TurnError::BudgetExhausted { remaining: 200, .. } => {}
@@ -4831,12 +4853,12 @@ fn test_budget_gate_fresh_slice_after_rebalance() {
 
     // First turn exhausts most of the slice.
     let turn = make_noop_turn_with_fee(agent_id, 0, 400);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed());
 
     // Next turn with fee=200 would exceed remaining (100).
     let turn = make_noop_turn_with_fee(agent_id, 1, 200);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_rejected());
 
     // Simulate rebalance: replace the slice with a fresh one.
@@ -4847,7 +4869,7 @@ fn test_budget_gate_fresh_slice_after_rebalance() {
 
     // Now the same turn succeeds with the fresh slice.
     let turn = make_noop_turn_with_fee(agent_id, 1, 200);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed());
 
     // Verify new slice state.
@@ -4864,7 +4886,7 @@ fn test_budget_gate_none_allows_all_turns() {
 
     for i in 0..10u64 {
         let turn = make_noop_turn_with_fee(agent_id, i, 1000);
-        let result = executor.execute(&turn, &mut ledger);
+        let result = execute_chained(&executor, &turn, &mut ledger);
         assert!(result.is_committed());
     }
 
@@ -5308,7 +5330,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
     };
-    let result = executor.execute(&turn2, &mut ledger);
+    let result = execute_chained(&executor, &turn2, &mut ledger);
     assert!(result.is_committed(), "revoke should work: {:?}", result);
 
     // Parent's epoch bumped.
@@ -6005,7 +6027,7 @@ fn test_escrow_create_and_release_with_predicate() {
     }
     let turn2 = builder2.fee(100).build();
 
-    let result2 = executor.execute(&turn2, &mut ledger);
+    let result2 = execute_chained(&executor, &turn2, &mut ledger);
     assert!(
         result2.is_committed(),
         "ReleaseEscrow should succeed: {:?}",
@@ -6055,7 +6077,7 @@ fn test_escrow_create_and_timeout_refund() {
         action.effect(Effect::RefundEscrow { escrow_id });
     }
     let turn_early = builder_early.fee(100).build();
-    let result_early = executor.execute(&turn_early, &mut ledger);
+    let result_early = execute_chained(&executor, &turn_early, &mut ledger);
     assert!(
         result_early.is_rejected(),
         "RefundEscrow before timeout should fail"
@@ -6069,7 +6091,7 @@ fn test_escrow_create_and_timeout_refund() {
         action.effect(Effect::RefundEscrow { escrow_id });
     }
     let turn_refund = builder_refund.fee(100).build();
-    let result_refund = executor.execute(&turn_refund, &mut ledger);
+    let result_refund = execute_chained(&executor, &turn_refund, &mut ledger);
     assert!(
         result_refund.is_committed(),
         "RefundEscrow after timeout should succeed: {:?}",
@@ -6187,7 +6209,7 @@ fn test_escrow_double_release_fails() {
         });
     }
     let turn_release = builder_release.fee(100).build();
-    let result_release = executor.execute(&turn_release, &mut ledger);
+    let result_release = execute_chained(&executor, &turn_release, &mut ledger);
     assert!(result_release.is_committed());
 
     // Release escrow AGAIN (second time — should fail: already resolved).
@@ -6200,7 +6222,7 @@ fn test_escrow_double_release_fails() {
         });
     }
     let turn_double = builder_double.fee(100).build();
-    let result_double = executor.execute(&turn_double, &mut ledger);
+    let result_double = execute_chained(&executor, &turn_double, &mut ledger);
     assert!(
         result_double.is_rejected(),
         "Double release should fail: escrow already resolved"
@@ -6281,7 +6303,7 @@ fn test_escrow_release_with_proof_verifier() {
         });
     }
     let turn_release = builder_release.fee(100).build();
-    let result_release = executor.execute(&turn_release, &mut ledger);
+    let result_release = execute_chained(&executor, &turn_release, &mut ledger);
     assert!(
         result_release.is_committed(),
         "ReleaseEscrow with valid proof should succeed: {:?}",
@@ -6539,7 +6561,7 @@ fn test_adversarial_fulfill_obligation_wrong_caller() {
         });
     }
     let turn3 = builder3.fee(100).build();
-    let result3 = executor.execute(&turn3, &mut ledger);
+    let result3 = execute_chained(&executor, &turn3, &mut ledger);
     assert!(
         result3.is_committed(),
         "FulfillObligation by obligor should succeed"
@@ -8630,7 +8652,7 @@ fn allocate_queue(
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, ledger);
+    let result = execute_chained(executor, &turn, ledger);
     assert!(result.is_committed(), "queue allocate failed: {:?}", result);
 
     // Derive the queue cell ID (same derivation as the executor).
@@ -8691,7 +8713,7 @@ fn test_queue_enqueue_adds_message() {
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed(), "enqueue failed: {:?}", result);
 
     // Verify queue length incremented.
@@ -8727,7 +8749,7 @@ fn test_queue_dequeue_by_owner_succeeds() {
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed(), "enqueue failed: {:?}", result);
 
     // Now dequeue (agent is the owner).
@@ -8738,7 +8760,7 @@ fn test_queue_dequeue_by_owner_succeeds() {
         action.effect(Effect::QueueDequeue { queue: queue_id });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed(), "dequeue failed: {:?}", result);
 
     // Queue length should be 0 again.
@@ -8833,7 +8855,7 @@ fn test_queue_atomic_tx_all_succeed() {
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed(), "atomic tx failed: {:?}", result);
 
     // Both queues should have length 1.
@@ -8866,7 +8888,7 @@ fn test_queue_atomic_tx_one_fails_all_rolled_back() {
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
     assert!(result.is_committed(), "fill failed: {:?}", result);
 
     // Record the agent balance before the atomic tx attempt.
@@ -8886,7 +8908,7 @@ fn test_queue_atomic_tx_one_fails_all_rolled_back() {
         });
     }
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = execute_chained(&executor, &turn, &mut ledger);
 
     // The turn should be rejected because the queue is full.
     match result {

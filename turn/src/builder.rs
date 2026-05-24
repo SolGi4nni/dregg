@@ -17,6 +17,7 @@ pub struct TurnBuilder {
     fee: u64,
     memo: Option<String>,
     valid_until: Option<i64>,
+    previous_receipt_hash: Option<[u8; 32]>,
     action_builders: Vec<ActionBuilder>,
 }
 
@@ -29,8 +30,24 @@ impl TurnBuilder {
             fee: 0,
             memo: None,
             valid_until: None,
+            previous_receipt_hash: None,
             action_builders: Vec::new(),
         }
+    }
+
+    /// Set the `previous_receipt_hash` (P0-3): the agent's prior receipt hash.
+    /// Genesis turns leave this as `None`; all subsequent turns from the same
+    /// agent must pass the hash of the previous receipt to maintain the
+    /// executor-enforced receipt chain.
+    pub fn previous_receipt_hash(mut self, hash: [u8; 32]) -> Self {
+        self.previous_receipt_hash = Some(hash);
+        self
+    }
+
+    /// Set the `previous_receipt_hash` (chainable from `&mut self`).
+    pub fn set_previous_receipt_hash(&mut self, hash: [u8; 32]) -> &mut Self {
+        self.previous_receipt_hash = Some(hash);
+        self
     }
 
     /// Add a root-level action targeting the given cell with the given method.
@@ -94,7 +111,7 @@ impl TurnBuilder {
             fee: self.fee,
             memo: self.memo,
             valid_until: self.valid_until,
-            previous_receipt_hash: None,
+            previous_receipt_hash: self.previous_receipt_hash,
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: std::collections::HashMap::new(),

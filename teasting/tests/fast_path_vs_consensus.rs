@@ -9,6 +9,7 @@
 //! This test verifies that the routing logic correctly distinguishes these cases and
 //! that both paths produce consistent results.
 
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use pyana_cell::permissions::{AuthRequired, Permissions};
 use pyana_cell::{Cell, CellId, Ledger, Preconditions};
 use pyana_turn::action::{Action, Authorization, DelegationMode, Effect};
@@ -19,6 +20,21 @@ use pyana_turn::fast_path::{
 };
 use pyana_turn::forest::{CallForest, CallTree};
 use pyana_turn::{ExecutionPath, Turn, TurnResult, compute_execution_path};
+
+/// Derive a deterministic Ed25519 keypair from a u8 seed.
+fn keypair_from_seed(seed: u8) -> ([u8; 32], [u8; 32]) {
+    let mut s = [0u8; 32];
+    s[0] = seed;
+    let sk = SigningKey::from_bytes(&s);
+    let vk: VerifyingKey = (&sk).into();
+    (s, vk.to_bytes())
+}
+
+/// Sign a turn_hash with the agent's seed.
+fn agent_sig(seed: &[u8; 32], turn_hash: &[u8; 32]) -> [u8; 64] {
+    let sk = SigningKey::from_bytes(seed);
+    sk.sign(turn_hash).to_bytes()
+}
 
 /// Permissive permissions: no auth required for any action.
 /// Used in tests to avoid needing real Ed25519 signatures.
@@ -231,7 +247,7 @@ fn test_multi_owner_routes_to_consensus() {
 #[test]
 fn test_fast_path_executes_immediately() {
     let mut ledger = Ledger::new();
-    let alice_pk = [1u8; 32];
+    let (alice_seed, alice_pk) = keypair_from_seed(1);
     let alice_id = insert_permissive_cell(&mut ledger, alice_pk, 10_000);
 
     // Verify the turn routes to fast path.
@@ -242,22 +258,27 @@ fn test_fast_path_executes_immediately() {
     );
 
     let turn_hash = turn.hash();
+    let agent_signature = agent_sig(&alice_seed, &turn_hash);
 
     // Simulate 3 validators granting locks (2f+1 with f=1, n=3).
-    let validator_keys: Vec<[u8; 32]> = (0..3u8)
-        .map(|i| {
-            let mut k = [0u8; 32];
-            k[0] = 0xA0 + i;
-            k
-        })
+    let validator_seeds: Vec<[u8; 32]> = (0..3u8)
+        .map(|i| keypair_from_seed(0xA0 + i).0)
         .collect();
 
     let mut table = CellLockTable::with_defaults();
 
     let mut signs = Vec::new();
-    for key in &validator_keys {
-        let sign = process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, key)
-            .expect("lock should succeed for single-owner turn");
+    for seed in &validator_seeds {
+        let sign = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            seed,
+            &agent_signature,
+        )
+        .expect("lock should succeed for single-owner turn");
         signs.push(sign);
     }
 
@@ -292,8 +313,8 @@ fn test_fast_path_executes_immediately() {
 #[test]
 fn test_consensus_path_waits_for_finalization() {
     let mut ledger = Ledger::new();
-    let alice_pk = [1u8; 32];
-    let bob_pk = [2u8; 32];
+    let (alice_seed, alice_pk) = keypair_from_seed(1);
+    let (_bob_seed, bob_pk) = keypair_from_seed(2);
     let alice_id = insert_permissive_cell(&mut ledger, alice_pk, 10_000);
     let bob_token = [1u8; 32];
     let bob_id = insert_permissive_cell_domain(&mut ledger, bob_pk, bob_token, 10_000);
@@ -301,6 +322,7 @@ fn test_consensus_path_waits_for_finalization() {
     // A multi-owner turn (Alice writes to Bob's cell).
     let turn = make_cross_cell_turn(alice_id, bob_id);
     let turn_hash = turn.hash();
+    let agent_signature = agent_sig(&alice_seed, &turn_hash);
 
     // Verify it routes to consensus.
     assert_eq!(
@@ -310,8 +332,16 @@ fn test_consensus_path_waits_for_finalization() {
 
     // Attempting to acquire a fast-path lock should fail (not eligible).
     let mut table = CellLockTable::with_defaults();
-    let validator_key = [0xAA; 32];
-    let result = process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key);
+    let (validator_seed, _) = keypair_from_seed(0xAA);
+    let result = process_fast_path_lock(
+        &mut table,
+        &turn,
+        turn_hash,
+        100,
+        &ledger,
+        &validator_seed,
+        &agent_signature,
+    );
 
     assert!(
         result.is_err(),
@@ -352,7 +382,7 @@ fn test_consensus_path_waits_for_finalization() {
 fn test_both_paths_deterministic() {
     // --- Fast-path execution ---
     let mut ledger_fast = Ledger::new();
-    let alice_pk = [1u8; 32];
+    let (alice_seed, alice_pk) = keypair_from_seed(1);
     let alice_id_fast = insert_permissive_cell(&mut ledger_fast, alice_pk, 10_000);
 
     let turn_fast = make_self_write_turn(alice_id_fast);
@@ -363,15 +393,17 @@ fn test_both_paths_deterministic() {
 
     // Execute via fast path (lock + certificate + execute).
     let turn_hash = turn_fast.hash();
+    let agent_signature = agent_sig(&alice_seed, &turn_hash);
     let mut table = CellLockTable::with_defaults();
-    let validator_key = [0xAA; 32];
+    let (validator_seed, _) = keypair_from_seed(0xAA);
     let sign = process_fast_path_lock(
         &mut table,
         &turn_fast,
         turn_hash,
         100,
         &ledger_fast,
-        &validator_key,
+        &validator_seed,
+        &agent_signature,
     )
     .unwrap();
     let cert = assemble_certificate(turn_fast, turn_hash, vec![sign], 1).unwrap();
@@ -410,17 +442,19 @@ fn test_both_paths_deterministic() {
 #[test]
 fn test_fast_path_conflict_detection() {
     let mut ledger = Ledger::new();
-    let alice_pk = [1u8; 32];
+    let (alice_seed, alice_pk) = keypair_from_seed(1);
     let alice_id = insert_permissive_cell(&mut ledger, alice_pk, 10_000);
 
     // Turn 1: Alice writes value A to her cell.
     let turn1 = make_self_write_turn(alice_id);
     let turn1_hash = turn1.hash();
+    let sig1 = agent_sig(&alice_seed, &turn1_hash);
 
     // Turn 2: Alice writes a different value (different memo to get different hash).
     let mut turn2 = make_self_write_turn(alice_id);
     turn2.memo = Some("second turn".to_string());
     let turn2_hash = turn2.hash();
+    let sig2 = agent_sig(&alice_seed, &turn2_hash);
 
     // Sanity: both are different turns.
     assert_ne!(turn1_hash, turn2_hash);
@@ -436,16 +470,30 @@ fn test_fast_path_conflict_detection() {
     );
 
     let mut table = CellLockTable::with_defaults();
-    let validator_key = [0xAA; 32];
+    let (validator_seed, _) = keypair_from_seed(0xAA);
 
     // First turn acquires the lock successfully.
-    let result1 =
-        process_fast_path_lock(&mut table, &turn1, turn1_hash, 100, &ledger, &validator_key);
+    let result1 = process_fast_path_lock(
+        &mut table,
+        &turn1,
+        turn1_hash,
+        100,
+        &ledger,
+        &validator_seed,
+        &sig1,
+    );
     assert!(result1.is_ok(), "first turn should acquire lock");
 
     // Second turn tries to lock the same cell — should get a LockConflict.
-    let result2 =
-        process_fast_path_lock(&mut table, &turn2, turn2_hash, 100, &ledger, &validator_key);
+    let result2 = process_fast_path_lock(
+        &mut table,
+        &turn2,
+        turn2_hash,
+        100,
+        &ledger,
+        &validator_seed,
+        &sig2,
+    );
     assert!(
         result2.is_err(),
         "second turn should be rejected due to conflict"

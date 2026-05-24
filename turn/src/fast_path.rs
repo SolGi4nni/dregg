@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use pyana_cell::{CellId, Ledger};
 
 use crate::budget_gate::DebitDigest;
@@ -301,11 +302,18 @@ pub fn is_fast_path_eligible(turn: &Turn, ledger: &Ledger) -> bool {
 
 /// Validator processes a fast-path lock request.
 ///
-/// Performs cheap checks (signature validity assumed already verified upstream,
-/// nonce, fee, ownership, lock availability) without executing the turn.
-/// Atomically acquires locks for all write-set cells.
+/// Performs the agent-signature check, then cheap checks (nonce, fee, ownership,
+/// lock availability), then atomically acquires locks for all write-set cells.
 ///
 /// Returns a `TurnSign` if the lock is granted, or an error describing why not.
+///
+/// # Authentication (P1-6 fix)
+///
+/// `agent_signature` must be a valid Ed25519 signature over `turn_hash` produced
+/// by the private key corresponding to the agent cell's `public_key`. Previously
+/// this function trusted callers to have verified the signature upstream, which
+/// allowed any caller that forgot the check to lock cells for arbitrary unsigned
+/// turns. This is now enforced at lock time.
 ///
 /// # Lock Atomicity
 ///
@@ -318,7 +326,25 @@ pub fn process_fast_path_lock(
     current_height: u64,
     ledger: &Ledger,
     signing_key: &[u8; 32],
+    agent_signature: &[u8; 64],
 ) -> Result<TurnSign, FastPathError> {
+    // 0. Verify the agent signed this turn. The agent's signature MUST be over
+    //    turn_hash and verify against the agent cell's public_key. This was
+    //    previously assumed verified upstream (P1-6) -- no longer.
+    let agent_pk = ledger
+        .get(&turn.agent)
+        .map(|c| c.public_key)
+        .ok_or(FastPathError::NotEligible)?;
+    let verifying_key = VerifyingKey::from_bytes(&agent_pk)
+        .map_err(|_| FastPathError::InvalidSignature)?;
+    let sig = Signature::from_bytes(agent_signature);
+    if verifying_key
+        .verify_strict(&turn_hash, &sig)
+        .is_err()
+    {
+        return Err(FastPathError::InvalidSignature);
+    }
+
     // 1. Check eligibility.
     if !is_fast_path_eligible(turn, ledger) {
         return Err(FastPathError::NotEligible);
@@ -363,11 +389,6 @@ pub fn process_fast_path_lock(
     }
 
     // 4. Acquire all locks atomically.
-    let agent_public_key = ledger
-        .get(&turn.agent)
-        .map(|c| c.public_key)
-        .unwrap_or([0u8; 32]);
-
     for (cell_id, nonce) in &cells_to_lock {
         table.locks.insert(
             (*cell_id, *nonce),
@@ -376,22 +397,21 @@ pub fn process_fast_path_lock(
                 turn_hash,
                 locked_at_height: current_height,
                 locked_nonce: *nonce,
-                signer: agent_public_key,
+                signer: agent_pk,
                 budget_digest: None,
             },
         );
     }
 
-    // 5. Produce the TurnSign (validator's lock acknowledgement).
-    // In a real implementation, this would be an Ed25519 signature over turn_hash.
-    // Here we produce a deterministic signature from the signing key for testability.
-    let signature = compute_turn_sign_signature(signing_key, &turn_hash);
+    // 5. Produce the TurnSign (validator's lock acknowledgement) as a real
+    //    Ed25519 signature (P0-1 fix). The signing key is a 32-byte seed; the
+    //    validator's PUBLIC key (which appears in TurnSign and is broadcast
+    //    publicly) is derived from the seed -- distinct from the seed bytes.
+    //    Holding the public key alone is INSUFFICIENT to forge a signature,
+    //    which the previous BLAKE3-keyed-hash scheme did not provide.
+    let sign = sign_fast_path(signing_key, &turn_hash, current_height);
 
-    Ok(TurnSign {
-        validator_key: *signing_key,
-        signature,
-        height: current_height,
-    })
+    Ok(sign)
 }
 
 /// Client assembles a certificate from collected signatures.
@@ -508,31 +528,57 @@ pub fn clear_all_locks(table: &mut CellLockTable) -> Vec<CellLockEntry> {
 // Internal Helpers
 // =============================================================================
 
-/// Compute a deterministic "signature" for testing purposes.
+/// Compute the domain-separated signing message for a fast-path TurnSign.
 ///
-/// In production, this would be a proper Ed25519 signature using the validator's
-/// private key. For the module's internal logic, we use BLAKE3-based keyed hashing
-/// to produce a deterministic 64-byte value that can be verified with the same key.
-fn compute_turn_sign_signature(key: &[u8; 32], turn_hash: &[u8; 32]) -> [u8; 64] {
-    let mut hasher = blake3::Hasher::new_keyed(key);
-    hasher.update(b"pyana-fast-path-sign-v1");
-    hasher.update(turn_hash);
-    let hash = hasher.finalize();
-    let mut sig = [0u8; 64];
-    sig[..32].copy_from_slice(hash.as_bytes());
-    // Second half: hash again with domain separator for full 64 bytes.
-    let mut hasher2 = blake3::Hasher::new_keyed(key);
-    hasher2.update(b"pyana-fast-path-sign-v1-ext");
-    hasher2.update(turn_hash);
-    let hash2 = hasher2.finalize();
-    sig[32..].copy_from_slice(hash2.as_bytes());
-    sig
+/// Format: `DOMAIN || turn_hash`. The domain separator ensures a fast-path
+/// signature cannot be repurposed as (e.g.) a regular turn signature.
+fn fast_path_signing_message(turn_hash: &[u8; 32]) -> [u8; 32 + FAST_PATH_DOMAIN.len()] {
+    let mut out = [0u8; 32 + FAST_PATH_DOMAIN.len()];
+    out[..FAST_PATH_DOMAIN.len()].copy_from_slice(FAST_PATH_DOMAIN);
+    out[FAST_PATH_DOMAIN.len()..].copy_from_slice(turn_hash);
+    out
 }
 
-/// Verify a TurnSign signature produced by `compute_turn_sign_signature`.
+/// Domain separator for fast-path signatures (`pyana-fast-path-sign-v2`).
+const FAST_PATH_DOMAIN: &[u8] = b"pyana-fast-path-sign-v2";
+
+/// Produce an Ed25519 fast-path signature over `turn_hash` from a 32-byte seed.
+///
+/// Exposed for callers that produce certificates outside the lock-table state
+/// machine (e.g. solo-mode signing, test harnesses, fragment composers).
+///
+/// SECURITY: `seed` is a SECRET signing key seed. The returned `TurnSign`
+/// contains the corresponding PUBLIC verifying key, which is safe to broadcast.
+/// The signature can only be produced by a holder of `seed`; possessing the
+/// public key alone is INSUFFICIENT to forge a valid signature.
+pub fn sign_fast_path(seed: &[u8; 32], turn_hash: &[u8; 32], height: u64) -> TurnSign {
+    let sk = SigningKey::from_bytes(seed);
+    let vk: VerifyingKey = (&sk).into();
+    let msg = fast_path_signing_message(turn_hash);
+    let signature = sk.sign(&msg).to_bytes();
+    TurnSign {
+        validator_key: vk.to_bytes(),
+        signature,
+        height,
+    }
+}
+
+/// Verify a TurnSign as a real Ed25519 signature over `turn_hash`.
+///
+/// SECURITY (P0-1 fix): this is a real asymmetric signature check. The previous
+/// `BLAKE3::new_keyed(validator_key)` scheme was symmetric -- anyone holding the
+/// validator's PUBLIC key (broadcast on the wire) could recompute a valid
+/// "signature." This implementation verifies that `sign.signature` was produced
+/// by the private key corresponding to `sign.validator_key`.
 pub fn verify_turn_sign(sign: &TurnSign, turn_hash: &[u8; 32]) -> bool {
-    let expected = compute_turn_sign_signature(&sign.validator_key, turn_hash);
-    expected == sign.signature
+    let vk = match VerifyingKey::from_bytes(&sign.validator_key) {
+        Ok(vk) => vk,
+        Err(_) => return false,
+    };
+    let signature = Signature::from_bytes(&sign.signature);
+    let msg = fast_path_signing_message(turn_hash);
+    // verify_strict rejects malleable signatures (non-canonical R/S).
+    vk.verify_strict(&msg, &signature).is_ok()
 }
 
 // =============================================================================
@@ -545,6 +591,21 @@ mod tests {
     use crate::action::{Action, Authorization, Effect};
     use crate::forest::CallForest;
     use pyana_cell::{Cell, Ledger};
+
+    /// Test helper: derive a deterministic Ed25519 keypair from a u8 seed.
+    fn keypair_from_seed(seed: u8) -> ([u8; 32], [u8; 32]) {
+        let mut s = [0u8; 32];
+        s[0] = seed;
+        let sk = SigningKey::from_bytes(&s);
+        let vk: VerifyingKey = (&sk).into();
+        (s, vk.to_bytes())
+    }
+
+    /// Test helper: sign turn_hash with the agent's seed.
+    fn agent_sig(seed: &[u8; 32], turn_hash: &[u8; 32]) -> [u8; 64] {
+        let sk = SigningKey::from_bytes(seed);
+        sk.sign(turn_hash).to_bytes()
+    }
 
     /// Helper: create a cell with a given public key and insert it into the ledger.
     fn insert_cell_with_key(ledger: &mut Ledger, public_key: [u8; 32], balance: u64) -> CellId {
@@ -661,12 +722,13 @@ mod tests {
     #[test]
     fn test_lock_and_sign() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn = make_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
-        let validator_key = [0xAA; 32];
+        let agent_sig_bytes = agent_sig(&agent_seed, &turn_hash);
+        let (validator_seed, validator_pk) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::with_defaults();
 
@@ -676,12 +738,13 @@ mod tests {
             turn_hash,
             100, // current height
             &ledger,
-            &validator_key,
+            &validator_seed,
+            &agent_sig_bytes,
         );
 
         assert!(result.is_ok());
         let sign = result.unwrap();
-        assert_eq!(sign.validator_key, validator_key);
+        assert_eq!(sign.validator_key, validator_pk);
         assert_eq!(sign.height, 100);
 
         // Verify the signature is valid.
@@ -694,27 +757,43 @@ mod tests {
     #[test]
     fn test_lock_conflict_rejected() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn1 = make_own_cell_turn(agent_id);
         let turn1_hash = turn1.hash();
-        let validator_key = [0xAA; 32];
+        let sig1 = agent_sig(&agent_seed, &turn1_hash);
+        let (validator_seed, _) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::with_defaults();
 
         // First lock succeeds.
-        let result1 =
-            process_fast_path_lock(&mut table, &turn1, turn1_hash, 100, &ledger, &validator_key);
+        let result1 = process_fast_path_lock(
+            &mut table,
+            &turn1,
+            turn1_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig1,
+        );
         assert!(result1.is_ok());
 
         // Second turn tries to lock the same cell at the same nonce.
         let mut turn2 = make_own_cell_turn(agent_id);
         turn2.memo = Some("different turn".to_string()); // Make it different.
         let turn2_hash = turn2.hash();
+        let sig2 = agent_sig(&agent_seed, &turn2_hash);
 
-        let result2 =
-            process_fast_path_lock(&mut table, &turn2, turn2_hash, 100, &ledger, &validator_key);
+        let result2 = process_fast_path_lock(
+            &mut table,
+            &turn2,
+            turn2_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig2,
+        );
 
         assert!(result2.is_err());
         match result2.unwrap_err() {
@@ -729,27 +808,17 @@ mod tests {
     #[test]
     fn test_certificate_assembly() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (_, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn = make_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
 
-        // Simulate 3 validators signing (2f+1 with f=1, n=3).
-        let validator_keys: Vec<[u8; 32]> = (0..3u8)
+        // Simulate 3 validators signing (2f+1 with f=1, n=3). Each gets a distinct seed.
+        let signs: Vec<TurnSign> = (0..3u8)
             .map(|i| {
-                let mut k = [0u8; 32];
-                k[0] = 0xA0 + i;
-                k
-            })
-            .collect();
-
-        let signs: Vec<TurnSign> = validator_keys
-            .iter()
-            .map(|key| TurnSign {
-                validator_key: *key,
-                signature: compute_turn_sign_signature(key, &turn_hash),
-                height: 100,
+                let (seed, _) = keypair_from_seed(0xA0 + i);
+                sign_fast_path(&seed, &turn_hash, 100)
             })
             .collect();
 
@@ -759,6 +828,11 @@ mod tests {
         let cert = cert.unwrap();
         assert_eq!(cert.turn_hash, turn_hash);
         assert_eq!(cert.signatures.len(), 3);
+
+        // All signatures should verify under the real Ed25519 scheme.
+        for sign in &cert.signatures {
+            assert!(verify_turn_sign(sign, &turn_hash));
+        }
     }
 
     #[test]
@@ -781,11 +855,8 @@ mod tests {
         };
         let turn_hash = turn.hash();
 
-        let sign = TurnSign {
-            validator_key: [0xAA; 32],
-            signature: compute_turn_sign_signature(&[0xAA; 32], &turn_hash),
-            height: 100,
-        };
+        let (seed, _) = keypair_from_seed(0xAA);
+        let sign = sign_fast_path(&seed, &turn_hash, 100);
 
         // Need 3, have 1.
         let result = assemble_certificate(turn, turn_hash, vec![sign], 3);
@@ -799,12 +870,13 @@ mod tests {
     #[test]
     fn test_stale_lock_expiry() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn = make_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
-        let validator_key = [0xAA; 32];
+        let sig = agent_sig(&agent_seed, &turn_hash);
+        let (validator_seed, _) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::new(FastPathConfig {
             lock_timeout_blocks: 30,
@@ -813,7 +885,16 @@ mod tests {
         });
 
         // Acquire lock at height 100.
-        process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key).unwrap();
+        process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig,
+        )
+        .unwrap();
         assert_eq!(table.len(), 1);
 
         // At height 120, lock should NOT be expired yet (only 20 blocks passed).
@@ -877,24 +958,30 @@ mod tests {
     #[test]
     fn test_execute_certified_turn() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 10_000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 10_000);
 
         let turn = make_valid_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
+        let agent_sig_bytes = agent_sig(&agent_seed, &turn_hash);
 
         // Lock the cell.
         let mut table = CellLockTable::with_defaults();
-        let validator_key = [0xAA; 32];
-        process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key).unwrap();
+        let (validator_seed, _) = keypair_from_seed(0xAA);
+        process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &agent_sig_bytes,
+        )
+        .unwrap();
         assert!(!table.is_empty());
 
-        // Build a certificate.
-        let sign = TurnSign {
-            validator_key,
-            signature: compute_turn_sign_signature(&validator_key, &turn_hash),
-            height: 100,
-        };
+        // Build a certificate using a real Ed25519 signature.
+        let sign = sign_fast_path(&validator_seed, &turn_hash, 100);
         let cert = assemble_certificate(turn, turn_hash, vec![sign], 1).unwrap();
 
         // Execute.
@@ -917,15 +1004,25 @@ mod tests {
     #[test]
     fn test_clear_all_locks() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn = make_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
-        let validator_key = [0xAA; 32];
+        let sig = agent_sig(&agent_seed, &turn_hash);
+        let (validator_seed, _) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::with_defaults();
-        process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key).unwrap();
+        process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig,
+        )
+        .unwrap();
         assert!(!table.is_empty());
 
         let cleared = clear_all_locks(&mut table);
@@ -936,21 +1033,38 @@ mod tests {
     #[test]
     fn test_idempotent_relock_same_turn() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let turn = make_own_cell_turn(agent_id);
         let turn_hash = turn.hash();
-        let validator_key = [0xAA; 32];
+        let sig = agent_sig(&agent_seed, &turn_hash);
+        let (validator_seed, _) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::with_defaults();
 
         // First lock.
-        let r1 = process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key);
+        let r1 = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig,
+        );
         assert!(r1.is_ok());
 
         // Same turn, same hash -- should succeed (idempotent).
-        let r2 = process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key);
+        let r2 = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig,
+        );
         assert!(r2.is_ok());
         assert_eq!(table.len(), 1); // Still just one lock.
     }
@@ -958,13 +1072,14 @@ mod tests {
     #[test]
     fn test_fee_too_low_rejected() {
         let mut ledger = Ledger::new();
-        let pk = [1u8; 32];
-        let agent_id = insert_cell_with_key(&mut ledger, pk, 1000);
+        let (agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
 
         let mut turn = make_own_cell_turn(agent_id);
         turn.fee = 5; // Below minimum.
         let turn_hash = turn.hash();
-        let validator_key = [0xAA; 32];
+        let sig = agent_sig(&agent_seed, &turn_hash);
+        let (validator_seed, _) = keypair_from_seed(0xAA);
 
         let mut table = CellLockTable::new(FastPathConfig {
             lock_timeout_blocks: 30,
@@ -972,8 +1087,15 @@ mod tests {
             require_fee_minimum: 100, // Requires at least 100.
         });
 
-        let result =
-            process_fast_path_lock(&mut table, &turn, turn_hash, 100, &ledger, &validator_key);
+        let result = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &sig,
+        );
 
         match result.unwrap_err() {
             FastPathError::FeeTooLow {
@@ -982,5 +1104,167 @@ mod tests {
             } => {}
             other => panic!("expected FeeTooLow, got: {other:?}"),
         }
+    }
+
+    // ========================================================================
+    // Adversarial tests for P0-1 (forgeable BLAKE3-keyed signatures) and P1-6
+    // (missing agent signature check at lock time).
+    // ========================================================================
+
+    /// P0-1 adversarial: forging a fast-path "signature" using only the
+    /// validator's PUBLIC key (the same scheme the old BLAKE3-keyed code used)
+    /// MUST be rejected by the real Ed25519 verifier.
+    #[test]
+    fn fast_path_forged_blake3_signature_rejected() {
+        let turn = Turn {
+            agent: CellId([0u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 100,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+        };
+        let turn_hash = turn.hash();
+
+        // The attacker knows the validator's PUBLIC key (broadcast on the wire).
+        let (_real_seed, validator_pk) = keypair_from_seed(0x42);
+
+        // Old forgery technique: BLAKE3-keyed-hash where the key is the public
+        // identity. Anyone who learned the public key could compute this.
+        let mut hasher = blake3::Hasher::new_keyed(&validator_pk);
+        hasher.update(b"pyana-fast-path-sign-v1");
+        hasher.update(&turn_hash);
+        let lo = hasher.finalize();
+        let mut hasher2 = blake3::Hasher::new_keyed(&validator_pk);
+        hasher2.update(b"pyana-fast-path-sign-v1-ext");
+        hasher2.update(&turn_hash);
+        let hi = hasher2.finalize();
+        let mut forged = [0u8; 64];
+        forged[..32].copy_from_slice(lo.as_bytes());
+        forged[32..].copy_from_slice(hi.as_bytes());
+
+        let forged_sign = TurnSign {
+            validator_key: validator_pk,
+            signature: forged,
+            height: 100,
+        };
+
+        assert!(
+            !verify_turn_sign(&forged_sign, &turn_hash),
+            "BLAKE3-keyed forgery using only the validator's public key MUST be rejected"
+        );
+    }
+
+    /// P0-1 adversarial: a signature produced by ANY seed other than the real
+    /// validator's MUST be rejected, even if the attacker sets validator_key to
+    /// the real validator's public key.
+    #[test]
+    fn fast_path_signature_under_wrong_seed_rejected() {
+        let turn = Turn {
+            agent: CellId([0u8; 32]),
+            nonce: 0,
+            call_forest: CallForest::new(),
+            fee: 100,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+        };
+        let turn_hash = turn.hash();
+
+        let (_real_seed, real_validator_pk) = keypair_from_seed(0x42);
+        let (attacker_seed, _attacker_pk) = keypair_from_seed(0x99);
+
+        // Attacker signs with their own seed but stamps the real validator's PK
+        // in validator_key (the kind of attack the old symmetric scheme allowed).
+        let mut sign = sign_fast_path(&attacker_seed, &turn_hash, 100);
+        sign.validator_key = real_validator_pk;
+
+        assert!(
+            !verify_turn_sign(&sign, &turn_hash),
+            "Signature produced by attacker's seed MUST NOT verify under the real \
+             validator's public key"
+        );
+    }
+
+    /// P1-6 adversarial: process_fast_path_lock MUST reject a lock request that
+    /// is not accompanied by a valid agent signature over turn_hash. Previously
+    /// it trusted callers to have verified upstream.
+    #[test]
+    fn fast_path_lock_rejects_missing_agent_signature() {
+        let mut ledger = Ledger::new();
+        let (_agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
+
+        let turn = make_own_cell_turn(agent_id);
+        let turn_hash = turn.hash();
+        let (validator_seed, _) = keypair_from_seed(0xAA);
+
+        let mut table = CellLockTable::with_defaults();
+
+        // Garbage agent signature.
+        let bogus_sig = [0u8; 64];
+
+        let result = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &bogus_sig,
+        );
+
+        match result {
+            Err(FastPathError::InvalidSignature) => {}
+            other => panic!("expected InvalidSignature, got: {other:?}"),
+        }
+        // No lock should have been acquired.
+        assert!(table.is_empty());
+    }
+
+    /// P1-6 adversarial: a signature produced by an attacker's seed (different
+    /// from the agent's seed) MUST be rejected even though it's a real Ed25519
+    /// signature.
+    #[test]
+    fn fast_path_lock_rejects_signature_under_attacker_seed() {
+        let mut ledger = Ledger::new();
+        let (_agent_seed, agent_pk) = keypair_from_seed(1);
+        let agent_id = insert_cell_with_key(&mut ledger, agent_pk, 1000);
+
+        let turn = make_own_cell_turn(agent_id);
+        let turn_hash = turn.hash();
+        let (attacker_seed, _) = keypair_from_seed(0x77);
+        let bad_sig = agent_sig(&attacker_seed, &turn_hash);
+
+        let (validator_seed, _) = keypair_from_seed(0xAA);
+        let mut table = CellLockTable::with_defaults();
+
+        let result = process_fast_path_lock(
+            &mut table,
+            &turn,
+            turn_hash,
+            100,
+            &ledger,
+            &validator_seed,
+            &bad_sig,
+        );
+
+        assert!(matches!(result, Err(FastPathError::InvalidSignature)));
+        assert!(table.is_empty());
     }
 }

@@ -582,6 +582,20 @@ pub struct TurnExecutor {
     /// the executor validates the enqueue against the program's constraints before
     /// accepting the effect. The validation result hash is bound to the STARK proof.
     pub queue_program_registry: crate::queue_programs::QueueProgramRegistry,
+    /// Per-agent last receipt hash (P0-3 fix).
+    ///
+    /// On every successful turn commit, the agent's entry is set to the
+    /// resulting receipt's `receipt_hash()`. Subsequent turns from the same
+    /// agent must set `turn.previous_receipt_hash` to this value or be
+    /// rejected with `TurnError::ReceiptChainMismatch`. An entry with no
+    /// value means the agent has no committed turns and must submit with
+    /// `previous_receipt_hash: None` (a "genesis" turn for that agent).
+    ///
+    /// Off-chain `verify::verify_receipt_chain` already enforces this when it
+    /// has access to the full chain. This field enforces the same property
+    /// AT WRITE TIME, removing the wallet's ability to silently break the
+    /// chain by submitting every turn as if it were genesis.
+    pub last_receipt_hash: Mutex<HashMap<CellId, [u8; 32]>>,
 }
 
 impl TurnExecutor {
@@ -611,6 +625,7 @@ impl TurnExecutor {
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
+            last_receipt_hash: Mutex::new(HashMap::new()),
         }
     }
 
@@ -644,6 +659,7 @@ impl TurnExecutor {
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
+            last_receipt_hash: Mutex::new(HashMap::new()),
         }
     }
 
@@ -673,6 +689,7 @@ impl TurnExecutor {
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
+            last_receipt_hash: Mutex::new(HashMap::new()),
         }
     }
 
@@ -687,8 +704,99 @@ impl TurnExecutor {
     }
 
     /// Set the current timestamp (used for expiration and precondition checks).
+    ///
+    /// P2-2: rejects backwards timestamp updates. The executor's clock must be
+    /// monotonically non-decreasing; a stuck/backward clock allows expired
+    /// turns to succeed and breaks `valid_until` enforcement. Backward-stepping
+    /// `ts` values are silently ignored (no-op).
     pub fn set_timestamp(&mut self, ts: i64) {
-        self.current_timestamp = ts;
+        if ts >= self.current_timestamp {
+            self.current_timestamp = ts;
+        }
+        // else: silently ignore (do not allow time to go backwards).
+    }
+
+    /// Get the per-agent last-known receipt hash, if any (P0-3 fix).
+    ///
+    /// Used by callers that need to construct a turn with the correct
+    /// `previous_receipt_hash` value. Returns `None` if the agent has no
+    /// committed turns on this executor.
+    pub fn get_last_receipt_hash(&self, agent: &CellId) -> Option<[u8; 32]> {
+        self.last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(agent)
+            .copied()
+    }
+
+    /// Seed the receipt-chain head for an agent (for state recovery / loading).
+    ///
+    /// Use this when an executor is started against a ledger that already has
+    /// history (e.g. after restart) so the receipt-chain check reflects the
+    /// actual prior state. Without seeding, the first turn from an agent with
+    /// pre-existing history would be rejected as `ReceiptChainMismatch`.
+    pub fn set_last_receipt_hash(&self, agent: CellId, hash: [u8; 32]) {
+        self.last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(agent, hash);
+    }
+
+    /// Clear the per-agent receipt-chain head (for tests and resets).
+    pub fn reset_receipt_chain(&self) {
+        self.last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
+    /// Check whether a cell is frozen for migration (P0-4 fix).
+    ///
+    /// Returns `Err(TurnError::CellFrozen { cell })` if the cell is in
+    /// `MigrationState::Frozen` or `AwaitingReceipt`; `Ok(())` otherwise.
+    /// Called near the top of every turn-execution path that mutates state.
+    fn check_not_frozen(&self, cell: &CellId) -> Result<(), TurnError> {
+        if self
+            .cell_migrations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_frozen(cell)
+        {
+            Err(TurnError::CellFrozen { cell: *cell })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Verify the agent's `previous_receipt_hash` matches the executor's
+    /// stored head for that agent (P0-3 fix).
+    fn check_previous_receipt_hash(
+        &self,
+        agent: &CellId,
+        claimed: Option<[u8; 32]>,
+    ) -> Result<(), TurnError> {
+        let stored = self
+            .last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(agent)
+            .copied();
+        if stored == claimed {
+            Ok(())
+        } else {
+            Err(TurnError::ReceiptChainMismatch {
+                expected: stored,
+                got: claimed,
+            })
+        }
+    }
+
+    /// Record a receipt as the new chain-head for the agent.
+    fn record_receipt_hash(&self, agent: CellId, receipt_hash: [u8; 32]) {
+        self.last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(agent, receipt_hash);
     }
 
     /// Set the current block height (used for network preconditions).
@@ -1222,6 +1330,15 @@ impl TurnExecutor {
     ///
     /// The stored commitment encodes a Poseidon2 CellState commitment: the BabyBear
     /// value is in the first 4 bytes (u32 LE), remaining bytes are zero.
+    ///
+    // REVIEW[effect-vm-coord]: This 4-byte truncation gives ~31-bit collision
+    // resistance per sovereign-cell commitment (P0-2 in AUDIT-turn-executor.md).
+    // The coordinated fix widens the Effect VM's `OLD_COMMIT`/`NEW_COMMIT` PI
+    // slots from 1 BabyBear to 8 BabyBears and uses `bytes32_to_babybear`
+    // (defined just above) end-to-end. Touching this function alone breaks
+    // every existing proof; the change must land together with the circuit
+    // side. See REVIEW[effect-vm-coord] in `convert_turn_effects_to_vm` for
+    // a related truncation that needs the same widening.
     pub fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
         let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         pyana_circuit::field::BabyBear::new_canonical(val)
@@ -1263,6 +1380,17 @@ impl TurnExecutor {
             use pyana_circuit::effect_vm::Effect as VmEffect;
             use pyana_circuit::field::BabyBear;
 
+            // REVIEW[effect-vm-coord]: Both helpers truncate 32-byte values to
+            // 4 bytes (P1-2 in AUDIT-turn-executor.md). Many distinct effects
+            // collapse to the same circuit-side identifier; the proof binds to
+            // a coarse equivalence class rather than the specific effect.
+            // The coordinated fix expands each per-effect PI slot (nullifier,
+            // commitment, message_hash, pipeline_id, etc.) to 8 BabyBears via
+            // `bytes32_to_babybear`, matching the executor's `compute_effects_hash`
+            // which already hashes the full bytes. This is purely a circuit
+            // PI-layout change on the runtime side, but the AIR's
+            // domain-specific constraints over these slots must be widened in
+            // tandem -- a single coordinated landing.
             fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
                 let val_u32 = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
                 BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
@@ -1585,6 +1713,48 @@ impl TurnExecutor {
             };
         }
 
+        // P0-4: Reject turns whose agent cell is frozen for migration. A frozen
+        // cell may not initiate any turn.
+        if let Err(e) = self.check_not_frozen(&turn.agent) {
+            return TurnResult::Rejected {
+                reason: e,
+                at_action: vec![],
+            };
+        }
+        // Also reject if any cell touched in the call-forest write set is
+        // frozen. Per-effect freezing checks are also applied inside
+        // `apply_effect` as defence in depth.
+        {
+            let (_read_set, write_set) = crate::conflict::extract_access_sets(turn);
+            for cell_id in &write_set {
+                if let Err(e) = self.check_not_frozen(cell_id) {
+                    return TurnResult::Rejected {
+                        reason: e,
+                        at_action: vec![],
+                    };
+                }
+            }
+        }
+
+        // P0-3: Receipt-chain self-binding. The agent's claimed
+        // `previous_receipt_hash` must match the executor's stored head for
+        // this agent. Genesis turns (the agent's first) must use `None`.
+        //
+        // REVIEW[wallet-coord]: AUDIT-wallet.md P3-6 reports that
+        // `build_authorized_turn`, `allocate_queue`, `enqueue_message`,
+        // `dequeue_message`, and `atomic_queue_tx` all hardcode
+        // `previous_receipt_hash: None`. After this fix, every non-first turn
+        // from those paths will be rejected with `ReceiptChainMismatch`. The
+        // wallet must be updated to plumb the prior receipt hash (track per
+        // agent, populate on build, advance on commit). This check should NOT
+        // be relaxed; the wallet is the side that needs to catch up.
+        if let Err(e) = self.check_previous_receipt_hash(&turn.agent, turn.previous_receipt_hash) {
+            return TurnResult::Rejected {
+                reason: e,
+                at_action: vec![],
+            };
+        }
+
         // =====================================================================
         // BUDGET GATE: Check silo's bounded-counter slice (Stingray).
         // BEFORE Phase 1 — if the silo's budget slice cannot cover the turn fee,
@@ -1720,6 +1890,9 @@ impl TurnExecutor {
                     agent_delta.balance_change = -(turn.fee as i64);
                     agent_delta.nonce_increment = true;
                     delta.updated.push((turn.agent, agent_delta));
+
+                    // P0-3: record the new chain-head for this agent.
+                    self.record_receipt_hash(turn.agent, receipt.receipt_hash());
 
                     return TurnResult::Committed {
                         ledger_delta: delta,
@@ -2053,6 +2226,9 @@ impl TurnExecutor {
             executor_signature: None,
             finality: crate::turn::Finality::Final,
         };
+
+        // P0-3: record the new chain-head for this agent.
+        self.record_receipt_hash(turn.agent, receipt.receipt_hash());
 
         TurnResult::Committed {
             ledger_delta: delta,
@@ -7439,7 +7615,7 @@ pub fn execute_pipeline(
         }
 
         // Resolve EventualRefs in this turn before executing it.
-        let resolved_turn = match resolve_turn(turn, &resolution_table) {
+        let mut resolved_turn = match resolve_turn(turn, &resolution_table) {
             Ok(t) => t,
             Err(e) => {
                 failed[idx] = true;
@@ -7447,6 +7623,18 @@ pub fn execute_pipeline(
                 continue;
             }
         };
+
+        // P0-3: auto-chain previous_receipt_hash from the executor's per-agent
+        // head when the turn doesn't already specify one. Pipeline turns are
+        // commonly assembled before knowing the receipt-chain head, so the
+        // pipeline executor fills it in here. Turns that explicitly set
+        // `previous_receipt_hash` are NOT overridden -- the explicit value
+        // will be checked against the head and rejected if mismatched.
+        if resolved_turn.previous_receipt_hash.is_none() {
+            if let Some(prev) = executor.get_last_receipt_hash(&resolved_turn.agent) {
+                resolved_turn.previous_receipt_hash = Some(prev);
+            }
+        }
 
         let result = executor.execute(&resolved_turn, ledger);
 
@@ -7635,7 +7823,7 @@ pub fn execute_pipeline_result(
             continue;
         }
         let turn = &pipeline.turns[idx];
-        let resolved_turn = match resolve_turn(turn, &resolution_table) {
+        let mut resolved_turn = match resolve_turn(turn, &resolution_table) {
             Ok(t) => t,
             Err(e) => {
                 failed[idx] = true;
@@ -7643,6 +7831,13 @@ pub fn execute_pipeline_result(
                 continue;
             }
         };
+        // P0-3: auto-chain previous_receipt_hash for pipeline turns (see
+        // execute_pipeline for rationale).
+        if resolved_turn.previous_receipt_hash.is_none() {
+            if let Some(prev) = executor.get_last_receipt_hash(&resolved_turn.agent) {
+                resolved_turn.previous_receipt_hash = Some(prev);
+            }
+        }
         let result = executor.execute(&resolved_turn, ledger);
         match result {
             TurnResult::Committed { receipt, .. } => {
@@ -7765,6 +7960,14 @@ pub struct AtomicProofEntry {
 ///
 /// Conservation is enforced across BOTH domains: sovereign deltas (extracted from
 /// proofs) plus hosted deltas (computed from execution) must sum to zero.
+///
+/// SECURITY (C1 fix): the hosted side is now expressed as a `Vec<Action>` so
+/// each hosted-side operation carries its own `Authorization` (Ed25519 sig,
+/// proof, bearer cap, etc.). Each action's authorization is verified via the
+/// standard `verify_authorization` pipeline before its effects are applied.
+/// Previously `hosted_effects: Vec<(CellId, Vec<Effect>)>` had no
+/// per-cell auth, which allowed any caller of `execute_mixed_atomic` to
+/// mutate any hosted cell's balance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MixedAtomicTurn {
     /// The agent submitting this turn (pays fee, provides nonce).
@@ -7775,9 +7978,9 @@ pub struct MixedAtomicTurn {
     pub fee: u64,
     /// Proof-carrying sovereign cell entries.
     pub sovereign_entries: Vec<AtomicProofEntry>,
-    /// Hosted cell effects (federation executes these directly).
-    /// Each entry is (cell_id, effects_to_apply).
-    pub hosted_effects: Vec<(CellId, Vec<crate::action::Effect>)>,
+    /// Hosted-side actions. Each `Action` carries its own authorization, which
+    /// is verified before any of its effects apply.
+    pub hosted_actions: Vec<crate::action::Action>,
 }
 
 /// Result of a successful mixed atomic turn execution.
@@ -7836,6 +8039,12 @@ pub enum AtomicTurnError {
     NonceMismatch { expected: u64, got: u64 },
     /// Duplicate cell in proof entries.
     DuplicateCell(CellId),
+    /// A cell referenced by the atomic turn is frozen for migration (P0-4).
+    FrozenCell(CellId),
+    /// An action in the hosted side failed authorization (C1 fix).
+    HostedAuthorizationFailed { cell: CellId, reason: String },
+    /// An action in the hosted side failed preconditions or effect application.
+    HostedApplyFailed { cell: CellId, reason: String },
 }
 
 impl core::fmt::Display for AtomicTurnError {
@@ -7877,6 +8086,15 @@ impl core::fmt::Display for AtomicTurnError {
                 write!(f, "nonce mismatch: expected {}, got {}", expected, got)
             }
             Self::DuplicateCell(id) => write!(f, "duplicate cell in proof entries: {}", id),
+            Self::FrozenCell(id) => {
+                write!(f, "cell {} is frozen for migration", id)
+            }
+            Self::HostedAuthorizationFailed { cell, reason } => {
+                write!(f, "hosted action on cell {} failed authorization: {}", cell, reason)
+            }
+            Self::HostedApplyFailed { cell, reason } => {
+                write!(f, "hosted action on cell {} failed to apply: {}", cell, reason)
+            }
         }
     }
 }
@@ -7909,6 +8127,27 @@ impl TurnExecutor {
         for entry in &atomic_turn.proofs {
             if !seen_cells.insert(entry.cell_id) {
                 return Err(AtomicTurnError::DuplicateCell(entry.cell_id));
+            }
+        }
+
+        // P0-4: reject any frozen agent or proof-entry cell.
+        if self
+            .cell_migrations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_frozen(&atomic_turn.agent)
+        {
+            return Err(AtomicTurnError::FrozenCell(atomic_turn.agent));
+        }
+        {
+            let mig = self
+                .cell_migrations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for entry in &atomic_turn.proofs {
+                if mig.is_frozen(&entry.cell_id) {
+                    return Err(AtomicTurnError::FrozenCell(entry.cell_id));
+                }
             }
         }
 
@@ -7976,6 +8215,13 @@ impl TurnExecutor {
                 });
             }
 
+            // REVIEW[effect-vm-coord]: NET_DELTA_MAG is a single BabyBear
+            // (~31 bits) (P1-3 in AUDIT-turn-executor.md). A turn whose true
+            // sovereign balance change is > 2^31 cannot be expressed correctly
+            // in the proof PI -- the prover proves `mag = (real_value mod p)`
+            // while real_value may be larger. The coordinated fix splits
+            // magnitude into 2 BabyBears (lo+hi) with an in-circuit constraint
+            // that hi*p + lo equals the true magnitude.
             let delta_magnitude = BabyBear::new_canonical(
                 proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
             );
@@ -7991,6 +8237,20 @@ impl TurnExecutor {
             let custom_count = BabyBear::new_canonical(
                 proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
             );
+            // P0-1 fix: also forward the bal_* PIs so the boundary
+            // and Group 6 constraints can be checked by the verifier.
+            let init_bal_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
+            );
+            let init_bal_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
+            );
+            let final_bal_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
+            );
+            let final_bal_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
+            );
 
             // Build public inputs in Effect VM layout.
             let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
@@ -8001,6 +8261,10 @@ impl TurnExecutor {
             public_inputs.push(effects_hash_lo);
             public_inputs.push(effects_hash_hi);
             public_inputs.push(custom_count);
+            public_inputs.push(init_bal_lo);
+            public_inputs.push(init_bal_hi);
+            public_inputs.push(final_bal_lo);
+            public_inputs.push(final_bal_hi);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = custom_count.0 as usize;
@@ -8120,6 +8384,13 @@ impl TurnExecutor {
     ///
     /// Conservation is enforced across BOTH: sovereign deltas (extracted from proofs)
     /// plus hosted deltas (computed from execution) must sum to zero.
+    ///
+    /// SECURITY (C1 fix): every hosted action's authorization is verified through
+    /// the standard `verify_authorization` pipeline before any of its effects
+    /// apply, and ALL hosted mutations are journaled so that any subsequent
+    /// failure (auth, precondition, effect-apply, conservation) rolls back the
+    /// entire turn atomically. Previously the hosted side could mutate any
+    /// cell's balance without authorization.
     pub fn execute_mixed_atomic(
         &self,
         mixed_turn: &MixedAtomicTurn,
@@ -8128,7 +8399,7 @@ impl TurnExecutor {
         use pyana_circuit::field::BabyBear;
         use pyana_circuit::stark;
 
-        if mixed_turn.sovereign_entries.is_empty() && mixed_turn.hosted_effects.is_empty() {
+        if mixed_turn.sovereign_entries.is_empty() && mixed_turn.hosted_actions.is_empty() {
             return Err(AtomicTurnError::EmptyProofs);
         }
 
@@ -8146,6 +8417,28 @@ impl TurnExecutor {
                 available: agent_cell.state.balance,
                 required: mixed_turn.fee,
             });
+        }
+
+        // P0-4: reject any frozen agent, sovereign-entry cell, or hosted-action
+        // target cell.
+        {
+            let mig = self
+                .cell_migrations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if mig.is_frozen(&mixed_turn.agent) {
+                return Err(AtomicTurnError::FrozenCell(mixed_turn.agent));
+            }
+            for entry in &mixed_turn.sovereign_entries {
+                if mig.is_frozen(&entry.cell_id) {
+                    return Err(AtomicTurnError::FrozenCell(entry.cell_id));
+                }
+            }
+            for action in &mixed_turn.hosted_actions {
+                if mig.is_frozen(&action.target) {
+                    return Err(AtomicTurnError::FrozenCell(action.target));
+                }
+            }
         }
 
         // Verify sovereign proofs and extract proven deltas.
@@ -8193,6 +8486,13 @@ impl TurnExecutor {
                 });
             }
 
+            // REVIEW[effect-vm-coord]: NET_DELTA_MAG is a single BabyBear
+            // (~31 bits) (P1-3 in AUDIT-turn-executor.md). A turn whose true
+            // sovereign balance change is > 2^31 cannot be expressed correctly
+            // in the proof PI -- the prover proves `mag = (real_value mod p)`
+            // while real_value may be larger. The coordinated fix splits
+            // magnitude into 2 BabyBears (lo+hi) with an in-circuit constraint
+            // that hi*p + lo equals the true magnitude.
             let delta_magnitude = BabyBear::new_canonical(
                 proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
             );
@@ -8208,6 +8508,19 @@ impl TurnExecutor {
             let custom_count = BabyBear::new_canonical(
                 proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
             );
+            // P0-1 fix: forward bal_* PIs.
+            let init_bal_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
+            );
+            let init_bal_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
+            );
+            let final_bal_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
+            );
+            let final_bal_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
+            );
 
             let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
             public_inputs.push(old_commit_field);
@@ -8217,6 +8530,10 @@ impl TurnExecutor {
             public_inputs.push(effects_hash_lo);
             public_inputs.push(effects_hash_hi);
             public_inputs.push(custom_count);
+            public_inputs.push(init_bal_lo);
+            public_inputs.push(init_bal_hi);
+            public_inputs.push(final_bal_lo);
+            public_inputs.push(final_bal_hi);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = custom_count.0 as usize;
@@ -8290,39 +8607,140 @@ impl TurnExecutor {
             new_commitments.push((entry.cell_id, entry.new_commitment));
         }
 
-        // Compute hosted cell balance deltas from Transfer effects.
-        let mut hosted_deltas: Vec<i64> = Vec::new();
-        let mut hosted_mutations: Vec<(CellId, i64)> = Vec::new();
+        // ====================================================================
+        // HOSTED SIDE (C1 FIX): each hosted action is authorized via the same
+        // `verify_authorization` pipeline as `execute()` and applied through
+        // `apply_effect` with full journaling. On any failure (auth,
+        // precondition, effect, conservation) the entire journal is rolled
+        // back -- no partial state is left in the ledger.
+        // ====================================================================
+        let mut journal = LedgerJournal::with_capacity(16);
+        let mut hosted_deltas: Vec<i64> = Vec::with_capacity(mixed_turn.hosted_actions.len());
 
-        for (cell_id, effects) in &mixed_turn.hosted_effects {
-            let _cell = ledger
-                .get(cell_id)
-                .ok_or(AtomicTurnError::AgentNotFound(*cell_id))?;
+        for (idx, action) in mixed_turn.hosted_actions.iter().enumerate() {
+            // 1. Target cell must exist.
+            let target_cell = match ledger.get(&action.target) {
+                Some(c) => c.clone(),
+                None => {
+                    journal.rollback(
+                        ledger,
+                        &self.obligations,
+                        &self.escrows,
+                        &self.bridged_nullifiers,
+                        &self.committed_escrows,
+                        &self.committed_escrow_amounts,
+                    );
+                    return Err(AtomicTurnError::HostedApplyFailed {
+                        cell: action.target,
+                        reason: format!("hosted action #{} target cell not found", idx),
+                    });
+                }
+            };
+
+            // 2. Authorization (the C1 fix). Use the same gate as `execute()`.
+            let path = vec![idx];
+            if let Err((err, _path)) = self.verify_authorization(
+                action,
+                &target_cell,
+                ledger,
+                &mixed_turn.agent,
+                &path,
+                mixed_turn.nonce,
+            ) {
+                journal.rollback(
+                    ledger,
+                    &self.obligations,
+                    &self.escrows,
+                    &self.bridged_nullifiers,
+                    &self.committed_escrows,
+                    &self.committed_escrow_amounts,
+                );
+                return Err(AtomicTurnError::HostedAuthorizationFailed {
+                    cell: action.target,
+                    reason: format!("{err}"),
+                });
+            }
+
+            // 3. Preconditions.
+            if let Err((err, _)) =
+                self.check_preconditions(&action.preconditions, &target_cell, &path)
+            {
+                journal.rollback(
+                    ledger,
+                    &self.obligations,
+                    &self.escrows,
+                    &self.bridged_nullifiers,
+                    &self.committed_escrows,
+                    &self.committed_escrow_amounts,
+                );
+                return Err(AtomicTurnError::HostedApplyFailed {
+                    cell: action.target,
+                    reason: format!("{err}"),
+                });
+            }
+
+            // 4. Apply each effect via apply_effect (which is journaled).
+            // Compute the net Transfer delta for this hosted entry for the
+            // conservation check after-the-fact.
             let mut net_delta: i64 = 0;
-            for effect in effects {
+            for effect in &action.effects {
                 if let crate::action::Effect::Transfer { from, to, amount } = effect {
-                    if from == cell_id {
+                    if from == &action.target {
                         net_delta -= *amount as i64;
                     }
-                    if to == cell_id {
+                    if to == &action.target {
                         net_delta += *amount as i64;
                     }
                 }
+                if let Err((err, _)) = self.apply_effect(
+                    effect,
+                    ledger,
+                    &path,
+                    &action.target,
+                    &mixed_turn.agent,
+                    &mut journal,
+                ) {
+                    journal.rollback(
+                        ledger,
+                        &self.obligations,
+                        &self.escrows,
+                        &self.bridged_nullifiers,
+                        &self.committed_escrows,
+                        &self.committed_escrow_amounts,
+                    );
+                    return Err(AtomicTurnError::HostedApplyFailed {
+                        cell: action.target,
+                        reason: format!("{err}"),
+                    });
+                }
             }
             hosted_deltas.push(net_delta);
-            hosted_mutations.push((*cell_id, net_delta));
         }
 
         // Cross-domain conservation: sovereign + hosted must sum to zero.
         let total_delta: i64 =
             sovereign_deltas.iter().sum::<i64>() + hosted_deltas.iter().sum::<i64>();
         if total_delta != 0 {
+            // Roll back ALL hosted mutations before returning.
+            journal.rollback(
+                ledger,
+                &self.obligations,
+                &self.escrows,
+                &self.bridged_nullifiers,
+                &self.committed_escrows,
+                &self.committed_escrow_amounts,
+            );
             return Err(AtomicTurnError::ConservationViolation {
                 net_excess: total_delta,
             });
         }
 
-        // Commit atomically.
+        // ====================================================================
+        // COMMIT: hosted mutations are already in place (in `ledger`) via
+        // apply_effect; we just commit fee, nonce, and sovereign commitment
+        // updates. We deliberately do NOT call rollback on the journal -- we
+        // want to keep the mutations; the journal is dropped on success.
+        // ====================================================================
         {
             let agent = ledger.get_mut(&mixed_turn.agent).unwrap();
             agent.state.balance -= mixed_turn.fee;
@@ -8343,16 +8761,6 @@ impl TurnExecutor {
                     *new_commitment,
                     self.block_height,
                 );
-            }
-        }
-
-        for (cell_id, delta) in &hosted_mutations {
-            if let Some(cell) = ledger.get_mut(cell_id) {
-                if *delta >= 0 {
-                    cell.state.balance += *delta as u64;
-                } else {
-                    cell.state.balance = cell.state.balance.saturating_sub((-delta) as u64);
-                }
             }
         }
 
@@ -8554,5 +8962,513 @@ mod migration_tests {
         assert!(removed.contains(&cell2));
         assert!(mgr.is_frozen(&cell3)); // still tracked
         assert!(mgr.get(&cell1).is_none()); // cleaned up
+    }
+}
+
+// =============================================================================
+// Adversarial Tests for CRITICAL/P0 fixes (C1, P0-3, P0-4)
+// =============================================================================
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use crate::action::{Action, Authorization, DelegationMode, Effect};
+    use crate::forest::{CallForest, CallTree};
+    use crate::turn::Turn;
+    use pyana_cell::permissions::{AuthRequired, Permissions};
+    use pyana_cell::{Cell, Preconditions};
+
+    fn permissive() -> Permissions {
+        Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        }
+    }
+
+    fn make_permissive_cell(seed: u8, balance: u64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        let token = [0u8; 32];
+        let mut cell = Cell::with_balance(pk, token, balance);
+        cell.permissions = permissive();
+        cell
+    }
+
+    fn make_signed_cell(seed: u8, balance: u64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        let token = [0u8; 32];
+        // Default permissions: Signature required.
+        Cell::with_balance(pk, token, balance)
+    }
+
+    fn build_noop_turn(agent: CellId, nonce: u64) -> Turn {
+        let action = Action {
+            target: agent,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+        let tree = CallTree {
+            action,
+            children: vec![],
+            hash: [0u8; 32],
+        };
+        Turn {
+            agent,
+            nonce,
+            call_forest: CallForest {
+                roots: vec![tree],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+        }
+    }
+
+    // ---------------- P0-3: previous_receipt_hash enforcement ----------------
+
+    /// Submit two turns with the same nonce=0 and `previous_receipt_hash: None`.
+    /// The second MUST be rejected -- without the P0-3 fix the executor would
+    /// accept both because it never bound the receipt chain at write time.
+    #[test]
+    fn previous_receipt_hash_replay_blocked() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        let turn1 = build_noop_turn(agent_id, 0);
+        let r1 = executor.execute(&turn1, &mut ledger);
+        assert!(r1.is_committed(), "first turn should commit: {:?}", r1);
+
+        // Second turn from same agent with previous_receipt_hash: None.
+        // Reset nonce by building with nonce 1 (which is the actual next nonce).
+        let turn2 = build_noop_turn(agent_id, 1);
+        let r2 = executor.execute(&turn2, &mut ledger);
+        match r2 {
+            TurnResult::Rejected {
+                reason: TurnError::ReceiptChainMismatch { expected, got },
+                ..
+            } => {
+                assert!(expected.is_some(), "expected = Some(prev_receipt_hash)");
+                assert!(got.is_none(), "got = None (the bug pattern)");
+            }
+            other => panic!("expected ReceiptChainMismatch, got: {:?}", other),
+        }
+    }
+
+    /// Submit a non-genesis turn whose `previous_receipt_hash` doesn't match
+    /// the prior receipt -- MUST be rejected (no rebranching the chain).
+    #[test]
+    fn previous_receipt_hash_wrong_chain_rejected() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        let turn1 = build_noop_turn(agent_id, 0);
+        let r1 = executor.execute(&turn1, &mut ledger);
+        assert!(r1.is_committed());
+
+        // Build turn2 with WRONG previous_receipt_hash.
+        let mut turn2 = build_noop_turn(agent_id, 1);
+        turn2.previous_receipt_hash = Some([0xAB; 32]);
+        let r2 = executor.execute(&turn2, &mut ledger);
+        match r2 {
+            TurnResult::Rejected {
+                reason: TurnError::ReceiptChainMismatch { expected, got },
+                ..
+            } => {
+                assert!(expected.is_some());
+                assert_eq!(got, Some([0xAB; 32]));
+            }
+            other => panic!("expected ReceiptChainMismatch, got: {:?}", other),
+        }
+    }
+
+    /// Properly chained sequential turns MUST commit.
+    #[test]
+    fn previous_receipt_hash_correct_chain_accepted() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        let turn1 = build_noop_turn(agent_id, 0);
+        let (_, receipt1, _) = executor.execute(&turn1, &mut ledger).unwrap_committed();
+
+        let mut turn2 = build_noop_turn(agent_id, 1);
+        turn2.previous_receipt_hash = Some(receipt1.receipt_hash());
+        let r2 = executor.execute(&turn2, &mut ledger);
+        assert!(r2.is_committed(), "correctly-chained turn must commit: {:?}", r2);
+    }
+
+    /// A turn that claims a prior receipt when the executor has none on file
+    /// MUST be rejected (a wallet can't fake an established chain).
+    #[test]
+    fn previous_receipt_hash_genesis_with_some_rejected() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        let mut turn = build_noop_turn(agent_id, 0);
+        turn.previous_receipt_hash = Some([0x42; 32]);
+        let r = executor.execute(&turn, &mut ledger);
+        match r {
+            TurnResult::Rejected {
+                reason: TurnError::ReceiptChainMismatch { expected, got },
+                ..
+            } => {
+                assert!(expected.is_none(), "executor has no prior receipt");
+                assert_eq!(got, Some([0x42; 32]));
+            }
+            other => panic!("expected ReceiptChainMismatch, got: {:?}", other),
+        }
+    }
+
+    // ---------------- P0-4: CellMigrationManager enforcement ----------------
+
+    /// A turn whose agent cell is frozen for migration MUST be rejected.
+    #[test]
+    fn migration_frozen_agent_blocks_execute() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        // Freeze the agent cell for migration.
+        executor
+            .cell_migrations
+            .lock()
+            .unwrap()
+            .begin_migration(agent_id, [0xDD; 32], 0, 100)
+            .unwrap();
+
+        let turn = build_noop_turn(agent_id, 0);
+        let r = executor.execute(&turn, &mut ledger);
+        match r {
+            TurnResult::Rejected {
+                reason: TurnError::CellFrozen { cell },
+                ..
+            } => assert_eq!(cell, agent_id),
+            other => panic!("expected CellFrozen, got: {:?}", other),
+        }
+    }
+
+    /// A turn that transfers TO a frozen cell MUST be rejected.
+    #[test]
+    fn migration_frozen_target_blocks_transfer() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 10_000);
+        let agent_id = agent.id;
+        let target = make_permissive_cell(2, 0);
+        let target_id = target.id;
+        // Grant agent capability to target so cross-cell check passes.
+        let mut a = agent;
+        a.capabilities.grant(target_id, AuthRequired::None);
+        ledger.insert_cell(a).unwrap();
+        ledger.insert_cell(target).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .cell_migrations
+            .lock()
+            .unwrap()
+            .begin_migration(target_id, [0xDD; 32], 0, 100)
+            .unwrap();
+
+        // Build a transfer turn (agent -> target).
+        let action = Action {
+            target: agent_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: agent_id,
+                to: target_id,
+                amount: 100,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+        let tree = CallTree {
+            action,
+            children: vec![],
+            hash: [0u8; 32],
+        };
+        let mut turn = build_noop_turn(agent_id, 0);
+        turn.call_forest = CallForest {
+            roots: vec![tree],
+            forest_hash: [0u8; 32],
+        };
+        turn.fee = 0;
+
+        let r = executor.execute(&turn, &mut ledger);
+        match r {
+            TurnResult::Rejected {
+                reason: TurnError::CellFrozen { cell },
+                ..
+            } => assert_eq!(cell, target_id),
+            other => panic!("expected CellFrozen(target), got: {:?}", other),
+        }
+    }
+
+    /// `execute_atomic_sovereign` MUST reject when a sovereign-entry cell is
+    /// frozen.
+    #[test]
+    fn migration_frozen_blocks_atomic_sovereign() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(1, 1000);
+        let agent_id = agent.id;
+        let frozen_id = CellId([0xCC; 32]);
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .cell_migrations
+            .lock()
+            .unwrap()
+            .begin_migration(frozen_id, [0xDD; 32], 0, 100)
+            .unwrap();
+
+        let atomic = AtomicSovereignTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            proofs: vec![AtomicProofEntry {
+                cell_id: frozen_id,
+                proof: vec![1, 2, 3, 4],
+                old_commitment: [0u8; 32],
+                new_commitment: [1u8; 32],
+                effects_hash: [0u8; 32],
+                balance_delta: 0,
+            }],
+        };
+
+        let r = executor.execute_atomic_sovereign(&atomic, &mut ledger);
+        match r {
+            Err(AtomicTurnError::FrozenCell(cell)) => assert_eq!(cell, frozen_id),
+            other => panic!("expected FrozenCell, got: {:?}", other),
+        }
+    }
+
+    // ---------------- CRITICAL C1: execute_mixed_atomic auth ----------------
+
+    /// The CRITICAL fix: a hosted action targeting a cell the caller has no
+    /// authority over MUST be rejected by `execute_mixed_atomic`. Without the
+    /// fix, the call would mutate the target cell's balance.
+    #[test]
+    fn mixed_atomic_hosted_unauthorized_rejected() {
+        let mut ledger = Ledger::new();
+        // Agent (attacker) and victim cell both exist; victim REQUIRES Signature.
+        let agent = make_permissive_cell(0xAA, 1000);
+        let agent_id = agent.id;
+        let victim = make_signed_cell(0xBB, 1000);
+        let victim_id = victim.id;
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(victim.clone()).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        // Attacker constructs a hosted action that targets the victim cell but
+        // provides `Authorization::Unchecked` (no signature). The victim cell's
+        // default permissions require Signature for SetField; verify_authorization
+        // MUST reject.
+        let malicious_action = Action {
+            target: victim_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::SetField {
+                cell: victim_id,
+                index: 0,
+                value: [0xFF; 32],
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![malicious_action],
+        };
+
+        let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
+        assert!(
+            matches!(r, Err(AtomicTurnError::HostedAuthorizationFailed { cell, .. }) if cell == victim_id),
+            "expected HostedAuthorizationFailed on victim cell, got: {:?}",
+            r
+        );
+
+        // Victim's state MUST be unchanged.
+        let v = ledger.get(&victim_id).unwrap();
+        assert_eq!(v.state.fields[0], pyana_cell::state::FIELD_ZERO);
+    }
+
+    /// C1 / P1-7: a later hosted-action failure MUST roll back earlier hosted
+    /// mutations within the same `execute_mixed_atomic` call.
+    #[test]
+    fn mixed_atomic_late_failure_rolls_back_hosted_mutations() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(0xAA, 100);
+        let agent_id = agent.id;
+        let cell_b = make_permissive_cell(0xBB, 1_000);
+        let cell_b_id = cell_b.id;
+        let cell_c = make_permissive_cell(0xCC, 50);
+        let cell_c_id = cell_c.id;
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(cell_b).unwrap();
+        ledger.insert_cell(cell_c).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        // Action 1: B sends 100 to C (succeeds; both permissive).
+        let a1 = Action {
+            target: cell_b_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: cell_b_id,
+                to: cell_c_id,
+                amount: 100,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+        // Action 2: C sends 999_999 to B (FAILS: insufficient balance after first
+        // action). Journal MUST roll back action 1.
+        let a2 = Action {
+            target: cell_c_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: cell_c_id,
+                to: cell_b_id,
+                amount: 999_999,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![a1, a2],
+        };
+
+        let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
+        assert!(r.is_err(), "expected late failure, got: {:?}", r);
+
+        // Balances MUST be unchanged (rollback worked).
+        assert_eq!(ledger.get(&cell_b_id).unwrap().state.balance, 1_000);
+        assert_eq!(ledger.get(&cell_c_id).unwrap().state.balance, 50);
+    }
+
+    /// P2-2: set_timestamp MUST silently ignore backwards-in-time updates.
+    #[test]
+    fn set_timestamp_backwards_no_op() {
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_timestamp(100);
+        assert_eq!(executor.current_timestamp, 100);
+        executor.set_timestamp(50); // backwards
+        assert_eq!(executor.current_timestamp, 100, "must not go backwards");
+        executor.set_timestamp(100); // same
+        assert_eq!(executor.current_timestamp, 100);
+        executor.set_timestamp(200); // forward
+        assert_eq!(executor.current_timestamp, 200);
+    }
+
+    /// A hosted Transfer from a victim's cell MUST be rejected (the attacker
+    /// has no Signature for the victim's Send permission).
+    #[test]
+    fn mixed_atomic_hosted_unauthorized_transfer_blocked() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(0xAA, 100);
+        let agent_id = agent.id;
+        let victim = make_signed_cell(0xBB, 10_000);
+        let victim_id = victim.id;
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(victim).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        // Malicious hosted action: transfer from victim -> agent.
+        let action = Action {
+            target: victim_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: victim_id,
+                to: agent_id,
+                amount: 5_000,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+        };
+
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![action],
+        };
+
+        let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
+        assert!(matches!(r, Err(AtomicTurnError::HostedAuthorizationFailed { .. })));
+
+        // Both balances UNCHANGED.
+        assert_eq!(ledger.get(&victim_id).unwrap().state.balance, 10_000);
+        assert_eq!(ledger.get(&agent_id).unwrap().state.balance, 100);
     }
 }
