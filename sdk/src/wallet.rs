@@ -5551,60 +5551,31 @@ impl AgentWallet {
     ///
     /// * `capacity` - Maximum number of entries the queue can hold.
     /// * `program_vk` - Optional program verification key hash (for programmable queues).
+    /// * `federation_id` - Federation binding for the canonical signing message.
+    ///   The signed action is rejected by any executor running under a different
+    ///   federation_id; see `pyana_turn::executor::TurnExecutor::compute_signing_message`.
     ///
     /// # Returns
     ///
-    /// A [`Turn`] ready to be signed and submitted, or an error.
+    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
+    /// for submission, or an error.
     pub fn allocate_queue(
         &self,
         capacity: u64,
         program_vk: Option<[u8; 32]>,
+        federation_id: &[u8; 32],
     ) -> Result<Turn, SdkError> {
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
-        use pyana_turn::forest::{CallForest, CallTree};
-
         let effect = Effect::QueueAllocate {
             capacity,
             program_vk,
         };
-
-        let action = Action {
-            target: self.cell_id("default"),
-            method: pyana_turn::action::symbol("queue_allocate"),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects: vec![effect],
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
-        };
-
-        let tree = CallTree {
-            action,
-            children: vec![],
-            hash: [0u8; 32],
-        };
-
-        Ok(Turn {
-            agent: self.cell_id("default"),
-            nonce: 0,
-            fee: 0,
-            call_forest: CallForest {
-                roots: vec![tree],
-                forest_hash: [0u8; 32],
-            },
-            memo: None,
-            valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: Vec::new(),
-            conservation_proof: None,
-            sovereign_witnesses: Default::default(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-        })
+        let action = self.make_action(
+            self.cell_id("default"),
+            "queue_allocate",
+            vec![effect],
+            federation_id,
+        );
+        Ok(self.make_turn(action))
     }
 
     /// Enqueue a message to a queue.
@@ -5617,62 +5588,31 @@ impl AgentWallet {
     /// * `queue` - The CellId of the target queue.
     /// * `message_hash` - BLAKE3 hash of the message content.
     /// * `deposit` - Deposit amount in computrons (anti-spam bond).
+    /// * `federation_id` - Federation binding for the canonical signing message.
     ///
     /// # Returns
     ///
-    /// A [`Turn`] ready to be signed and submitted, or an error.
+    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
+    /// for submission, or an error.
     pub fn enqueue_message(
         &self,
         queue: CellId,
         message_hash: [u8; 32],
         deposit: u64,
+        federation_id: &[u8; 32],
     ) -> Result<Turn, SdkError> {
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
-        use pyana_turn::forest::{CallForest, CallTree};
-
         let effect = Effect::QueueEnqueue {
             queue,
             message_hash,
             deposit,
         };
-
-        let action = Action {
-            target: self.cell_id("default"),
-            method: pyana_turn::action::symbol("queue_enqueue"),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects: vec![effect],
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
-        };
-
-        let tree = CallTree {
-            action,
-            children: vec![],
-            hash: [0u8; 32],
-        };
-
-        Ok(Turn {
-            agent: self.cell_id("default"),
-            nonce: 0,
-            fee: 0,
-            call_forest: CallForest {
-                roots: vec![tree],
-                forest_hash: [0u8; 32],
-            },
-            memo: None,
-            valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: Vec::new(),
-            conservation_proof: None,
-            sovereign_witnesses: Default::default(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-        })
+        let action = self.make_action(
+            self.cell_id("default"),
+            "queue_enqueue",
+            vec![effect],
+            federation_id,
+        );
+        Ok(self.make_turn(action))
     }
 
     /// Dequeue the next message from a queue (FIFO consumption).
@@ -5683,53 +5623,25 @@ impl AgentWallet {
     /// # Arguments
     ///
     /// * `queue` - The CellId of the queue to dequeue from.
+    /// * `federation_id` - Federation binding for the canonical signing message.
     ///
     /// # Returns
     ///
-    /// A [`Turn`] ready to be signed and submitted, or an error.
-    pub fn dequeue_message(&self, queue: CellId) -> Result<Turn, SdkError> {
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
-        use pyana_turn::forest::{CallForest, CallTree};
-
+    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
+    /// for submission, or an error.
+    pub fn dequeue_message(
+        &self,
+        queue: CellId,
+        federation_id: &[u8; 32],
+    ) -> Result<Turn, SdkError> {
         let effect = Effect::QueueDequeue { queue };
-
-        let action = Action {
-            target: self.cell_id("default"),
-            method: pyana_turn::action::symbol("queue_dequeue"),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects: vec![effect],
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
-        };
-
-        let tree = CallTree {
-            action,
-            children: vec![],
-            hash: [0u8; 32],
-        };
-
-        Ok(Turn {
-            agent: self.cell_id("default"),
-            nonce: 0,
-            fee: 0,
-            call_forest: CallForest {
-                roots: vec![tree],
-                forest_hash: [0u8; 32],
-            },
-            memo: None,
-            valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: Vec::new(),
-            conservation_proof: None,
-            sovereign_witnesses: Default::default(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-        })
+        let action = self.make_action(
+            self.cell_id("default"),
+            "queue_dequeue",
+            vec![effect],
+            federation_id,
+        );
+        Ok(self.make_turn(action))
     }
 
     /// Execute an atomic cross-queue transaction.
@@ -5740,62 +5652,30 @@ impl AgentWallet {
     /// # Arguments
     ///
     /// * `operations` - The queue operations to perform atomically.
+    /// * `federation_id` - Federation binding for the canonical signing message.
     ///
     /// # Returns
     ///
-    /// A [`Turn`] ready to be signed and submitted, or an error.
+    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
+    /// for submission, or an error.
     pub fn atomic_queue_tx(
         &self,
         operations: Vec<pyana_turn::QueueTxOp>,
+        federation_id: &[u8; 32],
     ) -> Result<Turn, SdkError> {
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
-        use pyana_turn::forest::{CallForest, CallTree};
-
         if operations.is_empty() {
             return Err(SdkError::InvalidWitness(
                 "atomic queue transaction must have at least one operation".into(),
             ));
         }
-
         let effect = Effect::QueueAtomicTx { operations };
-
-        let action = Action {
-            target: self.cell_id("default"),
-            method: pyana_turn::action::symbol("queue_atomic_tx"),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects: vec![effect],
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
-        };
-
-        let tree = CallTree {
-            action,
-            children: vec![],
-            hash: [0u8; 32],
-        };
-
-        Ok(Turn {
-            agent: self.cell_id("default"),
-            nonce: 0,
-            fee: 0,
-            call_forest: CallForest {
-                roots: vec![tree],
-                forest_hash: [0u8; 32],
-            },
-            memo: None,
-            valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: Vec::new(),
-            conservation_proof: None,
-            sovereign_witnesses: Default::default(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-        })
+        let action = self.make_action(
+            self.cell_id("default"),
+            "queue_atomic_tx",
+            vec![effect],
+            federation_id,
+        );
+        Ok(self.make_turn(action))
     }
 }
 
@@ -7276,6 +7156,214 @@ mod tests {
             msg.contains("depth exceeds maximum") || msg.contains("membership"),
             "expected depth/membership rejection, got: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Queue-method authorization tests.
+    //
+    // SDK-REVIEW.md C-3 flagged that `allocate_queue`, `enqueue_message`,
+    // `dequeue_message`, and `atomic_queue_tx` each built Turns by struct
+    // literal ending in `Authorization::Unchecked` — i.e. SDK was
+    // shipping four `Unchecked` authorizations on user-callable surface
+    // (one of the Stage 8 P2.E-H grep targets).
+    //
+    // These tests pin the post-fix invariant: every queue method
+    // produces a Turn whose root action carries a real, non-zero
+    // ed25519 signature half against the supplied federation_id.
+    // -----------------------------------------------------------------
+
+    /// Adversarial pin: a Signature with both halves zero is not a real
+    /// signature; if a queue method ever regressed to `Authorization::Unchecked`
+    /// the variant would not be `Signature(..)` at all, but if some future
+    /// "lazy sign" path produced `Signature([0;32], [0;32])` we want to catch
+    /// it too. (See `app-framework/tests/wallet_sign_action.rs` for the
+    /// matching pin on the AppWallet path.)
+    fn assert_real_signature(action: &pyana_turn::action::Action) {
+        use pyana_turn::action::Authorization;
+        match &action.authorization {
+            Authorization::Signature(a, b) => {
+                assert!(
+                    *a != [0u8; 32] || *b != [0u8; 32],
+                    "queue action signature must be non-zero (got both halves zero)"
+                );
+            }
+            other => panic!(
+                "queue action must carry Authorization::Signature(..), got {:?}",
+                other
+            ),
+        }
+    }
+
+    fn root_action(turn: &Turn) -> &pyana_turn::action::Action {
+        &turn.call_forest.roots[0].action
+    }
+
+    #[test]
+    fn allocate_queue_produces_real_signature() {
+        let wallet = AgentWallet::new();
+        let fed = [7u8; 32];
+        let turn = wallet.allocate_queue(8, None, &fed).unwrap();
+        assert_real_signature(root_action(&turn));
+        assert_eq!(turn.agent, wallet.cell_id("default"));
+    }
+
+    #[test]
+    fn allocate_queue_with_program_vk_produces_real_signature() {
+        let wallet = AgentWallet::new();
+        let fed = [3u8; 32];
+        let vk = [42u8; 32];
+        let turn = wallet.allocate_queue(4, Some(vk), &fed).unwrap();
+        let action = root_action(&turn);
+        assert_real_signature(action);
+        match &action.effects[0] {
+            Effect::QueueAllocate {
+                capacity,
+                program_vk,
+            } => {
+                assert_eq!(*capacity, 4);
+                assert_eq!(*program_vk, Some(vk));
+            }
+            other => panic!("expected QueueAllocate effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enqueue_message_produces_real_signature() {
+        let wallet = AgentWallet::new();
+        let fed = [1u8; 32];
+        let queue = wallet.cell_id("queue-target");
+        let msg_hash = [0xAB; 32];
+        let turn = wallet.enqueue_message(queue, msg_hash, 100, &fed).unwrap();
+        let action = root_action(&turn);
+        assert_real_signature(action);
+        match &action.effects[0] {
+            Effect::QueueEnqueue {
+                queue: q,
+                message_hash,
+                deposit,
+            } => {
+                assert_eq!(*q, queue);
+                assert_eq!(*message_hash, msg_hash);
+                assert_eq!(*deposit, 100);
+            }
+            other => panic!("expected QueueEnqueue effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dequeue_message_produces_real_signature() {
+        let wallet = AgentWallet::new();
+        let fed = [9u8; 32];
+        let queue = wallet.cell_id("queue-target");
+        let turn = wallet.dequeue_message(queue, &fed).unwrap();
+        let action = root_action(&turn);
+        assert_real_signature(action);
+        match &action.effects[0] {
+            Effect::QueueDequeue { queue: q } => assert_eq!(*q, queue),
+            other => panic!("expected QueueDequeue effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn atomic_queue_tx_produces_real_signature() {
+        use pyana_turn::QueueTxOp;
+        let wallet = AgentWallet::new();
+        let fed = [5u8; 32];
+        let q1 = wallet.cell_id("q1");
+        let q2 = wallet.cell_id("q2");
+        let ops = vec![
+            QueueTxOp::Dequeue { queue: q1 },
+            QueueTxOp::Enqueue {
+                queue: q2,
+                message_hash: [0xCD; 32],
+                deposit: 50,
+            },
+        ];
+        let turn = wallet.atomic_queue_tx(ops, &fed).unwrap();
+        let action = root_action(&turn);
+        assert_real_signature(action);
+        match &action.effects[0] {
+            Effect::QueueAtomicTx { operations } => assert_eq!(operations.len(), 2),
+            other => panic!("expected QueueAtomicTx effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn atomic_queue_tx_rejects_empty_operations() {
+        let wallet = AgentWallet::new();
+        let fed = [5u8; 32];
+        let result = wallet.atomic_queue_tx(vec![], &fed);
+        assert!(
+            result.is_err(),
+            "atomic_queue_tx with no operations must error"
+        );
+    }
+
+    /// Signatures should bind to the federation_id: signing the same
+    /// queue allocation under two different federations must produce
+    /// distinct signature bytes. This is the "no cross-federation
+    /// replay" property of `compute_signing_message`.
+    #[test]
+    fn queue_signature_binds_to_federation_id() {
+        use pyana_turn::action::Authorization;
+        let wallet = AgentWallet::new();
+        let fed_a = [1u8; 32];
+        let fed_b = [2u8; 32];
+        let t_a = wallet.allocate_queue(4, None, &fed_a).unwrap();
+        let t_b = wallet.allocate_queue(4, None, &fed_b).unwrap();
+        let sig_a = match root_action(&t_a).authorization {
+            Authorization::Signature(a, b) => (a, b),
+            _ => panic!("expected Signature"),
+        };
+        let sig_b = match root_action(&t_b).authorization {
+            Authorization::Signature(a, b) => (a, b),
+            _ => panic!("expected Signature"),
+        };
+        assert_ne!(
+            sig_a, sig_b,
+            "queue signatures must bind to federation_id (got identical sigs across two feds)"
+        );
+    }
+
+    /// The signature must verify against the wallet's actual ed25519 key
+    /// (not against some zero key or other party's key). This proves the
+    /// signature was produced by `self.signing_key`, closing the
+    /// "Unchecked → Signature shape but uses [0;64] key" attack.
+    #[test]
+    fn queue_signature_verifies_against_wallet_pubkey() {
+        use ed25519_dalek::{Signature, VerifyingKey};
+        use pyana_turn::action::{Action, Authorization};
+        use pyana_turn::executor::TurnExecutor;
+
+        let wallet = AgentWallet::new();
+        let fed = [13u8; 32];
+        let turn = wallet
+            .enqueue_message(wallet.cell_id("q"), [0xEE; 32], 25, &fed)
+            .unwrap();
+        let action = root_action(&turn);
+
+        // Recompute the canonical signing message (must match what
+        // sign_action did internally), then verify with the wallet pubkey.
+        let unsigned = Action {
+            authorization: Authorization::Unchecked,
+            ..action.clone()
+        };
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &fed);
+
+        let (a, b) = match action.authorization {
+            Authorization::Signature(a, b) => (a, b),
+            _ => panic!("expected Signature"),
+        };
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[..32].copy_from_slice(&a);
+        sig_bytes[32..].copy_from_slice(&b);
+        let sig = Signature::from_bytes(&sig_bytes);
+
+        let vk_bytes = wallet.public_key().0;
+        let vk = VerifyingKey::from_bytes(&vk_bytes).expect("valid pubkey");
+
+        vk.verify_strict(&msg, &sig)
+            .expect("queue signature must verify against wallet pubkey");
     }
 }
 

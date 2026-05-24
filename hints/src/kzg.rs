@@ -4,11 +4,11 @@
 #![allow(unused_imports)]
 
 //use ark_ec::AffineRepr;
-use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_ec::{
-    scalar_mul::{BatchMulPreprocessing, ScalarMul},
     AffineRepr, VariableBaseMSM,
+    scalar_mul::{BatchMulPreprocessing, ScalarMul},
 };
+use ark_ec::{CurveGroup, pairing::Pairing};
 use ark_ff::{One, PrimeField, UniformRand, Zero};
 use ark_poly::DenseUVPolynomial;
 use ark_std::{format, marker::PhantomData, ops::*, vec};

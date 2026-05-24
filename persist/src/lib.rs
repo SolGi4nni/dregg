@@ -1,4 +1,7 @@
-//! `pyana-store`: Persistent storage for the pyana token system.
+//! `pyana-persist`: Persistent storage for the pyana token system.
+//!
+//! (Renamed from `pyana-store` to disambiguate from the user-facing
+//! `pyana-storage` programmable queues crate.)
 //!
 //! This crate provides durable storage for token chains, federation state
 //! (revocation trees, attested roots), key management, and audit logs using

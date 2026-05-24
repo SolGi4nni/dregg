@@ -2,7 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::Field;
 use ark_poly::{EvaluationDomain, Polynomial, Radix2EvaluationDomain};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{ops::*, Zero};
+use ark_std::{Zero, ops::*};
 
 use crate::{HintsError, PublicKey};
 

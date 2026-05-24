@@ -1,42 +1,62 @@
 {
-  "//": "Post-conditions the run.sh harness asserts after the 10-step flow.",
-  "//": "Any field set to null means 'don't enforce this yet — blocker exists'.",
+  "//": "Post-conditions the run.sh harness asserts after the canonical handoff flow.",
+  "//": "The demo now demonstrates the Silver-Vision substrate pieces: CapTpDelivered,",
+  "//": "SovereignCellWitness, slot caveats (WriteOnce), and γ.2 bilateral binding.",
+  "//": "Each entry below is a boolean post-condition; arrays group related checks.",
 
+  "scenario": "alice grants bob a bearer cap; bob exercises via CapTP-delivered turn; charlie verifies (Silver-shape demo)",
   "transfer_amount": 100,
 
-  "alice_balance_delta": -100,
-  "bob_cell_credited":   100,
+  "must_pass": [
+    "step_2_alice_and_bob_cells_created",
+    "step_3_grant_turn_committed_with_effect_vm_proof",
+    "step_5_bearer_cap_handoff_uri_dropped",
+    "step_7_exercise_turn_committed",
 
-  "grant_turn": {
-    "must_commit": true,
-    "must_have_effect_vm_proof": true,
-    "verifier_accepts": true
-  },
+    "captp_delivered_turn_assembled",
+    "captp_delivered_introducer_sig_verifies",
+    "captp_delivered_sender_sig_verifies",
+    "captp_delivered_sender_pk_matches_cert_recipient",
+    "captp_delivered_introducer_pk_matches_cert_introducer",
 
-  "exercise_turn": {
-    "must_commit": true,
-    "must_have_bearer_authorization": true,
-    "must_have_effect_vm_proof": true,
-    "verifier_accepts": true
-  },
+    "sovereign_witness_signed_by_alice",
+    "sovereign_witness_self_verifies",
+    "sovereign_witness_signing_message_matches_canonical_layout",
 
-  "receipt_chain": {
-    "grant_then_exercise_linked": true,
-    "exportable": true
-  },
+    "slot_caveat_first_write_accepted",
+    "slot_caveat_renewal_accepted",
+
+    "bilateral_bundle_verifies_for_alice_and_bob",
+    "bilateral_bundle_transfer_count_eq_1",
+    "bilateral_bundle_is_agent_cell_alice",
+
+    "charlie_grant_proof_verified",
+    "charlie_exercise_proof_verified",
+    "charlie_replay_chain_verified",
+
+    "transfer_credited_bob_100",
+    "transfer_debited_alice_stub_100",
+    "alice_receipt_chain_contains_grant",
+    "bob_receipt_chain_contains_exercise"
+  ],
+
+  "must_not_pass": [
+    "captp_delivered_tampered_signature_accepted",
+    "sovereign_witness_tampered_commitment_accepted",
+    "slot_caveat_rewrite_rejected",
+    "bilateral_tampered_bundle_accepted",
+    "captp_delivered_bearer_cap_reused"
+  ],
 
   "verifier_independence": {
-    "//": "Charlie must be a separate OS process from the prover node.",
-    "different_pid":    true,
-    "different_binary": "TBD-once-pyana-verifier-extracted"
+    "different_pid": true,
+    "different_binary": true
   },
 
-  "handoff": {
-    "//": "True three-party handoff: swiss entry registered, certificate signed,",
-    "//": "presented by recipient, swiss consumed (not replayable).",
-    "swiss_registered":     "TBD-blocker-2",
-    "certificate_signed":   true,
-    "recipient_signed":     true,
-    "swiss_consumed_once":  "TBD-blocker-2"
-  }
+  "documented_gaps": [
+    "MCP_pyana_exercise_bearer_cap_emits_Authorization::Bearer_not_CapTpDelivered",
+    "MCP_does_not_expose_pyana_submit_sovereign_turn_for_witness-carrying_turns",
+    "MCP_does_not_expose_pyana_install_cell_program_for_slot_caveats",
+    "MCP_exercise_tool_does_not_emit_per-cell_WitnessedReceipts_for_bilateral_bundle"
+  ]
 }

@@ -26,7 +26,7 @@ pyana-commit = { path = "../commit", optional = true }
 pyana-captp = { path = "../captp" }
 pyana-cell = { path = "../cell" }
 pyana-federation = { path = "../federation", default-features = false }
-pyana-store = { path = "../store" }
+pyana-persist = { path = "../persist" }
 pyana-turn = { path = "../turn" }
 pyana-types = { path = "../types" }
 pyana-dfa = { path = "../dfa" }

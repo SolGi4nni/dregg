@@ -503,8 +503,8 @@ fn execute_tampered_partial_fails_test(config: &TestConfig) -> Result<(), String
 
     // invalidate two of the partials
 
-    partials[0].1 .0 = crate::G2::rand(&mut ark_std::test_rng());
-    partials[1].1 .0 = crate::G2::rand(&mut ark_std::test_rng());
+    partials[0].1.0 = crate::G2::rand(&mut ark_std::test_rng());
+    partials[1].1.0 = crate::G2::rand(&mut ark_std::test_rng());
 
     // Calculate threshold
     let threshold = env.sum_weights(&config.signers);
@@ -538,7 +538,7 @@ fn execute_tampered_partial_succeeds_test(config: &TestConfig) -> Result<(), Str
 
     // invalidate only one of the partials
 
-    partials[0].1 .0 = crate::G2::rand(&mut ark_std::test_rng());
+    partials[0].1.0 = crate::G2::rand(&mut ark_std::test_rng());
 
     // Aggregate signature
     env.aggregate(2.into(), &partials, msg)

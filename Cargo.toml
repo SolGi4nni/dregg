@@ -1,13 +1,20 @@
 [workspace]
 resolver = "3"
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "apps/bounty-board", "apps/compute-exchange", "apps/gallery", "apps/identity", "apps/privacy-voting", "discord-bot", "apps/governed-namespace", "apps/nameservice", "apps/subscription", "app-framework", "pyana-dsl", "pyana-dsl-runtime", "pyana-dsl-tests", "pyana-dsl-differential", "preflight", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa"]
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "audit", "bridge", "wire", "persist", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "apps/bounty-board", "apps/compute-exchange", "apps/gallery", "apps/identity", "apps/privacy-voting", "discord-bot", "apps/governed-namespace", "apps/nameservice", "apps/subscription", "app-framework", "pyana-dsl", "pyana-dsl-runtime", "pyana-dsl-tests", "pyana-dsl-differential", "preflight", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "pyana-credentials", "pyana-directory"]
 # chain/ and chain/program/ are standalone workspaces with their own root Cargo.toml.
 # chain has a known dep conflict (sp1-core-machine pins generic-array =1.1.0,
 # nova-snark needs >=1.2.0). chain/program is the SP1 guest, edition 2021,
 # riscv32im-succinct-zkvm-elf target, built by sp1-build.
-# rbg/ is an experimental Robigalia-inspired VFS sketch (edition 2021,
-# no in-tree consumers) — kept excluded until either integrated or removed.
-exclude = ["chain", "chain/program", "rbg"]
+# rbg/ (the `pyana-rbg` package) hosts the Robigalia-inspired userspace
+# primitives — `DirectoryCell`, `ScopedIntentPool`, `MetaDirectory`,
+# `DirectoryFactory`, and the userspace `Volume`/`Blob`/`Directory`
+# VFS triple — composed atop `pyana-types::CellId` /
+# `pyana-types::FederationId` and (for the directory factory
+# descriptor) `pyana-cell::factory::FactoryDescriptor`. The DFA routing
+# module that used to live in rbg has been promoted into `pyana-dfa`
+# per `DFA-RATIONALIZATION-DESIGN.md`; rbg/ no longer ships its own
+# routing engine.
+exclude = ["chain", "chain/program"]
 
 [workspace.package]
 version = "0.1.0"

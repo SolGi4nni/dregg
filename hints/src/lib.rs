@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ec::{AffineRepr, CurveGroup, pairing::Pairing};
 use ark_ff::{Field, One, PrimeField, Zero};
-use ark_std::{rand::RngCore, vec::Vec, UniformRand};
+use ark_std::{UniformRand, rand::RngCore, vec::Vec};
 
 pub mod kzg;
 pub mod snark;
@@ -220,7 +220,7 @@ pub fn verify_aggregate(verif: &Verifier, sig: &Signature, msg: &[u8]) -> Result
             return Err(HintsError::ProofVerificationError(format!(
                 "SNARK failed to verify: {}",
                 e
-            )))
+            )));
         }
     }
 

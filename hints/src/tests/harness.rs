@@ -22,7 +22,7 @@ use ark_ff::PrimeField;
 use ark_ff::Zero;
 use ark_std::{
     ops::*,
-    rand::{rngs::StdRng, Rng, SeedableRng},
+    rand::{Rng, SeedableRng, rngs::StdRng},
     vec,
     vec::Vec,
 };

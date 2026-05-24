@@ -42,6 +42,7 @@ use pyana_federation::threshold_decrypt::{
 use pyana_turn::action::Authorization;
 use serde::{Deserialize, Serialize};
 
+use crate::bond::{BondEscrow, BondKey};
 use crate::lowering::{self, LoweringContext, SealedTurn};
 use crate::solver::RingTrade;
 use crate::{CommitmentId, Intent, IntentId};
@@ -424,6 +425,16 @@ pub struct TrustlessIntentEngine {
     next_batch_id: u64,
     /// Archive of settled batches (batch_id -> compound turn).
     pub settled_batches: HashMap<u64, SettlementOutput>,
+    /// Solver bond escrow. When a solver posts a submission, their
+    /// bond is locked here; on successful finalize the bond is
+    /// released, on a successful challenge the displaced solver's
+    /// bond is slashed (per audit §14 — bond escrow with `BoundedBy`
+    /// slot caveat semantics, mirrored in-memory by [`BondEscrow`]).
+    ///
+    /// Defaults to an empty escrow. Production deployments pre-deposit
+    /// solver balances via [`Self::deposit_bond`] (or the cell-program
+    /// migration's slot updates) so solvers can actually post bonds.
+    pub bond_escrow: BondEscrow,
 }
 
 impl TrustlessIntentEngine {
@@ -440,6 +451,7 @@ impl TrustlessIntentEngine {
             verifier: Box::new(MockProofVerifier),
             next_batch_id: 1,
             settled_batches: HashMap::new(),
+            bond_escrow: BondEscrow::new(),
         }
     }
 
@@ -460,7 +472,16 @@ impl TrustlessIntentEngine {
             verifier,
             next_batch_id: 1,
             settled_batches: HashMap::new(),
+            bond_escrow: BondEscrow::new(),
         }
+    }
+
+    /// Deposit value into a solver's bond account. Tests and node
+    /// initialization use this to pre-fund solvers; in production the
+    /// cell-program version is driven by a transfer turn into the
+    /// SolverEscrow cell.
+    pub fn deposit_bond(&mut self, solver_id: &[u8; 32], amount: u64) {
+        self.bond_escrow.deposit(solver_id, amount);
     }
 
     // =========================================================================
@@ -695,6 +716,45 @@ impl TrustlessIntentEngine {
             return Err(EngineError::TooManySubmissions);
         }
 
+        // Lock the bond in escrow. The bond stays locked until either
+        // finalize (release) or a successful challenge (slash). If the
+        // solver hasn't pre-deposited enough, the lock fails with
+        // InsufficientBond. Note: a duplicate submission from the same
+        // solver for the same batch would hit `AlreadyPosted`, which
+        // we map to `TooManySubmissions` for the protocol layer.
+        let bond_key = BondKey {
+            solver_id: submission.solver_id,
+            batch_id: self.current_batch.batch_id,
+        };
+        match self.bond_escrow.lock(
+            &submission.solver_id,
+            self.current_batch.batch_id,
+            submission.bond,
+        ) {
+            Ok(()) => {}
+            Err(crate::bond::BondError::AlreadyPosted) => {
+                return Err(EngineError::TooManySubmissions);
+            }
+            Err(crate::bond::BondError::InsufficientBalance { available, .. }) => {
+                return Err(EngineError::InsufficientBond {
+                    provided: available,
+                    required: submission.bond,
+                });
+            }
+            Err(e) => {
+                return Err(EngineError::InvalidProof {
+                    reason: format!("bond escrow error: {e}"),
+                });
+            }
+        }
+        // Bind each participating intent to this (solver, batch) so the
+        // slash path can find the bond by intent.
+        for ring in &submission.solution {
+            for intent_id in &ring.participants {
+                self.bond_escrow.bind_intent(*intent_id, bond_key);
+            }
+        }
+
         // Verify the proof
         let decrypted = self
             .current_batch
@@ -741,7 +801,8 @@ impl TrustlessIntentEngine {
     ///
     /// During the challenge window, anyone can submit a solution with a higher
     /// score. If successful, the challenger's solution replaces the current winner,
-    /// and the original solver's bond is slashed.
+    /// and the original solver's bond is slashed (per audit §14 — real
+    /// escrow slashing via `BondEscrow::slash`).
     pub fn challenge(&mut self, better_solution: SolverSubmission) -> Result<(), EngineError> {
         if self.current_batch.state != BatchState::Challenging {
             return Err(EngineError::WrongState {
@@ -772,8 +833,28 @@ impl TrustlessIntentEngine {
             });
         }
 
+        // Capture the displaced winner's identity before the challenger
+        // overwrites it. If submit_solution succeeds and the challenger
+        // becomes the new winner, the displaced solver's bond is slashed.
+        let displaced = self
+            .current_batch
+            .winning_solution
+            .as_ref()
+            .map(|s| s.solver_id);
+        let batch_id = self.current_batch.batch_id;
+
         // Verify and submit through the normal path
-        self.submit_solution(better_solution)
+        self.submit_solution(better_solution)?;
+
+        // Slash the displaced solver's bond if there was one. The slash
+        // ignores NotPosted errors (e.g. if the challenger somehow
+        // landed without displacing — should not happen given the
+        // higher-score check above).
+        if let Some(loser_id) = displaced {
+            let _ = self.bond_escrow.slash(&loser_id, batch_id);
+        }
+
+        Ok(())
     }
 
     // =========================================================================
@@ -857,6 +938,29 @@ impl TrustlessIntentEngine {
             proof_hash,
             solver_id: winner.solver_id,
         };
+
+        // Release the winning solver's bond (their submission was
+        // unchallenged or held up through the challenge window).
+        let winner_id = winner.solver_id;
+        let batch_id = self.current_batch.batch_id;
+        let _ = self.bond_escrow.release(&winner_id, batch_id);
+
+        // Any other submissions for this batch held a locked bond too.
+        // Those solvers didn't win but they also weren't successfully
+        // challenged — their bonds are returned. (Slashing only applies
+        // to losers of a successful challenge, which already happened
+        // in `challenge()`. If a solver was already slashed,
+        // `release` returns `NotPosted` which is ignored.)
+        let other_solvers: Vec<[u8; 32]> = self
+            .current_batch
+            .solutions
+            .iter()
+            .filter(|s| s.solver_id != winner_id)
+            .map(|s| s.solver_id)
+            .collect();
+        for solver_id in other_solvers {
+            let _ = self.bond_escrow.release(&solver_id, batch_id);
+        }
 
         // Archive and advance to next batch
         self.current_batch.state = BatchState::Settled;
@@ -1108,6 +1212,12 @@ mod tests {
     /// Internal helper: drive the engine through Collecting → Solving
     /// with the given intents, encrypting each under `key` and feeding
     /// `threshold` shares per ciphertext from `key_shares`.
+    ///
+    /// Side effect: pre-deposits bond funds for every byte-prefix
+    /// solver id (`[0x00; 32]`, `[0x01; 32]`, …, `[0xFF; 32]`) so the
+    /// submit-solution path's bond locking can find balance. Tests
+    /// that need a specifically un-funded solver can override this
+    /// via `engine.bond_escrow.withdraw(...)`.
     fn drive_to_solving(
         engine: &mut TrustlessIntentEngine,
         key: &ThresholdEncryptionKey,
@@ -1115,6 +1225,10 @@ mod tests {
         intents: &[Intent],
         close_height: u64,
     ) -> Vec<EncryptedIntent> {
+        // Pre-fund every byte-prefix solver_id used by tests.
+        for b in 0..=255u8 {
+            engine.deposit_bond(&[b; 32], DEFAULT_MIN_SOLVER_BOND * 10);
+        }
         let mut enc_intents = Vec::new();
         for (i, intent) in intents.iter().enumerate() {
             let enc = encrypt_intent(intent, key, (i as u64) + 1);
@@ -1548,6 +1662,10 @@ mod tests {
     fn test_full_protocol_flow() {
         let (key, key_shares) = make_test_keys(2, 3);
         let mut engine = TrustlessIntentEngine::new(2, 3);
+        // Pre-fund the byte-prefix solver IDs for the bond escrow.
+        for b in 0..=255u8 {
+            engine.deposit_bond(&[b; 32], DEFAULT_MIN_SOLVER_BOND * 10);
+        }
         engine.advance_height(1);
 
         // Layer 1: Submit encrypted intents

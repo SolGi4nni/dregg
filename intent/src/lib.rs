@@ -61,7 +61,9 @@
 //!
 //! This IS the progressive disclosure story applied to discovery.
 
+pub mod bond;
 pub mod commit_reveal_fulfillment;
+pub mod cross_fed;
 pub mod delay_pool;
 pub mod exchange;
 pub mod fulfillment;
@@ -72,8 +74,10 @@ pub mod lowering;
 pub mod matcher;
 pub mod partial_fill;
 pub mod pir;
+pub mod predicate;
 pub mod solver;
 pub mod sse;
+pub mod state_machine;
 pub mod trustless;
 pub mod validation;
 

@@ -362,6 +362,47 @@ pub struct GeneralizedRingTrade {
     pub fully_satisfied: bool,
 }
 
+impl GeneralizedRingTrade {
+    /// Project a `GeneralizedRingTrade` to a sequence of asset-only
+    /// `RingTrade`s suitable for submission through
+    /// `TrustlessIntentEngine`. Each `GeneralizedSettlement` carrying
+    /// one or more `ExchangeItem::Asset` items contributes one
+    /// `Settlement` per asset; non-asset items
+    /// (`Capability`/`Service`/`Storage`/`Name`) are dropped — they
+    /// flow through application-side cells rather than the asset
+    /// settlement turn (closes audit §10 — generalized rings now
+    /// have a defined seam into the trustless engine).
+    ///
+    /// Returns `None` if the ring has no asset settlements (e.g.,
+    /// it's a pure capability swap); such rings should settle
+    /// through their per-app cell programs, not through
+    /// `RingSettlement`.
+    pub fn project_asset_legs(&self) -> Option<crate::solver::RingTrade> {
+        use crate::solver::{RingTrade, Settlement};
+        let mut settlements: Vec<Settlement> = Vec::new();
+        for gs in &self.settlements {
+            for item in &gs.items {
+                if let ExchangeItem::Asset { id, amount } = item {
+                    settlements.push(Settlement {
+                        from: gs.from,
+                        to: gs.to,
+                        asset: *id,
+                        amount: *amount,
+                    });
+                }
+            }
+        }
+        if settlements.is_empty() {
+            return None;
+        }
+        Some(RingTrade {
+            participants: self.participants.clone(),
+            settlements,
+            score: self.score,
+        })
+    }
+}
+
 /// The generalized ring trade solver.
 pub struct GeneralizedSolver {
     /// Maximum cycle length to search.

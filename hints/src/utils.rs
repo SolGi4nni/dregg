@@ -3,12 +3,12 @@
 use ark_crypto_primitives::crh::sha256::Sha256;
 use ark_ec::hashing::curve_maps::wb::WBMap;
 use ark_ec::{
-    bls12::Bls12Config, hashing::map_to_curve_hasher::MapToCurveBasedHasher, hashing::HashToCurve,
+    bls12::Bls12Config, hashing::HashToCurve, hashing::map_to_curve_hasher::MapToCurveBasedHasher,
     pairing::Pairing,
 };
 use ark_ff::{Field /* FftField */};
 use ark_poly::{
-    univariate::DensePolynomial, EvaluationDomain, Evaluations, Polynomial, Radix2EvaluationDomain,
+    EvaluationDomain, Evaluations, Polynomial, Radix2EvaluationDomain, univariate::DensePolynomial,
 };
 
 use crate::HintsError;

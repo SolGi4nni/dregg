@@ -329,16 +329,20 @@ impl RingSolver {
         }
 
         // Build settlements.
+        //
+        // Quantity contract: by the `InsufficientAmount` check above
+        // we already know `offerer.offer_amount >= receiver.want_min_amount`.
+        // The settled amount is therefore exactly `receiver.want_min_amount`.
+        // (Audit §8 noted the previous `.min(...).max(...)` chain that
+        // raised the value back up when offer < want_min — that branch
+        // was unreachable because under-funded rings are rejected
+        // earlier with `InsufficientAmount`.)
         let mut settlements = Vec::new();
         for k in 0..ring.len() {
             let next = (k + 1) % ring.len();
             let offerer = &ring[k];
             let receiver = &ring[next];
-            let amount = offerer
-                .exchange
-                .offer_amount
-                .min(receiver.exchange.want_min_amount)
-                .max(receiver.exchange.want_min_amount);
+            let amount = receiver.exchange.want_min_amount;
             settlements.push(Settlement {
                 from: offerer.creator,
                 to: receiver.creator,

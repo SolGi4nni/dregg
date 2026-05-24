@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use ark_ec::VariableBaseMSM;
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{CurveGroup, pairing::Pairing};
 use ark_ff::PrimeField;
-use ark_poly::{univariate::DensePolynomial, Polynomial};
+use ark_poly::{Polynomial, univariate::DensePolynomial};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use ark_std::{One, Zero};
 
 use crate::utils;
-use crate::{kzg::*, GlobalData, HintsError, PublicKey};
+use crate::{GlobalData, HintsError, PublicKey, kzg::*};
 
 mod hints;
 mod prover;

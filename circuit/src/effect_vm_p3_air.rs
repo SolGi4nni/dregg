@@ -61,7 +61,7 @@
 //! handles folding it with successive powers of `alpha`.
 
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::PrimeCharacteristicRing;
 
 use crate::effect_vm::{
     EFFECT_VM_WIDTH, NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, pi, sel, state,
@@ -97,10 +97,7 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for EffectVmShapeAir {
     }
 }
 
-impl<AB: AirBuilder> Air<AB> for EffectVmShapeAir
-where
-    AB::F: Field,
-{
+impl<AB: AirBuilder> Air<AB> for EffectVmShapeAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.current_slice();
@@ -125,7 +122,8 @@ where
         // Σ selectors == 1
         let mut sum: AB::Expr = AB::Expr::ZERO;
         for i in 0..NUM_EFFECTS {
-            sum = sum + local[i].into();
+            let s: AB::Expr = local[i].into();
+            sum = sum + s;
         }
         builder.assert_zero(sum - one.clone());
 

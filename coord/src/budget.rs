@@ -46,6 +46,7 @@
 
 use std::collections::HashMap;
 
+use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::CellId;
 use serde::{Deserialize, Serialize};
 
@@ -189,6 +190,33 @@ pub struct SpendingCertificate {
     pub signature: [u8; 64],
 }
 
+impl SpendingCertificate {
+    /// Reconstruct the signing message for this certificate.
+    /// Must match the format used by `BudgetSlice::certificate`:
+    ///   agent || version || spent || silo
+    fn signing_message(&self) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(32 + 8 + 8 + 32);
+        msg.extend_from_slice(self.agent.as_bytes());
+        msg.extend_from_slice(&self.version.to_le_bytes());
+        msg.extend_from_slice(&self.total_spent.to_le_bytes());
+        msg.extend_from_slice(&self.silo);
+        msg
+    }
+
+    /// Verify this certificate's signature against the silo's Ed25519 pubkey.
+    ///
+    /// Returns `true` if the signature is valid, `false` otherwise (including
+    /// when the pubkey or signature bytes are not a valid Ed25519 form).
+    pub fn verify_signature(&self, pubkey_bytes: &[u8; 32]) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(pubkey_bytes) else {
+            return false;
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        let msg = self.signing_message();
+        verifying_key.verify_strict(&msg, &sig).is_ok()
+    }
+}
+
 // ─── BudgetCoordinator ────────────────────────────────────────────────────────
 
 /// Manages resource budget distribution across silos for an agent.
@@ -215,6 +243,10 @@ pub struct BudgetCoordinator {
     pub total_balance: u64,
     /// Total amount committed across all slices (sum of ceilings).
     pub total_allocated: u64,
+    /// Ed25519 public keys for each silo. Used to verify `SpendingCertificate`
+    /// signatures during rebalance. A silo whose pubkey is not registered will
+    /// have its certificate rejected with `MissingSiloPubkey` (fail-closed).
+    pub silo_pubkeys: HashMap<SiloId, [u8; 32]>,
 }
 
 impl BudgetCoordinator {
@@ -250,11 +282,21 @@ impl BudgetCoordinator {
             silo_states: HashMap::new(),
             total_balance,
             total_allocated: 0,
+            silo_pubkeys: HashMap::new(),
         };
 
         // Distribute initial slices.
         coord.distribute_slices();
         Ok(coord)
+    }
+
+    /// Register an Ed25519 verifying key for a silo. Required before that silo's
+    /// `SpendingCertificate` can be accepted during rebalance.
+    ///
+    /// Without registration, `rebalance` will reject the silo's certificate with
+    /// `BudgetError::MissingSiloPubkey` (fail-closed).
+    pub fn register_silo_pubkey(&mut self, silo: SiloId, pubkey: [u8; 32]) {
+        self.silo_pubkeys.insert(silo, pubkey);
     }
 
     /// Calculate the per-silo ceiling based on Byzantine tolerance.
@@ -418,6 +460,19 @@ impl BudgetCoordinator {
                 });
             }
 
+            // SECURITY: Verify the certificate's Ed25519 signature against the
+            // silo's registered pubkey. Without a registered pubkey, the
+            // certificate is rejected (fail-closed). Without verification, a
+            // malicious coordinator could forge certificates and silently
+            // overspend the agent's true balance up to the slice ceiling.
+            let pubkey = self
+                .silo_pubkeys
+                .get(&cert.silo)
+                .ok_or(BudgetError::MissingSiloPubkey { silo: cert.silo })?;
+            if !cert.verify_signature(pubkey) {
+                return Err(BudgetError::InvalidCertificateSignature { silo: cert.silo });
+            }
+
             seen_silos.insert(cert.silo, cert.total_spent);
             total_spent = total_spent.saturating_add(cert.total_spent);
         }
@@ -502,6 +557,32 @@ pub struct UnlockVote {
     pub signature: [u8; 64],
 }
 
+impl UnlockVote {
+    /// Reconstruct the signing message for this vote.
+    /// Must match the format used by `FastUnlockManager::vote_unlock`:
+    ///   proposal_id || voter || has_conflict_byte
+    fn signing_message(&self) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(32 + 32 + 1);
+        msg.extend_from_slice(&self.request.proposal_id);
+        msg.extend_from_slice(&self.voter);
+        msg.push(if self.has_conflict { 1 } else { 0 });
+        msg
+    }
+
+    /// Verify this vote's signature against the voter's Ed25519 pubkey.
+    ///
+    /// Returns `true` if the signature is valid, `false` otherwise (including
+    /// when the pubkey or signature bytes are not a valid Ed25519 form).
+    pub fn verify_signature(&self, pubkey_bytes: &[u8; 32]) -> bool {
+        let Ok(verifying_key) = VerifyingKey::from_bytes(pubkey_bytes) else {
+            return false;
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        let msg = self.signing_message();
+        verifying_key.verify_strict(&msg, &sig).is_ok()
+    }
+}
+
 /// Certificate proving enough silos agree the lock can be released.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnlockCertificate {
@@ -520,6 +601,10 @@ pub struct FastUnlockManager {
     pub byzantine_tolerance: usize,
     /// Total silos in the system.
     pub total_silos: usize,
+    /// Ed25519 public keys for each silo. Used to verify `UnlockVote`
+    /// signatures. A voter whose pubkey is not registered will have their vote
+    /// rejected with `MissingSiloPubkey` (fail-closed).
+    pub silo_pubkeys: HashMap<SiloId, [u8; 32]>,
 }
 
 impl FastUnlockManager {
@@ -529,7 +614,17 @@ impl FastUnlockManager {
             locks: HashMap::new(),
             byzantine_tolerance,
             total_silos,
+            silo_pubkeys: HashMap::new(),
         }
+    }
+
+    /// Register an Ed25519 verifying key for a silo. Required before that
+    /// silo's `UnlockVote` can be accepted in an unlock certificate.
+    ///
+    /// Without registration, `apply_unlock_certificate` rejects the vote with
+    /// `BudgetError::MissingSiloPubkey` (fail-closed).
+    pub fn register_silo_pubkey(&mut self, silo: SiloId, pubkey: [u8; 32]) {
+        self.silo_pubkeys.insert(silo, pubkey);
     }
 
     /// Lock resources for a proposed atomic turn.
@@ -630,6 +725,29 @@ impl FastUnlockManager {
             });
         }
 
+        // SECURITY: Verify each vote's Ed25519 signature against the voter's
+        // registered pubkey. Without verification, a Byzantine coordinator
+        // could fabricate `UnlockVote`s and silently release locked resources.
+        // Also reject duplicate votes from the same voter, and any vote whose
+        // request field does not match the certificate's request (the
+        // signature is bound to the vote's own request copy).
+        let mut seen_voters: HashMap<SiloId, ()> = HashMap::new();
+        for vote in &certificate.votes {
+            if vote.request != certificate.request {
+                return Err(BudgetError::InvalidUnlockVoteSignature { voter: vote.voter });
+            }
+            if seen_voters.insert(vote.voter, ()).is_some() {
+                return Err(BudgetError::InvalidUnlockVoteSignature { voter: vote.voter });
+            }
+            let pubkey = self
+                .silo_pubkeys
+                .get(&vote.voter)
+                .ok_or(BudgetError::MissingSiloPubkey { silo: vote.voter })?;
+            if !vote.verify_signature(pubkey) {
+                return Err(BudgetError::InvalidUnlockVoteSignature { voter: vote.voter });
+            }
+        }
+
         // Check no conflicts.
         for vote in &certificate.votes {
             if vote.has_conflict {
@@ -727,6 +845,16 @@ pub enum BudgetError {
     ConflictingUnlock { silo: SiloId, proposal_id: [u8; 32] },
     /// Not all silos submitted spending certificates during rebalance.
     IncompleteCertificates { received: usize, expected: usize },
+    /// No Ed25519 pubkey is registered for this silo (cannot verify certificate
+    /// or unlock vote). Register via `register_silo_pubkey` /
+    /// `FastUnlockManager::register_silo_pubkey` before applying.
+    MissingSiloPubkey { silo: SiloId },
+    /// A `SpendingCertificate` failed Ed25519 signature verification.
+    /// Indicates a forgery attempt or a corrupted certificate.
+    InvalidCertificateSignature { silo: SiloId },
+    /// An `UnlockVote` failed Ed25519 signature verification.
+    /// Indicates a forgery attempt or a corrupted vote.
+    InvalidUnlockVoteSignature { voter: SiloId },
 }
 
 impl core::fmt::Display for BudgetError {
@@ -784,6 +912,15 @@ impl core::fmt::Display for BudgetError {
                     "incomplete certificates: received {received}, expected {expected}"
                 )
             }
+            BudgetError::MissingSiloPubkey { .. } => {
+                write!(f, "no Ed25519 pubkey registered for silo")
+            }
+            BudgetError::InvalidCertificateSignature { .. } => {
+                write!(f, "spending certificate signature failed verification")
+            }
+            BudgetError::InvalidUnlockVoteSignature { .. } => {
+                write!(f, "unlock vote signature failed verification")
+            }
         }
     }
 }
@@ -818,6 +955,30 @@ mod tests {
     /// Generate a deterministic test signing key from a silo id.
     fn test_signing_key(silo: &SiloId) -> [u8; 32] {
         *blake3::hash(silo).as_bytes()
+    }
+
+    /// Derive the Ed25519 verifying key (pubkey) from a signing key.
+    fn test_pubkey(signing_key: &[u8; 32]) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(signing_key)
+            .verifying_key()
+            .to_bytes()
+    }
+
+    /// Register Ed25519 pubkeys for every silo in the coordinator.
+    fn register_all_silo_pubkeys(coord: &mut BudgetCoordinator) {
+        let silos = coord.silos.clone();
+        for silo in &silos {
+            let sk = test_signing_key(silo);
+            coord.register_silo_pubkey(*silo, test_pubkey(&sk));
+        }
+    }
+
+    /// Register Ed25519 pubkeys for every silo on the unlock manager.
+    fn register_all_unlock_pubkeys(mgr: &mut FastUnlockManager, silos: &[SiloId]) {
+        for silo in silos {
+            let sk = test_signing_key(silo);
+            mgr.register_silo_pubkey(*silo, test_pubkey(&sk));
+        }
     }
 
     // ── Bounded Counter Tests ─────────────────────────────────────────────
@@ -909,6 +1070,7 @@ mod tests {
         let silo_d = silos[3];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos.clone(), 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
 
         // Spend from two silos.
         coord.try_debit(silo_a, 200, test_digest(1)).unwrap();
@@ -966,6 +1128,7 @@ mod tests {
         let silo_a = silos[0];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
         coord.try_debit(silo_a, 50, test_digest(1)).unwrap();
 
         let key_a = test_signing_key(&silo_a);
@@ -983,6 +1146,7 @@ mod tests {
         let silo = silos[0];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
         coord.try_debit(silo, 50, test_digest(1)).unwrap();
 
         let key = test_signing_key(&silo);
@@ -1005,6 +1169,7 @@ mod tests {
         let silo = silos[0];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
 
         // Forge a certificate claiming more than ceiling.
         let cert = SpendingCertificate {
@@ -1013,12 +1178,87 @@ mod tests {
             version: 0,
             total_spent: 9999,
             debits: vec![],
-            signature: [0u8; 64], // Forged signature (not verified in rebalance yet).
+            signature: [0u8; 64], // Forged; ceiling check fires before sig check.
         };
 
         // Use rebalance_partial to avoid the incomplete certs check.
+        // The ceiling check fires before the signature check, so this still
+        // surfaces as CertificateExceedsCeiling.
         let err = coord.rebalance_partial(&[cert]).unwrap_err();
         assert!(matches!(err, BudgetError::CertificateExceedsCeiling { .. }));
+    }
+
+    // ── Block 1: Adversarial signature-verification tests ───────────────────
+
+    #[test]
+    fn test_rebalance_rejects_forged_certificate_signature() {
+        // A certificate within the ceiling but with an invalid signature must
+        // be rejected. This is the Stingray-correctness gap that previously
+        // allowed a malicious coordinator to forge silos' spending claims.
+        let silos = test_silos(4);
+        let silo = silos[0];
+
+        let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
+
+        // Forge a certificate within the ceiling (so ceiling check passes)
+        // but with a bogus signature.
+        let cert = SpendingCertificate {
+            silo,
+            agent: test_agent(),
+            version: 0,
+            total_spent: 100, // Under ceiling 666.
+            debits: vec![],
+            signature: [0u8; 64], // Invalid Ed25519 signature.
+        };
+
+        let err = coord.rebalance_partial(&[cert]).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::InvalidCertificateSignature { .. }),
+            "expected InvalidCertificateSignature, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_rebalance_rejects_certificate_signed_by_wrong_silo() {
+        // A certificate signed by silo_b but claiming to be from silo_a must
+        // be rejected: the signature won't verify under silo_a's pubkey.
+        let silos = test_silos(4);
+        let silo_a = silos[0];
+        let silo_b = silos[1];
+
+        let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
+
+        // Silo B signs a certificate, but it claims silo == silo_a.
+        let key_b = test_signing_key(&silo_b);
+        let mut cert = coord.silo_states[&silo_b].certificate(silo_b, &key_b);
+        cert.silo = silo_a; // Forge the silo field.
+
+        let err = coord.rebalance_partial(&[cert]).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::InvalidCertificateSignature { .. }),
+            "expected InvalidCertificateSignature, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_rebalance_rejects_certificate_when_pubkey_unregistered() {
+        // Without a registered pubkey, the certificate is rejected fail-closed.
+        let silos = test_silos(4);
+        let silo = silos[0];
+
+        let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
+        // Note: NO register_all_silo_pubkeys call.
+
+        let key = test_signing_key(&silo);
+        let cert = coord.silo_states[&silo].certificate(silo, &key);
+
+        let err = coord.rebalance_partial(&[cert]).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::MissingSiloPubkey { .. }),
+            "expected MissingSiloPubkey, got {err:?}"
+        );
     }
 
     // ── Fast Unlock Tests ─────────────────────────────────────────────────
@@ -1044,6 +1284,7 @@ mod tests {
         let proposal = [0x02; 32];
         let silo = [0x20; 32];
         let silos = test_silos(4);
+        register_all_unlock_pubkeys(&mut mgr, &silos);
 
         // Lock computrons for a proposed atomic turn.
         mgr.lock(proposal, test_agent(), 300, silo, 0).unwrap();
@@ -1116,6 +1357,7 @@ mod tests {
         let proposal = [0x04; 32];
         let silo = [0x40; 32];
         let silos = test_silos(4);
+        register_all_unlock_pubkeys(&mut mgr, &silos);
 
         mgr.lock(proposal, test_agent(), 200, silo, 0).unwrap();
 
@@ -1142,6 +1384,123 @@ mod tests {
     }
 
     #[test]
+    fn test_fast_unlock_rejects_forged_vote_signature() {
+        // A vote with a quorum count but an invalid signature must be
+        // rejected. This is the Stingray-correctness gap that previously
+        // allowed a Byzantine coordinator to fabricate `UnlockVote`s and
+        // silently release locked resources.
+        let mut mgr = FastUnlockManager::new(1, 4);
+        let proposal = [0x06; 32];
+        let silo = [0x60; 32];
+        let silos = test_silos(4);
+        register_all_unlock_pubkeys(&mut mgr, &silos);
+
+        mgr.lock(proposal, test_agent(), 100, silo, 0).unwrap();
+
+        let request = UnlockRequest {
+            proposal_id: proposal,
+            agent: test_agent(),
+            amount: 100,
+            requester: silo,
+        };
+
+        // Fabricate 3 votes with zero signatures (forged).
+        let votes: Vec<UnlockVote> = silos[..3]
+            .iter()
+            .map(|&voter| UnlockVote {
+                request: request.clone(),
+                voter,
+                has_conflict: false,
+                signature: [0u8; 64], // Invalid Ed25519 signature.
+            })
+            .collect();
+
+        let certificate = UnlockCertificate { request, votes };
+
+        let err = mgr.apply_unlock_certificate(&certificate).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::InvalidUnlockVoteSignature { .. }),
+            "expected InvalidUnlockVoteSignature, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_fast_unlock_rejects_vote_signed_by_wrong_voter() {
+        // A vote signed by silo_b but claiming to be from silo_a must be
+        // rejected: the signature won't verify under silo_a's pubkey.
+        let mut mgr = FastUnlockManager::new(1, 4);
+        let proposal = [0x07; 32];
+        let silo = [0x70; 32];
+        let silos = test_silos(4);
+        register_all_unlock_pubkeys(&mut mgr, &silos);
+
+        mgr.lock(proposal, test_agent(), 100, silo, 0).unwrap();
+
+        let request = UnlockRequest {
+            proposal_id: proposal,
+            agent: test_agent(),
+            amount: 100,
+            requester: silo,
+        };
+
+        // silo_b signs a vote, but the vote claims voter == silo_a.
+        let key_b = test_signing_key(&silos[1]);
+        let mut vote_a_forged = mgr.vote_unlock(&request, silos[1], false, &key_b);
+        vote_a_forged.voter = silos[0]; // Forge the voter field.
+
+        // Two more honest votes to satisfy the quorum check before signature
+        // verification fires.
+        let key1 = test_signing_key(&silos[2]);
+        let key2 = test_signing_key(&silos[3]);
+        let votes = vec![
+            vote_a_forged,
+            mgr.vote_unlock(&request, silos[2], false, &key1),
+            mgr.vote_unlock(&request, silos[3], false, &key2),
+        ];
+
+        let certificate = UnlockCertificate { request, votes };
+
+        let err = mgr.apply_unlock_certificate(&certificate).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::InvalidUnlockVoteSignature { .. }),
+            "expected InvalidUnlockVoteSignature, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_fast_unlock_rejects_when_pubkey_unregistered() {
+        // Without registered pubkeys, votes are rejected fail-closed.
+        let mut mgr = FastUnlockManager::new(1, 4);
+        let proposal = [0x08; 32];
+        let silo = [0x80; 32];
+        let silos = test_silos(4);
+        // Note: NO register_all_unlock_pubkeys call.
+
+        mgr.lock(proposal, test_agent(), 100, silo, 0).unwrap();
+
+        let request = UnlockRequest {
+            proposal_id: proposal,
+            agent: test_agent(),
+            amount: 100,
+            requester: silo,
+        };
+        let votes: Vec<UnlockVote> = silos[..3]
+            .iter()
+            .map(|&voter| {
+                let key = test_signing_key(&voter);
+                mgr.vote_unlock(&request, voter, false, &key)
+            })
+            .collect();
+        let certificate = UnlockCertificate { request, votes };
+
+        let err = mgr.apply_unlock_certificate(&certificate).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::MissingSiloPubkey { .. }),
+            "expected MissingSiloPubkey, got {err:?}"
+        );
+    }
+
+    #[test]
     fn test_duplicate_lock_rejected() {
         let mut mgr = FastUnlockManager::new(1, 4);
         let proposal = [0x05; 32];
@@ -1160,7 +1519,9 @@ mod tests {
         let silo = silos[0];
 
         let mut coord = BudgetCoordinator::new(test_agent(), 1000, silos.clone(), 1).unwrap();
+        register_all_silo_pubkeys(&mut coord);
         let mut unlock_mgr = FastUnlockManager::new(1, 4);
+        register_all_unlock_pubkeys(&mut unlock_mgr, &silos);
 
         // Debit from the silo's budget for a proposed atomic turn.
         let proposal = [0x99; 32];

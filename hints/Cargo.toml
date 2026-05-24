@@ -7,11 +7,7 @@ keywords = ["cryptography", "finite-fields", "elliptic-curves", "pairing"]
 categories = ["cryptography"]
 include = ["Cargo.toml", "src", "README.md", "LICENSE"]
 license = "AGPL-3.0-or-later"
-edition = "2021"
-
-[profile.test]
-opt-level = 2
-debug-assertions = true
+edition = "2024"
 
 ################################# Dependencies ################################
 

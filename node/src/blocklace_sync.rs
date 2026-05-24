@@ -32,7 +32,7 @@ use pyana_blocklace::pyana_bridge::PyanaBlocklaceBridge;
 use pyana_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
 use pyana_net::message::PeerMessage;
 use pyana_net::node::{NodeId, PeerNode, PeerNodeConfig};
-use pyana_store::BlocklaceMeta;
+use pyana_persist::BlocklaceMeta;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -1315,7 +1315,7 @@ async fn execute_finalized_turn(
 
             // Persist the attested root so the next turn's executor sees
             // its height (closes audit gap D — was never written).
-            let stored = pyana_store::StoredAttestedRoot {
+            let stored = pyana_persist::StoredAttestedRoot {
                 merkle_root: attested.merkle_root,
                 note_tree_root: attested.note_tree_root,
                 nullifier_set_root: attested.nullifier_set_root,
@@ -1611,7 +1611,7 @@ pub struct BlocklaceCheckpointQuery {
 }
 
 pub fn load_blocklace_checkpoint(
-    store: &pyana_store::PersistentStore,
+    store: &pyana_persist::PersistentStore,
     height: u64,
 ) -> Option<BlocklaceCheckpointResponse> {
     let checkpoint_key = format!("blocklace_checkpoint_{}", height);
@@ -1638,7 +1638,7 @@ pub fn load_blocklace_checkpoint(
     })
 }
 
-pub fn latest_blocklace_checkpoint_height(store: &pyana_store::PersistentStore) -> u64 {
+pub fn latest_blocklace_checkpoint_height(store: &pyana_persist::PersistentStore) -> u64 {
     store
         .get_config("blocklace_checkpoint_latest_height")
         .ok()

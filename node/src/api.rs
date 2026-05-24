@@ -215,6 +215,52 @@ pub struct EncryptedIntentSubmitResponse {
 }
 
 // =============================================================================
+// SSE (Searchable Symmetric Encryption) match query types
+// =============================================================================
+
+/// Request body for `/intents/encrypted/search` — a fulfiller's local
+/// capability keywords + epoch, used as a coarse SSE-token filter
+/// against the node's encrypted intent pool.
+///
+/// The fulfiller hashes each of their `capability_keywords` under
+/// `(keyword, epoch)` to produce SSE search tokens, and the server
+/// streams back any stored encrypted intent whose token set intersects.
+/// The intent body remains encrypted; the fulfiller requests body
+/// decryption out-of-band after picking matches.
+#[derive(Deserialize)]
+pub struct SseSearchRequest {
+    /// Capability keywords (cleartext, e.g. "action:read",
+    /// "resource:documents/*"). The server hashes each as
+    /// `BLAKE3_derive_key("pyana-sse-token-v1", keyword || epoch_le)`.
+    pub capability_keywords: Vec<String>,
+    /// Epoch for token derivation (must match the epoch the poster
+    /// used; rotate-by-epoch makes cross-epoch correlation harder).
+    pub epoch: u64,
+    /// Maximum results to return (cap at server-side limit).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// A single SSE search hit: the encrypted intent (still encrypted)
+/// plus its content-addressed id for follow-up.
+#[derive(Serialize)]
+pub struct SseSearchHit {
+    pub intent_id: String,
+    pub encrypted_intent: pyana_intent::sse::EncryptedIntent,
+}
+
+/// Response from `/intents/encrypted/search`. Returns intent
+/// envelopes whose SSE tokens intersect with any of the request's
+/// derived tokens.
+#[derive(Serialize)]
+pub struct SseSearchResponse {
+    pub hits: Vec<SseSearchHit>,
+    /// Number of intents matched before `limit` truncation (lets the
+    /// client know if there are more results behind the cap).
+    pub total_matches: usize,
+}
+
+// =============================================================================
 // Events query types
 // =============================================================================
 
@@ -885,6 +931,7 @@ pub fn router(
         .route("/wallet/receipts", get(get_receipts))
         .route("/intents", get(get_intents).post(post_intent))
         .route("/intents/encrypted", post(post_encrypted_intent))
+        .route("/intents/encrypted/search", post(post_sse_search))
         .route("/intents/trustless", post(post_trustless_intent))
         .route(
             "/intents/trustless/share",
@@ -1616,6 +1663,69 @@ async fn post_encrypted_intent(
     Ok(Json(EncryptedIntentSubmitResponse {
         intent_id: intent_id_hex,
         stored: true,
+    }))
+}
+
+/// POST /intents/encrypted/search — SSE-token coarse filter against the
+/// node's encrypted intent pool.
+///
+/// Closes audit §12 / §14: the SSE primitives were implemented but the
+/// node had no way to *serve* SSE-token queries. Fulfillers now POST
+/// their `capability_keywords` + `epoch`; the server hashes each
+/// keyword to a token and returns every stored encrypted intent whose
+/// token set intersects. The body remains encrypted — the fulfiller
+/// asks the poster for the decryption key out-of-band.
+///
+/// This is the "encrypted discovery loop close" — combined with
+/// `/intents/encrypted` (post) the encrypted-intent pool becomes
+/// queryable, not just write-only.
+async fn post_sse_search(
+    State(state): State<NodeState>,
+    Json(req): Json<SseSearchRequest>,
+) -> Result<Json<SseSearchResponse>, StatusCode> {
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 200;
+
+    if req.capability_keywords.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let limit = req.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT).max(1);
+
+    // Derive search tokens from the fulfiller's keywords.
+    let keyword_refs: Vec<&str> = req.capability_keywords.iter().map(String::as_str).collect();
+
+    // Filter the encrypted intent pool.
+    let s = state.read().await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut total = 0usize;
+    let mut hits: Vec<SseSearchHit> = Vec::new();
+    for (id, encrypted) in s.encrypted_intent_pool.iter() {
+        // Honor expiry: don't return stale entries.
+        if encrypted.is_expired(now) {
+            continue;
+        }
+        if !pyana_intent::sse::capability_matches_tokens(
+            &keyword_refs,
+            &encrypted.search_tokens,
+            req.epoch,
+        ) {
+            continue;
+        }
+        total += 1;
+        if hits.len() < limit {
+            hits.push(SseSearchHit {
+                intent_id: hex_encode(id),
+                encrypted_intent: encrypted.clone(),
+            });
+        }
+    }
+
+    Ok(Json(SseSearchResponse {
+        hits,
+        total_matches: total,
     }))
 }
 

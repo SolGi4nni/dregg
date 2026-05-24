@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{CurveGroup, pairing::Pairing};
 use ark_poly::Polynomial;
-use ark_std::{ops::*, One, Zero};
+use ark_std::{One, Zero, ops::*};
 
-use crate::utils::{self};
 use crate::HintsError;
-use crate::{snark::*, Hint, PublicKey, SecretKey, UniverseSetup};
+use crate::utils::{self};
+use crate::{Hint, PublicKey, SecretKey, UniverseSetup, snark::*};
 use serde::{Deserialize, Serialize};
 
 pub(crate) fn preprocess_q1_contributions(q1_contributions: &[Vec<G1>]) -> Vec<G1> {

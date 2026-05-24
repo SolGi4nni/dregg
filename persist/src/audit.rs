@@ -216,11 +216,11 @@ impl PersistentStore {
 }
 
 // =============================================================================
-// Audit Log Bridge (pyana-audit <-> pyana-store)
+// Audit Log Bridge (pyana-audit <-> pyana-persist)
 // =============================================================================
 
 /// Bridge between the in-memory `pyana-audit` `AuditLog` (with Merkle proofs)
-/// and the persistent `pyana-store` audit storage.
+/// and the persistent `pyana-persist` audit storage.
 ///
 /// The in-memory `AuditLog` is the **canonical** audit system: it maintains a
 /// 4-ary Merkle tree over events and can produce inclusion proofs, count proofs,

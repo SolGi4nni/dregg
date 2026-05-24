@@ -1,4 +1,4 @@
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{CurveGroup, pairing::Pairing};
 use ark_ff::Field;
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -133,7 +133,7 @@ pub fn verify_proof(gd: &GlobalData, vp: &VerifierKey, π: &Proof) -> Result<(),
         &π.coms,
     )?;
     lhs_rhs_eq!(r_expected, π.r, "proof.r == r_expected"); // Check if received r matches derived r
-                                                           // --- End Fiat-Shamir ---
+    // --- End Fiat-Shamir ---
 
     let domain = Radix2EvaluationDomain::<F>::new(vp.degree_max)
         .ok_or(HintsError::PolynomialDegreeTooLarge)?;

@@ -8,10 +8,10 @@ use crate::state::{CellState, FieldElement};
 /// Per PREDICATE-INVENTORY §4.3 case 1, the duplicate-surface
 /// `turn::preconditions::Precondition` enum has been folded into this
 /// canonical struct via the [`Preconditions::builder`] entry-point and
-/// [`PreconditionsBuilder`]. The enum-shaped surface still exists at
-/// `pyana_turn::preconditions::Precondition` (re-exported from this
-/// builder) for app/userspace ergonomics, but lowers directly to
-/// these fields rather than running a parallel evaluator.
+/// [`PreconditionsBuilder`]. The clause-shaped surface lives here as
+/// [`Precondition`]; the parallel `turn/src/preconditions.rs` module
+/// no longer exists — userspace imports `pyana_cell::Precondition`
+/// directly.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preconditions {
     /// Assertions about the cell's current state.

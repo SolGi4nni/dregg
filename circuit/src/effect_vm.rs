@@ -184,7 +184,10 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 ///     federation's approved-handoffs root after a successful
 ///     ValidateHandoff; replays present a non-membership witness to
 ///     the next AIR proof).
-pub const EFFECT_VM_WIDTH: usize = 105;
+/// Total trace width.
+/// Stage 2: 105 (46 selectors + 14 state_before + 8 params + 14 state_after + 23 aux).
+/// Sovereign-witness teeth: 110 (+ 5 sovereign-witness aux cols).
+pub const EFFECT_VM_WIDTH: usize = 110;
 
 /// Number of effect types (selectors).
 pub const NUM_EFFECTS: usize = 46;
@@ -373,7 +376,8 @@ pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 44 + 14 = 58
 /// Number of auxiliary columns.
 /// Stage 1: 12 (8 effect-aux + 3 state intermediates + 1 custom-count acc).
 /// Stage 2: 23 (+ 8 reserved bits + 1 mode flag + 2 ResizeQueue sign/mag).
-pub const NUM_AUX: usize = 23;
+/// Sovereign-witness teeth: 28 (+ 4 WITNESS_KEY_COMMIT + 1 WITNESS_SEQUENCE).
+pub const NUM_AUX: usize = 28;
 
 /// Auxiliary column offsets for state commitment tree intermediates.
 pub mod aux_off {
@@ -415,6 +419,21 @@ pub mod aux_off {
     pub const RESIZE_DELTA_SIGN: usize = 21;
     /// Stage 2: |new_capacity - old_capacity| magnitude.
     pub const RESIZE_DELTA_MAG: usize = 22;
+
+    // ---- Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md) ----
+    /// 4-felt Poseidon2 hash of the sovereign witness's owning pubkey,
+    /// row-0-pinned to PI[SOVEREIGN_WITNESS_KEY_COMMIT_BASE..+4].
+    /// Zero sentinel on every row for non-sovereign proofs. The boundary
+    /// constraint binds row 0; later rows are free (the gate is at row 0
+    /// only — the witness identity is a property of the turn, not of
+    /// individual effects).
+    pub const WITNESS_KEY_COMMIT_0: usize = 23;
+    pub const WITNESS_KEY_COMMIT_1: usize = 24;
+    pub const WITNESS_KEY_COMMIT_2: usize = 25;
+    pub const WITNESS_KEY_COMMIT_3: usize = 26;
+    /// Per-cell monotonic sequence counter, row-0-pinned to
+    /// PI[SOVEREIGN_WITNESS_SEQUENCE]. Zero sentinel for non-sovereign proofs.
+    pub const WITNESS_SEQUENCE: usize = 27;
 }
 
 /// Effect parameter meanings per effect type.
@@ -763,6 +782,51 @@ pub mod pi {
     /// verifier enforces the exactly-one-agent rule across the bundle.
     pub const IS_AGENT_CELL: usize = 73;
 
+    // ---- Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md) ----
+    //
+    // Phase 1: bind the witness's signing identity + replay counter to the
+    // AIR at row 0 via gated boundary constraints. When IS_SOVEREIGN_CELL
+    // == 1, the prover and verifier must agree on
+    //   PI[SOVEREIGN_WITNESS_KEY_COMMIT_BASE..+4] == Poseidon2(owner_pubkey)
+    //   PI[SOVEREIGN_WITNESS_SEQUENCE]            == witness.sequence
+    // When IS_SOVEREIGN_CELL == 0 (hosted-cell proofs), the prover writes
+    // the zero sentinel into both PI slots and the in-trace aux columns,
+    // and the boundary holds trivially (the columns and PI both zero).
+    // The verifier sets the PI sentinel when not sovereign.
+    //
+    // Phase 2 (Option B per design §3.2): an additional proof-commitment
+    // pair binds an inner transition_proof. The off-AIR verifier reads
+    // SOVEREIGN_TRANSITION_PROOF_VK_HASH + SOVEREIGN_TRANSITION_PROOF_COMMITMENT
+    // and recursively verifies the inner STARK via Lane Golden-Edge's
+    // generalized recursive verifier.
+    /// 4-felt Poseidon2 hash of the sovereign cell's owning pubkey (the
+    /// key that signed the witness). Zero sentinel when IS_SOVEREIGN_CELL == 0.
+    pub const SOVEREIGN_WITNESS_KEY_COMMIT_BASE: usize = 74;
+    pub const SOVEREIGN_WITNESS_KEY_COMMIT_LEN: usize = 4;
+    /// Per-cell monotonic sequence counter from the witness. Zero sentinel
+    /// when IS_SOVEREIGN_CELL == 0. Replay protection via the verifier's
+    /// chain-walk (each turn's PI[SOVEREIGN_WITNESS_SEQUENCE] must equal
+    /// the federation's last-known + 1, enforced at executor injection
+    /// time).
+    pub const SOVEREIGN_WITNESS_SEQUENCE: usize = 78;
+    /// Single-felt boolean: 1 iff this per-cell proof attests to a
+    /// sovereign-witnessed effect. 0 for hosted cells. Drives the gating
+    /// for SOVEREIGN_WITNESS_KEY_COMMIT / SOVEREIGN_WITNESS_SEQUENCE.
+    pub const IS_SOVEREIGN_CELL: usize = 79;
+    /// 4-felt VK hash of the AIR under which the inner transition_proof
+    /// was produced (typically the Effect VM AIR — see design §3.2). Zero
+    /// sentinel when no transition_proof was supplied or IS_SOVEREIGN_CELL
+    /// == 0. Bound only when HAS_TRANSITION_PROOF == 1.
+    pub const SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE: usize = 80;
+    pub const SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN: usize = 4;
+    /// 4-felt Poseidon2 hash of the inner transition_proof bytes (after
+    /// canonical serialization). Zero sentinel when no proof was supplied.
+    pub const SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE: usize = 84;
+    pub const SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN: usize = 4;
+    /// Single-felt boolean: 1 iff a STARK transition_proof was supplied
+    /// alongside the witness AND IS_SOVEREIGN_CELL == 1.
+    pub const HAS_TRANSITION_PROOF: usize = 88;
+
     // ---- Custom proof commitments ----
     /// For each custom effect i (0..custom_count):
     ///   PI[CUSTOM_PROOFS_BASE + i*8 + 0..4] = custom_program_vk_hash (4 elements)
@@ -774,7 +838,7 @@ pub mod pi {
     pub const CUSTOM_PROOFS_BASE: usize = BASE_COUNT;
     /// Base public inputs (without custom proof data).
     ///
-    /// Layout (post Stage 7-γ.2 Phase 1, BASE_COUNT bumped 38 -> 74):
+    /// Layout (post sovereign-witness teeth, BASE_COUNT bumped 74 -> 89):
     ///   0..21   pre-γ.0a slots (commitments, balances, block height, etc.)
     ///   21..25  APPROVED_HANDOFFS[4]
     ///   25..29  TURN_HASH[4]                       (γ.0a)
@@ -790,7 +854,13 @@ pub mod pi {
     ///   65..69  INTRO_AS_RECIPIENT_ROOT[4]         (γ.2)
     ///   69..73  INTRO_AS_TARGET_ROOT[4]            (γ.2)
     ///   73      IS_AGENT_CELL                      (γ.2)
-    pub const BASE_COUNT: usize = 74;
+    ///   74..78  SOVEREIGN_WITNESS_KEY_COMMIT[4]    (sovereign teeth)
+    ///   78      SOVEREIGN_WITNESS_SEQUENCE         (sovereign teeth)
+    ///   79      IS_SOVEREIGN_CELL                  (sovereign teeth)
+    ///   80..84  SOVEREIGN_TRANSITION_PROOF_VK_HASH[4]    (sovereign teeth Phase 2)
+    ///   84..88  SOVEREIGN_TRANSITION_PROOF_COMMITMENT[4] (sovereign teeth Phase 2)
+    ///   88      HAS_TRANSITION_PROOF               (sovereign teeth Phase 2)
+    pub const BASE_COUNT: usize = 89;
     /// Elements per custom effect entry in PI (4 vk_hash + 4 proof_commit).
     pub const CUSTOM_ENTRY_SIZE: usize = 8;
 
@@ -3751,6 +3821,52 @@ impl StarkAir for EffectVmAir {
         });
 
         // ====================================================================
+        // SOVEREIGN-WITNESS AIR TEETH (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.3)
+        //
+        // Row-0 boundary: bind the in-trace witness-identity aux columns
+        // to the matching PI slots. The constraint holds unconditionally,
+        // by sentinel-zero agreement on the hosted-cell path:
+        //
+        //   When IS_SOVEREIGN_CELL == 1 (sovereign path):
+        //     trace[0][WITNESS_KEY_COMMIT_i] == PI[SOVEREIGN_WITNESS_KEY_COMMIT_BASE + i]
+        //     trace[0][WITNESS_SEQUENCE] == PI[SOVEREIGN_WITNESS_SEQUENCE]
+        //   When IS_SOVEREIGN_CELL == 0 (hosted path):
+        //     prover writes zero into both columns; verifier writes zero
+        //     into both PI slots; equality holds.
+        //
+        // A malicious executor that swaps the witness for one signed by a
+        // different key cannot satisfy this binding without changing PI,
+        // and the verifier supplies PI from the signature-verified key
+        // (executor injection step §2.5 in AUDIT-sovereign-witness-teeth.md).
+        // Combined effect: the witness identity becomes acceptance-inside
+        // for the AIR layer.
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0,
+            value: public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE],
+        });
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: AUX_BASE + aux_off::WITNESS_KEY_COMMIT_1,
+            value: public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + 1],
+        });
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: AUX_BASE + aux_off::WITNESS_KEY_COMMIT_2,
+            value: public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + 2],
+        });
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: AUX_BASE + aux_off::WITNESS_KEY_COMMIT_3,
+            value: public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + 3],
+        });
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: AUX_BASE + aux_off::WITNESS_SEQUENCE,
+            value: public_inputs[pi::SOVEREIGN_WITNESS_SEQUENCE],
+        });
+
+        // ====================================================================
         // SOUNDNESS FIX (Gap 1): Net delta range check via balance binding.
         //
         // The net_delta public input MUST reflect the actual balance change.
@@ -3844,6 +3960,34 @@ pub struct EffectVmContext {
     /// Stage 7-γ.0a: Poseidon2 of `previous_receipt_hash` (or zero
     /// sentinel when None). Shared across the bundle.
     pub previous_receipt_hash: [BabyBear; 4],
+    /// Sovereign-witness teeth (Phase 1): when this proof attests to a
+    /// sovereign-witnessed effect, the 4-felt Poseidon2 hash of the
+    /// witness's owning pubkey. Bound to the row-0 aux column and to
+    /// PI[SOVEREIGN_WITNESS_KEY_COMMIT_BASE..+4]. Zero sentinel for
+    /// hosted-cell proofs.
+    pub sovereign_witness_key_commit: [BabyBear; 4],
+    /// Sovereign-witness teeth (Phase 1): per-cell monotonic sequence
+    /// from the witness. Bound to the row-0 aux column and to
+    /// PI[SOVEREIGN_WITNESS_SEQUENCE]. Zero sentinel for hosted-cell
+    /// proofs.
+    pub sovereign_witness_sequence: u64,
+    /// Sovereign-witness teeth (Phase 1): 1 iff this is a sovereign
+    /// witnessed proof; 0 otherwise. Drives the (a)-style sentinel
+    /// agreement between prover and verifier (no actual gating in the
+    /// AIR — sentinel zeros on both sides make the boundary trivial
+    /// when off).
+    pub is_sovereign_cell: bool,
+    /// Sovereign-witness teeth (Phase 2): 4-felt VK hash of the AIR the
+    /// inner transition_proof was generated under. Zero sentinel when
+    /// no transition_proof is supplied.
+    pub sovereign_transition_proof_vk_hash: [BabyBear; 4],
+    /// Sovereign-witness teeth (Phase 2): 4-felt Poseidon2 hash of the
+    /// canonical inner-proof bytes. Zero sentinel when no transition_proof
+    /// is supplied.
+    pub sovereign_transition_proof_commitment: [BabyBear; 4],
+    /// Sovereign-witness teeth (Phase 2): 1 iff a transition_proof
+    /// was supplied AND `is_sovereign_cell` is true.
+    pub has_transition_proof: bool,
 }
 
 impl Default for EffectVmContext {
@@ -3856,6 +4000,12 @@ impl Default for EffectVmContext {
             effects_hash_global: [BabyBear::ZERO; 4],
             actor_nonce: 0,
             previous_receipt_hash: [BabyBear::ZERO; 4],
+            sovereign_witness_key_commit: [BabyBear::ZERO; 4],
+            sovereign_witness_sequence: 0,
+            is_sovereign_cell: false,
+            sovereign_transition_proof_vk_hash: [BabyBear::ZERO; 4],
+            sovereign_transition_proof_commitment: [BabyBear::ZERO; 4],
+            has_transition_proof: false,
         }
     }
 }
@@ -4783,6 +4933,23 @@ pub fn generate_effect_vm_trace_ext(
         trace[0][AUX_BASE + 3] = BabyBear::new(delta_sign);
         trace[0][AUX_BASE + 4] = effects_hash_4_witness[0];
         trace[0][AUX_BASE + 5] = effects_hash_4_witness[1];
+
+        // Sovereign-witness teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.1):
+        // bind the witness's key-commit + sequence into row-0 aux columns.
+        // The boundary constraints pin these to the matching PI slots.
+        // When IS_SOVEREIGN_CELL == 0, the prover writes zero sentinels
+        // and the verifier supplies zero sentinels — the boundary holds
+        // trivially.
+        trace[0][AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0] =
+            context.sovereign_witness_key_commit[0];
+        trace[0][AUX_BASE + aux_off::WITNESS_KEY_COMMIT_1] =
+            context.sovereign_witness_key_commit[1];
+        trace[0][AUX_BASE + aux_off::WITNESS_KEY_COMMIT_2] =
+            context.sovereign_witness_key_commit[2];
+        trace[0][AUX_BASE + aux_off::WITNESS_KEY_COMMIT_3] =
+            context.sovereign_witness_key_commit[3];
+        trace[0][AUX_BASE + aux_off::WITNESS_SEQUENCE] =
+            BabyBear::new((context.sovereign_witness_sequence & 0x7FFF_FFFF) as u32);
     }
     // Silence unused warnings on the legacy 2-felt return values.
     let _ = (effects_hash_lo, effects_hash_hi);
@@ -4947,6 +5114,42 @@ pub fn generate_effect_vm_trace_ext(
     for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
         public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE + i] = context.previous_receipt_hash[i];
     }
+
+    // ---- Sovereign-witness teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md) ----
+    //
+    // Phase 1: PI carries the witness's owning-key commitment, monotonic
+    // sequence, and a flag indicating sovereign vs. hosted. The boundary
+    // constraint binds the in-trace aux columns to these PI values at
+    // row 0. When IS_SOVEREIGN_CELL == 0, the sentinel-zero on both
+    // sides makes the constraint trivially satisfied.
+    //
+    // Phase 2: PI additionally carries the inner transition_proof's
+    // VK hash + 4-felt commitment + a presence flag. The off-AIR
+    // verifier reads these and recursively verifies the inner STARK.
+    for i in 0..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN {
+        public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + i] =
+            context.sovereign_witness_key_commit[i];
+    }
+    public_inputs[pi::SOVEREIGN_WITNESS_SEQUENCE] =
+        BabyBear::new((context.sovereign_witness_sequence & 0x7FFF_FFFF) as u32);
+    public_inputs[pi::IS_SOVEREIGN_CELL] = if context.is_sovereign_cell {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
+    for i in 0..pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN {
+        public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE + i] =
+            context.sovereign_transition_proof_vk_hash[i];
+    }
+    for i in 0..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN {
+        public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE + i] =
+            context.sovereign_transition_proof_commitment[i];
+    }
+    public_inputs[pi::HAS_TRANSITION_PROOF] = if context.has_transition_proof {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
 
     // ---- Custom proof entries ----
     for (i, (vk_hash, proof_commit)) in custom_entries.iter().enumerate() {

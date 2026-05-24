@@ -37,23 +37,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-// =============================================================================
-// Pyana primitive stubs (mirrors real types from pyana-types / pyana-cell)
-// =============================================================================
+pub use pyana_types::CellId;
 
-/// Cell identity: BLAKE3(public_key || token_id). 32 bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CellId(pub [u8; 32]);
-
-impl fmt::Debug for CellId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Cell({})",
-            self.0[..4].iter().map(|b| format!("{b:02x}")).collect::<String>()
-        )
-    }
-}
+// =============================================================================
+// VFS-local primitives (composes the real `pyana_types::CellId`)
+// =============================================================================
 
 /// Monotonically increasing version counter on a cell.
 pub type Nonce = u64;
@@ -67,7 +55,10 @@ impl fmt::Debug for NoteCommitment {
         write!(
             f,
             "Note({})",
-            self.0[..4].iter().map(|b| format!("{b:02x}")).collect::<String>()
+            self.0[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         )
     }
 }
@@ -151,12 +142,15 @@ impl EffectTrace {
 
     /// Total computational cost of this trace (for volume accounting).
     pub fn total_cost(&self) -> u64 {
-        self.effects.iter().map(|e| match e {
-            VfsEffect::CreateBlob { size, .. } => 100 + size, // base + per-byte
-            VfsEffect::SpendBlob { .. } => 50,
-            VfsEffect::SetEntry { .. } => 30,
-            VfsEffect::VolumeDebit { .. } | VfsEffect::VolumeCredit { .. } => 10,
-        }).sum()
+        self.effects
+            .iter()
+            .map(|e| match e {
+                VfsEffect::CreateBlob { size, .. } => 100 + size, // base + per-byte
+                VfsEffect::SpendBlob { .. } => 50,
+                VfsEffect::SetEntry { .. } => 30,
+                VfsEffect::VolumeDebit { .. } | VfsEffect::VolumeCredit { .. } => 10,
+            })
+            .sum()
     }
 }
 
@@ -359,7 +353,9 @@ impl Blob {
         if new_size > old_size {
             volume.allocate(new_size - old_size, trace)?;
         } else if new_size < old_size {
-            volume.free(old_size - new_size, trace).map_err(|_| SpliceError::VolumeUnderflow)?;
+            volume
+                .free(old_size - new_size, trace)
+                .map_err(|_| SpliceError::VolumeUnderflow)?;
         }
 
         // Spend the old blob.
@@ -402,7 +398,9 @@ impl Blob {
             return Err(SpliceError::AlreadySpent);
         }
         let size = self.data.len() as u64;
-        volume.free(size, trace).map_err(|_| SpliceError::VolumeUnderflow)?;
+        volume
+            .free(size, trace)
+            .map_err(|_| SpliceError::VolumeUnderflow)?;
 
         let nullifier = Self::compute_nullifier(&self.commitment, spending_key);
         trace.push(VfsEffect::SpendBlob {
@@ -823,8 +821,8 @@ impl Vfs {
             .get_mut(volume_id)
             .ok_or(VfsError::VolumeNotFound(*volume_id))?;
 
-        let blob = Blob::create(data, volume, spending_key, &mut trace)
-            .map_err(VfsError::Volume)?;
+        let blob =
+            Blob::create(data, volume, spending_key, &mut trace).map_err(VfsError::Volume)?;
 
         let receipt = BlobReceipt {
             commitment: blob.commitment,
@@ -933,8 +931,7 @@ pub trait VfsAirConstraints {
     /// Nullifier uniqueness:
     /// Published nullifier must not already appear in the nullifier set.
     /// Enforced by NoteSpend constraint (Merkle non-membership proof).
-    const NULLIFIER_UNIQUENESS: &'static str =
-        "nullifier_set.contains(row.nullifier) == false";
+    const NULLIFIER_UNIQUENESS: &'static str = "nullifier_set.contains(row.nullifier) == false";
 
     /// Splice atomicity:
     /// Old blob spent AND new blob created in the same trace (consecutive rows).
@@ -972,11 +969,7 @@ pub struct MigrationCallback {
 impl MigrationCallback {
     /// Apply this migration: update all affected directory entries to point
     /// to the new commitment. Each update is a swap with version check.
-    pub fn apply(
-        &self,
-        vfs: &mut Vfs,
-        caller_cap: &CapRef,
-    ) -> Result<EffectTrace, VfsError> {
+    pub fn apply(&self, vfs: &mut Vfs, caller_cap: &CapRef) -> Result<EffectTrace, VfsError> {
         let mut trace = EffectTrace::default();
 
         for dir_id in &self.affected_dirs {
@@ -1091,9 +1084,18 @@ mod tests {
         vol.free(50, &mut trace).unwrap();
 
         assert_eq!(trace.effects.len(), 3);
-        assert!(matches!(trace.effects[0], VfsEffect::VolumeDebit { amount: 100 }));
-        assert!(matches!(trace.effects[1], VfsEffect::VolumeDebit { amount: 200 }));
-        assert!(matches!(trace.effects[2], VfsEffect::VolumeCredit { amount: 50 }));
+        assert!(matches!(
+            trace.effects[0],
+            VfsEffect::VolumeDebit { amount: 100 }
+        ));
+        assert!(matches!(
+            trace.effects[1],
+            VfsEffect::VolumeDebit { amount: 200 }
+        ));
+        assert!(matches!(
+            trace.effects[2],
+            VfsEffect::VolumeCredit { amount: 50 }
+        ));
     }
 
     // --- Blob tests ---
@@ -1128,8 +1130,9 @@ mod tests {
         let old_commitment = blob.commitment;
 
         // Splice: replace "world" with "pyana"
-        let new_blob =
-            blob.splice(6, 5, b"pyana", &mut vol, &key, &mut trace).unwrap();
+        let new_blob = blob
+            .splice(6, 5, b"pyana", &mut vol, &key, &mut trace)
+            .unwrap();
 
         // Old blob is spent.
         assert!(blob.spent);
@@ -1165,7 +1168,9 @@ mod tests {
         assert_eq!(vol.used, 3);
 
         // Grow: replace "b" with "xyz" (3 -> 5)
-        let new_blob = blob.splice(1, 1, b"xyz", &mut vol, &key, &mut trace).unwrap();
+        let new_blob = blob
+            .splice(1, 1, b"xyz", &mut vol, &key, &mut trace)
+            .unwrap();
         assert_eq!(new_blob.data, b"axyzc");
         assert_eq!(vol.used, 5); // grew by 2
     }
@@ -1198,7 +1203,9 @@ mod tests {
         assert_eq!(err, SpliceError::AlreadySpent);
 
         // Cannot splice either.
-        let err = blob.splice(0, 1, b"x", &mut vol, &key, &mut trace).unwrap_err();
+        let err = blob
+            .splice(0, 1, b"x", &mut vol, &key, &mut trace)
+            .unwrap_err();
         assert_eq!(err, SpliceError::AlreadySpent);
     }
 
@@ -1237,8 +1244,13 @@ mod tests {
         let blob_v1 = NoteCommitment([0x01; 32]);
         let blob_v2 = NoteCommitment([0x02; 32]);
 
-        dir.insert(b"file".to_vec(), EntryTarget::Blob(blob_v1), &cap, &mut trace)
-            .unwrap();
+        dir.insert(
+            b"file".to_vec(),
+            EntryTarget::Blob(blob_v1),
+            &cap,
+            &mut trace,
+        )
+        .unwrap();
 
         // Swap with correct version succeeds.
         let new_ver = dir
@@ -1306,8 +1318,13 @@ mod tests {
         let cap = make_cap(dir_cell, Permissions::ALL);
 
         let blob = NoteCommitment([0x42; 32]);
-        dir.insert(b"old_name".to_vec(), EntryTarget::Blob(blob), &cap, &mut trace)
-            .unwrap();
+        dir.insert(
+            b"old_name".to_vec(),
+            EntryTarget::Blob(blob),
+            &cap,
+            &mut trace,
+        )
+        .unwrap();
 
         dir.rename(b"old_name", b"new_name".to_vec(), &cap, &mut trace)
             .unwrap();
@@ -1367,7 +1384,14 @@ mod tests {
         let key = test_spending_key();
 
         let (receipt, trace) = vfs
-            .write_file(&dir_id, b"hello.txt".to_vec(), b"file content".to_vec(), &vol_id, &key, &cap)
+            .write_file(
+                &dir_id,
+                b"hello.txt".to_vec(),
+                b"file content".to_vec(),
+                &vol_id,
+                &key,
+                &cap,
+            )
             .unwrap();
 
         // Receipt has a valid commitment.
@@ -1405,19 +1429,35 @@ mod tests {
         let key = test_spending_key();
 
         let (receipt, _) = vfs
-            .write_file(&src_dir, b"doc.pdf".to_vec(), b"PDF data".to_vec(), &vol_id, &key, &src_cap)
+            .write_file(
+                &src_dir,
+                b"doc.pdf".to_vec(),
+                b"PDF data".to_vec(),
+                &vol_id,
+                &key,
+                &src_cap,
+            )
             .unwrap();
 
         // Move from src to dst.
         let trace = vfs
-            .move_file(&src_dir, b"doc.pdf", &dst_dir, b"moved.pdf".to_vec(), &src_cap)
+            .move_file(
+                &src_dir,
+                b"doc.pdf",
+                &dst_dir,
+                b"moved.pdf".to_vec(),
+                &src_cap,
+            )
             .unwrap();
 
         // Source no longer has it.
         assert!(vfs.directories[&src_dir].lookup(b"doc.pdf").is_none());
         // Dest has it.
         assert_eq!(
-            vfs.directories[&dst_dir].lookup(b"moved.pdf").unwrap().target,
+            vfs.directories[&dst_dir]
+                .lookup(b"moved.pdf")
+                .unwrap()
+                .target,
             EntryTarget::Blob(receipt.commitment)
         );
 
@@ -1449,7 +1489,14 @@ mod tests {
         let key = test_spending_key();
 
         let (receipt, _) = vfs
-            .write_file(&dir_id, b"data.bin".to_vec(), b"original".to_vec(), &vol_id, &key, &cap)
+            .write_file(
+                &dir_id,
+                b"data.bin".to_vec(),
+                b"original".to_vec(),
+                &vol_id,
+                &key,
+                &cap,
+            )
             .unwrap();
 
         // Simulate migration: storage moved the blob.

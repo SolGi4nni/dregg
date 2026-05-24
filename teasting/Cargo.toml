@@ -24,7 +24,7 @@ pyana-intent = { path = "../intent" }
 pyana-coord = { path = "../coord" }
 pyana-captp = { path = "../captp" }
 token = { path = "../token" }
-pyana-store = { path = "../store" }
+pyana-persist = { path = "../persist" }
 pyana-storage = { path = "../storage" }
 macaroon = { workspace = true, features = ["crypto"] }
 tokio = { version = "1", features = ["full"] }

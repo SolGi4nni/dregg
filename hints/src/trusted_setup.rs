@@ -1,5 +1,5 @@
-use ark_ec::pairing::Pairing;
 use ark_ec::AffineRepr;
+use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Validate};
 use hex::FromHexError;
 use serde::Deserialize;

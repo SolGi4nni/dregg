@@ -13,7 +13,7 @@ description = "Federation node daemon — hosts an agent wallet, participates in
 pyana-types = { path = "../types" }
 pyana-cell = { path = "../cell" }
 pyana-turn = { path = "../turn" }
-pyana-store = { path = "../store" }
+pyana-persist = { path = "../persist" }
 pyana-federation = { path = "../federation" }
 pyana-sdk = { path = "../sdk" }
 pyana-intent = { path = "../intent" }

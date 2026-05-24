@@ -329,6 +329,66 @@ pub fn seal_plan_uniform(
     SealedTurn::from_turn(turn)
 }
 
+/// Per-leg authorization sealer: walks each [`PendingAction`]'s
+/// `auth_hint` and produces an [`Authorization`] tailored to that
+/// hint. Closes audit §11 — the uniform sealer was a stub; real
+/// settlements need per-leg auth so each cell sees the authorization
+/// kind it expects.
+///
+/// The `sealer` callback is the wallet's per-leg authorization
+/// producer. For ring settlement, this is typically:
+///
+/// - `Signed` → an Ed25519 signature by the anchor.
+/// - `Proved { … }` → a STARK proof bound to the action+resource.
+/// - `Bearer` → a bearer cap delegation.
+/// - `Breadstuff` → a capability-token hash.
+///
+/// In the trustless engine's settlement path, `Signed` for every leg
+/// is acceptable (the validity_proof already gates the whole
+/// settlement). Apps that need per-leg STARK auth call this with a
+/// `Proved`-routing sealer.
+pub fn seal_plan_per_leg<F>(plan: EffectPlan, agent: CellId, nonce: u64, sealer: F) -> SealedTurn
+where
+    F: Fn(&PendingAction) -> Authorization,
+{
+    let mut builder = pyana_turn::builder::TurnBuilder::new(agent, nonce);
+    for pa in &plan.actions {
+        let auth = sealer(pa);
+        debug_assert!(
+            !matches!(auth, Authorization::Unchecked),
+            "seal_plan_per_leg: sealer returned Unchecked for hint {:?}",
+            pa.auth_hint
+        );
+        let action = Action {
+            target: pa.target,
+            method: pyana_turn::action::symbol(&pa.method),
+            args: Vec::new(),
+            authorization: auth,
+            preconditions: Default::default(),
+            effects: pa.effects.clone(),
+            may_delegate: pyana_turn::action::DelegationMode::None,
+            commitment_mode: pyana_turn::action::CommitmentMode::Full,
+            balance_change: None,
+        };
+        builder.add_action(action);
+    }
+    let mut turn = builder.build();
+    if let Some(w) = plan.validity_witness {
+        turn.memo = Some(format!(
+            "ring-settlement solver={:02x}{:02x}..{:02x}{:02x} proof={:02x}{:02x}..{:02x}{:02x}",
+            w.solver_id[0],
+            w.solver_id[1],
+            w.solver_id[30],
+            w.solver_id[31],
+            w.validity_proof_hash[0],
+            w.validity_proof_hash[1],
+            w.validity_proof_hash[30],
+            w.validity_proof_hash[31],
+        ));
+    }
+    SealedTurn::from_turn(turn)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

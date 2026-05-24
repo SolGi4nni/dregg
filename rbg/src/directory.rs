@@ -36,31 +36,45 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use pyana_types::{CellId, FederationId};
+
 // ---------------------------------------------------------------------------
-// Type stubs (standing in for actual pyana crate types in this exploration module)
+// Local types
+//
+// `CellId` and `FederationId` are the real workspace identifiers (from
+// `pyana-types`). `MemberId`, `GossipTopic`, `SturdyRef` and `CommitmentId`
+// are introduced here because no canonical home exists yet — see
+// `STORAGE-REFLECTIVITY-RBG-DFA-AUDIT.md` for the long-term plan to put
+// `SturdyRef` next to the captp `pyana://` URI machinery and `MemberId`
+// next to constitution membership in `pyana-federation`. They are kept
+// local rather than placeholder-stubbed so the `directory` module is
+// self-consistent and immediately usable.
 // ---------------------------------------------------------------------------
 
-/// A 32-byte identifier for a group (formerly "federation").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct GroupId(pub [u8; 32]);
-
-/// A 32-byte identifier for a cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct CellId(pub [u8; 32]);
-
-/// A pyana:// URI (swiss number + federation + cell).
+/// A pyana:// URI (federation + cell + swiss number), the directory-entry
+/// payload that points at a remote capability.
+///
+/// Mirrors the `pyana://` URI / SturdyRef pattern carried by `captp` for
+/// cross-federation enlivening. Stored explicitly here so directory
+/// listings carry both the location (federation + cell) and the bearer
+/// secret (swiss number) needed to enliven the capability.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SturdyRef {
-    pub federation_id: GroupId,
+    pub federation_id: FederationId,
     pub cell_id: CellId,
     pub swiss: [u8; 32],
 }
 
-/// Gossip topic identifier. Each directory defines its own topic for scoped propagation.
+/// Gossip topic identifier. Each directory defines its own topic for
+/// scoped propagation; topics are derived deterministically from the
+/// directory cell's id so anyone with a `DirectoryCell` reference can
+/// derive the same topic.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GossipTopic(pub [u8; 32]);
 
-/// Anonymous commitment ID for intent creators (from intent crate).
+/// Anonymous commitment ID for intent creators (matches
+/// `pyana_intent::CommitmentId`'s shape; kept local because adding a
+/// `pyana-intent` dependency here would create a layering cycle).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CommitmentId(pub [u8; 32]);
 
@@ -122,7 +136,11 @@ pub enum DirectoryError {
     /// The entry does not exist.
     NotFound { name: Name },
     /// Version mismatch on CAS operation (stale read).
-    VersionConflict { name: Name, expected: Version, actual: Version },
+    VersionConflict {
+        name: Name,
+        expected: Version,
+        actual: Version,
+    },
     /// The caller lacks authority (not a member of this directory's scope).
     Unauthorized { member: MemberId },
     /// The directory has reached its capacity limit.
@@ -137,11 +155,22 @@ impl std::fmt::Display for DirectoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound { name } => write!(f, "entry not found: {name}"),
-            Self::VersionConflict { name, expected, actual } => {
-                write!(f, "version conflict on '{name}': expected {expected}, actual {actual}")
+            Self::VersionConflict {
+                name,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "version conflict on '{name}': expected {expected}, actual {actual}"
+                )
             }
             Self::Unauthorized { member } => {
-                write!(f, "unauthorized: member {:02x}{:02x}... not in scope", member.0[0], member.0[1])
+                write!(
+                    f,
+                    "unauthorized: member {:02x}{:02x}... not in scope",
+                    member.0[0], member.0[1]
+                )
             }
             Self::Full { capacity } => write!(f, "directory full (capacity {capacity})"),
             Self::InvalidName { name, reason } => write!(f, "invalid name '{name}': {reason}"),
@@ -180,7 +209,7 @@ pub struct DirectoryCell {
     /// The cell ID of this directory (its identity in the blocklace).
     pub cell_id: CellId,
     /// The federation this directory belongs to.
-    pub federation_id: GroupId,
+    pub federation_id: FederationId,
     /// Global version counter (incremented on every mutation).
     pub version: Version,
     /// The entries in this directory, indexed by name.
@@ -203,7 +232,7 @@ impl DirectoryCell {
     /// anyone who holds a reference to this directory subscribes to the same topic.
     pub fn new(
         cell_id: CellId,
-        federation_id: GroupId,
+        federation_id: FederationId,
         members: HashSet<MemberId>,
         created_at: u64,
     ) -> Self {
@@ -224,7 +253,7 @@ impl DirectoryCell {
     /// Create a directory with a custom capacity.
     pub fn with_capacity(
         cell_id: CellId,
-        federation_id: GroupId,
+        federation_id: FederationId,
         members: HashSet<MemberId>,
         created_at: u64,
         max_entries: usize,
@@ -266,9 +295,11 @@ impl DirectoryCell {
     /// Requires membership.
     pub fn get(&self, caller: MemberId, name: &str) -> Result<&DirectoryEntry, DirectoryError> {
         self.check_membership(&caller)?;
-        self.entries.get(name).ok_or_else(|| DirectoryError::NotFound {
-            name: name.to_string(),
-        })
+        self.entries
+            .get(name)
+            .ok_or_else(|| DirectoryError::NotFound {
+                name: name.to_string(),
+            })
     }
 
     /// Atomic compare-and-swap: update or insert an entry.
@@ -292,7 +323,9 @@ impl DirectoryCell {
             // Insert: expected_version == 0, entry does not exist
             (None, 0) => {
                 if self.entries.len() >= self.max_entries {
-                    return Err(DirectoryError::Full { capacity: self.max_entries });
+                    return Err(DirectoryError::Full {
+                        capacity: self.max_entries,
+                    });
                 }
                 let entry = new_entry.ok_or_else(|| DirectoryError::NotFound {
                     name: name.to_string(),
@@ -399,20 +432,26 @@ impl DirectoryCell {
     /// Search entries by tag.
     ///
     /// Returns all entries that have ALL of the specified tags.
-    pub fn search_by_tags(&self, caller: MemberId, tags: &[&str]) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
+    pub fn search_by_tags(
+        &self,
+        caller: MemberId,
+        tags: &[&str],
+    ) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
         self.check_membership(&caller)?;
         let results = self
             .entries
             .iter()
-            .filter(|(_, entry)| {
-                tags.iter().all(|tag| entry.tags.iter().any(|t| t == tag))
-            })
+            .filter(|(_, entry)| tags.iter().all(|tag| entry.tags.iter().any(|t| t == tag)))
             .collect();
         Ok(results)
     }
 
     /// Search entries by kind.
-    pub fn search_by_kind(&self, caller: MemberId, kind: &EntryKind) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
+    pub fn search_by_kind(
+        &self,
+        caller: MemberId,
+        kind: &EntryKind,
+    ) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
         self.check_membership(&caller)?;
         let results = self
             .entries
@@ -429,11 +468,9 @@ impl DirectoryCell {
     /// Remove expired entries. Returns the count of entries removed.
     pub fn gc_expired(&mut self, current_height: u64) -> usize {
         let before = self.entries.len();
-        self.entries.retain(|_, entry| {
-            match entry.expires_at {
-                Some(exp) => current_height <= exp,
-                None => true,
-            }
+        self.entries.retain(|_, entry| match entry.expires_at {
+            Some(exp) => current_height <= exp,
+            None => true,
         });
         let removed = before - self.entries.len();
         if removed > 0 {
@@ -587,7 +624,11 @@ impl std::fmt::Display for ScopedPoolError {
             Self::Duplicate => write!(f, "duplicate intent in scope"),
             Self::Full => write!(f, "scoped intent pool is full"),
             Self::NotInScope { member } => {
-                write!(f, "member {:02x}{:02x}... not in directory scope", member.0[0], member.0[1])
+                write!(
+                    f,
+                    "member {:02x}{:02x}... not in directory scope",
+                    member.0[0], member.0[1]
+                )
             }
         }
     }
@@ -611,7 +652,11 @@ impl ScopedIntentPool {
     ///
     /// Only directory members can subscribe. Returns the gossip topic they should
     /// join to receive scoped intent propagation.
-    pub fn subscribe(&mut self, member: MemberId, directory: &DirectoryCell) -> Result<&GossipTopic, ScopedPoolError> {
+    pub fn subscribe(
+        &mut self,
+        member: MemberId,
+        directory: &DirectoryCell,
+    ) -> Result<&GossipTopic, ScopedPoolError> {
         if !directory.is_member(&member) {
             return Err(ScopedPoolError::NotInScope { member });
         }
@@ -655,7 +700,11 @@ impl ScopedIntentPool {
     /// Match intents against offered capabilities within this scope.
     ///
     /// Returns (intent_id, entry_name) pairs where a directory entry satisfies a Need intent.
-    pub fn match_against_directory(&self, directory: &DirectoryCell, caller: MemberId) -> Result<Vec<([u8; 32], Name)>, DirectoryError> {
+    pub fn match_against_directory(
+        &self,
+        directory: &DirectoryCell,
+        caller: MemberId,
+    ) -> Result<Vec<([u8; 32], Name)>, DirectoryError> {
         let listing = directory.list(caller)?;
         let mut matches = Vec::new();
 
@@ -715,7 +764,11 @@ impl ScopedIntentPool {
             }
         }
         // Check tag filter (all required tags must be present)
-        if !pattern.required_tags.iter().all(|tag| entry.tags.contains(tag)) {
+        if !pattern
+            .required_tags
+            .iter()
+            .all(|tag| entry.tags.contains(tag))
+        {
             return false;
         }
         // Check name prefix
@@ -766,7 +819,7 @@ impl MetaDirectory {
     /// Create a new meta-directory.
     pub fn new(
         cell_id: CellId,
-        federation_id: GroupId,
+        federation_id: FederationId,
         members: HashSet<MemberId>,
         created_at: u64,
     ) -> Self {
@@ -789,7 +842,8 @@ impl MetaDirectory {
         current_height: u64,
     ) -> Result<Version, DirectoryError> {
         // Cache the topology
-        self.topology_cache.insert(path.to_string(), directory_ref.cell_id);
+        self.topology_cache
+            .insert(path.to_string(), directory_ref.cell_id);
 
         self.directory.register_subdirectory(
             caller,
@@ -816,7 +870,11 @@ impl MetaDirectory {
     /// Find directories by tag.
     ///
     /// Useful for "what directories offer storage services?" queries.
-    pub fn find_by_tags(&self, caller: MemberId, tags: &[&str]) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
+    pub fn find_by_tags(
+        &self,
+        caller: MemberId,
+        tags: &[&str],
+    ) -> Result<Vec<(&Name, &DirectoryEntry)>, DirectoryError> {
         self.directory.search_by_tags(caller, tags)
     }
 
@@ -847,7 +905,7 @@ pub struct DirectoryFactory {
     /// The meta-directory that new directories are registered in.
     meta_directory_cell_id: CellId,
     /// Federation context for new directories.
-    federation_id: GroupId,
+    federation_id: FederationId,
     /// Default capacity for created directories.
     default_capacity: usize,
     /// Maximum allowed members per created directory.
@@ -860,7 +918,7 @@ impl DirectoryFactory {
     /// Create a new directory factory.
     pub fn new(
         meta_directory_cell_id: CellId,
-        federation_id: GroupId,
+        federation_id: FederationId,
         default_capacity: usize,
         max_members: usize,
     ) -> Self {
@@ -984,10 +1042,7 @@ impl TopicSubscriptionManager {
             .entry(topic.clone())
             .or_default()
             .insert(member);
-        self.member_topics
-            .entry(member)
-            .or_default()
-            .insert(topic);
+        self.member_topics.entry(member).or_default().insert(topic);
     }
 
     /// Unsubscribe a member from a topic.
@@ -1084,8 +1139,8 @@ mod tests {
         MemberId([id; 32])
     }
 
-    fn federation() -> GroupId {
-        GroupId([0xFE; 32])
+    fn federation() -> FederationId {
+        FederationId([0xFE; 32])
     }
 
     fn cell(id: u8) -> CellId {
@@ -1113,7 +1168,8 @@ mod tests {
     }
 
     fn test_directory() -> DirectoryCell {
-        let members: HashSet<MemberId> = vec![member(1), member(2), member(3)].into_iter().collect();
+        let members: HashSet<MemberId> =
+            vec![member(1), member(2), member(3)].into_iter().collect();
         DirectoryCell::new(cell(0x10), federation(), members, 100)
     }
 
@@ -1179,7 +1235,8 @@ mod tests {
         let mut dir = test_directory();
         for i in 0..5u8 {
             let entry = test_entry(cell(i), EntryKind::Service, &["svc"]);
-            dir.swap(member(1), &format!("service-{i}"), 0, Some(entry)).unwrap();
+            dir.swap(member(1), &format!("service-{i}"), 0, Some(entry))
+                .unwrap();
         }
         let listing = dir.list(member(2)).unwrap();
         assert_eq!(listing.entries.len(), 5);
@@ -1214,7 +1271,9 @@ mod tests {
         assert!(matches!(err, DirectoryError::InvalidName { .. }));
 
         // Name with null byte
-        let err = dir.swap(member(1), "bad\0name", 0, Some(entry.clone())).unwrap_err();
+        let err = dir
+            .swap(member(1), "bad\0name", 0, Some(entry.clone()))
+            .unwrap_err();
         assert!(matches!(err, DirectoryError::InvalidName { .. }));
 
         // Name too long
@@ -1230,7 +1289,8 @@ mod tests {
 
         for i in 0..3u8 {
             let entry = test_entry(cell(i), EntryKind::Service, &[]);
-            dir.swap(member(1), &format!("s{i}"), 0, Some(entry)).unwrap();
+            dir.swap(member(1), &format!("s{i}"), 0, Some(entry))
+                .unwrap();
         }
 
         // Fourth insert should fail
@@ -1242,9 +1302,27 @@ mod tests {
     #[test]
     fn search_by_tags_filters_correctly() {
         let mut dir = test_directory();
-        dir.swap(member(1), "gpu-compute", 0, Some(test_entry(cell(1), EntryKind::Service, &["compute", "gpu"]))).unwrap();
-        dir.swap(member(1), "cpu-compute", 0, Some(test_entry(cell(2), EntryKind::Service, &["compute", "cpu"]))).unwrap();
-        dir.swap(member(1), "storage", 0, Some(test_entry(cell(3), EntryKind::DataSource, &["storage"]))).unwrap();
+        dir.swap(
+            member(1),
+            "gpu-compute",
+            0,
+            Some(test_entry(cell(1), EntryKind::Service, &["compute", "gpu"])),
+        )
+        .unwrap();
+        dir.swap(
+            member(1),
+            "cpu-compute",
+            0,
+            Some(test_entry(cell(2), EntryKind::Service, &["compute", "cpu"])),
+        )
+        .unwrap();
+        dir.swap(
+            member(1),
+            "storage",
+            0,
+            Some(test_entry(cell(3), EntryKind::DataSource, &["storage"])),
+        )
+        .unwrap();
 
         let results = dir.search_by_tags(member(1), &["compute"]).unwrap();
         assert_eq!(results.len(), 2);
@@ -1257,14 +1335,34 @@ mod tests {
     #[test]
     fn search_by_kind_filters_correctly() {
         let mut dir = test_directory();
-        dir.swap(member(1), "svc1", 0, Some(test_entry(cell(1), EntryKind::Service, &[]))).unwrap();
-        dir.swap(member(1), "svc2", 0, Some(test_entry(cell(2), EntryKind::Service, &[]))).unwrap();
-        dir.swap(member(1), "data1", 0, Some(test_entry(cell(3), EntryKind::DataSource, &[]))).unwrap();
+        dir.swap(
+            member(1),
+            "svc1",
+            0,
+            Some(test_entry(cell(1), EntryKind::Service, &[])),
+        )
+        .unwrap();
+        dir.swap(
+            member(1),
+            "svc2",
+            0,
+            Some(test_entry(cell(2), EntryKind::Service, &[])),
+        )
+        .unwrap();
+        dir.swap(
+            member(1),
+            "data1",
+            0,
+            Some(test_entry(cell(3), EntryKind::DataSource, &[])),
+        )
+        .unwrap();
 
         let results = dir.search_by_kind(member(1), &EntryKind::Service).unwrap();
         assert_eq!(results.len(), 2);
 
-        let results = dir.search_by_kind(member(1), &EntryKind::DataSource).unwrap();
+        let results = dir
+            .search_by_kind(member(1), &EntryKind::DataSource)
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1278,7 +1376,8 @@ mod tests {
         let entry3 = test_entry(cell(3), EntryKind::Service, &[]); // no expiry
 
         dir.swap(member(1), "short-lived", 0, Some(entry1)).unwrap();
-        dir.swap(member(1), "medium-lived", 0, Some(entry2)).unwrap();
+        dir.swap(member(1), "medium-lived", 0, Some(entry2))
+            .unwrap();
         dir.swap(member(1), "permanent", 0, Some(entry3)).unwrap();
 
         assert_eq!(dir.len(), 3);
@@ -1439,8 +1538,20 @@ mod tests {
     #[test]
     fn match_against_directory_finds_entries() {
         let mut dir = test_directory();
-        dir.swap(member(1), "gpu-service", 0, Some(test_entry(cell(1), EntryKind::Service, &["compute", "gpu"]))).unwrap();
-        dir.swap(member(1), "storage-node", 0, Some(test_entry(cell(2), EntryKind::DataSource, &["storage"]))).unwrap();
+        dir.swap(
+            member(1),
+            "gpu-service",
+            0,
+            Some(test_entry(cell(1), EntryKind::Service, &["compute", "gpu"])),
+        )
+        .unwrap();
+        dir.swap(
+            member(1),
+            "storage-node",
+            0,
+            Some(test_entry(cell(2), EntryKind::DataSource, &["storage"])),
+        )
+        .unwrap();
 
         let mut pool = ScopedIntentPool::new(&dir, 100);
 
@@ -1498,7 +1609,8 @@ mod tests {
             compute_ref.clone(),
             Some("Compute services".into()),
             100,
-        ).unwrap();
+        )
+        .unwrap();
 
         meta.register_directory(
             member(1),
@@ -1506,7 +1618,8 @@ mod tests {
             storage_ref.clone(),
             Some("Storage providers".into()),
             101,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Lookup
         let entry = meta.lookup(member(2), "compute").unwrap();
@@ -1637,7 +1750,8 @@ mod tests {
 
         // 2. A factory creates a scoped "compute" directory for a subset of members
         let mut factory = DirectoryFactory::new(cell(0x01), federation(), 500, 50);
-        let compute_members: HashSet<MemberId> = vec![member(1), member(2), member(3)].into_iter().collect();
+        let compute_members: HashSet<MemberId> =
+            vec![member(1), member(2), member(3)].into_iter().collect();
         let mut compute_dir = factory.create_directory(compute_members, 100).unwrap();
 
         // 3. Register the compute directory in the meta-directory
@@ -1646,7 +1760,14 @@ mod tests {
             cell_id: compute_dir.cell_id,
             swiss: [0xCC; 32],
         };
-        meta.register_directory(member(1), "compute", compute_ref, Some("Compute services".into()), 100).unwrap();
+        meta.register_directory(
+            member(1),
+            "compute",
+            compute_ref,
+            Some("Compute services".into()),
+            100,
+        )
+        .unwrap();
 
         // 4. Providers register their services in the compute directory
         let gpu_service_ref = SturdyRef {
@@ -1663,7 +1784,9 @@ mod tests {
             registered_at: 101,
             expires_at: None,
         };
-        compute_dir.swap(member(2), "provider-alpha/gpu", 0, Some(gpu_entry)).unwrap();
+        compute_dir
+            .swap(member(2), "provider-alpha/gpu", 0, Some(gpu_entry))
+            .unwrap();
 
         // 5. A subscriber creates a scoped intent pool and posts a need
         let mut pool = ScopedIntentPool::new(&compute_dir, 100);
@@ -1686,7 +1809,9 @@ mod tests {
         pool.post_intent(need_gpu, 200, &compute_dir).unwrap();
 
         // 6. Matching: the intent finds the GPU service
-        let matches = pool.match_against_directory(&compute_dir, member(1)).unwrap();
+        let matches = pool
+            .match_against_directory(&compute_dir, member(1))
+            .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].1, "provider-alpha/gpu");
 

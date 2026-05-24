@@ -1,7 +1,7 @@
 //! Canonical shared types for the pyana federation protocol.
 //!
 //! This crate defines the ONE TRUE version of cryptographic primitives and
-//! consensus types used across `pyana-wire`, `pyana-store`, `pyana-federation`,
+//! consensus types used across `pyana-wire`, `pyana-persist`, `pyana-federation`,
 //! and other crates.
 //!
 //! # Key invariants
@@ -93,7 +93,7 @@ impl fmt::Display for PublicKey {
 /// Ed25519 signature (64 bytes).
 ///
 /// This is the CORRECT size for Ed25519 signatures. Previous versions of
-/// `pyana-wire` and `pyana-store` incorrectly used 32-byte arrays, which
+/// `pyana-wire` and `pyana-persist` incorrectly used 32-byte arrays, which
 /// truncated signatures and made verification impossible.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Signature(#[serde(with = "serde_64")] pub [u8; 64]);

@@ -8,7 +8,7 @@ use ark_serialize::{
 use zeroize::Zeroize;
 
 use crate::kzg::UniversalParams;
-use crate::snark::{AggregationKey, Curve, PartyError, Proof, VerifierKey, F, G1, G2};
+use crate::snark::{AggregationKey, Curve, F, G1, G2, PartyError, Proof, VerifierKey};
 
 use serde::{Deserialize, Serialize};
 

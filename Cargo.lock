@@ -6534,6 +6534,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-credentials"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "macaroon",
+ "pyana-bridge",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-commit",
+ "pyana-trace",
+ "serde",
+ "thiserror 2.0.18",
+ "token",
+]
+
+[[package]]
 name = "pyana-demo"
 version = "0.1.0"
 dependencies = [
@@ -6587,6 +6603,18 @@ dependencies = [
  "pyana-federation",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pyana-directory"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "pyana-cell",
+ "pyana-dfa",
+ "pyana-types",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -6824,9 +6852,9 @@ dependencies = [
  "pyana-federation",
  "pyana-intent",
  "pyana-net",
+ "pyana-persist",
  "pyana-sdk",
  "pyana-storage",
- "pyana-store",
  "pyana-turn",
  "pyana-types",
  "quinn",
@@ -6858,6 +6886,28 @@ dependencies = [
  "pyana-types",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pyana-persist"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "postcard",
+ "pyana-audit",
+ "pyana-blocklace",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-commit",
+ "pyana-federation",
+ "pyana-types",
+ "redb",
+ "serde",
+ "subtle",
+ "tempfile",
 ]
 
 [[package]]
@@ -6928,6 +6978,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-rbg"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "pyana-cell",
+ "pyana-types",
+]
+
+[[package]]
 name = "pyana-sdk"
 version = "0.1.0"
 dependencies = [
@@ -6970,7 +7029,9 @@ name = "pyana-sdk-consensus-demo"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ed25519-dalek",
  "postcard",
+ "pyana-blocklace",
  "pyana-captp",
  "pyana-cell",
  "pyana-federation",
@@ -6996,28 +7057,6 @@ dependencies = [
  "pyana-cell",
  "pyana-circuit",
  "serde",
-]
-
-[[package]]
-name = "pyana-store"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "ed25519-dalek",
- "getrandom 0.3.4",
- "postcard",
- "pyana-audit",
- "pyana-blocklace",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-federation",
- "pyana-types",
- "redb",
- "serde",
- "subtle",
- "tempfile",
 ]
 
 [[package]]
@@ -7063,9 +7102,9 @@ dependencies = [
  "pyana-federation",
  "pyana-intent",
  "pyana-net",
+ "pyana-persist",
  "pyana-sdk",
  "pyana-storage",
- "pyana-store",
  "pyana-turn",
  "pyana-types",
  "pyana-wire",
@@ -7208,7 +7247,7 @@ dependencies = [
  "pyana-dfa",
  "pyana-dsl-runtime",
  "pyana-federation",
- "pyana-store",
+ "pyana-persist",
  "pyana-turn",
  "pyana-types",
  "rustls-pemfile",

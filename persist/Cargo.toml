@@ -1,5 +1,5 @@
 [package]
-name = "pyana-store"
+name = "pyana-persist"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -32,7 +32,7 @@ pyana-audit = { path = "../audit", optional = true }
 tempfile = "3"
 
 [lib]
-name = "pyana_store"
+name = "pyana_persist"
 crate-type = ["rlib"]
 
 [lints]

@@ -1,0 +1,32 @@
+[package]
+name = "pyana-directory"
+version.workspace = true
+edition.workspace = true
+description = "Pyana directory primitive — register/lookup/revoke/discover for named cells, lifted from rbg::directory and the nameservice / governed-namespace patterns (G32, G33)."
+
+# This crate is the promotion of `rbg::directory::DirectoryCell` +
+# `ScopedIntentPool` + `MetaDirectory` plus the inline registry logic that
+# `apps/nameservice/` and `apps/governed-namespace/` each reinvented, as
+# called out in `PYANA-FLAWS-FROM-APPS.md` G33. It exposes a canonical
+# `Directory` surface (`register`, `lookup`, `revoke`, `discover`) with:
+#
+# 1. A `Directory` trait that wraps the `DirectoryCell` pattern.
+# 2. A `DfaRoutedDirectory` composition that uses the `dfa` crate to
+#    route lookup based on prefix tables (the governed-namespace pattern
+#    of atomic table swaps).
+# 3. Tests covering registration uniqueness, lookup, revocation, and
+#    governance-bound table swaps.
+
+[dependencies]
+pyana-cell = { path = "../cell", default-features = false }
+pyana-types = { path = "../types" }
+pyana-dfa = { path = "../dfa" }
+
+blake3 = "1"
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

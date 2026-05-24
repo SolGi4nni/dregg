@@ -1391,6 +1391,26 @@ impl TurnExecutor {
             };
         }
 
+        // Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.2):
+        //
+        // This path (verify_and_commit_proof) is the proof-carrying path
+        // where `turn.execution_proof` is `Some`. The cell IS the sovereign
+        // cell, but `turn.sovereign_witnesses` is empty for this branch
+        // (mutually exclusive at construction). We set IS_SOVEREIGN_CELL == 1
+        // here because the proof-carrying path is, semantically, a sovereign
+        // turn — it just doesn't carry a Phase-1 witness object. The
+        // WITNESS_KEY_COMMIT / WITNESS_SEQUENCE / transition-proof fields
+        // are populated from the cell's registered owning pubkey + the
+        // federation's stored witness-sequence + the execution_proof itself
+        // (which IS the transition proof in this path).
+        Self::populate_sovereign_witness_pi(
+            &mut public_inputs,
+            cell_id,
+            turn,
+            ledger,
+            /* execution_proof_carrying = */ true,
+        );
+
         // Append custom proof entries (vk_hash + proof_commitment per custom effect).
         let mut custom_idx = 0;
         for effect in &vm_effects {
