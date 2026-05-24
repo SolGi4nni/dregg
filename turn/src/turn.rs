@@ -130,31 +130,52 @@ pub struct Turn {
 }
 
 impl Turn {
-    // REVIEW[wallet-coord]: P1-1 / P2-1 (AUDIT-turn-executor.md) and P2-10
-    // (AUDIT-wallet.md) report that `Turn::hash()` excludes
-    // `execution_proof`, `execution_proof_cell`, `execution_proof_new_commitment`,
-    // `sovereign_witnesses`, `conservation_proof`, and `custom_program_proofs`.
-    // An attacker with write-access to the in-flight SignedTurn can swap any of
-    // these without invalidating the signature. The coordinated fix bumps the
-    // domain tag to `pyana-turn-v3:`, extends this hash to cover the
-    // semantically-load-bearing fields, AND updates `compute_turn_bytes` in
-    // wallet/src/signer.rs so the executor and wallet derive the same hash.
-    // Bumping the tag here without the wallet change will reject every wallet
-    // turn -- they must land together.
+    // Stage 7-α (R-2 closure / EFFECT-VM-SHAPE-A.md §Receipts): the v3 domain
+    // tag covers every semantically load-bearing field on `Turn`, including
+    // the execution-proof bundle (`execution_proof`,
+    // `execution_proof_cell`, `execution_proof_new_commitment`),
+    // `sovereign_witnesses`, `conservation_proof`, and
+    // `custom_program_proofs`. The v2 form excluded those, so an attacker
+    // with write-access to an in-flight `SignedTurn` could swap any of
+    // them without invalidating the signature (the "proof-swap attack").
+    //
+    // Note for callers: this hash is a content-addressed identifier for
+    // the entire `Turn` object. The wallet still signs over its own
+    // `compute_turn_bytes` (sdk/src/wallet.rs) which deliberately covers
+    // only the fields a wallet sees at sign time; `Turn::hash` is what
+    // the executor, receipt chain, and (post-Stage 7-γ.0) the per-cell
+    // proof bundle agree on after the fact. Wallet signature compatibility
+    // is therefore preserved by this bump.
     pub fn hash(&self) -> [u8; 32] {
         let forest_hash = self.call_forest.compute_hash();
         let mut hasher = blake3::Hasher::new();
         // Domain separation: prevents type confusion with other hash preimages.
-        hasher.update(b"pyana-turn-v2:");
+        hasher.update(b"pyana-turn-v3:");
         hasher.update(self.agent.as_bytes());
         hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&forest_hash);
         hasher.update(&self.fee.to_le_bytes());
-        if let Some(ref memo) = self.memo {
-            hasher.update(memo.as_bytes());
+        // Length-prefix the optional memo so the boundary cannot be confused
+        // with subsequent fields.
+        match &self.memo {
+            Some(memo) => {
+                hasher.update(&[1u8]);
+                let memo_bytes = memo.as_bytes();
+                hasher.update(&(memo_bytes.len() as u64).to_le_bytes());
+                hasher.update(memo_bytes);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
         }
-        if let Some(valid_until) = self.valid_until {
-            hasher.update(&valid_until.to_le_bytes());
+        match self.valid_until {
+            Some(valid_until) => {
+                hasher.update(&[1u8]);
+                hasher.update(&valid_until.to_le_bytes());
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
         }
         // Include depends_on to prevent dependency malleability.
         hasher.update(&(self.depends_on.len() as u64).to_le_bytes());
@@ -166,6 +187,85 @@ impl Turn {
             Some(h) => {
                 hasher.update(&[1u8]);
                 hasher.update(h);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        // --- v3 additions: execution-proof + witness bundle ---
+        // execution_proof: opaque proof bytes; hash with presence tag and
+        // length prefix so a swap to a different-length proof is caught.
+        match &self.execution_proof {
+            Some(bytes) => {
+                hasher.update(&[1u8]);
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        // execution_proof_cell: which sovereign cell the proof binds.
+        match &self.execution_proof_cell {
+            Some(cell) => {
+                hasher.update(&[1u8]);
+                hasher.update(cell.as_bytes());
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        // execution_proof_new_commitment: post-state commitment claimed.
+        match &self.execution_proof_new_commitment {
+            Some(commit) => {
+                hasher.update(&[1u8]);
+                hasher.update(commit);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        // conservation_proof: serialized Schnorr proof bytes.
+        match &self.conservation_proof {
+            Some(bytes) => {
+                hasher.update(&[1u8]);
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        // sovereign_witnesses: map of (CellId -> SovereignCellWitness).
+        // Sort entries by cell ID for canonical ordering. We bind each
+        // witness via its (state_proof, cell-state-commitment) tuple
+        // rather than re-serialising the full Cell — both are the
+        // load-bearing 32-byte commitments the executor checks anyway,
+        // and this keeps the hash insensitive to serde representation
+        // drift inside `Cell`.
+        let mut sw_entries: Vec<(&CellId, &SovereignCellWitness)> =
+            self.sovereign_witnesses.iter().collect();
+        sw_entries.sort_by_key(|(cell, _)| *cell.as_bytes());
+        hasher.update(&(sw_entries.len() as u64).to_le_bytes());
+        for (cell, witness) in sw_entries {
+            hasher.update(cell.as_bytes());
+            hasher.update(&witness.state_proof);
+            hasher.update(&witness.cell_state.state_commitment());
+        }
+        // custom_program_proofs: ordered Vec; bind each proof's bytes and
+        // its public-inputs vector.
+        match &self.custom_program_proofs {
+            Some(proofs) => {
+                hasher.update(&[1u8]);
+                hasher.update(&(proofs.len() as u64).to_le_bytes());
+                for proof in proofs {
+                    hasher.update(&(proof.proof_bytes.len() as u64).to_le_bytes());
+                    hasher.update(&proof.proof_bytes);
+                    hasher.update(&(proof.public_inputs.len() as u64).to_le_bytes());
+                    for pi in &proof.public_inputs {
+                        hasher.update(&pi.to_le_bytes());
+                    }
+                }
             }
             None => {
                 hasher.update(&[0u8]);
@@ -376,5 +476,38 @@ impl TurnReceipt {
             }
         }
         *hasher.finalize().as_bytes()
+    }
+
+    /// Canonical message the executor signs to populate
+    /// [`Self::executor_signature`].
+    ///
+    /// Per `EFFECT-VM-SHAPE-A.md` Stage 9 R-4, the executor's signature is a
+    /// domain-separated commitment to the receipt's load-bearing state
+    /// transition — turn identity, the pre/post state pair it claims to advance,
+    /// and the wall-clock the executor saw when committing it. This is
+    /// deliberately **narrower** than [`Self::receipt_hash`]: a downstream
+    /// verifier that does not understand `routing_directives`,
+    /// `derivation_records`, etc. can still recover the executor's intent (this
+    /// turn took the agent from `pre_state_hash` to `post_state_hash`).
+    ///
+    /// The signed bytes are:
+    /// ```text
+    /// "executor-receipt-sig-v1:" || turn_hash || pre_state_hash
+    ///                            || post_state_hash || timestamp_le
+    /// ```
+    ///
+    /// `timestamp` plays the role the master plan called `block_height` — it is
+    /// the executor's monotonic clock at commit time, which is the field
+    /// present on `TurnReceipt` and the right binding for the executor's view
+    /// of "when did this happen".
+    pub fn canonical_executor_signed_message(&self) -> Vec<u8> {
+        const DOMAIN: &[u8] = b"executor-receipt-sig-v1:";
+        let mut msg = Vec::with_capacity(DOMAIN.len() + 32 + 32 + 32 + 8);
+        msg.extend_from_slice(DOMAIN);
+        msg.extend_from_slice(&self.turn_hash);
+        msg.extend_from_slice(&self.pre_state_hash);
+        msg.extend_from_slice(&self.post_state_hash);
+        msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        msg
     }
 }
