@@ -39,6 +39,7 @@ proptest! {
         let (mut ledger, ids) = build_open_ledger(&spec);
         let agent = ids[0];
         let executor = TurnExecutor::new(ComputronCosts::zero());
+        let mut prev_receipt_hash: Option<[u8; 32]> = None;
 
         for expected_pre_nonce in 0u64..(k as u64) {
             // The on-ledger nonce must match what we expect to submit.
@@ -50,7 +51,7 @@ proptest! {
                 expected_pre_nonce,
             );
 
-            let turn = build_no_op_turn(agent, actual_nonce, None);
+            let turn = build_no_op_turn(agent, actual_nonce, prev_receipt_hash);
             let result = executor.execute(&turn, &mut ledger);
             prop_assert!(
                 result.is_committed(),
@@ -58,6 +59,12 @@ proptest! {
                 expected_pre_nonce,
                 result,
             );
+
+            // Thread the receipt chain forward so the next turn passes the
+            // executor's ReceiptChainMismatch enforcement.
+            if let pyana_turn::TurnResult::Committed { ref receipt, .. } = result {
+                prev_receipt_hash = Some(receipt.receipt_hash());
+            }
 
             let post_nonce = ledger.get(&agent).unwrap().state.nonce();
             prop_assert_eq!(
@@ -83,12 +90,18 @@ proptest! {
         let agent = ids[0];
         let executor = TurnExecutor::new(ComputronCosts::zero());
 
-        // Advance the agent's nonce to some non-zero value.
+        // Advance the agent's nonce to some non-zero value, threading the
+        // receipt chain so each successive turn passes the executor's
+        // ReceiptChainMismatch enforcement.
+        let mut prev_receipt_hash: Option<[u8; 32]> = None;
         for _ in 0..5 {
             let n = ledger.get(&agent).unwrap().state.nonce();
-            let turn = build_no_op_turn(agent, n, None);
+            let turn = build_no_op_turn(agent, n, prev_receipt_hash);
             let res = executor.execute(&turn, &mut ledger);
             prop_assert!(res.is_committed());
+            if let pyana_turn::TurnResult::Committed { ref receipt, .. } = res {
+                prev_receipt_hash = Some(receipt.receipt_hash());
+            }
         }
         let nonce_before = ledger.get(&agent).unwrap().state.nonce();
         prop_assert_eq!(nonce_before, 5);
@@ -103,7 +116,9 @@ proptest! {
         // legitimately succeed; the strategy excludes that.
         prop_assume!(stale_nonce < nonce_before);
 
-        let turn = build_no_op_turn(agent, stale_nonce, None);
+        // Stale nonce: pass the current prev_receipt_hash so the rejection
+        // is driven by nonce mismatch, not ReceiptChainMismatch.
+        let turn = build_no_op_turn(agent, stale_nonce, prev_receipt_hash);
         let result = executor.execute(&turn, &mut ledger);
         prop_assert!(
             matches!(result, TurnResult::Rejected { .. }),
