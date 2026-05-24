@@ -1,0 +1,127 @@
+//! `pyana-verifier`: Standalone Effect VM proof verifier.
+//!
+//! # Usage
+//!
+//! ## CLI mode
+//! ```text
+//! pyana-verifier \
+//!   --proof /path/to/proof.bin \
+//!   --pi /path/to/pi.json \
+//!   --vk-hash 8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a
+//! ```
+//!
+//! ## stdin (JSON) mode
+//! ```text
+//! echo '{"proof_hex":"...","public_inputs":[...],"vk_hash":"auto"}' | pyana-verifier
+//! ```
+//!
+//! ## Exit codes
+//! - 0 — proof verified
+//! - 1 — proof rejected (cryptographically invalid)
+//! - 2 — error (bad inputs, unknown VK, deserialisation failure)
+//!
+//! # Isolation guarantee
+//! This binary imports ONLY `pyana-circuit` and `pyana-types`. It carries no
+//! prover state, no ledger, no executor, no program registry. The only
+//! dependencies on shared context are the bytes it reads from disk / stdin.
+
+use pyana_verifier::{
+    JsonRequest, VerifierOutput, exit_code, parse_public_inputs_json, verify_effect_vm_proof,
+};
+use std::{
+    env,
+    io::{self, Read},
+    process,
+};
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    // Detect JSON-stdin mode: no args, or stdin is not a tty.
+    // We use the simple heuristic: if no flags given, read stdin.
+    let (proof_bytes, pi_u32, vk_hash) = if args.len() == 1 {
+        match read_json_stdin() {
+            Ok(t) => t,
+            Err(e) => {
+                let out = VerifierOutput::reject(format!("stdin read error: {}", e));
+                print_and_exit(out, exit_code::ERROR);
+            }
+        }
+    } else {
+        match parse_cli(&args[1..]) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Usage: pyana-verifier --proof <file> --pi <file> --vk-hash <hex>");
+                eprintln!("       pyana-verifier  (reads JSON from stdin)");
+                eprintln!("Error: {}", e);
+                process::exit(exit_code::ERROR);
+            }
+        }
+    };
+
+    let (output, code) = verify_effect_vm_proof(&proof_bytes, &pi_u32, &vk_hash);
+    print_and_exit(output, code);
+}
+
+fn print_and_exit(output: VerifierOutput, code: i32) -> ! {
+    let json = serde_json::to_string(&output)
+        .unwrap_or_else(|_| r#"{"verified":false,"reason":"serialisation error"}"#.to_string());
+    println!("{}", json);
+    process::exit(code);
+}
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing (no external parser dep)
+// ---------------------------------------------------------------------------
+
+fn parse_cli(args: &[String]) -> Result<(Vec<u8>, Vec<u32>, String), String> {
+    let mut proof_path: Option<&str> = None;
+    let mut pi_path: Option<&str> = None;
+    let mut vk_hash: Option<&str> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--proof" => {
+                i += 1;
+                proof_path = Some(args.get(i).ok_or("--proof requires a value")?);
+            }
+            "--pi" => {
+                i += 1;
+                pi_path = Some(args.get(i).ok_or("--pi requires a value")?);
+            }
+            "--vk-hash" => {
+                i += 1;
+                vk_hash = Some(args.get(i).ok_or("--vk-hash requires a value")?);
+            }
+            other => return Err(format!("unknown flag: {}", other)),
+        }
+        i += 1;
+    }
+
+    let proof_path = proof_path.ok_or("--proof is required")?;
+    let pi_path = pi_path.ok_or("--pi is required")?;
+    let vk_hash = vk_hash.ok_or("--vk-hash is required")?;
+
+    let proof_bytes =
+        std::fs::read(proof_path).map_err(|e| format!("cannot read proof file: {}", e))?;
+    let pi_json =
+        std::fs::read_to_string(pi_path).map_err(|e| format!("cannot read pi file: {}", e))?;
+    let pi_u32 = parse_public_inputs_json(&pi_json)?;
+
+    Ok((proof_bytes, pi_u32, vk_hash.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// JSON stdin mode
+// ---------------------------------------------------------------------------
+
+fn read_json_stdin() -> Result<(Vec<u8>, Vec<u32>, String), String> {
+    let mut buf = String::new();
+    io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("stdin read error: {}", e))?;
+    let req = JsonRequest::parse(&buf)?;
+    let proof_bytes = req.proof_bytes()?;
+    Ok((proof_bytes, req.public_inputs, req.vk_hash))
+}

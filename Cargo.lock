@@ -6948,6 +6948,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-protocol-tests"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "proptest",
+ "pyana-cell",
+ "pyana-turn",
+ "pyana-types",
+ "serde",
+]
+
+[[package]]
 name = "pyana-sdk"
 version = "0.1.0"
 dependencies = [
@@ -7148,6 +7160,18 @@ dependencies = [
  "postcard",
  "serde",
  "zeroize",
+]
+
+[[package]]
+name = "pyana-verifier"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "pyana-circuit",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

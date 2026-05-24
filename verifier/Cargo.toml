@@ -1,0 +1,30 @@
+[package]
+name = "pyana-verifier"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Standalone Effect VM proof verifier — no shared state with the prover"
+
+[[bin]]
+name = "pyana-verifier"
+path = "src/main.rs"
+
+[dependencies]
+pyana-circuit = { path = "../circuit" }
+pyana-types = { path = "../types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = "0.4"
+
+[dev-dependencies]
+pyana-circuit = { path = "../circuit" }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+hex = "0.4"
+
+[lints]
+workspace = true
