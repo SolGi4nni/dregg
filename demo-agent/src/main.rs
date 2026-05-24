@@ -200,7 +200,7 @@ fn main() {
         delegate: AuthRequired::None,
         access: AuthRequired::None,
     };
-    let issuer_id = issuer_cell.id;
+    let issuer_id = issuer_cell.id();
     ledger.insert_cell(issuer_cell).unwrap();
 
     // Agent cell: needs proof authorization to access the target
@@ -216,7 +216,7 @@ fn main() {
         delegate: AuthRequired::None,
         access: AuthRequired::None,
     };
-    let agent_id = agent_cell.id;
+    let agent_id = agent_cell.id();
     ledger.insert_cell(agent_cell).unwrap();
 
     // Target cell: requires PROOF authorization for state mutations
@@ -238,7 +238,7 @@ fn main() {
         *blake3::hash(&federation_root_bytes).as_bytes(),
         federation_root_bytes.to_vec(),
     ));
-    let target_id = target_cell.id;
+    let target_id = target_cell.id();
     ledger.insert_cell(target_cell).unwrap();
 
     item(&format!(

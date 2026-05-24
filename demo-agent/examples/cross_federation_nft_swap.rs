@@ -113,10 +113,10 @@ fn main() {
     let mut fed_alpha = Ledger::new();
     let mut alice_alpha = Cell::with_balance([0xA1; 32], token_id, 5000);
     alice_alpha.permissions = open_permissions();
-    let alice_alpha_id = alice_alpha.id;
+    let alice_alpha_id = alice_alpha.id();
     let mut bob_alpha = Cell::with_balance([0xB1; 32], token_id, 0);
     bob_alpha.permissions = open_permissions();
-    let bob_alpha_id = bob_alpha.id;
+    let bob_alpha_id = bob_alpha.id();
     alice_alpha
         .capabilities
         .grant(bob_alpha_id, AuthRequired::None);
@@ -127,10 +127,10 @@ fn main() {
     let mut fed_beta = Ledger::new();
     let mut alice_beta = Cell::with_balance([0xA2; 32], token_id, 0);
     alice_beta.permissions = open_permissions();
-    let alice_beta_id = alice_beta.id;
+    let alice_beta_id = alice_beta.id();
     let mut bob_beta = Cell::with_balance([0xB2; 32], token_id, 1); // Bob has the NFT
     bob_beta.permissions = open_permissions();
-    let bob_beta_id = bob_beta.id;
+    let bob_beta_id = bob_beta.id();
     bob_beta
         .capabilities
         .grant(alice_beta_id, AuthRequired::None);
@@ -251,14 +251,14 @@ fn main() {
     println!("  Federation Beta state after Bob's turn:");
     println!(
         "    Alice NFTs: {} (was 0) [RECEIVED]",
-        alice_beta_cell.state.balance
+        alice_beta_cell.state.balance()
     );
     println!(
         "    Bob NFTs:   {} (was 1) [SENT]",
-        bob_beta_cell.state.balance
+        bob_beta_cell.state.balance()
     );
-    assert_eq!(alice_beta_cell.state.balance, 1);
-    assert_eq!(bob_beta_cell.state.balance, 0);
+    assert_eq!(alice_beta_cell.state.balance(), 1);
+    assert_eq!(bob_beta_cell.state.balance(), 0);
     println!();
 
     // =========================================================================
@@ -298,14 +298,14 @@ fn main() {
     println!("  Federation Alpha state after resolution:");
     println!(
         "    Alice balance: {} computrons (was 5000) [PAID]",
-        alice_alpha_cell.state.balance
+        alice_alpha_cell.state.balance()
     );
     println!(
         "    Bob balance:   {} computrons (was 0) [RECEIVED]",
-        bob_alpha_cell.state.balance
+        bob_alpha_cell.state.balance()
     );
-    assert_eq!(alice_alpha_cell.state.balance, 4000);
-    assert_eq!(bob_alpha_cell.state.balance, 1000);
+    assert_eq!(alice_alpha_cell.state.balance(), 4000);
+    assert_eq!(bob_alpha_cell.state.balance(), 1000);
     println!();
     println!("  ┌─────────────────────────────────────────────────────────────┐");
     println!("  │  ATOMIC SWAP COMPLETE                                       │");
@@ -330,10 +330,10 @@ fn main() {
     let mut fed_gamma = Ledger::new();
     let mut charlie = Cell::with_balance([0xC1; 32], token_id, 3000);
     charlie.permissions = open_permissions();
-    let charlie_id = charlie.id;
+    let charlie_id = charlie.id();
     let mut dave = Cell::with_balance([0xD1; 32], token_id, 0);
     dave.permissions = open_permissions();
-    let dave_id = dave.id;
+    let dave_id = dave.id();
     charlie.capabilities.grant(dave_id, AuthRequired::None);
     fed_gamma.insert_cell(charlie).unwrap();
     fed_gamma.insert_cell(dave).unwrap();
@@ -401,10 +401,10 @@ fn main() {
     }
 
     let charlie_cell = fed_gamma.get(&charlie_id).unwrap();
-    assert_eq!(charlie_cell.state.balance, 3000);
+    assert_eq!(charlie_cell.state.balance(), 3000);
     println!(
         "    Charlie balance: {} (unchanged)",
-        charlie_cell.state.balance
+        charlie_cell.state.balance()
     );
     println!();
     println!("  This is the SAFETY guarantee: if your counterparty disappears,");
@@ -476,10 +476,10 @@ fn main() {
     }
 
     let charlie_cell = fed_gamma.get(&charlie_id).unwrap();
-    assert_eq!(charlie_cell.state.balance, 3000);
+    assert_eq!(charlie_cell.state.balance(), 3000);
     println!(
         "    Charlie balance: {} (unchanged — no invalid proof can steal funds)",
-        charlie_cell.state.balance
+        charlie_cell.state.balance()
     );
     println!();
 

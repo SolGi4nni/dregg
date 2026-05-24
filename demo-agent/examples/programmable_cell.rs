@@ -194,7 +194,7 @@ fn main() {
 
     // Create the agent cell (has balance to pay fees).
     let mut agent_cell = Cell::with_balance(agent_pubkey, token_id, 100_000);
-    let agent_id = agent_cell.id;
+    let agent_id = agent_cell.id();
     // Agent allows everything on itself (no auth required for any action).
     agent_cell.permissions = Permissions {
         send: AuthRequired::None,
@@ -210,7 +210,7 @@ fn main() {
     // Create the proof-protected target cell.
     let target_pubkey = [0xBB; 32];
     let mut target_cell = Cell::new(target_pubkey, token_id);
-    let target_id = target_cell.id;
+    let target_id = target_cell.id();
     target_cell.program = circuit_program.clone();
     // Requires Proof auth for state changes, None for access/receive.
     target_cell.permissions = Permissions {
@@ -302,8 +302,8 @@ fn main() {
     // Reset the agent's nonce and balance for the next test.
     // (The fee was already deducted even on rejection.)
     let agent = ledger.get_mut(&agent_id).unwrap();
-    agent.state.nonce = 0;
-    agent.state.balance = 100_000;
+    agent.state.set_nonce(0);
+    agent.state.set_balance(100_000);
 
     // --- Case 3B: Turn WITH valid proof (accepted) ---
     println!("  Case 3B: Turn with valid STARK proof");
@@ -394,7 +394,7 @@ fn main() {
 
     // Reset for next test.
     let agent = ledger.get_mut(&agent_id).unwrap();
-    let current_nonce = agent.state.nonce;
+    let current_nonce = agent.state.nonce();
 
     let mut invalid_proof = vec![0u8; 128];
     invalid_proof[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // Wrong prefix

@@ -124,14 +124,14 @@ fn main() {
     let budget_ledger = make_open_cell(0x07, 10_000_000); // holds the budget pool
     let audit_log = make_open_cell(0x08, 50_000);
 
-    let dev_id = developer.id;
-    let agent_id = agent_runtime.id;
-    let registry_id = model_registry.id;
-    let gateway_id = gateway_router.id;
-    let provider_id = inference_provider.id;
-    let tool_id = tool_provider.id;
-    let budget_id = budget_ledger.id;
-    let audit_id = audit_log.id;
+    let dev_id = developer.id();
+    let agent_id = agent_runtime.id();
+    let registry_id = model_registry.id();
+    let gateway_id = gateway_router.id();
+    let provider_id = inference_provider.id();
+    let tool_id = tool_provider.id();
+    let budget_id = budget_ledger.id();
+    let audit_id = audit_log.id();
 
     let cell_names = [
         (dev_id, "Developer"),

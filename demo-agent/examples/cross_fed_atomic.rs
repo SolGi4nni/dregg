@@ -88,10 +88,10 @@ fn main() {
 
     let mut alice_a = Cell::with_balance(alice_a_pk, token_id, 1000);
     alice_a.permissions = open_permissions();
-    let alice_a_id = alice_a.id;
+    let alice_a_id = alice_a.id();
     let mut bob_a = Cell::with_balance(bob_a_pk, token_id, 0);
     bob_a.permissions = open_permissions();
-    let bob_a_id = bob_a.id;
+    let bob_a_id = bob_a.id();
     alice_a.capabilities.grant(bob_a_id, AuthRequired::None);
 
     fed_a_ledger.insert_cell(alice_a).unwrap();
@@ -107,10 +107,10 @@ fn main() {
 
     let mut alice_b = Cell::with_balance(alice_b_pk, token_id, 0);
     alice_b.permissions = open_permissions();
-    let alice_b_id = alice_b.id;
+    let alice_b_id = alice_b.id();
     let mut bob_b = Cell::with_balance(bob_b_pk, token_id, 1);
     bob_b.permissions = open_permissions();
-    let bob_b_id = bob_b.id;
+    let bob_b_id = bob_b.id();
     bob_b.capabilities.grant(alice_b_id, AuthRequired::None);
 
     fed_b_ledger.insert_cell(alice_b).unwrap();
@@ -195,10 +195,10 @@ fn main() {
     let alice_b_cell = fed_b_ledger.get(&alice_b_id).unwrap();
     let bob_b_cell = fed_b_ledger.get(&bob_b_id).unwrap();
     println!("  Fed B state after:");
-    println!("    Alice NFTs: {} (was 0)", alice_b_cell.state.balance);
-    println!("    Bob NFTs:   {} (was 1)", bob_b_cell.state.balance);
-    assert_eq!(alice_b_cell.state.balance, 1);
-    assert_eq!(bob_b_cell.state.balance, 0);
+    println!("    Alice NFTs: {} (was 0)", alice_b_cell.state.balance());
+    println!("    Bob NFTs:   {} (was 1)", bob_b_cell.state.balance());
+    assert_eq!(alice_b_cell.state.balance(), 1);
+    assert_eq!(bob_b_cell.state.balance(), 0);
 
     // ─── Step 4: Alice resolves her conditional using Bob's receipt ──────────
 
@@ -231,11 +231,11 @@ fn main() {
     println!("  Fed A state after:");
     println!(
         "    Alice balance: {} (was 1000)",
-        alice_a_cell.state.balance
+        alice_a_cell.state.balance()
     );
-    println!("    Bob balance:   {} (was 0)", bob_a_cell.state.balance);
-    assert_eq!(alice_a_cell.state.balance, 900);
-    assert_eq!(bob_a_cell.state.balance, 100);
+    println!("    Bob balance:   {} (was 0)", bob_a_cell.state.balance());
+    assert_eq!(alice_a_cell.state.balance(), 900);
+    assert_eq!(bob_a_cell.state.balance(), 100);
 
     println!("\n  ATOMIC SWAP COMPLETE:");
     println!("    Alice gave 100 tokens (Fed A) and received 1 NFT (Fed B)");
@@ -251,10 +251,10 @@ fn main() {
 
     let mut charlie = Cell::with_balance(charlie_pk, token_id, 500);
     charlie.permissions = open_permissions();
-    let charlie_id = charlie.id;
+    let charlie_id = charlie.id();
     let mut dave = Cell::with_balance(dave_pk, token_id, 0);
     dave.permissions = open_permissions();
-    let dave_id = dave.id;
+    let dave_id = dave.id();
     charlie.capabilities.grant(dave_id, AuthRequired::None);
     fed_c_ledger.insert_cell(charlie).unwrap();
     fed_c_ledger.insert_cell(dave).unwrap();
@@ -299,8 +299,8 @@ fn main() {
 
     let charlie_cell = fed_c_ledger.get(&charlie_id).unwrap();
     let dave_cell = fed_c_ledger.get(&dave_id).unwrap();
-    assert_eq!(charlie_cell.state.balance, 500);
-    assert_eq!(dave_cell.state.balance, 0);
+    assert_eq!(charlie_cell.state.balance(), 500);
+    assert_eq!(dave_cell.state.balance(), 0);
     println!("  Balances unchanged: Charlie=500, Dave=0");
 
     // ─── Step 6: Demonstrate invalid proof rejection ────────────────────────
@@ -327,7 +327,7 @@ fn main() {
     }
 
     let charlie_cell = fed_c_ledger.get(&charlie_id).unwrap();
-    assert_eq!(charlie_cell.state.balance, 500);
+    assert_eq!(charlie_cell.state.balance(), 500);
     println!("  Balances unchanged: Charlie=500, Dave=0");
 
     // ─── Step 7: Successful preimage reveal ─────────────────────────────────
@@ -373,10 +373,10 @@ fn main() {
     let dave_cell = fed_c_ledger.get(&dave_id).unwrap();
     println!(
         "  Balances after: Charlie={}, Dave={}",
-        charlie_cell.state.balance, dave_cell.state.balance
+        charlie_cell.state.balance(), dave_cell.state.balance()
     );
-    assert_eq!(charlie_cell.state.balance, 300);
-    assert_eq!(dave_cell.state.balance, 200);
+    assert_eq!(charlie_cell.state.balance(), 300);
+    assert_eq!(dave_cell.state.balance(), 200);
 
     // ─── Step 8: Demonstrate RemoteProof condition ──────────────────────────
 

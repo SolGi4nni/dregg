@@ -81,14 +81,14 @@ fn main() {
 
     // Create parent and 3 service cells.
     let mut parent = make_open_cell(1, 1_000_000);
-    let parent_id = parent.id;
+    let parent_id = parent.id();
 
     let service_a = make_open_cell(10, 0);
     let service_b = make_open_cell(11, 0);
     let service_c = make_open_cell(12, 0);
-    let svc_a_id = service_a.id;
-    let svc_b_id = service_b.id;
-    let svc_c_id = service_c.id;
+    let svc_a_id = service_a.id();
+    let svc_b_id = service_b.id();
+    let svc_c_id = service_c.id();
 
     // Parent holds capabilities to all 3 services.
     parent.capabilities.grant(svc_a_id, AuthRequired::None);
@@ -167,7 +167,7 @@ fn main() {
     println!("Step 2: Child uses delegated cap to write to Service A");
 
     // Give child some balance.
-    ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
+    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
 
     let value = [0xAA; 32];
     let child_write = Action {
@@ -199,7 +199,7 @@ fn main() {
     println!("Step 3: Parent gains capability to new Service D");
 
     let service_d = make_open_cell(13, 0);
-    let svc_d_id = service_d.id;
+    let svc_d_id = service_d.id();
     ledger.insert_cell(service_d).unwrap();
     ledger
         .get_mut(&parent_id)
@@ -212,7 +212,7 @@ fn main() {
 
     // Child tries to use Service D.
     // Note: Even failed turns consume the nonce (Phase 1 is never rolled back).
-    let child_nonce = ledger.get(&child_id).unwrap().state.nonce;
+    let child_nonce = ledger.get(&child_id).unwrap().state.nonce();
     let child_try_d = Action {
         target: svc_d_id,
         method: symbol("use_d"),
@@ -238,7 +238,7 @@ fn main() {
     println!("Step 4: Child refreshes delegation (picks up Service D)");
     executor.set_timestamp(2000);
 
-    let child_nonce = ledger.get(&child_id).unwrap().state.nonce;
+    let child_nonce = ledger.get(&child_id).unwrap().state.nonce();
     let refresh = Action {
         target: child_id,
         method: symbol("refresh_delegation"),
@@ -268,7 +268,7 @@ fn main() {
     println!("  Refreshed at: {}", delegation.refreshed_at);
 
     // Now child can use Service D.
-    let child_nonce = ledger.get(&child_id).unwrap().state.nonce;
+    let child_nonce = ledger.get(&child_id).unwrap().state.nonce();
     let child_use_d = Action {
         target: svc_d_id,
         method: symbol("use_d"),
@@ -304,7 +304,7 @@ fn main() {
         .capabilities
         .grant(child_id, AuthRequired::None);
 
-    let parent_nonce = ledger.get(&parent_id).unwrap().state.nonce;
+    let parent_nonce = ledger.get(&parent_id).unwrap().state.nonce();
     let revoke = Action {
         target: parent_id,
         method: symbol("revoke_worker"),
@@ -325,7 +325,7 @@ fn main() {
     let child = ledger.get(&child_id).unwrap();
     println!(
         "  Parent delegation_epoch: {}",
-        parent.state.delegation_epoch
+        parent.state.delegation_epoch()
     );
     println!(
         "  Child delegation: {:?}",
@@ -334,7 +334,7 @@ fn main() {
     println!("  Child delegation cleared: {}", child.delegation.is_none());
 
     // Child tries to use Service A again — now fails (delegation cleared).
-    let child_nonce = ledger.get(&child_id).unwrap().state.nonce;
+    let child_nonce = ledger.get(&child_id).unwrap().state.nonce();
     let child_try_a = Action {
         target: svc_a_id,
         method: symbol("write_again"),

@@ -93,8 +93,8 @@ fn main() {
 
     let cell_alice = make_open_cell(pk_alice, 1_000_000);
     let cell_bob = make_open_cell(pk_bob, 1_000_000);
-    let id_alice = cell_alice.id;
-    let id_bob = cell_bob.id;
+    let id_alice = cell_alice.id();
+    let id_bob = cell_bob.id();
 
     ledger.insert_cell(cell_alice).unwrap();
     ledger.insert_cell(cell_bob).unwrap();
@@ -197,8 +197,8 @@ fn main() {
     }
 
     // Verify final balances.
-    let alice_balance = ledger.get(&id_alice).unwrap().state.balance;
-    let bob_balance = ledger.get(&id_bob).unwrap().state.balance;
+    let alice_balance = ledger.get(&id_alice).unwrap().state.balance();
+    let bob_balance = ledger.get(&id_bob).unwrap().state.balance();
     println!();
     println!("  Final balances:");
     println!(
@@ -325,8 +325,8 @@ fn main() {
     }
 
     // A still committed -- partial success.
-    let alice2_balance = ledger2.get(&id_alice).unwrap().state.balance;
-    let bob2_balance = ledger2.get(&id_bob).unwrap().state.balance;
+    let alice2_balance = ledger2.get(&id_alice).unwrap().state.balance();
+    let bob2_balance = ledger2.get(&id_bob).unwrap().state.balance();
     println!();
     println!("  Final balances (partial pipeline success):");
     println!("    Alice: {} (1,000,000 - 100 = 999,900)", alice2_balance);
@@ -348,8 +348,8 @@ fn main() {
     let cell_b3 = make_open_cell(pk_bob, 1_000_000);
     let cell_c3 = make_open_cell(pk_c, 1_000_000);
     let cell_d3 = make_open_cell(pk_d, 1_000_000);
-    let id_c = cell_c3.id;
-    let id_d = cell_d3.id;
+    let id_c = cell_c3.id();
+    let id_d = cell_d3.id();
     ledger3.insert_cell(cell_a3).unwrap();
     ledger3.insert_cell(cell_b3).unwrap();
     ledger3.insert_cell(cell_c3).unwrap();

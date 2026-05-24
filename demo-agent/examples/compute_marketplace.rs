@@ -376,11 +376,11 @@ fn main() {
     println!(
         "  Client balance: {} -> {}",
         100_000,
-        ledger.get(&client_id).unwrap().state.balance
+        ledger.get(&client_id).unwrap().state.balance()
     );
     println!(
         "  Escrow balance: {}",
-        ledger.get(&escrow_id).unwrap().state.balance
+        ledger.get(&escrow_id).unwrap().state.balance()
     );
 
     // Verify escrow program constraints hold
@@ -554,9 +554,9 @@ fn main() {
     }
 
     // Verify final balances
-    let client_final = ledger.get(&client_id).unwrap().state.balance;
-    let provider_final = ledger.get(&winner_id).unwrap().state.balance;
-    let escrow_final = ledger.get(&escrow_id).unwrap().state.balance;
+    let client_final = ledger.get(&client_id).unwrap().state.balance();
+    let provider_final = ledger.get(&winner_id).unwrap().state.balance();
+    let escrow_final = ledger.get(&escrow_id).unwrap().state.balance();
 
     println!();
     println!("  Post-settlement state:");
@@ -611,12 +611,12 @@ fn main() {
     );
 
     // Conservation of value
-    let total_value: u64 = ledger.get(&client_id).unwrap().state.balance
-        + ledger.get(&winner_id).unwrap().state.balance
-        + ledger.get(&escrow_id).unwrap().state.balance;
+    let total_value: u64 = ledger.get(&client_id).unwrap().state.balance()
+        + ledger.get(&winner_id).unwrap().state.balance()
+        + ledger.get(&escrow_id).unwrap().state.balance();
     // The other providers still have their original balances
-    let others: u64 = ledger.get(&provider_a_id).unwrap().state.balance
-        + ledger.get(&provider_c_id).unwrap().state.balance;
+    let others: u64 = ledger.get(&provider_a_id).unwrap().state.balance()
+        + ledger.get(&provider_c_id).unwrap().state.balance();
     println!(
         "    Conservation: client + winner + escrow = {} (expected {})",
         total_value,
@@ -640,7 +640,7 @@ fn main() {
 
     // Use a fee that the cell CAN pay (marketplace has 10,000) but the
     // budget slice CANNOT cover (slice ceiling = 100).
-    let mkt_nonce = ledger.get(&marketplace_id).unwrap().state.nonce;
+    let mkt_nonce = ledger.get(&marketplace_id).unwrap().state.nonce();
     let mut expensive_builder = TurnBuilder::new(marketplace_id, mkt_nonce);
     expensive_builder.set_fee(500); // Cell can afford 500, but slice ceiling is only 100
     {
@@ -675,9 +675,9 @@ fn main() {
     // an invalid proof / non-delivery scenario). The entire turn must roll back.
     let fake_provider_id = cell_id_for(0xFF); // non-existent cell
 
-    let pre_dispute_client = ledger.get(&client_id).unwrap().state.balance;
-    let pre_dispute_escrow = ledger.get(&escrow_id).unwrap().state.balance;
-    let dispute_nonce = ledger.get(&marketplace_id).unwrap().state.nonce;
+    let pre_dispute_client = ledger.get(&client_id).unwrap().state.balance();
+    let pre_dispute_escrow = ledger.get(&escrow_id).unwrap().state.balance();
+    let dispute_nonce = ledger.get(&marketplace_id).unwrap().state.nonce();
 
     let mut bad_settle = TurnBuilder::new(marketplace_id, dispute_nonce);
     bad_settle.set_fee(0);
@@ -704,8 +704,8 @@ fn main() {
     println!("  Turn REJECTED: {}", reason);
 
     // Verify NOTHING changed (atomic rollback)
-    let post_dispute_client = ledger.get(&client_id).unwrap().state.balance;
-    let post_dispute_escrow = ledger.get(&escrow_id).unwrap().state.balance;
+    let post_dispute_client = ledger.get(&client_id).unwrap().state.balance();
+    let post_dispute_escrow = ledger.get(&escrow_id).unwrap().state.balance();
     let post_dispute_rep = field_u64(&ledger.get(&reputation_id).unwrap().state.fields[0]);
 
     assert_eq!(pre_dispute_client, post_dispute_client, "client unchanged");
@@ -725,7 +725,7 @@ fn main() {
     println!("--- Phase 9: RECEIPT CHAIN ---\n");
 
     // Build a chain of receipts to demonstrate audit trail
-    let mkt_nonce_now = ledger.get(&marketplace_id).unwrap().state.nonce;
+    let mkt_nonce_now = ledger.get(&marketplace_id).unwrap().state.nonce();
     let (_, settle_receipt, _) = {
         let mut chain_builder = TurnBuilder::new(marketplace_id, mkt_nonce_now);
         chain_builder.set_fee(0);

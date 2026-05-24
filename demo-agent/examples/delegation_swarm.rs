@@ -99,13 +99,13 @@ fn main() {
 
     // Create the controller agent.
     let mut controller = make_open_cell(1, 10_000_000);
-    let controller_id = controller.id;
+    let controller_id = controller.id();
 
     // Create 5 service cells that the controller has access to.
     let mut service_ids = Vec::new();
     for i in 0..5 {
         let svc = make_open_cell(100 + i, 0);
-        let svc_id = svc.id;
+        let svc_id = svc.id();
         service_ids.push(svc_id);
         controller.capabilities.grant(svc_id, AuthRequired::None);
         ledger.insert_cell(svc).unwrap();
@@ -158,7 +158,7 @@ fn main() {
             balance_change: None,
         };
 
-        let nonce = ledger.get(&controller_id).unwrap().state.nonce;
+        let nonce = ledger.get(&controller_id).unwrap().state.nonce();
         let turn = make_turn(controller_id, nonce, spawn);
         let result = executor.execute(&turn, &mut ledger);
         assert!(result.is_committed(), "Spawn worker {} failed", i);
@@ -174,7 +174,7 @@ fn main() {
         };
 
         // Give worker some balance for future turns.
-        ledger.get_mut(&expected_id).unwrap().state.balance = 100_000;
+        ledger.get_mut(&expected_id).unwrap().state.set_balance(100_000);
 
         worker_ids.push(expected_id);
         println!(
@@ -237,7 +237,7 @@ fn main() {
                 balance_change: None,
             };
 
-            let nonce = ledger.get(&worker_id).unwrap().state.nonce;
+            let nonce = ledger.get(&worker_id).unwrap().state.nonce();
             let turn = make_turn(worker_id, nonce, write_action);
             let result = executor.execute(&turn, &mut ledger);
             assert!(
@@ -268,7 +268,7 @@ fn main() {
     println!();
 
     let new_service = make_open_cell(200, 0);
-    let new_svc_id = new_service.id;
+    let new_svc_id = new_service.id();
     ledger.insert_cell(new_service).unwrap();
     ledger
         .get_mut(&controller_id)
@@ -284,7 +284,7 @@ fn main() {
 
     // Worker 0 tries to access new service -> FAILS.
     let worker_0_id = worker_ids[0];
-    let worker_0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce;
+    let worker_0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce();
     let try_new_svc = Action {
         target: new_svc_id,
         method: symbol("access_new_service"),
@@ -326,7 +326,7 @@ fn main() {
     executor.set_timestamp(2000);
 
     for (i, worker_id) in worker_ids.iter().enumerate() {
-        let nonce = ledger.get(worker_id).unwrap().state.nonce;
+        let nonce = ledger.get(worker_id).unwrap().state.nonce();
         let refresh = Action {
             target: *worker_id,
             method: symbol("refresh_delegation"),
@@ -364,7 +364,7 @@ fn main() {
     );
 
     // Worker 0 can now access the new service.
-    let worker_0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce;
+    let worker_0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce();
     let use_new_svc = Action {
         target: new_svc_id,
         method: symbol("access_new_service_after_refresh"),
@@ -409,7 +409,7 @@ fn main() {
         .capabilities
         .grant(compromised_worker, AuthRequired::None);
 
-    let controller_nonce = ledger.get(&controller_id).unwrap().state.nonce;
+    let controller_nonce = ledger.get(&controller_id).unwrap().state.nonce();
     let revoke = Action {
         target: controller_id,
         method: symbol("revoke_compromised_worker"),
@@ -458,7 +458,7 @@ fn main() {
     );
 
     // Worker 7 tries to act -> FAILS.
-    let w7_nonce = ledger.get(&compromised_worker).unwrap().state.nonce;
+    let w7_nonce = ledger.get(&compromised_worker).unwrap().state.nonce();
     let w7_try = Action {
         target: service_ids[0],
         method: symbol("worker_7_post_revocation"),
@@ -485,7 +485,7 @@ fn main() {
 
     // Worker 3 (unaffected) can still act.
     let w3_id = worker_ids[3];
-    let w3_nonce = ledger.get(&w3_id).unwrap().state.nonce;
+    let w3_nonce = ledger.get(&w3_id).unwrap().state.nonce();
     let w3_action = Action {
         target: service_ids[2],
         method: symbol("worker_3_still_works"),
@@ -608,7 +608,7 @@ fn main() {
     println!("  Time passes to t=2100 (stale). Worker refreshes again:");
 
     executor.set_timestamp(2100);
-    let w0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce;
+    let w0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce();
     let refresh_again = Action {
         target: worker_0_id,
         method: symbol("refresh_after_stale"),

@@ -57,11 +57,11 @@ fn main() {
     let dave = make_open_cell(0xDD, 10000);
     let eve = make_open_cell(0xEE, 10000);
 
-    let alice_id = alice.id;
-    let bob_id = bob.id;
-    let carol_id = carol.id;
-    let dave_id = dave.id;
-    let eve_id = eve.id;
+    let alice_id = alice.id();
+    let bob_id = bob.id();
+    let carol_id = carol.id();
+    let dave_id = dave.id();
+    let eve_id = eve.id();
 
     println!("  Alice: {} (the introducer)", short_id(&alice_id));
     println!(
@@ -261,7 +261,7 @@ fn main() {
     // but we can demonstrate by checking the permission level of a new grant).
     // Instead, let's create a new cell for this step.
     let frank = make_open_cell(0xFF, 5000);
-    let frank_id = frank.id;
+    let frank_id = frank.id();
     ledger.insert_cell(frank).unwrap();
 
     // Give Alice a cap to Frank.

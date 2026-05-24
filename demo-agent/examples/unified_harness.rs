@@ -244,12 +244,12 @@ fn setup_genesis() -> Result<SharedState, Box<dyn Error>> {
     let eve = make_open_cell(0xE5, 100_000);
     let treasury = make_open_cell(0xF6, 1_000_000);
 
-    let alice_id = alice.id;
-    let bob_id = bob.id;
-    let carol_id = carol.id;
-    let dave_id = dave.id;
-    let eve_id = eve.id;
-    let treasury_id = treasury.id;
+    let alice_id = alice.id();
+    let bob_id = bob.id();
+    let carol_id = carol.id();
+    let dave_id = dave.id();
+    let eve_id = eve.id();
+    let treasury_id = treasury.id();
 
     ledger.insert_cell(alice)?;
     ledger.insert_cell(bob)?;
@@ -684,8 +684,8 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     let mut pl = Ledger::new();
     let ca = make_open_cell(0x01, 1_000_000);
     let cb = make_open_cell(0x02, 1_000_000);
-    let id_a = ca.id;
-    let id_b = cb.id;
+    let id_a = ca.id();
+    let id_b = cb.id();
     pl.insert_cell(ca)?;
     pl.insert_cell(cb)?;
     {
@@ -767,8 +767,8 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     for (i, r) in results.iter().enumerate() {
         assert!(r.is_ok(), "Pipeline turn {} failed: {:?}", i, r);
     }
-    assert_eq!(pl.get(&id_a).unwrap().state.balance, 1_000_000 - 500 + 100);
-    assert_eq!(pl.get(&id_b).unwrap().state.balance, 1_000_000 + 500 - 100);
+    assert_eq!(pl.get(&id_a).unwrap().state.balance(), 1_000_000 - 500 + 100);
+    assert_eq!(pl.get(&id_b).unwrap().state.balance(), 1_000_000 + 500 - 100);
     Ok(())
 }
 

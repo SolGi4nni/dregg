@@ -296,7 +296,7 @@ fn main() {
         delegate: AuthRequired::None,
         access: AuthRequired::None,
     };
-    let target_id = target_cell.id;
+    let target_id = target_cell.id();
     ledger.insert_cell(target_cell).unwrap();
 
     println!(
@@ -321,7 +321,7 @@ fn main() {
     parent_cell
         .capabilities
         .grant(target_id, AuthRequired::None);
-    let parent_cell_id = parent_cell.id;
+    let parent_cell_id = parent_cell.id();
     ledger.insert_cell(parent_cell).unwrap();
 
     println!(
