@@ -1,10 +1,15 @@
-//! App-framework wallet handle.
+//! App-framework cipherclerk handle.
 //!
 //! Apps are *userspace*: they should not reach past the SDK into
 //! `pyana_turn::builder::ActionBuilder` or hand-encode `[0u8; 64]`
 //! placeholder signatures. Instead, the framework hands them a narrow,
-//! wallet-bound action-construction surface backed by the SDK's
+//! cipherclerk-bound action-construction surface backed by the SDK's
 //! [`pyana_sdk::AgentCipherclerk`].
+//!
+//! See the crate root docs for the lineage of the name "cipherclerk"
+//! (Greg Egan's *Polis*); the SDK's [`AgentCipherclerk`] is the broad
+//! 100+-method surface and [`AppCipherclerk`] is the narrow ~6-method
+//! handle apps actually see.
 //!
 //! ## What this gives apps
 //!
@@ -69,9 +74,9 @@ impl AppCipherclerk {
     ///
     /// The default domain is `"default"` — matches `AgentCipherclerk::cell_id("default")`.
     /// Override with [`Self::with_domain`].
-    pub fn new(wallet: AgentCipherclerk, federation_id: [u8; 32]) -> Self {
+    pub fn new(cipherclerk: AgentCipherclerk, federation_id: [u8; 32]) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(wallet)),
+            inner: Arc::new(RwLock::new(cipherclerk)),
             federation_id,
             domain: "default".to_string(),
         }
