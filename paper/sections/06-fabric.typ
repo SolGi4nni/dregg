@@ -4,53 +4,96 @@
 
 = The Unified Fabric <sec-fabric>
 
-== From Isolated Federations to Emergent Groups
+== From Four Federations to One
 
-Traditional distributed consensus systems partition the network into isolated clusters: each federation owns a separate DAG, maintains its own genesis, and communicates with others only through explicit bridges. Pyana inverts this model. A single _unified blocklace_ spans all participants; a _federation_ is merely a reference group---a named subset of strands whose blocks are ordered together by a shared $tau$ function. Groups overlap, emerge organically, and dissolve without affecting the underlying DAG structure.
+Pre-Lane-D, the codebase carried *four* disjoint "federation" concepts:
 
-The key insight: ordering is a _view_, not a partition. Two reference groups operating over the same blocklace can share members, reference each other's blocks causally, and even merge---because the DAG is universal and group membership is a filter applied at ordering time.
++ A `FederationCommittee` (the BLS-aggregated committee in `federation/src/threshold.rs`).
++ A `FederationMode { Full, Solo }` runtime flag.
++ An opaque `federation_id: [u8; 16]` random tag (`node/src/genesis.rs`).
++ A Morpheus BFT-simulator harness (`node::Federation`) preserved only because some tests still imported it.
 
-== Reference Groups
+`AUDIT-federation.md` named this seam: $"federation_id"$ was conventional (not algebraic); the `committee_pubkeys` and `federation_id` were not joined; a `FederationReceipt::verify` call accepted a `committee` parameter and never checked `committee` $arrow.l.r$ `federation_id`. An attacker who could route a receipt could mislabel its `federation_id` and the algebra would not notice.
 
-A `ReferenceGroup` is the primitive unit of coordination:
+The unified `Federation` type collapses the four into one canonical object:
 
-#figure(
-  table(
-    columns: (auto, auto),
-    align: (left, left),
-    table.header([*Field*], [*Description*]),
-    [`participants: Vec<StrandId>`], [Public keys of block-producing strands],
-    [`threshold: usize`], [Supermajority count for finality ($2n\/3 + 1$)],
-    [`timeout_waves: u64`], [Inactivity before auto-removal],
-    [`routes_commitment: Option<Hash>`], [BLAKE3 of governance DFA (if governed)],
-  ),
-  caption: [ReferenceGroup structure. The group ID is the BLAKE3 hash of sorted participant keys.],
-)
+```rust
+pub struct Federation {
+    members: Vec<PublicKey>,            // sorted; substrate of federation_id
+    bls_committee: Option<FederationCommittee>,
+    epoch: u64,                          // part of federation_id preimage
+    threshold: u32,
+    id: FederationId,                    // = BLAKE3(sorted(members) || epoch)
+    blocklace: Arc<Blocklace>,
+    local_seat: Option<LocalSeat>,
+}
+```
 
-Multiple reference groups coexist over the same underlying DAG. Blocks from non-members are invisible to the group's ordering function but remain causally reachable for cross-group references. This enables:
+The Morpheus simulator harness is dead code (per `AUDIT-morpheus-federation-blocklace.md`); the runtime `FederationMode` flag is a quorum-arithmetic special case (Solo = committee of one, threshold = 1); the random tag becomes a commitment. See @sec-federation for the full type and the five properties that follow from the unified definition.
 
-- *Overlapping membership*: A strand participates in multiple groups simultaneously.
-- *Zero-cost migration*: Moving between groups is a metadata change, not a state export.
-- *Causal cross-references*: A block in group $A$ can reference a block in group $B$ without requiring $B$'s ordering permission.
+== `federation_id` as Commitment
+
+$ "federation_id" = "BLAKE3"("pyana-fed-id-v1" || "sorted_members" || "epoch") $
+
+Two federations with the same committee at the same epoch *are the same federation*. Membership rotation produces a new `epoch`, which produces a new `federation_id`. Blocklace continuity across epochs gives the federation its identity-over-time; the `federation_id` itself is per-epoch.
+
+== `AttestedRoot` v3
+
+The attested-root structure binds federation context into the signed message:
+
+```rust
+pub struct AttestedRoot {
+    pub federation_id: FederationId,        // bound in signing_message
+    pub blocklace_block_id: BlockId,        // bound in signing_message
+    pub finality_round: u64,                // bound in signing_message
+    pub merkle_root: Hash,
+    pub height: u64,
+    pub timestamp: u64,
+    pub threshold_qc: ThresholdQC,
+}
+```
+
+The signing message includes `federation_id || blocklace_block_id || finality_round || merkle_root || height || timestamp`. This closes prior gaps F1 (random `federation_id`), F3 (`AttestedRoot.blocklace_block_id` missing), and F4 (`committee_epoch` decorative) from the federation audit. The bridge `destination_federation` PI field is now both surfaced *and algebraically bound* in the AIR (closes threat T6 from the executor-honesty audit and `AUDIT-nullifiers.md §5`).
+
+== `KnownFederations` Registry
+
+Each node persists a `KnownFederations` registry at `<data-dir>/known_federations/<federation_id>.json`, listing every federation the node is willing to verify receipts and attestations from. Each entry carries:
+
+```rust
+pub struct KnownFederationEntry {
+    pub federation_id: FederationId,
+    pub committee_members: Vec<PublicKey>,
+    pub committee_epoch: u64,
+    pub bls_verifier_key: Option<Vec<u8>>,
+    pub added_at: SystemTime,
+    pub trust_origin: TrustOrigin,           // OperatorAdded | BootstrappedFromPeer | ...
+}
+```
+
+The `pyana register-federation` CLI subcommand atomically adds an entry. `CapTpState::sync_known_federations` keeps the in-memory CapTP routing table consistent with the on-disk registry on every startup and on every registry change.
+
+This registry is the trust root for cross-federation operations. A receiver of a CapTP-delivered Turn at federation $F_2$ that claims to originate from federation $F_1$ checks: (a) the Turn's `federation_id` matches an entry in $F_2$'s known-federations registry; (b) the introducer's signature on the handoff certificate verifies under the public key listed in that entry; (c) the `AttestedRoot` carries a `ThresholdQC` that verifies under $F_1$'s committee key. No entry in `known_federations` $arrow.r.double$ no acceptance. This closes `AUDIT-distributed-semantics.md` GAP-3 (the wire layer formerly accepted `introducer_pk` from the wire message and trusted it).
+
+== Reference Groups: The Coordination Substrate
+
+A reference group is a named subset of strands in the blocklace whose blocks are ordered together by a shared $tau$ function. Groups overlap, emerge organically, and dissolve without affecting the underlying DAG.
+
+```rust
+pub struct ReferenceGroup {
+    pub participants: Vec<StrandId>,
+    pub threshold: usize,                    // 2n/3 + 1 supermajority
+    pub timeout_waves: u64,
+    pub routes_commitment: Option<Hash>,     // BLAKE3 of governance DFA
+}
+```
+
+Multiple reference groups coexist over the same underlying DAG. Blocks from non-members are invisible to the group's ordering function but remain causally reachable for cross-group references. This enables overlapping membership (a strand participates in multiple groups), zero-cost migration (moving between groups is metadata, not state export), and causal cross-references.
 
 == The $tau_"unified"$ Function
 
-The unified ordering function $tau_"unified"$ generalizes Cordial Miners to operate over an arbitrary subset of the blocklace:
-
 $ tau_"unified"(cal(B), G, C) = "xsort"(union.big_(l in cal(L)(cal(B), G, C)) "new_past"(l)) $
 
-where $cal(B)$ is the full blocklace, $G$ is the reference group, $C$ is the ordering configuration (wavelength), and $cal(L)$ is the set of finalized leaders computed over $G$'s blocks only.
-
-The algorithm proceeds:
-
-+ *Filter*: Consider only blocks whose creator is in $G."participants"$.
-+ *Compute rounds*: Round assignment uses only filtered blocks (non-member predecessors do not advance rounds).
-+ *Identify waves*: Partition rounds into waves of length $C."wavelength"$.
-+ *Elect leaders*: Round-robin leader assignment over $G."participants"$ (sorted).
-+ *Check super-ratification*: Leader $l$ is finalized if a supermajority of the wave's last-round blocks ratify $l$.
-+ *Collect and sort*: For each finalized leader, collect its new causal past (excluding already-ordered blocks) and sort deterministically via `xsort` (block hash ordering).
-
-The critical property: $tau_"unified"$ produces _exactly_ the same total order as running a standalone Cordial Miners instance over $G$'s blocks---even when those blocks are interleaved in the DAG with blocks from other groups.
+where $cal(B)$ is the full blocklace, $G$ is the reference group, $C$ is the ordering configuration (wavelength), and $cal(L)$ is the set of finalized leaders computed over $G$'s blocks only. The algorithm proceeds: filter to $G$'s participants, compute rounds, identify waves, elect leaders (round-robin), check super-ratification, collect and `xsort` (block-hash ordering). Produces *exactly* the same total order as a standalone Cordial Miners instance over $G$'s blocks.
 
 == Governance Modes <sec-governance-modes>
 
@@ -58,30 +101,15 @@ A `GovernedReferenceGroup` wraps the ordering primitive with one of three member
 
 === Constitutional (Formal Organizations)
 
-Membership changes require supermajority vote via the H-rule: changing threshold from $T$ to $T'$ requires $max(T, T')$ votes. This is the current federation behavior---preserved for DAOs, regulated entities, and formal organizations.
-
-- Join requires $h$-rule approval (proposal + vote blocks in DAG).
-- Leave is explicit or via timeout.
-- Equivocation triggers immediate auto-eviction.
-- Amendment proposals have bounded lifetime.
+Membership changes require supermajority vote via the H-rule: changing threshold from $T$ to $T'$ requires $max(T, T')$ votes. Suited to DAOs, regulated entities, formal organizations.
 
 === Open (Permissionless Networks)
 
-Anyone can join by producing blocks that reference group members. No vote or threshold for admission. Timeout-based cleanup removes inactive strands.
-
-- Join: produce a block referencing any group member.
-- Leave: stop producing blocks for $"timeout_waves"$ waves.
-- Anti-spam: the group can set a routes commitment (DFA) to filter message types.
-
-This mode suits public goods networks, open research collaborations, and permissionless validator sets.
+Anyone can join by producing blocks that reference group members. No vote or threshold for admission. Timeout-based cleanup. Suited to public goods networks, open research collaborations.
 
 === Invite-Only (Small Teams)
 
-Any single existing member can unilaterally add new members. No threshold vote needed. Optimized for small teams, friend groups, and rapid-formation working groups.
-
-- Join: any member issues an invitation (a block containing the new strand's key).
-- Leave: stop producing or be removed after timeout.
-- No governance overhead for groups under 10 members.
+Any single existing member can unilaterally add new members. Optimized for small teams, friend groups, rapid-formation working groups.
 
 #figure(
   table(
@@ -97,27 +125,9 @@ Any single existing member can unilaterally add new members. No threshold vote n
 
 == Interest-Based Dissemination
 
-In a unified blocklace with thousands of strands, transmitting every block to every node is prohibitive. Pyana uses _subscriptions_ to filter dissemination:
-
-A `Subscription` declares which strands a node wants to receive:
-
-- *Direct subscriptions*: Blocks from strands in my reference group.
-- *Referenced closure*: Optionally include blocks that my subscribed strands reference (one hop of causal closure).
-- *Causal depth*: Maximum hops to follow beyond direct subscriptions.
-
-The dissemination protocol (Cordial Dissemination) respects subscriptions: a node pushes blocks only to peers whose subscription includes the block's creator. This reduces bandwidth from $O(|"strands"|)$ to $O(|"subscription"|)$ per node while preserving causal closure for ordering.
-
-=== Subscription Semantics
-
-For a node $n$ with subscription $S_n$ and reference group $G$:
-
-$ "receive"(n, b) arrow.l.r.double b."creator" in S_n."subscribed_strands" or ("include_referenced" and exists b' in S_n : b in "predecessors"(b')) $
-
-Nodes automatically subscribe to their reference group's participants. Additional subscriptions enable cross-group awareness (e.g., a relay subscribing to multiple groups for routing).
+In a unified blocklace with many strands, transmitting every block to every node is prohibitive. Pyana uses _subscriptions_ to filter dissemination. A `Subscription` declares which strands a node wants to receive (direct subscriptions, referenced closure, causal depth). The dissemination protocol (Cordial Dissemination) respects subscriptions: a node pushes blocks only to peers whose subscription includes the block's creator. Bandwidth drops from $O(|"strands"|)$ to $O(|"subscription"|)$ per node while preserving causal closure for ordering.
 
 == Strand-Based Addressing
-
-The unified fabric replaces federation-scoped addressing with strand-based addressing:
 
 #figure(
   table(
@@ -127,60 +137,64 @@ The unified fabric replaces federation-scoped addressing with strand-based addre
     [`Strand(StrandId)`], [Specific block producer], [Direct messaging],
     [`Group(GroupId)`], [Any group member], [Multicast to reference group],
     [`Capability(SwissNum)`], [Swiss number holder], [Bearer-addressed],
-    [`Federation(FedId)`], [Legacy backward compat], [$"FedId" equiv "GroupId"$],
+    [`Federation(FederationId)`], [Federation-by-commitment], [`FederationId = BLAKE3(committee || epoch)`],
   ),
-  caption: [Addressing modes. FederationId is a type alias for GroupId in the unified model.],
+  caption: [Addressing modes. `FederationId` is now a *commitment* to the committee, not a random tag.],
 )
 
-The strand address is the public key of a block-producing entity. The group address is the BLAKE3 hash of the sorted participant set---deterministic and content-addressed. A message addressed to a group is delivered to any member; a message addressed to a strand reaches that specific entity.
+== Per-Federation Checkpoints
 
-=== Per-Group Checkpoints
+Checkpoint proofs are scoped to a single federation. A checkpoint proves: "at height $H$, the state of federation $F$ was commitment $C$, and all turns up to $H$ were valid." This enables pruning (discard blocklace data below the checkpoint), fast sync (new members sync from the latest checkpoint), and portable proofs (independently verifiable without the full DAG).
 
-Checkpoint proofs are scoped to a single reference group. A checkpoint proves: "at height $H$, the state of group $G$ was commitment $C$, and all turns up to $H$ were valid." This enables:
+== Federation-Bypass: `peer_exchange` <sec-fabric-peer-exchange>
 
-- *Pruning*: Discard blocklace data below the checkpoint height for this group.
-- *Fast sync*: New members sync from the latest checkpoint rather than replaying history.
-- *Portable proofs*: The checkpoint is independently verifiable without the full DAG.
+Two sovereign cells can exchange signed state transitions directly, without ever touching consensus. See @sec-peer-exchange for the type definition and the boundary contract. The fabric implications:
+
+- *Partition tolerance*: cells operate during federation unreachability and reconcile on reconnect.
+- *Strongest sovereign boundary*: the federation learns nothing about the transitions unless one party publishes; observers are out-of-band by default.
+- *Federation divergence*: if Alice and Bob both hold federation-tracked sovereign-cell identities, the federation's view of their commitments diverges from the peer-exchange chain head until publication.
+
+The optional `transition_proof: Option<Vec<u8>>` carries actual transition validity through the same `EffectVmAir` the federation would have used. On publication, the federation-side executor verifies the proof against the proof-carrying-turn validation path---the algebra is identical.
 
 == Intra-Fabric Migration
 
 Since all groups share one DAG, migrating a strand between groups requires no state export:
 
-+ The strand's blocks remain in the shared DAG (they are never deleted).
++ The strand's blocks remain in the shared DAG.
 + The source group's $tau_"unified"$ stops including the strand (if removed from membership).
 + The target group's $tau_"unified"$ starts including the strand (upon joining).
 + The strand's receipt chain and IVC proofs remain valid (they reference block hashes, not group IDs).
 
-Migration cost: one membership change in the source group + one in the target. The strand's entire history is immediately available to the new group via the shared DAG---no state transfer protocol needed.
+Migration cost: one membership change in the source group + one in the target.
 
 == Emergent Federation Properties
 
 The unified fabric provides properties impossible with isolated federations:
 
-*Organic growth*: A solo strand ($n = 1$) operates as its own reference group. When it finds collaborators, they form a group simply by including each other as participants. No genesis ceremony, no bootstrap coordination.
+*Organic growth*: a solo strand ($n = 1$) operates as its own federation. When it finds collaborators, they form a group simply by including each other as participants. No genesis ceremony, no bootstrap coordination.
 
-*Graceful partition*: If a group disagrees, the minority can fork---creating a new reference group with a subset of the original participants. Both groups continue operating over the shared DAG; blocks already ordered by the original group remain ordered.
+*Graceful partition*: if a group disagrees, the minority can fork---creating a new reference group with a subset of the original participants. Both groups continue operating over the shared DAG; blocks already ordered remain ordered.
 
-*Federation as a spectrum*: The same mechanism serves a solo developer (1 strand, invite-only), a startup team (5 strands, open), a DAO (50 strands, constitutional), and a public network (1000+ strands, open with DFA governance). No separate code paths---only configuration of the reference group.
+*Federation as a spectrum*: the same mechanism serves a solo developer (1 strand, invite-only), a startup team (5 strands, open), a DAO (50 strands, constitutional), and a public network (1000+ strands, open with DFA governance). No separate code paths---only configuration of the reference group.
 
-== Federation Privacy <sec-federation-privacy>
+== Federation Privacy
 
-Validators in a reference group currently see all turn content in cleartext. The target architecture provides layered privacy:
+Validators in a federation currently see all turn content in cleartext. The target architecture provides layered privacy via the threshold-decryption substrate already real in `federation::threshold_decrypt` (Shamir over GF(256) + ChaCha20-Poly1305); see @sec-federation-privacy.
 
-*Layer 1 (Conflict Set Ordering):* Bloom filter conflict sets enable ordering without content. A lightweight STARK proves nonce correctness and fee sufficiency. The group orders and detects conflicts without seeing turn bodies.
+== Blocklace and Consensus
 
-*Layer 2 (Threshold Decryption):* Turn bodies are encrypted to a group threshold key. Decrypted AFTER ordering is finalized. Protects against MEV and front-running.
+The blocklace is the substrate over which committee members produce blocks. Each block is Ed25519-signed, content-addressed by BLAKE3, and carries a monotonic per-creator `seq`. Equivocation is detected at receive time (`finality.rs::detect_equivocation`: same `(creator, seq)`, different content) and in `tau` (`ordering.rs::has_equivocation_in_past`: same `(creator, round)`, two distinct blocks). The two predicates differ slightly---a Byzantine node can monotonically bump `seq` across forks while producing two blocks at the same round; unifying the equivocation rule is `AUDIT-blocklace-consensus.md` open question B.
 
-*Layer 3 (Full Validity Proof):* Full STARK proving conservation and authorization eliminates decryption entirely. Agents generate proofs; the group only verifies.
-
-The recommended medium-term approach is validium-style blind ordering: agents submit encrypted turns alongside STARK proofs of valid state transition. Validators see nullifiers and proofs but not turn content or state.
+Constitutional auto-eviction at `constitution.rs::auto_evict_equivocator` consumes the finality-layer flavour of proof. The constitution maintains the H-rule for governance amendments (changing threshold from $T$ to $T'$ requires $max(T, T')$ votes).
 
 == Security Properties
 
 *Safety*: $tau_"unified"$ inherits Cordial Miners safety. For a reference group with threshold $t$, safety holds if fewer than $t$ members are Byzantine.
 
-*Liveness*: Under partial synchrony, if more than $t$ members are honest and eventually connected, every submitted turn is eventually ordered.
+*Liveness*: under partial synchrony, if more than $t$ members are honest and eventually connected, every submitted turn is eventually ordered.
 
-*Group isolation*: Faults in one reference group cannot affect ordering in another (they share DAG structure but not ordering computation).
+*Group isolation*: faults in one reference group cannot affect ordering in another.
 
-*Equivocation detection*: Structural---two blocks by the same author at the same round with different content constitute irrefutable proof of Byzantine behavior, visible to all DAG participants regardless of group membership.
+*Equivocation detection*: structural---two blocks by the same author at the same round (or same `seq`) with different content constitute irrefutable proof of Byzantine behavior.
+
+*Federation-identity binding*: $"federation_id" = "BLAKE3"("committee" || "epoch")$ makes the binding *algebraic*. A receipt mislabeled with the wrong `federation_id` is detected by any verifier that holds the committee key.

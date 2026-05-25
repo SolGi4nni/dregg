@@ -1,22 +1,135 @@
 // =============================================================================
-// Section 8: Storage Economics and Queues
+// Section 8: Storage as Cell Programs
 // =============================================================================
 
-= Storage Economics <sec-storage>
+= Storage as Cell Programs <sec-storage-as-cell-programs>
 
-== Design Principles
+== Thesis: storage primitives are not new Effects
 
-Storage in a distributed capability system differs fundamentally from blockchain state: cells are sovereign (they own their data), storage is metered (ongoing cost, not one-time), and queues are the primary communication primitive (not shared memory). This section formalizes the storage model, queue semantics, and economic mechanisms that sustain long-term operation.
+Storage in a distributed capability system differs fundamentally from blockchain state: cells are sovereign (they own their data), storage is metered (ongoing cost, not one-time), and queues are the primary communication primitive (not shared memory). The historically natural framing made each storage primitive a new `Effect` variant: `Effect::QueueAllocate`, `Effect::Enqueue`, `Effect::Dequeue`, `Effect::TopicCreate`, and so on. Each new app proposed new effects; each new effect needed an AIR row, a cost-table entry, a wallet wrapper, an executor branch. The effect surface bloated; the AIR's column count climbed; the constitution that named effects became harder to govern.
+
+The corrected framing: **storage primitives are not new Effects. They are cell-program patterns.** Compositions of existing `Effect` variants (`SetField`, `EmitEvent`, `Transfer`, `Grant`/`Revoke`, `CreateCellFromFactory`) governed by `CellProgram`s whose `StateConstraint`s are drawn from the 21+ variant slot caveat vocabulary, plus---where genuinely needed---a `WitnessedPredicate` for the witness-attached cases.
+
+Three concrete consequences:
+
++ *One enforcement loop, not two*: the executor's per-turn evaluator that already runs for every state-modifying turn enforces queue invariants, inbox sequencing, blinded-spend correctness, relay quota. The legacy `QueueConstraint` vocabulary in `storage::programmable` aliases directly to `StateConstraint` post-Lane-G Phase 1.
++ *New primitives plug in by declaring a composition*: no new Effects, no new AIR row, no new wallet wrapper. The `FactoryDescriptor` carries the slot layout and `state_constraints`; apps use the existing `createFromFactory` wallet method to instantiate.
++ *Constructor transparency*: anyone with the `factory_vk` can read the descriptor and know exactly what invariants the cell will carry over its lifetime.
+
+== The migration framework
+
+Every storage primitive's migration follows the same six-step pattern:
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Step*], [*Action*]),
+    [1. Factory], [Define a `FactoryDescriptor` declaring slot layout + `state_constraints`.],
+    [2. Constraints], [Express invariants in `StateConstraint` vocabulary (and `WitnessedPredicate` for witness-attached).],
+    [3. App API], [Apps use existing `createFromFactory` + standard `Effect` variants. No new wallet wrappers.],
+    [4. Receipt], [Every modification produces a `TurnReceipt` through the standard executor path.],
+    [5. Boundary], [Document the cell's boundary contract per BOUNDARIES.md vocabulary.],
+    [6. Deprecate], [The legacy storage-crate enforcement loop becomes a thin re-export of `cell::program::StateConstraint`, or is deleted.],
+  ),
+  caption: [Six-step migration framework. Each primitive in §3 fills in this pattern.],
+)
+
+== Primitives as Cell-Program Patterns
+
+This subsection names the five primary storage primitives and the slot caveat compositions that realize them.
+
+=== CapInbox
+
+A `CapInbox` is a monotonic-sequence, write-once-slot, sender-authorized message queue.
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Slot*], [*StateConstraint*]),
+    [`sequence_counter: u64`], [`MonotonicSequence { seq_index }`---the slot's value equals `old[seq_index] + 1` on each enqueue],
+    [`messages[N]: MerkleRoot`], [`WriteOnce { index: i }` per slot---each slot is written exactly once, then frozen],
+    [`max_messages: u64`], [`FieldLte { i, v: MAX_INBOX_SIZE }`---cell-program-bound upper bound],
+    [`sender_set_root: MerkleRoot`], [`SenderAuthorized { set_root_index }`---only members of the cell's allow-list may enqueue],
+  ),
+  caption: [`CapInbox` slot layout and caveats. No new Effects; no new predicate kinds.],
+)
+
+Enqueue: `Effect::SetField { slot: sequence_counter, value: old+1 }` + `Effect::SetField { slot: messages[old], value: msg_hash }` in a single Turn. The two `StateConstraint`s enforce sequencing and write-once-ness; `SenderAuthorized` gates the actor. Dequeue: the recipient cell observes the inbox's state via a read action; consumption advances a per-recipient pointer (also in slots, also `MonotonicSequence`).
+
+=== ProgrammableQueue
+
+The legacy `QueueConstraint` vocabulary (`SenderAuthorized`, `ContentPattern`, `MinDeposit`, `MaxSize`, `RateLimit`, `MonotonicSequence`, `TemporalGate`, `PreimageGate`, `Custom`) is *already* lifted to `StateConstraint` (Phase 1 alias in `storage/src/programmable.rs:30-36`). A `ProgrammableQueue` is simply a cell whose `CellProgram` declares queue-shaped caveats:
+
+- `RateLimit { max_per_epoch, epoch_duration }` for sender throttling.
+- `MinDeposit` via `FieldGte` against a sender's deposit slot.
+- `TemporalGate { not_before, not_after }` for commit/reveal windows.
+- `ContentPattern` via `WitnessedPredicate { kind: Dfa, commitment: pattern_root }` for prefix/regex filtering.
+
+KZG polynomial commitments (`Effect::QueueCommit`) over queue state remain the substrate for constant-size queue proofs and `Dequeue` membership; the difference is that the *invariants* the queue carries (who can enqueue, what fits, when) live in the cell's `CellProgram`, evaluated by the executor, not in a parallel storage-crate loop.
+
+=== PubSubTopic
+
+A `PubSubTopic` is a many-to-many channel: subscribers register a sturdy ref + filter; publishers `Effect::EmitEvent` to the topic's cell; subscribers' cells receive deliveries via CapTP routing. The topic's `CellProgram` declares:
+
+- `SenderAuthorized { set_root_index }`---only publishers in the allow-list may emit.
+- A `WitnessedPredicate { kind: Dfa, commitment: topic_filter_root }` per subscriber bound in a slot, gating which messages route to which subscriber.
+- `RateLimitBySum { i, max_sum, dur }`---windowed cap on cumulative payload size per publisher.
+
+No new `Effect`; the topic is a cell that holds the subscription tree, and the DFA-as-`WitnessedPredicate` does subscription matching as part of the executor's per-turn evaluation.
+
+=== BlindedQueue
+
+A `BlindedQueue` introduces *one* new `WitnessedPredicateKind`: `Custom { vk_hash: blinded_spend_air_vk }`, the verifier for the spend AIR that proves "I know the commitment opening and the spending key" without revealing the deposit-withdrawal correspondence.
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Slot*], [*StateConstraint*]),
+    [`commitment_set_root: MerkleRoot`], [`Monotonic { i }`---commitments are append-only],
+    [`nullifier_set_root: MerkleRoot`], [`Monotonic { i }`---spent nullifiers append-only],
+    [`spend_authorization`], [`StateConstraint::Witnessed(WP { kind: Custom { vk_hash: blinded_spend_air_vk }, ... })`],
+  ),
+  caption: [`BlindedQueue` slot layout. The single new `WitnessedPredicateKind` (`Custom`) registers via the `WitnessedPredicateRegistry`---no new `Effect`, no new AIR row in the Effect VM proper.],
+)
+
+The spend AIR proves: (a) the commitment is in the queue's `commitment_set_root`, (b) the nullifier $nu = "Poseidon2"(C || k)$ is correctly derived, (c) the withdrawer knows $k$. Withdrawals are processed as standard Turns whose `Authorization::Custom { predicate, descriptor }` carries the spend proof; the executor's auth-mode dispatch (see §3) routes to the registered verifier.
+
+=== RelayOperator
+
+A `RelayOperator` is a cell that provides store-and-forward infrastructure. Its `CellProgram` declares:
+
+- `RateLimitBySum { i, max_sum, dur }`---bounded relay throughput per epoch.
+- `FieldLte { i, max_shard_count }`---bounded number of erasure shards hosted.
+- `SenderAuthorized { set_root_index }`---only paying customers may use the relay.
+
+Relay operations are standard Turns: `Effect::Enqueue` to deposit (sender pays the deposit), `Effect::Dequeue` on delivery (deposit refunded). The relay's economic model is `StateConstraint::SumEqualsAcross { input_fields: [deposit_in], output_fields: [refund_out, fee_out] }`---the relay's fee comes out as a conservation residual.
+
+=== Summary
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Primitive*], [*New `WitnessedPredicateKind`s needed*]),
+    [CapInbox], [none---`SenderAuthorized` + `MonotonicSequence` + `WriteOnce` + `FieldLte`],
+    [ProgrammableQueue], [none---vocabulary already lifted to `StateConstraint`],
+    [PubSubTopic], [none after the `Dfa` `WitnessedPredicate` kind lands],
+    [BlindedQueue], [one (`Custom { vk_hash }` for the spend AIR)],
+    [RelayOperator], [none---`RateLimitBySum` + `FieldLte` + `SenderAuthorized`],
+  ),
+  caption: [Storage primitives and the predicate-kinds they require. Most need *zero* new kinds.],
+)
 
 == Space Banks
 
-A _space bank_ is a governance-managed allocation of storage capacity within a reference group. Each group maintains a total storage budget $B_"total"$ (governance-configurable, initially 1 TiB). Space banks partition this budget among cells:
+A _space bank_ is a governance-managed allocation of storage capacity within a federation. Each federation maintains a total storage budget $B_"total"$ (governance-configurable). Space banks partition this budget among cells:
 
 $ B_"total" = sum_(i=1)^n "space_bank"(i)."allocation" $
 
-Cells draw from their assigned space bank. When a cell's usage exceeds its bank allocation, new storage requests enter a queue: the cell must either free existing storage (triggering GC) or request a governance vote to increase its bank allocation.
-
-=== Bank Operations
+Cells draw from their assigned space bank. When usage exceeds allocation, new storage requests enter a queue: the cell must either free existing storage (triggering GC) or request a governance vote to increase the bank.
 
 #figure(
   table(
@@ -44,38 +157,20 @@ All persistent storage is metered in computrons with ongoing costs:
     [Read (per byte)], [0.01 computrons], [Cheap reads encourage verification],
     [MerkleQueue enqueue], [$10 + |"msg"|$ computrons], [Inbox anti-spam],
     [Erasure shard storage], [0.5 computrons/byte/epoch], [Redundancy at half price],
-    [Queue program storage], [2 computrons/byte/epoch], [Programs are long-lived],
+    [Cell-program storage], [2 computrons/byte/epoch], [Programs are long-lived],
   ),
-  caption: [Storage metering. Costs are governance-adjustable per reference group.],
+  caption: [Storage metering. Costs are governance-adjustable per federation.],
 )
 
-The key distinction from blockchain gas: storage costs are _ongoing_ (per-epoch rent), not one-time. This ensures sustainable operation---storing 1 MiB forever costs the same as storing it for 1000 epochs at the per-epoch rate, with the cost borne continuously by the cell that benefits from the storage.
+The key distinction from blockchain gas: storage costs are *ongoing* (per-epoch rent), not one-time.
 
-== MerkleQueue
+== MerkleQueue Substrate
 
-The `MerkleQueue` is Pyana's fundamental communication primitive: a content-addressed append-only queue where each state has a unique root hash (BLAKE3 Merkle tree of entries).
-
-=== Structure
-
-Each entry in the queue contains:
-
-- *Content hash*: BLAKE3 of the enqueued data (the data itself may be stored off-queue).
-- *Sender*: Identity of the enqueueing cell (for deposit refund tracking).
-- *Deposit*: Computrons locked by the sender (anti-spam).
-- *Enqueued height*: Block height at enqueue time.
-- *Size*: Byte count of the referenced data.
-- *TTL*: Maximum blocks before expiry.
-
-The queue root is recomputed on every enqueue/dequeue operation, providing a content-addressed snapshot of queue state at any point. This enables:
+The `MerkleQueue` is the data-structure substrate underlying the cell-program patterns: a content-addressed append-only queue where each state has a unique root hash (BLAKE3 Merkle tree of entries). Each entry contains: content hash (BLAKE3 of the enqueued data), sender, deposit, enqueued height, size, TTL. The queue root is recomputed on every enqueue/dequeue:
 
 $ "root"_n = "BLAKE3"("root"_(n-1) || "entry"_n."content_hash") $
 
-=== Operations
-
-- *Enqueue*: Append a leaf. Sender must lock deposit. Queue root updates.
-- *Dequeue*: Advance head pointer. Deposit refunded to sender. Queue root updates.
-- *Expire*: Entries past TTL are garbage-collected. Deposit is burned (20%) + treasury (80%).
-- *Prove membership*: A STARK proof of queue membership proves a message was enqueued at a specific height.
+In the cell-program view, the `MerkleQueue` is the *implementation* of certain `CellProgram` patterns; the cell's slots commit to the queue's root, and the cell's `StateConstraint`s enforce queue invariants.
 
 === Sender-Pays-Deposit Anti-Spam
 
@@ -83,112 +178,52 @@ The deposit formula prevents inbox flooding:
 
 $ "deposit" = "base_fee" + |"msg"| times r_"byte" + "ttl" times r_"block" $
 
-With defaults: $"base_fee" = 100$, $r_"byte" = 0.1$, $r_"block" = 1$. A 1 KiB message with 1000-block TTL costs $approx 1202$ computrons. The deposit is fully refunded when the recipient processes the message. On timeout, the deposit covers the storage cost incurred by the network.
-
-== Programmable Queues
-
-Standard MerkleQueues are FIFO with uniform access. _Programmable queues_ extend this with custom logic:
-
-=== Queue Programs
-
-A queue program is a predicate $P: "Entry" -> {"accept", "reject", "defer"}$ that filters entries before they join the queue. Programs are committed to the queue's metadata (BLAKE3 of program bytecode) and verified by the executor before admission.
-
-Example programs:
-
-- *Priority queue*: Accept entries sorted by deposit amount (highest first dequeue).
-- *Rate limiter*: Accept at most $k$ entries per sender per epoch.
-- *Type filter*: Accept only entries whose content hash matches a schema commitment.
-- *Auction queue*: Accept bids during a window, sort by value, dequeue winner first.
-
-=== Dataflow Pipelines
-
-Programmable queues compose into dataflow pipelines: the output of one queue feeds the input of another. Each stage applies its program, producing a multi-stage processing pipeline:
-
-$ Q_1 arrow.r^(P_1) Q_2 arrow.r^(P_2) Q_3 arrow.r^(P_3) "cell" $
-
-Pipeline composition is declarative: a cell specifies its intake pipeline as a sequence of queue IDs and programs. The federation ensures causal ordering across pipeline stages.
-
-== Blinded Queues (Fair Unique Withdrawal)
-
-A _blinded queue_ extends MerkleQueue with privacy guarantees for fair withdrawal---no party (including the queue operator) can predict withdrawal order or correlate depositor with withdrawer.
-
-=== Construction
-
-+ *Deposit phase*: Depositors commit entries using Pedersen commitments: $C = g^v h^r$ where $v$ is the entry value and $r$ is blinding randomness.
-+ *Shuffle phase*: A verifiable shuffle (provable in STARK) permutes the committed entries. The shuffle proof demonstrates that the output set is a permutation of the input set without revealing the permutation.
-+ *Withdrawal phase*: Withdrawers present a STARK proof of knowledge of the opening $(v, r)$ for some entry in the shuffled set, plus a nullifier $nu = "Poseidon2"(v || r || "nonce")$ to prevent double-withdrawal.
-
-=== Properties
-
-- *Fairness*: No party can determine withdrawal order (shuffle is random).
-- *Uniqueness*: Each entry can be withdrawn exactly once (nullifier prevents double-spend).
-- *Privacy*: Depositor-withdrawer correlation is broken by the shuffle.
-- *Verifiability*: The shuffle proof is publicly verifiable; no trusted shuffler.
-
-Applications: fair airdrops (recipients cannot front-run), lottery payouts, anonymous voting (ballot box as blinded queue), and fair NFT minting order.
-
-== Relay Operators
-
-Relay operators provide store-and-forward infrastructure for cells that are intermittently online. A relay:
-
-- Maintains MerkleQueue inboxes for subscribed cells.
-- Accepts enqueue operations from senders (collecting deposits).
-- Delivers messages when the recipient connects.
-- Earns relay fees (a fraction of the sender's deposit, governance-configurable).
-
-=== Relay Economics
-
-#figure(
-  table(
-    columns: (auto, auto, auto),
-    align: (left, right, left),
-    table.header([*Revenue Source*], [*Share*], [*Trigger*]),
-    [Relay fee], [10% of deposit], [On successful delivery],
-    [Expired cleanup], [5% of burned deposit], [On TTL expiry],
-    [Erasure shard hosting], [Storage rate], [Per-epoch for hosted shards],
-    [Cross-group forwarding], [Per-message], [When routing between groups],
-  ),
-  caption: [Relay operator revenue model. Operators earn from active participation.],
-)
-
-Relay operators compete on reliability (uptime), latency (delivery speed), and capacity (queue depth). Cells choose relays via reputation (receipt-chain-based track record) or direct peering agreements.
+With defaults: $"base_fee" = 100$, $r_"byte" = 0.1$, $r_"block" = 1$. A 1 KiB message with 1000-block TTL costs $approx 1202$ computrons. The deposit is fully refunded when the recipient processes; on timeout, the deposit covers the storage cost.
 
 == State Lifecycle and Deep Garbage Collection
 
 Cell storage follows a lifecycle with automatic transitions:
 
-=== Lifecycle Phases
-
-+ *Birth*: Cell created, initial storage allocation from space bank.
-+ *Active*: Cell regularly produces turns. Storage metered at standard rate.
-+ *Decay*: No turns for $d_"decay"$ epochs. Storage rate increases linearly (incentivizing cleanup).
-+ *Forced sovereignty*: No turns for $d_"force"$ epochs. The federation stops hosting the cell's MerkleQueues. The cell must self-host or lose inbox service.
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, left, left, left),
+    table.header([*Phase*], [*Condition*], [*Storage*], [*Behavior*]),
+    [Birth], [Factory creation or genesis], [Full state], [Active participant],
+    [Active], [Recent turn within TTL], [Commitment (sovereign) or full (hosted)], [Normal operation],
+    [Decay], [No turn for $>$ TTL, storage rent unpaid], [Commitment only (frozen)], [Cannot execute turns; can pay rent to reactivate],
+    [Forced Sovereignty], [Decay exceeds grace period], [Ejected from federation hosting], [Must self-host or lose state],
+  ),
+  caption: [Cell lifecycle phases. Decay is reversible (pay rent); forced sovereignty is permanent ejection from hosted state.],
+)
 
 === Storage Rent
 
-Active cells pay rent per epoch proportional to their storage usage:
+Hosted cells (federation stores full state) pay storage rent proportional to their state size:
 
-$ "rent"_e = sum_(o in "objects") |o| times r_"base" times cases(1 &"if active", 1 + (e - e_"last") / d_"decay" &"if decaying") $
+$ "rent"_"epoch" = "state_size_bytes" times "rent_rate_per_byte" $
 
-where $e$ is the current epoch, $e_"last"$ is the epoch of the cell's last turn, and $d_"decay"$ is the decay onset threshold. Rent is deducted from the cell's balance automatically at epoch boundaries.
+Sovereign cells (32-byte commitment only) pay a fixed minimal fee regardless of actual state size.
 
 === Epoch Rotation
 
-Every $E_"rotation"$ epochs (governance-configurable, default 1000), the storage layer performs a rotation:
-
-- Expired queue entries are garbage-collected (deposits burned/returned).
-- Decaying cells have their storage rent increased.
-- Cells that have reached forced sovereignty have their relay services terminated.
-- Erasure shards are re-verified (challenge-response against committed shard roots).
-- Space bank utilization metrics are published for governance decisions.
+Every $E_"rotation"$ epochs (governance-configurable, default 1000), the storage layer performs a rotation: enumerate insufficient-balance cells, transition to Decay, force-sovereignty after grace period, prune expired sovereign registrations, re-verify erasure shards, publish space-bank utilization metrics.
 
 == Erasure Coding for Data Availability
 
-Sovereign cells maintain their own state, but may opt into _erasure-coded availability_ for their MerkleQueue inboxes:
+Sovereign cells maintain their own state, but may opt into erasure-coded availability for their MerkleQueue inboxes. The state is encoded as $k$-of-$n$ Reed-Solomon shards distributed across federation nodes:
 
-The state is encoded as $k$-of-$n$ Reed-Solomon shards distributed across reference group nodes:
+- *Data availability*: any $k$ shards reconstruct the full queue state. No single node holds enough to read the content alone.
+- *Reduced per-node cost*: each node stores $1\/n$ of the data rather than a full copy.
+- *Proof of storage*: nodes periodically prove they still hold their shard via random leaf queries against a committed shard Merkle root.
+- *Half-price rate*: erasure-coded storage costs $0.5 times$ the standard rate.
 
-- *Data availability*: Any $k$ shards reconstruct the full queue state. No single node holds enough to read the content alone (combined with encryption).
-- *Reduced per-node cost*: Each node stores $1\/n$ of the data rather than a full copy.
-- *Proof of storage*: Nodes periodically prove they still hold their shard via random leaf queries against a committed shard Merkle root.
-- *Half-price rate*: Erasure-coded storage costs $0.5times$ the standard rate (redundancy amortized across shards).
+== Why this matters
+
+The "storage as cell programs" reframing is not a cosmetic refactor. Five things follow:
+
++ *One executor loop, not two.* The same `StateConstraint` evaluator runs for every state-modifying turn, regardless of whether the cell is implementing a queue, an inbox, a topic, a blinded set, or arbitrary app logic.
++ *Receipt-bound transitions.* Every storage mutation produces a `TurnReceipt`. The "Alice subscribed at epoch 47" event is now a verifiable receipt, not an operator-process commitment.
++ *Constructor transparency.* The `FactoryDescriptor` discloses the cell's invariants statically. Anyone can audit the slot caveats before instantiating.
++ *Userspace authoring.* Apps compose existing `Effect` variants and existing `StateConstraint`s. New apps need zero kernel changes.
++ *Soundness reduction.* Two implementations of the same algebra was twice the bug surface. One implementation, one audit, one upgrade path.

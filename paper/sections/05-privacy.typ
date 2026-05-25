@@ -4,18 +4,104 @@
 
 = Privacy Architecture
 
-Pyana provides zero-knowledge authorization proofs where a prover demonstrates "I hold a valid attenuated capability chain from a group-registered issuer that satisfies your request" without revealing the chain, intermediate states, or other capabilities. However, production anonymous credential systems require additional properties beyond basic ZK authorization. This section describes the full privacy architecture from current state through target state.
+Pyana provides zero-knowledge authorization proofs where a prover demonstrates "I hold a valid attenuated capability chain from a federation-registered issuer that satisfies your request" without revealing the chain, intermediate states, or other capabilities. The privacy story spans many subsystems; the *boundary discipline* (@sec-boundary-discipline) is the vocabulary the codebase uses to keep them honest.
+
+== Boundary Discipline <sec-boundary-discipline>
+
+Cryptographic distributed systems organize around two populations: those who know a datum *by construction* (because they generated it, hold the private key, ran the prover) and those who relate to that datum through some interface (verify a signature, check membership in a set, decode a ciphertext, accept a proof). In Pyana, that boundary is *implicit, plural, and per-subsystem*. The codebase names fourteen boundaries explicitly (see BOUNDARIES.md) and adopts a four-label vocabulary that every public type with a privacy story documents:
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Label*], [*Population*]),
+    [Cleartext-inside], [Participants who see the plaintext datum. The hosted-cell executor is cleartext-inside every hosted cell's state, regardless of the slot's `FieldVisibility` tag.],
+    [Commitment-inside], [Participants who see only the commitment (a 32-byte hash or 4-felt Poseidon2 output). External readers of `public_field_view` for a `Committed` slot; the federation for a sovereign cell's state in proof-carrying mode.],
+    [Acceptance-inside], [Participants who see only proof-of-acceptance (yes/no plus public inputs). A STARK verifier; a `ThresholdQC` verifier.],
+    [Out-of-band], [Participants who learn nothing. The default audience for everything not explicitly named.],
+  ),
+  caption: [The four boundary populations. Labels are *per-datum, per-subsystem*; a single party can be cleartext-inside one subsystem and out-of-band another.],
+)
+
+These labels do not aggregate into a global trust level. The discipline is editorial: every public type with a privacy story documents its boundary contract:
+
+```rust
+/// Boundary contract:
+/// - Cleartext-inside:  <population>
+/// - Commitment-inside: <population>
+/// - Acceptance-inside: <population>
+/// - Out-of-band:       <population>
+/// Enforced by: <primitive>
+/// Failure mode if violated: <description>
+```
+
+=== The fourteen boundaries
+
+Pyana's boundaries, enumerated:
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (left, left, left),
+    table.header([*Boundary*], [*Inside (cleartext)*], [*Enforcing primitive*]),
+    [Federation membership], [BLS committee members], [BLS12-381 weighted-threshold aggregate],
+    [Cap-holder (swiss-number)], [Swiss bytes holder], [Possession (bearer)],
+    [Turn-author (STARK soundness)], [Actor (wallet spending key)], [STARK soundness over `EffectVmAir`],
+    [Sealed-box recipient], [`unsealer_secret` holder], [X25519 + ChaCha20-Poly1305 + BLAKE3 binding],
+    [Cell state field visibility], [Federation node (always); external readers per `FieldVisibility`], [`public_field_view`],
+    [Sovereign cell holder vs executor], [Agent (intended); agent + executor (witness path)], [STARK (proof-carrying) or signature (witness path)],
+    [`WitnessedReceipt` scope-1 vs scope-2], [Scope-1: proof verifier; Scope-2: bundle file holder], [STARK + bundle membership (no predicate today)],
+    [`peer_exchange` two-party vs world], [Alice + Bob], [Ed25519 `verify_strict` + monotonic sequence + optional STARK],
+    [Blocklace consensus vs external verifier], [Constitution participants], [Cordial Miners $tau$ + signatures + equivocation detection],
+    [Bridge origin + destination vs world], [Source committee + destination committee + note holder], [STARK + `BridgedNullifierSet` + `AttestedRoot`],
+    [Blinded credential prover vs verifier], [Credential holder], [`BlindedMerklePoseidon2StarkAir` + per-presentation randomness],
+    [Sealed-box pair (intent matching)], [Two matched intent owners], [Sealer/unsealer + threshold-encrypted intent],
+    [CapTP session participants], [Two peers in a `CapSession`], [Session epoch + TLS confidentiality],
+    [`Authorization::CapTpDelivered` cert vs anyone], [Cert recipient (`recipient_pk` holder)], [Introducer Ed25519 sig + recipient Ed25519 sig + `KnownFederations`],
+  ),
+  caption: [The 14 boundaries in Pyana. Each carries a per-subsystem boundary contract (per BOUNDARIES.md).],
+)
+
+=== Boundary composition
+
+Boundaries compose three ways:
+
+- *Nesting*: a sealed message *to* a cap-holder who's *in* a federation produces nested boundaries. The innermost boundary is operative for the protected datum; outsiders see what the next-outer boundary permits.
+- *Intersection*: a datum exposed via two different mechanisms, each with its own boundary, has an effective inside that is the smaller intersection (parties who satisfy *both*).
+- *Union*: a datum sealable to either of two recipients has an effective inside that is the larger union.
+
+Concrete example: a sovereign cell's state is *commitment-inside* the federation (only the commitment is persisted) but *cleartext-inside* the host executor during the witnessed turn. The boundary "executor blind" requires the proof-carrying path, where the AIR's `OLD_COMMIT == sovereign_commitments[cell_id]` constraint is the operative inside.
+
+=== Boundary conflicts
+
+The cases where two boundaries make incompatible claims (and the long-term path to resolution):
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    table.header([*Conflict*], [*Resolution path*]),
+    [`FieldVisibility::Committed` claims commitment-inside externals, but executor sees cleartext], [Sovereign cells in proof-carrying mode; document `public_field_view` is *external* not algebraic],
+    [Sovereign witness path claims executor-blind; actually executor-sees-during-turn], [Lane Hardening: proof-carrying default, witness path Phase 1 AIR teeth + Phase 2 `transition_proof` recursion],
+    [Seal drops `allowed_effects` on unseal (formerly)], [Soundness sweep: v3 sealed-plaintext encodes `allowed_effects`],
+    [Prior `FederationReceipt.federation_id` decoupled from `committee_pubkeys`], [Lane D: `federation_id = BLAKE3(committee_pubkeys || epoch)` (algebraic)],
+    [CapTP-routed turns used `Authorization::Unchecked`], [CI-guarded carve-out list (Stage 8 P2.F); soundness sweep closing remaining],
+    [Two equivocation definitions in blocklace (seq vs round)], [Unified equivocation rule (open question)],
+    [Proof's outside vs witness-bundle's inside (no audience predicate)], [Sealable witness bundle (open question)],
+  ),
+  caption: [Boundary conflicts and resolution paths. Naming the conflict is a precondition to fixing it.],
+)
 
 == Gap Analysis: Path to Anonymous Credential Parity
 
 Parity with Idemix/BBS+/AnonCreds requires six properties:
 
-+ *Unlinkable multi-show*: The same credential presented N times produces N presentations that cannot be correlated by any party (including colluding verifiers).
-+ *Issuer anonymity within set*: A verifier cannot determine which reference group member issued the underlying credential.
-+ *Predicate proofs over attributes*: "Prove age >= 18" without revealing the exact value. Arbitrary boolean combinations of such predicates.
-+ *Selective disclosure with cryptographic binding*: The prover chooses which attributes to reveal; unrevealed attributes are cryptographically guaranteed to satisfy the policy.
-+ *Revocable anonymity*: Credentials can be revoked without breaking unlinkability for non-revoked credentials.
-+ *Offline verification*: All of the above must work without contacting the issuer or reference group (already achieved for the STARK path).
++ *Unlinkable multi-show*: the same credential presented N times produces N presentations that cannot be correlated.
++ *Issuer anonymity within set*: a verifier cannot determine which federation member issued the underlying credential.
++ *Predicate proofs over attributes*: "prove age >= 18" without revealing the exact value; arbitrary boolean combinations.
++ *Selective disclosure with cryptographic binding*: the prover chooses which attributes to reveal; unrevealed attributes are cryptographically guaranteed to satisfy the policy.
++ *Revocable anonymity*: credentials can be revoked without breaking unlinkability for non-revoked credentials.
++ *Offline verification*: all of the above without contacting the issuer or federation (already achieved for the STARK path).
 
 == Current Linkability Problem
 
@@ -25,7 +111,7 @@ Parity with Idemix/BBS+/AnonCreds requires six properties:
 
 A fully private, unlinkable presentation proof exposes only:
 
-$ "PublicInputs" = ("group_root", "request_predicate", "timestamp", "blinded_tag", "revocation_root", "revealed_commitment") $
+$ "PublicInputs" = ("federation_root", "request_predicate", "timestamp", "blinded_tag", "revocation_root", "revealed_commitment") $
 
 The `initial_root` and `final_root` become private witness. The `blinded_presentation_tag` is:
 
@@ -33,66 +119,30 @@ $ "blinded_tag" = "Poseidon2"("final_root" || "nonce" || "randomness") $
 
 This tag is fresh per presentation (unlinkable), but deterministic given the token and nonce (for replay detection within a session). The STARK proves correct derivation from the real `final_root` without revealing it.
 
-== Proof Structure (Target)
-
-The unified recursive proof composes six sub-proofs internally:
-
-+ *Blinded Issuer Membership (ring proof)*: Proves "some leaf in the group tree is my issuer" without revealing which. Public: blinded leaf, group root. Private: leaf hash, blinding factor, Merkle path.
-
-+ *Fold Chain Validity (IVC)*: Proves "attenuation chain from issuer root to final root is valid." Both initial and final roots are private witness. Binding: final root feeds into derivation as state root.
-
-+ *Derivation (multi-step Datalog)*: Proves "the final capability set authorizes this request." Public: request predicate. Private: state root (= final root), rules, body facts, substitutions.
-
-+ *Body Fact Membership*: Proves "each body fact in the derivation exists in the tree at final root." All private---fact hashes and Merkle paths are witness.
-
-+ *Non-Revocation*: Proves "my credential's ancestor hashes are not in the revocation set." Public: revocation set root. Private: ancestor hashes, non-membership witnesses.
-
-+ *Presentation Randomization*: Proves "blinded tag is correctly derived from final root." Public: blinded tag. Private: final root, nonce, randomness.
-
 == Blinded Queues <sec-blinded-queues>
 
-A _blinded queue_ is a programmable queue (see @sec-effect-vm) where withdrawal is anonymized via nullifiers. The construction:
+A _blinded queue_ is a programmable queue where withdrawal is anonymized via nullifiers. The construction:
 
-+ *Deposit*: Any cell enqueues a message commitment $C = "Poseidon2"("msg" || "randomness")$. The commitment is public; the content and randomness are private.
-+ *Withdrawal*: A cell dequeues by presenting a nullifier $nu = "Poseidon2"(C || k)$ where $k$ is the withdrawal key. A STARK proves: (a) $C$ is in the queue's KZG commitment, (b) $nu$ is correctly derived from $C$ and $k$, (c) the withdrawer knows $k$.
-+ *Fairness*: Each commitment can be withdrawn exactly once (nullifier uniqueness). The queue enforces FIFO ordering via the KZG polynomial structure---withdrawals must target the oldest uncommitted position.
-+ *Unlinkability*: The nullifier reveals no information about which deposit it corresponds to (Poseidon2 preimage resistance).
++ *Deposit*: any cell enqueues a message commitment $C = "Poseidon2"("msg" || "randomness")$. The commitment is public; the content and randomness are private.
++ *Withdrawal*: a cell dequeues by presenting a nullifier $nu = "Poseidon2"(C || k)$ where $k$ is the withdrawal key. A STARK proves: (a) $C$ is in the queue's KZG commitment, (b) $nu$ is correctly derived from $C$ and $k$, (c) the withdrawer knows $k$.
++ *Fairness*: each commitment can be withdrawn exactly once (nullifier uniqueness). The queue enforces FIFO ordering via the KZG polynomial structure.
++ *Unlinkability*: the nullifier reveals no information about which deposit it corresponds to (Poseidon2 preimage resistance).
 
-Blinded queues enable privacy-preserving message delivery, anonymous voting, and fair resource allocation without revealing the mapping between depositors and withdrawers.
+In the storage-as-cell-programs view (@sec-storage-as-cell-programs), `BlindedQueue` is a cell whose `CellProgram` declares a slot layout (`commitment_set_root`, `nullifier_set_root`, ...) and a single `WitnessedPredicate { kind: Custom { vk_hash: blinded_spend_air_vk } }` enforcing the spend predicate. No new `Effect` variant.
 
 == Private Cell Migration
 
-Sovereign cells can migrate between reference groups without revealing their identity or state:
+Sovereign cells can migrate between federations without revealing their identity or state:
 
-=== Stealth Registration
++ The migrating cell derives a stealth address for the target federation using the federation's scan key.
++ The cell registers under the stealth address.
++ An IVC proof accompanies registration, proving valid history from genesis without revealing the history.
 
-+ The migrating cell derives a stealth address for the target group using the group's scan key: $"addr" = "group_spend_key" + "derive_ed25519"("BLAKE3"("DH"(r, "group_scan_key")))$.
-+ The cell registers under the stealth address---the target group cannot link the registration to any known identity.
-+ An IVC proof accompanies registration, proving valid history from genesis without revealing the history itself.
-
-=== STARK Migration Proof
-
-The migration proof demonstrates:
-- The cell was validly registered in the source group (Merkle membership under source root).
-- The cell's IVC chain is valid (all state transitions were sound).
-- The cell's state commitment is correctly carried over (binding between old and new commitment).
-- No double-registration: a nullifier derived from the source registration prevents registering the same cell twice.
-
-The source group learns only that "some cell deregistered." The target group learns only that "some cell with valid history registered." No party can link the two events.
+A nullifier derived from the source registration prevents double-registration. The source federation learns only that "some cell deregistered"; the target learns only that "some cell with valid history registered."
 
 == Fixed-Size Proof Padding
 
-STARK proof size is proportional to trace length, which leaks information about the computation performed (delegation chain length, derivation depth, number of effects). To mitigate timing and size-based analysis:
-
-=== Padding Strategy
-
-All proofs are padded to one of a small set of canonical sizes: ${2^(10), 2^(12), 2^(14), 2^(16)}$ trace rows. Padding rows use the `Noop` opcode (Effect VM) or zero-valued constraint rows (other AIRs) that satisfy all constraints trivially. The prover selects the smallest canonical size that fits the actual trace.
-
-=== Timing Mitigation
-
-Proof generation time is normalized: after computing the proof, the prover delays response until a fixed time quantum (configurable, default 500ms granularity). This prevents an observer from correlating response time with proof complexity.
-
-=== Size Classes
+STARK proof size is proportional to trace length, which leaks information about the computation. All proofs are padded to canonical sizes: ${2^(10), 2^(12), 2^(14), 2^(16)}$ trace rows. Padding rows use the `Noop` opcode (Effect VM) or zero-valued constraint rows that satisfy all constraints trivially.
 
 #figure(
   table(
@@ -115,65 +165,31 @@ Swiss numbers (256-bit bearer secrets for sturdy refs) never cross trust boundar
 
 - Generated and stored within the target executor's swiss table.
 - Transmitted to authorized parties via sealed boxes (X25519 authenticated encryption).
-- Never included in STARK public inputs (they are private witness when proving CapTP effects).
-- Revocable by the executor at any time (removing the swiss table entry).
-
-An observer monitoring network traffic sees only encrypted sturdy ref URIs. The swiss number is meaningful only to the target executor---it is not a globally meaningful identifier.
+- Never included in STARK public inputs (private witness when proving CapTP effects).
+- Revocable by the executor at any time.
 
 === Session Privacy
 
-CapTP sessions between strands reveal communication patterns (who talks to whom) but not content:
+CapTP sessions reveal communication patterns (who talks to whom) but not content. Note that the CapTP envelope is *cleartext over TLS*: sealed capabilities protect the payload, but the metadata (who is talking to whom about what cap-id) is leaky to any peer with TLS-decrypt access. The trust-model docstring at `wire/src/lib.rs` is honest about this.
 
-- Message bodies are encrypted (X25519 per-message ephemeral keys).
-- Message sizes are padded to fixed quanta (preventing content-length analysis).
-- Session epochs are monotonic but do not reveal absolute time or message count.
+=== `Authorization::CapTpDelivered` boundary
 
-=== Reference Group Boundary Enforcement
-
-Messages crossing reference group boundaries are filtered by `PeerRole`:
-
-#figure(
-  table(
-    columns: (auto, auto, auto),
-    align: (left, left, left),
-    table.header([*PeerRole*], [*Permitted Messages*], [*Privacy Guarantee*]),
-    [Member], [All CapTP messages], [Full protocol access],
-    [Observer], [Read-only (no mutations, no exports)], [Cannot modify state],
-    [Relay], [Store-and-forward only (encrypted, no decryption)], [Cannot read content],
-    [External], [Sturdy ref enlivenment only], [Minimal surface],
-  ),
-  caption: [PeerRole-based message filtering at reference group boundaries.],
-)
-
-The boundary enforcer inspects message types (not content) and rejects messages inconsistent with the sender's role. This prevents information leakage from misconfigured or compromised relay nodes.
-
-== The Sovereignty Escape Hatch
-
-For maximum privacy, a cell can go fully sovereign:
-
-+ *Deregister* from all reference groups (publish final IVC proof).
-+ *Operate peer-to-peer*: Interact only via direct STARK proofs with chosen counterparties.
-+ *Zero metadata leakage*: No consensus participation, no block production, no ordering service sees any activity.
-+ *Re-register on demand*: When federation services are needed, re-register with a fresh stealth address.
-
-The sovereignty escape hatch is the privacy nuclear option: total invisibility at the cost of losing ordering services, discovery, and store-and-forward delivery. Cells can oscillate between sovereign privacy and group participation based on their current needs.
+A CapTP-delivered Turn produces an on-ledger receipt at the receiving federation. The acceptance check requires the `introducer_pk` to derive from an entry in the local `KnownFederations` registry---without that, the receiver cannot verify the introducer signature against any trusted public key. The wire handler that formerly accepted `introducer_pk` from the wire message without cross-checking (`AUDIT-distributed-semantics.md` GAP-3) now requires registry presence.
 
 == Predicate Proofs
 
-Range proofs and membership tests are supported within the existing derivation AIR via `CircuitLtCheck` and `CircuitGteCheck` constraints. A `PredicateBuilder` API (designed, not yet exposed) composes predicates like "age >= 18 AND country IN {US, CA, UK} AND tier >= 2" into a single STARK proof by mapping to the derivation witness's check columns.
-
-The existing multi-step AIR already supports these checks---the work is building the ergonomic API and ensuring full composition produces a single verifiable proof.
+The predicate substrate (@sec-predicate-substrate) provides `WitnessedPredicate { kind: BridgePredicate }` for arithmetic range/comparison proofs over committed facts (Gte/Lte/Gt/Lt/Neq/InRange). A `PredicateBuilder` API composes predicates like "age >= 18 AND country IN {US, CA, UK} AND tier >= 2" into a single STARK proof. The existing multi-step AIR already supports the underlying checks.
 
 == Revocable Unlinkability
 
-The fundamental tension: perfect unlinkability means no party can identify a specific credential. Revocation requires the _issuer_ to identify credentials without verifiers being able to do so.
+The fundamental tension: perfect unlinkability means no party can identify a specific credential. Revocation requires the *issuer* to identify credentials without verifiers being able to do so.
 
 Resolution (Camenisch-Lysyanskaya style adapted to STARKs):
 
-+ At issuance, the issuer assigns $"revocation_handle" = "Poseidon2"("issuer_secret", "credential_id")$. This handle is known only to the issuer.
-+ The credential holder proves non-membership of their revocation handle in the revocation set---but the handle itself is private witness (never revealed to verifiers).
-+ To revoke, the issuer adds the handle to the revocation set. The next proof attempt fails (the handle IS in the set).
-+ The `NonRevocationAir` proves non-membership. The extension: derive `revocation_handle` from the credential's root inside the circuit.
++ At issuance, the issuer assigns $"revocation_handle" = "Poseidon2"("issuer_secret", "credential_id")$.
++ The holder proves non-membership of their revocation handle in the revocation set---the handle itself is private witness.
++ To revoke, the issuer adds the handle. The next proof attempt fails.
++ The `NonRevocationAir` proves non-membership.
 
 This achieves "issuer-revocable, verifier-unlinkable"---the strongest achievable property without trusted hardware.
 
@@ -186,123 +202,104 @@ This achieves "issuer-revocable, verifier-unlinkable"---the strongest achievable
     table.header([*Property*], [*Idemix*], [*BBS+*], [*AnonCreds*], [*Pyana (target)*]),
     [Unlinkable multi-show], [Yes], [Yes], [Yes], [Yes],
     [Selective disclosure], [Yes], [Yes], [Yes], [Yes],
-    [Predicate proofs], [GE only], [No], [Limited], [Arbitrary],
+    [Predicate proofs], [GE only], [No], [Limited], [Arbitrary (`WitnessedPredicate`)],
     [Issuer anonymity], [No], [No], [No], [Yes (ring)],
     [Post-quantum], [No], [No], [No], [Yes (STARK)],
     [Offline verify], [No], [Yes], [Partial], [Yes],
     [Proof size], [$tilde$2 KiB], [$tilde$1 KiB], [$tilde$5 KiB], [$tilde$48--80 KiB],
     [Prove time], [$tilde$50ms], [$tilde$10ms], [$tilde$100ms], [$tilde$200--500ms],
     [Verify time], [$tilde$30ms], [$tilde$5ms], [$tilde$50ms], [$tilde$10ms],
-    [Programmable policy], [No], [No], [Limited], [Full Datalog],
+    [Programmable policy], [No], [No], [Limited], [Full Datalog + `WitnessedPredicate`],
   ),
   caption: [Privacy comparison. Pyana trades larger proofs for post-quantum security, programmable policy, and issuer anonymity.],
 )
 
 == Privacy Migration Path
 
-The privacy architecture is deployed in phases:
+*Phase 1 (in progress):* complete issuer unlinkability via `BlindedMerklePoseidon2StarkAir`.
 
-*Phase 1 (in progress):* Complete issuer unlinkability via `BlindedMerklePoseidon2StarkAir`. Issuer is anonymous within the reference group ring. Same-token presentations remain linkable.
+*Phase 2:* remove `final_root` from public inputs; add `blinded_presentation_tag`. Highest-impact single change.
 
-*Phase 2:* Remove `final_root` from public inputs. Add `blinded_presentation_tag`. Presentations become fully unlinkable. This is the single highest-impact change.
+*Phase 3:* `PredicateBuilder` API over the existing circuit machinery, lifted into the unified `WitnessedPredicate { kind: BridgePredicate }` shape.
 
-*Phase 3:* Predicate proof API. Build `PredicateBuilder` mapping to existing circuit machinery. No new circuit work needed.
+*Phase 4:* unified recursive proof. Single $tilde$48--80 KiB proof covering all components via the corrected verifier-AIR-as-leaf architecture (@sec-effect-vm).
 
-*Phase 4:* Unified recursive proof. Single $tilde$48--80 KiB proof covering all components. Eliminates structural leakage.
+*Phase 5:* revocable unlinkability via in-circuit revocation handle derivation.
 
-*Phase 5:* Revocable unlinkability. Revocation handle derivation inside the circuit. Protocol-level change (new field in token format).
-
-*Phase 6 (future):* Reference group privacy---turns encrypted or proved without revealing content to validators. See @sec-federation-privacy.
+*Phase 6:* federation privacy---turns encrypted (via the threshold-decryption substrate already real in `federation::threshold_decrypt`) or proved without revealing content to validators. See @sec-federation-privacy.
 
 == Implemented Privacy Mechanisms
 
-Beyond the credential privacy pipeline (Phases 1--6 above), several privacy mechanisms are operational today:
+Beyond the credential pipeline, several privacy mechanisms are operational today:
 
 === Stealth Addresses
 
-Pyana implements stealth addresses for unlinkable payment receipt. The construction uses X25519 Diffie-Hellman for shared secret derivation and Ed25519 for the actual recipient key:
+Stealth addresses use X25519 Diffie-Hellman for shared secret derivation and Ed25519 for the recipient key:
 
 + Sender computes ephemeral X25519 keypair $(r, R = r dot G)$.
 + Shared secret $s = "BLAKE3"("DH"(r, "recipient_scan_key"))$.
 + Stealth address derived: $"addr" = "recipient_spend_key" + "derive_ed25519"(s)$.
-+ View tag $= s[0]$ enables fast scanning (recipients check one byte before attempting full derivation).
++ View tag $= s[0]$ enables fast scanning.
 
-Recipients scan by: check view tag (skip 255/256 irrelevant transactions), then attempt full derivation.
+Recipients scan by checking view tag (skip 255/256 irrelevant), then attempting full derivation.
 
 === Pedersen Commitments
 
-Value commitments use Pedersen commitments over Ristretto with per-asset-type generators:
+Value commitments use Pedersen over Ristretto with per-asset-type generators:
 
 $ C = v dot G_"value" + r dot H + a dot G_"asset" $
 
-where $G_"value"$, $H$, and $G_"asset"$ are independent generators (derived via hash-to-group with distinct domain separators). The asset type $a$ is hidden inside the commitment---a verifier cannot determine the asset type without the opening.
+The asset type $a$ is hidden inside the commitment.
 
 === Bulletproof Range Proofs
 
-Range proofs use Bulletproofs over Ristretto to prove $v in [0, 2^(64))$ without revealing $v$. These are verified in the executor (not merely checked for non-empty bytes). The `RangeProofAir` also supports in-circuit range verification for STARK-based proofs.
+Range proofs use Bulletproofs over Ristretto to prove $v in [0, 2^(64))$ without revealing $v$. These are verified in the executor (not merely checked for non-empty bytes).
 
 === Dandelion++ Stem Routing
 
-Transaction propagation uses Dandelion++ @dandelion to obscure the originator's network identity. In the stem phase, transactions are forwarded along a random path ($p = 0.9$ forwarding probability, $tilde$10 hops expected before fluff). The fluff phase uses standard gossip. This prevents a network observer from correlating transaction origin with IP address.
+Transaction propagation uses Dandelion++ to obscure the originator's network identity. Stem phase: $p = 0.9$ forwarding, $tilde$10 hops expected before fluff. Fluff phase: standard gossip.
 
 === Delay Pool and Dummy Traffic
 
-Intent fulfillments pass through a _delay pool_: a 30-second batching window that collects fulfillments and releases them simultaneously, mixed with dummy traffic. This prevents timing correlation between intent broadcast and fulfillment response. The pool uses BLAKE3-keyed MAC authentication (encrypt-then-MAC) for SSE-encrypted intent streams.
+Intent fulfillments pass through a delay pool: a 30-second batching window with dummy traffic. Prevents timing correlation between intent broadcast and fulfillment response.
 
 === Commitment Tree Root History
 
-Proofs may reference any recent Merkle root (not only the latest). The reference group maintains a sliding window of recent roots with TTL-based expiry. This accommodates proof generation latency: a prover can generate a STARK proof against root $R_n$ even if the current root has advanced to $R_(n+k)$, provided $R_n$ is still within the acceptance window.
+Proofs may reference any recent Merkle root (not only the latest), with a sliding TTL window. Accommodates proof generation latency.
 
 == Private Vickrey Auction (4-Phase Protocol)
 
-Pyana implements a fully private Vickrey (sealed-bid second-price) auction where no party learns any bid value, the payment amount, or the winner's identity. The protocol uses a combination of garbled circuits, oblivious transfer, threshold cryptography, Pedersen commitments, ring proofs, and stealth addresses:
+Pyana implements a fully private Vickrey auction where no party learns any bid value, the payment amount, or the winner's identity. The protocol uses Pedersen commitments, threshold-encrypted bid revelation (via real `federation::threshold_decrypt`), garbled circuit evaluation, oblivious transfer, ring proofs, and stealth addresses:
 
-=== Phase 1: Bid Commitment
++ *Bid commitment*: $C_i = b_i dot G + r_i dot H$ with STARK range proof.
++ *Threshold-encrypted bid revelation*: bidders encrypt openings under the federation's threshold public key; $t$-of-$n$ decryption required.
++ *Garbled circuit evaluation*: the committee evaluates a garbled Vickrey-outcome circuit. Output: only winner index + payment. Individual bids never leave the secure computation.
++ *Anonymous settlement*: payment via Pedersen commitment + ring proof over bidder set + stealth address derivation.
 
-Each bidder $i$ commits their bid $b_i$ using a Pedersen commitment $C_i = b_i dot G + r_i dot H$ and submits it to the auction contract. A STARK range proof proves $b_i in [0, 2^(64))$ without revealing $b_i$. The commitment is binding (bidder cannot change their bid) and hiding (no one learns the bid value).
+Security properties: bid privacy (no party learns bids except second-highest price); winner privacy (hidden behind ring proof); payment privacy (Pedersen + stealth); fairness (threshold $t$ prevents coalition deanonymization); correctness (garbled circuit evaluation is verifiable via STARK). Status: end-to-end auction execution tested with up to 64 bidders, using Poseidon2-based garbling (STARK-friendly), Simplest OT over Ristretto, and Schnorr-based linkable ring signatures.
 
-=== Phase 2: Threshold-Encrypted Bid Revelation
+== Federation Privacy <sec-federation-privacy>
 
-After the commitment deadline, bidders encrypt their bid openings $(b_i, r_i)$ under the reference group's threshold public key. No single group member can decrypt---$t$-of-$n$ threshold decryption is required. The encrypted bids are submitted on-chain.
+Validators in a federation currently see all turn content in cleartext (cleartext-inside the executor, per `FieldVisibility::Committed`'s caveat). The target architecture provides layered privacy:
 
-=== Phase 3: Garbled Circuit Evaluation
+- *Layer 1 (Conflict Set Ordering)*: Bloom filter conflict sets enable ordering without content. A lightweight STARK proves nonce correctness and fee sufficiency.
+- *Layer 2 (Threshold Decryption)*: turn bodies encrypted to the federation's threshold key, decrypted *after* ordering is finalized. The substrate is real in `federation::threshold_decrypt`; the executor consumption is in flight (`EncryptedTurn` in `turn/src/encrypted.rs` is well-tested in isolation but not yet consumed by the executor's production path).
+- *Layer 3 (Full Validity Proof)*: full STARK proving conservation and authorization eliminates decryption entirely. Agents generate proofs; the federation only verifies.
 
-The reference group collectively evaluates a garbled circuit that computes the Vickrey outcome:
-- Inputs: All bid values (threshold-decrypted within the secure computation)
-- Computation: Find the highest bid (winner) and second-highest bid (payment)
-- Outputs: Only the winner index and payment amount---individual bid values are NOT output
-
-Oblivious transfer (OT) is used between group members during garbled circuit evaluation to prevent any subset from learning intermediate values. The garbled circuit construction ensures that the group learns only the final output, not the individual inputs.
-
-=== Phase 4: Anonymous Settlement
-
-Settlement hides the winner's identity from all observers:
-- The payment amount $p$ (second-highest bid) is committed via Pedersen: $C_p = p dot G + r_p dot H$.
-- The winner proves in zero knowledge (ring proof over the bidder set) that they are the winning bidder without revealing which commitment $C_i$ is theirs.
-- Payment is sent to a stealth address derived for the auctioneer---network observers cannot link the payment to the auction.
-- The winner receives the item via a fresh stealth address---the auctioneer cannot link the winner's payment identity to their receiving address.
-
-=== Security Properties
-
-- *Bid privacy*: No party (including the reference group) learns any bid value except the second-highest price.
-- *Winner privacy*: The winner's identity is hidden behind a ring proof. Even the auctioneer cannot identify which bidder won.
-- *Payment privacy*: The payment amount and flow are hidden behind Pedersen commitments and stealth addresses.
-- *Fairness*: The threshold requirement prevents a coalition smaller than $t$ group members from learning bids early.
-- *Correctness*: The garbled circuit evaluation is verifiable---a STARK proof attests that the circuit was evaluated correctly on the threshold-decrypted inputs.
-
-*Status:* The 4-phase protocol is implemented. Garbled circuit evaluation uses Poseidon2-based garbling (STARK-friendly). OT uses the Simplest OT protocol over Ristretto. The ring proof uses a Schnorr-based linkable ring signature adapted for the bidder commitment set. End-to-end auction execution is tested with up to 64 bidders.
+The medium-term path is Layer 2: validium-style blind ordering. Agents submit encrypted turns alongside STARK proofs of valid state transition. Validators see nullifiers and proofs but not turn content.
 
 == Post-Quantum Safety
 
-All privacy additions maintain PQ safety:
+All privacy additions maintain PQ safety where they cross trust boundaries:
+
 - Blinding uses Poseidon2 (algebraic hash, no curves)
 - Presentation randomization uses Poseidon2
 - Non-revocation uses Poseidon2 Merkle proofs
 - Predicates use BabyBear field arithmetic
 - The recursive verifier uses FRI (hash-based)
 - Blinded queues use Poseidon2 nullifiers (PQ-secure)
-- Fixed-size padding reveals no computational structure
 - Stealth addresses use X25519/Ed25519 (classical; confined within peer relationships)
-- Pedersen/Bulletproofs use Ristretto (classical; value privacy only, not cross-group)
+- Pedersen/Bulletproofs use Ristretto (classical; value privacy only)
+- Threshold decryption uses ChaCha20-Poly1305 + Shamir over GF(256) (classical; confined within federation)
 
-The non-PQ components (BLS12-381 threshold signatures, Ed25519, X25519, Ristretto) are confined within reference group trust boundaries or peer relationships. Everything that crosses a trust boundary uses hash-based (PQ-secure) proofs. The PQ migration roadmap awaits lattice threshold signature standardization for BLS replacement.
+The non-PQ components are confined within federation trust boundaries or peer relationships. Everything that crosses a trust boundary uses hash-based (PQ-secure) proofs. The PQ migration roadmap awaits lattice threshold signature standardization for BLS replacement.

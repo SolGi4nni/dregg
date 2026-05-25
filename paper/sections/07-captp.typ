@@ -6,7 +6,9 @@
 
 == Overview
 
-CapTP is the network protocol by which cells exercise capabilities across trust boundaries. It extends Cap'n Proto RPC with cryptographic authority: sturdy references for offline sharing, distributed garbage collection across federations, three-party handoff for capability delegation without mutual connectivity, promise pipelining with eventual references, and store-and-forward for partition-tolerant delivery. Four effects in the Effect VM are CapTP-native, enabling STARK proofs of protocol correctness.
+CapTP is the network protocol by which cells exercise capabilities across trust boundaries. It is OCapN-lineage @ocapn: sturdy references for offline sharing, distributed garbage collection across federations, three-party handoff for capability delegation without mutual connectivity, promise pipelining with eventual references, and store-and-forward for partition-tolerant delivery. Four effects in the Effect VM are CapTP-native, enabling STARK proofs of protocol correctness.
+
+The integration-complete Silver Vision invariant: **a CapTP-delivered message produces a real `TurnReceipt` on the receiving cell's ledger.** This is the responsibility of `Authorization::CapTpDelivered`, which makes CapTP messages route through the executor's standard verification path and produce on-ledger receipts---closing the prior gap where the wire layer pushed CapTP turns to a `pending_captp_turns` queue that was never drained. The mirror invariant "every CapTP mutation has a corresponding on-chain receipt" is now structural.
 
 == Sturdy References
 
@@ -96,8 +98,24 @@ The handoff protocol enables offline capability transfer to a third party withou
 
 - *Non-transferable*: The certificate names a specific recipient. Presenting it with the wrong key fails.
 - *Unforgeable*: Requires Alice's Ed25519 private key. No party can forge a valid certificate.
-- *One-time*: Each certificate is consumed on presentation. Replay is detected and rejected.
+- *One-time*: Each certificate is consumed on presentation. Replay is detected via `HandoffError::ReplayDetected` against a per-cert nonce-seen ledger, or via `max_uses` decrement at swiss enliven when bounded.
 - *Offline*: Neither Alice nor Bob need be online simultaneously. The certificate is a proof object.
+- *Trust root*: validation requires the introducer's public key to derive from an entry in the receiver's `KnownFederations` registry (the `FederationId` $arrow.r$ public-key registry). Without registry presence, the introducer-signature check fails closed.
+
+=== Cross-federation invocation flow
+
+When Alice on federation $F_1$ introduces Bob on federation $F_2$ to a capability at $F_2$:
+
++ Alice (or her wallet's SDK) constructs a `HandoffCertificate` over `{target_federation: F_2, target_cell, recipient_pk: pk_B, permissions, allowed_effects, expires_at, max_uses, nonce, swiss}` and signs with $"pk"_A$.
++ The certificate travels out-of-band (any channel).
++ Bob presents the certificate to $F_2$ via a `PresentHandoff` CapTP message, signing a `HandoffPresentation` binding (nonce, target_cell, target_federation).
++ $F_2$ verifies:
+  - The introducer signature against `pk_A`, which is looked up in $F_2$'s `KnownFederations` registry for `cert.introducer` (a `FederationId`).
+  - The recipient signature against `recipient_pk`.
+  - Expiry and `max_uses` not exhausted; nonce not in the seen-set.
+  - The swiss-bytes enliven against $F_2$'s local swiss table.
++ $F_2$ constructs a Turn with `Authorization::CapTpDelivered` and routes it through the standard executor path. The Turn produces a real `TurnReceipt`.
++ The receipt is attested via `FederationReceipt` (if the committee runs one) and is portable back to $F_1$ as proof that the introduction was honored.
 
 == Store-and-Forward
 
@@ -162,4 +180,15 @@ CapTP maintains the following invariants, each verifiable without trusting the e
   caption: [CapTP trust model. Executor-trusted components are verified via federation replication; trustless components are independently verifiable.],
 )
 
-The path toward full trustlessness: as the Effect VM proves more CapTP operations, the executor-trusted surface shrinks. The target architecture proves swiss table lookups and session state transitions in the STARK, reducing the federation's role to ordering and availability.
+The path toward full trustlessness: as the Effect VM proves more CapTP operations, the executor-trusted surface shrinks. The target architecture proves swiss table lookups and session state transitions in the STARK, reducing the federation's role to ordering and availability. Verification that the four CapTP AIR variants (`ExportSturdyRef`, `EnlivenRef`, `DropRef`, `ValidateHandoff`) are *real* Merkle membership and not tautological is in-flight per Stage 7 cont P1.C.
+
+== Cross-Vat / Cross-Federation Composition
+
+The cross-federation invocation flow above (§Handoff Security) is the canonical example of *proof-carrying capability* across trust boundaries:
+
+- The bearer secret (swiss number) lives only at $F_2$ and never crosses cleartext.
+- The handoff certificate is unforgeable without Alice's key.
+- The receiver's `KnownFederations` registry is the trust root for the introducer's identity.
+- The resulting Turn is algebraically bound to $F_2$'s federation context via `Authorization::CapTpDelivered`'s domain-separated canonical message including `federation_id`.
+
+The Silver Vision e2e verification spec (`SILVER-VISION-E2E-VERIFICATION.md`) names the bench against which this end-to-end story is judged: *two federations, one bearer cap, one CapTP delivery, one Turn at the receiver, one receipt, one `AttestedRoot`, one `WitnessedReceipt` chain export, one independent verifier verdict.* Charlie (a third-party verifier with no shared state, holding only $F_1$'s and $F_2$'s committee descriptors out-of-band) accepts or rejects the joint record from cold.

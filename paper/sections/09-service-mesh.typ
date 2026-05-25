@@ -8,14 +8,18 @@
 
 Capability systems excel at access control but traditionally lack discoverability: if you don't already hold a capability, how do you find one? Pyana's service mesh provides governed discovery without compromising the capability model. The three primitives---mount, discover, resolve---build atop DFA-based routing and constitutional governance to provide namespace-level access control provable via STARK lookup tables.
 
-== DFA-Based Routing
+== DFA Routing as a First-Class Userspace Caveat
 
-The routing layer uses deterministic finite automata to classify incoming messages and determine dispatch targets. The DFA approach provides:
+In the corrected framing, DFA dispatch is a *userspace primitive* exposed as a `WitnessedPredicate { kind: Dfa, commitment: route_table_root, ... }`---not an implementation detail of the wire layer. The same predicate substrate (@sec-predicate-substrate) that powers slot caveats, per-action preconditions, and capability caveats also powers route classification. Slot caveats can invoke a DFA classification; capability caveats can gate dispatch on a route-table match; the Effect VM verifies the same DFA-acceptance predicate the wire layer does.
 
-- *$O(n)$ classification*: One state integer per message byte, constant space.
-- *Deterministic commitment*: The transition table hashes to a fixed 32-byte value bindable into governance constitutions.
-- *Atomic route updates*: Swap the entire DFA table in one operation (constitutional amendment).
-- *STARK-provable*: Classification decisions are provable via lookup tables in the Effect VM.
+The DFA approach provides:
+
+- *$O(n)$ classification*: one state integer per message byte, constant space.
+- *Deterministic commitment*: the transition table hashes to a fixed 32-byte value bindable into governance constitutions.
+- *Atomic route updates*: swap the entire DFA table in one operation (constitutional amendment).
+- *STARK-provable*: classification decisions are provable via lookup tables in the Effect VM; the DFA-acceptance predicate is a single registered `WitnessedPredicateKind`.
+
+Three implementations of DFA-shaped machinery existed in the tree pre-rationalization (`wire::dfa_router`, `rbg::routing`, `apps/governed-namespace::routes`), none subsuming the others. The rationalization (per `DFA-RATIONALIZATION-DESIGN.md`): promote the `rbg::routing` compiler shape (`Pattern $arrow.r$ NFA $arrow.r$ DFA`, regex with intersection, AIR-trace) into `wire::dfa_router` as the single canonical engine; delete `apps/governed-namespace::routes` (a `BTreeMap`-backed longest-prefix matcher wearing DFA's clothes); lift the `DirectoryCell` / `ScopedIntentPool` / `MetaDirectory` cluster into `pyana-directory`. The vocabulary (`Route`, `Predicate`, `RouteCaveat`) is what authors touch.
 
 === Route Table Structure
 
@@ -36,12 +40,15 @@ A compiled `RouteTable` consists of:
 
 === Route Targets
 
-Each accepted message is dispatched to one of four targets:
+Each accepted message is dispatched to one of five targets:
 
-- *Cell*: Route to a specific cell by ID (direct delivery).
-- *Handler*: Route to a named handler (e.g., "intent\_pool", "admin", "gossip").
-- *Federation*: Forward to another reference group (cross-group routing).
-- *Drop*: Silently discard (capability revoked or blocked topic).
+- *Cell*: route to a specific cell by ID (direct delivery).
+- *Handler*: route to a named handler (e.g., "intent\_pool", "admin", "gossip").
+- *Federation*: forward to another federation (cross-federation routing via `KnownFederations`).
+- *Userspace { kind, payload }*: dispatch into an app-registered userspace handler keyed by `kind` (an `OpaqueHandlerId`). Used today by `apps/governed-namespace`, intent gossip topic filtering, and CapTP pre/post filters. The payload carries any required auxiliary witness data.
+- *Drop*: silently discard (capability revoked or blocked topic).
+
+`RouteTarget::Userspace` is the userspace dispatch verb. An app registers a handler via the app-framework; the wire layer routes accepted prefixes into that handler without going through a centralized switch. The handler runs in the app's process (or in the Studio in-browser node) and produces ordinary `Action` blobs that go through the standard executor.
 
 === DFA Construction
 
@@ -196,6 +203,8 @@ The DFA serves as the unifying enforcement mechanism:
 )
 
 The DFA is intentionally _coarse-grained_ (prefix-based classification, not deep inspection). Fine-grained access control is delegated to capability-level checks within cells. The DFA provides namespace-level governance; capabilities provide object-level authority. This separation mirrors the DNS/firewall distinction in traditional networking---the DFA is the firewall, capabilities are the application-level authorization.
+
+The orthogonalization with slot caveats: DFA classification *selects* the route (where does this message go?); the route's caveat *gates* the action (is the actor entitled to invoke?). Two stages, two evaluators, both AIR-bindable through the unified `WitnessedPredicate` substrate.
 
 == Security Analysis
 
