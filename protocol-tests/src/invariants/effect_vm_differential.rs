@@ -99,6 +99,7 @@ fn one_effect_turn(agent: CellId, nonce: u64, effect: Effect) -> Turn {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     });
     Turn {
         agent,
@@ -310,8 +311,15 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         AuthRequired::Proof => 2,
                         AuthRequired::Either => 3,
                         AuthRequired::Impossible => 4,
+                        AuthRequired::Custom { .. } => 5,
                     };
                     h.update(&[perm_byte]);
+                    // For Custom auth, mix the vk_hash into the introduce
+                    // hash so the differential VM observes the same
+                    // distinction the reference executor's commitment does.
+                    if let AuthRequired::Custom { vk_hash } = permissions {
+                        h.update(vk_hash);
+                    }
                     out.push(VmEffect::Introduce {
                         intro_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
@@ -1217,6 +1225,7 @@ fn differential_pipelined_send_passthrough() {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
     let effect = Effect::PipelinedSend {
         target: pyana_turn::eventual::EventualRef {

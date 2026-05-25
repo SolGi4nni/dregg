@@ -75,6 +75,7 @@ pub fn build_transfer_turn(
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
 
@@ -115,6 +116,7 @@ pub fn build_no_op_turn(
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
 

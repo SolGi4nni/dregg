@@ -160,6 +160,7 @@ proptest! {
                 may_delegate: pyana_turn::DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,
+                witness_blobs: vec![],
             };
             let mut forest = pyana_turn::CallForest::new();
             forest.add_root(action);

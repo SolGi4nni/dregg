@@ -129,6 +129,7 @@ proptest! {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let provided_kind: Option<AuthKind> = match choice {
