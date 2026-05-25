@@ -191,7 +191,12 @@ impl TurnExecutor {
             Some(proof_bytes), // execution_proof IS the transition proof
         );
 
-        // Append custom proof entries (vk_hash + proof_commitment per custom effect).
+        // Append custom proof entries (vk_hash + proof_commitment per custom
+        // effect). PI layout v2 (`effect_vm::pi::VK_PI_LAYOUT_VERSION == 2`):
+        // 8 felts vk_hash + 4 felts proof_commit per entry. Pre-v2 layouts
+        // used a 4-felt low-half vk_hash and zero-padded the upper 16 bytes
+        // at registry-lookup time — that path is removed (closes
+        // AIR-SOUNDNESS-AUDIT.md #70).
         let mut custom_idx = 0;
         for effect in &vm_effects {
             if let effect_vm::Effect::Custom {
@@ -201,11 +206,11 @@ impl TurnExecutor {
             {
                 let base = effect_vm::pi::CUSTOM_PROOFS_BASE
                     + custom_idx * effect_vm::pi::CUSTOM_ENTRY_SIZE;
-                for j in 0..4 {
+                for j in 0..8 {
                     public_inputs[base + j] = program_vk_hash[j];
                 }
                 for j in 0..4 {
-                    public_inputs[base + 4 + j] = proof_commitment[j];
+                    public_inputs[base + 8 + j] = proof_commitment[j];
                 }
                 custom_idx += 1;
             }
@@ -332,7 +337,10 @@ impl TurnExecutor {
                 .zip(custom_proofs.iter())
                 .enumerate()
             {
-                let vk_hash_bytes = Self::babybear4_to_bytes16(vk_hash_elems);
+                // PI layout v2: vk_hash_elems is 8 felts (full 32B). The
+                // pre-v2 zero-padded `expand_vk_hash_16_to_32` path is
+                // removed — registry dispatch now reads the entire 32-byte
+                // key (AIR-SOUNDNESS-AUDIT.md #70).
                 let actual_proof_hash = Self::hash_custom_proof(&custom_proof.proof_bytes);
                 let expected_commit = Self::babybear4_to_bytes16(proof_commit_elems);
                 if actual_proof_hash != expected_commit {
@@ -342,7 +350,7 @@ impl TurnExecutor {
                         got: actual_proof_hash,
                     });
                 }
-                let full_vk_hash = Self::expand_vk_hash_16_to_32(&vk_hash_bytes);
+                let full_vk_hash = Self::babybear8_to_bytes32(vk_hash_elems);
 
                 // Per VK-AS-RE-EXECUTION-RECIPE.md §2.4 / §v2: the
                 // `Effect::Custom { vk_hash }` is dispatched through
@@ -1365,6 +1373,21 @@ impl TurnExecutor {
         result
     }
 
+    /// Convert 8 BabyBear elements to a 32-byte array (PI v2 VK hash key).
+    ///
+    /// AIR-SOUNDNESS-AUDIT.md #70: the registry now binds against the full
+    /// 32-byte VK hash. The pre-v2 path used `babybear4_to_bytes16` plus
+    /// `expand_vk_hash_16_to_32` (zero-padded upper 16 bytes), giving 80-bit
+    /// effective security in a 128-bit system. The full 32-byte form
+    /// distinguishes VK hashes whose lower 16 bytes collide.
+    pub(super) fn babybear8_to_bytes32(elems: &[pyana_circuit::field::BabyBear; 8]) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        for (i, elem) in elems.iter().enumerate() {
+            result[i * 4..i * 4 + 4].copy_from_slice(&elem.0.to_le_bytes());
+        }
+        result
+    }
+
     /// Hash custom proof bytes to produce a 16-byte commitment (matching BabyBear[4]).
     pub(super) fn hash_custom_proof(proof_bytes: &[u8]) -> [u8; 16] {
         let h = blake3::hash(proof_bytes);
@@ -1374,8 +1397,19 @@ impl TurnExecutor {
         result
     }
 
-    /// Expand a 16-byte VK hash (from 4 BabyBear elements) to a 32-byte registry key.
-    /// The upper 16 bytes are zero-padded (registry lookup uses the full 32 bytes).
+    /// **DEPRECATED** — see `babybear8_to_bytes32`.
+    ///
+    /// Pre-v2 (`pi::VK_PI_LAYOUT_VERSION == 1`) expanded a 16-byte VK hash
+    /// (from 4 BabyBear elements) to a 32-byte registry key by zero-padding
+    /// the upper 16 bytes. This gave 80-bit effective security: any two
+    /// VK hashes that collide on the lower 16 bytes (~2^64 work) dispatch
+    /// to the same handler regardless of their upper 16 bytes.
+    /// `AIR-SOUNDNESS-AUDIT.md` #70 closed this by widening the PI vk_hash
+    /// to 8 felts (full 32 bytes); see `babybear8_to_bytes32`. This helper
+    /// is retained only so legacy callers compile; no live dispatch path
+    /// uses it.
+    #[deprecated(note = "PI layout v2: use babybear8_to_bytes32 against the full 8-felt PI slot")]
+    #[allow(dead_code)]
     pub(super) fn expand_vk_hash_16_to_32(short: &[u8; 16]) -> [u8; 32] {
         let mut result = [0u8; 32];
         result[..16].copy_from_slice(short);

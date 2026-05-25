@@ -126,7 +126,7 @@ fn check_all_14_effect_types() -> Result<(), String> {
             stake_return: 200,
         },
         Effect::Custom {
-            program_vk_hash: [BabyBear::new(1); 4],
+            program_vk_hash: [BabyBear::new(1); 8],
             proof_commitment: [BabyBear::new(2); 4],
         },
         Effect::SlashObligation {

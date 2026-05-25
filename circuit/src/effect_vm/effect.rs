@@ -160,8 +160,15 @@ pub enum Effect {
     /// `custom_proof_commitment`. The verifier checks that the external proof is
     /// valid and that its hash matches this commitment.
     Custom {
-        /// VK hash identifying the custom program (4 BabyBear elements packed into a hash).
-        program_vk_hash: [BabyBear; 4],
+        /// VK hash identifying the custom program.
+        ///
+        /// **PI layout v2** (`pi::VK_PI_LAYOUT_VERSION == 2`): widened from
+        /// 4 BabyBear felts (~16 bytes; 80-bit registry binding) to 8 felts
+        /// (~32 bytes; ~248-bit registry binding) so that two custom programs
+        /// whose 32-byte VKs collide only in the upper 16 bytes dispatch to
+        /// distinct handlers. Pre-v2 callers zero-padded the upper 16 bytes,
+        /// silently allowing such collisions to alias.
+        program_vk_hash: [BabyBear; 8],
         /// Hash of the external custom program proof (4 BabyBear elements).
         proof_commitment: [BabyBear; 4],
     },

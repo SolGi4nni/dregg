@@ -3030,7 +3030,7 @@ fn test_stage2_trailing_custom_gets_pad_row() {
             direction: 1,
         },
         Effect::Custom {
-            program_vk_hash: [BabyBear::ONE; 4],
+            program_vk_hash: [BabyBear::ONE; 8],
             proof_commitment: [BabyBear::new(2); 4],
         },
     ];
@@ -3365,4 +3365,165 @@ fn test_stage7_actor_nonce_trace_mismatch_rejected() {
         result.is_err(),
         "trace row-0 nonce disagreeing with PI[ACTOR_NONCE] must be rejected",
     );
+}
+
+// ============================================================================
+// AIR-SOUNDNESS-AUDIT.md #70 — PI v2 VK-hash widening
+// ============================================================================
+//
+// Pre-v2 the custom-effect dispatch path read 4 BabyBear felts (16 bytes) of
+// VK hash from PI[CUSTOM_PROOFS_BASE..+4] and zero-padded the upper 16 bytes
+// for registry lookup. Two VKs colliding on the lower 16 bytes (a ~2^64 work
+// item under generic-hash assumptions, well below the 128-bit security floor)
+// dispatched to the same handler regardless of their upper halves.
+//
+// Post-v2 PI carries the full 8-felt (32-byte) VK hash. The tests below
+// adversarially construct two VK hashes that share their lower 16 bytes and
+// differ in the upper 16, assert their PI projections diverge, and that the
+// dispatch keys reconstructed via `babybear8_to_bytes32` are distinct.
+
+#[test]
+fn test_vk_pi_layout_version_is_v2() {
+    // Sentinel for callers that gate on PI layout version: bumping this
+    // constant should be a deliberate, audited PI-shape change.
+    assert_eq!(pi::VK_PI_LAYOUT_VERSION, 2);
+    // Entry size after v2 widening: 8 vk + 4 commit.
+    assert_eq!(pi::CUSTOM_ENTRY_SIZE, 12);
+}
+
+#[test]
+fn test_vk_hash_widening_distinguishes_upper_half_collisions() {
+    // Adversary A and B share the lower 16 bytes (felts [0..4]) of their
+    // VK hashes — under pre-v2 PI layout they would alias to the same
+    // 32-byte registry key (zero-padded upper half), causing dispatch
+    // confusion. Under v2 the upper 4 felts are bound through PI, so they
+    // resolve to distinct registry entries.
+    let low: [BabyBear; 4] = [
+        BabyBear::new(0x1111),
+        BabyBear::new(0x2222),
+        BabyBear::new(0x3333),
+        BabyBear::new(0x4444),
+    ];
+    let vk_a: [BabyBear; 8] = [
+        low[0], low[1], low[2], low[3],
+        BabyBear::new(0xAAAA_0001),
+        BabyBear::new(0xAAAA_0002),
+        BabyBear::new(0xAAAA_0003),
+        BabyBear::new(0xAAAA_0004),
+    ];
+    let vk_b: [BabyBear; 8] = [
+        low[0], low[1], low[2], low[3],
+        BabyBear::new(0xBBBB_0001),
+        BabyBear::new(0xBBBB_0002),
+        BabyBear::new(0xBBBB_0003),
+        BabyBear::new(0xBBBB_0004),
+    ];
+    // Lower halves match — pre-v2 zero-pad would have aliased.
+    assert_eq!(&vk_a[..4], &vk_b[..4]);
+    // Upper halves differ — v2 layout distinguishes.
+    assert_ne!(&vk_a[4..], &vk_b[4..]);
+    // Full 8-felt hashes differ.
+    assert_ne!(vk_a, vk_b);
+}
+
+#[test]
+fn test_vk_hash_widening_distinct_pi_projections() {
+    // Build two Effect::Custom values whose vk_hashes collide on the
+    // lower half. Their PI projections must occupy distinct 8-felt
+    // ranges at PI[CUSTOM_PROOFS_BASE..+8].
+    let state = make_initial_state(1000);
+    let common_commit = [BabyBear::new(7); 4];
+    let vk_a: [BabyBear; 8] = [
+        BabyBear::new(0xC0DE_0001),
+        BabyBear::new(0xC0DE_0002),
+        BabyBear::new(0xC0DE_0003),
+        BabyBear::new(0xC0DE_0004),
+        BabyBear::new(0xA000_0001),
+        BabyBear::new(0xA000_0002),
+        BabyBear::new(0xA000_0003),
+        BabyBear::new(0xA000_0004),
+    ];
+    let vk_b: [BabyBear; 8] = [
+        // Same lower half as vk_a — pre-v2 would have collided here.
+        vk_a[0], vk_a[1], vk_a[2], vk_a[3],
+        // Upper half differs.
+        BabyBear::new(0xB000_0001),
+        BabyBear::new(0xB000_0002),
+        BabyBear::new(0xB000_0003),
+        BabyBear::new(0xB000_0004),
+    ];
+    let (_, pi_a) = generate_effect_vm_trace(
+        &state,
+        &[Effect::Custom {
+            program_vk_hash: vk_a,
+            proof_commitment: common_commit,
+        }],
+    );
+    let (_, pi_b) = generate_effect_vm_trace(
+        &state,
+        &[Effect::Custom {
+            program_vk_hash: vk_b,
+            proof_commitment: common_commit,
+        }],
+    );
+    // Pre-v2: PI[CUSTOM_PROOFS_BASE..+4] would match → same dispatch.
+    let base = pi::CUSTOM_PROOFS_BASE;
+    assert_eq!(&pi_a[base..base + 4], &pi_b[base..base + 4],
+        "lower-half collision is preserved (precondition)");
+    // Post-v2: upper-half slots differ, so dispatch keys disagree.
+    assert_ne!(&pi_a[base + 4..base + 8], &pi_b[base + 4..base + 8],
+        "PI v2 must expose the upper 4 vk_hash felts so dispatch is distinct");
+    // The full 8-felt projections must differ overall.
+    assert_ne!(&pi_a[base..base + 8], &pi_b[base..base + 8]);
+    // Effects-hash binding (helpers absorbs all 8 felts) also differs.
+    assert_ne!(
+        &pi_a[pi::EFFECTS_HASH_BASE..pi::EFFECTS_HASH_BASE + pi::EFFECTS_HASH_LEN],
+        &pi_b[pi::EFFECTS_HASH_BASE..pi::EFFECTS_HASH_BASE + pi::EFFECTS_HASH_LEN],
+        "effects_hash must absorb the full 8-felt vk_hash"
+    );
+}
+
+#[test]
+fn test_vk_hash_pi_dispatch_key_full_32_bytes() {
+    // Reconstruct the 32-byte registry dispatch key from the 8 PI felts and
+    // confirm pre-v2 truncation would have lost the upper 16 bytes.
+    fn babybear8_to_bytes32(elems: &[BabyBear; 8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, e) in elems.iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(&e.0.to_le_bytes());
+        }
+        out
+    }
+    let vk_a: [BabyBear; 8] = [
+        BabyBear::new(0xDEAD_0001),
+        BabyBear::new(0xDEAD_0002),
+        BabyBear::new(0xDEAD_0003),
+        BabyBear::new(0xDEAD_0004),
+        BabyBear::new(0xAAAA_0001),
+        BabyBear::new(0xAAAA_0002),
+        BabyBear::new(0xAAAA_0003),
+        BabyBear::new(0xAAAA_0004),
+    ];
+    let vk_b: [BabyBear; 8] = [
+        vk_a[0], vk_a[1], vk_a[2], vk_a[3],
+        BabyBear::new(0xBBBB_0001),
+        BabyBear::new(0xBBBB_0002),
+        BabyBear::new(0xBBBB_0003),
+        BabyBear::new(0xBBBB_0004),
+    ];
+    let key_a = babybear8_to_bytes32(&vk_a);
+    let key_b = babybear8_to_bytes32(&vk_b);
+    // Lower 16 bytes match.
+    assert_eq!(&key_a[..16], &key_b[..16]);
+    // Upper 16 bytes differ — distinct registry dispatch.
+    assert_ne!(&key_a[16..], &key_b[16..]);
+    assert_ne!(key_a, key_b,
+        "PI v2 32-byte dispatch keys must differ when upper half differs");
+    // Pre-v2 simulated: zero-pad the upper half from a 16-byte truncation.
+    let mut key_a_v1 = [0u8; 32];
+    key_a_v1[..16].copy_from_slice(&key_a[..16]);
+    let mut key_b_v1 = [0u8; 32];
+    key_b_v1[..16].copy_from_slice(&key_b[..16]);
+    assert_eq!(key_a_v1, key_b_v1,
+        "pre-v2 zero-pad would collide — this is exactly the gap #70 closes");
 }

@@ -253,13 +253,28 @@ pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 
 // ---- Custom proof commitments ----
 /// For each custom effect i (0..custom_count):
-///   PI[CUSTOM_PROOFS_BASE + i*8 + 0..4] = custom_program_vk_hash (4 elements)
-///   PI[CUSTOM_PROOFS_BASE + i*8 + 4..8] = custom_proof_commitment (4 elements)
+///   PI[CUSTOM_PROOFS_BASE + i*12 + 0..8]  = custom_program_vk_hash (8 elements, full 32B)
+///   PI[CUSTOM_PROOFS_BASE + i*12 + 8..12] = custom_proof_commitment (4 elements)
+///
+/// **PI layout v2** (`VK_PI_LAYOUT_VERSION == 2`): vk_hash widened from 4
+/// to 8 felts (~16B → 32B) per `AIR-SOUNDNESS-AUDIT.md` #70. Pre-v2
+/// callers wrote a 4-felt low half and zero-padded the upper 16 bytes for
+/// registry lookup, allowing two VKs that collide in the lower half to
+/// dispatch to the same handler (80-bit security in a 128-bit system).
+/// Post-v2 proofs are NOT verifier-compatible with pre-v2 proofs (the PI
+/// length differs by 4 felts/custom-entry); the verifier rejects on PI
+/// length mismatch.
 ///
 /// Note: CUSTOM_PROOFS_BASE is computed from BASE_COUNT so that adding
 /// new γ.2 PI fields shifts the custom-proof entries automatically. All
 /// callers compute from `BASE_COUNT` rather than the literal constant.
 pub const CUSTOM_PROOFS_BASE: usize = BASE_COUNT;
+
+/// PI layout version for custom-effect dispatch. Bumped from 1 to 2 when
+/// vk_hash widened from 4 to 8 felts. Verifiers MAY consult this constant
+/// to gate compatibility (the PI length itself is also a deterministic
+/// check).
+pub const VK_PI_LAYOUT_VERSION: u32 = 2;
 /// Base public inputs (without custom proof data).
 ///
 /// Layout (post sovereign-witness teeth + unilateral binding; BASE_COUNT 173):
@@ -461,8 +476,9 @@ pub const UNILATERAL_ATTESTATION_KIND_SOVEREIGN_WITNESS: u32 = 3;
 pub const UNILATERAL_ATTESTATION_KIND_CUSTOM_BASE: u32 = 0x4000_0000;
 
 pub const BASE_COUNT: usize = UNILATERAL_ATTESTATIONS_ROOT_BASE + UNILATERAL_ATTESTATIONS_ROOT_LEN; // 173
-/// Elements per custom effect entry in PI (4 vk_hash + 4 proof_commit).
-pub const CUSTOM_ENTRY_SIZE: usize = 8;
+/// Elements per custom effect entry in PI (8 vk_hash + 4 proof_commit).
+/// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`).
+pub const CUSTOM_ENTRY_SIZE: usize = 12;
 
 // ---- Hard cap on declared max_custom_effects ----
 /// Hard ceiling: a cell declaring more than this is refused at registration

@@ -632,7 +632,13 @@ pub fn generate_effect_vm_trace_ext(
                 program_vk_hash,
                 proof_commitment,
             } => {
-                // Write VK hash into params[0..4].
+                // Write VK hash into params[0..4]: the trace row carries the
+                // low 4 felts of the 8-felt VK hash for continuity. The full
+                // 8-felt vk_hash is bound through PI[CUSTOM_PROOFS_BASE..+8]
+                // (pi v2 widening, `pi::VK_PI_LAYOUT_VERSION == 2`). The
+                // executor's PI matching loop enforces equality between the
+                // full 32-byte registry key and the PI bytes — the trace's
+                // 4-felt slot is metadata only; binding is in PI.
                 for i in 0..4 {
                     row[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + i] = program_vk_hash[i];
                 }
@@ -1390,14 +1396,14 @@ pub fn generate_effect_vm_trace_ext(
             .write_to(&mut public_inputs[base..base + pi::SLOT_CAVEAT_ENTRY_SIZE]);
     }
 
-    // ---- Custom proof entries ----
+    // ---- Custom proof entries (PI layout v2: 8 vk + 4 commit per entry) ----
     for (i, (vk_hash, proof_commit)) in custom_entries.iter().enumerate() {
         let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
-        for j in 0..4 {
+        for j in 0..8 {
             public_inputs[base + j] = vk_hash[j];
         }
         for j in 0..4 {
-            public_inputs[base + 4 + j] = proof_commit[j];
+            public_inputs[base + 8 + j] = proof_commit[j];
         }
     }
 
@@ -1459,7 +1465,7 @@ pub fn extract_slot_caveat_manifest(public_inputs: &[BabyBear]) -> Vec<SlotCavea
 
 pub fn extract_custom_proof_commitments(
     public_inputs: &[BabyBear],
-) -> Vec<([BabyBear; 4], [BabyBear; 4])> {
+) -> Vec<([BabyBear; 8], [BabyBear; 4])> {
     if public_inputs.len() < pi::BASE_COUNT {
         return Vec::new();
     }
@@ -1470,17 +1476,22 @@ pub fn extract_custom_proof_commitments(
         if base + pi::CUSTOM_ENTRY_SIZE > public_inputs.len() {
             break;
         }
+        // PI layout v2: 8 vk_hash felts + 4 proof_commit felts per entry.
         let vk_hash = [
             public_inputs[base],
             public_inputs[base + 1],
             public_inputs[base + 2],
             public_inputs[base + 3],
-        ];
-        let proof_commit = [
             public_inputs[base + 4],
             public_inputs[base + 5],
             public_inputs[base + 6],
             public_inputs[base + 7],
+        ];
+        let proof_commit = [
+            public_inputs[base + 8],
+            public_inputs[base + 9],
+            public_inputs[base + 10],
+            public_inputs[base + 11],
         ];
         result.push((vk_hash, proof_commit));
     }
