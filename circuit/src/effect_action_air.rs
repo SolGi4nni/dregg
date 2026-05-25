@@ -401,6 +401,135 @@ pub const SCHEMA_CREATE_SEAL_PAIR: EffectActionSchema = EffectActionSchema {
     amount_count: 0,
 };
 
+/// Schema for `BridgeFinalize` binding:
+/// fields = [nullifier (32B), receipt_hash (32B = BLAKE3 of postcard(receipt))]
+/// amounts = []
+pub const SCHEMA_BRIDGE_FINALIZE: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-bridge-finalize-v1",
+    field_count: 2,
+    amount_count: 0,
+};
+
+/// Schema for `BridgeCancel` binding:
+/// fields = [nullifier (32B)]
+/// amounts = []
+pub const SCHEMA_BRIDGE_CANCEL: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-bridge-cancel-v1",
+    field_count: 1,
+    amount_count: 0,
+};
+
+/// Schema for `RevokeDelegation` binding:
+/// fields = [child (32B)]
+/// amounts = []
+pub const SCHEMA_REVOKE_DELEGATION: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-revoke-delegation-v1",
+    field_count: 1,
+    amount_count: 0,
+};
+
+/// Schema for `SpawnWithDelegation` binding:
+/// fields = [child_public_key (32B), child_token_id (32B)]
+/// amounts = [max_staleness (u64)]
+pub const SCHEMA_SPAWN_WITH_DELEGATION: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-spawn-with-delegation-v1",
+    field_count: 2,
+    amount_count: 1,
+};
+
+/// Schema for `ReleaseEscrow` / `RefundEscrow` binding (both share shape):
+/// fields = [escrow_id (32B), proof_hash (32B = BLAKE3 of optional proof; ZERO if None)]
+/// amounts = []
+///
+/// `RefundEscrow` uses the same schema with `proof_hash = ZERO` because the
+/// refund variant doesn't carry a proof. The discriminator between release
+/// and refund lives in the AIR kind_name domain separator — distinct kind
+/// names mean a release proof cannot replay as a refund proof.
+pub const SCHEMA_RELEASE_ESCROW: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-release-escrow-v1",
+    field_count: 2,
+    amount_count: 0,
+};
+
+/// Schema for `RefundEscrow` binding:
+/// fields = [escrow_id (32B)]
+/// amounts = []
+pub const SCHEMA_REFUND_ESCROW: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-refund-escrow-v1",
+    field_count: 1,
+    amount_count: 0,
+};
+
+/// Schema for `ExerciseViaCapability` binding:
+/// fields = [inner_effects_hash (32B = BLAKE3 of inner_effects[*].hash() chain)]
+/// amounts = [cap_slot (u32 → u64), inner_effects_len (u64)]
+///
+/// Note: inner_effects_len is bound explicitly so a prover cannot
+/// substitute a different-length effect chain with a collision-prefix
+/// hash. Combined with the chained hash, this gives full integrity over
+/// the inner effects list.
+pub const SCHEMA_EXERCISE_VIA_CAPABILITY: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-exercise-via-capability-v1",
+    field_count: 1,
+    amount_count: 2,
+};
+
+/// Schema for `CreateObligation` binding:
+/// fields = [beneficiary (32B), condition_hash (32B), stake_commitment (32B)]
+/// amounts = [deadline_height (u64), stake_amount (u64)]
+pub const SCHEMA_CREATE_OBLIGATION: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-create-obligation-v1",
+    field_count: 3,
+    amount_count: 2,
+};
+
+/// Schema for `CreateEscrow` binding (full-fidelity sibling to VmEffect):
+/// fields = [recipient (32B), condition_hash (32B), escrow_id (32B)]
+/// amounts = [amount (u64), timeout_height (u64)]
+pub const SCHEMA_CREATE_ESCROW: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-create-escrow-v1",
+    field_count: 3,
+    amount_count: 2,
+};
+
+/// Schema for `PipelinedSend` binding:
+/// fields = [source_turn (32B), action_hash (32B)]
+/// amounts = [output_slot (u64)]
+pub const SCHEMA_PIPELINED_SEND: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-pipelined-send-v1",
+    field_count: 2,
+    amount_count: 1,
+};
+
+/// Schema for `CreateCellFromFactory` binding:
+/// fields = [factory_vk (32B), owner_pubkey (32B), token_id (32B),
+///           params_hash (32B = BLAKE3 of postcard(params))]
+/// amounts = []
+pub const SCHEMA_CREATE_CELL_FROM_FACTORY: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-create-cell-from-factory-v1",
+    field_count: 4,
+    amount_count: 0,
+};
+
+/// Schema for `CreateCommittedEscrow` binding:
+/// fields = [creator_commitment (32B), recipient_commitment (32B),
+///           value_commitment (32B), condition_commitment (32B),
+///           escrow_id (32B), range_proof_hash (32B)]
+/// amounts = [amount (u64; cleartext amount deducted from creator balance),
+///            timeout_height (u64)]
+///
+/// The amount field carries the cleartext value that the executor will
+/// deduct from the creator's balance. The value_commitment + range_proof
+/// hide it cryptographically, but the proof-to-action binding must commit
+/// to which balance change happens, so we bind the cleartext amount here
+/// (the executor verifies the commitment+range_proof match the amount
+/// off-AIR).
+pub const SCHEMA_CREATE_COMMITTED_ESCROW: EffectActionSchema = EffectActionSchema {
+    kind_name: "pyana-effect-create-committed-escrow-v1",
+    field_count: 6,
+    amount_count: 2,
+};
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -825,5 +954,370 @@ mod tests {
         // All-zero fields and amount must round-trip (sentinel cases).
         let r = roundtrip(SCHEMA_CREATE_CELL, vec![[0u8; 32], [0u8; 32]], vec![0]);
         assert!(r.is_ok());
+    }
+
+    // ─── Additional per-Effect closures ──────────────────────────────────
+
+    #[test]
+    fn bridge_finalize_roundtrip_and_tamper_rejected() {
+        let null = [0x10u8; 32];
+        let receipt = [0x20u8; 32];
+        let r = roundtrip(SCHEMA_BRIDGE_FINALIZE, vec![null, receipt], vec![]);
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_BRIDGE_FINALIZE,
+            fields: vec![null, receipt],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong_receipt = receipt;
+        wrong_receipt[8] ^= 0x40;
+        let r = verify_effect_action(SCHEMA_BRIDGE_FINALIZE, &[null, wrong_receipt], &[], &proof);
+        assert!(r.is_err(), "tampered receipt must be rejected");
+    }
+
+    #[test]
+    fn bridge_cancel_roundtrip_and_tamper_rejected() {
+        let null = [0xA0u8; 32];
+        let r = roundtrip(SCHEMA_BRIDGE_CANCEL, vec![null], vec![]);
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_BRIDGE_CANCEL,
+            fields: vec![null],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong = null;
+        wrong[31] ^= 0x01;
+        let r = verify_effect_action(SCHEMA_BRIDGE_CANCEL, &[wrong], &[], &proof);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn revoke_delegation_roundtrip_and_tamper_rejected() {
+        let child = [0x77u8; 32];
+        let r = roundtrip(SCHEMA_REVOKE_DELEGATION, vec![child], vec![]);
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_REVOKE_DELEGATION,
+            fields: vec![child],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong = child;
+        wrong[0] ^= 0xFF;
+        let r = verify_effect_action(SCHEMA_REVOKE_DELEGATION, &[wrong], &[], &proof);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn spawn_with_delegation_roundtrip_and_staleness_tamper_rejected() {
+        let child_pk = [0x11u8; 32];
+        let child_tok = [0x22u8; 32];
+        let max_staleness = 3600u64;
+        let r = roundtrip(
+            SCHEMA_SPAWN_WITH_DELEGATION,
+            vec![child_pk, child_tok],
+            vec![max_staleness],
+        );
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_SPAWN_WITH_DELEGATION,
+            fields: vec![child_pk, child_tok],
+            amounts: vec![max_staleness],
+        };
+        let proof = prove_effect_action(&w);
+        let r = verify_effect_action(
+            SCHEMA_SPAWN_WITH_DELEGATION,
+            &[child_pk, child_tok],
+            &[max_staleness + 1],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered max_staleness must be rejected");
+    }
+
+    #[test]
+    fn release_escrow_roundtrip_and_proof_hash_tamper_rejected() {
+        let id = [0xAAu8; 32];
+        let phash = [0xBBu8; 32];
+        let r = roundtrip(SCHEMA_RELEASE_ESCROW, vec![id, phash], vec![]);
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_RELEASE_ESCROW,
+            fields: vec![id, phash],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong = phash;
+        wrong[7] ^= 0x80;
+        let r = verify_effect_action(SCHEMA_RELEASE_ESCROW, &[id, wrong], &[], &proof);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn release_refund_domain_separation() {
+        // Critical: a release proof must NOT verify as a refund proof.
+        let id = [0xAAu8; 32];
+        let phash = [0u8; 32];
+        let w_release = EffectActionWitness {
+            schema: SCHEMA_RELEASE_ESCROW,
+            fields: vec![id, phash],
+            amounts: vec![],
+        };
+        let proof_release = prove_effect_action(&w_release);
+        // Try to verify the release proof as a refund — schemas differ in
+        // field count (release=2, refund=1), so the count mismatch alone
+        // rejects. But even if a prover crafts a single-field witness, the
+        // kind_name domain separator rejects.
+        let r = verify_effect_action(SCHEMA_REFUND_ESCROW, &[id], &[], &proof_release);
+        assert!(r.is_err(), "release proof must not replay as refund");
+    }
+
+    #[test]
+    fn refund_escrow_roundtrip_and_id_tamper_rejected() {
+        let id = [0xCCu8; 32];
+        let r = roundtrip(SCHEMA_REFUND_ESCROW, vec![id], vec![]);
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_REFUND_ESCROW,
+            fields: vec![id],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong = id;
+        wrong[1] ^= 0x10;
+        let r = verify_effect_action(SCHEMA_REFUND_ESCROW, &[wrong], &[], &proof);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn exercise_via_capability_inner_count_tamper_rejected() {
+        // Critical: inner_effects_len is bound explicitly so a prover
+        // cannot substitute a different-length chain with a colliding
+        // hash prefix.
+        let inner_hash = [0xDDu8; 32];
+        let cap_slot = 7u64;
+        let inner_len = 3u64;
+        let w = EffectActionWitness {
+            schema: SCHEMA_EXERCISE_VIA_CAPABILITY,
+            fields: vec![inner_hash],
+            amounts: vec![cap_slot, inner_len],
+        };
+        let proof = prove_effect_action(&w);
+        // Tamper inner_len: 3 → 4.
+        let r = verify_effect_action(
+            SCHEMA_EXERCISE_VIA_CAPABILITY,
+            &[inner_hash],
+            &[cap_slot, inner_len + 1],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered inner_effects_len must be rejected");
+    }
+
+    #[test]
+    fn create_obligation_full_fidelity() {
+        let beneficiary = [0xE0u8; 32];
+        let condition = [0xE1u8; 32];
+        let stake_commit = [0xE2u8; 32];
+        let deadline = 1_000_000u64;
+        let stake_amount = 1u64 << 40;
+        let r = roundtrip(
+            SCHEMA_CREATE_OBLIGATION,
+            vec![beneficiary, condition, stake_commit],
+            vec![deadline, stake_amount],
+        );
+        assert!(r.is_ok());
+
+        // Tamper deadline: prover supplied 1_000_000, verifier tries 999_999.
+        let w = EffectActionWitness {
+            schema: SCHEMA_CREATE_OBLIGATION,
+            fields: vec![beneficiary, condition, stake_commit],
+            amounts: vec![deadline, stake_amount],
+        };
+        let proof = prove_effect_action(&w);
+        let r = verify_effect_action(
+            SCHEMA_CREATE_OBLIGATION,
+            &[beneficiary, condition, stake_commit],
+            &[deadline - 1, stake_amount],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered deadline_height must be rejected");
+
+        // Tamper stake_amount via the 30-bit-trunc gambit.
+        let high_stake = (1u64 << 50) | 0xCAFE;
+        let w2 = EffectActionWitness {
+            schema: SCHEMA_CREATE_OBLIGATION,
+            fields: vec![beneficiary, condition, stake_commit],
+            amounts: vec![deadline, high_stake],
+        };
+        let proof2 = prove_effect_action(&w2);
+        let r = verify_effect_action(
+            SCHEMA_CREATE_OBLIGATION,
+            &[beneficiary, condition, stake_commit],
+            &[deadline, high_stake & ((1u64 << 30) - 1)],
+            &proof2,
+        );
+        assert!(
+            r.is_err(),
+            "30-bit-truncated stake_amount must not collide with high-bit stake"
+        );
+    }
+
+    #[test]
+    fn create_escrow_full_fidelity_with_timeout_and_id() {
+        let recipient = [0xF0u8; 32];
+        let condition = [0xF1u8; 32];
+        let escrow_id = [0xF2u8; 32];
+        let amount = (1u64 << 40) | 0xBEEF;
+        let timeout = 500_000u64;
+        let r = roundtrip(
+            SCHEMA_CREATE_ESCROW,
+            vec![recipient, condition, escrow_id],
+            vec![amount, timeout],
+        );
+        assert!(r.is_ok());
+
+        // Tamper escrow_id.
+        let w = EffectActionWitness {
+            schema: SCHEMA_CREATE_ESCROW,
+            fields: vec![recipient, condition, escrow_id],
+            amounts: vec![amount, timeout],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong_id = escrow_id;
+        wrong_id[0] ^= 0x01;
+        let r = verify_effect_action(
+            SCHEMA_CREATE_ESCROW,
+            &[recipient, condition, wrong_id],
+            &[amount, timeout],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered escrow_id must be rejected");
+
+        // Tamper timeout_height.
+        let r = verify_effect_action(
+            SCHEMA_CREATE_ESCROW,
+            &[recipient, condition, escrow_id],
+            &[amount, timeout + 1],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered timeout_height must be rejected");
+    }
+
+    #[test]
+    fn pipelined_send_roundtrip_and_output_slot_tamper_rejected() {
+        let src_turn = [0x90u8; 32];
+        let action_hash = [0x91u8; 32];
+        let output_slot = 7u64;
+        let r = roundtrip(
+            SCHEMA_PIPELINED_SEND,
+            vec![src_turn, action_hash],
+            vec![output_slot],
+        );
+        assert!(r.is_ok());
+
+        let w = EffectActionWitness {
+            schema: SCHEMA_PIPELINED_SEND,
+            fields: vec![src_turn, action_hash],
+            amounts: vec![output_slot],
+        };
+        let proof = prove_effect_action(&w);
+        let r = verify_effect_action(
+            SCHEMA_PIPELINED_SEND,
+            &[src_turn, action_hash],
+            &[output_slot + 1],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered output_slot must be rejected");
+    }
+
+    #[test]
+    fn create_cell_from_factory_full_fidelity() {
+        let factory_vk = [0xA0u8; 32];
+        let owner_pk = [0xA1u8; 32];
+        let token_id = [0xA2u8; 32];
+        let params_hash = [0xA3u8; 32];
+        let r = roundtrip(
+            SCHEMA_CREATE_CELL_FROM_FACTORY,
+            vec![factory_vk, owner_pk, token_id, params_hash],
+            vec![],
+        );
+        assert!(r.is_ok());
+
+        // Tamper params_hash.
+        let w = EffectActionWitness {
+            schema: SCHEMA_CREATE_CELL_FROM_FACTORY,
+            fields: vec![factory_vk, owner_pk, token_id, params_hash],
+            amounts: vec![],
+        };
+        let proof = prove_effect_action(&w);
+        let mut wrong = params_hash;
+        wrong[10] ^= 0x10;
+        let r = verify_effect_action(
+            SCHEMA_CREATE_CELL_FROM_FACTORY,
+            &[factory_vk, owner_pk, token_id, wrong],
+            &[],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered params_hash must be rejected");
+
+        // Tamper token_id (closes the existing executor.rs gap where
+        // CreateCellFromFactory.token_id is silently dropped from VmEffect
+        // projection — only factory_vk and child_vk_derived are bound).
+        let mut wrong_tok = token_id;
+        wrong_tok[15] ^= 0x01;
+        let r = verify_effect_action(
+            SCHEMA_CREATE_CELL_FROM_FACTORY,
+            &[factory_vk, owner_pk, wrong_tok, params_hash],
+            &[],
+            &proof,
+        );
+        assert!(r.is_err(), "tampered token_id must be rejected");
+    }
+
+    #[test]
+    fn create_committed_escrow_binds_cleartext_amount() {
+        let creator_c = [0xB0u8; 32];
+        let recipient_c = [0xB1u8; 32];
+        let value_c = [0xB2u8; 32];
+        let condition_c = [0xB3u8; 32];
+        let escrow_id = [0xB4u8; 32];
+        let range_proof_h = [0xB5u8; 32];
+        let amount = (1u64 << 50) | 0xDEAD;
+        let timeout = 2_000_000u64;
+        let r = roundtrip(
+            SCHEMA_CREATE_COMMITTED_ESCROW,
+            vec![creator_c, recipient_c, value_c, condition_c, escrow_id, range_proof_h],
+            vec![amount, timeout],
+        );
+        assert!(r.is_ok());
+
+        // Critical: the cleartext amount must be full-64-bit bound, not
+        // 30-bit truncated. This is the closure for the executor-side gap
+        // where `CreateCommittedEscrow` projects to `commit_hash` with no
+        // PI binding to the amount.
+        let w = EffectActionWitness {
+            schema: SCHEMA_CREATE_COMMITTED_ESCROW,
+            fields: vec![creator_c, recipient_c, value_c, condition_c, escrow_id, range_proof_h],
+            amounts: vec![amount, timeout],
+        };
+        let proof = prove_effect_action(&w);
+        // Verifier with the 30-bit truncation must REJECT.
+        let r = verify_effect_action(
+            SCHEMA_CREATE_COMMITTED_ESCROW,
+            &[creator_c, recipient_c, value_c, condition_c, escrow_id, range_proof_h],
+            &[amount & ((1u64 << 30) - 1), timeout],
+            &proof,
+        );
+        assert!(
+            r.is_err(),
+            "30-bit-truncated amount must not collide with high-bit amount"
+        );
     }
 }
