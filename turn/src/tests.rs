@@ -10774,3 +10774,491 @@ mod binding_proof_executor_tests {
         assert_ne!(h_a, h_c, "adding a binding proof must change the hash");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lifecycle Effects: adversarial tests
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// One test per failure mode for the Silver-Vision lifecycle effects
+// (`Burn`, `CellSeal`, `CellUnseal`, `CellDestroy`, `AttenuateCapability`,
+// `ReceiptArchive`). Each test exercises *rejection* paths (the executor
+// must refuse) plus the two happy-path binding tests (Burn → `was_burn`,
+// CellDestroy → effects_hash binds DeathCertificate hash).
+#[cfg(test)]
+mod lifecycle_effects_adversarial {
+    use super::*;
+    use pyana_cell::lifecycle::{
+        ArchivalAttestation, DeathCertificate, DeathReason,
+    };
+
+    /// Build a CellDestroy effect targeting `cell` with a canonical
+    /// DeathCertificate (voluntary retirement at height 0).
+    fn make_destroy_effect(cell: CellId) -> Effect {
+        Effect::CellDestroy {
+            target: cell,
+            certificate: DeathCertificate {
+                cell_id: cell,
+                last_receipt_hash: [0u8; 32],
+                final_state_commitment: [0u8; 32],
+                destroyed_at_height: 0,
+                reason: DeathReason::Voluntary,
+            },
+        }
+    }
+
+    /// 1. Burn rejected when amount > balance.
+    #[test]
+    fn cannot_burn_more_than_balance() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(100, 0);
+        let executor = zero_cost_executor();
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "burn", agent_id)
+                .effect(Effect::Burn {
+                    target: agent_id,
+                    slot: 0,
+                    // Burning 200 with only 100 balance (we also need to
+                    // cover the fee, but the burn check fires first).
+                    amount: 200,
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "burn > balance must reject: {:?}",
+            result
+        );
+        let (err, _) = result.unwrap_rejected();
+        assert!(
+            matches!(err, TurnError::InsufficientBalance { .. }),
+            "expected InsufficientBalance, got {:?}",
+            err
+        );
+
+        // Ledger unchanged.
+        let agent = ledger.get(&agent_id).unwrap();
+        assert_eq!(agent.state.balance(), 100);
+    }
+
+    /// 2. CellUnseal rejected when cell is Live (NotSealed).
+    #[test]
+    fn cannot_unseal_live_cell() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(1000, 0);
+        let executor = zero_cost_executor();
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "unseal", agent_id)
+                .effect(Effect::CellUnseal { target: agent_id })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "unseal of Live cell must reject: {:?}",
+            result
+        );
+        let (err, _) = result.unwrap_rejected();
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("not sealed") || msg.contains("NotSealed"),
+            "expected NotSealed message, got {msg}"
+        );
+    }
+
+    /// 3. CellDestroy rejected when certificate's cell_id does not match
+    ///    the action target (CertificateMismatch).
+    #[test]
+    fn cannot_destroy_with_wrong_cell_certificate() {
+        let (mut ledger, agent_id, other_id) = setup_two_open_cells(1000, 1000);
+        let executor = zero_cost_executor();
+
+        // Action targets agent_id, but DeathCertificate's cell_id is
+        // other_id. The executor must reject via CertificateMismatch.
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "destroy", agent_id)
+                .effect(Effect::CellDestroy {
+                    target: agent_id,
+                    certificate: DeathCertificate {
+                        cell_id: other_id, // wrong cell
+                        last_receipt_hash: [0u8; 32],
+                        final_state_commitment: [0u8; 32],
+                        destroyed_at_height: 0,
+                        reason: DeathReason::Voluntary,
+                    },
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "destroy with wrong cell cert must reject: {:?}",
+            result
+        );
+        let (err, _) = result.unwrap_rejected();
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("certificate") || msg.contains("Mismatch"),
+            "expected CertificateMismatch, got {msg}"
+        );
+    }
+
+    /// 4. AttenuateCapability rejected when proposed permissions are
+    ///    WIDER (less restrictive) than the existing capability.
+    #[test]
+    fn cannot_attenuate_widening() {
+        let mut ledger = Ledger::new();
+        let (mut agent, _) = make_open_cell(1, 1000);
+        let (target, _) = make_open_cell(2, 0);
+        let target_id = target.id();
+        // Grant a capability with the *strict* permission `Signature`.
+        // Widening to `None` must be rejected.
+        let slot = agent
+            .capabilities
+            .grant(target_id, AuthRequired::Signature)
+            .expect("grant");
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(target).unwrap();
+        let executor = zero_cost_executor();
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "attenuate", agent_id)
+                .effect(Effect::AttenuateCapability {
+                    cell: agent_id,
+                    slot,
+                    narrower_permissions: AuthRequired::None, // wider than Signature
+                    narrower_effects: None,
+                    narrower_expiry: None,
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "widening attenuation must reject: {:?}",
+            result
+        );
+
+        // Capability permission unchanged.
+        let a = ledger.get(&agent_id).unwrap();
+        let cap = a
+            .capabilities
+            .iter()
+            .find(|r| r.slot == slot)
+            .expect("cap still present");
+        assert_eq!(cap.permissions, AuthRequired::Signature);
+    }
+
+    /// 5. ReceiptArchive rejected when prefix_end_height > current
+    ///    block height.
+    #[test]
+    fn cannot_archive_past_head() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(1000, 0);
+        let mut executor = zero_cost_executor();
+        executor.set_block_height(100);
+
+        // Try to archive a prefix ending at height 200 — the live head
+        // is only 100, so this must reject.
+        let prefix_end_height = 200u64;
+        let checkpoint = ArchivalAttestation {
+            cell_id: agent_id,
+            archive_start_height: 0,
+            archive_end_height: prefix_end_height,
+            archive_blob_hash: [0xAB; 32],
+            archive_terminal_commitment: [0xCD; 32],
+            archive_terminal_receipt_hash: [0xEF; 32],
+        };
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "archive", agent_id)
+                .effect(Effect::ReceiptArchive {
+                    prefix_end_height,
+                    checkpoint,
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "ReceiptArchive past head must reject: {:?}",
+            result
+        );
+        let (err, _) = result.unwrap_rejected();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("exceeds") || msg.to_lowercase().contains("head"),
+            "expected past-head rejection, got {msg}"
+        );
+    }
+
+    /// 6. CellSeal on a Destroyed cell must reject (Terminal).
+    ///    We split into two turns so the lifecycle change persists.
+    #[test]
+    fn cannot_seal_destroyed_cell() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(1000, 0);
+        let executor = zero_cost_executor();
+
+        // Turn 1: destroy the agent cell.
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "destroy", agent_id)
+                .effect(make_destroy_effect(agent_id))
+                .build();
+            builder.add_action(action);
+        }
+        let turn1 = builder.fee(0).build();
+        let r1 = execute_chained(&executor, &turn1, &mut ledger);
+        assert!(r1.is_committed(), "destroy turn must commit: {:?}", r1);
+        // Sanity: cell is now destroyed.
+        let c = ledger.get(&agent_id).unwrap();
+        assert!(
+            c.lifecycle.is_destroyed(),
+            "cell must be destroyed after turn 1"
+        );
+
+        // Turn 2: try to seal the destroyed cell.
+        let mut builder = TurnBuilder::new(agent_id, 1);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "seal", agent_id)
+                .effect(Effect::CellSeal {
+                    target: agent_id,
+                    reason: [0u8; 32],
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn2 = builder.fee(0).build();
+        let r2 = execute_chained(&executor, &turn2, &mut ledger);
+        assert!(
+            r2.is_rejected(),
+            "sealing a destroyed cell must reject: {:?}",
+            r2
+        );
+        let (err, _) = r2.unwrap_rejected();
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("terminal") || msg.contains("Terminal"),
+            "expected Terminal rejection, got {msg}"
+        );
+    }
+
+    /// 7. Generic Transfer on a destroyed cell must reject. The cell
+    ///    program semantics (lifecycle.accepts_effects()) say destroyed
+    ///    cells refuse new effects.
+    #[test]
+    fn cannot_operate_on_destroyed_cell() {
+        let mut ledger = Ledger::new();
+        let (mut agent, _) = make_open_cell(1, 1000);
+        let (target, _) = make_open_cell(2, 0);
+        let target_id = target.id();
+        agent
+            .capabilities
+            .grant(target_id, AuthRequired::None);
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(target).unwrap();
+        let executor = zero_cost_executor();
+
+        // Turn 1: destroy `target`. Action target is target (not agent).
+        // Use the agent as the submitter; the effect target must equal
+        // the action target per executor enforcement.
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(target_id, "destroy", agent_id)
+                .effect(make_destroy_effect(target_id))
+                .build();
+            builder.add_action(action);
+        }
+        let turn1 = builder.fee(0).build();
+        let r1 = execute_chained(&executor, &turn1, &mut ledger);
+        assert!(r1.is_committed(), "destroy turn must commit: {:?}", r1);
+        assert!(ledger.get(&target_id).unwrap().lifecycle.is_destroyed());
+        let target_bal_before = ledger.get(&target_id).unwrap().state.balance();
+        let agent_bal_before = ledger.get(&agent_id).unwrap().state.balance();
+
+        // Turn 2: try a generic Transfer FROM the destroyed cell.
+        let mut builder = TurnBuilder::new(agent_id, 1);
+        {
+            let action =
+                ActionBuilder::new_unchecked_for_tests(target_id, "transfer", agent_id)
+                    .effect(Effect::Transfer {
+                        from: target_id,
+                        to: agent_id,
+                        amount: 1,
+                    })
+                    .build();
+            builder.add_action(action);
+        }
+        let turn2 = builder.fee(0).build();
+        let r2 = execute_chained(&executor, &turn2, &mut ledger);
+        assert!(
+            r2.is_rejected(),
+            "operating on a destroyed cell must reject: {:?}",
+            r2
+        );
+        // Ledger state must not have shifted.
+        assert_eq!(
+            ledger.get(&target_id).unwrap().state.balance(),
+            target_bal_before,
+            "destroyed cell balance must not change"
+        );
+        assert_eq!(
+            ledger.get(&agent_id).unwrap().state.balance(),
+            agent_bal_before,
+            "agent balance must not change"
+        );
+    }
+
+    /// 8. Happy path: Burn produces a receipt with `was_burn = true`,
+    ///    and flipping `was_burn` changes `receipt_hash`.
+    #[test]
+    fn burn_emits_was_burn_in_receipt() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(1000, 0);
+        let executor = zero_cost_executor();
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "burn", agent_id)
+                .effect(Effect::Burn {
+                    target: agent_id,
+                    slot: 0,
+                    amount: 200,
+                })
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_committed(), "burn must commit: {:?}", result);
+        let (_, receipt, _) = result.unwrap_committed();
+        assert!(receipt.was_burn, "receipt.was_burn must be true after Burn");
+
+        // Flip the bit; receipt_hash must change so the executor cannot
+        // strip the non-conservation disclosure.
+        let h_with = receipt.receipt_hash();
+        let mut tweaked = receipt.clone();
+        tweaked.was_burn = false;
+        let h_without = tweaked.receipt_hash();
+        assert_ne!(
+            h_with, h_without,
+            "flipping was_burn must change receipt_hash"
+        );
+
+        // Sanity: balance reduced.
+        let agent = ledger.get(&agent_id).unwrap();
+        assert_eq!(agent.state.balance(), 1000 - 200);
+    }
+
+    /// 9. Happy path: CellDestroy's effect hash binds the
+    ///    DeathCertificate's canonical hash (so the receipt's
+    ///    `effects_hash` provably commits to the certificate). Flipping
+    ///    the certificate must change the effects-level commitment.
+    #[test]
+    fn destroy_receipt_includes_death_certificate_hash() {
+        let (mut ledger, agent_id, _) = setup_two_open_cells(1000, 0);
+        let executor = zero_cost_executor();
+
+        let cert_a = DeathCertificate {
+            cell_id: agent_id,
+            last_receipt_hash: [0u8; 32],
+            final_state_commitment: [0u8; 32],
+            destroyed_at_height: 0,
+            reason: DeathReason::Voluntary,
+        };
+        let cert_b = DeathCertificate {
+            reason: DeathReason::Forced,
+            ..cert_a.clone()
+        };
+        // The cert hash must differ between the two reasons.
+        assert_ne!(
+            cert_a.certificate_hash(),
+            cert_b.certificate_hash(),
+            "death cert hash must depend on `reason`"
+        );
+
+        let effect_a = Effect::CellDestroy {
+            target: agent_id,
+            certificate: cert_a.clone(),
+        };
+        let effect_b = Effect::CellDestroy {
+            target: agent_id,
+            certificate: cert_b.clone(),
+        };
+
+        // The two effects' canonical hashes must differ (effect.hash()
+        // folds the death cert's hash in).
+        let ea_hash = effect_a.hash();
+        let eb_hash = effect_b.hash();
+        assert_ne!(
+            ea_hash, eb_hash,
+            "Effect::CellDestroy.hash() must bind the DeathCertificate hash"
+        );
+
+        // And the cert_a's hash must actually appear (as bytes) in the
+        // preimage — the strongest assertion we can make without
+        // re-implementing the hash: an effect whose only difference
+        // from `effect_a` is a *zeroed* cert (same shape, different
+        // hash) must produce a different effect hash. Already covered
+        // by ea_hash != eb_hash.
+
+        // Drive a full turn for the happy path so the receipt's
+        // `effects_hash` reflects this binding.
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new_unchecked_for_tests(agent_id, "destroy", agent_id)
+                .effect(effect_a)
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(0).build();
+
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_committed(), "destroy turn must commit: {:?}", result);
+        let (_, receipt, _) = result.unwrap_committed();
+        // The receipt's effects_hash is a Merkle-fold over the
+        // per-effect hashes; a different cert would yield a different
+        // root. Re-deriving the root with `effect_b`'s hash and
+        // checking inequality is the cleanest substitute.
+        let exec_root_a = receipt.effects_hash;
+        // The executor's `compute_effects_hash` is
+        // `blake3(concat(effect_hashes))`. For a single-effect turn, it
+        // equals `blake3(effect.hash())`. Verify both: matches our
+        // parallel root for `effect_a` and differs from `effect_b`.
+        let root_a = blake3::Hasher::new()
+            .update(&ea_hash)
+            .finalize();
+        let root_b = blake3::Hasher::new()
+            .update(&eb_hash)
+            .finalize();
+        assert_eq!(
+            exec_root_a, *root_a.as_bytes(),
+            "single-effect effects_hash must equal blake3(effect.hash())"
+        );
+        assert_ne!(
+            exec_root_a, *root_b.as_bytes(),
+            "swapping cert (different reason) must change effects_hash"
+        );
+    }
+}

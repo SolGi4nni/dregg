@@ -21,6 +21,7 @@ impl TurnExecutor {
         journal: &mut LedgerJournal,
         excess: &mut i64,
         turn_nonce: u64,
+        turn_agent: &CellId,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let action = &tree.action;
 
@@ -561,6 +562,58 @@ impl TurnExecutor {
         // Suppress unused warning on the legacy alias.
         let _ = old_target_state;
 
+        // Per-action target-nonce bump for legacy (CellProgram::None) cells.
+        //
+        // When a cell has no program, the executor is responsible for
+        // monotonically advancing its nonce on each successful action that
+        // mutates its state. This mirrors Ethereum-style per-target sequence
+        // numbers and is what `test_program_none_backward_compat` asserts.
+        // Cells with a non-trivial CellProgram manage their own nonce via
+        // explicit `Effect::IncrementNonce` (see `test_increment_nonce_effect`)
+        // or via program constraints, so we only auto-bump when:
+        //   1. The target is NOT the turn's agent (the agent gets its own
+        //      per-turn nonce bump in phase 1 of `execute`; double-bumping
+        //      would break the nonce-replay chain used by chained turns),
+        //   2. The target cell exists post-effects,
+        //   3. Its program is `CellProgram::None`,
+        //   4. The action's effects actually changed target state (not a
+        //      pure read), AND
+        //   5. No explicit `Effect::IncrementNonce { cell: action.target }`
+        //      was already applied this action (avoid double-bump).
+        let target_is_turn_agent = &action.target == turn_agent;
+        let explicit_target_nonce_bump = action
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::IncrementNonce { cell } if *cell == action.target));
+        // Sovereign cells own their own state commitments and manage their
+        // own nonce through proof-carrying or witness-signed transitions;
+        // the hosted executor must not silently mutate them.
+        let target_is_sovereign = ledger.is_sovereign(&action.target)
+            || ledger.is_sovereign_registered(&action.target);
+        if !target_is_turn_agent && !target_is_sovereign && !explicit_target_nonce_bump {
+            let target_program_is_none = ledger
+                .get(&action.target)
+                .map(|c| c.program.is_none())
+                .unwrap_or(false);
+            // Did anything observably change for the target during this action?
+            // Use the old_target_state snapshot captured before effects applied.
+            let target_changed = match (
+                old_cell_states.get(&action.target),
+                ledger.get(&action.target),
+            ) {
+                (Some(old), Some(new)) => old != &new.state,
+                // Newly created target — treat as a change.
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if target_program_is_none && target_changed {
+                if let Some(c) = ledger.get_mut(&action.target) {
+                    journal.record_set_nonce(action.target, c.state.nonce());
+                    let _ = c.state.increment_nonce();
+                }
+            }
+        }
+
         // Recurse into children.
         // NOTE: This resolution determines whether children can target *different* cells.
         // DelegationMode::None prevents cross-cell targeting (enforced below).
@@ -604,6 +657,7 @@ impl TurnExecutor {
                 journal,
                 excess,
                 turn_nonce,
+                turn_agent,
             )?;
         }
 

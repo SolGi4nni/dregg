@@ -713,15 +713,12 @@ fn hex32(bytes: &[u8; 32]) -> String {
 #[allow(dead_code)]
 fn _api_surface_anchor() {
     let _ = HandoffPresentation::presentation_message;
-    // `LocalSeat::bls_secret` is gated on `pyana-federation/runtime`; that
-    // feature is unified-on across the workspace (e.g. `node/` enables it),
-    // so the field is always present in the build observability participates
-    // in. We always set it.
-    let _ = LocalSeat {
-        index: 0,
-        signing_key: SigningKey::from_bytes(&[0u8; 32]),
-        bls_secret: None,
-    };
+    // `LocalSeat::bls_secret` is gated on `pyana-federation/runtime`,
+    // a feature observability does not enable. We anchor the type but
+    // do not construct it here (the constructor shape differs between
+    // feature configurations). The type reference suffices to keep
+    // it linked into the binary's API surface.
+    let _: Option<LocalSeat> = None;
     let _: BabyBear = BabyBear::ZERO;
     let _ = BilateralCounts::default();
     let _ = BilateralRoots::default();
