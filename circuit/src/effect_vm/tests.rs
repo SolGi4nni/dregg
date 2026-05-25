@@ -3,7 +3,9 @@
 #![cfg(test)]
 
 use super::*;
-use crate::stark::{prove, verify};
+use crate::field::BabyBear;
+use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
+use crate::stark::{prove, verify, StarkAir};
 
 fn make_initial_state(balance: u64) -> CellState {
     CellState::new(balance, 0)
@@ -39,12 +41,12 @@ fn pi_layout_no_overlap_between_manifests() {
         pi::SLOT_CAVEAT_MANIFEST_BASE + pi::MAX_SLOT_CAVEATS * pi::SLOT_CAVEAT_ENTRY_SIZE;
     assert!(slot_caveat_end <= pi::CROSS_EFFECT_DEPS_COUNT);
 
-    let cross_effect_end = pi::CROSS_EFFECT_DEPS_BASE
-        + pi::MAX_CROSS_EFFECT_DEPS * pi::CROSS_EFFECT_DEP_ENTRY_SIZE;
+    let cross_effect_end =
+        pi::CROSS_EFFECT_DEPS_BASE + pi::MAX_CROSS_EFFECT_DEPS * pi::CROSS_EFFECT_DEP_ENTRY_SIZE;
     assert!(cross_effect_end <= pi::WITNESS_INDEX_MAP_COUNT);
 
-    let witness_index_end = pi::WITNESS_INDEX_MAP_BASE
-        + pi::MAX_WITNESS_INDEX_ENTRIES * pi::WITNESS_INDEX_ENTRY_SIZE;
+    let witness_index_end =
+        pi::WITNESS_INDEX_MAP_BASE + pi::MAX_WITNESS_INDEX_ENTRIES * pi::WITNESS_INDEX_ENTRY_SIZE;
     // Witness-index manifest ends exactly at the unilateral count slot
     // (append-only — unilateral binding sits in slots 168..173).
     assert_eq!(witness_index_end, pi::UNILATERAL_ATTESTATIONS_COUNT);

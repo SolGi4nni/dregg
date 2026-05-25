@@ -8,9 +8,10 @@ use crate::field::BabyBear;
 use crate::poseidon2::{hash_2_to_1, hash_4_to_1, hash_many};
 
 use super::{
-    aux_off, compute_effects_hash, compute_effects_hash_4, fill_reserved_bits, param, pi, sel,
-    split_u64, state, AUX_BASE, CellState, Effect, EffectVmAir, EFFECT_VM_WIDTH, NUM_AUX,
-    NUM_EFFECTS, NUM_PARAMS, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
+    AUX_BASE, CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, NUM_AUX, NUM_EFFECTS, NUM_PARAMS,
+    PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, aux_off, compute_effects_hash,
+    compute_effects_hash_4, fill_reserved_bits, param, pi, sel, split_u64, state,
+    u64_to_4_limbs_16,
 };
 
 /// Generate the execution trace and public inputs for an effect VM proof.
@@ -172,37 +173,6 @@ impl Default for EffectVmContext {
             slot_caveat_manifest: [SlotCaveatEntry::zero(); pi::MAX_SLOT_CAVEATS],
         }
     }
-}
-
-/// Decompose a u64 into 4 BabyBear limbs (16 bits each, little-endian).
-/// Returns `[lo16, mid_lo16, mid_hi16, hi16]` so the limbs sum back to
-/// the original via `Σ limbs[i] * 2^(16*i)`. Used to project full-u64
-/// effect values into the AIR PI without 30-bit truncation
-/// (CAVEAT-LAYER-COVERAGE.md §6.5).
-#[inline]
-pub fn u64_to_4_limbs_16(value: u64) -> [BabyBear; 4] {
-    [
-        BabyBear::new((value & 0xFFFF) as u32),
-        BabyBear::new(((value >> 16) & 0xFFFF) as u32),
-        BabyBear::new(((value >> 32) & 0xFFFF) as u32),
-        BabyBear::new(((value >> 48) & 0xFFFF) as u32),
-    ]
-}
-
-/// Inverse of [`u64_to_4_limbs_16`]: reconstruct a u64 from 4 BabyBear
-/// limbs of 16 bits each. Returns `None` if any limb exceeds 2^16
-/// (rejects out-of-range limbs — adversarial-test entry point).
-#[inline]
-pub fn u64_from_4_limbs_16(limbs: &[BabyBear; 4]) -> Option<u64> {
-    let mut acc: u64 = 0;
-    for (i, l) in limbs.iter().enumerate() {
-        let v = l.0 as u64;
-        if v >= (1u64 << 16) {
-            return None;
-        }
-        acc |= v << (16 * i);
-    }
-    Some(acc)
 }
 
 /// Stage 1 trace generator. Same as [`generate_effect_vm_trace`] but accepts
@@ -1516,4 +1486,3 @@ pub fn extract_custom_proof_commitments(
     }
     result
 }
-
