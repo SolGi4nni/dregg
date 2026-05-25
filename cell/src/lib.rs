@@ -93,7 +93,9 @@ pub use ledger::{
     CellStateDelta, DEFAULT_SOVEREIGN_TTL, Ledger, LedgerDelta, LedgerError, MembershipProof, Side,
     SovereignHistory, SovereignRegistration, WitnessDiff,
 };
-pub use lifecycle::{ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason};
+pub use lifecycle::{
+    ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason, LifecycleTransitionError,
+};
 pub use note::{Note, NoteBatcher, NoteCommitment, NoteError, Nullifier, PositionedNote};
 #[cfg(feature = "crypto")]
 pub use note_bridge::{

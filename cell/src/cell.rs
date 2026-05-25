@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::capability::CapabilitySet;
 use crate::delegation::DelegatedRef;
 use crate::id::CellId;
-use crate::lifecycle::CellLifecycle;
+use crate::lifecycle::{CellLifecycle, LifecycleTransitionError};
 use crate::permissions::Permissions;
 use crate::program::CellProgram;
 use crate::state::CellState;
@@ -383,6 +383,156 @@ impl Cell {
         self.id == CellId::derive_raw(&self.public_key, &self.token_id)
     }
 
+    /// Seal this cell: transition `lifecycle` to [`CellLifecycle::Sealed`].
+    ///
+    /// Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §1.4`. Sealing is *reversible*
+    /// quiescence — the cell rejects new effects but state and history
+    /// are preserved. Use [`Cell::unseal`] to return to
+    /// [`CellLifecycle::Live`]. Sealing is the prelude to destruction;
+    /// it clarifies what destruction is not.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(LifecycleTransitionError::Terminal)` if the cell is
+    /// already in a terminal state (Destroyed or Migrated). Returns
+    /// `Err(LifecycleTransitionError::AlreadySealed)` if the cell is
+    /// already sealed (sealing is idempotent in effect but explicit so
+    /// callers don't silently overwrite the original `reason_hash` /
+    /// `sealed_at`).
+    pub fn seal(
+        &mut self,
+        reason_hash: [u8; 32],
+        sealed_at: u64,
+    ) -> Result<(), LifecycleTransitionError> {
+        match &self.lifecycle {
+            CellLifecycle::Live | CellLifecycle::Archived { .. } => {
+                self.lifecycle = CellLifecycle::Sealed {
+                    reason_hash,
+                    sealed_at,
+                };
+                Ok(())
+            }
+            CellLifecycle::Sealed { .. } => Err(LifecycleTransitionError::AlreadySealed),
+            CellLifecycle::Destroyed { .. } | CellLifecycle::Migrated { .. } => {
+                Err(LifecycleTransitionError::Terminal)
+            }
+        }
+    }
+
+    /// Reverse a seal: transition `lifecycle` from [`CellLifecycle::Sealed`]
+    /// back to [`CellLifecycle::Live`].
+    ///
+    /// Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §1.4`. The reversibility of
+    /// seal/unseal is precisely what distinguishes sealing from
+    /// destruction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(LifecycleTransitionError::NotSealed)` if the cell is
+    /// not currently in [`CellLifecycle::Sealed`].
+    pub fn unseal(&mut self) -> Result<(), LifecycleTransitionError> {
+        if matches!(self.lifecycle, CellLifecycle::Sealed { .. }) {
+            self.lifecycle = CellLifecycle::Live;
+            Ok(())
+        } else {
+            Err(LifecycleTransitionError::NotSealed)
+        }
+    }
+
+    /// Permanently retire this cell: transition `lifecycle` to
+    /// [`CellLifecycle::Destroyed`] and bind a [`DeathCertificate`] hash
+    /// into the final state.
+    ///
+    /// Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §1.4`. Destruction is
+    /// *permanent* — once a cell is Destroyed it cannot transition to
+    /// any other lifecycle state. Descendants / observers can present
+    /// the cell's final state-commitment alongside the
+    /// `DeathCertificate` to prove "this cell is permanently retired"
+    /// rather than inferring from absence.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(LifecycleTransitionError::Terminal)` if the cell is
+    /// already in a terminal state.
+    pub fn destroy(
+        &mut self,
+        certificate: &crate::lifecycle::DeathCertificate,
+    ) -> Result<(), LifecycleTransitionError> {
+        if self.lifecycle.is_terminal() {
+            return Err(LifecycleTransitionError::Terminal);
+        }
+        if certificate.cell_id != self.id {
+            return Err(LifecycleTransitionError::CertificateMismatch);
+        }
+        self.lifecycle = CellLifecycle::Destroyed {
+            death_certificate_hash: certificate.certificate_hash(),
+            destroyed_at: certificate.destroyed_at_height,
+        };
+        Ok(())
+    }
+
+    /// Mark this cell's receipt-chain prefix as archived. Lifecycle
+    /// transitions to [`CellLifecycle::Archived`] (or stays Archived
+    /// with the newer checkpoint).
+    ///
+    /// Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §4.2`. Archival does NOT
+    /// disable the cell — `lifecycle.accepts_effects()` remains true.
+    /// What changes: verifiers reconstructing the chain prior to
+    /// `archived_through` consult the off-chain blob referenced by
+    /// `checkpoint_hash`; chain links above the cutover walk the live
+    /// tail.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(LifecycleTransitionError::Terminal)` if the cell is
+    /// in a terminal state, `Err(LifecycleTransitionError::SealedCannotArchive)`
+    /// if it is sealed (unseal first if you really mean to archive a
+    /// sealed cell's history), and
+    /// `Err(LifecycleTransitionError::CertificateMismatch)` if the
+    /// attestation does not bind to this cell.
+    pub fn archive(
+        &mut self,
+        attestation: &crate::lifecycle::ArchivalAttestation,
+    ) -> Result<(), LifecycleTransitionError> {
+        if self.lifecycle.is_terminal() {
+            return Err(LifecycleTransitionError::Terminal);
+        }
+        if self.lifecycle.is_sealed() {
+            return Err(LifecycleTransitionError::SealedCannotArchive);
+        }
+        if attestation.cell_id != self.id {
+            return Err(LifecycleTransitionError::CertificateMismatch);
+        }
+        attestation
+            .validate()
+            .map_err(LifecycleTransitionError::InvalidAttestation)?;
+        // Monotonicity: an earlier archival cutover cannot replace a
+        // later one (archived_through is monotone).
+        if let CellLifecycle::Archived {
+            archived_through, ..
+        } = &self.lifecycle
+        {
+            if attestation.archive_end_height <= *archived_through {
+                return Err(LifecycleTransitionError::ArchiveNotMonotone);
+            }
+        }
+        self.lifecycle = CellLifecycle::Archived {
+            checkpoint_hash: attestation.checkpoint_hash(),
+            archived_through: attestation.archive_end_height,
+        };
+        Ok(())
+    }
+
+    /// Whether this cell currently accepts new effects.
+    ///
+    /// Shortcut for `self.lifecycle.accepts_effects()`. The executor
+    /// consults this before applying any state-mutating effect; effects
+    /// targeting a non-accepting cell are rejected with a structural
+    /// "cell is sealed / destroyed / migrated" error.
+    pub fn accepts_effects(&self) -> bool {
+        self.lifecycle.accepts_effects()
+    }
+
     /// Create a child cell delegated to this cell.
     pub fn spawn_child(&self, child_public_key: [u8; 32], child_token_id: [u8; 32]) -> Cell {
         let id = CellId::derive_raw(&child_public_key, &child_token_id);
@@ -453,5 +603,251 @@ impl Cell {
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_transition_tests {
+    //! Adversarial tests for the Cell lifecycle transition primitives.
+    //!
+    //! Per PROTOCOL-CATEGORICAL-ANALYSIS.md §1.4: seal/unseal must be
+    //! exactly inverse; destroy is terminal; the certificate must bind
+    //! to the cell being retired; archive must be monotone.
+    use super::*;
+    use crate::lifecycle::{ArchivalAttestation, DeathCertificate, DeathReason};
+
+    fn fresh(b: u8) -> Cell {
+        let mut k = [0u8; 32];
+        k[0] = b;
+        Cell::new(k, [0u8; 32])
+    }
+
+    #[test]
+    fn seal_then_unseal_round_trips() {
+        let mut c = fresh(1);
+        assert!(c.accepts_effects());
+        c.seal([9u8; 32], 100).unwrap();
+        assert!(!c.accepts_effects());
+        assert!(c.lifecycle.is_sealed());
+        c.unseal().unwrap();
+        assert!(c.accepts_effects());
+        assert!(matches!(c.lifecycle, CellLifecycle::Live));
+    }
+
+    #[test]
+    fn second_seal_rejected() {
+        let mut c = fresh(1);
+        c.seal([9u8; 32], 100).unwrap();
+        let err = c.seal([7u8; 32], 200).unwrap_err();
+        assert_eq!(err, LifecycleTransitionError::AlreadySealed);
+        // Original seal data must be preserved.
+        if let CellLifecycle::Sealed { reason_hash, sealed_at } = c.lifecycle {
+            assert_eq!(reason_hash, [9u8; 32]);
+            assert_eq!(sealed_at, 100);
+        } else {
+            panic!("expected Sealed");
+        }
+    }
+
+    #[test]
+    fn unseal_on_live_cell_rejected() {
+        let mut c = fresh(1);
+        let err = c.unseal().unwrap_err();
+        assert_eq!(err, LifecycleTransitionError::NotSealed);
+    }
+
+    #[test]
+    fn destroy_is_terminal() {
+        let mut c = fresh(1);
+        let dc = DeathCertificate {
+            cell_id: c.id(),
+            last_receipt_hash: [1u8; 32],
+            final_state_commitment: c.state_commitment(),
+            destroyed_at_height: 42,
+            reason: DeathReason::Voluntary,
+        };
+        c.destroy(&dc).unwrap();
+        assert!(c.lifecycle.is_destroyed());
+        assert!(c.lifecycle.is_terminal());
+        assert!(!c.accepts_effects());
+
+        // No further transition is allowed.
+        assert_eq!(
+            c.seal([0u8; 32], 1).unwrap_err(),
+            LifecycleTransitionError::Terminal
+        );
+        assert_eq!(c.unseal().unwrap_err(), LifecycleTransitionError::NotSealed);
+        assert_eq!(
+            c.destroy(&dc).unwrap_err(),
+            LifecycleTransitionError::Terminal
+        );
+    }
+
+    #[test]
+    fn destroy_rejects_certificate_for_other_cell() {
+        let mut c = fresh(1);
+        let other = fresh(2);
+        let dc = DeathCertificate {
+            cell_id: other.id(),
+            last_receipt_hash: [1u8; 32],
+            final_state_commitment: other.state_commitment(),
+            destroyed_at_height: 42,
+            reason: DeathReason::Voluntary,
+        };
+        let err = c.destroy(&dc).unwrap_err();
+        assert_eq!(err, LifecycleTransitionError::CertificateMismatch);
+        assert!(matches!(c.lifecycle, CellLifecycle::Live));
+    }
+
+    #[test]
+    fn destroy_from_sealed_is_allowed() {
+        // Sealing-as-prelude-to-destruction is the documented usage.
+        let mut c = fresh(1);
+        c.seal([9u8; 32], 100).unwrap();
+        let dc = DeathCertificate {
+            cell_id: c.id(),
+            last_receipt_hash: [1u8; 32],
+            final_state_commitment: c.state_commitment(),
+            destroyed_at_height: 200,
+            reason: DeathReason::Forced,
+        };
+        c.destroy(&dc).unwrap();
+        assert!(c.lifecycle.is_destroyed());
+    }
+
+    #[test]
+    fn archive_succeeds_and_cell_still_accepts() {
+        let mut c = fresh(1);
+        let a = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 0,
+            archive_end_height: 100,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        };
+        c.archive(&a).unwrap();
+        assert!(c.accepts_effects(), "archived cells still accept effects");
+        if let CellLifecycle::Archived { archived_through, .. } = c.lifecycle {
+            assert_eq!(archived_through, 100);
+        } else {
+            panic!("expected Archived");
+        }
+    }
+
+    #[test]
+    fn archive_must_be_monotone() {
+        let mut c = fresh(1);
+        let a1 = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 0,
+            archive_end_height: 100,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        };
+        let a2_older = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 0,
+            archive_end_height: 50, // older
+            archive_blob_hash: [4u8; 32],
+            archive_terminal_commitment: [5u8; 32],
+            archive_terminal_receipt_hash: [6u8; 32],
+        };
+        let a3_newer = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 101,
+            archive_end_height: 200,
+            archive_blob_hash: [7u8; 32],
+            archive_terminal_commitment: [8u8; 32],
+            archive_terminal_receipt_hash: [9u8; 32],
+        };
+
+        c.archive(&a1).unwrap();
+        assert_eq!(
+            c.archive(&a2_older).unwrap_err(),
+            LifecycleTransitionError::ArchiveNotMonotone
+        );
+        c.archive(&a3_newer).unwrap(); // monotone advance OK
+        if let CellLifecycle::Archived { archived_through, .. } = c.lifecycle {
+            assert_eq!(archived_through, 200);
+        }
+    }
+
+    #[test]
+    fn archive_rejects_other_cell_attestation() {
+        let mut c = fresh(1);
+        let other = fresh(2);
+        let a = ArchivalAttestation {
+            cell_id: other.id(),
+            archive_start_height: 0,
+            archive_end_height: 100,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        };
+        assert_eq!(
+            c.archive(&a).unwrap_err(),
+            LifecycleTransitionError::CertificateMismatch
+        );
+    }
+
+    #[test]
+    fn sealed_cells_cannot_be_archived() {
+        let mut c = fresh(1);
+        c.seal([1u8; 32], 50).unwrap();
+        let a = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 0,
+            archive_end_height: 100,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        };
+        assert_eq!(
+            c.archive(&a).unwrap_err(),
+            LifecycleTransitionError::SealedCannotArchive
+        );
+    }
+
+    #[test]
+    fn terminal_cells_reject_archive() {
+        let mut c = fresh(1);
+        let dc = DeathCertificate {
+            cell_id: c.id(),
+            last_receipt_hash: [1u8; 32],
+            final_state_commitment: c.state_commitment(),
+            destroyed_at_height: 42,
+            reason: DeathReason::Voluntary,
+        };
+        c.destroy(&dc).unwrap();
+        let a = ArchivalAttestation {
+            cell_id: c.id(),
+            archive_start_height: 0,
+            archive_end_height: 100,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        };
+        assert_eq!(
+            c.archive(&a).unwrap_err(),
+            LifecycleTransitionError::Terminal
+        );
+    }
+
+    /// State-commitment difference: sealing produces a *different*
+    /// commitment than the original Live cell. This is what binds the
+    /// lifecycle transition into the chain.
+    #[test]
+    fn lifecycle_transition_changes_state_commitment() {
+        let mut c = fresh(1);
+        let live_commit = c.state_commitment();
+        c.seal([5u8; 32], 100).unwrap();
+        let sealed_commit = c.state_commitment();
+        assert_ne!(live_commit, sealed_commit);
+        c.unseal().unwrap();
+        let unsealed_commit = c.state_commitment();
+        // Round-trip: unsealed cell agrees with original Live commit.
+        assert_eq!(live_commit, unsealed_commit);
     }
 }

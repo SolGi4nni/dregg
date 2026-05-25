@@ -159,6 +159,47 @@ pub struct DeathCertificate {
     pub reason: DeathReason,
 }
 
+/// Errors returned by [`crate::cell::Cell::seal`] / `unseal` / `destroy`
+/// / `archive` when a lifecycle transition is refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LifecycleTransitionError {
+    /// Cell is already in a terminal state (Destroyed / Migrated). No
+    /// further transitions are allowed.
+    Terminal,
+    /// Cell is already sealed. Caller passed `seal` on a sealed cell;
+    /// this is explicit rather than silently overwriting the original
+    /// `reason_hash` / `sealed_at`.
+    AlreadySealed,
+    /// Caller attempted `unseal` on a cell that is not currently sealed.
+    NotSealed,
+    /// The certificate / attestation binds to a different cell.
+    CertificateMismatch,
+    /// The archival attestation failed structural validation.
+    InvalidAttestation(&'static str),
+    /// Archival cutover must be strictly monotone — the new
+    /// `archive_end_height` must exceed the existing `archived_through`.
+    ArchiveNotMonotone,
+    /// Sealed cells cannot be archived — unseal first if you intend to
+    /// archive a sealed cell's history.
+    SealedCannotArchive,
+}
+
+impl core::fmt::Display for LifecycleTransitionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Terminal => f.write_str("cell is in a terminal lifecycle state"),
+            Self::AlreadySealed => f.write_str("cell is already sealed"),
+            Self::NotSealed => f.write_str("cell is not sealed"),
+            Self::CertificateMismatch => f.write_str("certificate cell_id mismatch"),
+            Self::InvalidAttestation(why) => write!(f, "invalid archival attestation: {why}"),
+            Self::ArchiveNotMonotone => f.write_str("archive cutover is not monotone"),
+            Self::SealedCannotArchive => f.write_str("sealed cells cannot be archived"),
+        }
+    }
+}
+
+impl std::error::Error for LifecycleTransitionError {}
+
 /// Reason for cell destruction. Substrate-opaque; the federation records
 /// the value, downstream auditors decode per their conventions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
