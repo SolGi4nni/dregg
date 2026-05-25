@@ -191,8 +191,26 @@ fn generate_effect_vm_proof(
 
     let initial_state =
         pyana_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
-    let (trace, public_inputs) =
+    let (trace, mut public_inputs) =
         pyana_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
+
+    // Issue #72: the verifier's `check_receipt_pi_binding` requires
+    // `PI[IS_AGENT_CELL] == 1` for the v1 single-proof-per-WR shape (see
+    // `verifier/src/lib.rs::check_receipt_pi_binding`). The trace generator
+    // leaves this PI slot at zero because the AIR itself has no
+    // constraint on IS_AGENT_CELL (it is an executor-asserted bundle tag
+    // — the per-cell prover knows whether `cell_id == turn.agent`).
+    //
+    // For mcp-generated proofs the cell IS the agent by construction: this
+    // path produces a *single* per-cell proof for the actor's own state
+    // transition (grant/revoke/exercise of their own capability). So the
+    // tag is always 1 here. Setting it explicitly mirrors what
+    // `turn/src/executor/proof_verify.rs::populate_pi` does for the
+    // executor-driven path and what `silver_helper.rs::cmd_make_recursive_witness`
+    // does for the demo's witness fabrication path. Without this, the
+    // standalone `pyana-verifier replay-chain` rejects the chain with
+    // "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
+    public_inputs[pyana_circuit::effect_vm::pi::IS_AGENT_CELL] = pyana_circuit::BabyBear::ONE;
     // The trace generator pads to the next power of two ≥ 2; the AIR must be
     // sized to the actual trace height, not the raw effect count (passing
     // `vm_effects.len()` panics when it's less than 2 or not a power of two).
@@ -5019,5 +5037,79 @@ fn nibble(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #72 regression. Pins the producer-side contract:
+    /// `generate_effect_vm_proof` MUST emit `PI[IS_AGENT_CELL] == 1`.
+    ///
+    /// Background: the verifier's `check_receipt_pi_binding`
+    /// (`verifier/src/lib.rs::check_receipt_pi_binding`) requires
+    /// `PI[IS_AGENT_CELL] == 1` for the v1 single-proof-per-WR replay
+    /// shape, since mcp's path produces a single per-cell proof for the
+    /// actor's own state transition (the cell IS the agent here). The
+    /// underlying `pyana_circuit::effect_vm::generate_effect_vm_trace`
+    /// does not constrain this slot — it is an executor-asserted bundle
+    /// tag — so mcp must set it explicitly before proving. Without this,
+    /// the standalone `pyana-verifier replay-chain` rejects the chain
+    /// with "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
+    ///
+    /// See also `turn/src/executor/proof_verify.rs::populate_pi` (line
+    /// 164) and `demo/two-ai-handoff/silver_helper.rs::cmd_make_recursive_witness`
+    /// (line 1275), which set the same slot on their own paths.
+    #[test]
+    fn generate_effect_vm_proof_pins_is_agent_cell_to_one() {
+        use pyana_circuit::effect_vm::pi as evm_pi;
+
+        let vm_effects = vec![pyana_circuit::effect_vm::Effect::GrantCapability {
+            cap_entry: pyana_circuit::BabyBear::new(1),
+        }];
+
+        let (proof_hex, public_inputs, _trace, _witness_hash) =
+            generate_effect_vm_proof(100, 0, &vm_effects);
+
+        assert!(
+            !proof_hex.is_empty(),
+            "generate_effect_vm_proof must emit a proof for non-empty effects"
+        );
+        assert!(
+            public_inputs.len() > evm_pi::IS_AGENT_CELL,
+            "PI vector must extend past IS_AGENT_CELL (have len={}, need >{})",
+            public_inputs.len(),
+            evm_pi::IS_AGENT_CELL,
+        );
+        assert_eq!(
+            public_inputs[evm_pi::IS_AGENT_CELL],
+            1,
+            "Issue #72: generate_effect_vm_proof MUST set PI[IS_AGENT_CELL]=1 \
+             for the v1 single-proof-per-WR replay shape; got {}",
+            public_inputs[evm_pi::IS_AGENT_CELL]
+        );
+    }
+
+    /// Issue #72 second pin: confirm the bare trace generator does NOT
+    /// populate IS_AGENT_CELL. This documents WHY the explicit assignment
+    /// in `generate_effect_vm_proof` is required — if the trace generator
+    /// is later changed to populate this slot itself, this test will fail
+    /// and the explicit set can be removed.
+    #[test]
+    fn generate_effect_vm_trace_leaves_is_agent_cell_unset() {
+        use pyana_circuit::effect_vm::pi as evm_pi;
+        let state = pyana_circuit::effect_vm::CellState::new(100, 0);
+        let effects = vec![pyana_circuit::effect_vm::Effect::GrantCapability {
+            cap_entry: pyana_circuit::BabyBear::new(1),
+        }];
+        let (_trace, public_inputs) =
+            pyana_circuit::effect_vm::generate_effect_vm_trace(&state, &effects);
+        assert_eq!(
+            public_inputs[evm_pi::IS_AGENT_CELL].as_u32(),
+            0,
+            "trace generator should leave IS_AGENT_CELL at zero (executor sets it). \
+             If this fires, remove the explicit set in generate_effect_vm_proof."
+        );
     }
 }
