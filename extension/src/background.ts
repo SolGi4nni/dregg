@@ -2317,12 +2317,33 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       const w = wasm!;
       const wallet = await loadState();
       if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
-      const senderCellHex = w.blake3_hash(
-        Array.from(wallet.publicKey).map(b => String.fromCharCode(b)).join("")
-      );
-      const result = w.peer_exchange_with_proof(senderCellHex, message.receiverCellHex as string, message.amount as number);
-      resetLockTimer();
-      return { id: message.id, result };
+      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      // Route through the wallet's canonical `PeerExchange` session so
+      // the emitted `PeerStateTransition` is signed by the wallet's
+      // Ed25519 key. The previous binding (`peer_exchange_with_proof`)
+      // used canonical types but bypassed signing entirely.
+      try {
+        const result = w.wallet_peer_exchange(JSON.stringify({
+          sender_privkey: wallet.secretKey,
+          receiver_cell_hex: message.receiverCellHex as string,
+          amount: message.amount as number,
+          timestamp: Math.floor(Date.now() / 1000),
+        }));
+        resetLockTimer();
+        return {
+          id: message.id,
+          result: {
+            exchangeId: result.exchange_id,
+            proofCommitment: result.proof_commitment,
+            senderCell: result.sender_cell,
+            receiverCell: result.receiver_cell,
+            transitionBytes: Array.from(result.transition_bytes),
+          },
+        };
+      } catch (e: unknown) {
+        const err = e as Error;
+        return { id: message.id, error: err.message || "peer_exchange failed" };
+      }
     }
 
     // Proof composition

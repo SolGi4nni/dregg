@@ -596,6 +596,22 @@ export interface PyanaWasm {
     turn_bytes: Uint8Array;
     agent_cell_id: string;
   };
+  /**
+   * Canonical wallet-signed peer exchange. Routes through
+   * `AgentWallet::peer_exchange("default")` so the resulting
+   * `PeerStateTransition` is signed by the wallet's Ed25519 identity.
+   * `transition_bytes` is the postcard-encoded transition for direct
+   * peer-to-peer exchange; the legacy `exchange_id` / `proof_commitment`
+   * hex fields are retained for UI display parity.
+   */
+  wallet_peer_exchange(specJson: string): {
+    exchange_id: string;
+    proof_commitment: string;
+    sender_cell: string;
+    receiver_cell: string;
+    transition_bytes: Uint8Array;
+    amount: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

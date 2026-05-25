@@ -2174,6 +2174,138 @@ pub fn wallet_private_transfer(spec_json: &str) -> Result<JsValue, JsError> {
 }
 
 // ============================================================================
+// Canonical wallet-signed peer exchange (peerExchange canonical path)
+// ============================================================================
+
+/// Build a peer-exchange `PeerStateTransition` signed by the wallet's
+/// Ed25519 key via `AgentWallet::peer_exchange(domain)`. This replaces
+/// the prior `peer_exchange_with_proof` shape (which only emitted
+/// canonical-looking hex blobs but did not sign with the wallet).
+///
+/// The transition carries:
+///   - `cell_id`        = `wallet.cell_id("default")`
+///   - `old_commitment` = blake3-derived from (sender, receiver)
+///   - `new_commitment` = blake3-derived from (old, amount, receiver)
+///   - `effects_hash`   = blake3 of postcard(`Effect::Transfer{..}`)
+///   - `sequence`       = 1 (each call constructs a fresh PeerExchange
+///                          session — wasm has no persistent session)
+///   - `timestamp`      = caller-supplied (wasm has no `SystemTime::now()`)
+///   - `signature`      = Ed25519 over the canonical message
+///
+/// JSON input:
+/// ```json
+/// {
+///   "sender_privkey": [32 bytes as number[]],
+///   "receiver_cell_hex": "<64 hex>",
+///   "amount": <u64>,
+///   "timestamp": <i64 unix-seconds>
+/// }
+/// ```
+///
+/// Returns JSON: `{ exchange_id, proof_commitment, sender_cell,
+/// receiver_cell, transition_bytes, amount }`. `transition_bytes` is
+/// the postcard-encoded `PeerStateTransition` — the wire format peers
+/// exchange directly. `exchange_id` / `proof_commitment` are retained
+/// for shape compatibility with the legacy binding so existing
+/// page-side callers don't break.
+#[wasm_bindgen]
+pub fn wallet_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
+    use pyana_sdk::AgentWallet;
+    use pyana_turn::Effect;
+    use zeroize::Zeroizing;
+
+    #[derive(serde::Deserialize)]
+    struct Spec {
+        sender_privkey: Vec<u8>,
+        receiver_cell_hex: String,
+        #[serde(default)]
+        amount: u64,
+        #[serde(default)]
+        timestamp: i64,
+    }
+
+    let spec: Spec = serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+    if spec.sender_privkey.len() != 32 {
+        return Err(JsError::new("sender_privkey must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&spec.sender_privkey);
+    let receiver = hex_decode_32(&spec.receiver_cell_hex)
+        .map_err(|e| JsError::new(&format!("receiver_cell_hex: {e}")))?;
+
+    let wallet = AgentWallet::from_key_bytes(Zeroizing::new(seed));
+    let sender_cell = wallet.cell_id("default");
+    let mut session = wallet.peer_exchange("default");
+
+    // Derive deterministic old/new commitments from the request. These
+    // bind the transition to the (sender, receiver, amount) tuple so a
+    // verifier replaying with the same inputs can re-derive them and
+    // detect tampering.
+    let mut h = blake3::Hasher::new_derive_key("pyana-peer-exchange-old-commit-v1");
+    h.update(&sender_cell.0);
+    h.update(&receiver);
+    let old_commitment = *h.finalize().as_bytes();
+
+    let mut h = blake3::Hasher::new_derive_key("pyana-peer-exchange-new-commit-v1");
+    h.update(&old_commitment);
+    h.update(&spec.amount.to_le_bytes());
+    h.update(&receiver);
+    let new_commitment = *h.finalize().as_bytes();
+
+    // Effects hash binds the actual transfer payload.
+    let effects = vec![Effect::Transfer {
+        from: sender_cell,
+        to: pyana_cell::CellId::from_bytes(receiver),
+        amount: spec.amount,
+    }];
+    let effects_bytes = postcard::to_allocvec(&effects)
+        .map_err(|e| JsError::new(&format!("effects serialization failed: {e}")))?;
+    let effects_hash = *blake3::hash(&effects_bytes).as_bytes();
+
+    let transition = session.create_transition_at(
+        old_commitment,
+        new_commitment,
+        effects_hash,
+        spec.timestamp,
+    );
+
+    let transition_bytes = postcard::to_allocvec(&transition)
+        .map_err(|e| JsError::new(&format!("transition serialization failed: {e}")))?;
+
+    // Exchange id: BLAKE3 of the signed transition bytes — globally unique
+    // because the signature randomizes per session.
+    let exchange_id = *blake3::hash(&transition_bytes).as_bytes();
+
+    // Proof commitment: BLAKE3 binding of the canonical fields the
+    // verifier checks. Surfaced for UI display + log binding parity with
+    // the legacy peer_exchange_with_proof shape.
+    let mut ph = blake3::Hasher::new_derive_key("pyana-peer-exchange-proof-v1");
+    ph.update(&exchange_id);
+    ph.update(&effects_hash);
+    ph.update(&new_commitment);
+    let proof_commitment = *ph.finalize().as_bytes();
+
+    #[derive(Serialize)]
+    struct Out {
+        exchange_id: String,
+        proof_commitment: String,
+        sender_cell: String,
+        receiver_cell: String,
+        transition_bytes: Vec<u8>,
+        amount: u64,
+    }
+    let out = Out {
+        exchange_id: hex_encode(&exchange_id),
+        proof_commitment: hex_encode(&proof_commitment),
+        sender_cell: hex_encode(&sender_cell.0),
+        receiver_cell: hex_encode(&receiver),
+        transition_bytes,
+        amount: spec.amount,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
