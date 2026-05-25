@@ -65,6 +65,9 @@ dev = ["pyana-circuit/dev"]
 # crates.
 unsafe-test-utils = []
 
+[dev-dependencies]
+x25519-dalek = { workspace = true }
+
 [[example]]
 name = "agent_demo"
 path = "examples/agent_demo.rs"

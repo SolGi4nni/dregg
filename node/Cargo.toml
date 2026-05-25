@@ -61,6 +61,8 @@ metrics-exporter-prometheus = "0.16"
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 http-body-util = "0.1"
+x25519-dalek = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
 
 [[bin]]
 name = "pyana-node"
