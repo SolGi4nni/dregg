@@ -122,6 +122,9 @@ impl AtomicSettlement {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         engine
@@ -179,6 +182,9 @@ impl AtomicSettlement {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         engine

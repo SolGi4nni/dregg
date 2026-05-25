@@ -355,6 +355,9 @@ fn turn_with_each_unsigned_auth_constructs_without_panic() {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
     }
     // Touch unused Effect to keep imports tidy.

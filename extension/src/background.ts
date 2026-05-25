@@ -1,6 +1,7 @@
 /**
- * Pyana wallet background service worker (TypeScript).
- * Manages wallet state, evaluates authorization, generates proofs via WASM.
+ * Pyana cipherclerk background service worker (TypeScript).
+ * Manages cipherclerk state (signing keys, capability tokens, receipt chain),
+ * evaluates authorization, and generates proofs via WASM.
  */
 
 import { nodeRequest, nodeRequestRaw, getNodeHeaders } from "./api";
@@ -8,13 +9,14 @@ import type {
   AuthorizeRequest,
   AuthorizeResult,
   CapabilityToken,
+  CipherclerkState,
   DisclosableFact,
   DisclosureDecision,
   EncryptedEnvelope,
   ExtensionLiveRef,
   FederationNode,
   FederationState,
-  InternalWalletState,
+  InternalCipherclerkState,
   Intent,
   IntentConstraint,
   LogEntry,
@@ -34,16 +36,19 @@ import type {
   StealthPrivateKeys,
   StorageQuotaResult,
   TurnSpec,
-  WalletState,
 } from "./types";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "pyana_wallet";
-const ENCRYPTED_STATE_KEY = "pyana_wallet_encrypted";
+// Storage keys — "pyana_wallet*" keys are the legacy names kept for migration.
+const STORAGE_KEY = "pyana_cipherclerk";
+const ENCRYPTED_STATE_KEY = "pyana_cipherclerk_encrypted";
 const MNEMONIC_KEY = "pyana_mnemonic_encrypted";
+// Legacy key names; read-once migration copies them to the new keys on startup.
+const LEGACY_STORAGE_KEY = "pyana_wallet";
+const LEGACY_ENCRYPTED_STATE_KEY = "pyana_wallet_encrypted";
 const STEALTH_KEYS_KEY = "pyana_stealth_keys_encrypted";
 const ALLOWED_ORIGINS_KEY = "pyana_allowed_origins";
 const NODE_CONFIG_KEY = "pyana_node_config";
@@ -179,7 +184,7 @@ function resetLockTimer(): void {
     clearTimeout(lockTimer);
   }
   lockTimer = setTimeout(async () => {
-    await lockWallet();
+    await lockCipherclerk();
     notifySubscribers("ready", { locked: true });
   }, LOCK_TIMEOUT_MS);
 }
@@ -495,27 +500,57 @@ function notifySubscribers(event: string, payload: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// Wallet state
+// Cipherclerk state
 // ---------------------------------------------------------------------------
 
-let state: InternalWalletState | null = null;
-let walletPassphrase: string | null = null;
+let state: InternalCipherclerkState | null = null;
+let cclerkPassphrase: string | null = null;
 
-async function loadState(): Promise<InternalWalletState> {
+/**
+ * One-time migration: copy legacy "pyana_wallet*" storage keys to the new
+ * "pyana_cipherclerk*" names.  Runs at most once per installation (guarded by
+ * presence of the new key).  The old keys are removed after copying so the
+ * migration is idempotent.
+ */
+async function migrateLegacyStorageKeys(): Promise<void> {
+  // If the new encrypted key already exists, nothing to migrate.
+  const newCheck = await chrome.storage.local.get(ENCRYPTED_STATE_KEY);
+  if (newCheck[ENCRYPTED_STATE_KEY]) return;
+
+  // Check whether the old encrypted key exists.
+  const oldEncrypted = await chrome.storage.local.get(LEGACY_ENCRYPTED_STATE_KEY);
+  if (oldEncrypted[LEGACY_ENCRYPTED_STATE_KEY]) {
+    await chrome.storage.local.set({ [ENCRYPTED_STATE_KEY]: oldEncrypted[LEGACY_ENCRYPTED_STATE_KEY] });
+    await chrome.storage.local.remove(LEGACY_ENCRYPTED_STATE_KEY);
+  }
+
+  // Also migrate the legacy plaintext key if present (belt-and-suspenders).
+  const oldPlain = await chrome.storage.local.get(LEGACY_STORAGE_KEY);
+  if (oldPlain[LEGACY_STORAGE_KEY]) {
+    await chrome.storage.local.set({ [STORAGE_KEY]: oldPlain[LEGACY_STORAGE_KEY] });
+    await chrome.storage.local.remove(LEGACY_STORAGE_KEY);
+  }
+}
+
+async function loadState(): Promise<InternalCipherclerkState> {
   if (state) return state;
+
+  // One-time storage key migration: copy pyana_wallet* → pyana_cipherclerk* on first run.
+  // This preserves data for users upgrading from the old "wallet" naming.
+  await migrateLegacyStorageKeys();
 
   // Try loading legacy unencrypted state and migrate.
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   if (stored[STORAGE_KEY]) {
-    state = stored[STORAGE_KEY] as InternalWalletState;
+    state = stored[STORAGE_KEY] as InternalCipherclerkState;
     state.needsPassphraseSetup = true;
     const internalKey = await getInternalEncryptionKey();
-    walletPassphrase = internalKey;
+    cclerkPassphrase = internalKey;
     state.locked = false;
     await saveState();
     state.locked = true;
     state.secretKey = null;
-    walletPassphrase = null;
+    cclerkPassphrase = null;
     return state;
   }
 
@@ -563,7 +598,7 @@ async function loadState(): Promise<InternalWalletState> {
   };
 
   const internalKey = await getInternalEncryptionKey();
-  walletPassphrase = internalKey;
+  cclerkPassphrase = internalKey;
   state.locked = false;
   await saveState();
 
@@ -572,7 +607,7 @@ async function loadState(): Promise<InternalWalletState> {
 
   state.locked = true;
   state.secretKey = null;
-  walletPassphrase = null;
+  cclerkPassphrase = null;
   state.needsPassphraseSetup = true;
 
   return state;
@@ -580,10 +615,10 @@ async function loadState(): Promise<InternalWalletState> {
 
 async function saveState(): Promise<void> {
   if (!state) return;
-  if (!walletPassphrase && !state.locked) {
-    walletPassphrase = await getInternalEncryptionKey();
+  if (!cclerkPassphrase && !state.locked) {
+    cclerkPassphrase = await getInternalEncryptionKey();
   }
-  if (walletPassphrase && !state.locked) {
+  if (cclerkPassphrase && !state.locked) {
     const plaintext = JSON.stringify({
       publicKey: state.publicKey,
       secretKey: state.secretKey,
@@ -597,7 +632,7 @@ async function saveState(): Promise<void> {
       stealthPrivate: state.stealthPrivate || null,
       stealthNotes: state.stealthNotes || [],
     });
-    const envelope = await encryptWithPassphrase(plaintext, walletPassphrase);
+    const envelope = await encryptWithPassphrase(plaintext, cclerkPassphrase);
     (envelope as EncryptedEnvelope & { publicKey?: number[]; hasMnemonic?: boolean; needsPassphraseSetup?: boolean }).publicKey = state.publicKey;
     (envelope as EncryptedEnvelope & { hasMnemonic?: boolean }).hasMnemonic = state.hasMnemonic;
     (envelope as EncryptedEnvelope & { needsPassphraseSetup?: boolean }).needsPassphraseSetup = state.needsPassphraseSetup || false;
@@ -606,22 +641,22 @@ async function saveState(): Promise<void> {
   }
 }
 
-async function lockWallet(): Promise<void> {
+async function lockCipherclerk(): Promise<void> {
   if (!state) return;
-  if (walletPassphrase) {
+  if (cclerkPassphrase) {
     state.locked = false;
     await saveState();
   }
   state.locked = true;
   state.secretKey = null;
-  walletPassphrase = null;
+  cclerkPassphrase = null;
   if (lockTimer !== null) {
     clearTimeout(lockTimer);
     lockTimer = null;
   }
 }
 
-async function unlockWallet(passphrase: string): Promise<{ success: boolean; error?: string; needsPassphraseSetup?: boolean }> {
+async function unlockCipherclerk(passphrase: string): Promise<{ success: boolean; error?: string; needsPassphraseSetup?: boolean }> {
   const encrypted = await chrome.storage.local.get(ENCRYPTED_STATE_KEY);
   if (!encrypted[ENCRYPTED_STATE_KEY]) {
     if (state) state.locked = false;
@@ -653,7 +688,7 @@ async function unlockWallet(passphrase: string): Promise<{ success: boolean; err
         stealthPrivate: decrypted.stealthPrivate || null,
         stealthNotes: decrypted.stealthNotes || [],
       };
-      walletPassphrase = attempt;
+      cclerkPassphrase = attempt;
       resetLockTimer();
       return { success: true, needsPassphraseSetup: state.needsPassphraseSetup };
     } catch (_e) {
@@ -665,8 +700,8 @@ async function unlockWallet(passphrase: string): Promise<{ success: boolean; err
 }
 
 async function setPassphrase(newPassphrase: string): Promise<void> {
-  const oldPassphrase = walletPassphrase;
-  walletPassphrase = newPassphrase;
+  const oldPassphrase = cclerkPassphrase;
+  cclerkPassphrase = newPassphrase;
   if (state) {
     state.needsPassphraseSetup = false;
   }
@@ -699,11 +734,11 @@ async function setPassphrase(newPassphrase: string): Promise<void> {
 async function getMnemonic(): Promise<string | null> {
   const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
   if (!mnemonicStored[MNEMONIC_KEY]) return null;
-  if (!walletPassphrase) return null;
+  if (!cclerkPassphrase) return null;
 
-  const keysToTry: string[] = [walletPassphrase];
+  const keysToTry: string[] = [cclerkPassphrase];
   const internalKey = await getInternalEncryptionKey();
-  if (walletPassphrase !== internalKey) {
+  if (cclerkPassphrase !== internalKey) {
     keysToTry.push(internalKey);
   }
 
@@ -741,7 +776,7 @@ async function recoverFromMnemonic(
     stealthNotes: [],
   };
   const encryptionKey = passphrase || await getInternalEncryptionKey();
-  walletPassphrase = encryptionKey;
+  cclerkPassphrase = encryptionKey;
   const encryptedMnemonic = await encryptWithPassphrase(mnemonic, encryptionKey);
   await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
   await saveState();
@@ -896,7 +931,7 @@ async function authorize(request: AuthorizeRequest): Promise<AuthorizeResult> {
   }
   const wallet = await loadState();
   if (wallet.locked) {
-    return { allowed: false, error: "Wallet is locked" };
+    return { allowed: false, error: "Cipherclerk is locked" };
   }
   const matchingToken = wallet.tokens.find(
     t => t.actions.includes(request.action) &&
@@ -1112,7 +1147,7 @@ function showDisclosurePicker(origin: string, request: AuthorizeRequest, tokenFa
 async function authorizeWithDisclosure(request: AuthorizeRequest, origin: string): Promise<AuthorizeResult> {
   const wallet = await loadState();
   if (wallet.locked) {
-    return { allowed: false, error: "Wallet is locked" };
+    return { allowed: false, error: "Cipherclerk is locked" };
   }
   const matchingToken = wallet.tokens.find(
     t => t.actions.includes(request.action) &&
@@ -1432,7 +1467,7 @@ const liveRefs = new Map<string, Omit<ExtensionLiveRef, "refId">>();
 
 async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?: string; nodeId?: string; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   const resp = await nodeRequest<{ node_id?: string; secret?: string }>(nodeConfig, "/turns/bearer-auth", {
     method: "POST",
     body: JSON.stringify({ cell_id: cellId }),
@@ -1448,7 +1483,7 @@ async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?:
 
 async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: string; cellId?: string; nodeId?: string; permissions?: string; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   if (!uri.startsWith("pyana://")) return { error: "Invalid URI: must start with pyana://" };
   const parts = uri.replace("pyana://", "").split("/");
   if (parts.length < 3) return { error: "Invalid URI format. Expected: pyana://<node>/<cell>/<secret>" };
@@ -1477,7 +1512,7 @@ async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: 
 
 async function createHandoff(cellId: string, recipientPk: string): Promise<{ certificateHash?: string; cellId?: string; recipientPk?: string; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   const resp = await nodeRequest<{ certificate_hash?: string }>(nodeConfig, "/turns/peer-exchange", {
     method: "POST",
     body: JSON.stringify({ cell_id: cellId, recipient_pk: recipientPk }),
@@ -1528,7 +1563,7 @@ chrome.tabs.onRemoved.addListener((tabId: number) => {
 
 async function mountService(path: string, sturdyRef: string, kind?: string, tags?: string[]): Promise<{ path?: string; version?: number; kind?: string; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   const resp = await nodeRequest<{ version?: number }>(nodeConfig, "/registry/mount", {
     method: "POST",
     body: JSON.stringify({ path, uri: sturdyRef, kind: kind || "service", tags: tags || [] }),
@@ -1558,7 +1593,7 @@ async function resolvePath(path: string): Promise<Record<string, unknown>> {
 
 async function storageWrite(dataBase64: string): Promise<{ hash?: string; size?: number; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   const binary = Uint8Array.from(atob(dataBase64), c => c.charCodeAt(0));
   const resp = await nodeRequest<{ hash?: string; size?: number }>(nodeConfig, "/files/write", {
     method: "POST",
@@ -1612,10 +1647,10 @@ async function getFederationStatus(): Promise<{ mode?: string; height?: number; 
 
 async function proposeRoutes(routes: unknown[]): Promise<{ proposalId?: string; submitted?: boolean; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
-  if (!wallet.secretKey) return { error: "Wallet secret key not available" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
+  if (!wallet.secretKey) return { error: "Cipherclerk secret key not available" };
   if (wallet.needsPassphraseSetup) {
-    return { error: "Set a wallet passphrase before signing federation proposals." };
+    return { error: "Set a cipherclerk passphrase before signing federation proposals." };
   }
   requireWasm("proposeRoutes");
   const w = wasm!;
@@ -1643,10 +1678,10 @@ async function proposeRoutes(routes: unknown[]): Promise<{ proposalId?: string; 
 
 async function voteOnProposal(proposalId: string, approve: boolean): Promise<{ accepted?: boolean; proposalId?: string; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
-  if (!wallet.secretKey) return { error: "Wallet secret key not available" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
+  if (!wallet.secretKey) return { error: "Cipherclerk secret key not available" };
   if (wallet.needsPassphraseSetup) {
-    return { error: "Set a wallet passphrase before signing federation votes." };
+    return { error: "Set a cipherclerk passphrase before signing federation votes." };
   }
   requireWasm("voteOnProposal");
   const w = wasm!;
@@ -1680,14 +1715,14 @@ async function signTurn(turnSpec: TurnSpec): Promise<SignTurnResult> {
   requireWasm("signTurn");
   const w = wasm!;
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked", submitted: false };
+  if (wallet.locked) return { error: "Cipherclerk is locked", submitted: false };
   // P1-1: refuse to sign turns until the user has set a real passphrase.
   // While `needsPassphraseSetup === true` the wallet is encrypted under
   // an internal ephemeral key that's not a user secret.
   if (wallet.needsPassphraseSetup) {
-    return { error: "Set a wallet passphrase before signing turns.", submitted: false };
+    return { error: "Set a cipherclerk passphrase before signing turns.", submitted: false };
   }
-  if (!wallet.secretKey) return { error: "Wallet secret key not available", submitted: false };
+  if (!wallet.secretKey) return { error: "Cipherclerk secret key not available", submitted: false };
 
   let turnData: { turn_id: string; turn_bytes: Uint8Array; signature?: Uint8Array };
   if (w.build_turn) {
@@ -1747,7 +1782,7 @@ async function signTurn(turnSpec: TurnSpec): Promise<SignTurnResult> {
 
 async function queryBalance(): Promise<{ balance?: number; error?: string }> {
   const wallet = await loadState();
-  if (wallet.locked) return { error: "Wallet is locked" };
+  if (wallet.locked) return { error: "Cipherclerk is locked" };
   const pubkeyHex = Array.from(wallet.publicKey).map(b => b.toString(16).padStart(2, "0")).join("");
   const resp = await nodeRequest<{ balance?: number }>(nodeConfig, `/accounts/${pubkeyHex}/balance`);
   if (!resp.ok) return { error: `Failed to query balance: ${resp.error}` };
@@ -1755,10 +1790,10 @@ async function queryBalance(): Promise<{ balance?: number; error?: string }> {
 }
 
 // ---------------------------------------------------------------------------
-// Wallet state queries
+// Cipherclerk state queries
 // ---------------------------------------------------------------------------
 
-async function getWalletState(): Promise<WalletState> {
+async function getCipherclerkState(): Promise<CipherclerkState> {
   const wallet = await loadState();
   const internalKey = await getInternalEncryptionKey();
   return {
@@ -1767,7 +1802,7 @@ async function getWalletState(): Promise<WalletState> {
     chainLength: wallet.receiptChain.length,
     hasMnemonic: wallet.hasMnemonic || false,
     mnemonicShown: wallet.mnemonicShown || false,
-    hasPassphrase: walletPassphrase !== null && walletPassphrase !== internalKey,
+    hasPassphrase: cclerkPassphrase !== null && cclerkPassphrase !== internalKey,
     needsPassphraseSetup: wallet.needsPassphraseSetup || false,
     hasStealthKeys: wallet.stealthMeta !== null && wallet.stealthMeta !== undefined,
     stealthNotesCount: (wallet.stealthNotes || []).length,
@@ -1916,10 +1951,10 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: await getCapabilities() };
 
     case "pyana:getState":
-      return { id: message.id, result: await getWalletState() };
+      return { id: message.id, result: await getCipherclerkState() };
 
     case "pyana:lock": {
-      await lockWallet();
+      await lockCipherclerk();
       return { id: message.id, result: true };
     }
 
@@ -1927,7 +1962,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: "Unlock is only available from the extension popup." };
       }
-      const result = await unlockWallet((message.passphrase as string) || "");
+      const result = await unlockCipherclerk((message.passphrase as string) || "");
       if (result.success) {
         notifySubscribers("ready", { locked: false });
       }
@@ -1943,11 +1978,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     case "pyana:getMnemonic": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
       // P1-1: don't reveal the mnemonic while the wallet is encrypted under the
       // ephemeral internal key.
       if (wallet.needsPassphraseSetup) {
-        return { id: message.id, error: "Set a wallet passphrase before viewing the recovery phrase." };
+        return { id: message.id, error: "Set a cipherclerk passphrase before viewing the recovery phrase." };
       }
       const mnemonic = await getMnemonic();
       if (state) state.mnemonicShown = true;
@@ -2207,7 +2242,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("createBearerCap");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
       const delegatorKeyHex = Array.from(wallet.publicKey).map(b => b.toString(16).padStart(2, "0")).join("");
       const result = w.create_bearer_cap(delegatorKeyHex, message.targetCellHex as string, message.action as string, (message.expiry as number) || 0);
       resetLockTimer();
@@ -2228,7 +2263,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
 
     // Factory: canonical constructor-transparency mint.
     //
-    // Routes through `wallet_create_from_factory` (AgentWallet::create_from_factory)
+    // Routes through `wallet_create_from_factory` (AgentCipherclerk::create_from_factory)
     // — the canonical SDK path — to build a real signed
     // `Effect::CreateCellFromFactory` turn, submit it via /turns/submit,
     // and return the new cell's `(child_vk, param_hash, factory_vk)`
@@ -2239,11 +2274,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("createFromFactory");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
       if (wallet.needsPassphraseSetup) {
-        return { id: message.id, error: "Set a wallet passphrase before minting cells from a factory." };
+        return { id: message.id, error: "Set a cipherclerk passphrase before minting cells from a factory." };
       }
-      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      if (!wallet.secretKey) return { id: message.id, error: "Cipherclerk secret key not available" };
 
       const factoryVkHex = message.factoryVkHex as string;
       const ownerPubkeyHex = message.ownerPubkeyHex as string;
@@ -2251,7 +2286,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // signing domain so the resulting cell shares the token namespace with
       // other extension-minted cells.
       const tokenIdHex = (message.tokenIdHex as string | undefined)
-        ?? w.blake3_hash("pyana-wallet-default-token-domain");
+        ?? w.blake3_hash("pyana-cipherclerk-default-token-domain");
       const mode = (message.mode as string | undefined) ?? "Hosted";
       const initialFields = (message.initialFields as Array<[number, number]> | undefined) ?? [];
 
@@ -2346,7 +2381,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("makeCellSovereign");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
       const result = w.make_cell_sovereign(message.cellIdHex as string, 0);
       resetLockTimer();
       return { id: message.id, result };
@@ -2356,8 +2391,8 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("peerExchange");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
-      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
+      if (!wallet.secretKey) return { id: message.id, error: "Cipherclerk secret key not available" };
       // Route through the wallet's canonical `PeerExchange` session so
       // the emitted `PeerStateTransition` is signed by the wallet's
       // Ed25519 key. The previous binding (`peer_exchange_with_proof`)
@@ -2417,7 +2452,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     case "pyana:getStealthNotes": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
       return { id: message.id, result: wallet.stealthNotes || [] };
     }
 
@@ -2425,8 +2460,8 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("postEncryptedIntent");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
-      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
+      if (!wallet.secretKey) return { id: message.id, error: "Cipherclerk secret key not available" };
       const matchSpec = (message.matchSpec as MatchSpec) || {};
       const options = (message.options as { expiry?: number; kind?: string } | undefined) || {};
       const kind = options.kind || "need";
@@ -2480,10 +2515,10 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       requireWasm("privateTransfer");
       const w = wasm!;
       const wallet = await loadState();
-      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
-      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      if (wallet.locked) return { id: message.id, error: "Cipherclerk is locked" };
+      if (!wallet.secretKey) return { id: message.id, error: "Cipherclerk secret key not available" };
       if (wallet.needsPassphraseSetup) {
-        return { id: message.id, error: "Set a wallet passphrase before signing private transfers." };
+        return { id: message.id, error: "Set a cipherclerk passphrase before signing private transfers." };
       }
       const amount = message.amount as number;
       const assetType = message.assetType as string | number | undefined;

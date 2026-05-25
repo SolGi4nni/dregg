@@ -1,4 +1,4 @@
-// Pyana Wallet Recovery — handles mnemonic input validation and wallet restore.
+// Pyana Cipherclerk Recovery — handles mnemonic input validation and cipherclerk restore.
 
 const wordGrid = document.getElementById('wordGrid');
 const pasteBtn = document.getElementById('pasteBtn');
@@ -126,7 +126,7 @@ recoverBtn.addEventListener('click', async () => {
     });
 
     if (response?.result?.success) {
-      resultDiv.textContent = 'Wallet recovered successfully! You can close this tab.';
+      resultDiv.textContent = 'Cipherclerk recovered successfully! You can close this tab.';
       resultDiv.className = 'result success';
       resultDiv.style.display = 'block';
       // Clear inputs for security.
@@ -146,7 +146,7 @@ recoverBtn.addEventListener('click', async () => {
     recoverBtn.disabled = false;
   }
 
-  recoverBtn.textContent = 'Recover Wallet';
+  recoverBtn.textContent = 'Recover Cipherclerk';
 });
 
 // Focus first input on load.

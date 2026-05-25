@@ -136,7 +136,7 @@ export interface PyanaAPI {
   /**
    * Mint a cell from a factory via the canonical
    * `Effect::CreateCellFromFactory` path. Routes through
-   * `AgentWallet::create_from_factory` in the SDK to build a real
+   * `AgentCipherclerk::create_from_factory` in the SDK to build a real
    * signed turn, submits it to the configured node's `/turns/submit`,
    * and returns the new cell's identity tuple plus a submission flag.
    *

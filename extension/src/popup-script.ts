@@ -3,7 +3,7 @@
  * Communicates with the background service worker via chrome.runtime.sendMessage.
  */
 
-import type { WalletState, OriginPermissionDisplay } from "./types";
+import type { CipherclerkState, OriginPermissionDisplay } from "./types";
 
 // ---------------------------------------------------------------------------
 // DOM Elements
@@ -56,13 +56,13 @@ function escapeHtml(str: string): string {
 // ---------------------------------------------------------------------------
 
 async function refresh(): Promise<void> {
-  const state = await sendMessage<WalletState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("pyana:getState");
   if (!state) return;
 
   if (state.locked) {
     statusDot.classList.add("locked");
     statusText.textContent = "Locked";
-    lockBtn.textContent = "Unlock Wallet";
+    lockBtn.textContent = "Unlock Cipherclerk";
     lockBtn.classList.add("locked");
     passphraseSection.classList.remove("hidden");
     passphraseSetupSection.classList.add("hidden");
@@ -73,7 +73,7 @@ async function refresh(): Promise<void> {
   } else {
     statusDot.classList.remove("locked");
     statusText.textContent = "Connected";
-    lockBtn.textContent = "Lock Wallet";
+    lockBtn.textContent = "Lock Cipherclerk";
     lockBtn.classList.remove("locked");
     passphraseSection.classList.add("hidden");
     backupBtn.style.display = state.hasMnemonic ? "block" : "none";
@@ -99,8 +99,8 @@ interface LogEntryDisplay {
 }
 
 async function loadLog(): Promise<void> {
-  const stored = await chrome.storage.local.get("pyana_wallet");
-  const wallet = stored["pyana_wallet"] as { log?: LogEntryDisplay[] } | undefined;
+  const stored = await chrome.storage.local.get("pyana_cipherclerk");
+  const wallet = stored["pyana_cipherclerk"] as { log?: LogEntryDisplay[] } | undefined;
   if (!wallet || !wallet.log || wallet.log.length === 0) {
     logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
     return;
@@ -118,7 +118,7 @@ async function loadLog(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 lockBtn.addEventListener("click", async () => {
-  const state = await sendMessage<WalletState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("pyana:getState");
   if (!state) return;
 
   if (state.locked) {
@@ -212,14 +212,14 @@ async function loadPermissions(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 backupBtn.addEventListener("click", async () => {
-  const state = await sendMessage<WalletState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("pyana:getState");
   if (state && state.locked) {
-    alert("Unlock your wallet first to view the recovery phrase.");
+    alert("Unlock your cipherclerk first to view the recovery phrase.");
     return;
   }
   const mnemonic = await sendMessage<string>("pyana:getMnemonic");
   if (!mnemonic) {
-    alert("No recovery phrase available for this wallet.");
+    alert("No recovery phrase available for this cipherclerk.");
     return;
   }
   if (mnemonicDisplay.style.display === "block") {

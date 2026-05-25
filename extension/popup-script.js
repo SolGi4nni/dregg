@@ -30,7 +30,7 @@ async function refresh() {
   if (state.locked) {
     statusDot.classList.add('locked');
     statusText.textContent = 'Locked';
-    lockBtn.textContent = 'Unlock Wallet';
+    lockBtn.textContent = 'Unlock Cipherclerk';
     lockBtn.classList.add('locked');
     passphraseSection.classList.remove('hidden');
     passphraseSetupSection.classList.add('hidden');
@@ -41,7 +41,7 @@ async function refresh() {
   } else {
     statusDot.classList.remove('locked');
     statusText.textContent = 'Connected';
-    lockBtn.textContent = 'Lock Wallet';
+    lockBtn.textContent = 'Lock Cipherclerk';
     lockBtn.classList.remove('locked');
     passphraseSection.classList.add('hidden');
     backupBtn.style.display = state.hasMnemonic ? 'block' : 'none';
@@ -61,8 +61,8 @@ function escapeHtml(str) {
 }
 
 async function loadLog() {
-  const stored = await chrome.storage.local.get('pyana_wallet');
-  const wallet = stored['pyana_wallet'];
+  const stored = await chrome.storage.local.get('pyana_cipherclerk');
+  const wallet = stored['pyana_cipherclerk'];
   if (!wallet || !wallet.log || wallet.log.length === 0) {
     logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
     return;
@@ -96,7 +96,7 @@ lockBtn.addEventListener('click', async () => {
   await refresh();
 });
 
-// Passphrase setup handler (for new wallets).
+// Passphrase setup handler (for new cipherclerks).
 setPassphraseBtn.addEventListener('click', async () => {
   const newPass = newPassphraseInput.value;
   const confirmPass = confirmPassphraseInput.value;
@@ -161,12 +161,12 @@ async function loadPermissions() {
 backupBtn.addEventListener('click', async () => {
   const state = await sendMessage('pyana:getState');
   if (state && state.locked) {
-    alert('Unlock your wallet first to view the recovery phrase.');
+    alert('Unlock your cipherclerk first to view the recovery phrase.');
     return;
   }
   const mnemonic = await sendMessage('pyana:getMnemonic');
   if (!mnemonic) {
-    alert('No recovery phrase available for this wallet.');
+    alert('No recovery phrase available for this cipherclerk.');
     return;
   }
   // Toggle display.

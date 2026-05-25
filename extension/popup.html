@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Pyana Wallet</title>
+  <title>Pyana Cipherclerk</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -114,25 +114,25 @@
   </style>
 </head>
 <body>
-  <h1>Pyana Wallet</h1>
+  <h1>Pyana Cipherclerk</h1>
   <div class="status">
     <div class="status-dot" id="statusDot"></div>
     <span id="statusText">Connected</span>
   </div>
   <div id="wasmError" class="warning" style="display: none;">
-    Cryptographic module failed to load. Wallet operations requiring proof generation or key derivation are unavailable. Ensure your browser supports WebAssembly.
+    Cryptographic module failed to load. Cipherclerk operations requiring proof generation or key derivation are unavailable. Ensure your browser supports WebAssembly.
   </div>
 
   <!-- Tab navigation -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="wallet">Wallet</button>
+    <button class="tab-btn active" data-tab="cipherclerk">Cipherclerk</button>
     <button class="tab-btn" data-tab="capabilities">Caps</button>
     <button class="tab-btn" data-tab="directory">Directory</button>
     <button class="tab-btn" data-tab="storage">Storage</button>
   </div>
 
-  <!-- Wallet tab (existing functionality) -->
-  <div class="tab-content active" id="tab-wallet">
+  <!-- Cipherclerk tab -->
+  <div class="tab-content active" id="tab-cipherclerk">
     <div class="section">
       <div class="section-title">Tokens</div>
       <div class="stat">
@@ -154,7 +154,7 @@
       <input type="password" id="passphraseInput" class="passphrase-input" placeholder="Enter passphrase to unlock">
     </div>
     <div id="passphraseSetupSection" class="hidden">
-      <p style="font-size: 12px; color: #fbbf24; margin-bottom: 8px;">Set a passphrase to protect your wallet:</p>
+      <p style="font-size: 12px; color: #fbbf24; margin-bottom: 8px;">Set a passphrase to protect your cipherclerk:</p>
       <input type="password" id="newPassphraseInput" class="passphrase-input" placeholder="Choose a strong passphrase">
       <input type="password" id="confirmPassphraseInput" class="passphrase-input" placeholder="Confirm passphrase">
       <button id="setPassphraseBtn" style="background: #4ade80; color: #1a1a2e; margin-bottom: 8px;">Set Passphrase</button>
@@ -175,12 +175,12 @@
         <div class="empty">No origins approved</div>
       </div>
     </div>
-    <button id="lockBtn">Lock Wallet</button>
+    <button id="lockBtn">Lock Cipherclerk</button>
     <button id="backupBtn">Backup (Show Recovery Phrase)</button>
     <button id="intentsBtn" style="background: #16213e; color: #e0e0e0; border: 1px solid #374151; margin-bottom: 8px;">Fulfill Intents</button>
     <button id="managePermsBtn" style="background: #16213e; color: #e0e0e0; border: 1px solid #374151; margin-bottom: 8px;">Manage Permissions</button>
     <button id="settingsBtn" style="background: #16213e; color: #e0e0e0; border: 1px solid #374151; margin-bottom: 8px;">Node Settings</button>
-    <button id="recoverBtn">Recover Wallet</button>
+    <button id="recoverBtn">Recover Cipherclerk</button>
   </div>
 
   <!-- Capabilities tab -->

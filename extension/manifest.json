@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pyana Wallet",
+  "name": "Pyana Cipherclerk",
   "version": "0.1.0",
-  "description": "Capability-based authorization wallet with zero-knowledge proofs",
+  "description": "Capability-based cipherclerk for pyana: manages signing keys, authorization tokens, and capability handles with zero-knowledge proofs",
   "permissions": ["storage", "activeTab", "contextMenus"],
   "background": {
     "service_worker": "dist/background.js"

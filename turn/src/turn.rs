@@ -10,6 +10,7 @@ use pyana_cell::{Cell, CellId, DerivationRecord, LedgerDelta};
 use serde::{Deserialize, Serialize};
 
 use crate::action::Symbol;
+use crate::binding_proof::{EffectBindingProof, EffectDependency, EffectWitnessIndex};
 use crate::error::TurnError;
 use crate::forest::CallForest;
 use crate::routing::{IntroductionExport, RoutingDirective};
@@ -214,6 +215,38 @@ pub struct Turn {
     ///    - The program identified by vk_hash must verify the proof
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_program_proofs: Option<Vec<CustomProgramProof>>,
+    /// Sidecar full-fidelity binding proofs, one per Effect that has a
+    /// schema in `pyana_circuit::effect_action_air`. The verifier
+    /// (`verify_proof_carrying_turn_bundle`) walks this list, looks up
+    /// each schema by `schema_id`, reconstructs the expected PI from
+    /// the executor's view of the effect's typed parameters, and
+    /// verifies the STARK proof. Tampering on any byte of any 32-byte
+    /// field, or any bit of any u64 amount, fails verification.
+    ///
+    /// Empty by default — turns without binding proofs continue to
+    /// apply with executor-trusted enforcement (backwards compat).
+    /// Turns *with* binding proofs get strong-soundness enforcement.
+    ///
+    /// See `PROOF-TO-ACTION-BINDING-SWEEP.md` §3.3 + §5.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_binding_proofs: Vec<EffectBindingProof>,
+    /// Cross-effect within-turn chain pinnings. Each entry asserts that
+    /// the output of one effect equals the input of a later effect
+    /// (e.g., NoteSpend's nullifier ↔ BridgeMint's consumed nullifier
+    /// when both are in the same turn). The AIR enforces the
+    /// algebraic equality; without this, the executor could substitute
+    /// a different nullifier for the consumer.
+    ///
+    /// See `PROOF-TO-ACTION-BINDING-SWEEP.md` §3.3.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cross_effect_dependencies: Vec<EffectDependency>,
+    /// Witness-blob → effect indexing. Pins which witness blob each
+    /// effect consumes, preventing the executor from shuffling blobs
+    /// so an effect requiring witness K reads bytes meant for effect L.
+    ///
+    /// See `PROOF-TO-ACTION-BINDING-SWEEP.md` §3.2.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_witness_index_map: Vec<EffectWitnessIndex>,
 }
 
 impl Turn {
@@ -371,6 +404,34 @@ impl Turn {
             }
             None => {
                 hasher.update(&[0u8]);
+            }
+        }
+        // --- Proof-to-action binding additions ---
+        //
+        // To preserve byte-identity with pre-binding-sweep v3 turns
+        // (which have no binding proofs / dependencies / witness map),
+        // we gate the additional binding-related fields behind a
+        // "any present?" presence byte. When all three vectors are
+        // empty, no extra bytes are absorbed and the v3 hash is
+        // byte-identical to the prior schema. When any are present,
+        // a [1u8] discriminator + each vector's length + each element
+        // is absorbed. Length prefixes prevent boundary confusion.
+        let has_binding_extensions = !self.effect_binding_proofs.is_empty()
+            || !self.cross_effect_dependencies.is_empty()
+            || !self.effect_witness_index_map.is_empty();
+        if has_binding_extensions {
+            hasher.update(&[1u8]);
+            hasher.update(&(self.effect_binding_proofs.len() as u64).to_le_bytes());
+            for bp in &self.effect_binding_proofs {
+                bp.hash_into(&mut hasher);
+            }
+            hasher.update(&(self.cross_effect_dependencies.len() as u64).to_le_bytes());
+            for dep in &self.cross_effect_dependencies {
+                dep.hash_into(&mut hasher);
+            }
+            hasher.update(&(self.effect_witness_index_map.len() as u64).to_le_bytes());
+            for ewi in &self.effect_witness_index_map {
+                ewi.hash_into(&mut hasher);
             }
         }
         *hasher.finalize().as_bytes()

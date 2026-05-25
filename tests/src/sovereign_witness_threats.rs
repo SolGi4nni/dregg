@@ -212,6 +212,9 @@ fn sovereign_witnesses_field_is_covered_by_turn_hash() {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let empty = make_turn(HashMap::new());
@@ -280,6 +283,9 @@ fn turn_sovereign_witnesses_field_is_a_map_and_constructs_empty() {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
     assert!(turn.sovereign_witnesses.is_empty());
 }

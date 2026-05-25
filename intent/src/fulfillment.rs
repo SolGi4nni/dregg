@@ -835,6 +835,9 @@ pub fn create_fulfillment_turn(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     ConditionalTurn {
@@ -1253,6 +1256,9 @@ pub fn execute_committed_fulfillment_flow(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let turn_hash = partial_turn.hash();
@@ -1285,6 +1291,9 @@ pub fn execute_committed_fulfillment_flow(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
         ..partial_turn
     };
 

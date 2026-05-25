@@ -115,6 +115,9 @@ fn make_own_cell_turn(agent_id: CellId) -> Turn {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 
@@ -161,6 +164,9 @@ fn make_self_write_turn(agent_id: CellId) -> Turn {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 
@@ -207,6 +213,9 @@ fn make_cross_cell_turn(agent_id: CellId, target_id: CellId) -> Turn {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 

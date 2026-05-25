@@ -44,7 +44,7 @@ test.describe('Share capability', () => {
     await popup.locator('#shareCellInput').fill(validCellId);
     await popup.locator('#shareCapBtn').click();
 
-    // The share result area should appear (may show error if wallet locked,
+    // The share result area should appear (may show error if cipherclerk locked,
     // but the UI interaction path is exercised).
     const shareResult = popup.locator('#shareResult');
     // Wait briefly for the async response.

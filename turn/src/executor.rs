@@ -2123,7 +2123,412 @@ impl TurnExecutor {
             }
         }
 
+        // ---- Proof-to-action binding sweep §3.2/§3.3 + §5 ----
+        //
+        // If the turn carries sidecar effect-binding proofs (and/or
+        // cross-effect dependencies and/or witness-index pins), run the
+        // strong-soundness verification path on them. Turns without any
+        // of these continue to apply with executor-trusted enforcement
+        // (backwards compat); turns *with* them get the algebraic
+        // full-fidelity check.
+        if let Some(t) = turn {
+            if !t.effect_binding_proofs.is_empty()
+                || !t.cross_effect_dependencies.is_empty()
+                || !t.effect_witness_index_map.is_empty()
+            {
+                Self::verify_effect_binding_proofs(t)?;
+            }
+        }
+
         Ok(())
+    }
+
+    /// Verify every sidecar `EffectBindingProof` carried by the turn.
+    ///
+    /// For each entry the verifier:
+    ///   1. Locates the effect by `effect_index` (canonical DFS order
+    ///      over the whole call_forest — same traversal as
+    ///      `compute_turn_identity_pi`).
+    ///   2. Looks up the schema by `schema_id`.
+    ///   3. Reconstructs the expected PI vector from the executor's
+    ///      view of the effect's typed parameters and compares it to
+    ///      the proof's `public_inputs`.
+    ///   4. STARK-verifies the proof against the reconstructed PI.
+    ///
+    /// Cross-effect dependencies are also enforced here: the chain
+    /// pinning verifies that the producer effect's output field of
+    /// the named type equals the consumer's input of the same type,
+    /// preventing the executor from substituting a different value
+    /// (e.g., a different nullifier) between producer and consumer in
+    /// the same turn.
+    ///
+    /// Witness-blob → effect indexing entries are validated for
+    /// well-formedness here; the AIR-side enforcement that the
+    /// effect-claimed witness blob actually matches the indexed blob
+    /// is the responsibility of the corresponding per-effect AIR (the
+    /// generalized AIR exposes a `witness_blob_hash` schema slot when
+    /// the binding schema declares one).
+    pub fn verify_effect_binding_proofs(turn: &Turn) -> Result<(), TurnError> {
+        use pyana_circuit::effect_action_air as eaa;
+        use pyana_circuit::stark;
+
+        // Build the canonical DFS-order effect list once, mirroring
+        // `compute_turn_identity_pi`'s `dfs_collect`.
+        let effects = Self::dfs_collect_effects(turn);
+
+        // ---- 1) Effect binding proofs ----
+        for (i, bp) in turn.effect_binding_proofs.iter().enumerate() {
+            // Bounds-check effect_index.
+            let eff = effects.get(bp.effect_index as usize).ok_or_else(|| {
+                TurnError::InvalidExecutionProof(format!(
+                    "effect_binding_proofs[{}]: effect_index {} out of range (have {} effects)",
+                    i,
+                    bp.effect_index,
+                    effects.len()
+                ))
+            })?;
+
+            // Resolve schema by id.
+            let schema = Self::schema_by_id(&bp.schema_id).ok_or_else(|| {
+                TurnError::InvalidExecutionProof(format!(
+                    "effect_binding_proofs[{}]: unknown schema_id {:?}",
+                    i, bp.schema_id
+                ))
+            })?;
+
+            // Reconstruct expected (fields, amounts) from the executor's
+            // view of the effect's typed parameters.
+            let (exp_fields, exp_amounts) =
+                Self::extract_binding_params(eff, &bp.schema_id).ok_or_else(|| {
+                    TurnError::InvalidExecutionProof(format!(
+                        "effect_binding_proofs[{}]: effect at index {} does not match \
+                         schema_id {:?} (schema/variant mismatch)",
+                        i, bp.effect_index, bp.schema_id
+                    ))
+                })?;
+            if exp_fields.len() != schema.field_count
+                || exp_amounts.len() != schema.amount_count
+            {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "effect_binding_proofs[{}]: schema {:?} expects {} fields + \
+                     {} amounts, executor reconstruction got {} + {}",
+                    i,
+                    bp.schema_id,
+                    schema.field_count,
+                    schema.amount_count,
+                    exp_fields.len(),
+                    exp_amounts.len()
+                )));
+            }
+
+            // Build the expected PI vector and check the wire PI agrees
+            // (cheap byte-comparison rejection before STARK verify).
+            let exp_pi_bb = {
+                let w = eaa::EffectActionWitness {
+                    schema,
+                    fields: exp_fields.clone(),
+                    amounts: exp_amounts.clone(),
+                };
+                w.public_inputs()
+            };
+            let bp_pi_bb = bp.public_inputs_babybear();
+            if bp_pi_bb != exp_pi_bb {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "effect_binding_proofs[{}]: wire PI disagrees with executor's view \
+                     of effect {} (schema {:?})",
+                    i, bp.effect_index, bp.schema_id
+                )));
+            }
+
+            // STARK-verify the proof against the reconstructed PI.
+            let proof = stark::proof_from_bytes(&bp.proof_bytes).map_err(|e| {
+                TurnError::InvalidExecutionProof(format!(
+                    "effect_binding_proofs[{}]: deserialize: {}",
+                    i, e
+                ))
+            })?;
+            eaa::verify_effect_action(schema, &exp_fields, &exp_amounts, &proof).map_err(
+                |e| {
+                    TurnError::ProofVerificationFailed(format!(
+                        "effect_binding_proofs[{}] (schema {:?}, effect {}): {}",
+                        i, bp.schema_id, bp.effect_index, e
+                    ))
+                },
+            )?;
+        }
+
+        // ---- 2) Cross-effect within-turn chain pinning ----
+        for (i, dep) in turn.cross_effect_dependencies.iter().enumerate() {
+            if dep.producer_index >= dep.consumer_index {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "cross_effect_dependencies[{}]: producer_index {} must be < \
+                     consumer_index {} (forward edges only)",
+                    i, dep.producer_index, dep.consumer_index
+                )));
+            }
+            let prod = effects.get(dep.producer_index as usize).ok_or_else(|| {
+                TurnError::InvalidExecutionProof(format!(
+                    "cross_effect_dependencies[{}]: producer_index {} out of range",
+                    i, dep.producer_index
+                ))
+            })?;
+            let cons = effects.get(dep.consumer_index as usize).ok_or_else(|| {
+                TurnError::InvalidExecutionProof(format!(
+                    "cross_effect_dependencies[{}]: consumer_index {} out of range",
+                    i, dep.consumer_index
+                ))
+            })?;
+            let prod_out = Self::extract_named_field_32b(prod, &dep.field_name).ok_or_else(
+                || {
+                    TurnError::InvalidExecutionProof(format!(
+                        "cross_effect_dependencies[{}]: producer effect has no \
+                         output field {:?}",
+                        i, dep.field_name
+                    ))
+                },
+            )?;
+            let cons_in = Self::extract_named_field_32b(cons, &dep.field_name).ok_or_else(
+                || {
+                    TurnError::InvalidExecutionProof(format!(
+                        "cross_effect_dependencies[{}]: consumer effect has no \
+                         input field {:?}",
+                        i, dep.field_name
+                    ))
+                },
+            )?;
+            if prod_out != dep.value_commit {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "cross_effect_dependencies[{}]: producer's {:?} disagrees with \
+                     pinned value_commit",
+                    i, dep.field_name
+                )));
+            }
+            if cons_in != dep.value_commit {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "cross_effect_dependencies[{}]: consumer's {:?} disagrees with \
+                     pinned value_commit (chain broken)",
+                    i, dep.field_name
+                )));
+            }
+        }
+
+        // ---- 3) Witness-blob → Effect indexing ----
+        //
+        // Well-formedness only here: bounds-check effect_index. The
+        // tighter AIR-side enforcement that the indexed blob's bytes
+        // are the ones the effect's predicate dispatch consumes is
+        // owned by the per-effect generalized AIR (witness_blob_hash
+        // schema slot, when declared). Detecting duplicate
+        // (effect_index, witness_index) pairs and unbound effects is
+        // useful as an executor-side sanity check.
+        let mut seen_effect_indices = std::collections::HashSet::new();
+        for (i, ewi) in turn.effect_witness_index_map.iter().enumerate() {
+            if effects.get(ewi.effect_index as usize).is_none() {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "effect_witness_index_map[{}]: effect_index {} out of range",
+                    i, ewi.effect_index
+                )));
+            }
+            if !seen_effect_indices.insert(ewi.effect_index) {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "effect_witness_index_map[{}]: duplicate effect_index {}",
+                    i, ewi.effect_index
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Collect every Effect in the turn's call_forest in the canonical
+    /// DFS-traversal order (same order as `compute_turn_identity_pi`).
+    fn dfs_collect_effects(turn: &Turn) -> Vec<Effect> {
+        fn dfs(tree: &CallTree, out: &mut Vec<Effect>) {
+            for effect in &tree.action.effects {
+                out.push(effect.clone());
+            }
+            for child in &tree.children {
+                dfs(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        for root in &turn.call_forest.roots {
+            dfs(root, &mut out);
+        }
+        out
+    }
+
+    /// Resolve an `EffectActionSchema` by its `schema_id` (the
+    /// `kind_name` string used as the AIR's Fiat-Shamir domain
+    /// separator). Returns `None` for unknown ids.
+    fn schema_by_id(id: &str) -> Option<pyana_circuit::effect_action_air::EffectActionSchema> {
+        use pyana_circuit::effect_action_air as eaa;
+        macro_rules! match_schemas {
+            ($($s:ident),* $(,)?) => {
+                $(
+                    if id == eaa::$s.kind_name {
+                        return Some(eaa::$s);
+                    }
+                )*
+            };
+        }
+        match_schemas!(
+            SCHEMA_GRANT_CAPABILITY,
+            SCHEMA_REVOKE_CAPABILITY,
+            SCHEMA_EMIT_EVENT,
+            SCHEMA_CREATE_CELL,
+            SCHEMA_SET_PERMISSIONS,
+            SCHEMA_SET_VERIFICATION_KEY,
+            SCHEMA_INTRODUCE,
+            SCHEMA_CREATE_SEAL_PAIR,
+            SCHEMA_BRIDGE_FINALIZE,
+            SCHEMA_BRIDGE_CANCEL,
+            SCHEMA_REVOKE_DELEGATION,
+            SCHEMA_SPAWN_WITH_DELEGATION,
+            SCHEMA_RELEASE_ESCROW,
+            SCHEMA_REFUND_ESCROW,
+            SCHEMA_EXERCISE_VIA_CAPABILITY,
+            SCHEMA_CREATE_OBLIGATION,
+            SCHEMA_CREATE_ESCROW,
+            SCHEMA_PIPELINED_SEND,
+            SCHEMA_CREATE_CELL_FROM_FACTORY,
+            SCHEMA_CREATE_COMMITTED_ESCROW,
+            SCHEMA_NOTE_SPEND,
+            SCHEMA_NOTE_CREATE,
+            SCHEMA_BRIDGE_LOCK,
+        );
+        None
+    }
+
+    /// Reconstruct the (fields, amounts) tuple a given schema expects
+    /// from the runtime `Effect`'s typed parameters. Returns `None`
+    /// when the schema_id does not match the effect's variant (the
+    /// caller's bug; a binding proof's schema must match its effect).
+    ///
+    /// This is the executor-side "what did the runtime variant
+    /// actually carry?" projection that the binding proof's PI must
+    /// match. Any drift between this projection and the prover's
+    /// witness construction fails verification.
+    fn extract_binding_params(
+        effect: &Effect,
+        schema_id: &str,
+    ) -> Option<(Vec<[u8; 32]>, Vec<u64>)> {
+        match (schema_id, effect) {
+            ("pyana-effect-note-spend-v1", Effect::NoteSpend {
+                nullifier,
+                note_tree_root,
+                value,
+                asset_type,
+                value_commitment,
+                ..
+            }) => {
+                let asset_type_commit = {
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(&asset_type.to_le_bytes());
+                    *h.finalize().as_bytes()
+                };
+                let vc = value_commitment.unwrap_or([0u8; 32]);
+                Some((
+                    vec![nullifier.0, *note_tree_root, asset_type_commit, vc],
+                    vec![*value, *asset_type],
+                ))
+            }
+            ("pyana-effect-note-create-v1", Effect::NoteCreate {
+                commitment,
+                value,
+                asset_type,
+                value_commitment,
+                range_proof,
+                ..
+            }) => {
+                let asset_type_commit = {
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(&asset_type.to_le_bytes());
+                    *h.finalize().as_bytes()
+                };
+                let vc = value_commitment.unwrap_or([0u8; 32]);
+                let rph = match range_proof {
+                    Some(bytes) => *blake3::hash(bytes).as_bytes(),
+                    None => [0u8; 32],
+                };
+                Some((
+                    vec![commitment.0, asset_type_commit, vc, rph],
+                    vec![*value, *asset_type],
+                ))
+            }
+            ("pyana-effect-bridge-lock-v1", Effect::BridgeLock {
+                nullifier,
+                destination,
+                value,
+                asset_type,
+                timeout_height,
+                ..
+            }) => {
+                let asset_type_commit = {
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(&asset_type.to_le_bytes());
+                    *h.finalize().as_bytes()
+                };
+                // BridgeLock variant doesn't carry a value_commitment;
+                // use ZERO sentinel. (Future: when the runtime variant
+                // is extended with an optional Pedersen value
+                // commitment, plumb it here.)
+                Some((
+                    vec![*nullifier, *destination, asset_type_commit, [0u8; 32]],
+                    vec![*value, *asset_type, *timeout_height],
+                ))
+            }
+            ("pyana-effect-bridge-finalize-v1", Effect::BridgeFinalize {
+                nullifier,
+                receipt,
+            }) => {
+                let receipt_hash = {
+                    let bytes = postcard::to_allocvec(receipt).unwrap_or_default();
+                    *blake3::hash(&bytes).as_bytes()
+                };
+                Some((vec![*nullifier, receipt_hash], vec![]))
+            }
+            ("pyana-effect-bridge-cancel-v1", Effect::BridgeCancel { nullifier }) => {
+                Some((vec![*nullifier], vec![]))
+            }
+            ("pyana-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
+                Some((vec![*child.as_bytes()], vec![]))
+            }
+            // Other variants: extend as wire-in surface grows. Today
+            // the lane closes NoteSpend/NoteCreate/BridgeLock at full
+            // fidelity (the deferred §5 items); the remaining
+            // schema_ids are valid for off-AIR construction but not
+            // re-extracted by this executor-side projection. Add new
+            // arms here as their executor-side projection is needed.
+            _ => None,
+        }
+    }
+
+    /// Extract a named 32-byte field from an Effect (for cross-effect
+    /// chain pinning). Returns `None` when the effect doesn't carry a
+    /// field of that name.
+    fn extract_named_field_32b(effect: &Effect, name: &str) -> Option<[u8; 32]> {
+        match (name, effect) {
+            ("nullifier", Effect::NoteSpend { nullifier, .. }) => Some(nullifier.0),
+            ("nullifier", Effect::BridgeLock { nullifier, .. }) => Some(*nullifier),
+            ("nullifier", Effect::BridgeFinalize { nullifier, .. }) => Some(*nullifier),
+            ("nullifier", Effect::BridgeCancel { nullifier }) => Some(*nullifier),
+            ("nullifier", Effect::BridgeMint { portable_proof }) => {
+                Some(portable_proof.nullifier)
+            }
+            ("note_commitment" | "commitment", Effect::NoteCreate { commitment, .. }) => {
+                Some(commitment.0)
+            }
+            ("note_tree_root", Effect::NoteSpend { note_tree_root, .. }) => Some(*note_tree_root),
+            ("destination", Effect::BridgeLock { destination, .. }) => Some(*destination),
+            ("escrow_id", Effect::CreateEscrow { escrow_id, .. }) => Some(*escrow_id),
+            ("escrow_id", Effect::ReleaseEscrow { escrow_id, .. }) => Some(*escrow_id),
+            ("escrow_id", Effect::RefundEscrow { escrow_id, .. }) => Some(*escrow_id),
+            _ => None,
+        }
     }
 
     /// Stage 7-γ.2 Phase 1: bilateral cross-cell PI consistency check.
@@ -12328,6 +12733,9 @@ mod hardening_tests {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         }
     }
 

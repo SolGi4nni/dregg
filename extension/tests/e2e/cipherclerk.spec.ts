@@ -34,10 +34,10 @@ test.describe('Extension installation', () => {
   });
 });
 
-test.describe('Popup wallet tab', () => {
-  test('popup opens and shows wallet heading', async ({ popup }) => {
+test.describe('Popup cipherclerk tab', () => {
+  test('popup opens and shows cipherclerk heading', async ({ popup }) => {
     const heading = popup.locator('h1');
-    await expect(heading).toHaveText('Pyana Wallet');
+    await expect(heading).toHaveText('Pyana Cipherclerk');
   });
 
   test('status indicator is visible', async ({ popup }) => {
@@ -57,13 +57,13 @@ test.describe('Popup wallet tab', () => {
   test('lock button is present and clickable', async ({ popup }) => {
     const lockBtn = popup.locator('#lockBtn');
     await expect(lockBtn).toBeVisible();
-    // In initial state the wallet should be locked (needs passphrase setup).
+    // In initial state the cipherclerk should be locked (needs passphrase setup).
     const text = await lockBtn.textContent();
-    expect(text).toMatch(/Lock Wallet|Unlock Wallet/);
+    expect(text).toMatch(/Lock Cipherclerk|Unlock Cipherclerk/);
   });
 });
 
-test.describe('Wallet balance', () => {
+test.describe('Cipherclerk balance', () => {
   test('balance query returns mock value when node configured', async ({ context, extensionId }) => {
     // Configure the node URL via extension storage before checking.
     // This simulates what the settings page does.

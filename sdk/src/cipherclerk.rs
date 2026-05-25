@@ -2554,6 +2554,9 @@ impl AgentCipherclerk {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         }
     }
 
@@ -2674,6 +2677,9 @@ impl AgentCipherclerk {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         // 3. Sign the turn.
@@ -4305,6 +4311,9 @@ impl AgentCipherclerk {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         Ok(turn)
@@ -4437,6 +4446,9 @@ impl AgentCipherclerk {
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         Ok(turn)
@@ -4576,6 +4588,9 @@ impl AgentCipherclerk {
             execution_proof_cell: Some(*cell_id),
             execution_proof_new_commitment: Some(new_commitment),
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
         };
 
         Ok(turn)
@@ -5415,6 +5430,9 @@ impl AgentCipherclerk {
             execution_proof_cell: Some(*cell_id),
             execution_proof_new_commitment: Some(new_commitment),
             custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
             sovereign_witnesses: HashMap::new(),
             memo: None,
             previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),

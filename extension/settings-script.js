@@ -1,4 +1,4 @@
-// Settings page script for Pyana Wallet node configuration.
+// Settings page script for Pyana Cipherclerk node configuration.
 
 const NODE_CONFIG_KEY = 'pyana_node_config';
 const DEFAULT_NODE_URL = 'https://devnet.pyana.fg-goose.online';
@@ -55,7 +55,7 @@ saveBtn.addEventListener('click', async () => {
 
   // P1-4: confirm with the user if the node hostname is changing.
   // The node URL is where every turn / balance / capability secret goes,
-  // so switching it without user consent is equivalent to wallet compromise.
+  // so switching it without user consent is equivalent to cipherclerk compromise.
   try {
     const stored = await chrome.storage.local.get(NODE_CONFIG_KEY);
     const oldConfig = stored[NODE_CONFIG_KEY] || {};

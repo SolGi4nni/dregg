@@ -76,7 +76,7 @@ test.describe('Unrestricted methods', () => {
     await page.goto('https://example.com');
     await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
 
-    // canAuthorize is unrestricted. With a locked wallet or no matching token,
+    // canAuthorize is unrestricted. With a locked cipherclerk or no matching token,
     // it should return false without prompting.
     const result = await page.evaluate(async () => {
       return await (window as any).pyana.canAuthorize({
@@ -84,7 +84,7 @@ test.describe('Unrestricted methods', () => {
         resource: 'documents/test',
       });
     });
-    // Should be false (wallet is locked in fresh state).
+    // Should be false (cipherclerk is locked in fresh state).
     expect(result).toBe(false);
     await page.close();
   });

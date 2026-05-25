@@ -117,6 +117,9 @@ fn make_transfer_turn(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 
@@ -155,6 +158,9 @@ fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64)
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 
@@ -189,6 +195,9 @@ fn make_noop_turn(agent: CellId, nonce: u64) -> Turn {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 

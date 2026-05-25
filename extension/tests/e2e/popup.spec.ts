@@ -6,14 +6,14 @@ test.describe('Tab navigation', () => {
     await expect(tabs).toHaveCount(4);
 
     const tabTexts = await tabs.allTextContents();
-    expect(tabTexts).toEqual(['Wallet', 'Caps', 'Directory', 'Storage']);
+    expect(tabTexts).toEqual(['Cipherclerk', 'Caps', 'Directory', 'Storage']);
   });
 
-  test('wallet tab is active by default', async ({ popup }) => {
-    const walletTab = popup.locator('.tab-btn[data-tab="wallet"]');
+  test('cipherclerk tab is active by default', async ({ popup }) => {
+    const cclerkTab = popup.locator('.tab-btn[data-tab="cipherclerk"]');
     await expect(walletTab).toHaveClass(/active/);
 
-    const walletContent = popup.locator('#tab-wallet');
+    const cclerkContent = popup.locator('#tab-cipherclerk');
     await expect(walletContent).toHaveClass(/active/);
   });
 
@@ -23,13 +23,13 @@ test.describe('Tab navigation', () => {
     const capsTab = popup.locator('.tab-btn[data-tab="capabilities"]');
     await expect(capsTab).toHaveClass(/active/);
 
-    const walletTab = popup.locator('.tab-btn[data-tab="wallet"]');
+    const cclerkTab = popup.locator('.tab-btn[data-tab="cipherclerk"]');
     await expect(walletTab).not.toHaveClass(/active/);
 
     const capsContent = popup.locator('#tab-capabilities');
     await expect(capsContent).toHaveClass(/active/);
 
-    const walletContent = popup.locator('#tab-wallet');
+    const cclerkContent = popup.locator('#tab-cipherclerk');
     await expect(walletContent).not.toHaveClass(/active/);
   });
 
@@ -54,7 +54,7 @@ test.describe('Tab navigation', () => {
   });
 
   test('rapid tab switching does not crash', async ({ popup }) => {
-    const tabIds = ['wallet', 'capabilities', 'directory', 'storage', 'wallet', 'capabilities'];
+    const tabIds = ['cipherclerk', 'capabilities', 'directory', 'storage', 'cipherclerk', 'capabilities'];
     for (const tabId of tabIds) {
       await popup.locator(`.tab-btn[data-tab="${tabId}"]`).click();
     }
@@ -73,7 +73,7 @@ test.describe('Popup layout', () => {
     expect(box!.width).toBe(360);
   });
 
-  test('all action buttons are present in wallet tab', async ({ popup }) => {
+  test('all action buttons are present in cipherclerk tab', async ({ popup }) => {
     await expect(popup.locator('#lockBtn')).toBeVisible();
     await expect(popup.locator('#backupBtn')).toBeVisible();
     await expect(popup.locator('#intentsBtn')).toBeVisible();

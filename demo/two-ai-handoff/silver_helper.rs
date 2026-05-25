@@ -362,6 +362,9 @@ fn cmd_make_captp_delivered(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
     let turn_hash = turn.hash();
     let turn_bytes = postcard::to_allocvec(&turn).expect("turn serialize");
@@ -731,6 +734,9 @@ fn cmd_make_bilateral_bundle(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     // Sanity check: ensure the bilateral schedule contains exactly the one

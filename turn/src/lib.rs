@@ -58,6 +58,7 @@
 pub mod action;
 pub mod aggregate_bilateral_prover;
 pub mod bilateral_schedule;
+pub mod binding_proof;
 pub mod budget_gate;
 pub mod builder;
 pub mod composer;
@@ -164,5 +165,6 @@ pub use verify::{
     verify_receipt_chain_with_keys, verify_receipt_extends,
 };
 pub use witnessed_receipt::{
-    AggregateMembership, WitnessAvailability, WitnessBundle, WitnessedReceipt,
+    AggregateMembership, RecursiveProofVariant, WitnessAvailability, WitnessBundle,
+    WitnessedReceipt,
 };

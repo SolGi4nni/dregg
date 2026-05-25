@@ -300,7 +300,7 @@ test.describe('rate limit / decision message hygiene (P1-5 / P0-1)', () => {
     // The main router returns `result: true` for the ack; the show*() listener
     // is what enforces the nonce check, and there's no active show*() in this
     // scenario, so the ack is harmless. The important property: no token is
-    // provisioned, no wallet state changes.
+    // provisioned, no cipherclerk state changes.
     expect(resp).toBeDefined();
     await popupPage.close();
   });

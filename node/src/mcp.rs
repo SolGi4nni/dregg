@@ -1238,6 +1238,9 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1393,6 +1396,9 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1530,6 +1536,9 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1866,6 +1875,9 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -2288,6 +2300,9 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -2810,6 +2825,9 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let turn_hash = hex_encode(&turn.hash());
@@ -3398,6 +3416,9 @@ async fn tool_private_transfer(params: &Value, state: &NodeState) -> McpToolResu
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
 
     let turn_hash = hex_encode(&turn.hash());
@@ -4180,6 +4201,9 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
     let turn_hash = hex_encode(&turn.hash());
 
@@ -4521,6 +4545,9 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
     let turn_hash = hex_encode(&turn.hash());
 
@@ -4776,6 +4803,9 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     };
     let turn_hash = hex_encode(&turn.hash());
 

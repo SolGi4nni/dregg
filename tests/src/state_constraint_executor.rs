@@ -87,6 +87,9 @@ fn build_set_field_turn(
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 
@@ -125,6 +128,9 @@ fn build_transfer_turn(agent: CellId, peer: CellId, amount: u64, nonce: u64) -> 
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
         custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
     }
 }
 

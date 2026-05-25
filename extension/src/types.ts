@@ -255,11 +255,11 @@ export interface PredicateProofResult {
 }
 
 // ---------------------------------------------------------------------------
-// Wallet state types
+// Cipherclerk state types
 // ---------------------------------------------------------------------------
 
-/** Public wallet state (returned to popup). */
-export interface WalletState {
+/** Public cipherclerk state (returned to popup). */
+export interface CipherclerkState {
   locked: boolean;
   tokenCount: number;
   chainLength: number;
@@ -271,8 +271,8 @@ export interface WalletState {
   stealthNotesCount: number;
 }
 
-/** Internal full wallet state (in-memory). */
-export interface InternalWalletState {
+/** Internal full cipherclerk state (in-memory). */
+export interface InternalCipherclerkState {
   locked: boolean;
   publicKey: number[];
   secretKey: number[] | null;
@@ -286,6 +286,15 @@ export interface InternalWalletState {
   stealthPrivate: StealthPrivateKeys | null;
   stealthNotes: StealthNote[];
 }
+
+// ---------------------------------------------------------------------------
+// Migration-window aliases (deprecated; will be removed next release)
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use CipherclerkState instead. */
+export type WalletState = CipherclerkState;
+/** @deprecated Use InternalCipherclerkState instead. */
+export type InternalWalletState = InternalCipherclerkState;
 
 /** Stealth private keys (stored encrypted at rest). */
 export interface StealthPrivateKeys {
