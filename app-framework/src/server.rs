@@ -157,23 +157,39 @@ impl AppServer {
         }
     }
 
-    /// Install an [`AppCipherclerk`](crate::cipherclerk::AppCipherclerk) as an axum
-    /// `Extension<AppCipherclerk>` layer.
+    /// Install an [`AppCipherclerk`](crate::cipherclerk::AppCipherclerk) as
+    /// an axum `Extension<AppCipherclerk>` layer.
     ///
-    /// Handlers can then extract it via `axum::Extension<AppCipherclerk>` and
-    /// build signed actions/turns through it — no `[0u8; 64]` placeholder
-    /// signatures, no direct `pyana_turn::builder::ActionBuilder` imports.
-    pub fn with_wallet(mut self, wallet: crate::cipherclerk::AppCipherclerk) -> Self {
-        self.router = self.router.layer(axum::Extension(wallet.clone()));
-        self.wallet = Some(wallet);
+    /// Handlers can then extract it via `axum::Extension<AppCipherclerk>`
+    /// and build signed actions/turns through it — no `[0u8; 64]`
+    /// placeholder signatures, no direct
+    /// `pyana_turn::builder::ActionBuilder` imports.
+    pub fn with_cipherclerk(
+        mut self,
+        cipherclerk: crate::cipherclerk::AppCipherclerk,
+    ) -> Self {
+        self.router = self.router.layer(axum::Extension(cipherclerk.clone()));
+        self.cipherclerk = Some(cipherclerk);
         self
     }
 
-    /// Get a reference to the installed wallet, if any. Useful for code
-    /// that needs to capture the wallet *before* `serve()` consumes the
+    /// Get a reference to the installed cipherclerk, if any. Useful for
+    /// code that needs to capture it *before* `serve()` consumes the
     /// builder (e.g. for shared state construction).
+    pub fn cipherclerk(&self) -> Option<&crate::cipherclerk::AppCipherclerk> {
+        self.cipherclerk.as_ref()
+    }
+
+    /// Legacy alias for [`Self::with_cipherclerk`].
+    #[doc(hidden)]
+    pub fn with_wallet(self, cipherclerk: crate::cipherclerk::AppCipherclerk) -> Self {
+        self.with_cipherclerk(cipherclerk)
+    }
+
+    /// Legacy alias for [`Self::cipherclerk`].
+    #[doc(hidden)]
     pub fn wallet(&self) -> Option<&crate::cipherclerk::AppCipherclerk> {
-        self.wallet.as_ref()
+        self.cipherclerk()
     }
 
     /// Install an embedded [`EmbeddedExecutor`](crate::cipherclerk::EmbeddedExecutor)
