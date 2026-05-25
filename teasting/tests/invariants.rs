@@ -185,7 +185,6 @@ fn test_nonce_monotonicity_basic() {
                     field_updates: Vec::new(),
                     nonce_increment: true,
                     balance_change: 0,
-                    witness_blobs: vec![],
                     permission_changes: None,
                     capability_grants: Vec::new(),
                     capability_revocations: Vec::new(),
