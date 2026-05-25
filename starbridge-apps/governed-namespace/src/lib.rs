@@ -1089,6 +1089,119 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 }
 
 // =============================================================================
+// Cross-app composition: credential-gated voting + nameservice-mounted routes
+// =============================================================================
+//
+// Two integrations live here:
+//
+// 1. **Credential-gated voting** — a governed-namespace can require
+//    voters to present a credential (e.g. "verified developer") issued
+//    by a specific identity-issuer cell. The constraint is dropped into
+//    a future per-method case (e.g. `vote_on_proposal_attested`) via
+//    [`credential_gated_voting_constraint`]; the vote action attaches
+//    the credential proof in `witness_blobs` and uses
+//    [`credential_gated_witness_predicate`] as the dispatch shape.
+//
+// 2. **Nameservice-mounted route targets** — a governed namespace can
+//    register a `pyana://<name>` URI whose resolve target is computed
+//    via the nameservice's `RESOLVE_TARGET_SLOT` convention. The helper
+//    [`register_nameservice_route_action`] builds the registration so
+//    the route table's target binding matches the nameservice's
+//    canonical hash of the target URI.
+//
+// Both integrations are data-only: this crate does not import
+// `starbridge-identity` or `starbridge-nameservice`; callers supply the
+// issuer cell + schema commitment (computed by
+// `starbridge_identity::schema_commitment`) and the resolve target
+// (computed by `starbridge_nameservice::resolve_target`).
+
+/// Build the `StateConstraint` clause a credential-gated voting tier
+/// of a governed namespace imposes on `vote_on_proposal` turns.
+///
+/// Drop this into a `CellProgram::Cases` case (e.g. a new
+/// `vote_on_proposal_attested` method symbol) when the namespace's
+/// constitution requires voters to hold a credential from
+/// `issuer_cell` of `credential_schema_id` (computed via
+/// `starbridge_identity::schema_commitment`). The accompanying
+/// `Action` carries the `Presentation` proof bytes in
+/// `witness_blobs[proof_witness_index]`; the executor's
+/// `WitnessedPredicateRegistry` dispatches to the registered
+/// `WitnessedPredicateKind::BlindedSet` verifier.
+///
+/// The constraint's commitment is
+/// `AuthorizedSet::credential_set_commitment(issuer_cell,
+/// credential_schema_id)` — matching the witness predicate
+/// [`credential_gated_witness_predicate`] emits.
+pub fn credential_gated_voting_constraint(
+    issuer_cell: CellId,
+    credential_schema_id: [u8; 32],
+) -> StateConstraint {
+    StateConstraint::SenderAuthorized {
+        set: AuthorizedSet::CredentialSet {
+            issuer_cell: *issuer_cell.as_bytes(),
+            credential_schema_id,
+        },
+    }
+}
+
+/// Build the witness-predicate shape an `Action` carries to discharge
+/// a [`credential_gated_voting_constraint`].
+pub fn credential_gated_witness_predicate(
+    issuer_cell: CellId,
+    credential_schema_id: [u8; 32],
+    proof_witness_index: usize,
+) -> WitnessedPredicate {
+    WitnessedPredicate {
+        kind: WitnessedPredicateKind::BlindedSet,
+        commitment: AuthorizedSet::credential_set_commitment(
+            issuer_cell.as_bytes(),
+            &credential_schema_id,
+        ),
+        input_ref: InputRef::Sender,
+        proof_witness_index,
+    }
+}
+
+/// Build a `register_service` action that mounts a nameservice-resolved
+/// target at a path under the governed namespace.
+///
+/// Wraps [`build_register_service_action`] with the caller's
+/// pre-computed `nameservice_resolve_target` (the 32-byte hash a
+/// nameservice cell records in its `RESOLVE_TARGET_SLOT`) so the
+/// emitted `service-registered` event carries the same target bytes
+/// downstream consumers (a `pyana_dfa::Router` walking the live route
+/// table) see when they resolve the cell.
+///
+/// `target_cell` is still the canonical cell ID; the
+/// `nameservice_resolve_target` is an *additional* event datum so the
+/// indexer can correlate the namespace mount with the nameservice
+/// entry without a second lookup.
+pub fn register_nameservice_route_action(
+    cipherclerk: &AppCipherclerk,
+    namespace_cell: CellId,
+    path: &str,
+    target_cell: CellId,
+    nameservice_resolve_target: FieldElement,
+) -> Action {
+    let path_hash = blake3_field(path.as_bytes());
+    let target_field = cell_id_field(target_cell);
+
+    let effects = vec![Effect::EmitEvent {
+        cell: namespace_cell,
+        event: Event::new(
+            symbol("service-registered"),
+            vec![
+                path_hash,
+                target_field,
+                nameservice_resolve_target,
+            ],
+        ),
+    }];
+
+    cipherclerk.make_action(namespace_cell, "register_service", effects)
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -1786,5 +1899,83 @@ mod tests {
         }
         assert!(always_matched);
         assert!(!method_matched);
+    }
+
+    // ── Cross-app composition ────────────────────────────────────────────
+
+    #[test]
+    fn credential_gated_voting_constraint_and_predicate_agree_on_commitment() {
+        let issuer = CellId::from_bytes([55u8; 32]);
+        let schema_id = blake3_field(b"verified-developer-v1");
+        let constraint = credential_gated_voting_constraint(issuer, schema_id);
+        let predicate = credential_gated_witness_predicate(issuer, schema_id, 0);
+
+        let constraint_commit = match constraint {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            other => panic!("expected CredentialSet, got {other:?}"),
+        };
+        assert_eq!(predicate.commitment, constraint_commit);
+        assert_eq!(predicate.kind, WitnessedPredicateKind::BlindedSet);
+        assert_eq!(predicate.input_ref, InputRef::Sender);
+    }
+
+    #[test]
+    fn credential_gated_constraint_distinguishes_issuer_and_schema() {
+        let i_a = CellId::from_bytes([1u8; 32]);
+        let i_b = CellId::from_bytes([2u8; 32]);
+        let s_a = blake3_field(b"schema-a");
+        let s_b = blake3_field(b"schema-b");
+        let extract = |c: StateConstraint| match c {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            _ => panic!(),
+        };
+        let c1 = extract(credential_gated_voting_constraint(i_a, s_a));
+        let c2 = extract(credential_gated_voting_constraint(i_b, s_a));
+        let c3 = extract(credential_gated_voting_constraint(i_a, s_b));
+        assert_ne!(c1, c2);
+        assert_ne!(c1, c3);
+    }
+
+    #[test]
+    fn register_nameservice_route_action_carries_resolve_target() {
+        let wallet = test_wallet();
+        let cell = test_cell();
+        let target_cell = CellId::from_bytes([77u8; 32]);
+        let ns_resolve = blake3_field(b"pyana://cell/bob.dev-actual-target");
+
+        let action = register_nameservice_route_action(
+            &wallet,
+            cell,
+            "/bob.dev",
+            target_cell,
+            ns_resolve,
+        );
+
+        assert_eq!(action.method, symbol("register_service"));
+        assert_eq!(action.effects.len(), 1);
+        match &action.effects[0] {
+            Effect::EmitEvent { event, .. } => {
+                assert_eq!(event.topic, symbol("service-registered"));
+                // The 3-fact form for the nameservice-bound variant:
+                // [path_hash, target_cell_id, nameservice_resolve_target]
+                assert_eq!(event.data.len(), 3);
+                assert_eq!(event.data[0], blake3_field(b"/bob.dev"));
+                assert_eq!(event.data[1], cell_id_field(target_cell));
+                assert_eq!(event.data[2], ns_resolve);
+            }
+            other => panic!("expected EmitEvent, got {other:?}"),
+        }
     }
 }
