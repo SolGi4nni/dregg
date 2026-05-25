@@ -66,7 +66,7 @@ impl TurnExecutor {
 
         // 5. Compute effects hash using the circuit's Poseidon2-based hash
         // (Stage 1 widened to 4 felts).
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
+        let vm_effects = convert_turn_effects_to_vm(cell_id, turn, ledger);
         let effects_hash_4 = effect_vm::compute_effects_hash_4(&vm_effects);
 
         // 6. Compute balance delta from effects.

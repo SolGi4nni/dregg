@@ -3,7 +3,7 @@
 //! This module owns the (intentionally lossy) projection of a `Turn` into the
 //! sequence of VM effects that the Effect VM AIR consumes for STARK proving.
 
-use pyana_cell::CellId;
+use pyana_cell::{CellId, Ledger};
 
 use crate::action::Effect;
 use crate::forest::CallTree;
@@ -12,10 +12,12 @@ use crate::turn::Turn;
 pub(super) fn convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
+    ledger: &Ledger,
 ) -> Vec<pyana_circuit::effect_vm::Effect> {
     fn collect_effects(
         tree: &CallTree,
         cell_id: &CellId,
+        ledger: &Ledger,
         vm_effects: &mut Vec<pyana_circuit::effect_vm::Effect>,
     ) {
         use pyana_circuit::effect_vm::Effect as VmEffect;
@@ -104,55 +106,77 @@ pub(super) fn convert_turn_effects_to_vm(
                     message_hash,
                     deposit,
                 } => {
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4:
-                    // `queue_len: 0` is a hard-coded placeholder; the
-                    // AIR's "queue not full" check (`queue_len < capacity`)
-                    // therefore always passes against the projection.
-                    // The executor's apply_effect enforces the actual
-                    // capacity bound — the proof simply doesn't witness
-                    // that bound today. TODO[block1-bind]: plumb ledger
-                    // access (or pre-call argument) so queue_len can be
-                    // sourced from the operator's MerkleQueue state
-                    // (`storage::operator::QueueOperator::queue_len`).
-                    //
-                    // `program_vk: ZERO` is also a placeholder; the
-                    // programmable-queue feature path injects the queue's
-                    // attached program VK hash here once that pathway
-                    // wires through `convert_turn_effects_to_vm`. The AIR
-                    // gates the validation-hash constraint on `program_vk
-                    // != 0` so this is backwards-compatible.
-                    let _ = queue;
+                    // CLOSED block1-bind: queue length lives at
+                    // `queue_cell.state.fields[1]` (low 8 bytes LE u64) and
+                    // the queue's attached program_vk lives at
+                    // `queue_cell.state.fields[3]` (low 4 bytes folded into
+                    // BabyBear). Source both from the ledger now so the AIR
+                    // witnesses the real capacity bound. The executor's
+                    // apply_effect (`apply.rs::QueueEnqueue`) reads the
+                    // same slots, so the AIR projection and the runtime
+                    // mutation agree by construction.
+                    let (queue_len, program_vk) =
+                        if let Some(queue_cell) = ledger.get(queue) {
+                            let qlen = u64::from_le_bytes(
+                                queue_cell.state.fields[1][..8].try_into().unwrap_or([0u8; 8]),
+                            ) as u32;
+                            // program_vk is fields[3] when programmable;
+                            // hash_to_bb folds 4 bytes into a felt. Zero
+                            // sentinel means "no attached program" — the
+                            // AIR's `program_vk != 0` gate is honored.
+                            let pvk = hash_to_bb(&queue_cell.state.fields[3]);
+                            (qlen, pvk)
+                        } else {
+                            // Queue cell missing — executor will reject; we
+                            // project sentinel so PI matching still aligns.
+                            (0, BabyBear::ZERO)
+                        };
                     vm_effects.push(VmEffect::EnqueueMessage {
                         message_hash: hash_to_bb(message_hash),
                         deposit_amount: *deposit as u32,
                         sender_id: hash_to_bb(cell_id.as_bytes()),
-                        queue_len: 0,               // TODO[block1-bind]
-                        program_vk: BabyBear::ZERO, // TODO[block1-bind]
+                        queue_len,
+                        program_vk,
                     });
                 }
                 Effect::QueueDequeue { queue } => {
                     // DequeueMessage: the expected_message_hash is the queue's head.
                     // The executor validates correctness; the circuit proves the hash chain.
                     //
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4 fix:
-                    // pre-fix the expected_message_hash was aliased to
-                    // the queue ID hash. Two distinct dequeues against
-                    // the same queue projected to identical AIR PI,
-                    // and the AIR's `field[4] == hash(old_root, msg)`
-                    // transition was satisfiable against any prover-
-                    // supplied head whose hash matched the queue id.
+                    // CLOSED-PARTIALLY block1-bind: the dequeue head hash
+                    // lives in storage's `QueueOperator::queue_head_hash`,
+                    // NOT in `cell.state.fields` — `apply.rs::QueueDequeue`
+                    // does not currently track per-message head commitments
+                    // on the cell. To witness the true head we'd need to
+                    // either:
+                    //   (a) bind the head into a cell.state slot at enqueue
+                    //       time (executor + AIR co-evolution), or
+                    //   (b) plumb a QueueOperator reference into the bridge.
                     //
-                    // Post-fix: domain-tag the queue id with the
-                    // 'DEQUEUE_HEAD' marker so the projection is
-                    // distinct from the queue's own identity. This
-                    // is still a placeholder — the actual head hash
-                    // requires reading the queue's storage at the
-                    // executor (TODO[block1-bind]) — but it ensures
-                    // the AIR's per-call PI is unique to "this is a
-                    // dequeue intent" vs. "this is the queue id".
+                    // Path (a) is the architecturally clean answer and is
+                    // captured in BLOCK1-BIND-CLOSURE-NOTES.md. Until then
+                    // we keep the domain-tagged sentinel: distinct from
+                    // the queue-id alias (which collapsed soundness pre-
+                    // fix), but still synthetic. The cell-side enqueue/
+                    // dequeue length tracking via `fields[1]` IS bound
+                    // through the AIR; the message hash is the remaining
+                    // unbound surface.
                     let mut hasher = blake3::Hasher::new();
                     hasher.update(b"PYANA_DEQUEUE_HEAD/v1");
                     hasher.update(queue.as_bytes());
+                    // Mix in the current queue length so two sequential
+                    // dequeues on the same queue produce distinct
+                    // projections (the AIR PI was previously identical
+                    // for back-to-back dequeues against the same queue).
+                    let qlen = ledger
+                        .get(queue)
+                        .map(|c| {
+                            u64::from_le_bytes(
+                                c.state.fields[1][..8].try_into().unwrap_or([0u8; 8]),
+                            )
+                        })
+                        .unwrap_or(0);
+                    hasher.update(&qlen.to_le_bytes());
                     let head_bytes = hasher.finalize();
                     vm_effects.push(VmEffect::DequeueMessage {
                         expected_message_hash: hash_to_bb(head_bytes.as_bytes()),
@@ -163,20 +187,26 @@ pub(super) fn convert_turn_effects_to_vm(
                     queue,
                     new_capacity,
                 } => {
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4:
-                    // `old_capacity: 0` is a hard-coded placeholder; the
-                    // AIR's "delta == new - old, balance debit on grow"
-                    // arithmetic treats every resize as a fresh
-                    // allocation (delta == new_capacity). The
-                    // executor's apply_effect enforces the actual
-                    // arithmetic. TODO[block1-bind]: source old_capacity
-                    // from the queue cell's `state.fields[5]` so the
-                    // AIR can witness real shrink/grow distinctions.
+                    // CLOSED block1-bind: queue capacity lives at
+                    // `queue_cell.state.fields[0]` (low 8 bytes LE u64),
+                    // matching the executor's QueueAllocate write
+                    // (`apply.rs::QueueAllocate` sets `fields[0][..8] =
+                    // capacity.to_le_bytes()`). Source `old_capacity` from
+                    // the ledger now so the AIR can distinguish shrink
+                    // from grow.
+                    let old_capacity = ledger
+                        .get(queue)
+                        .map(|c| {
+                            u64::from_le_bytes(
+                                c.state.fields[0][..8].try_into().unwrap_or([0u8; 8]),
+                            ) as u32
+                        })
+                        .unwrap_or(0);
                     vm_effects.push(VmEffect::ResizeQueue {
                         new_capacity: *new_capacity as u32,
                         queue_id: hash_to_bb(queue.as_bytes()),
                         cost_per_slot: 1,
-                        old_capacity: 0, // TODO[block1-bind]
+                        old_capacity,
                     });
                 }
                 Effect::QueueAtomicTx { operations } => {
@@ -215,13 +245,26 @@ pub(super) fn convert_turn_effects_to_vm(
                     // forces the AIR's `field[4] == combined_old_root`
                     // -> `field[4] == combined_new_root` transition to
                     // be a real Poseidon2 step rather than a tautology.
-                    // The transition is still tx-deterministic (same
-                    // tx, same chain), but it cannot collapse to a
-                    // trivial self-loop. The verifier-side derivation
-                    // of `combined_old_root` from the cell's actual
-                    // stored queue root is a future tightening
-                    // (TODO[block1-bind] — needs ledger access).
-                    let combined_old_root = hash_to_bb(cell_id.as_bytes());
+                    //
+                    // CLOSED block1-bind: `combined_old_root` is now
+                    // sourced from the actor cell's `state.fields[4]`
+                    // — the cell-side combined-queue-root slot the
+                    // executor maintains in apply.rs. Honest path:
+                    // executor reads/writes this slot; AIR PI binds it
+                    // through this projection. When `fields[4]` is the
+                    // zero sentinel (queue uninitialized), the synthetic
+                    // cell-id projection keeps the AIR non-tautological.
+                    let combined_old_root = ledger
+                        .get(cell_id)
+                        .map(|c| {
+                            let f4 = c.state.fields[4];
+                            if f4 == [0u8; 32] {
+                                hash_to_bb(cell_id.as_bytes())
+                            } else {
+                                hash_to_bb(&f4)
+                            }
+                        })
+                        .unwrap_or_else(|| hash_to_bb(cell_id.as_bytes()));
                     let combined_new_root =
                         pyana_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
                     vm_effects.push(VmEffect::AtomicQueueTx {
@@ -700,33 +743,31 @@ pub(super) fn convert_turn_effects_to_vm(
                     // real permissions mask via the swiss table).
                     let cell_id_bb = hash_to_bb(target.as_bytes());
                     let random_seed_bb = hash_to_bb(swiss_number);
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4:
-                    // `permissions: ZERO` and `export_counter: 0`
-                    // remain placeholders because the runtime
-                    // `ExportSturdyRef { swiss_number, target }`
-                    // variant doesn't carry the permissions mask
-                    // and the export counter lives in
-                    // `cell.state.fields[7]` (ledger state).
-                    // TODO[block1-bind]: extend the runtime
-                    // ExportSturdyRef variant to carry the
-                    // permissions mask, and plumb ledger access
-                    // into `convert_turn_effects_to_vm` so the
-                    // export counter can be sourced from
-                    // `ledger.get(target).state.fields[7]`.
-                    //
-                    // The AIR's swiss derivation
-                    // `hash_2_to_1(cell_id, hash_2_to_1(random_seed,
-                    // counter))` is self-consistent with whatever
-                    // values we project; the tautology this leaves
-                    // is at the verifier side — it cannot reject
-                    // a prover who picks a different (random_seed,
-                    // counter) pair without per-cell counter
-                    // state.
+                    // CLOSED-PARTIALLY block1-bind:
+                    //   - `export_counter` now sourced from
+                    //     `target.state.fields[7]` (low 4 bytes LE u32),
+                    //     so the AIR's swiss derivation
+                    //     `hash_2_to_1(cell_id, hash_2_to_1(random_seed,
+                    //     counter))` is no longer tautological — a
+                    //     prover cannot pick an arbitrary counter.
+                    //   - `permissions: ZERO` remains because the
+                    //     runtime `ExportSturdyRef { swiss_number,
+                    //     target }` variant does not carry the
+                    //     permissions mask. Closing this requires
+                    //     extending the runtime variant (carried in
+                    //     BLOCK1-BIND-CLOSURE-NOTES.md as
+                    //     `ExportSturdyRef-permissions`).
+                    let export_counter = ledger
+                        .get(target)
+                        .map(|c| {
+                            u32::from_le_bytes(c.state.fields[7][..4].try_into().unwrap_or([0u8; 4]))
+                        })
+                        .unwrap_or(0);
                     vm_effects.push(VmEffect::ExportSturdyRef {
                         cell_id: cell_id_bb,
                         permissions: BabyBear::ZERO,
                         random_seed: random_seed_bb,
-                        export_counter: 0,
+                        export_counter,
                     });
                 }
                 Effect::EnlivenRef {
@@ -739,26 +780,29 @@ pub(super) fn convert_turn_effects_to_vm(
                     // Merkle membership proof against the target
                     // cell's swiss_table_root.
                     //
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4 fix:
-                    // pre-fix `expected_cell_id == presenter_id`
-                    // (literal alias) made the AIR's leaf-derivation
-                    // `aux[0] == hash_2_to_1(swiss, hash_2_to_1(
-                    // expected_cell_id, expected_permissions))` bind
-                    // against a circular reference. Post-fix we
-                    // derive `expected_cell_id` via a domain-tagged
-                    // hash of (swiss || bearer), so the AIR's leaf
-                    // is anchored to the swiss table's lookup key
-                    // rather than the presenter's identity. A
-                    // future binding (TODO[block1-bind]) reads the
-                    // *target's* swiss_table_root from the ledger
-                    // and supplies the actual table entry's
-                    // expected_cell_id and expected_permissions.
+                    // CLOSED-PARTIALLY block1-bind:
+                    // The bearer's swiss_table_root lives in
+                    // `bearer.state.fields[6]` (the swiss-table commit).
+                    // We now anchor `expected_cell_id` via a domain-tagged
+                    // hash of (swiss_number, bearer_swiss_root) so the
+                    // AIR's leaf-derivation is bound to actual ledger
+                    // state, not just the synthetic (swiss, bearer)
+                    // pair. A full closure binds `expected_permissions`
+                    // to the swiss-table entry; that requires walking
+                    // the table (off-AIR Merkle proof), tracked in
+                    // BLOCK1-BIND-CLOSURE-NOTES.md as
+                    // `EnlivenRef-permissions-merkle`.
                     let swiss_bb = hash_to_bb(swiss_number);
                     let presenter_bb = hash_to_bb(bearer.as_bytes());
+                    let swiss_root = ledger
+                        .get(bearer)
+                        .map(|c| c.state.fields[6])
+                        .unwrap_or([0u8; 32]);
                     let mut hasher = blake3::Hasher::new();
-                    hasher.update(b"PYANA_SWISS_TABLE_LOOKUP/v1");
+                    hasher.update(b"PYANA_SWISS_TABLE_LOOKUP/v2");
                     hasher.update(swiss_number);
                     hasher.update(bearer.as_bytes());
+                    hasher.update(&swiss_root);
                     let expected_cell_id_bb = hash_to_bb(hasher.finalize().as_bytes());
                     vm_effects.push(VmEffect::EnlivenRef {
                         swiss_number: swiss_bb,
@@ -775,25 +819,25 @@ pub(super) fn convert_turn_effects_to_vm(
                     // refcount; the executor's apply_effect verifies
                     // the actual stored refcount.
                     //
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4:
-                    // `current_refcount: 1` is a hard-coded
-                    // placeholder; the AIR's `refcount > 0` check
-                    // (`refcount * inv(refcount) == 1`) is
-                    // satisfied by construction with no link to the
-                    // actual stored refcount in
-                    // `cell.state.fields[5]`. TODO[block1-bind]:
-                    // plumb ledger access so we can source the
-                    // current_refcount from
-                    // `ledger.get(cell_id).state.fields[5]`.
-                    // The AIR's per-row `field[5]` continuity is
-                    // already constrained — the gap is between PI
-                    // and the trace's row-0 boundary value.
+                    // CLOSED block1-bind: `current_refcount` is now
+                    // sourced from `cell.state.fields[5]` (the refcount
+                    // slot the AIR's per-row `field[5]` continuity
+                    // already constrains). The AIR's `refcount > 0`
+                    // check is no longer satisfied by construction —
+                    // it must hold against the actual ledger state.
                     let cell_id_bb = hash_to_bb(cell_id.as_bytes());
                     let ref_id_bb = hash_to_bb(ref_id);
+                    // Refcount stored as u32 in low 4 bytes LE of fields[5].
+                    let current_refcount = ledger
+                        .get(cell_id)
+                        .map(|c| {
+                            u32::from_le_bytes(c.state.fields[5][..4].try_into().unwrap_or([0u8; 4]))
+                        })
+                        .unwrap_or(0);
                     vm_effects.push(VmEffect::DropRef {
                         cell_id: cell_id_bb,
                         holder_federation: ref_id_bb,
-                        current_refcount: 1,
+                        current_refcount,
                     });
                 }
                 Effect::ValidateHandoff { cert_hash } => {
@@ -801,32 +845,21 @@ pub(super) fn convert_turn_effects_to_vm(
                     // cert_hash ∈ approved_handoffs_root. P1.C
                     // tightens to a real Merkle membership proof.
                     //
-                    // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4 fix:
-                    // pre-fix `recipient_pk == introducer_pk ==
-                    // approved_set_root == ZERO`, so the AIR's
-                    // membership check `aux[0] == hash(cert_hash,
-                    // ZERO) -> cap_root = hash(old_cap_root,
-                    // hash(ZERO, cert_hash))` was tautologically
-                    // satisfiable against the all-zero root.
-                    // Post-fix we derive each PI from a domain-
-                    // tagged hash of (cert_hash, cell_id), which
-                    // gives the per-call PI a unique algebraic
-                    // identity (not the all-zero collapse). The
-                    // recipient_pk + introducer_pk fields exit the
-                    // minimal runtime variant (they're recovered
-                    // from the off-chain cert at federation-side
-                    // verification); a future tightening
-                    // (TODO[block1-bind]) carries them through the
-                    // runtime variant as `ValidateHandoff {
-                    // cert_hash, recipient_pk, introducer_pk }`.
-                    // approved_set_root is now sourced from the
-                    // federation's actual approved_handoffs_root
-                    // (PI[APPROVED_HANDOFFS_BASE]), which the
-                    // verifier populates via
-                    // `read_approved_handoffs_root` — making this
-                    // arm's `aux[6] == approved_set_root` check
-                    // a binding membership test rather than a
-                    // self-loop against ZERO.
+                    // CLOSED-DEFERRED block1-bind: recipient_pk and
+                    // introducer_pk both exit the minimal runtime
+                    // `ValidateHandoff { cert_hash }` variant — they
+                    // are recovered from the off-chain certificate at
+                    // federation-side verification. Closing this site
+                    // fully requires extending the runtime variant to
+                    // `ValidateHandoff { cert_hash, recipient_pk,
+                    // introducer_pk }`. The domain-tagged synthetic
+                    // derivation below is the current binding floor
+                    // (non-tautological per-call identity);
+                    // BLOCK1-BIND-CLOSURE-NOTES.md tracks the variant-
+                    // extension follow-up as
+                    // `ValidateHandoff-runtime-variant-extend`.
+                    // `approved_set_root` is already federation-bound
+                    // via PI[APPROVED_HANDOFFS_BASE].
                     let cert_bb = hash_to_bb(cert_hash);
                     let mut rh = blake3::Hasher::new();
                     rh.update(b"PYANA_HANDOFF_RECIPIENT/v1");
@@ -862,7 +895,7 @@ pub(super) fn convert_turn_effects_to_vm(
             }
         }
         for child in &tree.children {
-            collect_effects(child, cell_id, vm_effects);
+            collect_effects(child, cell_id, ledger, vm_effects);
         }
     }
 
@@ -873,7 +906,7 @@ pub(super) fn convert_turn_effects_to_vm(
 
     let mut vm_effects = Vec::new();
     for root in &turn.call_forest.roots {
-        collect_effects(root, cell_id, &mut vm_effects);
+        collect_effects(root, cell_id, ledger, &mut vm_effects);
     }
 
     // Must have at least one effect for the VM.
