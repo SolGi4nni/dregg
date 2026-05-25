@@ -2660,7 +2660,28 @@ impl TurnExecutor {
         bundle: &[(pyana_types::CellId, Vec<pyana_circuit::field::BabyBear>)],
         turn: &Turn,
     ) -> Result<(), TurnError> {
-        use crate::bilateral_schedule::{ExpectedBilateral, extract_from_pi};
+        use crate::bilateral_schedule::ExpectedBilateral;
+        let schedule = ExpectedBilateral::from_turn(turn);
+        Self::verify_bilateral_bundle_with_schedule(bundle, turn, &schedule)
+    }
+
+    /// γ.2 unilateral binding extension: same as [`verify_bilateral_bundle`]
+    /// but takes a pre-built `ExpectedBilateral` so the caller can populate
+    /// `unilateral_attestations` (which cannot be derived from `call_forest`
+    /// alone — they're per-cell self-witnessing data that lives outside the
+    /// Turn).
+    ///
+    /// Use this when a sovereign cell / peer_exchange transition carries
+    /// unilateral attestations that must be cross-checked against the PI
+    /// accumulator. Callers that don't have unilateral attestations can
+    /// keep using [`verify_bilateral_bundle`] — it builds an empty
+    /// unilateral list, which produces sentinel roots / zero counts.
+    pub fn verify_bilateral_bundle_with_schedule(
+        bundle: &[(pyana_types::CellId, Vec<pyana_circuit::field::BabyBear>)],
+        turn: &Turn,
+        schedule: &crate::bilateral_schedule::ExpectedBilateral,
+    ) -> Result<(), TurnError> {
+        use crate::bilateral_schedule::extract_from_pi;
         use pyana_circuit::effect_vm::pi;
 
         if bundle.is_empty() {
@@ -2681,7 +2702,6 @@ impl TurnExecutor {
             }
         }
 
-        let schedule = ExpectedBilateral::from_turn(turn);
         let actor_nonce = turn.nonce;
 
         // Per-cell check.
@@ -2709,6 +2729,8 @@ impl TurnExecutor {
             count_check!(intro_as_introducer, "intro_as_introducer_count");
             count_check!(intro_as_recipient, "intro_as_recipient_count");
             count_check!(intro_as_target, "intro_as_target_count");
+            // γ.2 unilateral binding: per-cell self-attestation count.
+            count_check!(unilateral_attestations, "unilateral_attestations_count");
 
             macro_rules! root_check {
                 ($field:ident, $name:literal) => {
@@ -2728,6 +2750,8 @@ impl TurnExecutor {
             root_check!(intro_as_introducer, "intro_as_introducer");
             root_check!(intro_as_recipient, "intro_as_recipient");
             root_check!(intro_as_target, "intro_as_target");
+            // γ.2 unilateral binding: per-cell self-attestation accumulator root.
+            root_check!(unilateral_attestations, "unilateral_attestations");
 
             // IS_AGENT_CELL consistency.
             let is_agent = p[pi::IS_AGENT_CELL];

@@ -391,6 +391,35 @@ impl WitnessedReceipt {
         crate::executor::TurnExecutor::verify_bilateral_bundle(&bundle, turn)
     }
 
+    /// γ.2 unilateral binding extension: verify a bilateral bundle against
+    /// a caller-built schedule (so the caller can populate per-cell
+    /// `unilateral_attestations` which the verifier folds into the
+    /// `UNILATERAL_ATTESTATIONS_*` PI accumulator and compares.)
+    ///
+    /// See [`verify_bilateral_chain`] for the rest of the contract.
+    pub fn verify_bilateral_chain_with_schedule(
+        wrs: &[(pyana_types::CellId, &WitnessedReceipt)],
+        turn: &Turn,
+        schedule: &crate::bilateral_schedule::ExpectedBilateral,
+    ) -> Result<(), crate::error::TurnError> {
+        use pyana_circuit::field::BabyBear;
+
+        let bundle: Vec<(pyana_types::CellId, Vec<BabyBear>)> = wrs
+            .iter()
+            .map(|(cid, wr)| {
+                let pi: Vec<BabyBear> = wr
+                    .public_inputs
+                    .iter()
+                    .map(|&v| BabyBear::new_canonical(v))
+                    .collect();
+                (cid.clone(), pi)
+            })
+            .collect();
+        crate::executor::TurnExecutor::verify_bilateral_bundle_with_schedule(
+            &bundle, turn, schedule,
+        )
+    }
+
     /// Convenience: serialize a chain (`Vec<WitnessedReceipt>`) as JSON.
     /// Used by demo / audit paths.
     pub fn chain_to_json(chain: &[Self]) -> Result<String, serde_json::Error> {
