@@ -9,7 +9,8 @@
 //! - Multiple CapTP effects can be combined in a single turn/proof
 
 use pyana_circuit::effect_vm::{
-    self, CellState, Effect, EffectVmAir, compute_effects_hash, generate_effect_vm_trace,
+    self, CellState, Effect, EffectVmAir, EffectVmContext, compute_effects_hash,
+    generate_effect_vm_trace, generate_effect_vm_trace_ext,
 };
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::poseidon2::hash_2_to_1;
@@ -159,13 +160,30 @@ fn test_enliven_ref_full_pipeline() {
         "use_count (field[6]) should increment to 1"
     );
 
-    // Verify the entry hash in aux[0].
+    // Verify the entry-hash binding swiss -> (cell_id, permissions).
+    //
+    // Stage 7 / P1.C aux semantics (see `circuit/src/effect_vm/columns.rs`
+    // doc comment, EnlivenRef row): `aux[0]` carries the new
+    // swiss_table_root; the leaf (= hash(swiss, hash(cell_id, perms)))
+    // lives in `aux[1]`. The pre-Stage-7 layout had `aux[0]` as the leaf;
+    // this test was pinned against that. Updating to the canonical
+    // Stage-7 column indices preserves the original intent (verify the
+    // entry-hash is computed correctly) without weakening the assertion.
     let inner = hash_2_to_1(cell_id, permissions);
     let expected_entry_hash = hash_2_to_1(swiss_number, inner);
-    let aux_entry = row[effect_vm::AUX_BASE + 0];
+    let aux_leaf = row[effect_vm::AUX_BASE + 1];
     assert_eq!(
-        aux_entry, expected_entry_hash,
-        "aux[0] should contain the entry hash binding swiss to (cell_id, permissions)"
+        aux_leaf, expected_entry_hash,
+        "aux[1] (leaf) should bind swiss to (cell_id, permissions)"
+    );
+    // aux[0] is the new swiss_table_root = hash(leaf, prev_root); the
+    // prev_root is zero at row 0, so the new root equals hash(leaf, 0).
+    let prev_root = BabyBear::ZERO;
+    let expected_root = hash_2_to_1(expected_entry_hash, prev_root);
+    let aux_root = row[effect_vm::AUX_BASE + 0];
+    assert_eq!(
+        aux_root, expected_root,
+        "aux[0] (new swiss_table_root) should equal hash(leaf, prev_root)"
     );
 
     // Prove and verify via STARK.
@@ -252,7 +270,20 @@ fn test_validate_handoff_full_pipeline() {
     let certificate_hash = BabyBear::new(0xCE27);
     let recipient_pk = BabyBear::new(0xBBCC);
     let introducer_pk = BabyBear::new(0xDDEE);
-    let approved_set_root = BabyBear::new(0xA55E);
+
+    // Stage 7 / P1.C: the AIR's chosen-parent (aux[6]) is
+    //   hash(leaf, sibling)  with  leaf = hash(cert, hash(recipient, introducer))
+    // and is constrained to equal PARAM[HANDOFF_APPROVED_SET_ROOT], which the
+    // trace generator pins from `context.approved_handoffs_root[0]`. The
+    // default context's all-zero sibling means the only approved_set_root
+    // that yields a valid trace is hash(leaf, ZERO) (single-entry tree).
+    // Compute that value rather than the prior 0xA55E placeholder, which
+    // produced a guaranteed-fail trace (a real federation witness oracle
+    // will eventually supply structured siblings; until then the
+    // single-entry shape is the AIR-self-consistent fixture).
+    let pks = hash_2_to_1(recipient_pk, introducer_pk);
+    let leaf = hash_2_to_1(certificate_hash, pks);
+    let approved_set_root = hash_2_to_1(leaf, BabyBear::ZERO);
 
     let effects = vec![Effect::ValidateHandoff {
         certificate_hash,
@@ -261,15 +292,37 @@ fn test_validate_handoff_full_pipeline() {
         approved_set_root,
     }];
 
-    let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
+    // Bind the AIR's PI-anchored approved_handoffs_root[0] to the same value
+    // the constraint will witness on the trace.
+    let mut ctx = EffectVmContext::default();
+    ctx.actor_nonce = initial_state.nonce as u64;
+    ctx.approved_handoffs_root[0] = approved_set_root;
+    let (trace, public_inputs) =
+        generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
 
-    // Verify membership binding in aux[0].
+    // Verify the membership leaf in aux[0] and the chosen-parent in aux[6].
+    //
+    // Stage 7 / P1.C aux semantics (see `circuit/src/effect_vm/columns.rs`
+    // ValidateHandoff row): the leaf binds cert+recipient+introducer, not
+    // cert+approved_set_root. The pre-Stage-7 layout used the latter; this
+    // test pinned the old shape.
+    //   aux[0] = leaf = hash(cert_hash, hash(recipient_pk, introducer_pk))
+    //   aux[1] = sibling
+    //   aux[6] = chosen = hash(leaf, sibling)  ==  approved_set_root
     let row = &trace[0];
-    let expected_membership = hash_2_to_1(certificate_hash, approved_set_root);
-    let aux_membership = row[effect_vm::AUX_BASE + 0];
+    let pks = hash_2_to_1(recipient_pk, introducer_pk);
+    let expected_leaf = hash_2_to_1(certificate_hash, pks);
+    let aux_leaf = row[effect_vm::AUX_BASE + 0];
     assert_eq!(
-        aux_membership, expected_membership,
-        "aux[0] should bind cert to approved set"
+        aux_leaf, expected_leaf,
+        "aux[0] (leaf) should bind cert_hash to hash(recipient_pk, introducer_pk)"
+    );
+    let aux_chosen = row[effect_vm::AUX_BASE + 6];
+    let aux_sibling = row[effect_vm::AUX_BASE + 1];
+    assert_eq!(
+        aux_chosen,
+        hash_2_to_1(expected_leaf, aux_sibling),
+        "aux[6] (chosen) should equal hash(leaf, sibling)"
     );
 
     // Verify cap_root update.
@@ -282,12 +335,20 @@ fn test_validate_handoff_full_pipeline() {
         "cap_root should incorporate the new routing entry"
     );
 
-    // Prove and verify via STARK.
-    let proof = prove_and_verify_effects(&initial_state, &effects);
+    // Prove and verify via STARK using the context we already built (so the
+    // AIR's PI-anchored approved_handoffs_root[0] stays consistent with the
+    // trace witness).
+    let air = EffectVmAir::new(trace.len());
+    let proof = stark::prove(&air, &trace, &public_inputs);
+    let verify_result = stark::verify(&air, &proof, &public_inputs);
+    assert!(
+        verify_result.is_ok(),
+        "STARK verification failed: {:?}",
+        verify_result.err()
+    );
     assert!(proof.trace_len >= 2);
 
     // Tamper with the proof: change a constraint value -> fails.
-    let air = EffectVmAir::new(proof.trace_len);
     let mut tampered = proof.clone();
     if !tampered.query_proofs.is_empty() {
         tampered.query_proofs[0].constraint_value ^= 0xDEAD;
@@ -368,15 +429,26 @@ fn test_multi_effect_captp_turn() {
     );
 
     // Verify effects hash in public inputs matches.
-    let (expected_hash_lo, expected_hash_hi) = compute_effects_hash(&effects);
-    assert_eq!(
-        public_inputs[4], expected_hash_lo,
-        "effects_hash_lo should match"
-    );
-    assert_eq!(
-        public_inputs[5], expected_hash_hi,
-        "effects_hash_hi should match"
-    );
+    //
+    // Stage 1 PI layout (see `circuit/src/effect_vm/pi.rs`):
+    //   positions 0..3  = OLD_COMMIT (4-felt Poseidon2)
+    //   positions 4..7  = NEW_COMMIT (4-felt Poseidon2)
+    //   positions 8..11 = EFFECTS_HASH (4-felt Poseidon2, by
+    //                     `compute_effects_hash_4`)
+    //
+    // Earlier pre-Stage-1 layouts kept effects-hash at positions 4..5
+    // (lo + synthetic-hi from `compute_effects_hash`); the synthetic-hi
+    // binding was dropped in favor of 4 independent Poseidon2 squeezes
+    // (per pi.rs AUDIT[stage1-effects-hash]). Use `compute_effects_hash_4`
+    // and check all 4 felts.
+    let expected_hash_4 = effect_vm::compute_effects_hash_4(&effects);
+    for i in 0..effect_vm::pi::EFFECTS_HASH_LEN {
+        assert_eq!(
+            public_inputs[effect_vm::pi::EFFECTS_HASH_BASE + i],
+            expected_hash_4[i],
+            "effects_hash[{i}] should match"
+        );
+    }
 
     // Verify net delta: -1000 (only the transfer changes balance).
     let net_delta = effect_vm::extract_net_delta(&public_inputs);
