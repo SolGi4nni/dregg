@@ -2428,9 +2428,7 @@ impl AgentCipherclerk {
         executor_x25519_public: &[u8; 32],
         submitted_at: i64,
     ) -> Result<pyana_turn::EncryptedTurn, pyana_turn::EncryptedTurnError> {
-        use pyana_turn::{
-            ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs,
-        };
+        use pyana_turn::{ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs};
 
         // Build an empty Bloom conflict set. A real sender would populate
         // this from the turn's access set so the federation can detect

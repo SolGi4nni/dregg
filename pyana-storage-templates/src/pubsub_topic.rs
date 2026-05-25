@@ -495,13 +495,8 @@ mod tests {
     fn subscribe_action_shape() {
         let wallet = test_wallet();
         let cell = test_cell();
-        let action = build_subscribe_action(
-            &wallet,
-            cell,
-            blake3_field(b"c"),
-            [9u8; 32],
-            u64_field(1),
-        );
+        let action =
+            build_subscribe_action(&wallet, cell, blake3_field(b"c"), [9u8; 32], u64_field(1));
         assert_eq!(action.method, symbol("subscribe"));
         assert_eq!(action.effects.len(), 2);
     }
@@ -510,8 +505,7 @@ mod tests {
     fn grant_subscriber_action_shape() {
         let wallet = test_wallet();
         let cell = test_cell();
-        let action =
-            build_grant_subscriber_action(&wallet, cell, blake3_field(b"s"), [11u8; 32]);
+        let action = build_grant_subscriber_action(&wallet, cell, blake3_field(b"s"), [11u8; 32]);
         assert_eq!(action.method, symbol("grant_subscriber"));
         assert_eq!(action.effects.len(), 2);
     }

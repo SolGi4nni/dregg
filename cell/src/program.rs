@@ -2846,7 +2846,10 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            ProgramError::WitnessedPredicateRejected { kind_name: "NonMembership", .. }
+            ProgramError::WitnessedPredicateRejected {
+                kind_name: "NonMembership",
+                ..
+            }
         ));
     }
 
@@ -2881,7 +2884,10 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            ProgramError::WitnessedPredicateRejected { kind_name: "NonMembership", .. }
+            ProgramError::WitnessedPredicateRejected {
+                kind_name: "NonMembership",
+                ..
+            }
         ));
     }
 

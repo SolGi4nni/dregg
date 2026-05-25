@@ -202,16 +202,10 @@ pub enum RingClosureError {
     },
     /// The ring's `participants` list contains a duplicate — every
     /// participant must appear exactly once.
-    DuplicateParticipant {
-        leg_index: usize,
-        cell: CellId,
-    },
+    DuplicateParticipant { leg_index: usize, cell: CellId },
     /// The closure proof bytes don't match the canonical encoding's
     /// expected commitment.
-    ClosureCommitmentMismatch {
-        expected: [u8; 32],
-        actual: Vec<u8>,
-    },
+    ClosureCommitmentMismatch { expected: [u8; 32], actual: Vec<u8> },
     /// The closure proof bytes have the wrong shape for the declared
     /// `closure_proof_kind`.
     ClosureProofMalformed {
@@ -223,10 +217,9 @@ pub enum RingClosureError {
 impl core::fmt::Display for RingClosureError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::DegenerateRing { participants } => write!(
-                f,
-                "ring has {participants} participants; rings require ≥ 2"
-            ),
+            Self::DegenerateRing { participants } => {
+                write!(f, "ring has {participants} participants; rings require ≥ 2")
+            }
             Self::LengthMismatch {
                 participants,
                 transfer_ids,
@@ -628,10 +621,7 @@ mod tests {
             },
         ];
         let err = RingClosureAttestation::silver(p, t, l).unwrap_err();
-        assert!(matches!(
-            err,
-            RingClosureError::DuplicateParticipant { .. }
-        ));
+        assert!(matches!(err, RingClosureError::DuplicateParticipant { .. }));
     }
 
     #[test]
@@ -678,8 +668,7 @@ mod tests {
         let (p, t, l) = ring_of_3();
         let att = RingClosureAttestation::silver(p, t, l).expect("silver");
         let bytes = postcard::to_allocvec(&att).expect("serialize");
-        let back: RingClosureAttestation =
-            postcard::from_bytes(&bytes).expect("deserialize");
+        let back: RingClosureAttestation = postcard::from_bytes(&bytes).expect("deserialize");
         assert_eq!(back, att);
         back.verify().expect("post-serde verification");
     }

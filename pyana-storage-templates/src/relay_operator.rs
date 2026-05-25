@@ -271,9 +271,9 @@ pub fn relay_operator_factory_descriptor() -> FactoryDescriptor {
     FactoryDescriptor {
         factory_vk: RELAY_OPERATOR_FACTORY_VK,
         child_program_vk: Some(relay_operator_child_program_vk()),
-        child_vk_strategy: Some(ChildVkStrategy::Fixed(
-            Some(relay_operator_child_program_vk()),
-        )),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(
+            relay_operator_child_program_vk(),
+        ))),
         allowed_cap_templates: vec![
             // Operator cap — non-attenuatable; the operator is the
             // sole authority for register_inbox + relay.
@@ -611,8 +611,7 @@ mod tests {
     fn register_inbox_action_shape() {
         let wallet = test_wallet();
         let cell = test_cell();
-        let action =
-            build_register_inbox_action(&wallet, cell, blake3_field(b"h"), [9u8; 32]);
+        let action = build_register_inbox_action(&wallet, cell, blake3_field(b"h"), [9u8; 32]);
         assert_eq!(action.method, symbol("register_inbox"));
         assert_eq!(action.effects.len(), 2);
     }

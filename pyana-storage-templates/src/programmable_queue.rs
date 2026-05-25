@@ -616,8 +616,7 @@ mod tests {
     fn grant_sender_action_shape() {
         let wallet = test_wallet();
         let cell = test_cell();
-        let action =
-            build_grant_sender_action(&wallet, cell, blake3_field(b"set-v1"), [9u8; 32]);
+        let action = build_grant_sender_action(&wallet, cell, blake3_field(b"set-v1"), [9u8; 32]);
         assert_eq!(action.method, symbol("grant_sender"));
         assert_eq!(action.effects.len(), 2);
     }

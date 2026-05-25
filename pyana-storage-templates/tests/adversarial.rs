@@ -89,8 +89,7 @@ mod cap_inbox_tests {
 
     fn send_new(old: &CellState, payload_commitment: FieldElement, deposit: u64) -> CellState {
         let mut s = old.clone();
-        let head =
-            u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
+        let head = u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
         let total = u64::from_be_bytes(
             s.fields[TOTAL_DEPOSITS_SLOT as usize][24..32]
                 .try_into()
@@ -110,8 +109,7 @@ mod cap_inbox_tests {
 
     fn dequeue_new(old: &CellState) -> CellState {
         let mut s = old.clone();
-        let tail =
-            u64::from_be_bytes(s.fields[TAIL_SEQ_SLOT as usize][24..32].try_into().unwrap());
+        let tail = u64::from_be_bytes(s.fields[TAIL_SEQ_SLOT as usize][24..32].try_into().unwrap());
         s.fields[TAIL_SEQ_SLOT as usize] = u64_field(tail + 1);
         s
     }
@@ -239,8 +237,7 @@ mod programmable_queue_tests {
 
     fn enqueue_new(old: &CellState) -> CellState {
         let mut s = old.clone();
-        let head =
-            u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
+        let head = u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
         s.fields[HEAD_SEQ_SLOT as usize] = u64_field(head + 1);
         s.fields[RING_ROOT_SLOT as usize] = blake3_field(b"new-ring");
         s
@@ -311,8 +308,7 @@ mod pubsub_topic_tests {
 
     fn publish_new(old: &CellState) -> CellState {
         let mut s = old.clone();
-        let head =
-            u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
+        let head = u64::from_be_bytes(s.fields[HEAD_SEQ_SLOT as usize][24..32].try_into().unwrap());
         s.fields[HEAD_SEQ_SLOT as usize] = u64_field(head + 1);
         s.fields[EVENT_ROOT_SLOT as usize] = blake3_field(b"events-v1");
         s.fields[DEDUP_ROOT_SLOT as usize] = blake3_field(b"dedup-v1");
@@ -489,8 +485,11 @@ mod blinded_queue_tests {
         old.fields[COMMITMENT_COUNT_SLOT as usize] = u64_field(1);
         old.fields[COMMITMENTS_ROOT_SLOT as usize] = blake3_field(b"have-an-item");
         let mut new = old.clone();
-        let nc =
-            u64::from_be_bytes(new.fields[NULLIFIER_COUNT_SLOT as usize][24..32].try_into().unwrap());
+        let nc = u64::from_be_bytes(
+            new.fields[NULLIFIER_COUNT_SLOT as usize][24..32]
+                .try_into()
+                .unwrap(),
+        );
         new.fields[NULLIFIER_COUNT_SLOT as usize] = u64_field(nc + 1);
         new.fields[NULLIFIER_ROOT_SLOT as usize] = blake3_field(b"nulls-v1");
 

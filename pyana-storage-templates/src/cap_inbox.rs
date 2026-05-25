@@ -598,8 +598,7 @@ mod tests {
         let new_total = u64_field(500);
         let new_root = blake3_field(b"root-1");
         let commitment = blake3_field(b"msg");
-        let action =
-            build_send_action(&wallet, cell, new_head, new_total, new_root, commitment);
+        let action = build_send_action(&wallet, cell, new_head, new_total, new_root, commitment);
         assert_eq!(action.method, symbol("send"));
         assert_eq!(action.effects.len(), 4);
     }
@@ -623,8 +622,7 @@ mod tests {
     fn grant_sender_action_shape() {
         let wallet = test_wallet();
         let cell = test_cell();
-        let action =
-            build_grant_sender_action(&wallet, cell, blake3_field(b"set-v1"), [9u8; 32]);
+        let action = build_grant_sender_action(&wallet, cell, blake3_field(b"set-v1"), [9u8; 32]);
         assert_eq!(action.method, symbol("grant_sender"));
         assert_eq!(action.effects.len(), 2);
     }

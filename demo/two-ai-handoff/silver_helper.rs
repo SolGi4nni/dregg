@@ -948,9 +948,7 @@ fn cmd_slot_caveat_suite(state_dir: &PathBuf) {
             .unwrap_or_else(|e| format!("{e:?}")),
     });
 
-    let all_passed = cases
-        .iter()
-        .all(|c| c.positive_ok && c.negative_rejected);
+    let all_passed = cases.iter().all(|c| c.positive_ok && c.negative_rejected);
     let art = SlotCaveatSuiteArtifact { cases, all_passed };
     fs::write(
         state_dir.join("silver.slot-caveat-suite.json"),

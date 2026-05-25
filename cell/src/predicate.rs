@@ -1682,7 +1682,9 @@ mod tests {
         // Built-in kinds report all-zero vk_hash; only Custom kinds
         // carry meaningful vk_hash from their discriminant.
         let producers = WitnessProducerRegistry::with_stubs();
-        let p = producers.get(WitnessedPredicateKind::Dfa).expect("dfa stub");
+        let p = producers
+            .get(WitnessedPredicateKind::Dfa)
+            .expect("dfa stub");
         assert_eq!(p.vk_hash(), [0u8; 32]);
     }
 }
