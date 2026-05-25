@@ -684,6 +684,17 @@ pub struct TurnExecutor {
     /// "requires executor wiring" sentinel (programs that don't use
     /// them are unaffected).
     pub witnessed_registry: Option<pyana_cell::WitnessedPredicateRegistry>,
+    /// Optional custom-effect verifier registry, parallel structure to
+    /// [`pyana_cell::WitnessedPredicateRegistry`] but keyed on the
+    /// `Effect::Custom` vk_hash. The proof-carrying turn path consults
+    /// this registry **before** falling back to the program registry,
+    /// so app-side custom effects (whose canonical bytes are not
+    /// `CellProgram`s) can be dispatched through a unified surface
+    /// (per `VK-AS-RE-EXECUTION-RECIPE.md` §2.4).
+    ///
+    /// Absent: the executor uses the existing program-registry path
+    /// (legacy DSL-authored cells).
+    pub custom_effect_registry: Option<pyana_cell::CustomEffectRegistry>,
 }
 
 impl TurnExecutor {
@@ -719,6 +730,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             witnessed_registry: None,
+            custom_effect_registry: None,
         }
     }
 
@@ -758,6 +770,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             witnessed_registry: None,
+            custom_effect_registry: None,
         }
     }
 
@@ -793,6 +806,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             witnessed_registry: None,
+            custom_effect_registry: None,
         }
     }
 
@@ -864,6 +878,16 @@ impl TurnExecutor {
     /// Set the witnessed-predicate registry after construction.
     pub fn set_witnessed_registry(&mut self, registry: pyana_cell::WitnessedPredicateRegistry) {
         self.witnessed_registry = Some(registry);
+    }
+
+    /// Set the [`Effect::Custom`] verifier registry after construction.
+    ///
+    /// When set, the proof-carrying turn path consults this registry
+    /// **before** falling back to `program_registry`, so app-defined
+    /// custom effects (whose canonical bytes are not `CellProgram`s)
+    /// can be dispatched through a unified surface.
+    pub fn set_custom_effect_registry(&mut self, registry: pyana_cell::CustomEffectRegistry) {
+        self.custom_effect_registry = Some(registry);
     }
 
     /// Return the X25519 public key callers should encrypt to (if set).
@@ -1623,6 +1647,39 @@ impl TurnExecutor {
                     });
                 }
                 let full_vk_hash = Self::expand_vk_hash_16_to_32(&vk_hash_bytes);
+
+                // Per VK-AS-RE-EXECUTION-RECIPE.md §2.4: the
+                // `Effect::Custom { vk_hash }` is dispatched through
+                // the canonical `CustomEffectRegistry` when one is
+                // wired. Apps that register an entry there get a
+                // unified custom-verifier surface (parallel to
+                // `WitnessedPredicateKind::Custom { vk_hash }`'s
+                // dispatch). When the registry is absent or the
+                // hash isn't registered there, the executor falls
+                // back to the legacy `program_registry` path
+                // (DSL-authored cells).
+                if let Some(reg) = self.custom_effect_registry.as_ref() {
+                    if reg.contains(&full_vk_hash) {
+                        // The CustomEffectRegistry verifier takes
+                        // serialized public inputs; we postcard-encode
+                        // the BabyBear PI vector for transport. The
+                        // verifier's own decoder reproduces the felts.
+                        let pi_bytes = postcard::to_allocvec(
+                            &custom_proof.public_inputs_babybear(),
+                        )
+                        .unwrap_or_default();
+                        reg.verify(&full_vk_hash, &pi_bytes, &custom_proof.proof_bytes)
+                            .map_err(|e| {
+                                TurnError::CustomProgramVerificationFailed {
+                                    index: i,
+                                    program_vk: full_vk_hash,
+                                    reason: e.to_string(),
+                                }
+                            })?;
+                        continue;
+                    }
+                }
+
                 if let Some(program) = self.program_registry.get(&full_vk_hash) {
                     program
                         .verify_transition(
@@ -2602,13 +2659,30 @@ impl TurnExecutor {
                             .collect();
                         let tx_hash_bytes = blake3::hash(&tx_hash_input);
                         let tx_hash = hash_to_bb(tx_hash_bytes.as_bytes());
-                        // Combined roots use cell_id field[4] as a stand-in.
-                        let combined_root = hash_to_bb(cell_id.as_bytes());
+                        // Block 1 / CAVEAT-LAYER-COVERAGE.md §6.4 fix:
+                        // pre-fix `combined_old_root == combined_new_root`
+                        // made the AIR's transition check a self-loop.
+                        // Post-fix we chain `combined_old` -> `combined_new`
+                        // via `hash_2_to_1(combined_old, tx_hash)`, which
+                        // forces the AIR's `field[4] == combined_old_root`
+                        // -> `field[4] == combined_new_root` transition to
+                        // be a real Poseidon2 step rather than a tautology.
+                        // The transition is still tx-deterministic (same
+                        // tx, same chain), but it cannot collapse to a
+                        // trivial self-loop. The verifier-side derivation
+                        // of `combined_old_root` from the cell's actual
+                        // stored queue root is a future tightening
+                        // (TODO[block1-bind] — needs ledger access).
+                        let combined_old_root = hash_to_bb(cell_id.as_bytes());
+                        let combined_new_root = pyana_circuit::poseidon2::hash_2_to_1(
+                            combined_old_root,
+                            tx_hash,
+                        );
                         vm_effects.push(VmEffect::AtomicQueueTx {
                             op_count,
                             tx_hash,
-                            combined_old_root: combined_root,
-                            combined_new_root: combined_root,
+                            combined_old_root,
+                            combined_new_root,
                             net_deposit: net_deposit as u32,
                         });
                     }

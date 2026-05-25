@@ -15,6 +15,7 @@ pub mod capability;
 pub mod capability_proof;
 pub mod cell;
 pub mod commitment;
+pub mod custom_effect;
 pub mod delegation;
 pub mod derivation;
 pub mod facet;
@@ -106,6 +107,9 @@ pub use preconditions::{
 pub use predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateRegistry, WitnessedPredicateVerifier, canonical_predicate_vk,
+};
+pub use custom_effect::{
+    CustomEffectError, CustomEffectRegistry, CustomEffectVerifier, StubCustomEffectVerifier,
 };
 pub use program::{CellProgram, ProgramError, StateConstraint, field_from_u64, field_from_u64_be};
 pub use revocation_channel::{
