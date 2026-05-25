@@ -242,6 +242,20 @@ pub enum AuthorizationPayload {
         /// vk_hash hex (set for `Custom` kind; empty otherwise).
         vk_hash: String,
     },
+    /// 1-of-N disjunctive authorization. The studio surface emits the
+    /// selected `proof_index` and the candidate's own `auth_kind` tag
+    /// so a consumer can see which branch the prover claimed. The
+    /// candidate's full payload is not recursively serialized here —
+    /// the receipt carries it.
+    OneOf {
+        /// Which candidate the prover claimed satisfies authorization.
+        proof_index: u32,
+        /// Total number of candidates in the disjunction.
+        num_candidates: u32,
+        /// Tag of the selected candidate's `Authorization` variant
+        /// (e.g. `"signature"`, `"proof"`, `"bearer"`, etc.).
+        selected_kind: &'static str,
+    },
     CapTpDelivered {
         /// Hash of the `HandoffCertificate` (BLAKE3 over its canonical
         /// signing message — i.e. the same bytes the introducer signed).
@@ -328,6 +342,7 @@ impl AuthorizationPayload {
                     K::Dfa => ("dfa".to_string(), String::new()),
                     K::Temporal => ("temporal".to_string(), String::new()),
                     K::MerkleMembership => ("merkle_membership".to_string(), String::new()),
+                    K::NonMembership => ("non_membership".to_string(), String::new()),
                     K::BlindedSet => ("blinded_set".to_string(), String::new()),
                     K::BridgePredicate => ("bridge_predicate".to_string(), String::new()),
                     K::PedersenEquality => ("pedersen_equality".to_string(), String::new()),
@@ -336,6 +351,23 @@ impl AuthorizationPayload {
                 AuthorizationPayload::Custom {
                     predicate_kind,
                     vk_hash,
+                }
+            }
+            Authorization::OneOf {
+                candidates,
+                proof_index,
+            } => {
+                // Tag for the selected candidate's variant. If `proof_index`
+                // is out of range we surface `"out_of_range"`; the executor
+                // will reject the turn but observability must not panic.
+                let selected_kind = candidates
+                    .get(*proof_index as usize)
+                    .map(authorization_tag)
+                    .unwrap_or("out_of_range");
+                AuthorizationPayload::OneOf {
+                    proof_index: *proof_index,
+                    num_candidates: candidates.len() as u32,
+                    selected_kind,
                 }
             }
             Authorization::CapTpDelivered {
@@ -365,6 +397,23 @@ impl AuthorizationPayload {
                 }
             }
         }
+    }
+}
+
+/// Stable tag name for an [`Authorization`] variant. Used by
+/// [`AuthorizationPayload::OneOf::selected_kind`] so consumers can
+/// see which branch a disjunctive auth was claimed against without
+/// the observability layer recursively serializing the candidate.
+fn authorization_tag(auth: &Authorization) -> &'static str {
+    match auth {
+        Authorization::Signature(_, _) => "signature",
+        Authorization::Proof { .. } => "proof",
+        Authorization::Breadstuff(_) => "breadstuff",
+        Authorization::Bearer(_) => "bearer",
+        Authorization::Unchecked => "unchecked",
+        Authorization::Custom { .. } => "custom",
+        Authorization::CapTpDelivered { .. } => "captp_delivered",
+        Authorization::OneOf { .. } => "one_of",
     }
 }
 
@@ -593,6 +642,16 @@ fn constraint_dissect(
         // registry; the observability layer surfaces them as a generic
         // tag (consumers introspect via the WitnessedPredicateRegistry).
         SC::Witnessed { .. } => ("witnessed", None, vec![]),
+        // Renounced sender-non-membership. Primary slot is the set-root
+        // slot when public; blinded variant has no slot binding (the
+        // commitment is fixed in the program). Mirrors `SenderAuthorized`
+        // semantics in reverse.
+        SC::Renounced { set } => match set {
+            pyana_cell::program::RenouncedSet::PublicRoot { set_root_index } => {
+                ("renounced", Some(*set_root_index), vec![])
+            }
+            pyana_cell::program::RenouncedSet::BlindedSet { .. } => ("renounced", None, vec![]),
+        },
     }
 }
 

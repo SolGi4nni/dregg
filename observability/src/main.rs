@@ -320,6 +320,10 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
         transfers: transfers.clone(),
         grants: grants.clone(),
         introduces: introduces.clone(),
+        // No cell in this tour produces a sovereign-witness self-attestation;
+        // the schedule still requires the field as of the γ.2 unilateral
+        // binding work.
+        unilateral_attestations: std::collections::BTreeMap::new(),
     };
 
     let actor_nonce = turn.nonce;
