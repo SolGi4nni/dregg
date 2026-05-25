@@ -262,6 +262,7 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     out.push(VmEffect::BridgeMint {
                         value_lo,
                         mint_hash: hash_to_bb(h.finalize().as_bytes()),
+                        value_full: portable_proof.value,
                     });
                 }
                 Effect::BridgeLock {
@@ -279,6 +280,7 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     out.push(VmEffect::BridgeLock {
                         value_lo,
                         lock_hash: hash_to_bb(h.finalize().as_bytes()),
+                        value_full: *value,
                     });
                 }
                 Effect::BridgeCancel { nullifier } => {
@@ -348,6 +350,7 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     out.push(VmEffect::CreateEscrow {
                         amount_lo,
                         escrow_hash: hash_to_bb(h.finalize().as_bytes()),
+                        amount_full: *amount,
                     });
                 }
                 Effect::ExerciseViaCapability {
