@@ -5,53 +5,95 @@
     <title>Starbridge — Nameservice</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!--
-      starbridge-app fragment for the nameservice. Mounts under
+      Starbridge-app fragment for the nameservice. Mounts under
       /starbridge-apps/nameservice/ on the site build.
 
-      Bootstraps the same <pyana-app> context the Studio uses (see
-      site/STUDIO.md §6) and the same URI-addressable inspectors.
-      The page itself is intentionally thin: shared inspectors do
-      the rendering; this fragment just configures which factory_vk
-      to load and which registry cell to target.
+      The page mounts the same `<pyana-app>` context the Studio uses
+      (see site/STUDIO.md §6) and contributes three domain-specific
+      web components defined in ./inspectors.js:
 
-      Wired-in JS:
-        - /pkg/pyana_wasm.js                       — the in-browser node
-        - /_includes/studio/runtimes.js            — runtime registry
-        - /starbridge-apps/shared/inspectors/      — shared inspector registry
-        - (future) /starbridge-apps/nameservice/inspectors.js
-                                                  — <pyana-name>, <pyana-name-registry>
-        - (future) /starbridge-apps/nameservice/turn-builders.js
-                                                  — register_name / renew / transfer
-                                                    presets that wrap window.pyana.signTurn
+        <pyana-name>                 — read-only view of one name cell
+        <pyana-name-registry>        — browse / filter / paginate names
+        <pyana-name-register-form>   — mutation surface (register, renew,
+                                       transfer, revoke, set-target)
 
-      The factory_vk hex below mirrors NAME_FACTORY_VK from src/lib.rs.
-      Keep these two in sync; the build script in a real deployment
-      would lift the constant from the Rust crate at build time.
+      The mutation surface dispatches signed turns through the extension
+      wallet's window.pyana.signTurn (see extension/src/page.ts); the
+      thin JS shim in ./turn-builders.js produces the right turnSpec
+      shape. The browser never holds raw private keys.
+
+      The factory_vk hex below is BLAKE3-ish — it is the literal byte
+      pattern of NAME_FACTORY_VK in ../src/lib.rs:
+
+          *b"starbridge-nameservice-factory!!"
+
+      i.e. 0x737461726272696467652d6e616d65736572766963652d666163746f72792121.
+      A real deployment swaps NAME_FACTORY_VK for the hash of the
+      production cell-program VK; this file must be regenerated to
+      match.
     -->
     <link rel="stylesheet" href="/_includes/studio/styles.css" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 960px; }
+      header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; margin-bottom: 1rem; }
+      .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; }
+      @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+      h1 { margin: 0 0 0.5rem 0; }
+      .lede { color: #555; }
+      code { font-family: ui-monospace, monospace; }
+      footer { margin-top: 2rem; color: #777; font-size: 0.85rem; }
+    </style>
   </head>
   <body>
     <header class="starbridge-nameservice-chrome">
       <h1>Pyana Nameservice</h1>
-      <p>Register, renew, transfer federation names — composed of
-         pyana-native primitives only. Backed by the
-         <code>name_factory_descriptor()</code> in
-         <code>starbridge-apps/nameservice/src/lib.rs</code>.</p>
+      <p class="lede">
+        Register, renew, transfer, and revoke federation names — composed
+        from pyana-native primitives only. Backed by the
+        <code>name_factory_descriptor()</code> in
+        <code>starbridge-apps/nameservice/src/lib.rs</code>.
+      </p>
     </header>
     <main>
       <pyana-app
         runtime="in-memory"
-        factory-vk="73746172627269646765-6e616d65736572766963652d666163746f7279"
+        factory-vk="737461726272696467652d6e616d65736572766963652d666163746f72792121"
         registry-uri="pyana://cell/registry-default"
       >
-        <pyana-name-registry slot="primary"></pyana-name-registry>
-        <pyana-name-inspector slot="detail"></pyana-name-inspector>
+        <section class="layout">
+          <div>
+            <h2>Registry</h2>
+            <pyana-name-registry
+              uri="pyana://cell/registry-default"
+              page-size="25"
+            ></pyana-name-registry>
+          </div>
+          <aside>
+            <h2>Detail</h2>
+            <pyana-name uri="pyana://cell/registry-default" name=""></pyana-name>
+            <h2 style="margin-top:1.5rem;">Mutate</h2>
+            <pyana-name-register-form
+              registry-uri="pyana://cell/registry-default"
+              mode="register"
+            ></pyana-name-register-form>
+          </aside>
+        </section>
       </pyana-app>
     </main>
+    <footer>
+      Slot layout — NAME_HASH=2, OWNER_HASH=3, EXPIRY=4, REVOKED=5, RESOLVE_TARGET=6.
+      Slot caveats: WriteOnce on NAME_HASH and REVOKED, Monotonic on
+      EXPIRY. See <code>src/lib.rs</code> for the full descriptor.
+    </footer>
+    <!-- The in-browser pyana node + the shared Studio chrome. -->
     <script type="module" src="/pkg/pyana_wasm.js"></script>
     <script type="module" src="/_includes/studio/runtimes.js"></script>
+    <!-- The shared inspector registry lazy-imports this app's
+         inspectors and turn-builders, but we also load them directly
+         here so the page is self-contained when served outside the
+         shared host. -->
     <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
-    <!-- Inspector + turn-builder modules land under shared/ as the JS
-         side of this starbridge-app is fleshed out. -->
+    <script type="module" src="./inspectors.js"></script>
+    <script type="module" src="./turn-builders.js"></script>
   </body>
 </html>
