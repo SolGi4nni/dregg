@@ -1227,10 +1227,14 @@ where
     //    - Value inflation (value binding)
     //    - Asset type confusion (asset_type binding)
     //
-    // NOTE: The note_spending AIR must embed value and asset_type as public inputs
-    // for this check to be meaningful. If the current AIR does not include them,
-    // the verify_stark closure should reject the proof (fail-closed).
-    // TODO: Ensure NoteSpendingAir includes value and asset_type in public inputs.
+    // NOTE: The note_spending AIR embeds value and asset_type as public inputs
+    // pi[2] and pi[3] respectively, with boundary constraints pinning them to
+    // trace row 0 col::VALUE and col::ASSET_TYPE. The destination_federation is
+    // pinned via pi[4] → col::DESTINATION_FEDERATION (boundary constraint). The
+    // verify_stark closure receives the proof's declared values and the AIR
+    // boundary constraints enforce they match what the prover committed to in
+    // the trace; a mismatch fails the STARK verification. This is enforced in
+    // note_spending_air.rs::boundary_constraints().
     verify_stark(
         &proof.nullifier,
         &note_tree_root,

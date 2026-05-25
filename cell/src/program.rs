@@ -41,7 +41,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::preconditions::EvalContext;
-use crate::predicate::WitnessedPredicate;
+use crate::predicate::{
+    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
+    WitnessedPredicateRegistry,
+};
 use crate::state::{CellState, FIELD_ZERO, FieldElement, STATE_SLOTS};
 
 /// A cell program defines valid state transitions.
@@ -55,7 +58,35 @@ pub enum CellProgram {
     /// Expressed as a list of constraints over the 8 field slots. All constraints
     /// must hold (implicit conjunction). For disjunction, use
     /// [`StateConstraint::AnyOf`].
+    ///
+    /// **Legacy shape** (Cav-Codex Block 4). Semantically equivalent to
+    /// `Cases(vec![TransitionCase { guard: TransitionGuard::Always,
+    /// constraints: <these> }])`. The shape is preserved during the
+    /// substrate-correctness migration; new programs should prefer
+    /// `Cases { .. }` since it can scope constraints to specific
+    /// transitions (e.g. `send` vs `dequeue` on a `CapInbox`).
     Predicate(Vec<StateConstraint>),
+
+    /// Operation-scoped cases (Cav-Codex Block 4). Each
+    /// [`TransitionCase`] declares a guard naming which transitions it
+    /// applies to and the constraints that must hold on those
+    /// transitions. Multiple cases may match a single transition; all
+    /// matching cases' constraints AND together.
+    ///
+    /// If **no** case matches a transition, the program **default-denies**
+    /// (the action's effects on this cell are rejected). This means a
+    /// `Cases([])` program rejects every transition; to allow arbitrary
+    /// transitions add an `Always`-guarded case with no constraints.
+    ///
+    /// Use cases:
+    /// - A `CapInbox` cell with separate cases for `send` (head advances
+    ///   by 1, tail unchanged) and `dequeue` (tail advances by 1, head
+    ///   unchanged).
+    /// - A factory cell that allows mint-style transitions on one method
+    ///   and burn-style on another.
+    /// - A state-machine cell whose allowed transitions depend on the
+    ///   action's method symbol.
+    Cases(Vec<TransitionCase>),
 
     /// Circuit program: an AIR/R1CS circuit that defines the valid state transition function.
     /// The proof in the Action's authorization MUST satisfy this circuit.
@@ -63,6 +94,167 @@ pub enum CellProgram {
         /// Hash of the circuit (for lookup/verification).
         circuit_hash: [u8; 32],
     },
+}
+
+/// A single operation-scoped case in a [`CellProgram::Cases`] program.
+///
+/// Each case declares a *guard* (what transitions does this case apply
+/// to?) and a *constraint list* (when this case applies, all these
+/// constraints must hold).
+///
+/// Per Cav-Codex Block 4: when multiple cases match a single transition,
+/// their constraints are ANDed together. When **no** case matches, the
+/// program default-denies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitionCase {
+    /// When does this case apply?
+    pub guard: TransitionGuard,
+    /// Constraints that must hold when the guard matches.
+    pub constraints: Vec<StateConstraint>,
+}
+
+/// Guard for a [`TransitionCase`]: names which transitions a case
+/// applies to.
+///
+/// Guards compose via `AnyOf` / `AllOf`. A transition matches a guard
+/// when:
+/// - `Always` — every transition (legacy `Predicate` shape lowers to
+///   this).
+/// - `MethodIs { method }` — the action's method symbol equals
+///   `method`.
+/// - `EffectKindIs { mask }` — at least one effect in the action's
+///   effect list has its `effect_kind_mask()` intersecting `mask`.
+/// - `SlotChanged { index }` — slot `index` of the cell's state changed
+///   on this transition (`new[index] != old[index]`).
+/// - `AnyOf` / `AllOf` — boolean composition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransitionGuard {
+    /// Always matches; the case's constraints apply to every transition.
+    /// Used to lift the legacy `Predicate(...)` shape into a single case.
+    Always,
+    /// Match when the action's method symbol equals `method` (the
+    /// 32-byte BLAKE3 hash of the method name).
+    MethodIs { method: [u8; 32] },
+    /// Match when the action carries an effect whose
+    /// `effect_kind_mask()` intersects `mask` (i.e. at least one effect
+    /// is of a kind in the mask).
+    EffectKindIs { mask: u32 },
+    /// Match when `new_state[index] != old_state[index]` (slot `index`
+    /// changed during this transition).
+    SlotChanged { index: u8 },
+    /// Disjunction — match if any child matches.
+    AnyOf(Vec<TransitionGuard>),
+    /// Conjunction — match if every child matches.
+    AllOf(Vec<TransitionGuard>),
+}
+
+/// A single witness payload bound by index inside a [`WitnessBundle`].
+///
+/// Per Cav-Codex Block 3: identifies a kind-tag plus an opaque byte
+/// payload. Concrete shapes live in `pyana_turn::action::WitnessKind /
+/// WitnessBlob`; this cell-side mirror exists so the program evaluator
+/// can dispatch witnesses without depending on the turn crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WitnessKindTag {
+    Preimage32,
+    MerklePath,
+    RateLimitCount,
+    ProofBytes,
+    Cleartext,
+}
+
+/// A view into an [`crate::Action`]-equivalent witness blob, kept
+/// behind a borrowed slice to avoid copies through the evaluator.
+#[derive(Clone, Copy, Debug)]
+pub struct WitnessBlobView<'a> {
+    pub kind: WitnessKindTag,
+    pub bytes: &'a [u8],
+}
+
+/// A bundle of witness blobs the executor passes alongside the action
+/// when evaluating a `CellProgram`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WitnessBundle<'a> {
+    /// The witness blobs the action carries (indexed).
+    pub blobs: &'a [WitnessBlobView<'a>],
+    /// Registered verifiers for witnessed-predicate dispatch.
+    pub registry: Option<&'a WitnessedPredicateRegistry>,
+}
+
+impl<'a> WitnessBundle<'a> {
+    pub fn empty() -> Self {
+        Self {
+            blobs: &[],
+            registry: None,
+        }
+    }
+
+    pub fn blob(&self, idx: usize) -> Option<&'a WitnessBlobView<'a>> {
+        self.blobs.get(idx)
+    }
+}
+
+/// Per-transition context evaluated against [`TransitionGuard`]s.
+///
+/// Built by the executor for each (cell, action) pair before evaluating
+/// the cell's `CellProgram`. Holds the action-level signals (method,
+/// effect mask, sender) plus the (old, new) state pair from which slot
+/// deltas are derived.
+#[derive(Clone, Debug)]
+pub struct TransitionMeta {
+    /// The action's method symbol (BLAKE3 hash of method name).
+    pub method: [u8; 32],
+    /// Bitwise-OR of every effect's `effect_kind_mask()`.
+    pub effects_mask: u32,
+}
+
+impl TransitionMeta {
+    /// Construct a context with explicit method and effects mask.
+    pub fn new(method: [u8; 32], effects_mask: u32) -> Self {
+        Self {
+            method,
+            effects_mask,
+        }
+    }
+    /// A wildcard meta — matches `Always` only; useful for tests.
+    pub fn wildcard() -> Self {
+        Self {
+            method: [0u8; 32],
+            effects_mask: 0,
+        }
+    }
+}
+
+impl TransitionGuard {
+    /// Evaluate this guard against a transition.
+    pub fn matches(
+        &self,
+        meta: &TransitionMeta,
+        old_state: Option<&CellState>,
+        new_state: &CellState,
+    ) -> bool {
+        match self {
+            TransitionGuard::Always => true,
+            TransitionGuard::MethodIs { method } => meta.method == *method,
+            TransitionGuard::EffectKindIs { mask } => meta.effects_mask & *mask != 0,
+            TransitionGuard::SlotChanged { index } => {
+                let idx = *index as usize;
+                if idx >= STATE_SLOTS {
+                    return false;
+                }
+                match old_state {
+                    Some(old) => new_state.fields[idx] != old.fields[idx],
+                    None => new_state.fields[idx] != FIELD_ZERO,
+                }
+            }
+            TransitionGuard::AnyOf(children) => children
+                .iter()
+                .any(|g| g.matches(meta, old_state, new_state)),
+            TransitionGuard::AllOf(children) => children
+                .iter()
+                .all(|g| g.matches(meta, old_state, new_state)),
+        }
+    }
 }
 
 impl Default for CellProgram {
@@ -450,6 +642,29 @@ pub enum ProgramError {
     /// run yet (the executor's witnessed-predicate registry verifies
     /// the proof; the static evaluator only declares the requirement).
     WitnessedPredicateRequiresExecutor { kind_name: &'static str },
+    /// `CellProgram::Cases(_)` was evaluated against a transition where
+    /// no case matched. Default-deny per Cav-Codex Block 4.
+    NoTransitionCaseMatched,
+    /// The witnessed-predicate registry returned a verifier rejection
+    /// (proof was malformed or the verifier rejected the input).
+    WitnessedPredicateRejected {
+        kind_name: &'static str,
+        reason: String,
+    },
+    /// `SenderAuthorized` requires a Merkle-membership witness blob but
+    /// the action did not carry one at the expected index.
+    SenderMembershipWitnessMissing,
+    /// The action did not carry the `PreimageGate`'s expected preimage
+    /// blob, or it was at the wrong witness index / wrong type.
+    PreimageWitnessMissing,
+    /// A `Custom { ir_hash }` predicate requires a registered custom
+    /// program verifier; either the action did not carry a proof at
+    /// the expected witness index or no verifier matched the
+    /// declared vk hash.
+    CustomProgramProofRejected {
+        ir_hash: [u8; 32],
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for ProgramError {
@@ -490,6 +705,33 @@ impl core::fmt::Display for ProgramError {
                     f,
                     "witnessed predicate ({kind_name}) requires executor-side registry dispatch"
                 )
+            }
+            ProgramError::NoTransitionCaseMatched => {
+                write!(
+                    f,
+                    "Cases program: no transition case matched the action — default-deny"
+                )
+            }
+            ProgramError::WitnessedPredicateRejected { kind_name, reason } => {
+                write!(
+                    f,
+                    "witnessed predicate ({kind_name}) rejected by registered verifier: {reason}"
+                )
+            }
+            ProgramError::SenderMembershipWitnessMissing => {
+                write!(
+                    f,
+                    "SenderAuthorized requires a Merkle-membership witness blob; action did not carry one"
+                )
+            }
+            ProgramError::PreimageWitnessMissing => {
+                write!(
+                    f,
+                    "PreimageGate requires a 32-byte Preimage32 witness blob; action did not carry one"
+                )
+            }
+            ProgramError::CustomProgramProofRejected { reason, .. } => {
+                write!(f, "custom program proof rejected: {reason}")
             }
         }
     }
@@ -536,11 +778,81 @@ impl CellProgram {
         old_state: Option<&CellState>,
         ctx: Option<&EvalContext>,
     ) -> Result<(), ProgramError> {
+        // Legacy entry-point: callers that don't have a TransitionMeta
+        // fall through to a `wildcard` meta (matches only `Always`
+        // guards). New `Cases` programs that depend on method or
+        // effect-kind guards should use `evaluate_with_meta`.
+        self.evaluate_with_meta(new_state, old_state, ctx, &TransitionMeta::wildcard())
+    }
+
+    /// Evaluate the program with a [`TransitionMeta`] in scope.
+    ///
+    /// Used by the executor for `Cases` programs: each case's guard is
+    /// matched against the (cell, action) pair, and only the matching
+    /// cases' constraints fire. When *no* case matches, the program
+    /// default-denies; when multiple cases match, their constraints AND
+    /// together.
+    ///
+    /// `Predicate(_)` and `None` programs are unaffected by `meta`
+    /// (they ignore the action-level signals).
+    pub fn evaluate_with_meta(
+        &self,
+        new_state: &CellState,
+        old_state: Option<&CellState>,
+        ctx: Option<&EvalContext>,
+        meta: &TransitionMeta,
+    ) -> Result<(), ProgramError> {
+        self.evaluate_full(
+            new_state,
+            old_state,
+            ctx,
+            meta,
+            &WitnessBundle::empty(),
+        )
+    }
+
+    /// Full-fat evaluation: per-transition context + witness bundle.
+    ///
+    /// Used by the executor (Cav-Codex Block 2) to dispatch witnessed
+    /// predicates through a registered verifier, populate
+    /// `SenderAuthorized` Merkle-membership witnesses, resolve
+    /// `PreimageGate` reveals, and surface `Custom` predicate proofs.
+    ///
+    /// Callers without a witness bundle should use
+    /// [`Self::evaluate_with_meta`] (which forwards an empty bundle);
+    /// callers without action-level meta and without witnesses can use
+    /// [`Self::evaluate`].
+    pub fn evaluate_full(
+        &self,
+        new_state: &CellState,
+        old_state: Option<&CellState>,
+        ctx: Option<&EvalContext>,
+        meta: &TransitionMeta,
+        witnesses: &WitnessBundle<'_>,
+    ) -> Result<(), ProgramError> {
         match self {
             CellProgram::None => Ok(()),
             CellProgram::Predicate(constraints) => {
                 for constraint in constraints {
-                    evaluate_constraint(constraint, new_state, old_state, ctx)?;
+                    evaluate_constraint_full(constraint, new_state, old_state, ctx, witnesses)?;
+                }
+                Ok(())
+            }
+            CellProgram::Cases(cases) => {
+                let mut any_matched = false;
+                for case in cases {
+                    if case.guard.matches(meta, old_state, new_state) {
+                        any_matched = true;
+                        for constraint in &case.constraints {
+                            evaluate_constraint_full(
+                                constraint, new_state, old_state, ctx, witnesses,
+                            )?;
+                        }
+                    }
+                }
+                if !any_matched {
+                    // Default-deny: no case applied to this transition.
+                    return Err(ProgramError::NoTransitionCaseMatched);
                 }
                 Ok(())
             }
@@ -570,6 +882,17 @@ impl CellProgram {
     pub fn requires_proof(&self) -> bool {
         matches!(self, CellProgram::Circuit { .. })
     }
+
+    /// Sugar: lift a list of constraints into a single `Always`-guarded
+    /// case. Equivalent to `CellProgram::Predicate(constraints)` but
+    /// uses the new `Cases` shape (so callers can mix in extra cases
+    /// later without restructuring).
+    pub fn always(constraints: Vec<StateConstraint>) -> Self {
+        CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints,
+        }])
+    }
 }
 
 // ============================================================================
@@ -584,12 +907,38 @@ fn check_index(index: u8) -> Result<usize, ProgramError> {
     Ok(idx)
 }
 
-/// Evaluate a single constraint against the cell state.
+/// Evaluate a single constraint with no witness bundle (legacy entry).
+/// Forwards to [`evaluate_constraint_full`] with an empty bundle so
+/// witness-dependent variants surface the same `WitnessedPredicateRequiresExecutor` /
+/// `WitnessedPredicateWitnessMissing` sentinel as before.
 fn evaluate_constraint(
     constraint: &StateConstraint,
     new_state: &CellState,
     old_state: Option<&CellState>,
     ctx: Option<&EvalContext>,
+) -> Result<(), ProgramError> {
+    evaluate_constraint_full(
+        constraint,
+        new_state,
+        old_state,
+        ctx,
+        &WitnessBundle::empty(),
+    )
+}
+
+/// Evaluate a single constraint against the cell state with a witness
+/// bundle in scope (Cav-Codex Block 2). When the bundle carries a
+/// matching witness for `SenderAuthorized`, `PreimageGate`,
+/// `RateLimit`, `Witnessed`, `TemporalPredicate`, or `Custom`, the
+/// evaluator dispatches to the registered verifier or uses the
+/// witness payload directly. Otherwise it falls through to the
+/// legacy fail-closed sentinel.
+fn evaluate_constraint_full(
+    constraint: &StateConstraint,
+    new_state: &CellState,
+    old_state: Option<&CellState>,
+    ctx: Option<&EvalContext>,
+    witnesses: &WitnessBundle<'_>,
 ) -> Result<(), ProgramError> {
     match constraint {
         StateConstraint::FieldEquals { index, value } => {
@@ -900,21 +1249,67 @@ fn evaluate_constraint(
 
         StateConstraint::SenderAuthorized { set } => {
             let ctx = ctx.ok_or(ProgramError::MissingContextField { field: "sender" })?;
-            let _sender = ctx
+            let sender = ctx
                 .sender
                 .as_ref()
                 .ok_or(ProgramError::MissingContextField { field: "sender" })?;
-            // Executor-side enforcement: structural — the actual Merkle
-            // membership / non-revocation proof is verified by the
-            // executor's authorization layer; this evaluator only
-            // requires the context fields exist. AIR-side enforcement
-            // (per design §4) is a future opt-in.
-            match set {
+            // Cav-Codex Block 2: enforce membership by dispatching to the
+            // witnessed-predicate registry against the appropriate
+            // commitment (slot root or blinded commitment). The action
+            // MUST carry a `MerklePath` (PublicRoot) or `ProofBytes`
+            // (BlindedSet) witness blob at the witness index encoded by
+            // the cell program. For migration, we accept the *first*
+            // `MerklePath`/`ProofBytes` witness blob the action carries
+            // — the cell program does not yet bind a specific witness
+            // index for `SenderAuthorized`.
+            let (commitment, kind) = match set {
                 AuthorizedSet::PublicRoot { set_root_index } => {
-                    let _ = check_index(*set_root_index)?;
+                    let idx = check_index(*set_root_index)?;
+                    (new_state.fields[idx], crate::predicate::WitnessedPredicateKind::MerkleMembership)
                 }
-                AuthorizedSet::BlindedSet { .. } => {}
-            }
+                AuthorizedSet::BlindedSet { commitment } => {
+                    (*commitment, crate::predicate::WitnessedPredicateKind::BlindedSet)
+                }
+            };
+            // Require a witness blob and a registry. If neither is
+            // present the constraint surfaces a structural sentinel so
+            // tests / fail-closed callers can still match on the
+            // `MissingContextField` shape, but real executor calls
+            // MUST configure both.
+            let Some(registry) = witnesses.registry else {
+                return Err(ProgramError::SenderMembershipWitnessMissing);
+            };
+            // Find a witness blob with kind MerklePath / ProofBytes.
+            let blob = witnesses
+                .blobs
+                .iter()
+                .find(|b| {
+                    matches!(
+                        b.kind,
+                        WitnessKindTag::MerklePath | WitnessKindTag::ProofBytes
+                    )
+                })
+                .ok_or(ProgramError::SenderMembershipWitnessMissing)?;
+            // Build a placeholder WitnessedPredicate to feed the registry.
+            let wp = crate::predicate::WitnessedPredicate {
+                kind,
+                commitment,
+                input_ref: InputRef::Sender,
+                proof_witness_index: 0,
+            };
+            let input = PredicateInput::Sender(sender);
+            registry.verify(&wp, &input, blob.bytes).map_err(|e| {
+                ProgramError::WitnessedPredicateRejected {
+                    kind_name: match kind {
+                        crate::predicate::WitnessedPredicateKind::MerkleMembership => {
+                            "MerkleMembership"
+                        }
+                        crate::predicate::WitnessedPredicateKind::BlindedSet => "BlindedSet",
+                        _ => "Witnessed",
+                    },
+                    reason: e.to_string(),
+                }
+            })?;
             Ok(())
         }
 
@@ -930,12 +1325,34 @@ fn evaluate_constraint(
             let ctx = ctx.ok_or(ProgramError::MissingContextField {
                 field: "sender_epoch_count",
             })?;
-            if ctx.sender_epoch_count >= *max_per_epoch {
+            // Prefer an executor-supplied count in `ctx.sender_epoch_count`
+            // (Cav-Codex Block 2: the executor populates the per-cell-per-
+            // sender counter slot). If unset (zero) AND the action carries
+            // a `RateLimitCount` witness blob, use that as a fallback (a
+            // self-attested counter that the action's signer commits to).
+            let count = if ctx.sender_epoch_count > 0 {
+                ctx.sender_epoch_count
+            } else {
+                witnesses
+                    .blobs
+                    .iter()
+                    .find_map(|b| {
+                        if b.kind == WitnessKindTag::RateLimitCount && b.bytes.len() == 4 {
+                            let mut buf = [0u8; 4];
+                            buf.copy_from_slice(b.bytes);
+                            Some(u32::from_le_bytes(buf))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0)
+            };
+            if count >= *max_per_epoch {
                 return violated(
                     constraint,
                     format!(
                         "sender has {} mutations this epoch, max is {}",
-                        ctx.sender_epoch_count, max_per_epoch
+                        count, max_per_epoch
                     ),
                 );
             }
@@ -999,14 +1416,25 @@ fn evaluate_constraint(
             hash_kind,
         } => {
             let idx = check_index(*commitment_index)?;
-            let ctx = ctx.ok_or(ProgramError::MissingContextField {
-                field: "revealed_preimage",
-            })?;
-            let preimage = ctx
-                .revealed_preimage
-                .ok_or(ProgramError::MissingContextField {
-                    field: "revealed_preimage",
-                })?;
+            // Cav-Codex Block 2: prefer the witness blob over the
+            // ctx-side preimage (the witness blob is the canonical
+            // carrier). Fall back to `ctx.revealed_preimage` for
+            // backwards compatibility with callers that haven't moved
+            // to witness_blobs yet.
+            let preimage = witnesses
+                .blobs
+                .iter()
+                .find_map(|b| {
+                    if b.kind == WitnessKindTag::Preimage32 && b.bytes.len() == 32 {
+                        let mut buf = [0u8; 32];
+                        buf.copy_from_slice(b.bytes);
+                        Some(buf)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| ctx.and_then(|c| c.revealed_preimage))
+                .ok_or(ProgramError::PreimageWitnessMissing)?;
             let expected = new_state.fields[idx];
             let hash = match hash_kind {
                 HashKind::Blake3 => *blake3::hash(&preimage).as_bytes(),
@@ -1069,14 +1497,51 @@ fn evaluate_constraint(
             Ok(())
         }
 
-        StateConstraint::TemporalPredicate { dsl_hash, .. } => {
-            // The actual proof verification is done by the executor's
-            // proof-attached-effect path. The constraint exists so the
-            // cell program declares it requires a witness; if the
-            // executor failed to wire a witness, surface the error here.
-            Err(ProgramError::TemporalPredicateWitnessMissing {
-                dsl_hash: *dsl_hash,
-            })
+        StateConstraint::TemporalPredicate {
+            dsl_hash,
+            witness_index,
+        } => {
+            // Cav-Codex Block 2: dispatch through the witnessed-predicate
+            // registry using the `Temporal` kind. The witness_index
+            // names which witness blob is the input; the proof bytes
+            // live in the first `ProofBytes` witness blob the action
+            // carries (alongside the input).
+            let Some(registry) = witnesses.registry else {
+                return Err(ProgramError::TemporalPredicateWitnessMissing {
+                    dsl_hash: *dsl_hash,
+                });
+            };
+            let input_blob = witnesses.blob(*witness_index as usize).ok_or(
+                ProgramError::TemporalPredicateWitnessMissing {
+                    dsl_hash: *dsl_hash,
+                },
+            )?;
+            // The proof bytes ride on the next ProofBytes witness blob
+            // after the input. (Apps that need a specific binding can
+            // migrate to the typed `Witnessed { wp }` variant which
+            // names the index explicitly.)
+            let proof_blob = witnesses
+                .blobs
+                .iter()
+                .find(|b| b.kind == WitnessKindTag::ProofBytes)
+                .ok_or(ProgramError::TemporalPredicateWitnessMissing {
+                    dsl_hash: *dsl_hash,
+                })?;
+            let wp = crate::predicate::WitnessedPredicate {
+                kind: crate::predicate::WitnessedPredicateKind::Temporal,
+                commitment: *dsl_hash,
+                input_ref: InputRef::Witness {
+                    index: *witness_index as usize,
+                },
+                proof_witness_index: 0,
+            };
+            let input = PredicateInput::Bytes(input_blob.bytes);
+            registry
+                .verify(&wp, &input, proof_blob.bytes)
+                .map_err(|e| ProgramError::WitnessedPredicateRejected {
+                    kind_name: "Temporal",
+                    reason: e.to_string(),
+                })
         }
 
         StateConstraint::BoundDelta { peer_cell, .. } => {
@@ -1111,10 +1576,6 @@ fn evaluate_constraint(
         }
 
         StateConstraint::Witnessed { wp } => {
-            // The static evaluator does not have access to the
-            // executor's witness-binding pass; it surfaces the
-            // sentinel so the executor's witnessed-predicate dispatch
-            // path can intercept and call the registered verifier.
             let kind_name: &'static str = match wp.kind {
                 crate::predicate::WitnessedPredicateKind::Dfa => "Dfa",
                 crate::predicate::WitnessedPredicateKind::Temporal => "Temporal",
@@ -1124,11 +1585,125 @@ fn evaluate_constraint(
                 crate::predicate::WitnessedPredicateKind::PedersenEquality => "PedersenEquality",
                 crate::predicate::WitnessedPredicateKind::Custom { .. } => "Custom",
             };
-            Err(ProgramError::WitnessedPredicateRequiresExecutor { kind_name })
+            // Cav-Codex Block 2: dispatch through the registry when one
+            // is supplied. Resolve the InputRef to a PredicateInput and
+            // read the proof bytes from `witnesses.blobs[wp.proof_witness_index]`.
+            let Some(registry) = witnesses.registry else {
+                return Err(ProgramError::WitnessedPredicateRequiresExecutor { kind_name });
+            };
+            let proof_blob = witnesses.blob(wp.proof_witness_index).ok_or(
+                ProgramError::WitnessedPredicateRejected {
+                    kind_name,
+                    reason: format!(
+                        "witness_blobs has no entry at proof_witness_index {}",
+                        wp.proof_witness_index
+                    ),
+                },
+            )?;
+            // Resolve input ref. For Slot we hand a 32-byte slot value;
+            // for Witness we hand the bytes; for Sender we hand the
+            // sender pk; for PublicInput we cannot synthesize without
+            // the proof's PI vec (caller must use a more specialized
+            // path); for SigningMessage we fall through to Bytes.
+            //
+            // For Sender we need to extend the lifetime of the sender
+            // pk reference; we resolve the sender outside the match
+            // so the &[u8; 32] borrow is valid for the call.
+            let sender_ref: Option<&[u8; 32]> = match &wp.input_ref {
+                InputRef::Sender => Some(
+                    ctx.ok_or(ProgramError::MissingContextField { field: "sender" })?
+                        .sender
+                        .as_ref()
+                        .ok_or(ProgramError::MissingContextField { field: "sender" })?,
+                ),
+                _ => None,
+            };
+            let input: PredicateInput<'_> = match &wp.input_ref {
+                InputRef::Slot { index } => {
+                    let idx = check_index(*index)?;
+                    PredicateInput::Slot(&new_state.fields[idx])
+                }
+                InputRef::Witness { index } => {
+                    let b = witnesses.blob(*index).ok_or(
+                        ProgramError::WitnessedPredicateRejected {
+                            kind_name,
+                            reason: format!("witness_blobs has no entry at input_ref index {index}"),
+                        },
+                    )?;
+                    PredicateInput::Bytes(b.bytes)
+                }
+                InputRef::PublicInput { .. } => {
+                    return Err(ProgramError::WitnessedPredicateRejected {
+                        kind_name,
+                        reason: "InputRef::PublicInput unsupported in cell-program evaluator"
+                            .into(),
+                    });
+                }
+                InputRef::Sender => PredicateInput::Sender(sender_ref.unwrap()),
+                InputRef::SigningMessage => {
+                    // Caller passes the signing message as a Cleartext
+                    // blob; pick the first one.
+                    let b = witnesses
+                        .blobs
+                        .iter()
+                        .find(|b| b.kind == WitnessKindTag::Cleartext)
+                        .ok_or(ProgramError::WitnessedPredicateRejected {
+                            kind_name,
+                            reason: "InputRef::SigningMessage needs a Cleartext witness blob"
+                                .into(),
+                        })?;
+                    PredicateInput::Bytes(b.bytes)
+                }
+            };
+            registry
+                .verify(wp, &input, proof_blob.bytes)
+                .map_err(|e| ProgramError::WitnessedPredicateRejected {
+                    kind_name,
+                    reason: e.to_string(),
+                })
         }
 
         StateConstraint::Custom { ir_hash, .. } => {
-            Err(ProgramError::CustomConstraintUnevaluable { ir_hash: *ir_hash })
+            // Cav-Codex Block 2: require an attached `custom_program_proof`
+            // (a ProofBytes witness blob whose verifier is registered
+            // against the declared `ir_hash` as a `Custom { vk_hash }`
+            // kind). When no registry is supplied or no matching
+            // verifier is registered, fall through to the legacy
+            // fail-closed sentinel.
+            let Some(registry) = witnesses.registry else {
+                return Err(ProgramError::CustomConstraintUnevaluable { ir_hash: *ir_hash });
+            };
+            let proof_blob = witnesses
+                .blobs
+                .iter()
+                .find(|b| b.kind == WitnessKindTag::ProofBytes)
+                .ok_or(ProgramError::CustomProgramProofRejected {
+                    ir_hash: *ir_hash,
+                    reason: "no ProofBytes witness blob carried for Custom predicate".into(),
+                })?;
+            let wp = crate::predicate::WitnessedPredicate {
+                kind: crate::predicate::WitnessedPredicateKind::Custom {
+                    vk_hash: *ir_hash,
+                },
+                commitment: *ir_hash,
+                input_ref: InputRef::Slot { index: 0 },
+                proof_witness_index: 0,
+            };
+            // Input: hand the entire new_state as Slot(0) reference;
+            // custom verifiers are expected to fold whatever they need
+            // out of the PI / proof itself.
+            let input = PredicateInput::Slot(&new_state.fields[0]);
+            registry.verify(&wp, &input, proof_blob.bytes).map_err(|e| {
+                ProgramError::CustomProgramProofRejected {
+                    ir_hash: *ir_hash,
+                    reason: match e {
+                        WitnessedPredicateError::KindNotRegistered { .. } => {
+                            format!("no verifier registered for ir_hash {:02x?}", ir_hash)
+                        }
+                        other => other.to_string(),
+                    },
+                }
+            })
         }
     }
 }

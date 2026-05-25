@@ -107,6 +107,12 @@ impl ChildVkStrategy {
                 AuthRequired::Custom { .. } => 5u8,
             };
             hasher.update(&[perm_byte]);
+            // For Custom auth, mix in the vk_hash so two factories that
+            // differ only in app-defined auth mode produce distinct
+            // param_hashes (and thus distinct derived child VKs).
+            if let AuthRequired::Custom { vk_hash } = &cap.max_permissions {
+                hasher.update(vk_hash);
+            }
         }
         *hasher.finalize().as_bytes()
     }
@@ -354,6 +360,12 @@ impl CapTemplate {
             AuthRequired::Custom { .. } => 5u8,
         };
         hasher.update(&[perm_byte]);
+        // For Custom permissions, include the vk_hash in the template hash
+        // so that templates differing only in their app-defined auth mode
+        // do not collide.
+        if let AuthRequired::Custom { vk_hash } = &self.max_permissions {
+            hasher.update(vk_hash);
+        }
         hasher.update(&[self.attenuatable as u8]);
         *hasher.finalize().as_bytes()
     }

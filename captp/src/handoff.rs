@@ -187,14 +187,22 @@ impl HandoffCertificate {
         msg.extend_from_slice(&self.target_federation.0);
         msg.extend_from_slice(&self.target_cell.0);
         msg.extend_from_slice(&self.recipient_pk);
-        // Encode permissions as a tag byte
+        // Encode permissions as a tag byte. For Custom, the tag byte is
+        // followed by the 32-byte vk_hash inline, so that two
+        // handoff certificates differing only in their app-defined auth
+        // mode produce distinct signing messages (and thus distinct
+        // signatures — a Custom { A } cert cannot be replayed as Custom { B }).
         msg.push(match &self.permissions {
             AuthRequired::None => 0,
             AuthRequired::Signature => 1,
             AuthRequired::Proof => 2,
             AuthRequired::Either => 3,
             AuthRequired::Impossible => 4,
+            AuthRequired::Custom { .. } => 5,
         });
+        if let AuthRequired::Custom { vk_hash } = &self.permissions {
+            msg.extend_from_slice(vk_hash);
+        }
         // Encode allowed_effects
         match self.allowed_effects {
             Some(mask) => {

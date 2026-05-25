@@ -283,9 +283,12 @@ impl SealPair {
 
     fn serialize_capability(cap: &CapabilityRef) -> Vec<u8> {
         let mut buf = Vec::with_capacity(85);
+        // Version 4: tier byte (5) for `AuthRequired::Custom` is followed by
+        //   the 32-byte vk_hash, so that two custom auth modes round-trip
+        //   distinctly through the seal.
         // Version 3: includes allowed_effects facet mask.
         // Version 2 added expires_at. Version 1 was the original layout.
-        buf.push(3u8);
+        buf.push(4u8);
         buf.extend_from_slice(cap.target.as_bytes());
         buf.extend_from_slice(&cap.slot.to_le_bytes());
         let perm_byte = match &cap.permissions {
@@ -297,6 +300,12 @@ impl SealPair {
             crate::permissions::AuthRequired::Custom { .. } => 5u8,
         };
         buf.push(perm_byte);
+        // Custom variant carries its vk_hash inline (32 bytes) immediately
+        // after the tier byte so the deserializer can reconstruct the full
+        // AuthRequired value without a registry round-trip.
+        if let crate::permissions::AuthRequired::Custom { vk_hash } = &cap.permissions {
+            buf.extend_from_slice(vk_hash);
+        }
         match &cap.breadstuff {
             None => buf.push(0),
             Some(bs) => {
@@ -334,9 +343,12 @@ impl SealPair {
             });
         }
 
-        // Version dispatch. Version 3 adds `allowed_effects`; version 2
-        // added `expires_at`; version 1 (implicit) had neither.
+        // Version dispatch. Version 4 admits AuthRequired::Custom (tier byte
+        //   5, followed by a 32-byte vk_hash). Version 3 added the
+        //   allowed_effects facet mask. Version 2 added expires_at. Version
+        //   1 (implicit) had neither.
         let (version, payload) = match data[0] {
+            4 => (4u8, &data[1..]),
             3 => (3u8, &data[1..]),
             2 => (2u8, &data[1..]),
             _ => (1u8, data),
@@ -351,19 +363,40 @@ impl SealPair {
         target_bytes.copy_from_slice(&payload[0..32]);
         let target = crate::id::CellId::from_bytes(target_bytes);
         let slot = u32::from_le_bytes([payload[32], payload[33], payload[34], payload[35]]);
+        let mut offset = 37;
         let permissions = match payload[36] {
             0 => crate::permissions::AuthRequired::None,
             1 => crate::permissions::AuthRequired::Signature,
             2 => crate::permissions::AuthRequired::Proof,
             3 => crate::permissions::AuthRequired::Either,
             4 => crate::permissions::AuthRequired::Impossible,
+            5 if version >= 4 => {
+                // Custom auth: the next 32 bytes are the vk_hash.
+                if payload.len() < offset + 32 {
+                    return Err(SealError::DeserializationFailed {
+                        reason: format!(
+                            "data too short for Custom vk_hash: {} bytes",
+                            payload.len()
+                        ),
+                    });
+                }
+                let mut vk_hash = [0u8; 32];
+                vk_hash.copy_from_slice(&payload[offset..offset + 32]);
+                offset += 32;
+                crate::permissions::AuthRequired::Custom { vk_hash }
+            }
+            5 => {
+                return Err(SealError::DeserializationFailed {
+                    reason: "Custom auth requires sealed-capability version 4 or later"
+                        .to_string(),
+                });
+            }
             other => {
                 return Err(SealError::DeserializationFailed {
                     reason: format!("invalid permission byte: {other}"),
                 });
             }
         };
-        let mut offset = 37;
         let breadstuff = match payload[offset] {
             0 => {
                 offset += 1;

@@ -13,10 +13,23 @@ pub enum AuthRequired {
     Either,
     /// Permanently locked — this action can never be performed.
     Impossible,
+    /// App-defined authorization: requires `Authorization::Custom` whose
+    /// `WitnessedPredicate` has kind `Custom { vk_hash }` matching this
+    /// `vk_hash`. The verifier identified by `vk_hash` must be
+    /// registered in the executor's `WitnessedPredicateRegistry`
+    /// (per AUTHORIZATION-CUSTOM-DESIGN §10.4).
+    Custom { vk_hash: [u8; 32] },
 }
 
 impl AuthRequired {
     /// Check if a given authorization kind satisfies this requirement.
+    ///
+    /// `AuthRequired::Custom` is NOT satisfied by `AuthKind::Signature` or
+    /// `AuthKind::Proof` — it requires `Authorization::Custom` with a
+    /// matching `vk_hash`, which the executor checks directly against the
+    /// predicate (the `AuthKind` lattice does not carry vk_hash). Callers
+    /// that need to enforce `Custom` go through the executor's
+    /// per-variant check, not this method.
     pub fn is_satisfied_by(&self, provided: &AuthKind) -> bool {
         match self {
             AuthRequired::None => true,
@@ -26,11 +39,16 @@ impl AuthRequired {
                 matches!(provided, AuthKind::Signature | AuthKind::Proof)
             }
             AuthRequired::Impossible => false,
+            AuthRequired::Custom { .. } => false,
         }
     }
 
     /// Returns true if this requirement is strictly narrower (more restrictive)
     /// than or equal to `other`.
+    ///
+    /// `Custom { vk_hash }` is comparable only with itself (vk_hash equality)
+    /// or with `Impossible`/`None`; two different `Custom` requirements are
+    /// incomparable (neither narrower nor equal).
     pub fn is_narrower_or_equal(&self, other: &AuthRequired) -> bool {
         match (self, other) {
             // Impossible is the most restrictive
@@ -42,6 +60,11 @@ impl AuthRequired {
             // Proof/Signature are narrower than Either
             (AuthRequired::Proof, AuthRequired::Either) => true,
             (AuthRequired::Signature, AuthRequired::Either) => true,
+            // Custom is narrower-or-equal only to an identical Custom
+            // (vk_hash equality). Different vk_hashes are incomparable.
+            (AuthRequired::Custom { vk_hash: a }, AuthRequired::Custom { vk_hash: b }) => a == b,
+            // Custom and Signature/Proof/Either are incomparable.
+            (AuthRequired::Custom { .. }, _) | (_, AuthRequired::Custom { .. }) => false,
             // Same level
             (a, b) => a == b,
         }

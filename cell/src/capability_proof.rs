@@ -244,8 +244,14 @@ impl CapabilityProof {
         msg.extend_from_slice(self.holder_cell.as_bytes());
         msg.extend_from_slice(&self.holder_commitment);
         msg.extend_from_slice(self.target_cell.as_bytes());
-        // Encode permissions as discriminant byte.
+        // Encode permissions as discriminant byte (plus vk_hash when Custom).
+        // The signing message must distinguish `Custom { vk_hash: A }` from
+        // `Custom { vk_hash: B }` so that two proofs over different
+        // app-defined auth modes never collide.
         msg.push(auth_required_discriminant(&self.permissions));
+        if let AuthRequired::Custom { vk_hash } = &self.permissions {
+            msg.extend_from_slice(vk_hash);
+        }
         // Encode proof_data. (StarkMembership variant was removed per
         // module-doc note above; SignedAttestation is currently the only
         // shape.)
@@ -388,6 +394,12 @@ fn can_satisfy(cap_permissions: &AuthRequired, target_requires: &AuthRequired) -
                 | AuthRequired::Proof
                 | AuthRequired::Either
         ),
+        // Custom requires the cap to carry an identical Custom requirement;
+        // the executor's per-variant check enforces the vk_hash match.
+        AuthRequired::Custom { vk_hash } => matches!(
+            cap_permissions,
+            AuthRequired::Custom { vk_hash: cap_vk } if cap_vk == vk_hash
+        ),
     }
 }
 
@@ -399,6 +411,9 @@ fn auth_required_discriminant(auth: &AuthRequired) -> u8 {
         AuthRequired::Proof => 2,
         AuthRequired::Either => 3,
         AuthRequired::Impossible => 4,
+        // Custom authorizers: encode as 5 (same tier byte as in canonical
+        // commitment; the full vk_hash is committed separately).
+        AuthRequired::Custom { .. } => 5,
     }
 }
 

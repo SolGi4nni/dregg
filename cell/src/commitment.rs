@@ -63,7 +63,13 @@ pub const CANONICAL_COMMITMENT_CONTEXT: &str = "pyana-cell:canonical-state-commi
 /// Domain-separation context for the canonical capability-set root.
 pub const CANONICAL_CAP_ROOT_CONTEXT: &str = "pyana-cell:canonical-capability-root v1";
 
-/// Compute the canonical commitment for a single `AuthRequired` value.
+/// Compute the canonical tier-byte for a single `AuthRequired` value.
+///
+/// For `Custom { vk_hash }`, the tier-byte (5) alone is insufficient:
+/// two different `vk_hash`es would yield identical commitments. Use
+/// [`hash_auth_required_into`] to commit an `AuthRequired` into a
+/// canonical-commitment hasher; that helper writes the tier byte
+/// followed by the vk_hash when the variant is `Custom`.
 #[inline]
 fn auth_byte(auth: &AuthRequired) -> u8 {
     match auth {
@@ -72,11 +78,22 @@ fn auth_byte(auth: &AuthRequired) -> u8 {
         AuthRequired::Proof => 2,
         AuthRequired::Either => 3,
         AuthRequired::Impossible => 4,
-        // Custom authorizers are identified by their vk_hash; encode as 5
-        // so they are distinguished from the standard tiers in the
-        // commitment. The full vk_hash is committed separately in the
-        // permissions-commitment chain; the byte here just marks the tier.
         AuthRequired::Custom { .. } => 5,
+    }
+}
+
+/// Commit an `AuthRequired` value into a canonical-commitment hasher.
+///
+/// Writes the single tier byte (per [`auth_byte`]) for the built-in
+/// variants. For `AuthRequired::Custom { vk_hash }`, writes the tier
+/// byte (5) followed by the 32-byte `vk_hash`. This is the
+/// soundness-critical path: two `Custom` permissions with distinct
+/// `vk_hash`es must yield distinct commitments.
+#[inline]
+fn hash_auth_required_into(hasher: &mut blake3::Hasher, auth: &AuthRequired) {
+    hasher.update(&[auth_byte(auth)]);
+    if let AuthRequired::Custom { vk_hash } = auth {
+        hasher.update(vk_hash);
     }
 }
 
@@ -198,16 +215,18 @@ fn hash_cell_state_into(hasher: &mut blake3::Hasher, state: &CellState) {
 }
 
 fn hash_permissions_into(hasher: &mut blake3::Hasher, perms: &Permissions) {
-    hasher.update(&[
-        auth_byte(&perms.send),
-        auth_byte(&perms.receive),
-        auth_byte(&perms.set_state),
-        auth_byte(&perms.set_permissions),
-        auth_byte(&perms.set_verification_key),
-        auth_byte(&perms.increment_nonce),
-        auth_byte(&perms.delegate),
-        auth_byte(&perms.access),
-    ]);
+    // Each `AuthRequired` field is committed via `hash_auth_required_into`
+    // (tier byte + vk_hash for `Custom`). The eight fields are written in
+    // a fixed canonical order; built-in variants contribute one byte each,
+    // and `Custom` variants contribute 33 bytes (tier + 32-byte vk_hash).
+    hash_auth_required_into(hasher, &perms.send);
+    hash_auth_required_into(hasher, &perms.receive);
+    hash_auth_required_into(hasher, &perms.set_state);
+    hash_auth_required_into(hasher, &perms.set_permissions);
+    hash_auth_required_into(hasher, &perms.set_verification_key);
+    hash_auth_required_into(hasher, &perms.increment_nonce);
+    hash_auth_required_into(hasher, &perms.delegate);
+    hash_auth_required_into(hasher, &perms.access);
 }
 
 fn hash_delegation_into(hasher: &mut blake3::Hasher, deleg: &DelegatedRef) {
@@ -228,7 +247,10 @@ fn hash_delegation_into(hasher: &mut blake3::Hasher, deleg: &DelegatedRef) {
 fn hash_capability_ref_into(hasher: &mut blake3::Hasher, cap: &crate::capability::CapabilityRef) {
     hasher.update(cap.target.as_bytes());
     hasher.update(&cap.slot.to_le_bytes());
-    hasher.update(&[auth_byte(&cap.permissions)]);
+    // Permissions commit via the auth-required canonicalizer so that
+    // Custom { vk_hash }'s 32-byte hash participates in the commitment
+    // (built-in variants contribute one byte, Custom contributes 33).
+    hash_auth_required_into(hasher, &cap.permissions);
     match &cap.breadstuff {
         Some(bs) => {
             hasher.update(&[1u8]);
