@@ -37,7 +37,7 @@
     </div>
     <div class="problem">
       <p class="problem__label problem__label--solve">3</p>
-      <p class="problem__text"><strong>Trustless intent solving.</strong> Broadcast needs publicly. Evaluate matches privately (local Datalog, never leaves wallet). Fulfill with a STARK proof. Ring trades settle multi-party cycles atomically without a coordinator.</p>
+      <p class="problem__text"><strong>Trustless intent solving.</strong> Broadcast needs publicly. Evaluate matches privately (local Datalog, never leaves cipherclerk). Fulfill with a STARK proof. Ring trades settle multi-party cycles atomically without a coordinator.</p>
     </div>
     <div class="problem">
       <p class="problem__label problem__label--solve">4</p>
@@ -204,7 +204,7 @@
   <div class="arch">
     <pre><code>Applications             Stablecoin | AMM | Orderbook | Namespace | Identity | Compute
   ────────────────────────────────────────────────────────────────────
-CLI                      pyana cell | turn | cap | namespace | route | storage | wallet
+CLI                      pyana cell | turn | cap | namespace | route | storage | cclerk
   ────────────────────────────────────────────────────────────────────
 SDK                      AgentWallet | AgentRuntime | HD keys | IT-PIR discovery
   ────────────────────────────────────────────────────────────────────
@@ -336,9 +336,9 @@ pyana intent post --spec '{"service": "compute", "action": "execute"}'</code></p
           <p>Or use the SDK directly:</p>
           <pre><code class="language-rust">use pyana_sdk::{AgentWallet, Attenuation, VerificationMode, AuthRequest};
 
-let mut wallet = AgentWallet::new();
-let root = wallet.mint_token(b"secret-key-material-32-bytes!!!!", "inventory");
-let child = wallet.attenuate(&amp;root, &amp;Attenuation {
+let mut cclerk = AgentWallet::new();
+let root = cclerk.mint_token(b"secret-key-material-32-bytes!!!!", "inventory");
+let child = cclerk.attenuate(&amp;root, &amp;Attenuation {
     services: vec![("inventory".into(), "read".into())],
     max_ttl: Some(std::time::Duration::from_secs(3600)),
     ..Default::default()
@@ -347,7 +347,7 @@ let child = wallet.attenuate(&amp;root, &amp;Attenuation {
 // The verifier learns ONE BIT: authorized or not.
 let req = AuthRequest { service: Some("inventory".into()),
                         action: Some("read".into()), ..Default::default() };
-let proof = wallet.authorize(&amp;child, &amp;req, VerificationMode::FullyPrivate).unwrap();</code></pre>
+let proof = cclerk.authorize(&amp;child, &amp;req, VerificationMode::FullyPrivate).unwrap();</code></pre>
         </div>
       </div>
       <div class="quickstart__step">

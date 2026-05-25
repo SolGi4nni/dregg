@@ -46,13 +46,13 @@
 
     <h2 id="sharing">Sharing a Capability</h2>
 
-    <h3>Via the Wallet (Browser Extension)</h3>
+    <h3>Via the Cipherclerk (Browser Extension)</h3>
     <ol>
-      <li>Open the wallet and navigate to "Tokens".</li>
+      <li>Open the cipherclerk and navigate to "Tokens".</li>
       <li>Select the token you want to share.</li>
       <li>Click "Delegate" and enter the recipient's public key (or scan a QR code).</li>
       <li>Choose restrictions: which actions, what TTL, what budget limit.</li>
-      <li>Click "Send". The wallet attenuates the token and transmits via CapTP.</li>
+      <li>Click "Send". The cipherclerk attenuates the token and transmits via CapTP.</li>
     </ol>
 
     <h3>Via the CLI</h3>
@@ -94,7 +94,7 @@ bob.receive_signed_delegation(
 
     <p>
       When someone delegates a capability to you, it arrives in your inbox.
-      The wallet (or CLI) validates:
+      The cipherclerk (or CLI) validates:
     </p>
     <ul>
       <li>The delegation chain is cryptographically valid (HMAC chain intact).</li>

@@ -70,7 +70,7 @@ pyana namespace mount --path /services/ai/inference --descriptor my-service.json
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, ServiceDescriptor, Effect};
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 let descriptor = ServiceDescriptor {
     name: "inference-api".into(),
@@ -81,7 +81,7 @@ let descriptor = ServiceDescriptor {
 };
 
 // Mount requires a capability proving authority at this path
-wallet.mount_service("/services/ai/inference", descriptor).await?;</code></pre>
+cclerk.mount_service("/services/ai/inference", descriptor).await?;</code></pre>
 
     <h2 id="discovery">Discovery</h2>
 
@@ -125,10 +125,10 @@ pyana intent post --need '{"type":"compute","model":"gpt4","budget":5000}'
 
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // Resolve returns a live capability reference
-let service_ref = wallet.resolve_service("/services/ai/inference").await?;
+let service_ref = cclerk.resolve_service("/services/ai/inference").await?;
 
 // Invoke the service via CapTP (promise pipelining supported)
 let result = service_ref.invoke("classify", &payload).await?;

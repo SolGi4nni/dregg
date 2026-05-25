@@ -37,7 +37,7 @@ use axum::{Router, routing::post};
 async fn main() {
     let config = AppConfig::from_env();
 
-    // Initialize the pyana engine (connects to node, manages wallet)
+    // Initialize the pyana engine (connects to node, manages cipherclerk)
     let engine = PyanaEngine::new(EngineConfig::from_env()).await;
 
     // Build the app

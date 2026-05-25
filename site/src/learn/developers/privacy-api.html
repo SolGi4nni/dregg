@@ -60,8 +60,8 @@
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, AuthRequest};
 
-let mut wallet = AgentWallet::new();
-let token = wallet.mint_token(b"secret-key-32-bytes-here!!!!!!!!!", "service");
+let mut cclerk = AgentWallet::new();
+let token = cclerk.mint_token(b"secret-key-32-bytes-here!!!!!!!!!", "service");
 
 let request = AuthRequest {
     service: Some("service".into()),
@@ -69,7 +69,7 @@ let request = AuthRequest {
     ..Default::default()
 };
 
-let presentation = wallet.authorize_anonymously(&token, &request).unwrap();
+let presentation = cclerk.authorize_anonymously(&token, &request).unwrap();
 // presentation.presentation_tag is unique and unlinkable per call</code></pre>
 
     <h2 id="private-notes">Private Notes (Hidden Balances)</h2>

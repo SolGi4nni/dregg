@@ -16,12 +16,12 @@
 <h1>SDK Quickstart</h1>
 
     <p>
-      This guide walks through the core <code>pyana-sdk</code> APIs: creating a wallet,
+      This guide walks through the core <code>pyana-sdk</code> APIs: creating a cipherclerk,
       minting tokens, attenuating and delegating, generating STARK proofs, and signing
       turns. All code examples use real API signatures from the codebase.
     </p>
 
-    <h2 id="wallet">Creating a Wallet</h2>
+    <h2 id="cipherclerk">Creating a Cipherclerk</h2>
 
     <p>
       The <code>AgentWallet</code> is the primary credential holder. It manages your
@@ -31,10 +31,10 @@
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 
 // Option 1: Fresh random identity
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // Option 2: From a 24-word mnemonic (deterministic, recoverable)
-let mut wallet = AgentWallet::from_mnemonic(
+let mut cclerk = AgentWallet::from_mnemonic(
     "abandon abandon abandon ... (24 words)",
     ""  // optional passphrase
 ).unwrap();
@@ -42,10 +42,10 @@ let mut wallet = AgentWallet::from_mnemonic(
 // Option 3: From raw key bytes (restore from backup)
 use zeroize::Zeroizing;
 let secret = Zeroizing::new([0u8; 32]); // your saved key
-let mut wallet = AgentWallet::from_key_bytes(secret);
+let mut cclerk = AgentWallet::from_key_bytes(secret);
 
 // Get your public identity
-let my_identity = wallet.public_key();
+let my_identity = cclerk.public_key();
 println!("Agent ID: {:?}", my_identity);</code></pre>
 
     <h2 id="mint">Minting a Root Token</h2>
@@ -61,11 +61,11 @@ println!("Agent ID: {:?}", my_identity);</code></pre>
 
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // The root_key is your HMAC secret. Guard it carefully.
 let root_key: [u8; 32] = *b"my-secret-root-key-32-bytes!!!!!";
-let root_token = wallet.mint_token(&root_key, "my-service");
+let root_token = cclerk.mint_token(&root_key, "my-service");
 
 println!("Token: {} (service: {})", root_token.label, root_token.service);
 assert!(root_token.can_mint()); // Root tokens can forge new ones</code></pre>
@@ -82,11 +82,11 @@ assert!(root_token.can_mint()); // Root tokens can forge new ones</code></pre>
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, Attenuation};
 
-let mut wallet = AgentWallet::new();
-let root = wallet.mint_token(b"my-secret-root-key-32-bytes!!!!!", "api");
+let mut cclerk = AgentWallet::new();
+let root = cclerk.mint_token(b"my-secret-root-key-32-bytes!!!!!", "api");
 
 // Restrict to read-only on the "dns" service
-let restricted = wallet.attenuate(&root, &Attenuation {
+let restricted = cclerk.attenuate(&root, &Attenuation {
     services: vec![("dns".into(), "r".into())],
     ..Default::default()
 }).unwrap();
@@ -118,7 +118,7 @@ let delegated = alice.delegate(&root, &bob.public_key(), &Attenuation {
 }).unwrap();
 
 // Bob receives the signed delegation envelope. He must declare the authority
-// policy (which delegator key he trusts for this envelope) — the SDK refuses
+// policy (which delegator key he trusts for this envelope) -- the SDK refuses
 // to consume untrusted envelopes silently.
 bob.receive_signed_delegation(
     delegated,
@@ -137,8 +137,8 @@ bob.receive_signed_delegation(
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, VerificationMode, AuthorizationPresentation, AuthRequest};
 
-let mut wallet = AgentWallet::new();
-let token = wallet.mint_token(b"my-secret-root-key-32-bytes!!!!!", "dns");
+let mut cclerk = AgentWallet::new();
+let token = cclerk.mint_token(b"my-secret-root-key-32-bytes!!!!!", "dns");
 
 let request = AuthRequest {
     service: Some("dns".into()),
@@ -147,10 +147,10 @@ let request = AuthRequest {
 };
 
 // Trusted mode: full visibility, ~8us
-let trusted = wallet.authorize(&token, &request, VerificationMode::Trusted).unwrap();
+let trusted = cclerk.authorize(&token, &request, VerificationMode::Trusted).unwrap();
 
 // Fully private: verifier learns only allow/deny, ~500ms
-let private = wallet.authorize(&token, &request, VerificationMode::FullyPrivate).unwrap();
+let private = cclerk.authorize(&token, &request, VerificationMode::FullyPrivate).unwrap();
 
 match private {
     AuthorizationPresentation::Private { proof, conclusion } => {
@@ -172,15 +172,15 @@ match private {
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, CellId, Turn, TurnBuilder, Effect};
 
-let wallet = AgentWallet::new();
+let cclerk = AgentWallet::new();
 
 // Build a turn targeting a cell
 let turn = TurnBuilder::new()
-    .target(CellId::derive_raw(&wallet.public_key().0, b"my-domain-hash-here-32bytes!"))
+    .target(CellId::derive_raw(&cclerk.public_key().0, b"my-domain-hash-here-32bytes!"))
     .effect(Effect::SetField { key: "counter".into(), value: 42 })
     .build();
 
-let signed = wallet.sign_turn(&turn);
+let signed = cclerk.sign_turn(&turn);
 // Submit signed.turn + signed.signature + signed.signer to the node</code></pre>
 
     <pyana-vizzer data-vizzer="state-diff"
@@ -201,16 +201,16 @@ let signed = wallet.sign_turn(&turn);
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 use pyana_turn::TurnReceipt;
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // After a turn is committed by the federation:
-// wallet.append_receipt(receipt);
+// cclerk.append_receipt(receipt);
 
 // Verify your own chain integrity
-wallet.verify_own_chain().unwrap();
+cclerk.verify_own_chain().unwrap();
 
 // Export for anyone to verify offline
-let chain = wallet.receipt_chain();
+let chain = cclerk.receipt_chain();
 pyana_turn::verify_receipt_chain(chain).unwrap();</code></pre>
 
     <h2 id="ivc">IVC (Constant-Size State Proof)</h2>
@@ -221,15 +221,15 @@ pyana_turn::verify_receipt_chain(chain).unwrap();</code></pre>
 
     <pre><code class="language-rust">use pyana_sdk::{AgentWallet, BabyBear, verify_ivc};
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // Enable IVC accumulation (provide initial state root)
-wallet.enable_ivc(BabyBear::new(0));
+cclerk.enable_ivc(BabyBear::new(0));
 
 // ... append receipts as turns commit ...
 
 // Export a constant-size proof of your entire history
-if let Some(proof) = wallet.export_state_proof() {
+if let Some(proof) = cclerk.export_state_proof() {
     // Anyone can verify this without seeing the full chain
     assert!(verify_ivc(&proof));
 }</code></pre>
@@ -250,7 +250,7 @@ if let Some(proof) = wallet.export_state_proof() {
     <pre><code class="language-rust">// Transition your cell from hosted to sovereign mode.
 // After this, the federation stores only your 32-byte commitment hash.
 // You maintain full state locally and submit proofs of valid transitions.
-let sovereign = wallet.make_sovereign().unwrap();
+let sovereign = cclerk.make_sovereign().unwrap();
 println!("Commitment: {:?}", sovereign.commitment());</code></pre>
 
     <h3>Private Transfers</h3>
@@ -262,8 +262,8 @@ println!("Commitment: {:?}", sovereign.commitment());</code></pre>
     <pre><code class="language-rust">// Amount-private send using Pedersen commitments.
 // The federation sees: a nullifier (double-spend check), a new note commitment,
 // and a conservation proof. It does NOT see the amount or recipient.
-let stealth_addr = bob_wallet.stealth_meta_address();
-let proof = wallet.private_transfer(1000, &stealth_addr).unwrap();</code></pre>
+let stealth_addr = bob_cclerk.stealth_meta_address();
+let proof = cclerk.private_transfer(1000, &stealth_addr).unwrap();</code></pre>
 
     <h3>Stealth Receiving</h3>
 
@@ -273,7 +273,7 @@ let proof = wallet.private_transfer(1000, &stealth_addr).unwrap();</code></pre>
 
     <pre><code class="language-rust">// Generate your stealth meta-address for receiving privately.
 // Senders derive a one-time address from this; only you can detect and spend.
-let my_stealth = wallet.stealth_meta_address();
+let my_stealth = cclerk.stealth_meta_address();
 // Share my_stealth with potential senders</code></pre>
 
     <h3>Peer-to-Peer Sessions</h3>
@@ -284,7 +284,7 @@ let my_stealth = wallet.stealth_meta_address();
 
     <pre><code class="language-rust">// Open a direct agent-to-agent session. No federation contact.
 // Both parties exchange signed state transitions with STARK proofs.
-let session = wallet.peer_exchange_session(&bob_pubkey).unwrap();
+let session = cclerk.peer_exchange_session(&bob_pubkey).unwrap();
 
 // Send a state transition directly to Bob
 session.send_transition(my_transition, my_proof).await?;

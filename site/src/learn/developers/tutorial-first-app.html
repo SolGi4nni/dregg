@@ -63,7 +63,7 @@ blake3 = "1"</code></pre>
     <h2 id="step-1">Step 1: Mint a root API key</h2>
 
     <p>
-      The admin creates a wallet and mints an unrestricted root token for the
+      The admin initializes a cipherclerk and mints an unrestricted root token for the
       <code>"api"</code> service. This root token has full permissions -- it is the master key.
     </p>
 
@@ -75,9 +75,9 @@ fn main() {
     // store it in a secrets manager. Anyone with this key can forge tokens.
     let root_key: [u8; 32] = *blake3::hash(b"my-api-service-root-secret").as_bytes();
 
-    // Create the admin's wallet and mint a root token.
-    let mut admin_wallet = AgentWallet::new();
-    let root_token = admin_wallet.mint_token(&amp;root_key, "api");
+    // Create the admin's cipherclerk and mint a root token.
+    let mut admin_cclerk = AgentWallet::new();
+    let root_token = admin_cclerk.mint_token(&amp;root_key, "api");
 
     println!("Root token minted:");
     println!("  ID:      {}", root_token.id);
@@ -109,7 +109,7 @@ fn main() {
         .as_secs() as i64;
 
     // Attenuate: read-only, 24h expiry, 1000 req/day budget.
-    let customer_token = admin_wallet.attenuate(&amp;root_token, &amp;Attenuation {
+    let customer_token = admin_cclerk.attenuate(&amp;root_token, &amp;Attenuation {
         services: vec![("api".into(), "r".into())],  // read-only
         not_after: Some(now + 86_400),               // expires in 24h
         budget: Some(BudgetSpec {
@@ -159,7 +159,7 @@ fn main() {
 
     // The edge service verifies locally. It needs only the token -- no
     // contact with the admin, no database lookup.
-    let authorized = admin_wallet.verify_token(&amp;customer_token, &amp;request);
+    let authorized = admin_cclerk.verify_token(&amp;customer_token, &amp;request);
     println!("\nVerification (read, 1h after mint): {}", authorized);
     assert!(authorized, "read access should be granted");
 
@@ -171,7 +171,7 @@ fn main() {
         now: Some(now + 3600),
         ..Default::default()
     };
-    let write_denied = !admin_wallet.verify_token(&amp;customer_token, &amp;write_request);
+    let write_denied = !admin_cclerk.verify_token(&amp;customer_token, &amp;write_request);
     println!("Verification (write attempt):      denied={}", write_denied);
     assert!(write_denied, "write access should be denied");
 
@@ -183,7 +183,7 @@ fn main() {
         now: Some(now + 100_000), // well past the 24h window
         ..Default::default()
     };
-    let expired_denied = !admin_wallet.verify_token(&amp;customer_token, &amp;expired_request);
+    let expired_denied = !admin_cclerk.verify_token(&amp;customer_token, &amp;expired_request);
     println!("Verification (expired, +100000s):  denied={}", expired_denied);
     assert!(expired_denied, "expired access should be denied");</code></pre>
 
@@ -219,19 +219,19 @@ Verification (expired, +100000s):  denied=true</code></pre>
     assert!(is_revoked);
 
     // The full authorization check: verify caveats AND check revocation.
-    let caveat_ok = admin_wallet.verify_token(&amp;customer_token, &amp;request);
+    let caveat_ok = admin_cclerk.verify_token(&amp;customer_token, &amp;request);
     let final_decision = caveat_ok &amp;&amp; !revocation_filter.is_revoked(&amp;customer_token.id);
     println!("Final authorization (post-revocation): {}", final_decision);
     assert!(!final_decision, "revoked token must be denied");
 
     // Other tokens remain unaffected.
-    let other_token = admin_wallet.attenuate(&amp;root_token, &amp;Attenuation {
+    let other_token = admin_cclerk.attenuate(&amp;root_token, &amp;Attenuation {
         services: vec![("api".into(), "r".into())],
         confine_user: Some("customer-99".into()),
         ..Default::default()
     }).unwrap();
 
-    let other_ok = admin_wallet.verify_token(&amp;other_token, &amp;AuthRequest {
+    let other_ok = admin_cclerk.verify_token(&amp;other_token, &amp;AuthRequest {
         service: Some("api".into()),
         action: Some("read".into()),
         user_id: Some("customer-99".into()),
@@ -270,8 +270,8 @@ use pyana_token::{BudgetSpec, RevocationFilter};
 fn main() {
     let root_key: [u8; 32] = *blake3::hash(b"my-api-service-root-secret").as_bytes();
 
-    let mut admin_wallet = AgentWallet::new();
-    let root_token = admin_wallet.mint_token(&amp;root_key, "api");
+    let mut admin_cclerk = AgentWallet::new();
+    let root_token = admin_cclerk.mint_token(&amp;root_key, "api");
 
     println!("Root token minted:");
     println!("  ID:      {}", root_token.id);
@@ -283,7 +283,7 @@ fn main() {
         .unwrap()
         .as_secs() as i64;
 
-    let customer_token = admin_wallet.attenuate(&amp;root_token, &amp;Attenuation {
+    let customer_token = admin_cclerk.attenuate(&amp;root_token, &amp;Attenuation {
         services: vec![("api".into(), "r".into())],
         not_after: Some(now + 86_400),
         budget: Some(BudgetSpec {
@@ -310,7 +310,7 @@ fn main() {
         ..Default::default()
     };
 
-    let authorized = admin_wallet.verify_token(&amp;customer_token, &amp;request);
+    let authorized = admin_cclerk.verify_token(&amp;customer_token, &amp;request);
     println!("\nVerification (read, 1h after mint): {}", authorized);
     assert!(authorized);
 
@@ -321,7 +321,7 @@ fn main() {
         now: Some(now + 3600),
         ..Default::default()
     };
-    let write_denied = !admin_wallet.verify_token(&amp;customer_token, &amp;write_request);
+    let write_denied = !admin_cclerk.verify_token(&amp;customer_token, &amp;write_request);
     println!("Verification (write attempt):      denied={}", write_denied);
     assert!(write_denied);
 
@@ -332,7 +332,7 @@ fn main() {
         now: Some(now + 100_000),
         ..Default::default()
     };
-    let expired_denied = !admin_wallet.verify_token(&amp;customer_token, &amp;expired_request);
+    let expired_denied = !admin_cclerk.verify_token(&amp;customer_token, &amp;expired_request);
     println!("Verification (expired, +100000s):  denied={}", expired_denied);
     assert!(expired_denied);
 
@@ -345,18 +345,18 @@ fn main() {
     println!("Is revoked: {}", is_revoked);
     assert!(is_revoked);
 
-    let caveat_ok = admin_wallet.verify_token(&amp;customer_token, &amp;request);
+    let caveat_ok = admin_cclerk.verify_token(&amp;customer_token, &amp;request);
     let final_decision = caveat_ok &amp;&amp; !revocation_filter.is_revoked(&amp;customer_token.id);
     println!("Final authorization (post-revocation): {}", final_decision);
     assert!(!final_decision);
 
-    let other_token = admin_wallet.attenuate(&amp;root_token, &amp;Attenuation {
+    let other_token = admin_cclerk.attenuate(&amp;root_token, &amp;Attenuation {
         services: vec![("api".into(), "r".into())],
         confine_user: Some("customer-99".into()),
         ..Default::default()
     }).unwrap();
 
-    let other_ok = admin_wallet.verify_token(&amp;other_token, &amp;AuthRequest {
+    let other_ok = admin_cclerk.verify_token(&amp;other_token, &amp;AuthRequest {
         service: Some("api".into()),
         action: Some("read".into()),
         user_id: Some("customer-99".into()),
@@ -416,7 +416,7 @@ fn main() {
     <p>From this foundation you can progressively escalate trust guarantees:</p>
 
     <ol>
-      <li><strong>Add ZK privacy</strong> -- Use <code>wallet.authorize(&amp;token, &amp;request, VerificationMode::FullyPrivate)</code>
+      <li><strong>Add ZK privacy</strong> -- Use <code>cclerk.authorize(&amp;token, &amp;request, VerificationMode::FullyPrivate)</code>
         to prove authorization without revealing the token contents or delegation
         chain to the verifier. The verifier learns only "authorized: yes/no."</li>
       <li><strong>Add federation</strong> -- Deploy a <code>SiloServer</code> for BFT-ordered revocations.
@@ -425,7 +425,7 @@ fn main() {
       <li><strong>Add selective disclosure</strong> -- Use <code>VerificationMode::SelectiveDisclosure</code>
         to reveal only specific facts (e.g., "service=api" but not "user=customer-42")
         while proving the rest in zero knowledge.</li>
-      <li><strong>Delegate to sub-agents</strong> -- Use <code>wallet.delegate(&amp;token, &amp;recipient_pubkey, &amp;restrictions)</code>
+      <li><strong>Delegate to sub-agents</strong> -- Use <code>cclerk.delegate(&amp;token, &amp;recipient_pubkey, &amp;restrictions)</code>
         to hand an attenuated token to another agent. They can present it, further
         attenuate it, but never widen it.</li>
       <li><strong>Add third-party caveats</strong> -- Require a discharge from an MFA gateway before

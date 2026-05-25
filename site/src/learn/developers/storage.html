@@ -188,14 +188,14 @@ pyana storage erasure disable --cell $CELL_ID</code></pre>
 
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 
-let mut wallet = AgentWallet::new();
+let mut cclerk = AgentWallet::new();
 
 // Check storage status
-let status = wallet.storage_status().await?;
+let status = cclerk.storage_status().await?;
 println!("Used: {} bytes, Rent: {} computrons/epoch", status.used, status.rent);
 
 // Send a message to another cell's inbox
-wallet.send_inbox_message(
+cclerk.send_inbox_message(
     &target_cell_id,
     &message_bytes,
     InboxOptions {
@@ -205,7 +205,7 @@ wallet.send_inbox_message(
 ).await?;
 
 // Process your own inbox
-let messages = wallet.process_inbox().await?;
+let messages = cclerk.process_inbox().await?;
 for msg in messages {
     println!("From: {:?}, size: {}", msg.sender, msg.payload.len());
     // Deposit is refunded to sender automatically

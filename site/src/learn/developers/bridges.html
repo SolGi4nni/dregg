@@ -53,7 +53,7 @@
 # (federation includes it in the next epoch)
 
 # Step 3: Claim the deposit in Pyana
-pyana wallet claim-deposit --tx-hash 0xabc123...</code></pre>
+pyana cclerk claim-deposit --tx-hash 0xabc123...</code></pre>
 
     <h3>Withdrawing (Pyana to EVM)</h3>
     <pre><code># Step 1: Generate a STARK proof of your note ownership
@@ -201,15 +201,15 @@ pyana bridge midnight respond --challenge $CHALLENGE_ID</code></pre>
     <pre><code class="language-rust">use pyana_sdk::AgentWallet;
 use pyana_chain::{EvmBridge, MinaBridge};
 
-let wallet = AgentWallet::new();
+let cclerk = AgentWallet::new();
 
 // EVM: wrap and submit
-let stark_proof = wallet.generate_proof(turn, Backend::Plonky3)?;
+let stark_proof = cclerk.generate_proof(turn, Backend::Plonky3)?;
 let groth16 = EvmBridge::wrap_sp1(&stark_proof)?;
 let tx_hash = EvmBridge::submit_to_base_sepolia(&groth16).await?;
 
 // Mina: wrap in Pickles
-let kimchi_proof = wallet.generate_proof(turn, Backend::Kimchi)?;
+let kimchi_proof = cclerk.generate_proof(turn, Backend::Kimchi)?;
 let pickles_proof = MinaBridge::wrap_pickles(&kimchi_proof)?;
 // Submit to Mina zkApp...</code></pre>
 

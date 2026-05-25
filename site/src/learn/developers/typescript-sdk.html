@@ -64,37 +64,37 @@ const wasm = await init();
 const client = await PyanaClient.init(wasm);
 
 // Mint a token
-const token = await client.wallet.mint("api-gateway");
+const token = await client.cclerk.mint("api-gateway");
 console.log(token.token); // "em2_..."
 
 // Attenuate (restrict) the token
-const restricted = await client.wallet.attenuate(token.token, {
+const restricted = await client.cclerk.attenuate(token.token, {
   service: "api-gateway",
   actions: "read",
   expiresSecs: 3600,
 });
 
 // Verify
-const result = await client.wallet.verify(restricted.token, { action: "read" });
+const result = await client.cclerk.verify(restricted.token, { action: "read" });
 console.log(result.allowed); // true</code></pre>
 
-    <h2 id="wallet">Wallet (Token Lifecycle)</h2>
+    <h2 id="cipherclerk">Cipherclerk (Token Lifecycle)</h2>
 
     <p>
       The <code>AgentWallet</code> class manages token minting, attenuation, and verification.
       It mirrors the Rust SDK's <code>AgentWallet</code> API.
     </p>
 
-    <pre><code class="language-rust">const wallet = await AgentWallet.create(wasm);
+    <pre><code class="language-rust">const cclerk = await AgentWallet.create(wasm);
 
 // Mint a root token for a service
-const token = await wallet.mint("my-service");
+const token = await cclerk.mint("my-service");
 
 // Attenuate: restrict to read-only
-const attenuated = await wallet.attenuate(token.token, { actions: "read" });
+const attenuated = await cclerk.attenuate(token.token, { actions: "read" });
 
 // Verify against a request
-const verified = await wallet.verify(attenuated.token, { action: "read" });
+const verified = await cclerk.verify(attenuated.token, { action: "read" });
 console.log(verified.allowed); // true</code></pre>
 
     <h2 id="proofs">STARK Proofs</h2>

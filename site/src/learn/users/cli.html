@@ -43,7 +43,7 @@ pyana --version</code></pre>
         <tr><td><code>pyana cell</code></td><td>Create, inspect, migrate, split, merge cells</td></tr>
         <tr><td><code>pyana turn</code></td><td>Build, sign, submit turns; inspect and verify receipts</td></tr>
         <tr><td><code>pyana cap</code></td><td>Mint, attenuate, delegate, revoke, present, verify capabilities</td></tr>
-        <tr><td><code>pyana wallet</code></td><td>Create/restore identity, manage keys, check balance</td></tr>
+        <tr><td><code>pyana cclerk</code></td><td>Create/restore identity, manage keys, check balance</td></tr>
         <tr><td><code>pyana federation</code></td><td>Join/leave federation, check status, list peers</td></tr>
         <tr><td><code>pyana namespace</code></td><td>Mount services, resolve names, manage registrations</td></tr>
         <tr><td><code>pyana storage</code></td><td>Check quotas, space bank status, manage erasure shards</td></tr>
@@ -54,21 +54,21 @@ pyana --version</code></pre>
       </tbody>
     </table>
 
-    <h2 id="wallet">Wallet Management</h2>
+    <h2 id="cclerk">Cipherclerk Management</h2>
 
     <pre><code class="language-rust"># Create a new identity (generates 24-word mnemonic)
-pyana wallet create --mnemonic
+pyana cclerk create --mnemonic
 # Output: writes mnemonic to stdout, saves encrypted key to ~/.pyana/keys/
 
 # Restore from mnemonic
-pyana wallet restore --mnemonic "word1 word2 ... word24"
+pyana cclerk restore --mnemonic "word1 word2 ... word24"
 
 # Check balance
-pyana wallet balance
+pyana cclerk balance
 # Output: 45000 computrons (available), 5000 (locked in deposits)
 
 # Export public key
-pyana wallet pubkey
+pyana cclerk pubkey
 # Output: ed25519:a1b2c3d4...</code></pre>
 
     <h2 id="cell">Cell Operations</h2>
@@ -243,7 +243,7 @@ pyana doctor --verify-chain</code></pre>
     <pre><code>[federation]
 default = "devnet.pyana.io:8420"
 
-[wallet]
+[cclerk]
 keyfile = "~/.pyana/keys/default.key"
 
 [proof]
