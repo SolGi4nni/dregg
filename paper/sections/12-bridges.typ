@@ -8,6 +8,10 @@
 
 Pyana connects to external chains via _proof translation_---not consensus bridging. Each bridge converts a Pyana STARK proof into a format the remote chain can verify natively. No relay committee, no multi-sig, no trusted oracle. The remote chain verifies a mathematical proof of Pyana state validity.
 
+The bridge's portable note proof `PortableNoteProof` has public inputs `(nullifier, attested_source_root, destination_federation, value, asset_type)`. The `destination_federation` field is now both surfaced in PI *and algebraically bound* by the AIR (closes threat T6 from the executor-honesty audit and `AUDIT-nullifiers.md §5`). A proof addressed to federation A cannot be replayed at federation B.
+
+The cross-federation trust path requires the destination federation to have an entry in its `KnownFederations` registry for the source federation (see @sec-federation). Without registry presence, the destination cannot verify the source's `AttestedRoot`---the source `federation_id` in the attestation is bound algebraically (Lane D unification: `federation_id = BLAKE3(committee_pubkeys || epoch)`), so an attacker cannot mint attestations for a federation it doesn't control.
+
 Bridges are classified by trust level:
 
 #figure(

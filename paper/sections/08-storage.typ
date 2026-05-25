@@ -8,7 +8,7 @@
 
 Storage in a distributed capability system differs fundamentally from blockchain state: cells are sovereign (they own their data), storage is metered (ongoing cost, not one-time), and queues are the primary communication primitive (not shared memory). The historically natural framing made each storage primitive a new `Effect` variant: `Effect::QueueAllocate`, `Effect::Enqueue`, `Effect::Dequeue`, `Effect::TopicCreate`, and so on. Each new app proposed new effects; each new effect needed an AIR row, a cost-table entry, a wallet wrapper, an executor branch. The effect surface bloated; the AIR's column count climbed; the constitution that named effects became harder to govern.
 
-The corrected framing: **storage primitives are not new Effects. They are cell-program patterns.** Compositions of existing `Effect` variants (`SetField`, `EmitEvent`, `Transfer`, `Grant`/`Revoke`, `CreateCellFromFactory`) governed by `CellProgram`s whose `StateConstraint`s are drawn from the 21+ variant slot caveat vocabulary, plus---where genuinely needed---a `WitnessedPredicate` for the witness-attached cases.
+The corrected framing: *storage primitives are not new Effects. They are cell-program patterns.* Compositions of existing `Effect` variants (`SetField`, `EmitEvent`, `Transfer`, `Grant`/`Revoke`, `CreateCellFromFactory`) governed by `CellProgram`s whose `StateConstraint`s are drawn from the 21+ variant slot caveat vocabulary, plus---where genuinely needed---a `WitnessedPredicate` for the witness-attached cases.
 
 Three concrete consequences:
 

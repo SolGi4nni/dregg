@@ -56,7 +56,7 @@ Ethereum achieves global consensus over shared state. Pyana differs fundamentall
 
 The deepest architectural difference: Anoma's resource machine operates over _shared mutable state_ (resources consumed and produced atomically). Pyana's cells are _sovereign_---each cell owns its state exclusively, and coordination happens via proof exchange rather than shared-state consensus. This makes Pyana naturally suited to privacy (cells never reveal state to the network) but requires more complex coordination protocols for multi-party operations.
 
-Anoma's solver market allows solvers to see intents during solving (enabling efficient optimization but creating MEV opportunities). Pyana's threshold encryption prevents any party from seeing intents before the batch closes---sacrificing some solver efficiency for stronger front-running protection.
+Anoma's solver market allows solvers to see intents during solving (enabling efficient optimization but creating MEV opportunities). Pyana's threshold encryption prevents any party from seeing intents before the batch closes---sacrificing some solver efficiency for stronger front-running protection. The threshold-decryption substrate (Shamir over GF(256) + ChaCha20-Poly1305) is real and production-wired via `federation::threshold_decrypt` and `node::state::trustless_intent_engine`.
 
 === Midnight
 

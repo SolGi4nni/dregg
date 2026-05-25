@@ -79,13 +79,13 @@ $ cal(S) = {(v_i, v_((i+1) mod n), a_i, q_i) : i in {0, ..., n-1}} $
 
 where $v_i$ is the $i$-th participant, $a_i$ is the asset type, and $q_i$ is the quantity. Settlement is atomic: all transfers execute or none do (via compound turn).
 
-== Trustless 7-Layer Protocol
+== Trustless 7-Layer Protocol (production-wired)
 
-The trustless intent engine provides verifiably fair solving without any trusted executor:
+The trustless intent engine provides verifiably fair solving without any trusted executor. The threshold-encryption substrate is *real* (`federation::threshold_decrypt`---Shamir over GF(256) + ChaCha20-Poly1305 AEAD) and *production-wired* (`node::state::trustless_intent_engine`). The earlier `set_decrypted_intents` cleartext side-channel is replaced; validators now contribute real decryption shares and `combine_shares` produces the cleartext intents.
 
 === Layer 1: SUBMIT
 
-Intents are encrypted to a threshold key (BLS12-381, threshold $t$-of-$n$ where $t = 2f + 1$). Encrypted intents are broadcast via gossip. No party---including gossip relays---can read intent content before the collective decryption ceremony.
+Intents are encrypted to the federation's threshold public key (`ThresholdCiphertext` in `federation::threshold_decrypt`). Encrypted intents are broadcast via gossip. No party---including gossip relays---can read intent content before the collective decryption ceremony.
 
 === Layer 2: BATCH
 
@@ -95,15 +95,16 @@ Batch boundaries are determined by consensus (blocklace finality). A batch close
 
 The batch boundary is a consensus decision---no party can manipulate which intents enter a batch.
 
-=== Layer 3: DECRYPT
+=== Layer 3: DECRYPT (real Shamir + ChaCha20-Poly1305)
 
 After a batch boundary is finalized, the threshold decryption ceremony begins:
 
-+ Each validator contributes a decryption share (BLS12-381 partial decryption).
-+ At $t$ shares, the batch is fully decrypted.
-+ Decrypted intents are published to all validators simultaneously.
++ Each validator contributes a `DecryptionShare` (Shamir share of the AEAD symmetric key over GF(256)).
++ The `node::state::trustless_intent_engine::contribute_decrypt_share` accumulates shares per `ThresholdCiphertext`.
++ At $t = "decrypt_threshold"$ shares (typically $2f + 1$), `federation::threshold_decrypt::combine_shares` reconstructs the AEAD key and decrypts the ciphertext via ChaCha20-Poly1305.
++ The cleartext `Vec<Intent>` flows into the solver auction.
 
-The critical property: intents are revealed _after_ the batch is sealed. No party can see an intent and then submit a competing intent into the same batch (front-running prevention).
+The critical property: intents are revealed *after* the batch is sealed; no party can see an intent and then submit a competing intent into the same batch (front-running prevention). The Silver Vision integration loop: the production node path actually invokes the threshold-decryption primitive, rather than calling a cleartext `set_decrypted_intents` side-channel. `intent::trustless::DecryptionShare` is now isomorphic to `federation::threshold_decrypt::DecryptionShare` (canonical share type re-exported, per the integration commits).
 
 === Layer 4: SOLVE
 
@@ -163,6 +164,22 @@ When an intent is partially satisfied (e.g., a ring trade uses 60% of the offere
 
 == Privacy Properties
 
-- *Creator anonymity*: The `CommitmentId` is a Pedersen commitment. No party learns the creator's identity until fulfillment (and even then, only the fulfiller learns it via the commit-reveal protocol).
-- *Intent content privacy*: Encrypted until batch closure. No front-running possible.
-- *Fulfillment privacy*: The STARK proof demonstrates satisfaction without revealing which specific capabilities the fulfiller holds (only that they satisfy the constraint).
+- *Creator anonymity*: the `CommitmentId` is a Pedersen commitment. No party learns the creator's identity until fulfillment (and even then, only the fulfiller learns it via the commit-reveal protocol).
+- *Intent content privacy*: encrypted until batch closure (via real Shamir-over-GF(256) + ChaCha20-Poly1305 threshold decryption in `federation::threshold_decrypt`). No front-running possible.
+- *Fulfillment privacy*: the STARK proof demonstrates satisfaction without revealing which specific capabilities the fulfiller holds.
+- *Bond escrow*: solver bonds are held in escrow via the standard escrow primitive; slashing is enforced at spend-time via encumbrance.
+
+The boundary contract (per BOUNDARIES.md §2.12 + §4.10):
+
+- *Cleartext-inside (intent body)*: whoever can decrypt the intent's seal, or after threshold ceremony, the entire federation committee.
+- *Cleartext-inside (intent match)*: the two wallets that locally evaluated the Datalog and matched.
+- *Commitment-inside*: gossip network (sees intent bodies post-decrypt, SSE keyword tokens, stake nullifiers).
+- *Acceptance-inside*: STARK validity verifier; predicate-attestation verifier.
+
+The boundary the trustless engine *delivers* with real threshold decryption:
+
+- Pending intent: nobody learns the `MatchSpec` (threshold-encrypted).
+- Sealed intent: only the matched pair learns the bilateral commitment.
+- Once decrypted: the entire federation sees the intent body (committee cleartext-inside post-decrypt is unavoidable for solver competition).
+- Settlement: the standard Turn/Receipt pipeline; observer sees commitments and atomic effects.
+

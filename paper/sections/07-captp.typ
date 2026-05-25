@@ -6,9 +6,9 @@
 
 == Overview
 
-CapTP is the network protocol by which cells exercise capabilities across trust boundaries. It is OCapN-lineage @ocapn: sturdy references for offline sharing, distributed garbage collection across federations, three-party handoff for capability delegation without mutual connectivity, promise pipelining with eventual references, and store-and-forward for partition-tolerant delivery. Four effects in the Effect VM are CapTP-native, enabling STARK proofs of protocol correctness.
+CapTP is the network protocol by which cells exercise capabilities across trust boundaries. It is OCapN-lineage: sturdy references for offline sharing, distributed garbage collection across federations, three-party handoff for capability delegation without mutual connectivity, promise pipelining with eventual references, and store-and-forward for partition-tolerant delivery. Four effects in the Effect VM are CapTP-native, enabling STARK proofs of protocol correctness.
 
-The integration-complete Silver Vision invariant: **a CapTP-delivered message produces a real `TurnReceipt` on the receiving cell's ledger.** This is the responsibility of `Authorization::CapTpDelivered`, which makes CapTP messages route through the executor's standard verification path and produce on-ledger receipts---closing the prior gap where the wire layer pushed CapTP turns to a `pending_captp_turns` queue that was never drained. The mirror invariant "every CapTP mutation has a corresponding on-chain receipt" is now structural.
+The integration-complete Silver Vision invariant: *a CapTP-delivered message produces a real `TurnReceipt` on the receiving cell's ledger.* This is the responsibility of `Authorization::CapTpDelivered`, which makes CapTP messages route through the executor's standard verification path and produce on-ledger receipts---closing the prior gap where the wire layer pushed CapTP turns to a `pending_captp_turns` queue that was never drained. The mirror invariant "every CapTP mutation has a corresponding on-chain receipt" is now structural.
 
 == Sturdy References
 

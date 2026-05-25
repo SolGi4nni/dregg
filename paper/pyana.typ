@@ -6,7 +6,7 @@
 #set document(
   title: "Pyana: A Distributed Object-Capability Runtime with Zero-Knowledge Authorization and Proof-Carrying State",
   author: ("Ember Arlynx"),
-  date: datetime(year: 2026, month: 5, day: 21),
+  date: datetime(year: 2026, month: 5, day: 24),
 )
 
 #set page(
@@ -56,7 +56,7 @@
   #text(size: 11pt)[Ember Arlynx]
   #v(0.3em)
   #text(size: 10pt, fill: luma(80))[
-    Draft -- May 23, 2026 \
+    Draft -- May 24, 2026 \
     `github.com/emberian/pyana`
   ]
 ]

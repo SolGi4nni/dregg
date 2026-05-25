@@ -388,7 +388,7 @@ Per-cell PI grows by 35 felts to accommodate Phase 1's bilateral accumulators (p
 The `pyana-verifier` standalone binary gains a `bilateral-pair <receipt_a> <receipt_b>` subcommand that verifies cross-cell consistency:
 
 + Parse both receipts; verify each per-cell STARK independently.
-+ Recompute the canonical id (e.g., `transfer_id`) from the bilateral effect's surface inputs $(""from"", ""to"", ""amount"", ""ACTOR_NONCE"")$.
++ Recompute the canonical id (e.g., `transfer_id`) from the bilateral effect's surface inputs `(from, to, amount, ACTOR_NONCE)`.
 + Walk the sender's `OUTGOING_TRANSFER_ROOT` accumulator entries; for each, locate the matching entry in the receiver's `INCOMING_TRANSFER_ROOT`.
 + Confirm direction, amount, and id agreement.
 + If any sender entry lacks a matching receiver entry (or vice versa), reject.
