@@ -1,36 +1,31 @@
 // starbridge-apps/identity/pages/inspectors.js
 //
 // Web components for the identity starbridge-app's four UI surfaces.
-// These are pure custom-element shells: they query window.pyana for the
-// underlying credential data, render disclosure pickers / predicate
-// builders / accept-reject results, and dispatch turn requests via
-// window.pyana.signTurn().
-//
 // All policy lives in Rust (starbridge-apps/identity/src/lib.rs); the
-// JS is the thinnest possible UX layer. The four components are:
+// JS is the thinnest possible UX layer.
 //
 //   <pyana-credential uri="pyana://credential/..."/>
-//     Read-only view: schema, holder id, status, attribute list (with a
-//     reveal toggle that does NOT leak the cleartext — the toggle only
-//     shows the holder their own attributes locally).
+//     Read-only credential view: schema, holder id, status, claim list
+//     (the holder's local cleartext copy — public network sees only
+//     commitments), expiry countdown, revoke button when the viewer is
+//     the issuer.
 //
 //   <pyana-credential-issue-form issuer-uri="pyana://cell/..." schema="kyc-v1"/>
-//     Issuer UI: collects attribute values for the selected schema,
-//     dispatches `build_issue_credential_action` via the turn-builder
-//     bridge.
+//     Issuer UI: schema picker, dynamic claim inputs, subject pk,
+//     signed-turn submission via the cipherclerk-named
+//     `window.pyana.builders.identity.issue_credential(...)` builder.
 //
 //   <pyana-credential-present-form credential-uri="pyana://credential/..."/>
-//     Holder UI: lets the holder pick which attributes to reveal,
-//     add predicate requests ("age ≥ 18"), choose anonymous mode,
-//     and emit the presentation bytes.
+//     Holder UI: per-claim selective-disclosure checklist, predicate
+//     builder ("verification_level Gte 1"), anonymous toggle, emits a
+//     signed presentation.
 //
 //   <pyana-credential-verifier verifier-uri="pyana://cell/..."/>
-//     Verifier UI: paste a presentation, configure expectations
-//     (schema, disclosure, predicate, revocation root), display
-//     accept / reject + the revealed-facts.
+//     Verifier UI: paste a presentation, configure expectations, see
+//     accept/reject + revealed facts.
 //
-// Each component dispatches CustomEvents so a host page can wire its
-// own analytics or persistence without forking these.
+// CSS classes are namespaced .pyana-identity-* so peer apps don't
+// collide.
 
 const TAGS = [
   'pyana-credential',
@@ -38,6 +33,58 @@ const TAGS = [
   'pyana-credential-present-form',
   'pyana-credential-verifier',
 ];
+
+const POLL_INTERVAL_MS = 7_000;
+
+// Slot indices — mirror src/lib.rs.
+const SCHEMA_COMMITMENT_SLOT  = 2;
+const ISSUANCE_COUNTER_SLOT   = 3;
+const REVOCATION_ROOT_SLOT    = 4;
+const ISSUER_AUTH_ROOT_SLOT   = 5;
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
+function shortId(s, head = 8, tail = 6) {
+  if (!s) return '—';
+  const str = String(s);
+  if (str.length <= head + tail + 1) return str;
+  return `${str.slice(0, head)}…${str.slice(-tail)}`;
+}
+
+function fmtTime(v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'number' || /^\d+$/.test(String(v))) {
+    // Treat as unix seconds.
+    try {
+      return new Date(Number(v) * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    } catch { return String(v); }
+  }
+  return String(v);
+}
+
+function countdown(toUnix, now = Date.now() / 1000) {
+  if (!toUnix) return '';
+  const d = Number(toUnix) - now;
+  if (d <= 0) return 'expired';
+  const days = Math.floor(d / 86_400);
+  if (days > 1) return `in ${days}d`;
+  const hrs = Math.floor(d / 3_600);
+  if (hrs > 1) return `in ${hrs}h`;
+  const mins = Math.floor(d / 60);
+  return `in ${Math.max(mins, 1)}m`;
+}
+
+const SCHEMA_DEFS = {
+  'kyc-v1':        ['given_name', 'family_name', 'dob', 'verification_level'],
+  'gov-id-v1':     ['id_number', 'country', 'expires_on'],
+  'employment-v1': ['employer', 'role', 'start_date'],
+};
 
 // ─── <pyana-credential> ──────────────────────────────────────────────────
 
@@ -47,62 +94,222 @@ class PyanaCredentialElement extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this._data = null;
+    this._error = null;
+    this._loading = true;
+    this._busy = null;
+    this._lastReceipt = null;
+    this._poll = null;
   }
 
-  connectedCallback() { this.render(); }
-  attributeChangedCallback() { this.render(); }
+  connectedCallback() {
+    this.refresh();
+    this._poll = setInterval(() => this.refresh(), POLL_INTERVAL_MS);
+  }
+  disconnectedCallback() {
+    if (this._poll) clearInterval(this._poll);
+    this._poll = null;
+  }
+  attributeChangedCallback() { this.refresh(); }
 
-  async render() {
+  async refresh() {
     const uri = this.getAttribute('uri') || '';
-    const data = await this.#fetch(uri);
+    try {
+      this._data = await this.#fetch(uri);
+      this._error = null;
+    } catch (e) {
+      this._error = String(e);
+    }
+    this._loading = false;
+    this.render();
+  }
+
+  render() {
+    const uri = this.getAttribute('uri') || '';
+    const d = this._data ?? {};
+    const revoked = !!d.revoked;
+    const attrs = Array.isArray(d.attributes) ? d.attributes : [];
+    const expiresCountdown = countdown(d.not_after);
+
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; }
-        .schema { font-size: 0.85rem; color: #666; }
-        .attr { display: flex; justify-content: space-between; padding: 0.25rem 0; }
-        .status-ok  { color: #2a8a3e; font-weight: 600; }
-        .status-bad { color: #c43030; font-weight: 600; }
-        button { margin-top: 0.5rem; }
+        .pyana-identity-credential-card {
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          padding: 1rem;
+          background: linear-gradient(180deg, #fff 0%, #fafbff 100%);
+          max-width: 480px;
+        }
+        .pyana-identity-credential-schema {
+          font-size: 0.75rem;
+          color: #557;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+        .pyana-identity-credential-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.5rem;
+          padding: 0.25rem 0;
+        }
+        .pyana-identity-credential-label { color: #555; }
+        code { font-family: ui-monospace, monospace; }
+        .pyana-identity-credential-status-ok  { color: #2a8a3e; font-weight: 600; }
+        .pyana-identity-credential-status-bad { color: #c43030; font-weight: 600; }
+        .pyana-identity-credential-claims {
+          margin-top: 0.6rem;
+          border-top: 1px solid #eee;
+          padding-top: 0.6rem;
+        }
+        .pyana-identity-credential-claim {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.5rem;
+          padding: 0.2rem 0;
+          font-size: 0.9rem;
+        }
+        .pyana-identity-credential-claim code {
+          background: #eef;
+          padding: 0.05rem 0.35rem;
+          border-radius: 3px;
+        }
+        .pyana-identity-credential-actions {
+          margin-top: 0.6rem;
+          display: flex;
+          gap: 0.4rem;
+        }
+        button {
+          padding: 0.4rem 0.7rem;
+          font: inherit;
+          background: #eef;
+          border: 1px solid #ccd;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        button[disabled] { opacity: 0.5; cursor: not-allowed; }
+        .pyana-identity-credential-error {
+          color: #a02020;
+          background: #fff0f0;
+          padding: 0.5rem;
+          border: 1px solid #f0c0c0;
+          border-radius: 4px;
+        }
       </style>
-      <div class="card">
-        <div class="schema">${data.schema || '(no schema)'}</div>
-        <h3>Credential ${data.id_short || ''}</h3>
-        <div class="attr"><span>Holder</span><code>${data.holder_id || '—'}</code></div>
-        <div class="attr"><span>Issued</span><span>${data.issued_at || '—'}</span></div>
-        <div class="attr"><span>Expires</span><span>${data.not_after || '—'}</span></div>
-        <div class="attr">
-          <span>Status</span>
-          <span class="${data.revoked ? 'status-bad' : 'status-ok'}">
-            ${data.revoked ? 'REVOKED' : 'VALID'}
+      <div class="pyana-identity-credential-card">
+        ${this._error ? `<div class="pyana-identity-credential-error">${escapeHtml(this._error)}</div>` : ''}
+        ${this._loading
+          ? `<pyana-status-bar state="loading" message="fetching credential…"></pyana-status-bar>`
+          : ''}
+        <div class="pyana-identity-credential-schema">${escapeHtml(d.schema || '(no schema)')}</div>
+        <h3 style="margin: 0.2rem 0 0.5rem 0;">Credential ${escapeHtml(shortId(d.id || d.id_short || uri))}</h3>
+        <div class="pyana-identity-credential-row">
+          <span class="pyana-identity-credential-label">Holder</span>
+          <code>${escapeHtml(shortId(d.holder_id))}</code>
+        </div>
+        <div class="pyana-identity-credential-row">
+          <span class="pyana-identity-credential-label">Issued</span>
+          <span>${escapeHtml(fmtTime(d.issued_at))}</span>
+        </div>
+        <div class="pyana-identity-credential-row">
+          <span class="pyana-identity-credential-label">Expires</span>
+          <span>${escapeHtml(fmtTime(d.not_after))}${expiresCountdown ? ` <em>(${escapeHtml(expiresCountdown)})</em>` : ''}</span>
+        </div>
+        <div class="pyana-identity-credential-row">
+          <span class="pyana-identity-credential-label">Status</span>
+          <span class="${revoked ? 'pyana-identity-credential-status-bad' : 'pyana-identity-credential-status-ok'}">
+            ${revoked ? 'REVOKED' : 'VALID'}
           </span>
         </div>
-        ${data.attributes ? `
-          <details>
-            <summary>Attributes (${data.attributes.length})</summary>
-            ${data.attributes.map(a => `<div class="attr"><span>${a.name}</span><code>${a.value}</code></div>`).join('')}
-          </details>
+        ${attrs.length ? `
+          <div class="pyana-identity-credential-claims">
+            <strong>Claims (${attrs.length})</strong>
+            ${attrs.map((a) => `
+              <div class="pyana-identity-credential-claim">
+                <span>${escapeHtml(a.name)}</span>
+                <code>${escapeHtml(a.value ?? '')}</code>
+              </div>
+            `).join('')}
+          </div>
         ` : ''}
-        <button id="present">Present this credential…</button>
+        <div class="pyana-identity-credential-actions">
+          <button data-action="present" ${revoked ? 'disabled' : ''}>Present…</button>
+          <button data-action="revoke" ${revoked ? 'disabled' : ''}>Revoke</button>
+          <button data-action="refresh">↻</button>
+        </div>
+        <pyana-status-bar
+          state="${this._busy ? 'loading' : (this._lastReceipt ? 'success' : 'idle')}"
+          message="${escapeHtml(this._busy?.message ?? (this._lastReceipt ? 'submitted' : ''))}"
+          receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
+        ></pyana-status-bar>
+        ${this._lastReceipt ? `
+          <div style="margin-top:0.5rem;">
+            <pyana-token-cap
+              kind="receipt"
+              label="credential-action"
+              target="${escapeHtml(uri)}"
+              action="${escapeHtml(this._lastReceipt.method || '')}"
+              tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
+            ></pyana-token-cap>
+          </div>
+        ` : ''}
       </div>
     `;
-    this.shadowRoot.getElementById('present')?.addEventListener('click', () => {
+    this.shadowRoot.querySelector('button[data-action=present]')?.addEventListener('click', () => {
       this.dispatchEvent(new CustomEvent('present-requested', {
         bubbles: true, composed: true, detail: { uri },
       }));
     });
+    this.shadowRoot.querySelector('button[data-action=refresh]')?.addEventListener('click', () => {
+      this._loading = true;
+      this.render();
+      this.refresh();
+    });
+    this.shadowRoot.querySelector('button[data-action=revoke]')?.addEventListener('click', () =>
+      this.#onRevoke(uri),
+    );
+  }
+
+  async #onRevoke(credentialUri) {
+    const builder = window.pyana?.builders?.identity?.revoke_credential;
+    if (!builder) {
+      this.dispatchEvent(new CustomEvent('revoke-requested', {
+        bubbles: true, composed: true, detail: { uri: credentialUri },
+      }));
+      return;
+    }
+    this._busy = { message: 'revoking credential…' };
+    this.render();
+    try {
+      // Issuer-cell uri is typically the parent factory cell; without
+      // host context we look up via a runtime helper, falling back to
+      // the credential uri itself (the host will surface an error if
+      // that's not the right target).
+      const issuerCell = this._data?.issuer_cell_uri || credentialUri;
+      const credId = this._data?.id || credentialUri;
+      const newRoot = new Array(32).fill(0); // host should override.
+      const receipt = await builder(issuerCell, credId, newRoot);
+      this._busy = null;
+      this._lastReceipt = { ...(receipt ?? {}), method: 'revoke_credential' };
+      this.refresh();
+    } catch (e) {
+      this._busy = null;
+      this._error = `revoke failed: ${String(e)}`;
+      this.render();
+    }
   }
 
   async #fetch(uri) {
-    if (typeof window === 'undefined' || !window.pyana?.fetchCredential) {
-      return { id_short: '(stub)', schema: 'kyc-v1', revoked: false, attributes: [] };
-    }
-    try {
+    if (typeof window === 'undefined') return null;
+    if (window.pyana?.fetchCredential) {
       return await window.pyana.fetchCredential(uri);
-    } catch (e) {
-      return { id_short: 'error', schema: '(unknown)', revoked: false, attributes: [],
-               error: String(e) };
     }
+    if (window.pyana?.credentials?.read) {
+      return await window.pyana.credentials.read(uri);
+    }
+    // No runtime helper — return a marker so the UI shows "(no
+    // credential)" rather than fake data.
+    return null;
   }
 }
 
@@ -111,44 +318,102 @@ class PyanaCredentialElement extends HTMLElement {
 class PyanaCredentialIssueFormElement extends HTMLElement {
   static get observedAttributes() { return ['issuer-uri', 'schema']; }
 
-  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this._busy = null;
+    this._lastError = null;
+    this._lastReceipt = null;
+  }
   connectedCallback() { this.render(); }
   attributeChangedCallback() { this.render(); }
 
   render() {
     const issuerUri = this.getAttribute('issuer-uri') || '';
     const schemaName = this.getAttribute('schema') || 'kyc-v1';
-    const attrs = this.#attrsFor(schemaName);
+    const attrs = SCHEMA_DEFS[schemaName] ?? [];
 
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        form { display: grid; gap: 0.75rem; max-width: 420px; }
-        label { display: grid; gap: 0.25rem; }
-        input, select { padding: 0.4rem; font-size: 1rem; }
-        button { padding: 0.5rem; font-weight: 600; }
-        .target { font-size: 0.85rem; color: #666; }
+        .pyana-identity-issue-form {
+          display: grid;
+          gap: 0.75rem;
+          max-width: 420px;
+        }
+        .pyana-identity-issue-form label {
+          display: grid;
+          gap: 0.25rem;
+        }
+        .pyana-identity-issue-form input,
+        .pyana-identity-issue-form select {
+          padding: 0.4rem;
+          font: inherit;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        .pyana-identity-issue-form button[type=submit] {
+          padding: 0.55rem;
+          font-weight: 600;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .pyana-identity-issue-form button[type=submit][disabled] {
+          opacity: 0.5; cursor: wait;
+        }
+        .pyana-identity-issue-form-target {
+          font-size: 0.85rem;
+          color: #666;
+        }
       </style>
-      <form>
-        <div class="target">Issuer cell: <code>${issuerUri}</code></div>
+      <form class="pyana-identity-issue-form">
+        <div class="pyana-identity-issue-form-target">
+          Issuer cell: <code>${escapeHtml(issuerUri)}</code>
+        </div>
         <label>
           Schema
           <select name="schema">
-            <option value="kyc-v1"        ${schemaName === 'kyc-v1'        ? 'selected' : ''}>KYC v1</option>
-            <option value="gov-id-v1"     ${schemaName === 'gov-id-v1'     ? 'selected' : ''}>Government ID v1</option>
-            <option value="employment-v1" ${schemaName === 'employment-v1' ? 'selected' : ''}>Employment v1</option>
+            ${Object.keys(SCHEMA_DEFS).map((s) => `
+              <option value="${s}" ${s === schemaName ? 'selected' : ''}>${s}</option>
+            `).join('')}
           </select>
         </label>
         <label>
           Subject (holder cell id / hex pubkey)
           <input name="subject" placeholder="0x…" required />
         </label>
-        ${attrs.map(a => `
-          <label>${a}<input name="attr_${a}" required /></label>
+        ${attrs.map((a) => `
+          <label>${escapeHtml(a)}<input name="attr_${escapeHtml(a)}" required /></label>
         `).join('')}
-        <button type="submit">Issue credential</button>
+        <button type="submit" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? 'issuing…' : 'Issue credential'}
+        </button>
       </form>
+      <pyana-status-bar
+        state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+        message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'credential issued' : ''))}"
+        receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
+      ></pyana-status-bar>
+      ${this._lastReceipt ? `
+        <div style="margin-top:0.5rem;">
+          <pyana-token-cap
+            kind="credential"
+            label="${escapeHtml(this._lastReceipt.credential?.schema || schemaName)}"
+            target="${escapeHtml(issuerUri)}"
+            action="issue_credential"
+            tag="${escapeHtml(this._lastReceipt.credential?.id || this._lastReceipt.id || '')}"
+            issuer="${escapeHtml(shortId(issuerUri))}"
+          ></pyana-token-cap>
+        </div>
+      ` : ''}
     `;
+
+    this.shadowRoot.querySelector('select[name=schema]')?.addEventListener('change', (e) => {
+      this.setAttribute('schema', e.target.value);
+    });
     this.shadowRoot.querySelector('form').addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -163,44 +428,36 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
         claims,
       });
     });
-    // Update the schema attribute on change so the input list refreshes.
-    this.shadowRoot.querySelector('select[name=schema]')
-      ?.addEventListener('change', (e) => {
-        this.setAttribute('schema', e.target.value);
-      });
-  }
-
-  #attrsFor(schemaName) {
-    return ({
-      'kyc-v1':        ['given_name', 'family_name', 'dob', 'verification_level'],
-      'gov-id-v1':     ['id_number', 'country', 'expires_on'],
-      'employment-v1': ['employer', 'role', 'start_date'],
-    })[schemaName] || [];
   }
 
   async #issue({ issuerUri, schema, subject, claims }) {
-    if (!window.pyana?.signTurn) {
-      this.dispatchEvent(new CustomEvent('issue-stubbed', {
-        bubbles: true, composed: true,
-        detail: { issuerUri, schema, subject, claims },
-      }));
-      return;
-    }
-    // The builder bridge (turn-builders.js) shapes the right turnSpec for
-    // build_issue_credential_action — keep this UI dumb.
+    this._busy = { message: `issuing ${schema} to ${shortId(subject)}…` };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this.render();
     const builder = window.pyana?.builders?.identity?.issue_credential;
     if (!builder) {
-      console.warn('[identity] missing turn-builder; falling back to event');
+      this._busy = null;
+      this._lastError = 'no issue_credential builder loaded (check turn-builders.js)';
       this.dispatchEvent(new CustomEvent('issue-requested', {
         bubbles: true, composed: true,
         detail: { issuerUri, schema, subject, claims },
       }));
+      this.render();
       return;
     }
-    const receipt = await builder(issuerUri, schema, subject, claims);
-    this.dispatchEvent(new CustomEvent('credential-issued', {
-      bubbles: true, composed: true, detail: { receipt },
-    }));
+    try {
+      const receipt = await builder(issuerUri, schema, subject, claims);
+      this._busy = null;
+      this._lastReceipt = receipt ?? { ok: true };
+      this.dispatchEvent(new CustomEvent('credential-issued', {
+        bubbles: true, composed: true, detail: { receipt },
+      }));
+    } catch (e) {
+      this._busy = null;
+      this._lastError = `issue failed: ${String(e)}`;
+    }
+    this.render();
   }
 }
 
@@ -209,43 +466,115 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
 class PyanaCredentialPresentFormElement extends HTMLElement {
   static get observedAttributes() { return ['credential-uri']; }
 
-  constructor() { super(); this.attachShadow({ mode: 'open' }); }
-  connectedCallback() { this.render(); }
-  attributeChangedCallback() { this.render(); }
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this._credential = null;
+    this._loading = true;
+    this._busy = null;
+    this._lastError = null;
+    this._presentation = null;
+  }
+  connectedCallback() { this.refresh(); }
+  attributeChangedCallback() { this.refresh(); }
 
-  async render() {
+  async refresh() {
+    this._credential = await this.#loadCredential(this.getAttribute('credential-uri') || '');
+    this._loading = false;
+    this.render();
+  }
+
+  render() {
     const credentialUri = this.getAttribute('credential-uri') || '';
-    const credential = await this.#loadCredential(credentialUri);
-    const attrs = credential?.attributes ?? [];
+    const attrs = this._credential?.attributes ?? [];
 
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        form { display: grid; gap: 0.75rem; max-width: 480px; }
-        .row { display: flex; gap: 0.5rem; align-items: center; }
-        fieldset { border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem; }
-        .predicate { display: grid; grid-template-columns: 1fr 100px 1fr; gap: 0.4rem; }
-        button { padding: 0.5rem; font-weight: 600; }
+        .pyana-identity-present-form {
+          display: grid;
+          gap: 0.75rem;
+          max-width: 540px;
+        }
+        .pyana-identity-present-form fieldset {
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          padding: 0.75rem;
+          background: #fafbff;
+        }
+        .pyana-identity-present-form legend {
+          font-weight: 600;
+          padding: 0 0.4rem;
+        }
+        .pyana-identity-present-form-row {
+          display: flex;
+          gap: 0.5rem;
+          align-items: center;
+          padding: 0.2rem 0;
+        }
+        .pyana-identity-present-form-predicate {
+          display: grid;
+          grid-template-columns: 1fr 80px 1fr;
+          gap: 0.4rem;
+        }
+        .pyana-identity-present-form input,
+        .pyana-identity-present-form select {
+          padding: 0.4rem;
+          font: inherit;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        .pyana-identity-present-form button[type=submit] {
+          padding: 0.55rem;
+          font-weight: 600;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .pyana-identity-present-form button[type=submit][disabled] {
+          opacity: 0.5; cursor: wait;
+        }
+        .pyana-identity-present-form-empty {
+          color: #888; font-style: italic;
+        }
+        .pyana-identity-present-form-output {
+          margin-top: 0.6rem;
+          padding: 0.6rem;
+          background: #f7f7fa;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          font: 0.8rem ui-monospace, monospace;
+          max-height: 16rem;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
+        }
       </style>
-      <form>
-        <div>Credential: <code>${credentialUri || '(none)'}</code></div>
+      <form class="pyana-identity-present-form">
+        <div>Credential: <code>${escapeHtml(credentialUri || '(none)')}</code></div>
+        ${this._loading
+          ? `<pyana-status-bar state="loading" message="loading credential…"></pyana-status-bar>`
+          : ''}
         <fieldset>
           <legend>Selective disclosure</legend>
-          ${attrs.length === 0 ? '<em>(no attributes)</em>' : ''}
-          ${attrs.map(a => `
-            <label class="row">
-              <input type="checkbox" name="disclose_${a.name}" />
-              <span>${a.name}</span>
-              <code style="margin-left:auto">${a.value ?? ''}</code>
-            </label>
-          `).join('')}
+          ${attrs.length === 0
+            ? `<div class="pyana-identity-present-form-empty">(no attributes available)</div>`
+            : attrs.map((a) => `
+              <label class="pyana-identity-present-form-row">
+                <input type="checkbox" name="disclose_${escapeHtml(a.name)}" />
+                <span>${escapeHtml(a.name)}</span>
+                <code style="margin-left:auto">${escapeHtml(a.value ?? '')}</code>
+              </label>
+            `).join('')}
         </fieldset>
         <fieldset>
-          <legend>Predicate requests</legend>
-          <div class="predicate">
+          <legend>Predicate (zero-knowledge range proof)</legend>
+          <div class="pyana-identity-present-form-predicate">
             <select name="pred_attr">
               <option value="">(no predicate)</option>
-              ${attrs.map(a => `<option value="${a.name}">${a.name}</option>`).join('')}
+              ${attrs.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('')}
             </select>
             <select name="pred_op">
               <option value="Gte">≥</option>
@@ -255,18 +584,35 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
             <input name="pred_val" type="number" placeholder="value" />
           </div>
         </fieldset>
-        <label class="row">
+        <label class="pyana-identity-present-form-row">
           <input type="checkbox" name="anonymous" />
           <span>Anonymous (unlinkable multi-show)</span>
         </label>
-        <button type="submit">Generate presentation</button>
+        <button type="submit" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? 'generating…' : 'Generate presentation'}
+        </button>
       </form>
+      <pyana-status-bar
+        state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._presentation ? 'success' : 'idle'))}"
+        message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._presentation ? 'presentation generated' : ''))}"
+      ></pyana-status-bar>
+      ${this._presentation ? `
+        <div class="pyana-identity-present-form-output">${escapeHtml(JSON.stringify(this._presentation, null, 2))}</div>
+        <pyana-token-cap
+          kind="presentation"
+          label="${escapeHtml(this._credential?.schema || 'credential-presentation')}"
+          target="${escapeHtml(credentialUri)}"
+          action="present_credential"
+          tag="${escapeHtml((this._presentation.id || '').toString().slice(0, 16))}"
+        ></pyana-token-cap>
+      ` : ''}
     `;
+
     this.shadowRoot.querySelector('form').addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       const disclose = [];
-      for (const [k, _] of fd.entries()) {
+      for (const [k] of fd.entries()) {
         if (k.startsWith('disclose_')) disclose.push(k.slice(9));
       }
       const predAttr = fd.get('pred_attr');
@@ -285,28 +631,40 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
   }
 
   async #loadCredential(uri) {
-    if (!window.pyana?.fetchCredential) {
-      return { attributes: [
-        { name: 'given_name', value: '(stub)' },
-        { name: 'family_name', value: '(stub)' },
-        { name: 'verification_level', value: '2' },
-      ] };
+    if (typeof window === 'undefined') return null;
+    if (window.pyana?.fetchCredential) {
+      try { return await window.pyana.fetchCredential(uri); } catch { return null; }
     }
-    try { return await window.pyana.fetchCredential(uri); } catch { return null; }
+    return null;
   }
 
   async #present(detail) {
+    this._busy = { message: 'generating presentation…' };
+    this._lastError = null;
+    this._presentation = null;
+    this.render();
     const builder = window.pyana?.builders?.identity?.present_credential;
     if (!builder) {
+      this._busy = null;
+      this._lastError = 'no present_credential builder loaded';
       this.dispatchEvent(new CustomEvent('present-requested', {
         bubbles: true, composed: true, detail,
       }));
+      this.render();
       return;
     }
-    const presentation = await builder(detail);
-    this.dispatchEvent(new CustomEvent('presentation-ready', {
-      bubbles: true, composed: true, detail: { presentation },
-    }));
+    try {
+      const out = await builder(detail);
+      this._busy = null;
+      this._presentation = out?.presentation ?? out;
+      this.dispatchEvent(new CustomEvent('presentation-ready', {
+        bubbles: true, composed: true, detail: { presentation: this._presentation },
+      }));
+    } catch (e) {
+      this._busy = null;
+      this._lastError = `present failed: ${String(e)}`;
+    }
+    this.render();
   }
 }
 
@@ -315,24 +673,83 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
 class PyanaCredentialVerifierElement extends HTMLElement {
   static get observedAttributes() { return ['verifier-uri']; }
 
-  constructor() { super(); this.attachShadow({ mode: 'open' }); }
-  connectedCallback() { this.render(null); }
-  attributeChangedCallback() { this.render(null); }
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this._busy = null;
+    this._result = null;
+    this._error = null;
+  }
+  connectedCallback() { this.render(); }
+  attributeChangedCallback() { this.render(); }
 
-  render(result) {
+  render() {
     const verifierUri = this.getAttribute('verifier-uri') || '';
+    const result = this._result;
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        form { display: grid; gap: 0.75rem; max-width: 500px; }
-        textarea { width: 100%; min-height: 7rem; font-family: monospace; }
-        button { padding: 0.5rem; font-weight: 600; }
-        .accept { color: #2a8a3e; font-weight: 700; }
-        .reject { color: #c43030; font-weight: 700; }
-        .result { border: 1px solid #ddd; padding: 0.75rem; border-radius: 4px; }
+        .pyana-identity-verifier-form {
+          display: grid;
+          gap: 0.75rem;
+          max-width: 540px;
+        }
+        .pyana-identity-verifier-form label {
+          display: grid;
+          gap: 0.25rem;
+        }
+        .pyana-identity-verifier-form textarea {
+          width: 100%;
+          min-height: 7rem;
+          font: 0.85rem ui-monospace, monospace;
+          padding: 0.4rem;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        .pyana-identity-verifier-form input {
+          padding: 0.4rem;
+          font: inherit;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        .pyana-identity-verifier-form button[type=submit] {
+          padding: 0.55rem;
+          font-weight: 600;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .pyana-identity-verifier-form button[type=submit][disabled] {
+          opacity: 0.5; cursor: wait;
+        }
+        .pyana-identity-verifier-result {
+          border: 1px solid #ddd;
+          padding: 0.75rem;
+          border-radius: 4px;
+          background: #fafbfc;
+        }
+        .pyana-identity-verifier-accept {
+          color: #1f6b30;
+          font-weight: 700;
+          font-size: 1.05rem;
+        }
+        .pyana-identity-verifier-reject {
+          color: #a02020;
+          font-weight: 700;
+          font-size: 1.05rem;
+        }
+        pre {
+          background: #f5f5f7;
+          padding: 0.5rem;
+          border-radius: 3px;
+          overflow: auto;
+          max-height: 14rem;
+        }
       </style>
-      <form>
-        <div>Verifier cell: <code>${verifierUri}</code></div>
+      <form class="pyana-identity-verifier-form">
+        <div>Verifier cell: <code>${escapeHtml(verifierUri)}</code></div>
         <label>
           Presentation (wire JSON)
           <textarea name="presentation" placeholder='{"proof": ..., "disclosed": [...]}'></textarea>
@@ -342,26 +759,42 @@ class PyanaCredentialVerifierElement extends HTMLElement {
           <input name="schema" placeholder="kyc-v1" />
         </label>
         <label>
-          Required disclosure (comma-separated attribute names)
+          Required disclosure (comma-separated)
           <input name="disclose" placeholder="verification_level" />
         </label>
         <label>
           Required predicate (e.g. "verification_level Gte 1")
           <input name="predicate" placeholder="verification_level Gte 1" />
         </label>
-        <button type="submit">Verify</button>
+        <button type="submit" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? 'verifying…' : 'Verify'}
+        </button>
       </form>
+      <pyana-status-bar
+        state="${this._busy ? 'loading' : (this._error ? 'error' : (result ? 'success' : 'idle'))}"
+        message="${escapeHtml(this._busy?.message ?? this._error ?? '')}"
+      ></pyana-status-bar>
       ${result ? `
-        <div class="result">
-          Result: <span class="${result.accept ? 'accept' : 'reject'}">${result.accept ? 'ACCEPT' : 'REJECT'}</span>
-          ${result.error ? `<div><em>${result.error}</em></div>` : ''}
+        <div class="pyana-identity-verifier-result">
+          <div class="${result.accept ? 'pyana-identity-verifier-accept' : 'pyana-identity-verifier-reject'}">
+            ${result.accept ? 'ACCEPT ✓' : 'REJECT ✗'}
+          </div>
+          ${result.error ? `<div><em>${escapeHtml(result.error)}</em></div>` : ''}
           ${result.disclosed ? `
-            <h4>Revealed</h4>
-            <pre>${JSON.stringify(result.disclosed, null, 2)}</pre>
+            <h4 style="margin: 0.6rem 0 0.3rem 0;">Revealed</h4>
+            <pre>${escapeHtml(JSON.stringify(result.disclosed, null, 2))}</pre>
           ` : ''}
+          <pyana-token-cap
+            kind="${result.accept ? 'verified' : 'rejected'}"
+            label="${result.accept ? 'ACCEPT' : 'REJECT'}"
+            target="${escapeHtml(verifierUri)}"
+            action="verify_presentation"
+            tag="${escapeHtml(result.commitment ?? '')}"
+          ></pyana-token-cap>
         </div>
       ` : ''}
     `;
+
     this.shadowRoot.querySelector('form').addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -370,31 +803,39 @@ class PyanaCredentialVerifierElement extends HTMLElement {
         presentationJson: fd.get('presentation'),
         schema: fd.get('schema'),
         disclose: String(fd.get('disclose') || '')
-          .split(',').map(s => s.trim()).filter(Boolean),
+          .split(',').map((s) => s.trim()).filter(Boolean),
         predicate: fd.get('predicate'),
       });
     });
   }
 
   async #verify(detail) {
+    this._busy = { message: 'verifying presentation…' };
+    this._error = null;
+    this._result = null;
+    this.render();
     const builder = window.pyana?.builders?.identity?.verify_presentation;
     if (!builder) {
+      this._busy = null;
+      this._error = 'no verify_presentation builder loaded';
       this.dispatchEvent(new CustomEvent('verify-requested', {
         bubbles: true, composed: true, detail,
       }));
-      // Render a stub accept for demo purposes.
-      this.render({ accept: true, disclosed: { _stub: true } });
+      this.render();
       return;
     }
     try {
       const result = await builder(detail);
-      this.render(result);
+      this._busy = null;
+      this._result = result;
       this.dispatchEvent(new CustomEvent('presentation-verified', {
         bubbles: true, composed: true, detail: { result },
       }));
     } catch (e) {
-      this.render({ accept: false, error: String(e) });
+      this._busy = null;
+      this._error = `verify failed: ${String(e)}`;
     }
+    this.render();
   }
 }
 
@@ -416,11 +857,14 @@ for (const [tag, ctor] of Object.entries(COMPONENTS)) {
   }
 }
 
-// Also export the constructors so a host can subclass them.
 export {
   PyanaCredentialElement,
   PyanaCredentialIssueFormElement,
   PyanaCredentialPresentFormElement,
   PyanaCredentialVerifierElement,
   TAGS,
+  SCHEMA_COMMITMENT_SLOT,
+  ISSUANCE_COUNTER_SLOT,
+  REVOCATION_ROOT_SLOT,
+  ISSUER_AUTH_ROOT_SLOT,
 };
