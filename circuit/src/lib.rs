@@ -117,6 +117,7 @@ pub mod multi_step_air;
 pub mod native_signature_air;
 #[allow(deprecated)]
 pub mod note_spending_air;
+pub mod bridge_action_air;
 #[allow(deprecated)]
 pub mod poseidon2_air;
 pub mod predicate_air;

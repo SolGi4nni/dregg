@@ -55,6 +55,19 @@
 //!   trace columns that participate in commitment recomputation. A spender cannot
 //!   claim a different value/asset_type than what is committed in the note.
 //! - Soundness: a cheating prover must break Poseidon2 collision resistance
+//!
+//! # Companion AIR: `bridge_action_air`
+//!
+//! Each 32-byte field in this AIR's PI vector (`nullifier`, `merkle_root`,
+//! `destination_federation`) lives in a **single** BabyBear slot — the prover
+//! compresses the 32 bytes via `bytes_to_babybear` (Poseidon2 of 8 limbs).
+//! That compression is sufficient for the spending-key + Merkle proof's
+//! binding, but for bridge mints the destination wants algebraic guarantees
+//! at full 32-byte fidelity on (nullifier, recipient, destination_federation)
+//! and at full 64-bit fidelity on amount. The sibling AIR
+//! `crate::bridge_action_air::BridgeActionAir` provides exactly that: 8 limbs
+//! per 32-byte field and 2 limbs (low+high 32) for u64 amount. A complete
+//! bridge presentation now carries BOTH proofs.
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_4_to_1, hash_many};
