@@ -393,6 +393,44 @@ fn executor_sender_authorized_rejects_non_member() {
 }
 
 // ===========================================================================
+// Renounced — executor rejects today (requires NonMembership verifier)
+// ===========================================================================
+
+#[test]
+fn executor_rejects_cell_declaring_renounced_variant_today() {
+    // Per CAVEAT-LAYER-COVERAGE.md §1 row 28: `StateConstraint::Renounced`
+    // requires the executor to wire a `WitnessedPredicateKind::NonMembership`
+    // verifier into the `WitnessBundle`. Today the executor does not supply a
+    // registry, so the cell-side evaluator returns `MissingContextField
+    // { field: "sender" }` (fail-closed sentinel). The executor surfaces it
+    // as `TurnResult::Rejected`.
+    use pyana_cell::program::RenouncedSet;
+    let program = CellProgram::Predicate(vec![StateConstraint::Renounced {
+        set: RenouncedSet::BlindedSet {
+            commitment: [0xCDu8; 32],
+        },
+    }]);
+    let agent_cell = make_cell_with_program(11, 1000, program);
+    let agent = agent_cell.id();
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent_cell).unwrap();
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let turn = build_set_field_turn(agent, 0, 0, field_from_u64(1));
+    let r = executor.execute(&turn, &mut ledger);
+    assert!(
+        matches!(r, TurnResult::Rejected { .. }),
+        "expected reject (Renounced sentinel), got: {r:?}"
+    );
+}
+
+#[test]
+#[ignore = "blocked on caveat-correctness lane: NonMembership verifier + sorted-set neighbor-witness dispatch (CAVEAT-LAYER-COVERAGE.md §1 row 28)"]
+fn executor_renounced_accepts_when_sender_not_in_set() {
+    panic!("blocked");
+}
+
+// ===========================================================================
 // Transfer with BoundDelta on both sides → γ.2 territory
 // ===========================================================================
 
