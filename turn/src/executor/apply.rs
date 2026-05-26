@@ -4501,23 +4501,6 @@ impl TurnExecutor {
 
     // ─── Shared helpers ──────────────────────────────────────────────────────
 
-    /// Check if a cell has access to a target, considering both direct capabilities
-    /// and delegated capability snapshots. Does NOT check expiry (use the height-aware
-    /// version `has_access_including_delegation_at` during execution).
-    pub(super) fn has_access_including_delegation(cell: &Cell, target: &CellId) -> bool {
-        // Direct capability
-        if cell.capabilities.has_access(target) {
-            return true;
-        }
-        // Delegated capability (from snapshot)
-        if let Some(ref delegation) = cell.delegation {
-            if delegation.has_capability(target) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Height-aware check: does the cell have a non-expired capability to the target?
     ///
     /// Uses `has_access_at` to filter out capabilities whose `expires_at` has passed.

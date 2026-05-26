@@ -313,14 +313,13 @@ impl CapabilityProof {
         }
 
         // 4. Check capability expiry.
-        if let CapabilityProofData::SignedAttestation { expires_at, .. } = &self.proof_data {
-            if let Some(exp) = expires_at {
-                if ctx.current_height > *exp {
-                    return Err(CapabilityProofError::CapabilityExpired {
-                        expires_at: *exp,
-                        current_height: ctx.current_height,
-                    });
-                }
+        let CapabilityProofData::SignedAttestation { expires_at, .. } = &self.proof_data;
+        if let Some(exp) = expires_at {
+            if ctx.current_height > *exp {
+                return Err(CapabilityProofError::CapabilityExpired {
+                    expires_at: *exp,
+                    current_height: ctx.current_height,
+                });
             }
         }
 

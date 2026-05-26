@@ -8,7 +8,7 @@
 //! - Chained attenuation: repeated narrowing is monotone and each step accepted.
 //! - Attenuating a cap held by a *different* actor is rejected.
 
-use pyana_cell::{AuthRequired, CapabilityRef, Cell, CellId, Ledger, Permissions};
+use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use pyana_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,

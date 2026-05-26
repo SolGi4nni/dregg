@@ -271,7 +271,6 @@ fn enliven_ref_honest_path_accepted() {
 #[test]
 fn enliven_ref_rejects_no_capability_for_expected_cell() {
     let target = make_cell(2, 0, open_permissions());
-    let target_id = target.id();
     let other_cell_id = CellId([0xEEu8; 32]); // bearer has NO cap for this
     let bearer = make_cell(3, 0, open_permissions());
     let bearer_id = bearer.id();
@@ -403,6 +402,8 @@ fn enliven_ref_expected_cell_id_distinct_effects_hash() {
 fn short(r: &pyana_turn::TurnResult) -> String {
     match r {
         pyana_turn::TurnResult::Committed { .. } => "Committed".into(),
+        pyana_turn::TurnResult::Expired => "Expired".into(),
+        pyana_turn::TurnResult::Pending => "Pending".into(),
         pyana_turn::TurnResult::Rejected { reason, .. } => format!("Rejected({reason:?})"),
     }
 }

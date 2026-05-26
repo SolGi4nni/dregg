@@ -62,40 +62,30 @@ pub(crate) enum JournalEntry {
     },
     /// A cell's delegation_epoch was changed. Records the old epoch.
     SetDelegationEpoch { cell: CellId, old_epoch: u64 },
-    /// A note was spent (nullifier revealed). Recorded so the note layer can
-    /// update the nullifier set after the turn commits.
-    NoteSpend { nullifier: Nullifier },
-    /// A note was created (commitment added). Recorded so the note layer can
-    /// insert into the note tree after the turn commits.
-    NoteCreate { commitment: NoteCommitment },
-    /// An obligation was created. Recorded for the obligation registry.
-    ObligationCreated {
-        obligor: CellId,
-        beneficiary: CellId,
-        deadline_height: u64,
-        stake: NoteCommitment,
-    },
-    /// An obligation was fulfilled. Recorded for the obligation registry.
-    ObligationFulfilled { obligation_id: [u8; 32] },
-    /// An obligation was slashed. Recorded for the obligation registry.
-    ObligationSlashed { obligation_id: [u8; 32] },
+    /// A note was spent (nullifier revealed). Marker for journal replay ordering;
+    /// actual nullifier insertion is tracked via NoteNullifierInserted.
+    NoteSpend,
+    /// A note was created (commitment added). Marker for journal replay ordering.
+    NoteCreate,
+    /// An obligation was created. Marker for journal replay ordering;
+    /// actual data lives on the Effect that triggered this entry.
+    ObligationCreated,
+    /// An obligation was fulfilled. Marker for journal replay ordering.
+    ObligationFulfilled,
+    /// An obligation was slashed. Marker for journal replay ordering.
+    ObligationSlashed,
     /// An event was emitted from a cell. Recorded so the receipt can include it.
     EventEmitted {
         cell: CellId,
         topic: Symbol,
         data: Vec<FieldElement>,
     },
-    /// An escrow was created. Recorded for the escrow registry.
-    EscrowCreated {
-        escrow_id: [u8; 32],
-        creator: CellId,
-        recipient: CellId,
-        amount: u64,
-    },
-    /// An escrow was released (condition satisfied, funds sent to recipient).
-    EscrowReleased { escrow_id: [u8; 32] },
-    /// An escrow was refunded (timeout passed, funds returned to creator).
-    EscrowRefunded { escrow_id: [u8; 32] },
+    /// An escrow was created. Marker for journal replay ordering.
+    EscrowCreated,
+    /// An escrow was released (condition satisfied, funds sent to recipient). Marker.
+    EscrowReleased,
+    /// An escrow was refunded (timeout passed, funds returned to creator). Marker.
+    EscrowRefunded,
     /// An obligation was inserted into the executor's obligation map.
     /// On rollback, this obligation_id must be REMOVED from the map.
     ObligationInserted { obligation_id: [u8; 32] },
@@ -109,12 +99,12 @@ pub(crate) enum JournalEntry {
     /// `note_nullifiers` set. On rollback this nullifier must be REMOVED so
     /// a failed turn doesn't permanently burn the note.
     NoteNullifierInserted { nullifier: Nullifier },
-    /// A committed escrow was created. Recorded for event tracking.
-    CommittedEscrowCreated { escrow_id: [u8; 32], amount: u64 },
-    /// A committed escrow was released (recipient claimed).
-    CommittedEscrowReleased { escrow_id: [u8; 32] },
-    /// A committed escrow was refunded (creator reclaimed after timeout).
-    CommittedEscrowRefunded { escrow_id: [u8; 32] },
+    /// A committed escrow was created. Marker for journal replay ordering.
+    CommittedEscrowCreated,
+    /// A committed escrow was released (recipient claimed). Marker.
+    CommittedEscrowReleased,
+    /// A committed escrow was refunded (creator reclaimed after timeout). Marker.
+    CommittedEscrowRefunded,
     /// A committed escrow was inserted into the executor's committed escrow map.
     /// On rollback, this escrow_id must be REMOVED from both committed_escrows
     /// and committed_escrow_amounts maps.
@@ -236,42 +226,36 @@ impl LedgerJournal {
             .push(JournalEntry::SetDelegationEpoch { cell, old_epoch });
     }
 
-    /// Record a note spend (nullifier revealed).
-    pub fn record_note_spend(&mut self, nullifier: Nullifier) {
-        self.entries.push(JournalEntry::NoteSpend { nullifier });
+    /// Record a note spend (nullifier revealed). Actual nullifier insertion
+    /// is tracked separately via `record_note_nullifier_inserted`.
+    pub fn record_note_spend(&mut self, _nullifier: Nullifier) {
+        self.entries.push(JournalEntry::NoteSpend);
     }
 
-    /// Record a note creation (commitment added to tree).
-    pub fn record_note_create(&mut self, commitment: NoteCommitment) {
-        self.entries.push(JournalEntry::NoteCreate { commitment });
+    /// Record a note creation (commitment added to tree). Ordering marker only.
+    pub fn record_note_create(&mut self, _commitment: NoteCommitment) {
+        self.entries.push(JournalEntry::NoteCreate);
     }
 
-    /// Record an obligation creation.
+    /// Record an obligation creation. Ordering marker only; data lives on the Effect.
     pub fn record_obligation_created(
         &mut self,
-        obligor: CellId,
-        beneficiary: CellId,
-        deadline_height: u64,
-        stake: NoteCommitment,
+        _obligor: CellId,
+        _beneficiary: CellId,
+        _deadline_height: u64,
+        _stake: NoteCommitment,
     ) {
-        self.entries.push(JournalEntry::ObligationCreated {
-            obligor,
-            beneficiary,
-            deadline_height,
-            stake,
-        });
+        self.entries.push(JournalEntry::ObligationCreated);
     }
 
-    /// Record an obligation fulfillment.
-    pub fn record_obligation_fulfilled(&mut self, obligation_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::ObligationFulfilled { obligation_id });
+    /// Record an obligation fulfillment. Ordering marker only.
+    pub fn record_obligation_fulfilled(&mut self, _obligation_id: [u8; 32]) {
+        self.entries.push(JournalEntry::ObligationFulfilled);
     }
 
-    /// Record an obligation slash.
-    pub fn record_obligation_slashed(&mut self, obligation_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::ObligationSlashed { obligation_id });
+    /// Record an obligation slash. Ordering marker only.
+    pub fn record_obligation_slashed(&mut self, _obligation_id: [u8; 32]) {
+        self.entries.push(JournalEntry::ObligationSlashed);
     }
 
     /// Record an event emission.
@@ -280,32 +264,25 @@ impl LedgerJournal {
             .push(JournalEntry::EventEmitted { cell, topic, data });
     }
 
-    /// Record an escrow creation.
+    /// Record an escrow creation. Ordering marker only; data lives on the Effect.
     pub fn record_escrow_created(
         &mut self,
-        escrow_id: [u8; 32],
-        creator: CellId,
-        recipient: CellId,
-        amount: u64,
+        _escrow_id: [u8; 32],
+        _creator: CellId,
+        _recipient: CellId,
+        _amount: u64,
     ) {
-        self.entries.push(JournalEntry::EscrowCreated {
-            escrow_id,
-            creator,
-            recipient,
-            amount,
-        });
+        self.entries.push(JournalEntry::EscrowCreated);
     }
 
-    /// Record an escrow release.
-    pub fn record_escrow_released(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::EscrowReleased { escrow_id });
+    /// Record an escrow release. Ordering marker only.
+    pub fn record_escrow_released(&mut self, _escrow_id: [u8; 32]) {
+        self.entries.push(JournalEntry::EscrowReleased);
     }
 
-    /// Record an escrow refund.
-    pub fn record_escrow_refunded(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::EscrowRefunded { escrow_id });
+    /// Record an escrow refund. Ordering marker only.
+    pub fn record_escrow_refunded(&mut self, _escrow_id: [u8; 32]) {
+        self.entries.push(JournalEntry::EscrowRefunded);
     }
 
     /// Record that an obligation was inserted into the executor's obligation map.
@@ -337,22 +314,19 @@ impl LedgerJournal {
             .push(JournalEntry::NoteNullifierInserted { nullifier });
     }
 
-    /// Record a committed escrow creation.
-    pub fn record_committed_escrow_created(&mut self, escrow_id: [u8; 32], amount: u64) {
-        self.entries
-            .push(JournalEntry::CommittedEscrowCreated { escrow_id, amount });
+    /// Record a committed escrow creation. Ordering marker only.
+    pub fn record_committed_escrow_created(&mut self, _escrow_id: [u8; 32], _amount: u64) {
+        self.entries.push(JournalEntry::CommittedEscrowCreated);
     }
 
-    /// Record a committed escrow release.
-    pub fn record_committed_escrow_released(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::CommittedEscrowReleased { escrow_id });
+    /// Record a committed escrow release. Ordering marker only.
+    pub fn record_committed_escrow_released(&mut self, _escrow_id: [u8; 32]) {
+        self.entries.push(JournalEntry::CommittedEscrowReleased);
     }
 
-    /// Record a committed escrow refund.
-    pub fn record_committed_escrow_refunded(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::CommittedEscrowRefunded { escrow_id });
+    /// Record a committed escrow refund. Ordering marker only.
+    pub fn record_committed_escrow_refunded(&mut self, _escrow_id: [u8; 32]) {
+        self.entries.push(JournalEntry::CommittedEscrowRefunded);
     }
 
     /// Record that a committed escrow was inserted into the executor's maps.

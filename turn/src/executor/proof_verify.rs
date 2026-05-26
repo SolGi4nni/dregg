@@ -1504,15 +1504,6 @@ impl TurnExecutor {
         result
     }
 
-    /// Decode 8 u32 values (from proof public_inputs) back into a 32-byte hash.
-    pub(super) fn babybear_slice_to_bytes32(values: &[u32]) -> [u8; 32] {
-        let mut result = [0u8; 32];
-        for (i, &val) in values.iter().take(8).enumerate() {
-            result[i * 4..i * 4 + 4].copy_from_slice(&val.to_le_bytes());
-        }
-        result
-    }
-
     /// Convert 4 BabyBear elements to a 16-byte array (for custom proof commitment matching).
     pub(super) fn babybear4_to_bytes16(elems: &[pyana_circuit::field::BabyBear; 4]) -> [u8; 16] {
         let mut result = [0u8; 16];
@@ -1908,28 +1899,6 @@ impl TurnExecutor {
             ((-net_delta) as u32, 1u32)
         } else {
             (net_delta as u32, 0u32)
-        }
-    }
-
-    /// Compute a BLAKE3 hash of the turn's effects for proof-carrying verification.
-    ///
-    /// This hashes all effects in the call forest deterministically (DFS order).
-    pub(super) fn compute_turn_effects_hash(&self, turn: &Turn) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
-        for root in &turn.call_forest.roots {
-            Self::hash_tree_effects(root, &mut hasher);
-        }
-        *hasher.finalize().as_bytes()
-    }
-
-    /// Recursively hash effects from a call tree into a hasher.
-    pub(super) fn hash_tree_effects(tree: &CallTree, hasher: &mut blake3::Hasher) {
-        for effect in &tree.action.effects {
-            hasher.update(&effect.hash());
-        }
-        for child in &tree.children {
-            Self::hash_tree_effects(child, hasher);
         }
     }
 }

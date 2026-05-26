@@ -255,7 +255,7 @@ fn test_multi_action_with_children() {
 #[test]
 fn test_permission_denied_proof_required() {
     let mut ledger = Ledger::new();
-    let (agent, agent_kp) = make_sig_cell(1, 5000);
+    let (agent, _agent_kp) = make_sig_cell(1, 5000);
     let agent_id = agent.id();
 
     // Target requires Proof for set_state.
@@ -489,7 +489,7 @@ fn test_proof_rejected_no_verification_key() {
 #[test]
 fn test_real_signature_verification() {
     let mut ledger = Ledger::new();
-    let (agent, agent_kp) = make_sig_cell(1, 5000);
+    let (agent, _agent_kp) = make_sig_cell(1, 5000);
     let agent_id = agent.id();
 
     // Target with Signature-required permissions.
@@ -7769,7 +7769,7 @@ fn generate_valid_sovereign_proof(
 /// The returned `new_commitment` is in the same format, ready to be stored in the
 /// ledger and verified by `TurnExecutor::commitment_to_4bb`.
 fn generate_valid_sovereign_proof_with_new_commit(
-    old_commitment: &[u8; 32],
+    _old_commitment: &[u8; 32],
 ) -> (Vec<u8>, [u8; 32]) {
     use pyana_circuit::effect_vm::{CellState, Effect as VmEffect, pi};
     use pyana_circuit::stark::{proof_to_bytes, prove};
@@ -11852,7 +11852,9 @@ fn test_adversarial_fulfill_obligation_no_verifier_stark_proof() {
                     obligation_id,
                     proof: crate::conditional::ConditionProof::StarkProof {
                         proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF], // non-empty
-                        public_inputs: vec![],
+                        public_outputs: vec![],
+                        federation_root: [0u8; 32],
+                        air_name: "test".to_string(),
                     },
                 })
                 .build();

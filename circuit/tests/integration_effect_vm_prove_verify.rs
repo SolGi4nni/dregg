@@ -18,7 +18,7 @@ use pyana_circuit::{
         extract_net_delta, generate_effect_vm_trace, generate_effect_vm_trace_ext, pi,
     },
     poseidon2::hash_2_to_1,
-    stark::{self, proof_from_bytes, proof_to_bytes},
+    stark::{self, StarkAir, proof_from_bytes, proof_to_bytes},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

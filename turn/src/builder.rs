@@ -343,9 +343,7 @@ impl TurnBuilder {
     }
 
     /// Build the Turn from the accumulated configuration.
-    pub fn build(mut self) -> Turn {
-        // Drain legacy builders into the canonical action list. Each legacy
-        // action enters in its `UncheckedOptIn` state.
+    pub fn build(self) -> Turn {
         let mut forest = CallForest::new();
         for awc in self.actions {
             awc.attach_to_forest(&mut forest);

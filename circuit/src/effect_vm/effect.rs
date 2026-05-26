@@ -8,7 +8,7 @@
 use crate::field::BabyBear;
 
 /// An effect to be proven in the VM.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     /// No operation (used for padding).
     NoOp,

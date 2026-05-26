@@ -113,10 +113,10 @@ fn bench_throughput(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_stark_over_wire(c: &mut Criterion) {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::{self, proof_to_bytes};
     use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
     use pyana_circuit::dsl::membership::prove_membership_dsl;
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::stark::{self, proof_to_bytes};
 
     // Generate a real STARK proof using the Poseidon2-based membership circuit
     // (replaces the deprecated MerkleStarkAir which uses a linear hash binding).
@@ -125,7 +125,11 @@ fn bench_stark_over_wire(c: &mut Criterion) {
         [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
         [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
         [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-        [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+        [
+            BabyBear::new(1000),
+            BabyBear::new(1100),
+            BabyBear::new(1200),
+        ],
     ];
     let positions: Vec<u8> = vec![0, 1, 2, 3];
     let proof = prove_membership_dsl(leaf, &siblings, &positions)

@@ -630,6 +630,7 @@ impl Cell {
     /// re-export it deliberately) can invoke it. External orchestration
     /// should go through a signature-required constructor or
     /// `DelegatedRef::new` with a real signature.
+    #[cfg(test)]
     pub(crate) fn spawn_child_with_delegation(
         &self,
         child_public_key: [u8; 32],

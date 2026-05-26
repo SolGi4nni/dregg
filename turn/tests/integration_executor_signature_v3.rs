@@ -8,7 +8,7 @@
 //! `finality`, `effects_hash`, `derivation_records`,
 //! `previous_receipt_hash`, etc.
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use pyana_turn::turn::{Finality, TurnReceipt};
 use pyana_turn::verify::{sign_receipt, verify_receipt_chain_with_keys};
 use pyana_types::CellId;

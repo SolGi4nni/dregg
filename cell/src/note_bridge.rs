@@ -56,21 +56,6 @@ pub enum BridgeDestination {
     },
 }
 
-/// Serde helper for `[u8; 64]` (Ed25519 signatures).
-mod signature_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
-        bytes.as_slice().serialize(ser)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
-        let v: Vec<u8> = Vec::deserialize(de)?;
-        v.try_into()
-            .map_err(|_| serde::de::Error::custom("expected 64 bytes for signature"))
-    }
-}
-
 /// A portable note proof that can be presented to another federation.
 ///
 /// This is the "bridge message" — the thing Alice creates in Federation A
