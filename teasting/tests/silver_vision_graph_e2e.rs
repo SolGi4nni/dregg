@@ -524,11 +524,11 @@ fn silver_vision_graph_e2e() {
     // set proposer/treasury so shares (50%/30%) appear in per-step post_state_hash,
     // final ledger.root() (thus AR merkle_root), receipt_stream (via receipts), and deltas.
     // 5 turns × 300 fee = 1500 total; proposer gets 750, treasury 450.
-    let mut prop_cell = permissive_cell("fee-proposer-silver", 0);
+    let prop_cell = permissive_cell("fee-proposer-silver", 0);
     let prop_id = prop_cell.id();
     ledger.insert_cell(prop_cell).unwrap();
     executor.set_proposer_cell(prop_id);
-    let mut treas_cell = permissive_cell("fee-treasury-silver", 0);
+    let treas_cell = permissive_cell("fee-treasury-silver", 0);
     let treas_id = treas_cell.id();
     ledger.insert_cell(treas_cell).unwrap();
     executor.set_treasury_cell(treas_id);
@@ -622,10 +622,10 @@ fn silver_vision_graph_e2e() {
         "replay ledger must produce the same cell ids"
     );
     // Mirror p/t setup so replay root matches (shares credited deterministically in both).
-    let mut replay_prop = permissive_cell("fee-proposer-silver", 0);
+    let replay_prop = permissive_cell("fee-proposer-silver", 0);
     let replay_prop_id = replay_prop.id();
     replay_ledger.insert_cell(replay_prop).unwrap();
-    let mut replay_treas = permissive_cell("fee-treasury-silver", 0);
+    let replay_treas = permissive_cell("fee-treasury-silver", 0);
     let replay_treas_id = replay_treas.id();
     replay_ledger.insert_cell(replay_treas).unwrap();
     let mut replay_executor = TurnExecutor::new(ComputronCosts::default_costs());

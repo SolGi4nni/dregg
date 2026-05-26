@@ -7,7 +7,6 @@
 //! - View changes: leader failure triggers view change.
 
 use dregg_teasting::federation::{drive_to_finalization, quick_federation};
-use dregg_teasting::harness::SimulationHarness;
 
 /// Basic consensus: 4 nodes, all online, finalize a revocation block.
 #[test]

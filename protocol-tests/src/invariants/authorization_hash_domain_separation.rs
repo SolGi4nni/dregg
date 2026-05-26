@@ -11,8 +11,8 @@
 
 use crate::Invariant;
 use dregg_cell::CellId;
-use dregg_turn::DelegationMode;
 use dregg_turn::action::{Action, Authorization};
+use dregg_turn::{BearerCapProof, DelegationMode, DelegationProofData};
 use proptest::prelude::*;
 
 pub struct AuthorizationHashDomainSeparation;

@@ -340,7 +340,7 @@ fn main() {
     let mut temp_forest = CallForest::new();
     temp_forest.add_root(alice_action.clone());
     temp_forest.add_root(bob_action.clone());
-    let forest_root = temp_forest.hash();
+    let _forest_root = temp_forest.hash();
 
     let alice_signing_msg =
         TurnExecutor::compute_partial_signing_message(&alice_action, 0, &[0u8; 32], 0);

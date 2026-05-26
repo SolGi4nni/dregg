@@ -18,7 +18,7 @@
 use dregg_cell::CellId;
 use dregg_cell::note::NoteCommitment;
 use dregg_turn::{
-    ConditionProof, DEFAULT_MAX_ROOT_AGE, ProofCondition, ProofObligation, TrustedRoot,
+    ConditionProof, DEFAULT_MAX_ROOT_AGE, ProofCondition, TrustedRoot,
     obligation::{ObligationOutcome, check_expiry, create_obligation, fulfill_obligation},
 };
 use std::collections::HashSet;

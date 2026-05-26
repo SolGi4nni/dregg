@@ -4289,7 +4289,7 @@ mod tests {
     use super::*;
     use dregg_coord::{AtomicForest, Coordinator, Decision, Vote};
     use dregg_turn::ComputronCosts;
-    use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+    use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode};
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 

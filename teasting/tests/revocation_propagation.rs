@@ -4,7 +4,6 @@
 //! of that token and can produce non-membership proofs.
 
 use dregg_teasting::federation::{drive_to_finalization, quick_federation};
-use dregg_teasting::harness::SimulationHarness;
 
 /// Basic revocation: submit, finalize, verify all nodes show revoked.
 #[test]

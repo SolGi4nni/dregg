@@ -13,11 +13,10 @@ use dregg_cell::note_bridge::{
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_teasting::agent::SimAgent;
 use dregg_teasting::federation::{drive_to_finalization, dual_federation};
-use dregg_teasting::harness::SimulationHarness;
 use dregg_token::RevocationRegistry;
 use dregg_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
-    DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
+    DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor,
     action::{Action, Authorization, DelegationMode},
     compute_conditional_deposit, resolve_condition, validate_conditional_submission,
 };
@@ -341,7 +340,7 @@ fn test_note_bridge_between_federations() {
         .clone();
 
     // --- Step 2: Define federation identities ---
-    let fed_a_id: [u8; 32] = fed_a_root.merkle_root;
+    let _fed_a_id: [u8; 32] = fed_a_root.merkle_root;
     let fed_b_id: [u8; 32] = [0xBB; 32];
 
     // --- Step 3: Alice creates a note in Fed A and initiates a bridge ---

@@ -18,7 +18,7 @@ use dregg_turn::fast_path::{
     process_fast_path_lock,
 };
 use dregg_turn::forest::{CallForest, CallTree};
-use dregg_turn::{ExecutionPath, Turn, TurnResult, compute_execution_path};
+use dregg_turn::{ExecutionPath, Turn, compute_execution_path};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 /// Derive a deterministic Ed25519 keypair from a u8 seed.

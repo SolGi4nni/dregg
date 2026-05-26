@@ -18,7 +18,13 @@
 //! attenuation check.
 
 use crate::Invariant;
+use crate::generators::{LedgerSpec, build_open_ledger, capability::arb_auth_required};
 
+use dregg_cell::{AuthRequired, CapabilityRef, is_attenuation};
+use dregg_turn::{
+    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, Turn, TurnExecutor,
+    TurnResult,
+};
 use proptest::prelude::*;
 
 pub struct CapabilityAttenuation;

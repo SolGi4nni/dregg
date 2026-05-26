@@ -12,9 +12,8 @@ use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit::predicate_air::{
     PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
 };
-use dregg_sdk::{AgentCipherclerk, AuthRequest};
+use dregg_sdk::AuthRequest;
 use dregg_teasting::agent::{SimAgent, shared_root_key};
-use dregg_teasting::assertions::assert_unlinkable;
 
 /// Same token, same request, two presentations: presentation tags must differ.
 #[test]

@@ -14,7 +14,10 @@
 //! `tests/src/main.rs`'s helper module.
 
 use dregg_cell::CellId;
-use dregg_turn::action::{Action, Authorization, DelegationMode};
+use dregg_turn::action::{
+    Action, Authorization, BearerCapProof, DelegationMode, DelegationProofData,
+};
+use dregg_turn::{CallForest, Effect, Turn};
 
 // ---------------------------------------------------------------------------
 // Helpers

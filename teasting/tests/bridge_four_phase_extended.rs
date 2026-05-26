@@ -12,9 +12,9 @@
 
 use dregg_cell::note::{NoteCommitment, Nullifier};
 use dregg_cell::note_bridge::{
-    BridgeError, BridgePhase, BridgePhaseError, BridgePhaseLog, BridgeReceiptEnvelope,
-    BridgedNullifierSet, PendingBridgeSet, compute_bridge_id, create_portable_note,
-    initiate_bridge, verify_portable_note,
+    BridgeError, BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope, BridgedNullifierSet,
+    PendingBridgeSet, compute_bridge_id, create_portable_note, initiate_bridge,
+    verify_portable_note,
 };
 use dregg_types::{AttestedRoot, FederationId};
 

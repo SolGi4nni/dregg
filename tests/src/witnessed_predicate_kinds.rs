@@ -14,8 +14,10 @@
 //!   2. Adversarial — tampered proof / wrong commitment rejected.
 //!   3. Registry lookup — unknown kind rejected.
 
-use dregg_cell::InputRef;
-use dregg_cell::predicate::{WitnessedPredicate, WitnessedPredicateKind};
+use dregg_cell::predicate::{
+    WitnessedPredicate, WitnessedPredicateKind, WitnessedPredicateRegistry,
+};
+use dregg_cell::{InputRef, ProgramError};
 
 // ---------------------------------------------------------------------------
 // Helpers / shared concerns

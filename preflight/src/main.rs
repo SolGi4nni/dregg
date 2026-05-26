@@ -73,6 +73,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::CheckResult;
 
     fn assert_all_passed(name: &str, results: Vec<CheckResult>) {
         for r in &results {

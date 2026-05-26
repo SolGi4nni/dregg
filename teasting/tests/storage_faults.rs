@@ -1146,7 +1146,7 @@ fn operator_bond_invariant_holds_under_faults() {
 /// This proves the system does not double-spend queue contents.
 #[test]
 fn atomic_tx_concurrent_dequeue_conflict_second_fails() {
-    use dregg_storage::atomic::{QueueOp, QueueTransaction, TxError};
+    use dregg_storage::atomic::{QueueTransaction, TxError};
     use std::collections::HashMap;
 
     let queue_a_id = [0x0A; 32];
@@ -1328,10 +1328,7 @@ fn atomic_tx_stale_root_assertion_rejected() {
 /// The circuit must reject (constraint: old_f4 == combined_old_root param).
 #[test]
 fn circuit_atomic_tx_wrong_old_root_rejected() {
-    use dregg_circuit::effect_vm::{
-        CellState, Effect, EffectVmAir, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
-        generate_effect_vm_trace, param, state,
-    };
+    use dregg_circuit::effect_vm::{CellState, Effect, EffectVmAir, generate_effect_vm_trace};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::poseidon2::hash_2_to_1;
     use dregg_circuit::stark::StarkAir;
@@ -1379,7 +1376,7 @@ fn circuit_atomic_tx_wrong_old_root_rejected() {
 #[test]
 fn circuit_atomic_tx_balance_change_rejected() {
     use dregg_circuit::effect_vm::{
-        AUX_BASE, CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, STATE_AFTER_BASE, aux_off,
+        AUX_BASE, CellState, Effect, EffectVmAir, STATE_AFTER_BASE, aux_off,
         generate_effect_vm_trace, state,
     };
     use dregg_circuit::field::BabyBear;

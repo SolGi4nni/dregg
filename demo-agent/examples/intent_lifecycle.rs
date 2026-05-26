@@ -24,7 +24,7 @@ use dregg_intent::gossip::{
 };
 use dregg_intent::matcher::{self, HeldCapability, MatchResult, Sensitivity};
 use dregg_intent::{
-    ActionPattern, CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof, VerificationMode,
+    ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec, StakeProof, VerificationMode,
 };
 
 fn main() {

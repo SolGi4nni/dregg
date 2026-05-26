@@ -23,7 +23,6 @@ use starbridge_identity::{
     REVOCATION_ROOT_SLOT, RevocationRegistry, VerificationOptions, build_issue_credential_action,
     build_present_credential_action, build_revoke_credential_action,
     build_verify_presentation_action, issue, kyc_schema, present, present_anonymous, revoke,
-    verify,
 };
 
 // =============================================================================

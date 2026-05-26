@@ -35,9 +35,7 @@ use dregg_circuit::{
     },
     poseidon2,
     predicate_types::compute_fact_commitment,
-    prove_predicate,
-    stark::proof_to_bytes,
-    verify_predicate,
+    prove_predicate, verify_predicate,
 };
 use dregg_turn::{ConditionProof, ConditionalTurn, ProofCondition, compute_conditional_deposit};
 
