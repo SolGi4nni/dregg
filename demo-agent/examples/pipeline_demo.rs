@@ -11,9 +11,9 @@
 //! that reference outputs of earlier turns, and the executor resolves them
 //! in causal order — all in a single network round-trip.
 
-use pyana_cell::Preconditions;
-use pyana_cell::{AuthRequired, CellId, Ledger, Permissions};
-use pyana_turn::{
+use dregg_cell::Preconditions;
+use dregg_cell::{AuthRequired, CellId, Ledger, Permissions};
+use dregg_turn::{
     Action, Authorization, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect,
     EventualRef, Pipeline, PipelineError, Turn, TurnExecutor, execute_pipeline,
 };
@@ -32,9 +32,9 @@ fn short_hex(bytes: &[u8]) -> String {
 }
 
 /// Create a cell with open permissions (no auth required for anything).
-fn make_open_cell(pk: [u8; 32], balance: u64) -> pyana_cell::Cell {
+fn make_open_cell(pk: [u8; 32], balance: u64) -> dregg_cell::Cell {
     let token_id = [0u8; 32];
-    let mut cell = pyana_cell::Cell::with_balance(pk, token_id, balance);
+    let mut cell = dregg_cell::Cell::with_balance(pk, token_id, balance);
     cell.permissions = Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,
@@ -87,7 +87,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
 }
 
 fn main() {
-    println!("=== Pyana Pipeline Demo (E-style Eventual-Send) ===\n");
+    println!("=== Dregg Pipeline Demo (E-style Eventual-Send) ===\n");
 
     // ─── Setup: Create initial cells ────────────────────────────────────────
     let mut ledger = Ledger::new();

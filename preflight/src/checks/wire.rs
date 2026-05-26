@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use pyana_wire::auth::{RateLimitConfig, RateLimiter};
-use pyana_wire::message::{AuthorizationRequest, Envelope, WireMessage};
-use pyana_wire::server::PeerRole;
+use dregg_wire::auth::{RateLimitConfig, RateLimiter};
+use dregg_wire::message::{AuthorizationRequest, Envelope, WireMessage};
+use dregg_wire::server::PeerRole;
 
 use crate::report::{CheckResult, run_check};
 

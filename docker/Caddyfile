@@ -1,4 +1,4 @@
-# Local dev reverse proxy for the pyana devnet stack.
+# Local dev reverse proxy for the dregg devnet stack.
 # Accessible at http://localhost:8400
 
 :8400 {

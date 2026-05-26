@@ -4,13 +4,13 @@
 Charlie's job is to read the artifacts produced by alice + bob + silver-helper
 and run every verification check by shelling to:
 
-  * `pyana-verifier` — the standalone STARK verifier binary
+  * `dregg-verifier` — the standalone STARK verifier binary
   * `silver-helper`  — the demo-side helper that mirrors the canonical
                        executor checks for `Authorization::CapTpDelivered`,
                        `SovereignCellWitness`, slot caveats, and γ.2
                        bilateral binding
 
-Charlie does NOT speak MCP and does NOT touch a `pyana-node` process. He
+Charlie does NOT speak MCP and does NOT touch a `dregg-node` process. He
 runs strictly off-disk artifacts.
 
 The verdict JSON shape:
@@ -166,14 +166,14 @@ def build_witnessed_chain(state_dir: Path) -> list[dict]:
     the companion output files written by alice.py / bob.py.
 
     The chain now includes three entries (when all artifacts are present):
-      [0] grant   — alice's pyana_grant_capability Effect VM proof
-      [1] exercise — bob's pyana_exercise_bearer_cap Effect VM proof
+      [0] grant   — alice's dregg_grant_capability Effect VM proof
+      [1] exercise — bob's dregg_exercise_bearer_cap Effect VM proof
       [2] captp-delivered — the CapTpDelivered Turn's Effect VM proof
                             (from silver-helper make-captp-delivered-chain)
 
     Entry [2] closes the off-band gap: previously charlie verified the
     CapTpDelivered cert only via a standalone silver-helper call. Now the
-    cert's associated Turn is in the witnessed chain so pyana-verifier
+    cert's associated Turn is in the witnessed chain so dregg-verifier
     replay-chain processes it alongside the other turns.
     """
     chain: list[dict] = []
@@ -256,7 +256,7 @@ def verify_replay_chain(verifier_bin: str, chain_path: Path) -> tuple[bool, str]
 
 
 def verify_bilateral(verifier_bin: str, bundle_path: Path) -> tuple[bool, str]:
-    """Run `pyana-verifier bilateral-pair <bundle>` and parse verdict."""
+    """Run `dregg-verifier bilateral-pair <bundle>` and parse verdict."""
     rc, stdout, stderr = run_proc([verifier_bin, "bilateral-pair", str(bundle_path)], timeout=120)
     try:
         parsed = json.loads(stdout)
@@ -266,7 +266,7 @@ def verify_bilateral(verifier_bin: str, bundle_path: Path) -> tuple[bool, str]:
 
 
 def verify_scope_recursive(verifier_bin: str, chain_path: Path) -> tuple[bool, str]:
-    """Run `pyana-verifier scope-recursive <chain.json>` and parse verdict."""
+    """Run `dregg-verifier scope-recursive <chain.json>` and parse verdict."""
     rc, stdout, stderr = run_proc(
         [verifier_bin, "scope-recursive", str(chain_path)], timeout=180
     )

@@ -9,7 +9,7 @@
 //! "executor-trust" gap called out in `STAGE-7-GAMMA-AGGREGATION-DESIGN.md`
 //! §1a and the issue brief.
 //!
-//! After γ.2 Phase 2, `pyana_turn::aggregate_bilateral_prover::prove_aggregated_bundle`
+//! After γ.2 Phase 2, `dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`
 //! emits a single outer proof that algebraically binds:
 //!
 //!   1. each per-cell PI's bilateral count + root fields to the schedule the
@@ -96,14 +96,14 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use pyana_circuit::bilateral_aggregation_air as ag;
-use pyana_circuit::effect_vm::pi as inner_pi;
-use pyana_turn::aggregate_bilateral_prover::{
+use dregg_circuit::bilateral_aggregation_air as ag;
+use dregg_circuit::effect_vm::pi as inner_pi;
+use dregg_turn::aggregate_bilateral_prover::{
     AggregatedBundle, prove_aggregated_bundle, verify_aggregated_bundle,
 };
-use pyana_turn::bilateral_schedule::ExpectedBilateral;
-use pyana_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
-use pyana_types::CellId;
+use dregg_turn::bilateral_schedule::ExpectedBilateral;
+use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
+use dregg_types::CellId;
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -147,20 +147,20 @@ fn receipt_for(agent: CellId, home_fed: [u8; 32]) -> TurnReceipt {
 
 /// Fabricate an "honest" `WitnessedReceipt` whose PI carries the γ.2
 /// bilateral slots for `cell_id` against `turn`. Mirrors the helper in
-/// `pyana_verifier::bilateral_pair::fabricate_witnessed_receipt` but lets
+/// `dregg_verifier::bilateral_pair::fabricate_witnessed_receipt` but lets
 /// the caller stamp the receipt with a specific home federation id (so the
 /// resulting bundle's `federation_ids` reflects "this WR came from F1, that
 /// one from F2").
 fn fabricate_wr_for_fed(turn: &Turn, cell_id: &CellId, home_fed: [u8; 32]) -> WitnessedReceipt {
-    use pyana_circuit::field::BabyBear;
-    use pyana_turn::bilateral_schedule::project_into_pi;
+    use dregg_circuit::field::BabyBear;
+    use dregg_turn::bilateral_schedule::project_into_pi;
 
     let sched = ExpectedBilateral::from_turn(turn);
     let counts = sched.counts_for(cell_id);
     let roots = sched.roots_for(cell_id, turn.nonce);
 
     let mut pi_bb = vec![BabyBear::ZERO; inner_pi::BASE_COUNT];
-    let (th, eg, _, prev) = pyana_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
+    let (th, eg, _, prev) = dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
     for i in 0..4 {
         pi_bb[inner_pi::TURN_HASH_BASE + i] = th[i];
         pi_bb[inner_pi::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];

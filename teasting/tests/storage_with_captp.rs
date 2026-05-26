@@ -4,12 +4,12 @@
 //! hosted inboxes, offline recipient queuing, handoff certificate delivery,
 //! cross-federation inbox hosting, namespace-mounted inboxes, and quota tracking.
 
-use pyana_storage::inbox::InboxMessage;
-use pyana_storage::multi_asset::FeePolicy;
-use pyana_storage::namespace_mount::{StorageMount, StorageMountKind};
-use pyana_storage::operator::RelayOperator;
-use pyana_storage::queue::verify_dequeue_proof;
-use pyana_teasting::harness::SimulationHarness;
+use dregg_storage::inbox::InboxMessage;
+use dregg_storage::multi_asset::FeePolicy;
+use dregg_storage::namespace_mount::{StorageMount, StorageMountKind};
+use dregg_storage::operator::RelayOperator;
+use dregg_storage::queue::verify_dequeue_proof;
+use dregg_teasting::harness::SimulationHarness;
 
 /// Deterministic identity.
 fn identity(n: u8) -> [u8; 32] {
@@ -171,7 +171,7 @@ fn cross_federation_inbox_delivery() {
     // Another sender in federation B sends via the CapTP bridge.
     harness.advance_blocks(1);
     let sender_in_fed_b = identity(0x20);
-    let msg2 = ref_msg(sender_in_fed_b, "pyana://fed-b/my-capability");
+    let msg2 = ref_msg(sender_in_fed_b, "dregg://fed-b/my-capability");
     operator_fed_a
         .receive_message(&user_in_fed_b, msg2, 150, harness.clock.block_height)
         .unwrap();
@@ -301,7 +301,7 @@ fn mixed_message_types_through_relay() {
     // Send different message types.
     let messages: Vec<InboxMessage> = vec![
         cap_msg(identity(0x10), b"cert-data-here"),
-        ref_msg(identity(0x20), "pyana://fed-a/cell-42"),
+        ref_msg(identity(0x20), "dregg://fed-a/cell-42"),
         test_msg(identity(0x30), b"encrypted-payload"),
     ];
 

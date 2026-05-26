@@ -11,14 +11,14 @@
 //!     the scope-1 STARK proof passed before the tamper; the constraint walk
 //!     must catch the tamper.
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{generate_effect_vm_trace, pi},
     stark::{self, proof_to_bytes},
 };
-use pyana_commit::typed::canonical_32_to_felts_4;
-use pyana_types::CellId;
-use pyana_verifier::{
+use dregg_commit::typed::canonical_32_to_felts_4;
+use dregg_types::CellId;
+use dregg_verifier::{
     ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle, replay_chain,
 };
 
@@ -26,8 +26,8 @@ use pyana_verifier::{
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn zero_receipt() -> pyana_turn::TurnReceipt {
-    pyana_turn::TurnReceipt {
+fn zero_receipt() -> dregg_turn::TurnReceipt {
+    dregg_turn::TurnReceipt {
         turn_hash: [0u8; 32],
         forest_hash: [0u8; 32],
         pre_state_hash: [0u8; 32],
@@ -57,7 +57,7 @@ fn zero_receipt() -> pyana_turn::TurnReceipt {
 fn build_valid_entry(
     balance: u64,
     effects: &[Effect],
-    receipt: pyana_turn::TurnReceipt,
+    receipt: dregg_turn::TurnReceipt,
 ) -> ReplayEntry {
     let state = CellState::new(balance, 0);
     let (trace, mut pi) = generate_effect_vm_trace(&state, effects);
@@ -314,7 +314,7 @@ fn pi_turn_hash_mismatch_rejected() {
 /// walk) in `replay_one_with_prev`.
 #[test]
 fn scope2_tampered_trace_row_rejected_by_constraint_walk() {
-    use pyana_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
+    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
 
     let mut receipt = zero_receipt();
     receipt.turn_hash = [0x77u8; 32];

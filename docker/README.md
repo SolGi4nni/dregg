@@ -1,4 +1,4 @@
-# Pyana Devnet
+# `dregg` Devnet
 
 Launch a local 4-node federation with one command.
 
@@ -40,7 +40,7 @@ Rate limit: 1 request per recipient cell per minute. Max 10000 per request.
 Generate configuration without Docker:
 
 ```bash
-cargo run --release -p pyana-node -- genesis \
+cargo run --release -p dregg-node -- genesis \
   --validators 4 \
   --epoch-length 1000 \
   --checkpoint-interval 100 \

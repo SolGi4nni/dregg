@@ -1,13 +1,13 @@
 //! CapTP subsystem checks: swiss table, session lifecycle, handoff, pipeline, store-and-forward.
 
-use pyana_captp::FederationId as GroupId;
-use pyana_captp::handoff::HandoffCertificate;
-use pyana_captp::pipeline::PipelineRegistry;
-use pyana_captp::session::CapSession;
-use pyana_captp::store_forward::{MessagePriority, QueuedMessage};
-use pyana_captp::sturdy::SwissTable;
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, generate_keypair};
+use dregg_captp::FederationId as GroupId;
+use dregg_captp::handoff::HandoffCertificate;
+use dregg_captp::pipeline::PipelineRegistry;
+use dregg_captp::session::CapSession;
+use dregg_captp::store_forward::{MessagePriority, QueuedMessage};
+use dregg_captp::sturdy::SwissTable;
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, generate_keypair};
 
 use crate::report::{CheckResult, run_check};
 
@@ -162,9 +162,9 @@ fn check_pipeline_resolve() -> Result<(), String> {
 
     // Pipeline messages to the unresolved promise.
     let sender_fed = GroupId(*blake3::hash(b"sender-fed").as_bytes());
-    let msg = pyana_captp::pipeline::PipelinedMessage {
+    let msg = dregg_captp::pipeline::PipelinedMessage {
         target_promise_id: promise_id,
-        action: pyana_captp::pipeline::PipelinedAction {
+        action: dregg_captp::pipeline::PipelinedAction {
             method: "transfer".to_string(),
             args: vec![1, 2, 3, 4],
             authorization: vec![],

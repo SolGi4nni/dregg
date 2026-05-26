@@ -1,6 +1,6 @@
-# HANDOFF.md — pyana session state, 2026-05-25 → weekend
+# HANDOFF.md — dregg session state, 2026-05-25 → weekend
 
-For any agent (grok / codex / gemini / claude) picking up pyana work
+For any agent (grok / codex / gemini / claude) picking up dregg work
 through the weekend. Author: claude-opus session 130628b0.
 
 ## Where things are tracked
@@ -76,7 +76,7 @@ by the time you read this — check `git log --since="2026-05-26"
 --oneline` for recent landings.
 
 1. **#119**: 4 absent VmEffect variants (CellSeal, CellUnseal, ReceiptArchive, Refusal) — sonnet
-2. **#122**: `pyana_exercise_handoff_cert` MCP tool — sonnet
+2. **#122**: `dregg_exercise_handoff_cert` MCP tool — sonnet
 3. **#125**: Stage 7-γ.2 multi-cell cross-fed binding (Seam 9, aggregator AIR) — opus
 4. **Warning sweep: core proving stack** (turn/cell/circuit/verifier) — sonnet
 5. **Warning sweep: network layer** (node/federation/wire/captp/intent/bridge) — sonnet
@@ -94,8 +94,8 @@ by the time you read this — check `git log --since="2026-05-26"
 ### Important / Cleanup
 
 - **#105 / #118** `VerificationKey::new` raw BLAKE3 → `canonical_vk_v2`. **No exploitable forge today** (verifier independently re-derives). Recommendation: add `from_components(VkComponents)`, deprecate `new`. See `VK-NEW-CALLER-AUDIT.md` for caller table.
-- **#122** `pyana_exercise_handoff_cert` MCP tool (in flight)
-- **#123** Promote `cross_fed_receipt_cite` helper to shared `pyana_turn::cross_fed_cite` module
+- **#122** `dregg_exercise_handoff_cert` MCP tool (in flight)
+- **#123** Promote `cross_fed_receipt_cite` helper to shared `dregg_turn::cross_fed_cite` module
 - **#127** Warning sweep across all crate domains (3 of 4 lanes in flight, infra/test lane completed and surfaced #128 as a bug-find)
 
 ### Nice-to-have / Documented gaps
@@ -137,16 +137,16 @@ call**. Remaining gaps:
   so a multi-cell turn naturally emits an `AggregatedBundle` rather
   than expecting caller-fabricated WRs.
 
-### From #122 (pyana_exercise_handoff_cert MCP tool)
+### From #122 (dregg_exercise_handoff_cert MCP tool)
 
 The tool landed; emits `Effect::ValidateHandoff` so
 `verify_captp_delivered`'s block1-bind closure actually fires.
 Bob's actual exercise path is blocked on:
 
-- **#130** alice.py needs a `pyana-handoff:` URI format (including
-  introducer_sk) + decoder. Until then alice still emits `pyana+bearer:`
-  shims and bob.py still calls `pyana_exercise_bearer_cap`. Once #130
-  lands, switch bob's MCP call to `pyana_exercise_handoff_cert` and
+- **#130** alice.py needs a `dregg-handoff:` URI format (including
+  introducer_sk) + decoder. Until then alice still emits `dregg+bearer:`
+  shims and bob.py still calls `dregg_exercise_bearer_cap`. Once #130
+  lands, switch bob's MCP call to `dregg_exercise_handoff_cert` and
   the CapTpDelivered auth path is exercised end-to-end through the
   executor.
 
@@ -193,7 +193,7 @@ carried in a SetField value. **Promotion candidate:**
 
 - **#123** Promote `cross_fed_receipt_cite` helper +
   `CROSS_FED_RECEIPT_CITE_KIND_TAG` to a shared module
-  (`pyana_cell::unilateral` or `pyana_turn::cross_fed_cite`) so
+  (`dregg_cell::unilateral` or `dregg_turn::cross_fed_cite`) so
   protocol impls share a canonical constructor instead of re-deriving
   the preimage locally.
 
@@ -294,7 +294,7 @@ Current state (as of this handoff):
   + `VmEffect::Burn` (Effect VM AIR) are sibling layers covering
   complementary concerns. Keep both unless someone has a unified design.
 - **CapTpDelivered through executor for Bob's MCP exercise**: needs
-  `pyana_exercise_handoff_cert` MCP tool (#122, in flight) to switch
+  `dregg_exercise_handoff_cert` MCP tool (#122, in flight) to switch
   from `Authorization::Bearer` to `Authorization::CapTpDelivered`.
 
 ## Quick start for picking up the lane

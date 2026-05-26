@@ -2,13 +2,13 @@
 """cross_app_mcp.py — MCP-subprocess driver for the cross-app-e2e demo.
 
 Replaces the EmbeddedExecutor path in cross_app_helper.rs.  Spawns
-`pyana-node mcp` as a child process (JSON-RPC over stdio) and drives the
+`dregg-node mcp` as a child process (JSON-RPC over stdio) and drives the
 four new MCP tools:
 
-  pyana_issue_credential    → alice.issue.receipt.json
-  pyana_register_name       → bob.register.receipt.json
-  pyana_register_service    → bob.mount.receipt.json
-  pyana_publish_subscription → dan.claim / dan.fulfill / carol.settle…
+  dregg_issue_credential    → alice.issue.receipt.json
+  dregg_register_name       → bob.register.receipt.json
+  dregg_register_service    → bob.mount.receipt.json
+  dregg_publish_subscription → dan.claim / dan.fulfill / carol.settle…
 
 Each step writes a `<step>.receipt.json` that matches the canonical
 `ReceiptArtifact` shape expected by `verify_real.py`:
@@ -36,7 +36,7 @@ The MCP tool result text carries all of these fields from
 `verify_real.py`'s replay-chain step can use the real proof bytes.
 
 Usage:
-  python3 cross_app_mcp.py --state-dir <path> [--node-bin <pyana-node>] [--data-dir <~/.pyana>]
+  python3 cross_app_mcp.py --state-dir <path> [--node-bin <dregg-node>] [--data-dir <~/.dregg>]
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ INITIALIZED_NOTIFICATION = {
 
 
 class McpClient:
-    """Thin JSON-RPC stdio client for a single pyana-node mcp subprocess."""
+    """Thin JSON-RPC stdio client for a single dregg-node mcp subprocess."""
 
     def __init__(self, node_bin: str, data_dir: str) -> None:
         self._id = 1
@@ -105,7 +105,7 @@ class McpClient:
                 # EOF — collect stderr for debugging
                 stderr = self._proc.stderr.read() if self._proc.stderr else ""
                 raise RuntimeError(
-                    f"pyana-node mcp closed stdout unexpectedly.\nstderr:\n{stderr}"
+                    f"dregg-node mcp closed stdout unexpectedly.\nstderr:\n{stderr}"
                 )
             line = line.strip()
             if line:
@@ -239,9 +239,9 @@ def _blake3_hex(data: bytes) -> str:
 def run_story(client: McpClient, state_dir: Path) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    print("[cross-app-mcp] step 1: alice issues credential (pyana_issue_credential)", file=sys.stderr)
+    print("[cross-app-mcp] step 1: alice issues credential (dregg_issue_credential)", file=sys.stderr)
     issue_result = client.call_tool(
-        "pyana_issue_credential",
+        "dregg_issue_credential",
         {
             "schema": "kyc",
             "attributes": {
@@ -281,9 +281,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
     ]
     write_artifact(state_dir, "alice.issue", art)
 
-    print("[cross-app-mcp] step 2: bob registers bob.dev (pyana_register_name)", file=sys.stderr)
+    print("[cross-app-mcp] step 2: bob registers bob.dev (dregg_register_name)", file=sys.stderr)
     register_result = client.call_tool(
-        "pyana_register_name",
+        "dregg_register_name",
         {
             "name": "bob.dev",
             "expiry_height": 2_000_000_000,
@@ -311,9 +311,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
         art["agent_cell_hex"] = issue_result.get("holder_id", "")
     write_artifact(state_dir, "bob.register", art)
 
-    print("[cross-app-mcp] step 3: bob mounts namespace route (pyana_register_service)", file=sys.stderr)
+    print("[cross-app-mcp] step 3: bob mounts namespace route (dregg_register_service)", file=sys.stderr)
     mount_result = client.call_tool(
-        "pyana_register_service",
+        "dregg_register_service",
         {
             "path": "/bob.dev",
         },
@@ -357,22 +357,22 @@ def run_story(client: McpClient, state_dir: Path) -> None:
 
     # carol's grant actions use the EmbeddedExecutor path in the old helper;
     # the MCP tools don't have dedicated grant_publisher / grant_consumer
-    # tools, so we produce them via pyana_publish_subscription with a
+    # tools, so we produce them via dregg_publish_subscription with a
     # grant-proxy publish (seq_head=0 → 0, state Posted → Posted).
     # However, verify_real.py expects carol.grant_publisher and
     # carol.grant_consumer as separate receipt files with specific link keys.
-    # We fulfil that by reusing pyana_publish_subscription with distinct
+    # We fulfil that by reusing dregg_publish_subscription with distinct
     # payloads and writing the links verify_real.py cares about.
     #
     # Note: verify_real.py only checks chain integrity and cross-app links;
     # it does NOT check that grant_publisher emits a specific event.
-    # So a real pyana_publish_subscription receipt (with proof) satisfies all
+    # So a real dregg_publish_subscription receipt (with proof) satisfies all
     # the required assertions.
     publishers_root_hex = _blake3_hex(b"cross-app:publishers-root-v1")
 
-    print("[cross-app-mcp] step 4a: carol.grant_publisher (pyana_publish_subscription)", file=sys.stderr)
+    print("[cross-app-mcp] step 4a: carol.grant_publisher (dregg_publish_subscription)", file=sys.stderr)
     grant_pub_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 0,
             "new_message_root": publishers_root_hex,
@@ -394,9 +394,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
 
     consumers_root_hex = _blake3_hex(b"cross-app:consumers-root-v1")
 
-    print("[cross-app-mcp] step 4b: carol.grant_consumer (pyana_publish_subscription)", file=sys.stderr)
+    print("[cross-app-mcp] step 4b: carol.grant_consumer (dregg_publish_subscription)", file=sys.stderr)
     grant_con_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 0,
             "new_message_root": consumers_root_hex,
@@ -418,9 +418,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
 
     msg_root_claim_hex = _blake3_hex(b"cross-app:msg-root-v1")
 
-    print("[cross-app-mcp] step 5: dan.claim (pyana_publish_subscription Posted→Claimed)", file=sys.stderr)
+    print("[cross-app-mcp] step 5: dan.claim (dregg_publish_subscription Posted→Claimed)", file=sys.stderr)
     claim_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 1,
             "new_message_root": msg_root_claim_hex,
@@ -446,7 +446,7 @@ def run_story(client: McpClient, state_dir: Path) -> None:
     # Dan's own chain agreeing with the payload hash.
     print("[cross-app-mcp] step 5b: dan.claim_assert (mirror publish)", file=sys.stderr)
     claim_assert_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 1,
             "new_message_root": msg_root_claim_hex,
@@ -468,9 +468,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
 
     msg_root_fulfill_hex = _blake3_hex(b"cross-app:msg-root-v2")
 
-    print("[cross-app-mcp] step 6: dan.fulfill (pyana_publish_subscription Claimed→Fulfilled)", file=sys.stderr)
+    print("[cross-app-mcp] step 6: dan.fulfill (dregg_publish_subscription Claimed→Fulfilled)", file=sys.stderr)
     fulfill_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 2,
             "new_message_root": msg_root_fulfill_hex,
@@ -495,9 +495,9 @@ def run_story(client: McpClient, state_dir: Path) -> None:
 
     msg_root_settle_hex = _blake3_hex(b"cross-app:msg-root-v3")
 
-    print("[cross-app-mcp] step 7: carol.settle (pyana_publish_subscription Fulfilled→Settled)", file=sys.stderr)
+    print("[cross-app-mcp] step 7: carol.settle (dregg_publish_subscription Fulfilled→Settled)", file=sys.stderr)
     settle_result = client.call_tool(
-        "pyana_publish_subscription",
+        "dregg_publish_subscription",
         {
             "new_head": 3,
             "new_message_root": msg_root_settle_hex,
@@ -596,12 +596,12 @@ def main() -> int:
     parser.add_argument(
         "--node-bin",
         default="",
-        help="Path to pyana-node binary (default: search PATH then ../../target/debug/pyana-node)",
+        help="Path to dregg-node binary (default: search PATH then ../../target/debug/dregg-node)",
     )
     parser.add_argument(
         "--data-dir",
-        default="~/.pyana",
-        help="pyana-node data directory (must already be initialised with `pyana-node init`)",
+        default="~/.dregg",
+        help="dregg-node data directory (must already be initialised with `dregg-node init`)",
     )
     args = parser.parse_args()
 
@@ -612,11 +612,11 @@ def main() -> int:
     if not node_bin:
         # Try alongside this script first, then the workspace target/debug.
         candidates = [
-            Path(__file__).parent / "../../target/debug/pyana-node",
-            Path("/usr/local/bin/pyana-node"),
+            Path(__file__).parent / "../../target/debug/dregg-node",
+            Path("/usr/local/bin/dregg-node"),
         ]
         import shutil
-        from_path = shutil.which("pyana-node")
+        from_path = shutil.which("dregg-node")
         if from_path:
             node_bin = from_path
         else:
@@ -626,8 +626,8 @@ def main() -> int:
                     break
     if not node_bin:
         print(
-            "[cross-app-mcp] ERROR: pyana-node binary not found. "
-            "Pass --node-bin or build with `cargo build -p pyana-node`.",
+            "[cross-app-mcp] ERROR: dregg-node binary not found. "
+            "Pass --node-bin or build with `cargo build -p dregg-node`.",
             file=sys.stderr,
         )
         return 1
@@ -642,7 +642,7 @@ def main() -> int:
         print(f"[cross-app-mcp] initialising node data dir: {data_dir}", file=sys.stderr)
         rc = subprocess.call([node_bin, "init", "--data-dir", data_dir])
         if rc != 0:
-            print(f"[cross-app-mcp] ERROR: pyana-node init failed (rc={rc})", file=sys.stderr)
+            print(f"[cross-app-mcp] ERROR: dregg-node init failed (rc={rc})", file=sys.stderr)
             return 1
 
     client = McpClient(node_bin, data_dir)

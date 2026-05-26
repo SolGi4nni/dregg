@@ -125,7 +125,7 @@ async fn list(cfg: &Config, ctx: &Context, path: &str) -> Result<(), Box<dyn std
 
     if entries.is_empty() {
         ctx.info(&format!("Directory '{}' is empty.", path));
-        ctx.info("  Create entries with: pyana directory mount <path> <uri>");
+        ctx.info("  Create entries with: dregg directory mount <path> <uri>");
         return Ok(());
     }
 

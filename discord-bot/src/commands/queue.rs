@@ -1,7 +1,7 @@
 //! Programmable queue commands: `/queue-create`, `/queue-publish`, `/queue-subscribe`,
 //! `/queue-status`, `/queue-mount`.
 //!
-//! Discord channels become programmable queues mounted in the pyana namespace at
+//! Discord channels become programmable queues mounted in the dregg namespace at
 //! `/discord/<guild-id>/<name>`.
 
 use serenity::all::{
@@ -74,10 +74,10 @@ pub fn register_status() -> CreateCommand {
         )
 }
 
-/// Register `/queue-mount <name> <pyana-uri>`.
+/// Register `/queue-mount <name> <dregg-uri>`.
 pub fn register_mount() -> CreateCommand {
     CreateCommand::new("queue-mount")
-        .description("Mount an external pyana queue in this guild")
+        .description("Mount an external dregg queue in this guild")
         .add_option(
             CreateCommandOption::new(CommandOptionType::String, "name", "Local mount name")
                 .required(true),
@@ -86,7 +86,7 @@ pub fn register_mount() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "uri",
-                "pyana:// URI of the external queue",
+                "dregg:// URI of the external queue",
             )
             .required(true),
         )
@@ -339,7 +339,7 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
                 }
             };
 
-            let embed = embeds::pyana_embed("Queue Status")
+            let embed = embeds::dregg_embed("Queue Status")
                 .field("Name", &name, true)
                 .field("Depth", status.depth.to_string(), true)
                 .field("Subscribers", status.subscribers.to_string(), true)
@@ -404,7 +404,7 @@ pub async fn handle_mount(ctx: &Context, command: &CommandInteraction, state: &B
     match resp {
         Ok(r) if r.status().is_success() => {
             let embed = embeds::success_embed("Queue Mounted")
-                .description("External pyana queue is now accessible in this guild.")
+                .description("External dregg queue is now accessible in this guild.")
                 .field("Local Name", &name, true)
                 .field("Path", format!("`{namespace_path}`"), true)
                 .field("External URI", format!("`{}`", truncate(&uri, 60)), false);

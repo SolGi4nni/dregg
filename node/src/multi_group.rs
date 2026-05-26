@@ -35,12 +35,12 @@
 
 use std::collections::HashMap;
 
-use pyana_blocklace::addressing::GroupId;
-use pyana_blocklace::constitution::GovernedReferenceGroup;
-use pyana_blocklace::cross_reference::{BlockPayload, CrossRefPolicy, DagDeliveredProof};
-use pyana_blocklace::dissemination::{Disseminator, Subscription};
-use pyana_blocklace::ordering::{OrderingConfig, tau_unified};
-use pyana_blocklace::{Block, BlockId, Blocklace, NodeKey};
+use dregg_blocklace::addressing::GroupId;
+use dregg_blocklace::constitution::GovernedReferenceGroup;
+use dregg_blocklace::cross_reference::{BlockPayload, CrossRefPolicy, DagDeliveredProof};
+use dregg_blocklace::dissemination::{Disseminator, Subscription};
+use dregg_blocklace::ordering::{OrderingConfig, tau_unified};
+use dregg_blocklace::{Block, BlockId, Blocklace, NodeKey};
 use tracing::{debug, info};
 
 // =============================================================================
@@ -523,7 +523,7 @@ impl std::error::Error for ProofForwardError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_blocklace::cross_reference::CrossRefPolicy;
+    use dregg_blocklace::cross_reference::CrossRefPolicy;
 
     fn make_key(id: u8) -> NodeKey {
         [id; 32]

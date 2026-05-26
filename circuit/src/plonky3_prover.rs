@@ -61,7 +61,7 @@ type Perm16 = Poseidon2BabyBear<16>;
 type EF = BinomialExtensionField<P3BabyBear, 4>;
 
 /// The DFT implementation (parallel radix-2).
-type PyanaDft = Radix2DitParallel<P3BabyBear>;
+type DreggDft = Radix2DitParallel<P3BabyBear>;
 
 // ============================================================================
 // Configuration builder
@@ -81,15 +81,15 @@ type TestMmcs = MerkleTreeMmcs<
 >;
 type TestChallenger = DuplexChallenger<P3BabyBear, Perm16, 16, 8>;
 type TestPcs =
-    TwoAdicFriPcs<P3BabyBear, PyanaDft, TestMmcs, ExtensionMmcs<P3BabyBear, EF, TestMmcs>>;
+    TwoAdicFriPcs<P3BabyBear, DreggDft, TestMmcs, ExtensionMmcs<P3BabyBear, EF, TestMmcs>>;
 
 /// The actual STARK config type used (matching Plonky3's own test setup).
-pub type PyanaStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
+pub type DreggStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
 
-/// A Plonky3 proof object for pyana circuits.
-pub type PyanaProof = Proof<PyanaStarkConfig>;
+/// A Plonky3 proof object for dregg circuits.
+pub type DreggProof = Proof<DreggStarkConfig>;
 
-pub fn create_config() -> PyanaStarkConfig {
+pub fn create_config() -> DreggStarkConfig {
     let perm16 = default_babybear_poseidon2_16();
 
     let hash = PaddingFreeSponge::new(perm16.clone());
@@ -608,7 +608,7 @@ pub fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
 /// Prove a MerklePoseidon2 membership proof using Plonky3.
 ///
 /// Uses the sound AIR with inline Poseidon2 constraints.
-pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> PyanaProof {
+pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> DreggProof {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
 
@@ -619,7 +619,7 @@ pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> Pya
 }
 
 /// Verify a Plonky3 proof for MerklePoseidon2 membership.
-pub fn verify_plonky3(proof: &PyanaProof, public_inputs: &[BabyBear]) -> Result<(), String> {
+pub fn verify_plonky3(proof: &DreggProof, public_inputs: &[BabyBear]) -> Result<(), String> {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
 
@@ -637,7 +637,7 @@ pub fn prove_membership_plonky3(
     leaf_hash: BabyBear,
     siblings: &[[BabyBear; 3]],
     positions: &[u8],
-) -> Result<PyanaProof, String> {
+) -> Result<DreggProof, String> {
     let (trace, public_inputs) = generate_sound_merkle_trace(leaf_hash, siblings, positions);
     let proof = prove_plonky3(&trace, &public_inputs);
     verify_plonky3(&proof, &public_inputs)?;

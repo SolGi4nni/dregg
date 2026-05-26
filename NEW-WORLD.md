@@ -1,10 +1,10 @@
-# pyana — the new world
+# dregg — the new world
 
-What pyana is, in its current shape (2026-05-24), after a season of substrate work. This document captures the design coherence — what we call it, what its layers do, and how they compose. It is not a tutorial; it is the design story.
+What dregg is, in its current shape (2026-05-24), after a season of substrate work. This document captures the design coherence — what we call it, what its layers do, and how they compose. It is not a tutorial; it is the design story.
 
 ## Tagline
 
-**pyana is a proof-carrying capability mesh.**
+**dregg is a proof-carrying capability mesh.**
 
 It composes:
 - **Distributed object substrate** (OCapN lineage — sturdy refs, attenuable caps, three-party handoff, swiss-table fast routing, distributed GC).
@@ -33,7 +33,7 @@ Silver makes Golden meaningful: there is nothing to constrain algebraically unti
 - **Capability** — a reference to a cell-method composition, attenuable. Faceted caps narrow permissions; sealed caps gate visibility; bearer caps grant exercise without identity.
 - **CapTP wire transport** — sturdy refs (durable; bearer-shaped), swiss-table fast routing (per-session promise IDs), `HandoffCertificate` (Alice→Bob→Carol three-party handoff, cross-federation), `PipelinedMsg` (promise pipelining over the wire).
 - **`Authorization::CapTpDelivered`** — the new authorization variant proving a turn arrived via a verified CapTP handoff. Carries `{handoff_cert, introducer_pk, sender_pk, sender_signature}`. The executor's `verify_captp_delivered` checks introducer-sig + sender-sig + cert freshness; the turn applies as if signed.
-- **Cipherclerk** (`AgentCipherclerk` in the SDK; `AppCipherclerk` is the narrow framework handle) — the agent-side *cryptographic clerk*. It holds signing keys, authorization tokens, the receipt chain, the stealth keypair, and presents credentials/proofs on the Principal's behalf. The name borrows from Greg Egan's *Polis* and its descendants (Diaspora, Schild's Ladder), where a citizen's cipherclerk is the autonomous component that manages their cryptographic identity and capability handles. The legacy term was "cclerk"; that connoted value storage, but a pyana cipherclerk's authority is mostly *capabilities*, not balances — so the rename is permanent and the old name remains as a deprecation-free alias during the migration window.
+- **Cipherclerk** (`AgentCipherclerk` in the SDK; `AppCipherclerk` is the narrow framework handle) — the agent-side *cryptographic clerk*. It holds signing keys, authorization tokens, the receipt chain, the stealth keypair, and presents credentials/proofs on the Principal's behalf. The name borrows from Greg Egan's *Polis* and its descendants (Diaspora, Schild's Ladder), where a citizen's cipherclerk is the autonomous component that manages their cryptographic identity and capability handles. The legacy term was "cclerk"; that connoted value storage, but a dregg cipherclerk's authority is mostly *capabilities*, not balances — so the rename is permanent and the old name remains as a deprecation-free alias during the migration window.
 
 ### Turns, effects, the Effect VM
 
@@ -45,7 +45,7 @@ Silver makes Golden meaningful: there is nothing to constrain algebraically unti
 
 ### Predicates everywhere — one vocabulary
 
-The unifying insight is that pyana has **many places** where "this thing is allowed" is expressed (slot caveats, action preconditions, capability caveats, authorization), and they all want the same predicate language.
+The unifying insight is that dregg has **many places** where "this thing is allowed" is expressed (slot caveats, action preconditions, capability caveats, authorization), and they all want the same predicate language.
 
 - **`StateConstraint`** (21+ variants) — declared on cell programs, evaluated per state transition. Vocabulary: `FieldEquals/Gte/Lte/Delta/DeltaInRange/GteHeight/LteHeight`, `WriteOnce/Immutable/Monotonic/StrictMonotonic/MonotonicSequence`, `BoundedBy`, `SumEquals/SumEqualsAcross`, `SenderAuthorized` (against a Merkle set root), `CapabilityUniqueness`, `RateLimit/RateLimitBySum`, `TemporalGate`, `PreimageGate`, `AllowedTransitions`, `AnyOf` (single-level disjunction over simples), `BoundDelta` (cross-cell γ.2 hook), `TemporalPredicate`, `Witnessed(WitnessedPredicate)`, `Custom { ir_hash, descriptor, reads }`.
 - **`Precondition`** (per-action, snapshot-time) — `SlotEquals`, `SlotZero`, `NonceAtLeast`, and `Witnessed(WitnessedPredicate)`. One shared `EvalContext { block_height, timestamp, current_epoch, sender, sender_epoch_count, revealed_preimage }`. The `cell/preconditions` and `turn/preconditions` surfaces collapsed into one in this season.
@@ -71,7 +71,7 @@ Six modes (after this season):
 - **`federation_id = H(committee_pubkeys)`** — cryptographic, not nominal. Genesis can't fabricate it.
 - **`AttestedRoot` v3** — signed preimage now binds `federation_id` + `blocklace_block_id` + `finality_round` (alongside the prior `merkle_root`, `note_tree_root`, `nullifier_set_root`, `height`, `timestamp`). Closes T6 (cross-federation replay) algebraically.
 - **`FederationReceipt`** — produced by the live node path (no longer tests-only). Threshold-signed via BLS over `ark_bls12_381`.
-- **`KnownFederations`** registry — `node::state::known_federations: HashMap<FederationId, Federation>`, persisted at `<data-dir>/known_federations/<federation_id>.json`. Replaces the prior flat `known_federation_keys: Vec<PublicKey>`. Self-registers the local federation. CapTP routing consumes via `sync_known_federations(&registry)`. First-contact registration via the `pyana-node register-federation` CLI.
+- **`KnownFederations`** registry — `node::state::known_federations: HashMap<FederationId, Federation>`, persisted at `<data-dir>/known_federations/<federation_id>.json`. Replaces the prior flat `known_federation_keys: Vec<PublicKey>`. Self-registers the local federation. CapTP routing consumes via `sync_known_federations(&registry)`. First-contact registration via the `dregg-node register-federation` CLI.
 - **Blocklace** — DAG-shaped BFT consensus (Cordial Miners + Blocklace data structure + Constitutional Consensus). 199 unit tests covering CRDT/safety/liveness/equivocation. The "what does this node know" data structure; the federation's role is to attest to its state.
 
 ### Cross-cell algebra (γ.2 — bilateral binding)
@@ -82,7 +82,7 @@ Single-cell proofs say "Alice's cclerk correctly applied N effects to Alice's st
 - **Grant** (asymmetric: A grants cap to B): `grant_id = Poseidon2("γ-grant", from_cell, to_cell, cap_target, permissions, expiry)`.
 - **Introduce** (three-party CapTP handoff: A→B→C): `intro_id = Poseidon2("γ-intro", introducer, introducee, target_cell)`.
 
-Each cell's WitnessedReceipt PI exposes an `outgoing_<kind>_root` and `incoming_<kind>_root` — Merkle accumulator over its bilateral schedule entries. The off-AIR verifier (`pyana-verifier bilateral-pair <wr_sender> <wr_receiver>`) reconstructs the schedule from `(call_forest, ACTOR_NONCE)` and confirms accumulators agree. `IS_AGENT_CELL` PI gate identifies which cell in a multi-cell proof is the actor.
+Each cell's WitnessedReceipt PI exposes an `outgoing_<kind>_root` and `incoming_<kind>_root` — Merkle accumulator over its bilateral schedule entries. The off-AIR verifier (`dregg-verifier bilateral-pair <wr_sender> <wr_receiver>`) reconstructs the schedule from `(call_forest, ACTOR_NONCE)` and confirms accumulators agree. `IS_AGENT_CELL` PI gate identifies which cell in a multi-cell proof is the actor.
 
 **Phase 1** (PI-only): both sides produce independent proofs whose PIs cross-validate.
 **Phase 2** (joint aggregation AIR): a single outer proof verifies both inner proofs *and* enforces the cross-cell agreement algebraically. Substrate landed via plonky3 recursion generalization (Lane Golden-Edge Block 1).
@@ -98,11 +98,11 @@ Composite operations get bilateral binding by composing the primitives: an aucti
 - The cleartext sideband `set_decrypted_intents` was deleted.
 - `NodeStateInner.trustless_intent_engine` is owned in production state; three REST endpoints (`/intents/trustless/{submit,share,status}`) drive the pipeline.
 - Lowering: `Intent::RingSettlement` composes `Effect::Transfer` primitives (with γ.2 bilateral binding); not a bespoke "settle_ring_leg" method (which no cell implements).
-- Fulfillment uses real STARK proofs via `pyana_circuit::multi_step_air` with replay-resistant `request_hash` binding.
+- Fulfillment uses real STARK proofs via `dregg_circuit::multi_step_air` with replay-resistant `request_hash` binding.
 
 ### DFA as a first-class predicate
 
-Pyana now has a canonical `pyana-dfa` crate. Its `GovernedRouter` is a constitutionally-governed atomic-swap routing table with BLAKE3 commitment + threshold-sig-verified updates. AIR integration: `circuit::dsl::circuit` has DFA AIR rows; `dfa::compile_to_air` + `dfa::verify_acceptance` provide the registry verifier for `WitnessedPredicateKind::Dfa`. Three real consumers migrated: `apps/governed-namespace` (canonical replacement for its prior 287-line BTreeMap pretender), `intent/src/gossip_filter.rs` (gossip topic filtering), and `wire/src/dfa_router.rs::IngressFilter` (wire-level pre-filter at server ingress).
+`dregg` now has a canonical `dregg-dfa` crate. Its `GovernedRouter` is a constitutionally-governed atomic-swap routing table with BLAKE3 commitment + threshold-sig-verified updates. AIR integration: `circuit::dsl::circuit` has DFA AIR rows; `dfa::compile_to_air` + `dfa::verify_acceptance` provide the registry verifier for `WitnessedPredicateKind::Dfa`. Three real consumers migrated: `apps/governed-namespace` (canonical replacement for its prior 287-line BTreeMap pretender), `intent/src/gossip_filter.rs` (gossip topic filtering), and `wire/src/dfa_router.rs::IngressFilter` (wire-level pre-filter at server ingress).
 
 Userspace can compose DFA caveats via `StateConstraint::Witnessed(WitnessedPredicate { kind: Dfa, ... })` — "this slot can only be set to inputs the route table accepts."
 
@@ -127,7 +127,7 @@ This is the **federation-bypass** primitive. Alice and Bob can interact directly
 
 ### Persistence: receipts are the stream
 
-Per `HOUYHNHNM-COMPARISON.md`'s closing reframe: **the WitnessedReceipt chain IS pyana's persistence layer.** Not an auxiliary log, not a sidecar — the canonical, source-of-truth stream. The `pyana_persist` on-disk database is a *cache* of state derived from this stream; given the receipt chain alone, any verifier can re-derive the cell's state at any tip. Operator-side retention is therefore a *policy on the persistence stream*, not a policy on a database: `pyana_node::config::RetentionPolicy` (default `Forever`) declares which suffix this operator commits to *serving*, and the wire-level `WireMessage::RequestReceipt` / `ReceiptResponse` returns a structured "covered by archival attestation X" response — never a bare 404 — when the hot tail has been pruned. This is the houyhnhnm "persistence-is-policy" framing put on a cryptographic substrate: the persistence stream is *the* thing the operator hosts, and the rest is cache.
+Per `HOUYHNHNM-COMPARISON.md`'s closing reframe: **the WitnessedReceipt chain IS dregg's persistence layer.** Not an auxiliary log, not a sidecar — the canonical, source-of-truth stream. The `dregg_persist` on-disk database is a *cache* of state derived from this stream; given the receipt chain alone, any verifier can re-derive the cell's state at any tip. Operator-side retention is therefore a *policy on the persistence stream*, not a policy on a database: `dregg_node::config::RetentionPolicy` (default `Forever`) declares which suffix this operator commits to *serving*, and the wire-level `WireMessage::RequestReceipt` / `ReceiptResponse` returns a structured "covered by archival attestation X" response — never a bare 404 — when the hot tail has been pruned. This is the houyhnhnm "persistence-is-policy" framing put on a cryptographic substrate: the persistence stream is *the* thing the operator hosts, and the rest is cache.
 
 ## Boundary discipline
 
@@ -171,11 +171,11 @@ Per `KIMCHI-SURVEY.md` + `STAGE-7-GAMMA-2-PI-DESIGN.md`:
 - **`AppServer`** — axum server with `.with_cclerk(...)` and `.with_embedded_executor(...)` extension hooks. `EmbeddedExecutor` is the submission path: the app authors a signed action and `EmbeddedExecutor` actually applies it to a ledger + returns the receipt. (Pre-this-season, apps authored actions and dropped them on the floor.)
 - **`StarbridgeAppContext`** — the canonical mounting point for starbridge-apps: cclerk handle, embedded executor, KnownFederations reference, factory registry, inspector registry for Studio integration.
 - **`FactoryDescriptor`** — `cell::factory::FactoryDescriptor` bakes program VK + state constraints + capability templates. `Effect::CreateCellFromFactory` creates cells via this canonical path. Apps register descriptors; users create instances.
-- **DSL** — `pyana-dsl` is the *caveat predicate language* (descended from macaroons/biscuits). It compiles to 7 backends (`gen_air`, `gen_kimchi`, `gen_plonky3`, `gen_sp1`, `gen_midnight`, `gen_datalog`, `gen_rust`); cross-backend differential testing (40 cases × 5 voting backends; 2 lint-only) confirms agreement. The DSL stays at the caveat layer; it does not author Effect VM transitions.
+- **DSL** — `dregg-dsl` is the *caveat predicate language* (descended from macaroons/biscuits). It compiles to 7 backends (`gen_air`, `gen_kimchi`, `gen_plonky3`, `gen_sp1`, `gen_midnight`, `gen_datalog`, `gen_rust`); cross-backend differential testing (40 cases × 5 voting backends; 2 lint-only) confirms agreement. The DSL stays at the caveat layer; it does not author Effect VM transitions.
 
-## Starbridge — pyana's IDE/runtime
+## Starbridge — dregg's IDE/runtime
 
-`starbridge` is the in-browser pyana IDE. The wasm runtime drives real `AgentCipherclerk` + `Ledger` + `TurnExecutor` (not a JS simulation — wasm-bindgen routes to the canonical crates). The Chrome extension exposes `window.pyana` with `signTurn`, `createFromFactory`, `verifyProvenance`, `shareCapability`, etc.
+`starbridge` is the in-browser dregg IDE. The wasm runtime drives real `AgentCipherclerk` + `Ledger` + `TurnExecutor` (not a JS simulation — wasm-bindgen routes to the canonical crates). The Chrome extension exposes `window.dregg` with `signTurn`, `createFromFactory`, `verifyProvenance`, `shareCapability`, etc.
 
 **Starbridge-apps** (`starbridge-apps/`) are the new userspace. Each is a Rust crate exporting `FactoryDescriptor[]` arrays + turn builders, plus a `pages/` directory with web components. The pattern: cell-program patterns + slot caveats + DSL caveats. **No new Effect variants.** The order (per `STARBRIDGE-APPS-PLAN.md`): nameservice → identity → subscription → governed-namespace → bounty-board → gallery → privacy-voting → compute-exchange. The legacy `apps/` retires as starbridge-apps replace each one.
 
@@ -218,9 +218,9 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 
 **Userspace (prior session):**
 - `AppCipherclerk` + `EmbeddedExecutor` + `StarbridgeAppContext`
-- `pyana-credentials` crate (G31 from PYANA-FLAWS-FROM-APPS: promotes `bridge::present`)
-- `pyana-directory` crate (G32/G33: promotes nameservice/governed-namespace directory pattern)
-- `pyana-dfa` crate (canonical DFA + AIR + governance)
+- `dregg-credentials` crate (G31 from DREGG-FLAWS-FROM-APPS: promotes `bridge::present`)
+- `dregg-directory` crate (G32/G33: promotes nameservice/governed-namespace directory pattern)
+- `dregg-dfa` crate (canonical DFA + AIR + governance)
 - `starbridge-apps/nameservice` bootstrap
 - `starbridge-apps/identity` bootstrap
 
@@ -237,7 +237,7 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - discord-bot promoted to toplevel; migrated to AppCipherclerk
 - `cod/` deleted
 - `store/` renamed `persist/`
-- Crate name normalization (`pyana-` prefix everywhere: `pyana-token`, `pyana-macaroon`, `pyana-tokenizer`, `pyana-secrets`, `pyana-hints`, `pyana-discharge-gateway`)
+- Crate name normalization (`dregg-` prefix everywhere: `dregg-token`, `dregg-macaroon`, `dregg-tokenizer`, `dregg-secrets`, `dregg-hints`, `dregg-discharge-gateway`)
 - `hints/` edition 2024 + profile override removed
 - Morpheus retirement Blocks 1-5 + 7-8 (Block 6: physical deletion of the 2515-LOC simulator pending teasting/wasm/sdc migrations)
 
@@ -264,7 +264,7 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - `EXECUTOR-VK-AUDIT.md` — executor + VK layering audit (closure plans for T1.3, T1.6, T1.7, T2.17, T2.18, T3.3)
 - `RECEIPT-ARCHITECTURE-STUDY.md` — receipt chain / audit trail deep dive
 - `HOUYHNHNM-COMPARISON.md` + `HOUYHNHNM-DEEP-CRITIQUE.md` — Houyhnhnm system comparison + deep critique
-- `PROTOCOL-CATEGORICAL-ANALYSIS.md` — categorical treatment of pyana's protocol primitives
+- `PROTOCOL-CATEGORICAL-ANALYSIS.md` — categorical treatment of dregg's protocol primitives
 - `KIMI-DAMAGE-AUDIT.md` — audit of prior Kimi-authored code for soundness regressions
 - `TEST-REALITY-AUDIT.md` — test suite honesty audit (fake assertions, scaffold must_pass)
 - `MULTI-NODE-DEVNET-RUN.md` — first end-to-end multi-node devnet run report
@@ -288,19 +288,19 @@ The remaining Silver Vision items, in priority order:
 9. **Token caveat modernization** — discard the 12 ancient caveat types; converge the 3 shape-similar ones with `cell::CapabilityCaveat`.
 10. **Real STARK ProofVerifier for intent fulfillment** — `TrustlessIntentEngine::new` still defaults to `WitnessedProofVerifier::with_stub_registry()` (SILVER-DEBT T1.2); the registry plumbing exists, wiring it is the remaining work.
 11. **Studio integration** — `STUDIO-REFACTOR-PICKUP.md` documents 13 refactors the resumed studio agent absorbs; we wrote the substrate.
-12. **`pyana-witnessed-registry-default` crate** — no in-tree host binary installs real verifiers for all 6 `WitnessedPredicateKind` variants; `default_builtins()` correctly rejects them but doesn't provide them (SILVER-DEBT T1.4, T2.8).
+12. **`dregg-witnessed-registry-default` crate** — no in-tree host binary installs real verifiers for all 6 `WitnessedPredicateKind` variants; `default_builtins()` correctly rejects them but doesn't provide them (SILVER-DEBT T1.4, T2.8).
 
 The Golden Vision items (γ.2 Phase 2 joint aggregation AIR, full mesh attestation) sit on top of these.
 
 ## How to read this
 
-Pyana, today, is the *Silver Vision in motion*. The substrate is mostly in tree. Each remaining gap above has a concrete plan or design doc. The thesis — *proof-carrying capability mesh, with programmable cell semantics, federated consensus, cross-cell algebra, and zero-knowledge predicate composition under one design discipline* — is coherent and partially realized.
+`dregg`, today, is the *Silver Vision in motion*. The substrate is mostly in tree. Each remaining gap above has a concrete plan or design doc. The thesis — *proof-carrying capability mesh, with programmable cell semantics, federated consensus, cross-cell algebra, and zero-knowledge predicate composition under one design discipline* — is coherent and partially realized.
 
 The vocabulary across the system is unified. The boundaries are named. The vision is real and reachable.
 
 ## Cross-references
 
-- `dev-philosophy/01-north-star.md` — what pyana is for (mission)
+- `dev-philosophy/01-north-star.md` — what dregg is for (mission)
 - `THOUGHTS-AND-DREAMS.md` — historical session notes
 - The 25+ audit / design docs listed above
 - `paper/` — the formal write-up of all of this

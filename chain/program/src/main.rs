@@ -1,7 +1,7 @@
-//! SP1 Guest Program: Verifies a pyana STARK proof inside the zkVM.
+//! SP1 Guest Program: Verifies a dregg STARK proof inside the zkVM.
 //!
 //! This program runs inside SP1's RISC-V zkVM. It:
-//! 1. Reads a serialized pyana STARK proof from the host
+//! 1. Reads a serialized dregg STARK proof from the host
 //! 2. Reads the public inputs (leaf hash + Merkle root)
 //! 3. Runs the full STARK verifier (Merkle commitments, FRI, Fiat-Shamir)
 //! 4. Commits the verification result and public inputs as public outputs
@@ -131,7 +131,7 @@ struct Transcript {
 impl Transcript {
     fn new(domain_sep: &[u8]) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-stark-v1:");
+        hasher.update(b"dregg-stark-v1:");
         hasher.update(domain_sep);
         Self { hasher, counter: 0 }
     }

@@ -1,8 +1,8 @@
-//! Client for the pyana devnet API.
+//! Client for the dregg devnet API.
 
 use serde::Deserialize;
 
-/// Client for communicating with the pyana devnet.
+/// Client for communicating with the dregg devnet.
 #[derive(Clone)]
 pub struct DevnetClient {
     base_url: String,
@@ -335,7 +335,7 @@ impl DevnetClient {
 
     /// Get the explorer base URL for building links.
     pub fn explorer_base_url(&self) -> &'static str {
-        "https://devnet.pyana.fg-goose.online/explorer"
+        "https://devnet.dregg.fg-goose.online/explorer"
     }
 
     // ─── Cipherclerk / transfer endpoints ───────────────────────────────────────────

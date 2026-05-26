@@ -115,7 +115,7 @@ All `FUTURE-LANE` (KNOWN-GAP with clear blocker):
 |---|---|---|---|
 | 544 | `end_to_end_note_spending_stark_from_real_tree` | KNOWN-GAP | `REVIEW[stage2-canonical-vs-poseidon-mismatch]` — already documented |
 
-### pyana-dsl-tests/src/sovereign_transition_dsl.rs — 1 test
+### dregg-dsl-tests/src/sovereign_transition_dsl.rs — 1 test
 
 | Line | Test name | Classification | Action |
 |---|---|---|---|
@@ -227,7 +227,7 @@ All `FUTURE-LANE` blocked on `AUTHORIZATION-CUSTOM-DESIGN` (Auth::Custom predica
 
 | Lines | Test name | Classification | Reason |
 |---|---|---|---|
-| 1394 | `many_node_causal_dag` | HISTORICAL-REMOVED | `CausalLedger`/`CausalTurn` removed from `pyana_coord::causal`; needs port to new causal surface (causal-test-port lane) |
+| 1394 | `many_node_causal_dag` | HISTORICAL-REMOVED | `CausalLedger`/`CausalTurn` removed from `dregg_coord::causal`; needs port to new causal surface (causal-test-port lane) |
 | 1446 | `rejected_turn_still_in_dag` | HISTORICAL-REMOVED | Same reason |
 
 ### demo-agent/examples/unified_harness.rs — 1 `#[cfg(any())]`
@@ -268,7 +268,7 @@ All `FUTURE-LANE` blocked on `AUTHORIZATION-CUSTOM-DESIGN` (Auth::Custom predica
 ### TASK-6: `effect-vm-shape-a-projection` — 31/41 effect variants collapse to NoOp
 **File:** `tests/src/every_variant_roundtrip.rs` lines 851, 901  
 **Nature:** `AgentCipherclerk::convert_effects_to_vm` maps the majority of effect variants to `VmEffect::NoOp`. Any turn exercising those effects produces no provable constraint. EFFECT-VM-SHAPE-A Stages 3-6 are the named workstream.  
-**Fix:** Implement per-variant projections from `pyana_turn::Effect` to `pyana_circuit::effect_vm::Effect` variants for all non-NoOp cases.
+**Fix:** Implement per-variant projections from `dregg_turn::Effect` to `dregg_circuit::effect_vm::Effect` variants for all non-NoOp cases.
 
 ---
 
@@ -282,7 +282,7 @@ All `FUTURE-LANE` blocked on `AUTHORIZATION-CUSTOM-DESIGN` (Auth::Custom predica
 
 4. **Circuit prover SLOW tests** — 18 tests (plonky3_prover ×13, plonky3_recursion ×3, poseidon2_air ×1, backends/plonky3 ×1) had bare `#[ignore]` with no reason. All were structurally sound proof-generation tests ignored purely for speed. All now have reason strings. These should be wired into a weekly/release CI job.
 
-5. **Historical stubs cluster** — `sovereign_transition.rs`, `pyana-dsl-tests/sovereign_transition_dsl.rs`, `coord/src/tests.rs` (×2), `demo-agent/unified_harness.rs` all have dead tests from removed modules. The `#[cfg(any())]` pattern (coord, demo-agent) is more honest than `#[ignore]` for truly dead code.
+5. **Historical stubs cluster** — `sovereign_transition.rs`, `dregg-dsl-tests/sovereign_transition_dsl.rs`, `coord/src/tests.rs` (×2), `demo-agent/unified_harness.rs` all have dead tests from removed modules. The `#[cfg(any())]` pattern (coord, demo-agent) is more honest than `#[ignore]` for truly dead code.
 
 6. **No ignore is older than the last major refactor** — the git log shows ignores were introduced alongside the active workstream lanes (stage2, caveat-correctness, γ.2, sovereign-witness, bridge), not as technical debt from 2+ years ago. The cluster pattern exactly mirrors the Silver Vision workstream decomposition.
 
@@ -303,7 +303,7 @@ All `FUTURE-LANE` blocked on `AUTHORIZATION-CUSTOM-DESIGN` (Auth::Custom predica
 ## Top 5 Stalest HISTORICAL-NO-LONGER-RELEVANT Removals
 
 1. `circuit/tests/sovereign_transition.rs:7` — `sovereign_transition_air` module removed; entire test file is one empty stub. Safe to delete the file.
-2. `pyana-dsl-tests/src/sovereign_transition_dsl.rs:352` — `dsl_matches_handwritten_air` stub with empty body; module removed.
+2. `dregg-dsl-tests/src/sovereign_transition_dsl.rs:352` — `dsl_matches_handwritten_air` stub with empty body; module removed.
 3. `coord/src/tests.rs:1394` (`many_node_causal_dag`) — `CausalLedger`/`CausalTurn` removed; `#[cfg(any())]` correctly gates it.
 4. `coord/src/tests.rs:1446` (`rejected_turn_still_in_dag`) — same removal event.
 5. `demo-agent/examples/unified_harness.rs:1110` (`run_federation_bootstrap`) — `Federation::new` API changed; `#[cfg(any())]` correctly gates it.

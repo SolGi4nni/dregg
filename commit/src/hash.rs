@@ -30,7 +30,7 @@ pub const HASH_ARITY: usize = 4;
 
 /// Hash a single leaf value (domain-separated).
 pub fn hash_leaf(data: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-commit leaf v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-commit leaf v1");
     hasher.update(data);
     *hasher.finalize().as_bytes()
 }
@@ -38,7 +38,7 @@ pub fn hash_leaf(data: &[u8]) -> [u8; 32] {
 /// Hash 4 children together (simulating 4-ary Poseidon).
 /// Domain-separated from leaf hashing to prevent second-preimage attacks.
 pub fn hash_node(children: &[[u8; 32]; 4]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-commit node v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-commit node v1");
     for child in children {
         hasher.update(child);
     }

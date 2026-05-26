@@ -1,4 +1,4 @@
-//! Unified Demo Harness — Runs ALL Pyana demos against shared state in one binary.
+//! Unified Demo Harness — Runs ALL Dregg demos against shared state in one binary.
 //!
 //! This exercises the entire system end-to-end in ~5 seconds by sharing:
 //! - A 3-node federation (keypairs, genesis AttestedRoot, quorum)
@@ -6,35 +6,35 @@
 //! - A shared NullifierSet
 //! - A root issuer token
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example unified_harness
+//! Run with: cargo run --release -p dregg-demo-agent --example unified_harness
 
 use std::error::Error;
 use std::time::Instant;
 
-use pyana_bridge::BridgePresentationBuilder;
-use pyana_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::program::{CellProgram, StateConstraint, field_from_u64};
-use pyana_cell::seal::test_seal_pair;
-use pyana_cell::state::CellState;
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2;
-use pyana_circuit::stark::{MerkleStarkAir, generate_merkle_trace, proof_to_bytes, prove, verify};
-use pyana_federation::types::{AttestedRoot, PublicKey};
-use pyana_federation::{Federation, SigningKey, generate_keypair, sign};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
-use pyana_trace::{
+use dregg_bridge::BridgePresentationBuilder;
+use dregg_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::program::{CellProgram, StateConstraint, field_from_u64};
+use dregg_cell::seal::test_seal_pair;
+use dregg_cell::state::CellState;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2;
+use dregg_circuit::stark::{MerkleStarkAir, generate_merkle_trace, proof_to_bytes, prove, verify};
+use dregg_federation::types::{AttestedRoot, PublicKey};
+use dregg_federation::{Federation, SigningKey, generate_keypair, sign};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
+use dregg_trace::{
     AuthorizationRequest, Conclusion, Evaluator, Fact, Rule, Term, standard_policy,
     symbol_from_str, verify_trace,
 };
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{
     ComputronCosts, DelegationMode, Effect, Pipeline, TurnBuilder, TurnExecutor, TurnResult,
     execute_pipeline,
 };
-use pyana_types::causal::CausalDag;
+use dregg_types::causal::CausalDag;
 
 // ============================================================================
 // Shared State Types
@@ -222,7 +222,7 @@ fn setup_genesis() -> Result<SharedState, Box<dyn Error>> {
         nullifier_set_root: None,
         quorum_signatures: Vec::new(),
         threshold: 2,
-        federation_id: pyana_types::FederationId::PLACEHOLDER,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
     };
 
@@ -300,20 +300,20 @@ fn run_rbac_datalog(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>> {
     let rules = vec![
         Rule {
             id: 100,
-            head: pyana_trace::Atom {
+            head: dregg_trace::Atom {
                 predicate: symbol_from_str("allow"),
                 terms: vec![],
             },
             body: vec![
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("has_role"),
                     terms: vec![Term::Var(0), Term::Const(symbol_from_str("admin"))],
                 },
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("request_user"),
                     terms: vec![Term::Var(0)],
                 },
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("request_action"),
                     terms: vec![Term::Var(1)],
                 },
@@ -322,29 +322,29 @@ fn run_rbac_datalog(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>> {
         },
         Rule {
             id: 102,
-            head: pyana_trace::Atom {
+            head: dregg_trace::Atom {
                 predicate: symbol_from_str("allow"),
                 terms: vec![],
             },
             body: vec![
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("has_role"),
                     terms: vec![Term::Var(0), Term::Var(1)],
                 },
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("role_permission"),
                     terms: vec![Term::Var(1), Term::Var(2), Term::Var(3)],
                 },
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("request_user"),
                     terms: vec![Term::Var(0)],
                 },
-                pyana_trace::Atom {
+                dregg_trace::Atom {
                     predicate: symbol_from_str("request_action"),
                     terms: vec![Term::Var(4)],
                 },
             ],
-            checks: vec![pyana_trace::Check::Contains(Term::Var(3), Term::Var(4))],
+            checks: vec![dregg_trace::Check::Contains(Term::Var(3), Term::Var(4))],
         },
     ];
     let facts = vec![
@@ -575,7 +575,7 @@ fn run_token_revocation(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn 
 }
 
 fn run_progressive_disclosure(issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>> {
-    use pyana_sdk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
+    use dregg_sdk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
     let mut cclerk = AgentCipherclerk::new();
     let root_token = cclerk.mint_token(issuer_key, "infrastructure");
     let attenuated = cclerk.attenuate(
@@ -606,7 +606,7 @@ fn run_progressive_disclosure(issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error
             &attenuated,
             &request,
             VerificationMode::SelectiveDisclosure {
-                reveal: vec![pyana_sdk::FactIndex(0)]
+                reveal: vec![dregg_sdk::FactIndex(0)]
             }
         ),
         Ok(AuthorizationPresentation::Selective { .. })
@@ -684,8 +684,8 @@ fn run_three_party_introduction(
 }
 
 fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
-    use pyana_cell::Preconditions;
-    use pyana_turn::{Action, Authorization, CallForest, CommitmentMode, Turn};
+    use dregg_cell::Preconditions;
+    use dregg_turn::{Action, Authorization, CallForest, CommitmentMode, Turn};
 
     let mut pl = Ledger::new();
     let ca = make_open_cell(0x01, 1_000_000);
@@ -849,9 +849,9 @@ fn run_note_privacy(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Erro
 }
 
 fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error>> {
-    use pyana_cell::Preconditions;
-    use pyana_turn::action::symbol;
-    use pyana_turn::{Action, Authorization, CommitmentMode};
+    use dregg_cell::Preconditions;
+    use dregg_turn::action::symbol;
+    use dregg_turn::{Action, Authorization, CommitmentMode};
 
     let asset_a: u64 = 0xAAAA_0000_0000_0001;
     let asset_b: u64 = 0xBBBB_0000_0000_0002;
@@ -979,7 +979,7 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
 
 #[allow(unused_assignments)]
 fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
-    use pyana_commit::{Fact as CommitFact, FoldDeltaBuilder, TokenState, verify_fold_chain};
+    use dregg_commit::{Fact as CommitFact, FoldDeltaBuilder, TokenState, verify_fold_chain};
 
     let mut state = TokenState::new();
     state.add_fact(CommitFact::from_symbols("can_read", &["alice", "database"]));
@@ -1027,7 +1027,7 @@ fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_seal_unseal_transfer() -> Result<(), Box<dyn Error>> {
-    use pyana_cell::capability::CapabilityRef;
+    use dregg_cell::capability::CapabilityRef;
 
     let carol_id = CellId::from_bytes([0xCC; 32]);
     let cap = CapabilityRef {
@@ -1089,7 +1089,7 @@ fn run_causal_ordering() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_multi_silo_budget() -> Result<(), Box<dyn Error>> {
-    use pyana_coord::budget::StingrayCounter;
+    use dregg_coord::budget::StingrayCounter;
     let agent = CellId::from_bytes([0xAA; 32]);
     let sa = [1u8; 32];
     let sb = [2u8; 32];
@@ -1108,7 +1108,7 @@ fn run_multi_silo_budget() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_cipherclerk_lifecycle() -> Result<(), Box<dyn Error>> {
-    use pyana_sdk::AgentCipherclerk;
+    use dregg_sdk::AgentCipherclerk;
     let mut cclerk = AgentCipherclerk::new();
     assert_ne!(cclerk.public_key().0, [0u8; 32]);
     let ik = *blake3::hash(b"cclerk-lifecycle-issuer").as_bytes();
@@ -1128,7 +1128,7 @@ fn run_cipherclerk_lifecycle() -> Result<(), Box<dyn Error>> {
             now: Some(1750000000),
             ..Default::default()
         },
-        pyana_sdk::VerificationMode::Trusted,
+        dregg_sdk::VerificationMode::Trusted,
     );
     assert!(result.is_ok());
     Ok(())
@@ -1140,7 +1140,7 @@ fn run_cipherclerk_lifecycle() -> Result<(), Box<dyn Error>> {
 
 fn main() {
     println!("================================================================");
-    println!("  PYANA UNIFIED DEMO HARNESS");
+    println!("  DREGG UNIFIED DEMO HARNESS");
     println!("  Running all demos against shared state");
     println!("================================================================\n");
 

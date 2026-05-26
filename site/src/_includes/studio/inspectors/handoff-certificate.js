@@ -1,16 +1,16 @@
 /**
- * <pyana-handoff-certificate uri="pyana://handoff-certificate/<nonce-hex>" data="...">
+ * <dregg-handoff-certificate uri="dregg://handoff-certificate/<nonce-hex>" data="...">
  *
- * Compact pyana-handoff:<base58> form + structured view of HandoffCertSummary + fields.
- * From pyana_captp::handoff::HandoffCertificate surfaced via Authorization::CapTpDelivered.
+ * Compact dregg-handoff:<base58> form + structured view of HandoffCertSummary + fields.
+ * From dregg_captp::handoff::HandoffCertificate surfaced via Authorization::CapTpDelivered.
  *
- * Composes inside <pyana-authorization> (CapTpDelivered variant).
+ * Composes inside <dregg-authorization> (CapTpDelivered variant).
  */
 
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaHandoffCertificate extends InspectorBase {
+class DreggHandoffCertificate extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -37,33 +37,33 @@ class PyanaHandoffCertificate extends InspectorBase {
 
     const Component = () => {
       if (!data) {
-        return html`<div class="pyana-inspector pyana-inspector--empty">no handoff cert data</div>`;
+        return html`<div class="dregg-inspector dregg-inspector--empty">no handoff cert data</div>`;
       }
       const cert = data.handoff_cert_summary || data; // support both shapes
 
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
-            <span class="pyana-inspector__kind">handoff</span>
+          <span class="dregg-inspector dregg-inspector--compact">
+            <span class="dregg-inspector__kind">handoff</span>
             <code title=${cert.nonce || ''}>${shortHex(cert.nonce || cert.recipient_pk || '', 8)}</code>
           </span>`;
       }
 
       return html`
-        <div class="pyana-inspector pyana-inspector--handoff">
+        <div class="dregg-inspector dregg-inspector--handoff">
           <header>
-            <span class="pyana-inspector__kind">handoff-certificate</span>
-            <code class="pyana-inspector__id" title=${cert.nonce || ''}>${shortHex(cert.nonce || 'n/a', 16)}</code>
+            <span class="dregg-inspector__kind">handoff-certificate</span>
+            <code class="dregg-inspector__id" title=${cert.nonce || ''}>${shortHex(cert.nonce || 'n/a', 16)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>introducer federation</dt><dd><code title=${cert.introducer_federation}>${shortHex(cert.introducer_federation, 16)}</code></dd>
             <dt>recipient pk</dt><dd><code title=${cert.recipient_pk}>${shortHex(cert.recipient_pk, 16)}</code></dd>
             <dt>nonce</dt><dd><code title=${cert.nonce}>${shortHex(cert.nonce, 16)}</code></dd>
             ${cert.introducer_pk ? html`<dt>introducer pk</dt><dd><code>${shortHex(cert.introducer_pk, 12)}</code></dd>` : ''}
           </dl>
           <div style="font-size:0.7rem;color:var(--fg-dim);">
-            HandoffCertificate enables 3-party CapTP handoff (introducer → recipient). See Authorization::CapTpDelivered + pyana_captp handoff.
-            Paste-friendly compact form: pyana-handoff:... (summary only; full cert oversized by design).
+            HandoffCertificate enables 3-party CapTP handoff (introducer → recipient). See Authorization::CapTpDelivered + dregg_captp handoff.
+            Paste-friendly compact form: dregg-handoff:... (summary only; full cert oversized by design).
           </div>
           <div style="font-size:0.6rem;color:#888;margin-top:2px;">(visible placeholder: full cert fields not surfaced in wasm summary)</div>
         </div>`;
@@ -72,4 +72,4 @@ class PyanaHandoffCertificate extends InspectorBase {
     this._dispose = effect(() => render(h(Component, {}), root));
   }
 }
-if (!customElements.get('pyana-handoff-certificate')) customElements.define('pyana-handoff-certificate', PyanaHandoffCertificate);
+if (!customElements.get('dregg-handoff-certificate')) customElements.define('dregg-handoff-certificate', DreggHandoffCertificate);

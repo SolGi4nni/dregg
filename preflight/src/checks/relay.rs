@@ -1,8 +1,8 @@
 //! Relay operator checks: bond, host inbox, receive, drain, GC, fees.
 
-use pyana_storage::QuotaId;
-use pyana_storage::quota::SpaceBank;
-use pyana_storage::relay::MeteredRelay;
+use dregg_storage::QuotaId;
+use dregg_storage::quota::SpaceBank;
+use dregg_storage::relay::MeteredRelay;
 
 use crate::report::{CheckResult, run_check};
 

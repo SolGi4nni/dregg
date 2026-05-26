@@ -22,7 +22,7 @@ Deep research finds no public production system explicitly targeting DAG-shaped 
     [Per-cell Effect VM AIR with $tilde$151 columns], [Operational],
     [Sequential IVC chains via `build_recursive_ivc_chain`], [Operational],
     [Stage 7-$gamma$.0 shared-PI bundle (per-cell proofs of one turn share PI)], [Landed],
-    [Stage 7-$gamma$.2 Phase 1 (PI-only bilateral binding + off-AIR `pyana-verifier bilateral-pair`)], [Landed],
+    [Stage 7-$gamma$.2 Phase 1 (PI-only bilateral binding + off-AIR `dregg-verifier bilateral-pair`)], [Landed],
     [Sovereign-witness Phase 1 (`WITNESS_KEY_COMMIT` AIR teeth)], [Designed in `SOVEREIGN-WITNESS-AIR-DESIGN.md`],
     [Lane Golden-Edge Block 1: lift `plonky3_recursion_impl` past `P3MerklePoseidon2Air` placeholder], [In flight],
     [Stage 7-$gamma$.2 Phase 2 (joint aggregation AIR via the generalized recursive substrate)], [Depends on Lane Golden-Edge],
@@ -70,14 +70,14 @@ The privacy migration (Section 5) proceeds through six phases. The most impactfu
 
 Encrypted turn ordering (@sec-federation-privacy) requires either threshold decryption ceremonies or full validity proofs for every turn. The substrate is real: `federation::threshold_decrypt` (Shamir over GF(256) + ChaCha20-Poly1305) is the same primitive the trustless intent engine now uses. The intermediate step is validium-style blind ordering: Bloom filter conflict sets for parallelism detection, lightweight STARKs for nonce/fee validity, and threshold decryption after ordering. Full elimination of decryption (Layer 3) requires encoding conservation and authorization verification in the validity AIR.
 
-== Two-Language Authoring: pyanascript
+== Two-Language Authoring: dreggscript
 
-The current authoring discipline is *bottom-up*: imagine the runtime API a behavior/protocol language would compile to; implement primitives as ugly Rust method-chains in `pyana-sdk` first; if chains are awkward, that awkwardness identifies the SDK gap; macro the chains once they work; *then* consider a surface language. The two-language model the project has in mind:
+The current authoring discipline is *bottom-up*: imagine the runtime API a behavior/protocol language would compile to; implement primitives as ugly Rust method-chains in `dregg-sdk` first; if chains are awkward, that awkwardness identifies the SDK gap; macro the chains once they work; *then* consider a surface language. The two-language model the project has in mind:
 
-- *pyana-dsl* (exists, sparse, stays focused): caveat predicate language descended from macaroons/biscuits. Row-shaped, constraint-shaped, multi-backend.
-- *pyanascript* (new, exploratory): behavior/protocol language for cell authoring, CapTP composition, app-framework primitives. Compiles down to typestate `ActionBuilder` calls + cell program declarations + CapTP wire protocols.
+- *dregg-dsl* (exists, sparse, stays focused): caveat predicate language descended from macaroons/biscuits. Row-shaped, constraint-shaped, multi-backend.
+- *dreggscript* (new, exploratory): behavior/protocol language for cell authoring, CapTP composition, app-framework primitives. Compiles down to typestate `ActionBuilder` calls + cell program declarations + CapTP wire protocols.
 
-They compose: pyanascript invokes pyana-dsl when it needs a caveat predicate; they don't compete.
+They compose: dreggscript invokes dregg-dsl when it needs a caveat predicate; they don't compete.
 
 The verified-compile-target survey landed on CakeML > PureCake > Lean 4 > custom: CakeML's strict semantics + verified compilation to native code + verified Candle HOL Light kernel makes it the most credible target. Year-scale integration; near-term experiment is a one-page proof-of-life linking a hand-written cell behavior in CakeML to CapTP via FFI.
 

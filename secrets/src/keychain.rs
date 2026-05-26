@@ -15,7 +15,7 @@ use base64::Engine;
 /// OS keychain secret store.
 ///
 /// Secrets are stored as entries in the OS credential manager with
-/// service name `dev.pyana.secrets.<namespace>` and username as the key.
+/// service name `dev.dregg.secrets.<namespace>` and username as the key.
 #[cfg(feature = "keychain")]
 pub struct KeychainStore {
     service_prefix: String,
@@ -26,7 +26,7 @@ impl KeychainStore {
     /// Create a new keychain store with the default service prefix.
     pub fn new() -> Self {
         Self {
-            service_prefix: "dev.pyana.secrets".into(),
+            service_prefix: "dev.dregg.secrets".into(),
         }
     }
 

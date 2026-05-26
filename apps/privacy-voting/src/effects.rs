@@ -1,7 +1,7 @@
 //! Effect emission for privacy-voting (P2.H / D-9).
 //!
 //! Before P2.H, the privacy-voting handlers operated entirely in-memory
-//! and emitted no `pyana_turn::Effect`s — the audit flagged this
+//! and emitted no `dregg_turn::Effect`s — the audit flagged this
 //! alongside nameservice as "no effects at all". This module assembles
 //! real effect-bearing `Action`s through the typestate `ActionBuilder`
 //! for the two voter-observable transitions:
@@ -18,10 +18,10 @@
 //! (after asserting in unit tests that it builds). A future commit
 //! routes the action through a federation client's `TurnBuilder`.
 
-use pyana_cell::CellId;
-use pyana_cell::state::FieldElement;
-use pyana_turn::action::Action;
-use pyana_turn::builder::ActionBuilder;
+use dregg_cell::CellId;
+use dregg_cell::state::FieldElement;
+use dregg_turn::action::Action;
+use dregg_turn::builder::ActionBuilder;
 
 /// State slot at which the voting registry cell stores its per-proposal
 /// commitment-set root. (Arbitrary for now — bound to schema later.)
@@ -70,7 +70,7 @@ pub fn build_ballot_reveal_action(
 
 /// Deterministic `CellId` for the privacy-voting registry cell.
 pub fn voting_cell_id() -> CellId {
-    let bytes = *blake3::Hasher::new_derive_key("pyana-privacy-voting-registry-cell-v1")
+    let bytes = *blake3::Hasher::new_derive_key("dregg-privacy-voting-registry-cell-v1")
         .finalize()
         .as_bytes();
     CellId::from_bytes(bytes)
@@ -79,7 +79,7 @@ pub fn voting_cell_id() -> CellId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_turn::action::Effect;
+    use dregg_turn::action::Effect;
 
     #[test]
     fn submit_emits_one_event() {
@@ -118,11 +118,11 @@ mod tests {
         let r = build_ballot_reveal_action(voting, caller, [7u8; 32], [9u8; 32], 1);
         assert!(matches!(
             s.authorization,
-            pyana_turn::action::Authorization::Signature(..)
+            dregg_turn::action::Authorization::Signature(..)
         ));
         assert!(matches!(
             r.authorization,
-            pyana_turn::action::Authorization::Signature(..)
+            dregg_turn::action::Authorization::Signature(..)
         ));
     }
 }

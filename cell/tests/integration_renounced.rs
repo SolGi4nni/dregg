@@ -22,7 +22,7 @@
 //!   accepted-under-negation).
 //! - no registry in bundle → `SenderMembershipWitnessMissing`.
 
-use pyana_cell::{
+use dregg_cell::{
     CellProgram, CellState, StateConstraint,
     preconditions::EvalContext,
     predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry},
@@ -49,7 +49,7 @@ fn eval_with_default_registry(
     program: &CellProgram,
     sender: [u8; 32],
     proof_bytes: &[u8],
-) -> Result<(), pyana_cell::ProgramError> {
+) -> Result<(), dregg_cell::ProgramError> {
     let registry = WitnessedPredicateRegistry::default_builtins();
     let blobs: [WitnessBlobView<'_>; 1] = [WitnessBlobView {
         kind: WitnessKindTag::ProofBytes,
@@ -108,7 +108,7 @@ fn renounced_candidate_equals_lower_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }
@@ -135,7 +135,7 @@ fn renounced_candidate_equals_upper_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }
@@ -151,7 +151,7 @@ fn renounced_candidate_equals_upper_rejected() {
 /// arbitrary) tag and claims non-membership for any candidate. The
 /// commitment-keyed tag introduced post-audit closes this — the verifier
 /// must reject any proof whose tag does not equal
-/// `BLAKE3_keyed("pyana-nonmembership-adjacency-v1", commitment||lower||upper)`.
+/// `BLAKE3_keyed("dregg-nonmembership-adjacency-v1", commitment||lower||upper)`.
 #[test]
 fn renounced_forged_adjacency_tag_rejected() {
     let commitment = [0xAB; 32];
@@ -171,7 +171,7 @@ fn renounced_forged_adjacency_tag_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }
@@ -197,7 +197,7 @@ fn renounced_garbage_proof_bytes_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }
@@ -218,7 +218,7 @@ fn renounced_empty_proof_bytes_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }
@@ -256,7 +256,7 @@ fn renounced_no_ctx_returns_missing_context_field() {
         .evaluate_full(&state, None, None, &TransitionMeta::wildcard(), &bundle)
         .expect_err("missing ctx must surface MissingContextField");
     assert!(
-        matches!(err, pyana_cell::ProgramError::MissingContextField { .. }),
+        matches!(err, dregg_cell::ProgramError::MissingContextField { .. }),
         "expected MissingContextField, got: {err:?}"
     );
 }
@@ -291,7 +291,7 @@ fn renounced_ctx_without_sender_returns_missing_context_field() {
         )
         .expect_err("ctx without sender must surface MissingContextField");
     assert!(
-        matches!(err, pyana_cell::ProgramError::MissingContextField { .. }),
+        matches!(err, dregg_cell::ProgramError::MissingContextField { .. }),
         "expected MissingContextField, got: {err:?}"
     );
 }
@@ -332,7 +332,7 @@ fn renounced_no_registry_returns_sentinel() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::SenderMembershipWitnessMissing
+            dregg_cell::ProgramError::SenderMembershipWitnessMissing
         ),
         "expected SenderMembershipWitnessMissing, got: {err:?}"
     );
@@ -418,7 +418,7 @@ fn renounced_public_root_wrong_commitment_rejected() {
     assert!(
         matches!(
             err,
-            pyana_cell::ProgramError::WitnessedPredicateRejected {
+            dregg_cell::ProgramError::WitnessedPredicateRejected {
                 kind_name: "NonMembership",
                 ..
             }

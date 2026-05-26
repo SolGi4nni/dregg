@@ -7,10 +7,10 @@
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Schema name. Distinct from the older
-/// `"pyana-observability-turn-trace-v1"` name (which referred to the
+/// `"dregg-observability-turn-trace-v1"` name (which referred to the
 /// monolithic single-document JSON dump). The new name marks the event-stream
 /// shape.
-pub const SCHEMA_NAME: &str = "pyana-observability-event-stream-v1";
+pub const SCHEMA_NAME: &str = "dregg-observability-event-stream-v1";
 
 /// Hex-encode a 32-byte value as lowercase, no `0x` prefix. Studio expects
 /// every hash / commitment / pubkey at this exact shape.
@@ -38,7 +38,7 @@ pub fn hex_bytes(bytes: &[u8]) -> String {
 /// only needs a string it can pass to `new Date(...)`. The grammar is:
 /// `YYYY-MM-DDTHH:MM:SS.sssZ`.
 pub fn iso8601_from_millis(unix_millis: i64) -> String {
-    // Negative timestamps (pre-1970) are valid in the RFC but pyana never
+    // Negative timestamps (pre-1970) are valid in the RFC but dregg never
     // produces them; clamp to zero to keep the output well-formed.
     let unix_millis = unix_millis.max(0) as u64;
     let secs = unix_millis / 1_000;

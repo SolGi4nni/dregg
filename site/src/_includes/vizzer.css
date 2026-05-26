@@ -1,12 +1,12 @@
 /* ============================================================
-   Pyana vizzer chrome + shared primitives.
+   Dregg vizzer chrome + shared primitives.
 
    Two responsibilities:
-     1. Container chrome + SVG primitives for `<pyana-vizzer>` hosts
+     1. Container chrome + SVG primitives for `<dregg-vizzer>` hosts
         embedded in learn/docs/explorer pages.
-     2. A small set of reusable utility classes (`.pyana-card`,
-        `.pyana-pill`, `.pyana-kv`, `.pyana-empty`, `.pyana-hash-badge`,
-        `.pyana-spinner`, `.pyana-toast*`) shared by the playground,
+     2. A small set of reusable utility classes (`.dregg-card`,
+        `.dregg-pill`, `.dregg-kv`, `.dregg-empty`, `.dregg-hash-badge`,
+        `.dregg-spinner`, `.dregg-toast*`) shared by the playground,
         explorer, and any page that wants consistent micro-UI.
 
    All color/size variables come from the main style.css palette
@@ -15,7 +15,7 @@
    directly.
    ============================================================ */
 
-/* ---- Container chrome for `<pyana-vizzer data-vizzer="…">` ---- */
+/* ---- Container chrome for `<dregg-vizzer data-vizzer="…">` ---- */
 [data-vizzer] {
   display: block;
   background: var(--bg-raised);
@@ -34,9 +34,9 @@
     var(--bg-elevated) 50%,
     var(--bg-raised) 100%);
   background-size: 200% 100%;
-  animation: pyana-vizzer-skeleton 1.4s linear infinite;
+  animation: dregg-vizzer-skeleton 1.4s linear infinite;
 }
-@keyframes pyana-vizzer-skeleton {
+@keyframes dregg-vizzer-skeleton {
   from { background-position: 100% 0; }
   to   { background-position: -100% 0; }
 }
@@ -147,18 +147,18 @@
    explorer, and any future surface that wants consistent micro-UI.
    ============================================================ */
 
-.pyana-card {
+.dregg-card {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 24px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.35);
 }
-.pyana-card[data-tone="warm"]   { border-color: color-mix(in srgb, var(--warm) 40%, var(--line)); }
-.pyana-card[data-tone="info"]   { border-color: color-mix(in srgb, var(--info) 40%, var(--line)); }
-.pyana-card[data-tone="danger"] { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.dregg-card[data-tone="warm"]   { border-color: color-mix(in srgb, var(--warm) 40%, var(--line)); }
+.dregg-card[data-tone="info"]   { border-color: color-mix(in srgb, var(--info) 40%, var(--line)); }
+.dregg-card[data-tone="danger"] { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 
-.pyana-pill {
+.dregg-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -169,25 +169,25 @@
   color: var(--accent-bright);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.pyana-pill[data-state="warn"]  { background: var(--warm-soft);   color: var(--warm-bright);
+.dregg-pill[data-state="warn"]  { background: var(--warm-soft);   color: var(--warm-bright);
                                   border-color: color-mix(in srgb, var(--warm) 30%, transparent); }
-.pyana-pill[data-state="err"]   { background: var(--danger-soft); color: var(--danger);
+.dregg-pill[data-state="err"]   { background: var(--danger-soft); color: var(--danger);
                                   border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
-.pyana-pill[data-state="info"]  { background: var(--info-soft);   color: var(--info);
+.dregg-pill[data-state="info"]  { background: var(--info-soft);   color: var(--info);
                                   border-color: color-mix(in srgb, var(--info) 30%, transparent); }
-.pyana-pill[data-state="muted"] { background: transparent;        color: var(--fg-muted);
+.dregg-pill[data-state="muted"] { background: transparent;        color: var(--fg-muted);
                                   border-color: var(--line-strong); }
 
-.pyana-kv {
+.dregg-kv {
   display: grid;
   grid-template-columns: minmax(8ch, max-content) 1fr;
   gap: 8px 16px;
   font-size: 0.875rem;
 }
-.pyana-kv > dt { color: var(--fg-dim); font-family: var(--font-mono); font-size: 0.72rem; }
-.pyana-kv > dd { color: var(--fg);     font-family: var(--font-mono); word-break: break-all; }
+.dregg-kv > dt { color: var(--fg-dim); font-family: var(--font-mono); font-size: 0.72rem; }
+.dregg-kv > dd { color: var(--fg);     font-family: var(--font-mono); word-break: break-all; }
 
-.pyana-hex {
+.dregg-hex {
   font-family: var(--font-mono);
   color: var(--fg);
   cursor: pointer;
@@ -197,9 +197,9 @@
   border: 1px solid var(--line);
   transition: border-color 180ms ease;
 }
-.pyana-hex:hover { border-color: var(--accent); }
+.dregg-hex:hover { border-color: var(--accent); }
 
-.pyana-empty {
+.dregg-empty {
   display: grid; place-items: center;
   padding: 56px 24px;
   color: var(--fg-muted);
@@ -208,17 +208,17 @@
   border-radius: 10px;
 }
 
-.pyana-spinner {
+.dregg-spinner {
   width: 16px; height: 16px;
   border-radius: 50%;
   border: 2px solid var(--line-strong);
   border-top-color: var(--accent);
-  animation: pyana-spin 720ms linear infinite;
+  animation: dregg-spin 720ms linear infinite;
 }
-@keyframes pyana-spin { to { transform: rotate(360deg); } }
+@keyframes dregg-spin { to { transform: rotate(360deg); } }
 
 /* Hex/hash color swatch with an inline --hash-color custom prop. */
-.pyana-hash-badge {
+.dregg-hash-badge {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 1px 8px;
   border-radius: 999px;
@@ -226,7 +226,7 @@
   border: 1px solid var(--line);
   font: 500 0.72rem/1 var(--font-mono);
 }
-.pyana-hash-badge::before {
+.dregg-hash-badge::before {
   content: "";
   width: 8px; height: 8px;
   border-radius: 50%;
@@ -235,7 +235,7 @@
 
 /* Toast host (used by the fail-soft banner when the CDN is unreachable
    and by `api.toast` calls from visualizers). */
-.pyana-toast-host {
+.dregg-toast-host {
   position: fixed;
   right: 20px;
   bottom: 20px;
@@ -245,7 +245,7 @@
   z-index: 80;
   pointer-events: none;
 }
-.pyana-toast {
+.dregg-toast {
   pointer-events: auto;
   background: var(--bg-elevated);
   color: var(--fg);
@@ -255,12 +255,12 @@
   padding: 8px 14px;
   font-size: 0.875rem;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  animation: pyana-toast-in 240ms ease-out;
+  animation: dregg-toast-in 240ms ease-out;
 }
-.pyana-toast[data-kind="warn"] { border-left-color: var(--warm); }
-.pyana-toast[data-kind="err"]  { border-left-color: var(--danger); }
-.pyana-toast[data-kind="info"] { border-left-color: var(--info); }
-@keyframes pyana-toast-in {
+.dregg-toast[data-kind="warn"] { border-left-color: var(--warm); }
+.dregg-toast[data-kind="err"]  { border-left-color: var(--danger); }
+.dregg-toast[data-kind="info"] { border-left-color: var(--info); }
+@keyframes dregg-toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }

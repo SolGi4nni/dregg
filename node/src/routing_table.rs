@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use pyana_cell::CellId;
-use pyana_turn::RoutingDirective;
+use dregg_cell::CellId;
+use dregg_turn::RoutingDirective;
 
 /// Maximum number of route entries per cell (Issue 4: prevent memory exhaustion).
 const MAX_ROUTES_PER_CELL: usize = 32;

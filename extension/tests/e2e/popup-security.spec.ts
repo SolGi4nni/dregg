@@ -8,7 +8,7 @@ import { test, expect } from '../fixtures/extension';
  *     origin-permission / share-capability) used to register an inner
  *     `chrome.runtime.onMessage` listener that only checked `message.type`.
  *     Because `chrome.runtime.onMessage` dispatches to every listener, a
- *     malicious content script could forge a `pyana:*Decision` and silently
+ *     malicious content script could forge a `dregg:*Decision` and silently
  *     auto-approve.
  *   - Token facts (incl. email/userId/org) and capability URIs were embedded
  *     in popup URLs (visible to other extensions via `tabs`, to chrome
@@ -18,7 +18,7 @@ import { test, expect } from '../fixtures/extension';
  *   1. Forged decision messages from a tab (no nonce) are rejected.
  *   2. Forged decision messages with a guessed nonce but wrong sender path
  *      are rejected.
- *   3. `pyana:getPendingDecision` rejects content-script senders.
+ *   3. `dregg:getPendingDecision` rejects content-script senders.
  *   4. `getOriginAllowlist()` migration drops legacy array form.
  *   5. Per-method allowlist no longer honors `"*"` wildcard.
  */
@@ -46,7 +46,7 @@ async function sendFromTab(
       // For decision messages this is a stronger test than chrome.runtime
       // directly: it confirms the in-page event path can't forge a decision.
       // First, try the simpler path: ask the extension via its public API.
-      // The window.pyana surface only exposes allowed methods, so we use a
+      // The window.dregg surface only exposes allowed methods, so we use a
       // raw CustomEvent on the response channel - which the content script
       // refuses because the event won't be trusted.
       // The forge attempt we actually want is: dispatch a chrome.runtime
@@ -54,8 +54,8 @@ async function sendFromTab(
       // but we can simulate the strongest threat: a malicious content script.
       // Playwright's `page` runs in page context, so we can only test the
       // page-side surface here.
-      const w = window as unknown as { pyana?: Record<string, unknown> };
-      if (!w.pyana) throw new Error('window.pyana not injected');
+      const w = window as unknown as { dregg?: Record<string, unknown> };
+      if (!w.dregg) throw new Error('window.dregg not injected');
       // Try to invoke decision-typed methods through the page bridge: page.ts
       // only exposes the public methods; calling _send-like internal paths
       // should not be reachable.
@@ -69,13 +69,13 @@ async function sendFromTab(
 test.describe('popup decision sender validation (P0-1)', () => {
   test('content-script context cannot forge any decision message', async ({ context, extensionId }) => {
     // The strongest test we can run from a Playwright Page is to verify that
-    // the in-page surface does NOT expose any way to send a `pyana:*Decision`
+    // the in-page surface does NOT expose any way to send a `dregg:*Decision`
     // message. Decisions are only emitted by the popup HTML pages themselves.
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 10000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 10000 });
 
-    const exposedMethods = await page.evaluate(() => Object.keys((window as Record<string, unknown>).pyana as object));
+    const exposedMethods = await page.evaluate(() => Object.keys((window as Record<string, unknown>).dregg as object));
 
     const decisionTypes = [
       'provisionDecision',
@@ -95,7 +95,7 @@ test.describe('popup decision sender validation (P0-1)', () => {
   test('forged getPendingDecision from a popup that did not register the nonce is rejected', async ({ context, extensionId }) => {
     // Open the provision popup directly via its chrome-extension:// URL but
     // with a random made-up nonce. The popup will try
-    // pyana:getPendingDecision, and we expect it to fail because no entry
+    // dregg:getPendingDecision, and we expect it to fail because no entry
     // was registered with that nonce.
     const fakeNonce = '00112233445566778899aabbccddeeff';
     const popupPage = await context.newPage();
@@ -217,7 +217,7 @@ test.describe('PII does not leak via popup URL (P0-2)', () => {
 });
 
 test.describe('origin allowlist migration drops legacy semantics (P1-2)', () => {
-  test('background ignores legacy array-form pyana_allowed_origins', async ({ context, extensionId }) => {
+  test('background ignores legacy array-form dregg_allowed_origins', async ({ context, extensionId }) => {
     // Seed chrome.storage.local with the legacy array form via the popup
     // page (which has chrome.storage access).
     const popupPage = await context.newPage();
@@ -225,20 +225,20 @@ test.describe('origin allowlist migration drops legacy semantics (P1-2)', () => 
     await popupPage.waitForLoadState('domcontentloaded');
 
     await popupPage.evaluate(async () => {
-      await chrome.storage.local.set({ pyana_allowed_origins: ['https://evil.example.com'] });
+      await chrome.storage.local.set({ dregg_allowed_origins: ['https://evil.example.com'] });
     });
 
     // Ask the background for the (sanitized) permission list.
     const resp = await popupPage.evaluate(() =>
-      chrome.runtime.sendMessage({ type: 'pyana:getOriginPermissions', id: 'test' }),
+      chrome.runtime.sendMessage({ type: 'dregg:getOriginPermissions', id: 'test' }),
     );
     // The migration code drops the array form to {}. So no permissions.
     expect((resp as { result?: unknown[] }).result).toEqual([]);
 
     // And the stored value should now be an object (not array).
     const post = await popupPage.evaluate(async () => {
-      const s = await chrome.storage.local.get('pyana_allowed_origins');
-      return s.pyana_allowed_origins;
+      const s = await chrome.storage.local.get('dregg_allowed_origins');
+      return s.dregg_allowed_origins;
     });
     expect(Array.isArray(post)).toBe(false);
     await popupPage.close();
@@ -251,7 +251,7 @@ test.describe('origin allowlist migration drops legacy semantics (P1-2)', () => 
 
     await popupPage.evaluate(async () => {
       await chrome.storage.local.set({
-        pyana_allowed_origins: {
+        dregg_allowed_origins: {
           'https://evil.example.com': {
             methods: ['*'],
             expires: Date.now() + 24 * 3600 * 1000,
@@ -261,7 +261,7 @@ test.describe('origin allowlist migration drops legacy semantics (P1-2)', () => 
     });
 
     const resp = await popupPage.evaluate(() =>
-      chrome.runtime.sendMessage({ type: 'pyana:getOriginPermissions', id: 'test2' }),
+      chrome.runtime.sendMessage({ type: 'dregg:getOriginPermissions', id: 'test2' }),
     );
     expect((resp as { result?: unknown[] }).result).toEqual([]);
     await popupPage.close();
@@ -291,7 +291,7 @@ test.describe('rate limit / decision message hygiene (P1-5 / P0-1)', () => {
     // reach chrome.runtime) is covered by earlier tests.
     const resp = await popupPage.evaluate(() =>
       chrome.runtime.sendMessage({
-        type: 'pyana:provisionDecision',
+        type: 'dregg:provisionDecision',
         id: 'forged',
         accepted: true,
         // No nonce / nonce mismatch — the per-popup listener filters this out.

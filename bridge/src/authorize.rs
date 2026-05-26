@@ -2,14 +2,14 @@
 //!
 //! Given a committed token state (the final state after all attenuations),
 //! this module evaluates an authorization request against it using the
-//! Datalog trace evaluator from `pyana-trace`.
+//! Datalog trace evaluator from `dregg-trace`.
 //!
 //! The output is a verifiable [`AuthorizationTrace`] that can be proven in
 //! zero knowledge by the circuit layer.
 
-use pyana_commit::{FieldElement, SymbolTable, TokenState};
-use pyana_token::AuthRequest;
-use pyana_trace::{
+use dregg_commit::{FieldElement, SymbolTable, TokenState};
+use dregg_token::AuthRequest;
+use dregg_trace::{
     AuthorizationRequest as TraceRequest, AuthorizationTrace, Conclusion, Evaluator,
     Fact as TraceFact, Rule, Term, symbol_from_bytes, symbol_from_str,
 };
@@ -46,7 +46,7 @@ impl std::error::Error for AuthError {}
 /// Evaluate an authorization request against a committed token state,
 /// producing a verifiable derivation trace.
 ///
-/// This bridges the `token` crate's `AuthRequest` to the `pyana-trace`
+/// This bridges the `token` crate's `AuthRequest` to the `dregg-trace`
 /// evaluator, converting the committed facts into trace-format facts and
 /// running the standard policy rules.
 ///
@@ -89,7 +89,7 @@ pub fn authorize_with_trace(
     // The proof path now uses macaroon_to_factset_secure() which produces
     // action_allowed/svc_action_allowed facts with exact hash equality, eliminating
     // the substring-Contains vulnerability (e.g. "threadwrite" matching "write").
-    let rules = pyana_trace::standard_policy();
+    let rules = dregg_trace::standard_policy();
 
     // Run the evaluator.
     let evaluator = Evaluator::new(trace_facts, rules);
@@ -247,7 +247,7 @@ pub fn authorize_with_custom_rules(
 /// For the trace evaluator, we need `TraceFact` instances with `Symbol` predicates
 /// (which are [u8; 32]) and `Term` values.
 fn committed_facts_to_trace(state: &TokenState, symbols: &SymbolTable) -> Vec<TraceFact> {
-    use pyana_trace::symbol_from_bytes;
+    use dregg_trace::symbol_from_bytes;
     let mut trace_facts = Vec::new();
 
     for fact in state.all_facts() {
@@ -379,7 +379,7 @@ fn auth_request_to_trace(request: &AuthRequest) -> Result<TraceRequest, AuthErro
 /// Multi-action strings (e.g. "rw") map to the first action bit for the
 /// single-action trace request format.
 fn action_short_to_canonical(s: &str) -> String {
-    use pyana_macaroon::action::Action;
+    use dregg_macaroon::action::Action;
 
     // If it's already a canonical name, pass through.
     match s {
@@ -432,8 +432,8 @@ pub(crate) fn budget_revocation_facts(request: &AuthRequest) -> Vec<TraceFact> {
         facts.push(TraceFact::new(
             symbol_from_str("budget_remaining"),
             vec![
-                pyana_trace::Term::Const(symbol_from_str(budget_id)),
-                pyana_trace::Term::Int(*remaining as i64),
+                dregg_trace::Term::Const(symbol_from_str(budget_id)),
+                dregg_trace::Term::Int(*remaining as i64),
             ],
         ));
     }
@@ -442,7 +442,7 @@ pub(crate) fn budget_revocation_facts(request: &AuthRequest) -> Vec<TraceFact> {
     if let Some(cost) = request.request_cost {
         facts.push(TraceFact::new(
             symbol_from_str("request_cost"),
-            vec![pyana_trace::Term::Int(cost as i64)],
+            vec![dregg_trace::Term::Int(cost as i64)],
         ));
     }
 
@@ -450,7 +450,7 @@ pub(crate) fn budget_revocation_facts(request: &AuthRequest) -> Vec<TraceFact> {
     for token_id in &request.not_revoked {
         facts.push(TraceFact::new(
             symbol_from_str("not_revoked"),
-            vec![pyana_trace::Term::Const(symbol_from_str(token_id))],
+            vec![dregg_trace::Term::Const(symbol_from_str(token_id))],
         ));
     }
 
@@ -470,8 +470,8 @@ pub fn verify_authorization_trace(
     // Re-evaluate with the same request and check we get the same conclusion.
     let trace_facts = committed_facts_to_trace(state, symbols);
     #[allow(deprecated)]
-    let mut rules = pyana_trace::policy::legacy_policy();
-    rules.extend(pyana_trace::standard_policy());
+    let mut rules = dregg_trace::policy::legacy_policy();
+    rules.extend(dregg_trace::standard_policy());
 
     let evaluator = Evaluator::new(trace_facts, rules);
     let new_trace = evaluator.evaluate(&trace.request);
@@ -482,7 +482,7 @@ pub fn verify_authorization_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_commit::{Fact as CommitFact, FieldElement};
+    use dregg_commit::{Fact as CommitFact, FieldElement};
 
     #[test]
     fn test_authorize_unrestricted_allows() {

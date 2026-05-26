@@ -1,11 +1,11 @@
-# AUDIT — `trace/` (pyana-trace)
+# AUDIT — `trace/` (dregg-trace)
 
 > Read-only audit of the `trace/` workspace member. Generated 2026-05-24
 > against `main` @ `8a66164`. Working tree has unrelated WIP edits to
 > `circuit/`, `intent/`, `turn/`, `wire/` (out of scope).
 >
 > Companion: `BACKWATER-CRATES-AUDIT.md` (which flagged `trace/policy.rs`
-> as "pyana's de facto policy language … load-bearing but never deeply
+> as "dregg's de facto policy language … load-bearing but never deeply
 > audited") plus `PREDICATE-INVENTORY.md`, `BOUNDARIES.md`,
 > `SLOT-CAVEATS-DESIGN.md`.
 
@@ -17,8 +17,8 @@
 
 ```toml
 [package]
-name = "pyana-trace"
-description = "Derivation trace format and reference evaluator for the pyana ZK token system"
+name = "dregg-trace"
+description = "Derivation trace format and reference evaluator for the dregg ZK token system"
 
 [dependencies]
 blake3 = "1"
@@ -28,7 +28,7 @@ serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 ```
 
-- **Zero pyana-crate dependencies.** Not on `commit`, `types`, `token`,
+- **Zero dregg-crate dependencies.** Not on `commit`, `types`, `token`,
   `macaroon`, or `circuit`. This is the most self-contained module in
   the auth stack — a fact §7 returns to.
 - **Two runtime deps only.** `blake3` for `symbol_from_str` hashing,
@@ -37,7 +37,7 @@ serde_json = { workspace = true }
   refuses ambient stdlib-shaped utility deps.
 
 That isolation is the most important structural fact about the crate.
-It can be lifted out of the pyana tree wholesale.
+It can be lifted out of the dregg tree wholesale.
 
 ---
 
@@ -65,7 +65,7 @@ Total ≈ 3.9 kLOC of which ≈ 60% is implementation, ≈ 40% tests.
 - `eval::Evaluator`
 - `policy::{secure_policy, standard_policy}` — but **not** `legacy_policy()`,
   `minimal_policy()`, or `time_bounded_policy()`. Those are reachable only
-  via `pyana_trace::policy::*`.
+  via `dregg_trace::policy::*`.
 - `types::*` — including `symbol_from_str`, `symbol_from_bytes`, every
   enum.
 - `verify::{verify_trace, verify_trace_with_request}`.
@@ -73,7 +73,7 @@ Total ≈ 3.9 kLOC of which ≈ 60% is implementation, ≈ 40% tests.
 The module doc comment names four jobs: "Data structures for representing
 Datalog derivation traces; A bottom-up Datalog evaluator that records
 proof traces; A standalone trace verifier; Standard policy rules for the
-pyana authorization model." That's the whole crate.
+dregg authorization model." That's the whole crate.
 
 ### `types.rs` (`/Users/ember/dev/breadstuffs/trace/src/types.rs`)
 
@@ -115,7 +115,7 @@ level. The `legacy_policy()` tests deliberately violate it to exercise
   and labels, `symbol_from_bytes` for binary handles) is *the* source
   of the substring-vulnerability story in §2 below.
 - `Substitution` is a `Vec` of bindings, not a map. Lookups are linear
-  scans. For typical pyana rule bodies (≤4 atoms × ≤3 terms ≈ ≤12
+  scans. For typical dregg rule bodies (≤4 atoms × ≤3 terms ≈ ≤12
   variables) this is fine; if the rule complexity grows, this becomes
   a re-evaluation hotspot.
 - `Fact::new`'s `debug_assert` ground-check is debug-only. The verifier
@@ -340,7 +340,7 @@ tells the story:
 - `30/31` revocation enforcement.
 - `50` not-before enforcement.
 
-**Surface for a policy rule.** A pyana policy can express:
+**Surface for a policy rule.** A dregg policy can express:
 
 - *Allow if* one of these intersected facts holds: an `action_allowed(app, act)`
   + `request_app(app)` + `request_action(act)`; ditto for `svc_action_allowed`;
@@ -405,8 +405,8 @@ checks }` literals.
    (`symbol_from_bytes` vs `symbol_from_str`), yet both are exported.
    `bridge::authorize::evaluate_with_revocation_and_budget`
    (`bridge/src/authorize.rs:444-445`) actually **concatenates them**:
-   `let mut rules = pyana_trace::policy::legacy_policy();
-   rules.extend(pyana_trace::standard_policy());` That's a 17-rule
+   `let mut rules = dregg_trace::policy::legacy_policy();
+   rules.extend(dregg_trace::standard_policy());` That's a 17-rule
    policy where rule 1 (Contains-based) coexists with rule 40
    (MemberOf-based) and a *single token presentation* could in
    principle hit either depending on its caveat encoding. The
@@ -462,7 +462,7 @@ expected. Worth filing.
 
 ## §1. What `trace` *is*
 
-`trace` is **two things at once**, both load-bearing for the pyana token
+`trace` is **two things at once**, both load-bearing for the dregg token
 authorization path, neither of which is "observability" in the modern
 distributed-tracing sense:
 
@@ -475,17 +475,17 @@ distributed-tracing sense:
    > - Data structures for representing Datalog derivation traces
    > - A bottom-up Datalog evaluator that records proof traces
    > - A standalone trace verifier
-   > - Standard policy rules for the pyana authorization model"
+   > - Standard policy rules for the dregg authorization model"
 
    The "trace" word in the crate name refers to *the Datalog
    derivation trace* — the sequence of `DerivationStep`s recording
    how an `allow` or `deny` fact was reached — not to spans, logs, or
    telemetry.
 
-2. **The de facto pyana policy language** (`policy.rs`). Quote the
+2. **The de facto dregg policy language** (`policy.rs`). Quote the
    `secure_policy()` doc (`policy.rs:47-64`):
 
-   > "Returns the standard pyana authorization policy rule set. This
+   > "Returns the standard dregg authorization policy rule set. This
    > is the secure policy that uses exact hash matching (`MemberOf`)
    > instead of substring matching (`Contains`)."
 
@@ -493,13 +493,13 @@ distributed-tracing sense:
    hand-written Rust. There is no external surface; what a token can
    express is exactly what these constructors encode.
 
-The crate is **not** the observability sidecar. `pyana-observability/`
+The crate is **not** the observability sidecar. `dregg-observability/`
 is a completely separate crate (now ~2 kLOC, four src files plus a
 binary) that emits Studio-shape `TraceEvent` JSON for the turn
 substrate. The two share the word "trace" and **nothing else** —
 different audience, different data shape, different consumers, no
-import in either direction (`pyana-observability/Cargo.toml` does
-NOT depend on `pyana-trace`). See §3.
+import in either direction (`dregg-observability/Cargo.toml` does
+NOT depend on `dregg-trace`). See §3.
 
 So `trace` *is*: the seam between (a) the imperative caveat world
 (macaroon / biscuit) and (b) the ZK proof world (circuit), expressed
@@ -615,16 +615,16 @@ rule IDs, no STARK enforcement *here* (the STARK enforcement is in
 *here* (it's the input to the witness-attached
 `BridgePresentationProof`). See §6.
 
-### Composition with `pyana-dsl` predicates
+### Composition with `dregg-dsl` predicates
 
-`pyana-dsl` (per inventory §1.9 and §1.6) defines a richer
-caveat-authoring DSL (`#[pyana_caveat]`) that compiles to AIR rows
+`dregg-dsl` (per inventory §1.9 and §1.6) defines a richer
+caveat-authoring DSL (`#[dregg_caveat]`) that compiles to AIR rows
 with `RequirementKind::{LessEqual, GreaterEqual, Equal, NotEqual,
 Membership, BitRange, MerkleAtPosition, Poseidon2Hash}`. That DSL is
 **strictly more expressive** than `trace`'s `Check` enum (it has
 Merkle inclusion, Poseidon hashes, bit-range proofs).
 
-The relationship is that `pyana-dsl` produces a *witnessed proof
+The relationship is that `dregg-dsl` produces a *witnessed proof
 predicate* per caveat (e.g. `BridgePredicateProof` for a single
 GTE/LTE/GT/LT/NEQ/InRange comparison), while `trace`'s checks express
 the *outer combinator* that the policy uses to stitch caveats into a
@@ -632,7 +632,7 @@ yes/no decision. They are not redundant; they are at different layers.
 
 A token caveat that wants to express "user's reputation > 100"
 becomes:
-1. A `pyana-dsl` predicate inside the caveat, witnessed by a
+1. A `dregg-dsl` predicate inside the caveat, witnessed by a
    `BridgePredicateProof` (private value, public threshold,
    commitment).
 2. A `trace`-level fact like `predicate_satisfied(rep_predicate_hash)`
@@ -646,7 +646,7 @@ diagram.
 
 ## §3. Composition with `observability/`
 
-`pyana-observability` (`observability/Cargo.toml`, `observability/src/`)
+`dregg-observability` (`observability/Cargo.toml`, `observability/src/`)
 is a **separate, recently upgraded** crate. As of 2026-05-24 it's ~2
 kLOC across `lib.rs`, `emitter.rs`, `events.rs`, `schema.rs`, `main.rs`,
 not the 378-LOC single-binary form `BACKWATER-CRATES-AUDIT.md`
@@ -670,9 +670,9 @@ TraceEvents** to a Studio inspector. The vocabulary is:
 
 ### Relationship to `trace`
 
-**None at the code level.** `pyana-observability/Cargo.toml` does
-**not** depend on `pyana-trace`; `pyana-trace/Cargo.toml` does not
-depend on `pyana-observability`. The two crates share zero types.
+**None at the code level.** `dregg-observability/Cargo.toml` does
+**not** depend on `dregg-trace`; `dregg-trace/Cargo.toml` does not
+depend on `dregg-observability`. The two crates share zero types.
 
 **At the design level**: they are at **opposite ends of the privacy
 boundary**. `trace` produces a private artifact (the
@@ -704,8 +704,8 @@ So they cover **disjoint audiences**:
 The word "trace" is used in *three* distinct senses across the
 workspace:
 
-1. **`pyana-trace`** = Datalog derivation trace (this crate).
-2. **`pyana-observability::TraceEvent`** = Studio-shape event log.
+1. **`dregg-trace`** = Datalog derivation trace (this crate).
+2. **`dregg-observability::TraceEvent`** = Studio-shape event log.
 3. **`stark_trace` / `execution_trace` / `witness_trace` / `poseidon2_trace`**
    in `circuit/` = AIR execution-row matrix (the prover's witness
    tableau).
@@ -721,10 +721,10 @@ Concrete consumer code pointers, from the dep graph:
 
 | Consumer | File | Used for |
 |---|---|---|
-| `token` | `token/src/datalog_verify.rs:18-21` | **canonical token verification**: token decode → caveat→FactSet → `pyana_trace::Evaluator::evaluate` → Allow/Deny |
-| `bridge` | `bridge/src/authorize.rs:12-15, 92, 444-445` | bridges `token::AuthRequest` → `pyana_trace::AuthorizationTrace` for STARK proving; concatenates `legacy_policy() + standard_policy()` |
-| `bridge` | `bridge/src/present.rs:30, 178, 1661, 2142` | embeds `AuthorizationTrace` in `BridgePresentationProof`; recomputes the evaluator's fact set for STARK input; computes `revealed_facts_commitment` (Poseidon2 hash of `pyana_trace::Fact`s) for selective disclosure |
-| `circuit` | `circuit/Cargo.toml:108` declares the dep but `circuit/src` doesn't `use pyana_trace`. The comment at `circuit/sp1-guest/src/main.rs:353` says the SP1 guest uses a "self-contained evaluator that doesn't need pyana-trace/pyana-commit" — the declared dep is therefore vestigial in current code | dead dep (?) |
+| `token` | `token/src/datalog_verify.rs:18-21` | **canonical token verification**: token decode → caveat→FactSet → `dregg_trace::Evaluator::evaluate` → Allow/Deny |
+| `bridge` | `bridge/src/authorize.rs:12-15, 92, 444-445` | bridges `token::AuthRequest` → `dregg_trace::AuthorizationTrace` for STARK proving; concatenates `legacy_policy() + standard_policy()` |
+| `bridge` | `bridge/src/present.rs:30, 178, 1661, 2142` | embeds `AuthorizationTrace` in `BridgePresentationProof`; recomputes the evaluator's fact set for STARK input; computes `revealed_facts_commitment` (Poseidon2 hash of `dregg_trace::Fact`s) for selective disclosure |
+| `circuit` | `circuit/Cargo.toml:108` declares the dep but `circuit/src` doesn't `use dregg_trace`. The comment at `circuit/sp1-guest/src/main.rs:353` says the SP1 guest uses a "self-contained evaluator that doesn't need dregg-trace/dregg-commit" — the declared dep is therefore vestigial in current code | dead dep (?) |
 | `intent` | `intent/Cargo.toml:22` declares dep but `intent/src` doesn't use it. Probably for future trustless intent paths | dead dep (?) |
 | `sdk` | `sdk/src/runtime.rs:572`, `sdk/src/cipherclerk.rs:28, 2001-2258`, `sdk/src/verify.rs:219, 647-660, 854-856` | cclerk emits trace facts, builds revealed-facts commitments, checks `Conclusion::Allow` on auth results |
 | `wasm` | `wasm/src/lib.rs:634-635` | wasm binding for the evaluator + standard policy |
@@ -752,7 +752,7 @@ executor was ever consulted.
 
 ## §5. Privacy / boundary contract (per `BOUNDARIES.md`)
 
-`BOUNDARIES.md` does not have a dedicated section for `pyana-trace`,
+`BOUNDARIES.md` does not have a dedicated section for `dregg-trace`,
 but the implied contract follows from the surrounding
 credential-presentation boundary (`BOUNDARIES.md §2.11`):
 
@@ -820,7 +820,7 @@ The audit task asked to name what's missing. I claim:
    `(action, resource, app_id, ...)`") and the credential
    presentation "Datalog rule" mentioned in `BOUNDARIES.md §2.11`,
    but it does not give a row in the §1 inventory to
-   `pyana_trace::Rule`. The omission is consistent with the
+   `dregg_trace::Rule`. The omission is consistent with the
    inventory's framing — it inventories *atomic* predicates, not
    *combinators* — but a `Combinator` axis is missing from §2.
    Adding "§1.11. Datalog rule combinators" with sites
@@ -880,7 +880,7 @@ The audit task asked to name what's missing. I claim:
    that's structurally valid (no allow was reached). There's no way
    to distinguish "policy denies" from "policy timed out". A separate
    `Conclusion::Indeterminate` would help.
-9. **`circuit` declares `pyana-trace` as a dep but doesn't use it.**
+9. **`circuit` declares `dregg-trace` as a dep but doesn't use it.**
    Either the dep should be removed or there's a planned wire-up
    that hasn't landed. `intent` is the same.
 
@@ -888,11 +888,11 @@ The audit task asked to name what's missing. I claim:
 
 ### Keep, with the following actions
 
-1. **Keep `trace` as its own crate.** Its no-pyana-dependency
+1. **Keep `trace` as its own crate.** Its no-dregg-dependency
    structure makes it a clean reusable component; the temptation to
    fold it into `token` or `bridge` should be resisted because the
    ZK-circuit replicates the verifier and benefits from the verifier
-   living somewhere that doesn't import every pyana crate transitively.
+   living somewhere that doesn't import every dregg crate transitively.
 2. **Promote `policy.rs` discussion to a dedicated `AUDIT-trace-policy.md`**
    or a `POLICY-LANGUAGE.md` design doc. The 1216-LOC file deserves
    the airtime: every rule ID is part of a public ABI, every check
@@ -929,9 +929,9 @@ The audit task asked to name what's missing. I claim:
 ### Do NOT merge with `observability/`
 
 The two crates' audiences are disjoint:
-- `pyana-trace`'s artefact is the *prover's private witness shape*.
+- `dregg-trace`'s artefact is the *prover's private witness shape*.
   It can never go out the door.
-- `pyana-observability`'s artefact is the *operator's sanitised event
+- `dregg-observability`'s artefact is the *operator's sanitised event
   log*. It must go out the door.
 
 A merge would require both crates to grow careful per-field
@@ -943,7 +943,7 @@ upgraded shape.
 ### Do NOT move `policy.rs` to a different crate (yet)
 
 There is a temptation to spin `policy.rs` into a separate
-`pyana-policy` crate so the verifier (which the ZK circuit
+`dregg-policy` crate so the verifier (which the ZK circuit
 replicates) can live without it. **Resist for now.** Three reasons:
 
 1. The policy is small (14 rule IDs) and unlikely to be authored
@@ -954,13 +954,13 @@ replicates) can live without it. **Resist for now.** Three reasons:
    policy out would force `verify.rs` to import policy or duplicate
    the predicate names.
 3. The right time to split is when a **policy DSL** (TOML / JSON /
-   pyana-dsl-style proc macro) lands. Then `pyana-policy` becomes
-   the *parser + compiler* crate and `pyana-trace` stays the AST +
+   dregg-dsl-style proc macro) lands. Then `dregg-policy` becomes
+   the *parser + compiler* crate and `dregg-trace` stays the AST +
    evaluator + verifier crate. Until then, keep them together.
 
 ### Long-term: invest in a policy authoring DSL
 
-The biggest gap is that **the only way to add a pyana policy rule
+The biggest gap is that **the only way to add a dregg policy rule
 today is to edit `trace/src/policy.rs`**. If apps want their own
 rules, they have to construct `Rule { id, head, body, checks }`
 literals in Rust. A small DSL — even just a `[[rule]]` TOML schema
@@ -969,12 +969,12 @@ with named predicates — would:
 - Decouple policy authoring from crate releases.
 - Make policy diff/review-able outside Rust.
 - Enable per-app policy registration (federations with custom rules).
-- Let `pyana-dsl`'s `RequirementKind` lower naturally into
+- Let `dregg-dsl`'s `RequirementKind` lower naturally into
   `Check`s once the bridging types are sketched.
 
-This is the natural place where `pyana-trace` and `pyana-dsl` meet:
+This is the natural place where `dregg-trace` and `dregg-dsl` meet:
 the DSL describes individual caveats; the policy language combines
-them. A future `pyana-policy` crate would own that boundary.
+them. A future `dregg-policy` crate would own that boundary.
 
 ---
 
@@ -995,7 +995,7 @@ If `verify.rs` rejects, the circuit must also reject. If the circuit
 accepts, `verify.rs` must also accept. Any divergence is a soundness
 bug. The 44 tampering tests in `tests.rs` are the verifier-side
 fence; the differential coverage between
-`pyana-trace::verify_trace(forged) == false` and
+`dregg-trace::verify_trace(forged) == false` and
 `circuit::derivation_air::prove(forged_witness) == fail` is *the* sign
 that the two layers are in sync. That differential test is **not in
 `tests.rs`** today — it would belong in `tests/src/trace_attacks.rs`

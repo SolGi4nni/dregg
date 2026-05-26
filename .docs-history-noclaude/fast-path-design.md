@@ -1,4 +1,4 @@
-# Owned-Cell Fast Path: LUTRIS-Style Consensusless Agreement for Pyana
+# Owned-Cell Fast Path: LUTRIS-Style Consensusless Agreement for `dregg`
 
 Design exploration for bypassing Morpheus BFT consensus on turns that
 touch only cells owned by the signer.
@@ -21,7 +21,7 @@ any other agent's turns. The Sui LUTRIS paper demonstrates that owned-object
 transactions (single-writer) can skip consensus entirely, achieving finality
 in 2 network round trips (~100ms at 50ms RTT).
 
-Pyana's cell model is well-suited to this optimization: cells have a single
+`dregg`'s cell model is well-suited to this optimization: cells have a single
 owner public key, turns declare their access sets upfront (in the ConflictSet
 Bloom filter), and the nonce provides a natural version/sequence number.
 
@@ -95,7 +95,7 @@ unless the target cell is also owned by the signer (self-capability exercise).
 
 ### 3.1 Nonce-as-Lock
 
-Sui uses per-object version locks (OwnedLock[ObjKey] -> TxSign). In pyana,
+Sui uses per-object version locks (OwnedLock[ObjKey] -> TxSign). In dregg,
 cells already have a monotonically increasing nonce in `CellState`. The
 natural analog:
 
@@ -158,7 +158,7 @@ has a `fast_unlock` mechanism -- reuse the same pattern. Default timeout:
 
 ### 4.1 What Validators Sign
 
-In Sui, validators sign the transaction itself (the TxSign). In pyana:
+In Sui, validators sign the transaction itself (the TxSign). In dregg:
 
 **Option A: Sign the turn hash.**
 ```rust
@@ -427,7 +427,7 @@ Sui's Move VM determines read/write sets during execution -- the validator
 must actually run the transaction to know what it touches. This means
 validators do speculative execution.
 
-Pyana declares read/write sets upfront in the turn structure (via
+`dregg` declares read/write sets upfront in the turn structure (via
 `extract_access_sets()` and the ConflictSet). This is BETTER for the fast
 path because:
 - Eligibility can be determined before execution
@@ -436,7 +436,7 @@ path because:
 
 ### 9.2 Privacy
 
-Sui has no privacy layer. In pyana, the encrypted turn system provides
+Sui has no privacy layer. In dregg, the encrypted turn system provides
 privacy for shared-cell turns (hiding content until after ordering). The
 fast path operates in a different regime: single-owner turns where privacy
 from other agents is not a concern. The two mechanisms are complementary,
@@ -444,7 +444,7 @@ not conflicting.
 
 ### 9.3 Shared Object Performance
 
-Sui's shared-object path is slow (full consensus). In pyana, we could
+Sui's shared-object path is slow (full consensus). In dregg, we could
 potentially do better for certain shared-cell patterns:
 
 - **Read-only shared cells** (frozen configuration): Same as Sui, reads
@@ -457,7 +457,7 @@ potentially do better for certain shared-cell patterns:
 
 ### 9.4 Equivocation Forgiveness
 
-Sui forgives equivocation at epoch boundaries (locks reset). Pyana could
+Sui forgives equivocation at epoch boundaries (locks reset). `dregg` could
 do better with timeout-based lock expiry + fast unlock quorum. An
 equivocating agent loses at most `timeout_blocks` of liveness, not an
 entire epoch.
@@ -551,7 +551,7 @@ turn WILL execute once the proof is submitted. No other turn can conflict.
 **Pursue this, but phase it.**
 
 The fast path provides a material latency improvement (6x for non-proof
-turns, 2x for proof-required turns) with manageable complexity. The pyana
+turns, 2x for proof-required turns) with manageable complexity. The dregg
 architecture is well-positioned for it because:
 
 - Cells have single owners (natural LUTRIS ownership model)
@@ -573,7 +573,7 @@ architecture is well-positioned for it because:
 - Broadcast turn to all federation peers via gossip
 - Collect signatures, form certificate
 - Re-broadcast certificate for execution
-- New gossip topic: `pyana/fast-path-signs`
+- New gossip topic: `dregg/fast-path-signs`
 
 **Phase 3** (1-2 weeks): Proof pipelining
 - Parallel proof generation during certificate collection
@@ -596,7 +596,7 @@ and gossip layer are stable.
 - Sui LUTRIS paper: `/Users/ember/hellas/proto-dumping-ground/sui-paper.txt`
 - Mini-Sui validator prototype: `/Users/ember/hellas/mini-sui/src/validator.rs`
 - BCB algorithms: `/Users/ember/hellas/proto-dumping-ground/mini-sui/src/validator.rs`
-- Pyana turn structure: `/Users/ember/dev/breadstuffs/turn/src/turn.rs`
+- `dregg` turn structure: `/Users/ember/dev/breadstuffs/turn/src/turn.rs`
 - Conflict detection: `/Users/ember/dev/breadstuffs/turn/src/conflict.rs`
 - Cell model: `/Users/ember/dev/breadstuffs/cell/src/cell.rs`
 - Budget gate: `/Users/ember/dev/breadstuffs/turn/src/budget_gate.rs`
@@ -632,13 +632,13 @@ Self-capability exercise (where cap_target is owned by the signer) is fine -- it
 
 **Justification from codebase**: The BudgetGate in `turn/src/budget_gate.rs` already has a `fast_unlock` pattern (line 145) where debits are refunded on failure. The Stingray `FastUnlockManager` in `coord/src/budget.rs` (lines 514-686) provides a full 2f+1 quorum-based unlock protocol with `UnlockRequest` / `UnlockVote` / `UnlockCertificate`. This exact same machinery can be reused for cell lock release.
 
-**What Sui does**: Per-epoch expiry. Sui's epochs are 24 hours in production (paper Section 1, line 94: "current epoch length is 24h"). This is too long for pyana -- we want sub-minute recovery from client crashes.
+**What Sui does**: Per-epoch expiry. Sui's epochs are 24 hours in production (paper Section 1, line 94: "current epoch length is 24h"). This is too long for dregg -- we want sub-minute recovery from client crashes.
 
 **Why 30 blocks, not 50**: The design doc originally proposed 50 blocks. However:
 - An equivocating/crashed client only self-DoSes (they own the locked cells)
 - 30 blocks provides fast liveness recovery (30s at 1s/block)
 - The fast-unlock quorum (reusing `coord/src/budget.rs`'s `FastUnlockManager` pattern) provides an even faster escape if 2f+1 validators agree the client is offline
-- Pyana's epoch length is 10000 blocks (`federation/src/epoch.rs` line 22: `DEFAULT_EPOCH_LENGTH: u64 = 10000`), so 30 blocks is 0.3% of an epoch -- negligible liveness cost
+- `dregg`'s epoch length is 10000 blocks (`federation/src/epoch.rs` line 22: `DEFAULT_EPOCH_LENGTH: u64 = 10000`), so 30 blocks is 0.3% of an epoch -- negligible liveness cost
 
 If the fast-unlock quorum succeeds before the 30-block timeout, the lock is released immediately. The timeout is just the fallback.
 
@@ -688,7 +688,7 @@ Adding threshold decryption to the fast path would add 1-2 RTTs of latency (defe
 
 **Justification from codebase**: In `federation/src/epoch.rs`, `apply_epoch_transition` (lines 263-308) updates the epoch config, advances the epoch number, and applies membership changes. The reconfiguration in `mini-sui/src/reconfiguration.rs` shows the Sui pattern: `pause_tx_locking()` is called during the EndOfEpoch phase (line 126), stopping new locks from being created.
 
-**What Sui does**: Locks expire at epoch boundary. The paper (Section 1, lines 88-95) states: "client bugs only affect the liveness of a single epoch." The equivocation forgiveness mechanism relies on this -- a client that equivocated and deadlocked their objects regains access when the epoch changes. This is the same for pyana.
+**What Sui does**: Locks expire at epoch boundary. The paper (Section 1, lines 88-95) states: "client bugs only affect the liveness of a single epoch." The equivocation forgiveness mechanism relies on this -- a client that equivocated and deadlocked their objects regains access when the epoch changes. This is the same for dregg.
 
 **Concrete protocol at epoch boundary**:
 1. At `epoch_start_height + epoch_length - LOCK_GRACE_PERIOD` (e.g., last 100 blocks): stop accepting NEW fast-path lock requests. New turns must go through consensus.
@@ -728,7 +728,7 @@ The `BudgetGate` does NOT need version-checking for fast-path turns because the 
 
 **Answer: Validators do NOT execute at lock time. They validate only: signature, nonce, fee, ownership, and access set correctness. Execution happens AFTER the certificate is formed.**
 
-**Justification from codebase**: Pyana declares access sets upfront in the turn structure (via `extract_access_sets()` in `turn/src/conflict.rs`). This is the key advantage over Sui, which must speculatively execute to discover access sets.
+**Justification from codebase**: `dregg` declares access sets upfront in the turn structure (via `extract_access_sets()` in `turn/src/conflict.rs`). This is the key advantage over Sui, which must speculatively execute to discover access sets.
 
 At lock time, validators perform the following cheap checks:
 1. **Signature**: agent's Ed25519 signature is valid over the turn hash (same as `verify_ed25519_signature` in executor.rs lines 1260-1319)
@@ -740,7 +740,7 @@ At lock time, validators perform the following cheap checks:
 
 These are all O(1) hash-table lookups or signature verifications. No precondition evaluation, no effect application, no proof verification. The turn is NOT executed.
 
-**What Sui does**: Algorithm 1 in the paper performs `valid(Tx, [Obj])` which checks authorization and gas sufficiency, but does NOT execute (no `exec(Tx, ...)` call at this stage). Execution happens in Algorithm 4 (process certificate). Pyana follows the same split.
+**What Sui does**: Algorithm 1 in the paper performs `valid(Tx, [Obj])` which checks authorization and gas sufficiency, but does NOT execute (no `exec(Tx, ...)` call at this stage). Execution happens in Algorithm 4 (process certificate). `dregg` follows the same split.
 
 **Why not execute at lock time**: Execution has side effects (balance changes, field mutations). If the turn fails to form a certificate (insufficient signatures), those side effects must be rolled back. Running execution on potentially-abandoned turns wastes compute and complicates the journal. Keep lock-time checking cheap and stateless (relative to the effects layer).
 
@@ -752,7 +752,7 @@ These are all O(1) hash-table lookups or signature verifications. No preconditio
 
 **Justification from codebase**: In `mini-sui/src/validator.rs` lines 249-287 (`process_tx_internal`), Sui locks ALL owned inputs for EVERY transaction -- whether it will go through the fast path (owned-only) or consensus (shared+owned). The lock is acquired in the same codepath regardless of path routing. This is essential: without it, a consensus-path turn could modify a cell that a fast-path turn has already locked.
 
-In pyana, the same principle applies. When a turn arrives at a validator:
+In dregg, the same principle applies. When a turn arrives at a validator:
 1. Route determination: Is it fast-path eligible? (all write-set cells owned by signer, no depends_on, no shared reads)
 2. **Regardless of routing**: acquire `CellLock[(cell_id, nonce)]` for every cell in the write set
 3. If fast-path: return TurnSign immediately
@@ -908,7 +908,7 @@ pub type CellLockTable = HashMap<(CellId, u64), CellLockEntry>;
 
 1. **Node turn submission API** (`node/src/api.rs`): After receiving a turn, call `is_fast_path_eligible`. If eligible, call `process_fast_path_lock` instead of forwarding to Morpheus. Return the TurnSign to the client.
 
-2. **Federation gossip** (`node/src/federation_sync.rs`): Add a new gossip topic `pyana/fast-path/signs` for broadcasting TurnSign messages between the client/gateway and validators.
+2. **Federation gossip** (`node/src/federation_sync.rs`): Add a new gossip topic `dregg/fast-path/signs` for broadcasting TurnSign messages between the client/gateway and validators.
 
 3. **Block processing loop**: Call `expire_stale_locks` at each block. Call `clear_all_locks` at epoch boundary (detected via `is_epoch_boundary` from `federation/src/epoch.rs`).
 

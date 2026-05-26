@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>MCP Integration (AI Agent Tools) — Pyana</title>
+<title>MCP Integration (AI Agent Tools) — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,14 +16,14 @@
 <h1>MCP Integration (AI Agent Tools)</h1>
 
     <p>
-      Pyana exposes its capabilities as MCP (Model Context Protocol) tools over
+      <code>dregg</code> exposes its capabilities as MCP (Model Context Protocol) tools over
       JSON-RPC 2.0 stdio transport. AI assistants (Claude, GPT, etc.) can discover
       and invoke tools to interact with the federation.
     </p>
 
     <h2 id="running">Running the MCP Server</h2>
 
-    <pre><code>pyana-node mcp --data-dir ~/.pyana --federation-peers "peer1:8420"</code></pre>
+    <pre><code>dregg-node mcp --data-dir ~/.dregg --federation-peers "peer1:8420"</code></pre>
 
     <p>
       This reads JSON-RPC from stdin and writes responses to stdout. Configure your
@@ -60,7 +60,7 @@
     <p>
       The JSON-Schema for each tool's input/output is served from the
       <code>tools/list</code> endpoint at runtime — point your MCP client at
-      a running pyana-node and read the live schema rather than chasing a
+      a running dregg-node and read the live schema rather than chasing a
       copy in these docs. End-to-end transcripts and authorisation patterns
       (read-only cap, scoped writer, federation observer) are covered in
       <code>docs/agent-authorization.md</code>.

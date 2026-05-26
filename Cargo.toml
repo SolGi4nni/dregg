@@ -1,17 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "audit", "bridge", "wire", "persist", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "discord-bot", "app-framework", "pyana-dsl", "pyana-dsl-runtime", "pyana-dsl-tests", "pyana-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "pyana-storage-templates", "preflight"]
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trace", "demo", "demo-agent", "demo/sdk-consensus", "federation", "circuit", "audit", "bridge", "wire", "persist", "cell", "turn", "coord", "tests", "types", "sdk", "wasm", "node", "intent", "net", "discharge-gateway", "teasting", "discord-bot", "app-framework", "dregg-dsl", "dregg-dsl-runtime", "dregg-dsl-tests", "dregg-dsl-differential", "blocklace", "captp", "cli", "verifier", "protocol-tests", "observability", "storage", "starbridge-apps/nameservice", "dfa", "rbg", "credentials", "directory", "starbridge-apps/identity", "starbridge-apps/subscription", "starbridge-apps/governed-namespace", "dregg-storage-templates", "preflight"]
 # chain/ and chain/program/ are standalone workspaces with their own root Cargo.toml.
 # chain has a known dep conflict (sp1-core-machine pins generic-array =1.1.0,
 # nova-snark needs >=1.2.0). chain/program is the SP1 guest, edition 2021,
 # riscv32im-succinct-zkvm-elf target, built by sp1-build.
-# rbg/ (the `pyana-rbg` package) hosts the Robigalia-inspired userspace
+# rbg/ (the `dregg-rbg` package) hosts the Robigalia-inspired userspace
 # primitives — `DirectoryCell`, `ScopedIntentPool`, `MetaDirectory`,
 # `DirectoryFactory`, and the userspace `Volume`/`Blob`/`Directory`
-# VFS triple — composed atop `pyana-types::CellId` /
-# `pyana-types::FederationId` and (for the directory factory
-# descriptor) `pyana-cell::factory::FactoryDescriptor`. The DFA routing
-# module that used to live in rbg has been promoted into `pyana-dfa`
+# VFS triple — composed atop `dregg-types::CellId` /
+# `dregg-types::FederationId` and (for the directory factory
+# descriptor) `dregg-cell::factory::FactoryDescriptor`. The DFA routing
+# module that used to live in rbg has been promoted into `dregg-dfa`
 # per `DFA-RATIONALIZATION-DESIGN.md`; rbg/ no longer ships its own
 # routing engine.
 exclude = ["chain", "chain/program"]
@@ -20,10 +20,10 @@ exclude = ["chain", "chain/program"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
-authors = ["Pyana Contributors"]
+authors = ["Dregg Contributors"]
 license = "AGPL-3.0-or-later"
-homepage = "https://pyana.dev"
-repository = "https://github.com/emberian/pyana"
+homepage = "https://dregg.dev"
+repository = "https://github.com/emberian/dregg"
 
 [patch.crates-io]
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
@@ -31,14 +31,14 @@ ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "
 
 [workspace.dependencies]
 ## Local
-pyana-macaroon = { path = "macaroon", default-features = false }
-pyana-net = { path = "net" }
-pyana-types = { path = "types" }
-pyana-secrets = { path = "secrets" }
-pyana-token = { path = "token" }
-pyana-tokenizer = { path = "tokenizer" }
+dregg-macaroon = { path = "macaroon", default-features = false }
+dregg-net = { path = "net" }
+dregg-types = { path = "types" }
+dregg-secrets = { path = "secrets" }
+dregg-token = { path = "token" }
+dregg-tokenizer = { path = "tokenizer" }
 
-## Plonky3 core (rev 82cfad73 — the version pyana proofs were validated against)
+## Plonky3 core (rev 82cfad73 — the version dregg proofs were validated against)
 p3-air = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-batch-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }

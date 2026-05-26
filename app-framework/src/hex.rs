@@ -1,6 +1,6 @@
 //! Hex encoding/decoding utilities for 32-byte identifiers.
 //!
-//! These are the common conversions duplicated across pyana apps.
+//! These are the common conversions duplicated across dregg apps.
 
 /// Error type for hex decoding failures.
 #[derive(Debug, Clone, PartialEq, Eq)]

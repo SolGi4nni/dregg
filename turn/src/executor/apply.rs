@@ -10,7 +10,7 @@
 //! corresponding old match arm, and `apply_effect` is reduced to a dispatcher.
 
 use super::*;
-use pyana_cell::*;
+use dregg_cell::*;
 
 impl TurnExecutor {
     /// Apply a single effect to the ledger, recording undo entries in the journal.
@@ -516,7 +516,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::SetState,
+                dregg_cell::permissions::Action::SetState,
                 "SetState",
                 path,
             )?;
@@ -549,7 +549,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 from,
-                pyana_cell::permissions::Action::Send,
+                dregg_cell::permissions::Action::Send,
                 "Send",
                 path,
             )?;
@@ -608,7 +608,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 from,
-                pyana_cell::permissions::Action::Delegate,
+                dregg_cell::permissions::Action::Delegate,
                 "Delegate",
                 path,
             )?;
@@ -643,7 +643,7 @@ impl TurnExecutor {
                     )
                 })?;
 
-            if !pyana_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
+            if !dregg_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
                 return Err((
                     TurnError::DelegationDenied {
                         parent: *from,
@@ -685,7 +685,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::Delegate,
+                dregg_cell::permissions::Action::Delegate,
                 "Delegate",
                 path,
             )?;
@@ -730,7 +730,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::IncrementNonce,
+                dregg_cell::permissions::Action::IncrementNonce,
                 "IncrementNonce",
                 path,
             )?;
@@ -780,14 +780,14 @@ impl TurnExecutor {
         actor: &CellId,
         journal: &mut LedgerJournal,
         cell: &CellId,
-        new_permissions: &pyana_cell::Permissions,
+        new_permissions: &dregg_cell::Permissions,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if cell != action_target {
             self.check_cross_cell_permission(
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::SetPermissions,
+                dregg_cell::permissions::Action::SetPermissions,
                 "SetPermissions",
                 path,
             )?;
@@ -808,14 +808,14 @@ impl TurnExecutor {
         actor: &CellId,
         journal: &mut LedgerJournal,
         cell: &CellId,
-        new_vk: Option<&pyana_cell::VerificationKey>,
+        new_vk: Option<&dregg_cell::VerificationKey>,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if cell != action_target {
             self.check_cross_cell_permission(
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::SetVerificationKey,
+                dregg_cell::permissions::Action::SetVerificationKey,
                 "SetVerificationKey",
                 path,
             )?;
@@ -1156,10 +1156,10 @@ impl TurnExecutor {
                             asset_type: u64,
                             proof_bytes: &[u8]|
          -> Result<(), String> {
-            use pyana_circuit::BabyBear;
-            use pyana_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
-            use pyana_circuit::poseidon2;
-            use pyana_circuit::stark::proof_from_bytes;
+            use dregg_circuit::BabyBear;
+            use dregg_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
+            use dregg_circuit::poseidon2;
+            use dregg_circuit::stark::proof_from_bytes;
 
             // Compress a 32-byte value to a single BabyBear via Poseidon2 of 8 limbs.
             // Matches `bridge::present::bytes_to_babybear` so prover and verifier agree.
@@ -1199,7 +1199,7 @@ impl TurnExecutor {
             .map_err(|e| format!("STARK spending proof verification failed: {e}"))
         };
 
-        pyana_cell::note_bridge::verify_portable_note(
+        dregg_cell::note_bridge::verify_portable_note(
             portable_proof,
             &self.local_federation_id,
             &self.trusted_federation_roots,
@@ -1249,7 +1249,7 @@ impl TurnExecutor {
         spending_proof: &[u8],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let mut pending = self.pending_bridges.lock().unwrap();
-        pyana_cell::note_bridge::initiate_bridge(
+        dregg_cell::note_bridge::initiate_bridge(
             *nullifier,
             *destination,
             value,
@@ -1278,7 +1278,7 @@ impl TurnExecutor {
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let mut pending = self.pending_bridges.lock().unwrap();
         let mut bridged = self.bridged_nullifiers.lock().unwrap();
-        pyana_cell::note_bridge::finalize_bridge(
+        dregg_cell::note_bridge::finalize_bridge(
             nullifier,
             receipt,
             &self.trusted_destination_keys,
@@ -1303,7 +1303,7 @@ impl TurnExecutor {
         nullifier: &[u8; 32],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let mut pending = self.pending_bridges.lock().unwrap();
-        pyana_cell::note_bridge::cancel_bridge(nullifier, self.block_height, &mut pending)
+        dregg_cell::note_bridge::cancel_bridge(nullifier, self.block_height, &mut pending)
             .map_err(|e| {
                 (
                     TurnError::BridgeCancelFailed {
@@ -1403,7 +1403,7 @@ impl TurnExecutor {
         // fulfillment proof built for a weak condition (e.g. HashPreimage) against an
         // obligation that was created with a stronger condition (e.g. LocalProof).
         let obligation_id = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
             hasher.update(action_target.as_bytes());
             hasher.update(beneficiary.as_bytes());
             hasher.update(&deadline_height.to_le_bytes());
@@ -2498,12 +2498,12 @@ impl TurnExecutor {
 
         // Permission check: the capability's permissions must allow the operations.
         // If the capability requires Impossible, reject.
-        if matches!(cap.permissions, pyana_cell::AuthRequired::Impossible) {
+        if matches!(cap.permissions, dregg_cell::AuthRequired::Impossible) {
             return Err((
                 TurnError::PermissionDenied {
                     cell: cap_target,
                     action: "ExerciseViaCapability".to_string(),
-                    required: pyana_cell::AuthRequired::Impossible,
+                    required: dregg_cell::AuthRequired::Impossible,
                 },
                 path.to_vec(),
             ));
@@ -2527,7 +2527,7 @@ impl TurnExecutor {
                         ledger,
                         actor,
                         from,
-                        pyana_cell::permissions::Action::Send,
+                        dregg_cell::permissions::Action::Send,
                         "Send (Transfer.from via ExerciseViaCapability)",
                         path,
                     )?;
@@ -2538,27 +2538,27 @@ impl TurnExecutor {
 
             let required_perm_action = match inner_effect {
                 Effect::SetField { .. } => {
-                    Some((pyana_cell::permissions::Action::SetState, "SetState"))
+                    Some((dregg_cell::permissions::Action::SetState, "SetState"))
                 }
                 Effect::Transfer { from, .. } if from == &cap_target => {
-                    Some((pyana_cell::permissions::Action::Send, "Send"))
+                    Some((dregg_cell::permissions::Action::Send, "Send"))
                 }
                 Effect::IncrementNonce { .. } => Some((
-                    pyana_cell::permissions::Action::IncrementNonce,
+                    dregg_cell::permissions::Action::IncrementNonce,
                     "IncrementNonce",
                 )),
                 Effect::GrantCapability { .. } => {
-                    Some((pyana_cell::permissions::Action::Delegate, "Delegate"))
+                    Some((dregg_cell::permissions::Action::Delegate, "Delegate"))
                 }
                 Effect::RevokeCapability { .. } => {
-                    Some((pyana_cell::permissions::Action::Delegate, "Delegate"))
+                    Some((dregg_cell::permissions::Action::Delegate, "Delegate"))
                 }
                 Effect::SetPermissions { .. } => Some((
-                    pyana_cell::permissions::Action::SetPermissions,
+                    dregg_cell::permissions::Action::SetPermissions,
                     "SetPermissions",
                 )),
                 Effect::SetVerificationKey { .. } => Some((
-                    pyana_cell::permissions::Action::SetVerificationKey,
+                    dregg_cell::permissions::Action::SetVerificationKey,
                     "SetVerificationKey",
                 )),
                 _ => None,
@@ -2678,7 +2678,7 @@ impl TurnExecutor {
             ));
         }
 
-        let pair = pyana_cell::SealPair::generate();
+        let pair = dregg_cell::SealPair::generate();
 
         // Grant sealer capability (breadstuff = sealer_key).
         let sealer_cap_id = Self::seal_capability_id(&pair.id, true);
@@ -2687,7 +2687,7 @@ impl TurnExecutor {
             .capabilities
             .grant_with_breadstuff(
                 sealer_cap_id,
-                pyana_cell::AuthRequired::None,
+                dregg_cell::AuthRequired::None,
                 Some(pair.sealer_public),
             )
             .ok_or_else(|| {
@@ -2707,7 +2707,7 @@ impl TurnExecutor {
             .capabilities
             .grant_with_breadstuff(
                 unsealer_cap_id,
-                pyana_cell::AuthRequired::None,
+                dregg_cell::AuthRequired::None,
                 Some(pair.unsealer_secret),
             )
             .ok_or_else(|| {
@@ -2757,7 +2757,7 @@ impl TurnExecutor {
                 path.to_vec(),
             )
         })?;
-        let seal_pair = pyana_cell::SealPair::sealer_only(sealer_public);
+        let seal_pair = dregg_cell::SealPair::sealer_only(sealer_public);
         let sealed = seal_pair.seal(capability);
         // Store seal commitment in actor's field 7 for on-chain discoverability.
         let actor_mut = ledger
@@ -2779,7 +2779,7 @@ impl TurnExecutor {
         introducer: &CellId,
         recipient: &CellId,
         target: &CellId,
-        permissions: &pyana_cell::AuthRequired,
+        permissions: &dregg_cell::AuthRequired,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let intro_cell = ledger
             .get(introducer)
@@ -2809,7 +2809,7 @@ impl TurnExecutor {
                     path.to_vec(),
                 )
             })?;
-        if !pyana_cell::is_attenuation(&held_cap.permissions, permissions) {
+        if !dregg_cell::is_attenuation(&held_cap.permissions, permissions) {
             return Err((
                 TurnError::IntroductionDenied {
                     introducer: *introducer,
@@ -2825,7 +2825,7 @@ impl TurnExecutor {
         let target_cell = ledger
             .get(target)
             .ok_or_else(|| (TurnError::CellNotFound { id: *target }, path.to_vec()))?;
-        if target_cell.permissions.delegate == pyana_cell::AuthRequired::Impossible {
+        if target_cell.permissions.delegate == dregg_cell::AuthRequired::Impossible {
             return Err((
                 TurnError::IntroductionDenied {
                     introducer: *introducer,
@@ -2892,7 +2892,7 @@ impl TurnExecutor {
             )
         })?;
 
-        let mut pair = pyana_cell::SealPair::from_keys([0u8; 32], unsealer_secret);
+        let mut pair = dregg_cell::SealPair::from_keys([0u8; 32], unsealer_secret);
         pair.id = sealed_box.pair_id;
 
         match pair.unseal(sealed_box) {
@@ -2939,15 +2939,15 @@ impl TurnExecutor {
         })?;
         let delegation_epoch = parent_cell_data.state.delegation_epoch();
         let now = self.current_timestamp as u64;
-        let snapshot: Vec<pyana_cell::CapabilityRef> =
+        let snapshot: Vec<dregg_cell::CapabilityRef> =
             parent_cell_data.capabilities.iter().cloned().collect();
 
         let child_id = CellId::derive_raw(child_public_key, child_token_id);
         let mut child_cell = Cell::with_balance(*child_public_key, *child_token_id, 0);
         child_cell.delegate = Some(*action_target);
         let clist_bytes = postcard::to_allocvec(&snapshot).unwrap_or_default();
-        let clist_commitment = pyana_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
-        child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
+        let clist_commitment = dregg_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
+        child_cell.delegation = Some(dregg_cell::DelegatedRef::new(
             *action_target,
             child_id,
             snapshot,
@@ -2996,7 +2996,7 @@ impl TurnExecutor {
         let parent_cell_data = ledger
             .get(&parent_id)
             .ok_or_else(|| (TurnError::CellNotFound { id: parent_id }, path.to_vec()))?;
-        let new_snapshot: Vec<pyana_cell::CapabilityRef> =
+        let new_snapshot: Vec<dregg_cell::CapabilityRef> =
             parent_cell_data.capabilities.iter().cloned().collect();
         let new_epoch = parent_cell_data.state.delegation_epoch();
         let now = self.current_timestamp as u64;
@@ -3004,8 +3004,8 @@ impl TurnExecutor {
         let child_mut = ledger.get_mut(action_target).unwrap();
         journal.record_set_delegation(*action_target, old_delegation);
         let clist_bytes = postcard::to_allocvec(&new_snapshot).unwrap_or_default();
-        let clist_commitment = pyana_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
-        child_mut.delegation = Some(pyana_cell::DelegatedRef::new(
+        let clist_commitment = dregg_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
+        child_mut.delegation = Some(dregg_cell::DelegatedRef::new(
             parent_id,
             *action_target,
             new_snapshot,
@@ -3094,7 +3094,7 @@ impl TurnExecutor {
         factory_vk: &[u8; 32],
         owner_pubkey: &[u8; 32],
         token_id: &[u8; 32],
-        params: &pyana_cell::factory::FactoryCreationParams,
+        params: &dregg_cell::factory::FactoryCreationParams,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // Validate the factory exists in the registry and the creation is within
         // the factory's declared constraints (program VK, capabilities, fields, mode, budget).
@@ -3121,19 +3121,19 @@ impl TurnExecutor {
             let registry = self.factory_registry.borrow();
             let descriptor = registry.get(factory_vk);
             match descriptor.and_then(|d| d.child_vk_strategy.as_ref()) {
-                Some(pyana_cell::factory::ChildVkStrategy::Derived { base_vk }) => {
+                Some(dregg_cell::factory::ChildVkStrategy::Derived { base_vk }) => {
                     let param_hash =
-                        pyana_cell::factory::ChildVkStrategy::compute_param_hash(params);
-                    Some(pyana_cell::factory::ChildVkStrategy::derive_child_vk(
+                        dregg_cell::factory::ChildVkStrategy::compute_param_hash(params);
+                    Some(dregg_cell::factory::ChildVkStrategy::derive_child_vk(
                         base_vk,
                         &param_hash,
                     ))
                 }
-                Some(pyana_cell::factory::ChildVkStrategy::FromSet { .. }) => {
+                Some(dregg_cell::factory::ChildVkStrategy::FromSet { .. }) => {
                     // Already validated; use the claimed VK.
                     params.program_vk
                 }
-                Some(pyana_cell::factory::ChildVkStrategy::Fixed(vk)) => *vk,
+                Some(dregg_cell::factory::ChildVkStrategy::Fixed(vk)) => *vk,
                 None => params.program_vk,
             }
         };
@@ -3141,14 +3141,14 @@ impl TurnExecutor {
         // Create the cell.
         let new_cell_id = CellId::derive_raw(owner_pubkey, token_id);
         let mut new_cell = match params.mode {
-            pyana_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
-            pyana_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
+            dregg_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
+            dregg_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
         };
 
         // Set initial fields.
         for (idx, val) in &params.initial_fields {
             let idx = *idx as usize;
-            if idx < pyana_cell::state::STATE_SLOTS {
+            if idx < dregg_cell::state::STATE_SLOTS {
                 // Zero-pad to 32 bytes.
                 let mut field = [0u8; 32];
                 field[..8].copy_from_slice(&val.to_le_bytes());
@@ -3158,7 +3158,7 @@ impl TurnExecutor {
 
         // Install program VK — use effective_vk (which may be derived).
         if let Some(vk_hash) = &effective_vk {
-            new_cell.verification_key = Some(pyana_cell::VerificationKey::from_parts(
+            new_cell.verification_key = Some(dregg_cell::VerificationKey::from_parts(
                 *vk_hash,
                 vk_hash.to_vec(), // Minimal VK data — the hash IS the identifier
             ));
@@ -3167,9 +3167,9 @@ impl TurnExecutor {
         // Grant initial capabilities.
         for cap_grant in &params.initial_caps {
             let target_id = match &cap_grant.target {
-                pyana_cell::factory::CapTarget::SelfCell => new_cell_id,
-                pyana_cell::factory::CapTarget::Specific(id) => *id,
-                pyana_cell::factory::CapTarget::Any => {
+                dregg_cell::factory::CapTarget::SelfCell => new_cell_id,
+                dregg_cell::factory::CapTarget::Specific(id) => *id,
+                dregg_cell::factory::CapTarget::Any => {
                     // "Any" in a grant means self for initial caps.
                     new_cell_id
                 }
@@ -3235,7 +3235,7 @@ impl TurnExecutor {
         let queue_token = [0u8; 32];
         let queue_id = CellId::derive_raw(&queue_seed, &queue_token);
 
-        let mut queue_cell = pyana_cell::Cell::with_balance(queue_seed, queue_token, 0);
+        let mut queue_cell = dregg_cell::Cell::with_balance(queue_seed, queue_token, 0);
         // Encode capacity in field[0].
         queue_cell.state.fields[0][..8].copy_from_slice(&capacity.to_le_bytes());
         // field[1] = current length = 0 (already zero).
@@ -3246,15 +3246,15 @@ impl TurnExecutor {
             queue_cell.state.fields[3] = *vk;
         }
         // Open permissions on queue cell (managed by executor logic).
-        queue_cell.permissions = pyana_cell::Permissions {
-            send: pyana_cell::AuthRequired::None,
-            receive: pyana_cell::AuthRequired::None,
-            set_state: pyana_cell::AuthRequired::None,
-            set_permissions: pyana_cell::AuthRequired::Impossible,
-            set_verification_key: pyana_cell::AuthRequired::Impossible,
-            increment_nonce: pyana_cell::AuthRequired::None,
-            delegate: pyana_cell::AuthRequired::None,
-            access: pyana_cell::AuthRequired::None,
+        queue_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::Impossible,
+            set_verification_key: dregg_cell::AuthRequired::Impossible,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
         };
 
         ledger
@@ -3852,14 +3852,14 @@ impl TurnExecutor {
         journal: &mut LedgerJournal,
         swiss_number: &[u8; 32],
         target: &CellId,
-        permissions: &pyana_cell::AuthRequired,
+        permissions: &dregg_cell::AuthRequired,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if target != action_target {
             self.check_cross_cell_permission(
                 ledger,
                 actor,
                 target,
-                pyana_cell::permissions::Action::Delegate,
+                dregg_cell::permissions::Action::Delegate,
                 "Delegate",
                 path,
             )?;
@@ -3927,7 +3927,7 @@ impl TurnExecutor {
         swiss_number: &[u8; 32],
         bearer: &CellId,
         expected_cell_id: &CellId,
-        expected_permissions: &pyana_cell::AuthRequired,
+        expected_permissions: &dregg_cell::AuthRequired,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // The bearer cell gains a routing entry; for the
         // minimal P1.A shape we increment the target's
@@ -4123,7 +4123,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 cell,
-                pyana_cell::permissions::Action::SetState,
+                dregg_cell::permissions::Action::SetState,
                 "Refusal",
                 path,
             )?;
@@ -4149,11 +4149,11 @@ impl TurnExecutor {
             return Err((TurnError::NonceOverflow { cell: *cell }, path.to_vec()));
         }
         // Compute audit commitment for slot[4]:
-        //   blake3("pyana-refusal-audit-v1" ||
+        //   blake3("dregg-refusal-audit-v1" ||
         //          offered_action_commitment ||
         //          reason_disc ||
         //          (optional reason_hash))
-        let mut h = blake3::Hasher::new_derive_key("pyana-refusal-audit-v1");
+        let mut h = blake3::Hasher::new_derive_key("dregg-refusal-audit-v1");
         h.update(offered_action_commitment);
         match refusal_reason {
             crate::action::RefusalReason::Declined => h.update(&[0u8]),
@@ -4312,7 +4312,7 @@ impl TurnExecutor {
                 ledger,
                 actor,
                 target,
-                pyana_cell::permissions::Action::Send,
+                dregg_cell::permissions::Action::Send,
                 "Burn",
                 path,
             )?;
@@ -4349,7 +4349,7 @@ impl TurnExecutor {
         journal: &mut LedgerJournal,
         cell: &CellId,
         slot: u32,
-        narrower_permissions: &pyana_cell::AuthRequired,
+        narrower_permissions: &dregg_cell::AuthRequired,
         narrower_effects: Option<u32>,
         narrower_expiry: Option<u64>,
     ) -> Result<(), (TurnError, Vec<usize>)> {
@@ -4564,7 +4564,7 @@ impl TurnExecutor {
         ledger: &Ledger,
         actor: &CellId,
         target_cell_id: &CellId,
-        permission_action: pyana_cell::permissions::Action,
+        permission_action: dregg_cell::permissions::Action,
         action_name: &str,
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {

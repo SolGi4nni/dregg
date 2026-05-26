@@ -5,19 +5,19 @@
 
 use std::sync::Arc;
 
-use pyana_net::PeerMessage;
-use pyana_net::gossip::{GossipNetwork, TopicHandle};
+use dregg_net::PeerMessage;
+use dregg_net::gossip::{GossipNetwork, TopicHandle};
 use tracing::warn;
 
 // ─── Topic name constants ────────────────────────────────────────────────────
 
-pub const TOPIC_TURNS: &str = "pyana/turns/v1";
-pub const TOPIC_REVOCATIONS: &str = "pyana/revocations/v1";
-pub const TOPIC_INTENTS: &str = "pyana/intents/v1";
-pub const TOPIC_ROOTS: &str = "pyana/roots/v1";
-pub const TOPIC_CHECKPOINTS: &str = "pyana/checkpoints/v1";
-pub const TOPIC_DECRYPTION_SHARES: &str = "pyana/decryption-shares/v1";
-pub const TOPIC_BUDGET: &str = "pyana/budget/v1";
+pub const TOPIC_TURNS: &str = "dregg/turns/v1";
+pub const TOPIC_REVOCATIONS: &str = "dregg/revocations/v1";
+pub const TOPIC_INTENTS: &str = "dregg/intents/v1";
+pub const TOPIC_ROOTS: &str = "dregg/roots/v1";
+pub const TOPIC_CHECKPOINTS: &str = "dregg/checkpoints/v1";
+pub const TOPIC_DECRYPTION_SHARES: &str = "dregg/decryption-shares/v1";
+pub const TOPIC_BUDGET: &str = "dregg/budget/v1";
 
 // ─── GossipHandle ────────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ impl GossipHandle {
     }
 
     /// Publish an encrypted intent to the intents topic.
-    pub async fn gossip_encrypted_intent(&self, enc: &pyana_intent::sse::EncryptedIntent) {
+    pub async fn gossip_encrypted_intent(&self, enc: &dregg_intent::sse::EncryptedIntent) {
         let intent_data = postcard::to_stdvec(enc).unwrap_or_default();
         let intent_hash = *blake3::hash(&intent_data).as_bytes();
         let msg = PeerMessage::PublishIntent {

@@ -406,7 +406,7 @@ mod tests {
         // 4 members, threshold 3 (BFT: can tolerate 1 fault)
         let (committee, members) = generate_test_committee(4, 3).unwrap();
 
-        let message = b"pyana-federation-vote-v1:deadbeef";
+        let message = b"dregg-federation-vote-v1:deadbeef";
 
         // Collect partial signatures from 3 out of 4 members
         let shares: Vec<(usize, PartialSignature)> = members[0..3]

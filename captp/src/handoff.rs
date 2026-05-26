@@ -23,8 +23,8 @@
 //! - Swiss numbers are pre-registered, preventing replay after revocation.
 //! - Optional expiration and use-count limits.
 
-use pyana_cell::{AuthRequired, EffectMask};
-use pyana_types::{CellId, PublicKey, Signature, SigningKey, sign};
+use dregg_cell::{AuthRequired, EffectMask};
+use dregg_types::{CellId, PublicKey, Signature, SigningKey, sign};
 use serde::{Deserialize, Serialize};
 
 // TODO(unified-lace): migrate FederationId to StrandId for introducer identity,
@@ -182,7 +182,7 @@ impl HandoffCertificate {
     /// to prevent cross-protocol confusion.
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-handoff-cert-v1");
+        msg.extend_from_slice(b"dregg-handoff-cert-v1");
         msg.extend_from_slice(&self.introducer.0);
         msg.extend_from_slice(&self.target_federation.0);
         msg.extend_from_slice(&self.target_cell.0);
@@ -272,16 +272,16 @@ impl HandoffCertificate {
 
     /// Encode as a compact string for URLs and QR codes.
     ///
-    /// Format: `pyana-handoff:<base58-encoded-bytes>`
+    /// Format: `dregg-handoff:<base58-encoded-bytes>`
     pub fn to_compact_string(&self) -> String {
         let bytes = self.to_bytes();
-        format!("pyana-handoff:{}", bs58::encode(&bytes).into_string())
+        format!("dregg-handoff:{}", bs58::encode(&bytes).into_string())
     }
 
     /// Decode from a compact string.
     pub fn from_compact_string(s: &str) -> Result<Self, HandoffError> {
-        let rest = s.strip_prefix("pyana-handoff:").ok_or_else(|| {
-            HandoffError::DeserializationFailed("missing pyana-handoff: prefix".into())
+        let rest = s.strip_prefix("dregg-handoff:").ok_or_else(|| {
+            HandoffError::DeserializationFailed("missing dregg-handoff: prefix".into())
         })?;
 
         let bytes = bs58::decode(rest)
@@ -328,7 +328,7 @@ impl HandoffPresentation {
     /// Domain-separated and includes the nonce to prevent cross-certificate replay.
     pub fn presentation_message(cert: &HandoffCertificate) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-handoff-present-v1");
+        msg.extend_from_slice(b"dregg-handoff-present-v1");
         msg.extend_from_slice(&cert.nonce);
         msg.extend_from_slice(&cert.target_cell.0);
         msg.extend_from_slice(&cert.target_federation.0);
@@ -428,7 +428,7 @@ pub fn validate_handoff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_types::generate_keypair;
+    use dregg_types::generate_keypair;
 
     fn setup_introducer() -> (SigningKey, PublicKey, FederationId) {
         let (sk, pk) = generate_keypair();
@@ -615,7 +615,7 @@ mod tests {
             full_handoff_setup();
 
         let compact = cert.to_compact_string();
-        assert!(compact.starts_with("pyana-handoff:"));
+        assert!(compact.starts_with("dregg-handoff:"));
 
         let decoded = HandoffCertificate::from_compact_string(&compact).unwrap();
         assert_eq!(decoded.introducer, cert.introducer);

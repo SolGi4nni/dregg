@@ -2,12 +2,12 @@
  * Inspector custom elements (initial set).
  *
  * Each inspector:
- *  - Reads `ref` attribute (a pyana:// URI).
- *  - Finds its <pyana-app> ancestor and reads `.runtime`.
+ *  - Reads `ref` attribute (a dregg:// URI).
+ *  - Finds its <dregg-app> ancestor and reads `.runtime`.
  *  - Renders via Preact + htm into its own light DOM (no shadow).
  *  - Subscribes to the relevant runtime signal so it re-renders on state change.
  *
- * Initial set: <pyana-cell>, <pyana-cell-list>. More to come as the vertical
+ * Initial set: <dregg-cell>, <dregg-cell-list>. More to come as the vertical
  * proves out.
  */
 
@@ -18,9 +18,9 @@ import { findRuntime } from './context.js';
 // Removes prior dupe; cell/cell-list continue to work (extend the imported class).
 import { InspectorBase, renderParseError, shortHex } from './inspectors/_base.js';
 
-// --- <pyana-cell> -----------------------------------------------------------
+// --- <dregg-cell> -----------------------------------------------------------
 
-class PyanaCell extends InspectorBase {
+class DreggCell extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -33,11 +33,11 @@ class PyanaCell extends InspectorBase {
     let parsed;
     try { parsed = parseRef(refAttr); }
     catch (e) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">bad ref: ${e.message}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">bad ref: ${e.message}</div>`;
       return;
     }
     if (parsed.kind !== 'cell') {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">wrong kind: ${parsed.kind} (expected cell)</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">wrong kind: ${parsed.kind} (expected cell)</div>`;
       return;
     }
 
@@ -49,15 +49,15 @@ class PyanaCell extends InspectorBase {
     // gives us a teardown handle.
     const Component = () => {
       const c = cellSignal.value;
-      if (!c) return html`<div class="pyana-inspector pyana-inspector--empty">cell not in this runtime: <code>${parsed.id.slice(0, 16)}…</code></div>`;
+      if (!c) return html`<div class="dregg-inspector dregg-inspector--empty">cell not in this runtime: <code>${parsed.id.slice(0, 16)}…</code></div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code title=${parsed.id}>${parsed.id.slice(0, 8)}…</code>
             balance ${String(c.balance)} · ${String(c.num_capabilities)} caps
           </span>`;
       }
-      // Program section: render <pyana-cell-program> if a program is present.
+      // Program section: render <dregg-cell-program> if a program is present.
       // We pass data-program as a JSON attribute (the element supports this).
       const hasProg = c.program && c.program.kind !== 'None';
       const progDataAttr = hasProg ? JSON.stringify(c.program) : null;
@@ -65,7 +65,7 @@ class PyanaCell extends InspectorBase {
         ? html`
           <details style="margin-top:var(--s3,8px);">
             <summary style="cursor:pointer;color:var(--fg-dim);font-size:0.82rem;user-select:none;">Program</summary>
-            <pyana-cell-program mode="default" data-program=${progDataAttr}></pyana-cell-program>
+            <dregg-cell-program mode="default" data-program=${progDataAttr}></dregg-cell-program>
           </details>`
         : html`
           <details style="margin-top:var(--s3,8px);">
@@ -74,12 +74,12 @@ class PyanaCell extends InspectorBase {
           </details>`;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">cell</span>
-            <code class="pyana-inspector__id" title=${parsed.id}>${parsed.id.slice(0, 24)}…</code>
+            <span class="dregg-inspector__kind">cell</span>
+            <code class="dregg-inspector__id" title=${parsed.id}>${parsed.id.slice(0, 24)}…</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>balance</dt><dd>${String(c.balance)}</dd>
             <dt>nonce</dt><dd>${String(c.nonce)}</dd>
             <dt>capabilities</dt><dd>${String(c.num_capabilities)}</dd>
@@ -96,11 +96,11 @@ class PyanaCell extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-cell')) customElements.define('pyana-cell', PyanaCell);
+if (!customElements.get('dregg-cell')) customElements.define('dregg-cell', DreggCell);
 
-// --- <pyana-cell-list> ------------------------------------------------------
+// --- <dregg-cell-list> ------------------------------------------------------
 
-class PyanaCellList extends InspectorBase {
+class DreggCellList extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     if (this._dispose) { this._dispose(); this._dispose = null; }
@@ -112,14 +112,14 @@ class PyanaCellList extends InspectorBase {
 
     const Component = () => {
       const cells = listSignal.value || [];
-      if (!cells.length) return html`<div class="pyana-inspector pyana-inspector--empty">no cells in this runtime</div>`;
+      if (!cells.length) return html`<div class="dregg-inspector dregg-inspector--empty">no cells in this runtime</div>`;
       return html`
-        <div class="pyana-inspector pyana-inspector--cell-list">
+        <div class="dregg-inspector dregg-inspector--cell-list">
           <header>${cells.length} cell${cells.length === 1 ? '' : 's'}</header>
           <ul>
             ${cells.map(c => html`
               <li>
-                <pyana-cell uri=${`pyana://cell/${c.cell_id}`} mode="compact"></pyana-cell>
+                <dregg-cell uri=${`dregg://cell/${c.cell_id}`} mode="compact"></dregg-cell>
               </li>
             `)}
           </ul>
@@ -131,7 +131,7 @@ class PyanaCellList extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-cell-list')) customElements.define('pyana-cell-list', PyanaCellList);
+if (!customElements.get('dregg-cell-list')) customElements.define('dregg-cell-list', DreggCellList);
 
 // --- Barrel: register inspector custom elements defined in inspectors/ ------
 // Each module self-registers via `customElements.define` on import.
@@ -152,16 +152,16 @@ import './inspectors/proof.js';
 import './inspectors/merkle-tree.js';
 import './inspectors/stealth-address.js';
 
-// --- <pyana-app-list> (Apps tab for /starbridge/, STARBRIDGE-PLAN §4.8) ---
+// --- <dregg-app-list> (Apps tab for /starbridge/, STARBRIDGE-PLAN §4.8) ---
 // Reads manifests from starbridge-apps/* (created as part of this task).
 // Renders cards. Selecting the nameservice demonstrates the first
 // end-to-end: loads its typed turn-builders + per-app inspectors
-// (which reuse <pyana-cell>, <pyana-capability> etc.).
+// (which reuse <dregg-cell>, <dregg-capability> etc.).
 // For demo, clicking "Demo" on nameservice renders a live
-// <pyana-name-registry> + <pyana-name> example in the inspector pane
+// <dregg-name-registry> + <dregg-name> example in the inspector pane
 // (via custom event the page orchestrator can listen to).
 
-class PyanaAppList extends HTMLElement {
+class DreggAppList extends HTMLElement {
   constructor() {
     super();
     this._apps = [];
@@ -181,7 +181,7 @@ class PyanaAppList extends HTMLElement {
         description: 'Federation name directory — first e2e starbridge-app demo. Slot caveats + signed turns.',
         page: '/starbridge-apps/nameservice/pages/index.html',
         factory_vks: ['737461726272696467652d6e616d65736572766963652d666163746f72792121'],
-        inspectors: ['pyana-name', 'pyana-name-registry'],
+        inspectors: ['dregg-name', 'dregg-name-registry'],
       },
       {
         id: 'identity',
@@ -189,7 +189,7 @@ class PyanaAppList extends HTMLElement {
         description: 'Credential issuance & selective disclosure (high-quality additional starbridge-app demo §4.8; now loads via shared/ fix).',
         page: '/starbridge-apps/identity/pages/index.html',
         factory_vks: [],
-        inspectors: ['pyana-credential', 'pyana-credential-issue-form'],
+        inspectors: ['dregg-credential', 'dregg-credential-issue-form'],
       },
       {
         id: 'governed-namespace',
@@ -218,7 +218,7 @@ class PyanaAppList extends HTMLElement {
     const root = this;
     root.innerHTML = '';
     const wrap = document.createElement('div');
-    wrap.className = 'pyana-app-list';
+    wrap.className = 'dregg-app-list';
     wrap.style.cssText = 'display:flex;flex-direction:column;gap:0.4rem;font-size:0.85rem;';
     if (this._loading) {
       wrap.innerHTML = '<div style="color:#888">loading apps…</div>';
@@ -249,12 +249,12 @@ class PyanaAppList extends HTMLElement {
           const preview = document.createElement('div');
           preview.style.cssText = 'margin-top:0.3rem;border-top:1px dashed #ccc;padding-top:0.3rem;';
           preview.innerHTML = `
-            <div style="font-size:0.7rem;color:#666;margin-bottom:0.2rem;">Live nameservice preview (reuses &lt;pyana-cell&gt; etc.):</div>
-            <pyana-name-registry uri="pyana://cell/registry-default" page-size="5"></pyana-name-registry>
+            <div style="font-size:0.7rem;color:#666;margin-bottom:0.2rem;">Live nameservice preview (reuses &lt;dregg-cell&gt; etc.):</div>
+            <dregg-name-registry uri="dregg://cell/registry-default" page-size="5"></dregg-name-registry>
           `;
           // Avoid stacking many previews
-          card.querySelectorAll('.pyana-preview').forEach(n => n.remove());
-          preview.className = 'pyana-preview';
+          card.querySelectorAll('.dregg-preview').forEach(n => n.remove());
+          preview.className = 'dregg-preview';
           card.appendChild(preview);
         }
       });
@@ -270,11 +270,11 @@ function escapeHtml(s) {
   })[c]);
 }
 
-if (typeof customElements !== 'undefined' && !customElements.get('pyana-app-list')) {
-  customElements.define('pyana-app-list', PyanaAppList);
+if (typeof customElements !== 'undefined' && !customElements.get('dregg-app-list')) {
+  customElements.define('dregg-app-list', DreggAppList);
 }
-if (typeof window !== 'undefined' && window.pyana?.register) {
-  window.pyana.register('pyana-app-list', PyanaAppList);
+if (typeof window !== 'undefined' && window.dregg?.register) {
+  window.dregg.register('dregg-app-list', DreggAppList);
 }
 
 // Ensure the first starbridge-app per-app inspectors (name.js) are available
@@ -296,7 +296,7 @@ import './inspectors/cap-inbox.js';
 import './inspectors/pubsub-topic.js';
 import './inspectors/relay-operator.js';
 import './inspectors/witnessed-predicate.js';
-import './inspectors/activity.js';  // <pyana-activity> live observability feed (STARBRIDGE-03 #30)
+import './inspectors/activity.js';  // <dregg-activity> live observability feed (STARBRIDGE-03 #30)
 
 // --- Full Wave 3 §4.5 integration (STARBRIDGE-FOLLOWUP-02) -----------------
 // All 22 from plan table now have files + barrel registration.

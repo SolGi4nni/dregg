@@ -11,8 +11,8 @@
 //! exercised by `tests/src/every_variant_roundtrip.rs`; this suite
 //! pins the runtime-side soundness gate.
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
 };
@@ -103,7 +103,7 @@ fn export_sturdy_ref_honest_path_accepted() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Committed { .. } => { /* expected */ }
+        dregg_turn::TurnResult::Committed { .. } => { /* expected */ }
         other => panic!(
             "honest ExportSturdyRef must commit, got {:?}",
             short(&other)
@@ -141,7 +141,7 @@ fn export_sturdy_ref_rejects_wider_than_cell_access() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("ExportSturdyRef") && s.contains("narrower"),
@@ -185,7 +185,7 @@ fn export_sturdy_ref_rejects_custom_tier_mismatch() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("ExportSturdyRef") && s.contains("narrower"),
@@ -258,7 +258,7 @@ fn enliven_ref_honest_path_accepted() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Committed { .. } => { /* expected */ }
+        dregg_turn::TurnResult::Committed { .. } => { /* expected */ }
         other => panic!("honest EnlivenRef must commit, got {:?}", short(&other)),
     }
 }
@@ -289,7 +289,7 @@ fn enliven_ref_rejects_no_capability_for_expected_cell() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("EnlivenRef") && s.contains("no"),
@@ -334,7 +334,7 @@ fn enliven_ref_rejects_wider_than_held_capability() {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     match executor.execute(&turn, &mut ledger) {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("EnlivenRef") && s.contains("tier"),
@@ -399,11 +399,11 @@ fn enliven_ref_expected_cell_id_distinct_effects_hash() {
     );
 }
 
-fn short(r: &pyana_turn::TurnResult) -> String {
+fn short(r: &dregg_turn::TurnResult) -> String {
     match r {
-        pyana_turn::TurnResult::Committed { .. } => "Committed".into(),
-        pyana_turn::TurnResult::Expired => "Expired".into(),
-        pyana_turn::TurnResult::Pending => "Pending".into(),
-        pyana_turn::TurnResult::Rejected { reason, .. } => format!("Rejected({reason:?})"),
+        dregg_turn::TurnResult::Committed { .. } => "Committed".into(),
+        dregg_turn::TurnResult::Expired => "Expired".into(),
+        dregg_turn::TurnResult::Pending => "Pending".into(),
+        dregg_turn::TurnResult::Rejected { reason, .. } => format!("Rejected({reason:?})"),
     }
 }

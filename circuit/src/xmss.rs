@@ -97,7 +97,7 @@ fn derive_wots_seed(master_seed: &[u8; 32], index: u64) -> [u8; 32] {
     let mut input = [0u8; 40];
     input[..32].copy_from_slice(master_seed);
     input[32..40].copy_from_slice(&index.to_le_bytes());
-    blake3::derive_key("pyana-xmss-leaf-v1", &input)
+    blake3::derive_key("dregg-xmss-leaf-v1", &input)
 }
 
 /// Generate the WOTS keypair for a specific leaf.
@@ -330,7 +330,7 @@ pub fn new_epoch_tree(
     let mut input = [0u8; 40];
     input[..32].copy_from_slice(validator_seed);
     input[32..40].copy_from_slice(&epoch.to_le_bytes());
-    let epoch_seed = blake3::derive_key("pyana-xmss-epoch-v1", &input);
+    let epoch_seed = blake3::derive_key("dregg-xmss-epoch-v1", &input);
     XmssTree::new(&epoch_seed, height)
 }
 

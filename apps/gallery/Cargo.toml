@@ -1,17 +1,17 @@
 [package]
-name = "pyana-gallery"
+name = "dregg-gallery"
 version = "0.1.0"
 edition = "2024"
-description = "Federated art gallery with commit-reveal auctions on the pyana protocol"
+description = "Federated art gallery with commit-reveal auctions on the dregg protocol"
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-cell = { path = "../../cell", default-features = false, features = ["crypto"] }
-pyana-circuit = { path = "../../circuit", default-features = false }
-pyana-dsl-runtime = { path = "../../pyana-dsl-runtime" }
-pyana-federation = { path = "../../federation" }
-pyana-turn = { path = "../../turn" }
-# pyana-sdk not needed directly: PyanaEngine and CellId are re-exported via pyana-app-framework
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false, features = ["crypto"] }
+dregg-circuit = { path = "../../circuit", default-features = false }
+dregg-dsl-runtime = { path = "../../dregg-dsl-runtime" }
+dregg-federation = { path = "../../federation" }
+dregg-turn = { path = "../../turn" }
+# dregg-sdk not needed directly: DreggEngine and CellId are re-exported via dregg-app-framework
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,8 +33,8 @@ uuid = { version = "1", features = ["v4"] }
 tower = { version = "0.5" }
 
 [[bin]]
-name = "pyana-gallery"
-path = "src/bin/pyana_gallery.rs"
+name = "dregg-gallery"
+path = "src/bin/dregg_gallery.rs"
 
 [[example]]
 name = "demo"

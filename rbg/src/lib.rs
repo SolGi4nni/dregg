@@ -1,7 +1,7 @@
-//! Robigalia-inspired designs mapped to pyana's distributed capability runtime.
+//! Robigalia-inspired designs mapped to dregg's distributed capability runtime.
 //!
 //! This crate provides three clusters of userspace primitives carried over
-//! from the Robigalia capability-secure OS design and adapted to pyana's
+//! from the Robigalia capability-secure OS design and adapted to dregg's
 //! distributed runtime:
 //!
 //! * [`directory`] — [`DirectoryCell`] (capability-secure versioned directory
@@ -13,19 +13,19 @@
 //!   VFS as a userspace library that decomposes into existing Effect VM
 //!   effects (`NoteCreate`, `NoteSpend`, `SetField`, balance accounting).
 //! * [`factory`] — [`directory_factory_descriptor`] returning a
-//!   `pyana_cell::factory::FactoryDescriptor` shape for the directory-cell
+//!   `dregg_cell::factory::FactoryDescriptor` shape for the directory-cell
 //!   pattern, so apps can `createFromFactory` a directory and have the
 //!   executor enforce the slot caveats on every turn.
 //!
 //! The earlier DFA routing module that used to live here has been promoted
-//! to the canonical [`pyana_dfa`] crate (see `DFA-RATIONALIZATION-DESIGN.md`).
-//! This crate now reuses real workspace types (`pyana_types::FederationId`,
-//! `pyana_types::CellId`) rather than the stub identifiers it once carried.
+//! to the canonical [`dregg_dfa`] crate (see `DFA-RATIONALIZATION-DESIGN.md`).
+//! This crate now reuses real workspace types (`dregg_types::FederationId`,
+//! `dregg_types::CellId`) rather than the stub identifiers it once carried.
 //!
 //! [`directory`]: crate::directory
 //! [`vfs`]: crate::vfs
 //! [`factory`]: crate::factory
-//! [`pyana_dfa`]: https://docs.rs/pyana-dfa
+//! [`dregg_dfa`]: https://docs.rs/dregg-dfa
 //! [`DirectoryCell`]: crate::directory::DirectoryCell
 //! [`ScopedIntentPool`]: crate::directory::ScopedIntentPool
 //! [`MetaDirectory`]: crate::directory::MetaDirectory

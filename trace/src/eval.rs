@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::check;
 use crate::types::*;
 
-/// The reference evaluator for the pyana authorization system.
+/// The reference evaluator for the dregg authorization system.
 ///
 /// Given a set of base facts and rules, the evaluator performs bottom-up (forward-chaining)
 /// Datalog evaluation, recording every derivation step. It then checks if any "allow"

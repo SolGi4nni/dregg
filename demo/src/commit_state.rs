@@ -1,19 +1,19 @@
-//! Token state commitment using the REAL `pyana_commit` crate.
+//! Token state commitment using the REAL `dregg_commit` crate.
 //!
 //! This module bridges the demo's `token::Fact` (rich, human-readable facts)
-//! with `pyana_commit::TokenState` (algebraic field-element-based Merkle commitment).
+//! with `dregg_commit::TokenState` (algebraic field-element-based Merkle commitment).
 //!
 //! The demo's authorization logic stays in `token.rs`, but we compute a REAL
-//! Merkle commitment and fold delta using `pyana-commit` in parallel.
+//! Merkle commitment and fold delta using `dregg-commit` in parallel.
 
-use pyana_commit::{
+use dregg_commit::{
     Fact as CommitFact, FoldDelta as CommitFoldDelta, FoldVerification,
     TokenState as CommitTokenState,
 };
 
 use crate::token::{Fact, FactKind};
 
-/// Convert a demo `Fact` into a `pyana_commit::Fact` (field-element-based).
+/// Convert a demo `Fact` into a `dregg_commit::Fact` (field-element-based).
 ///
 /// Uses `Fact::from_symbols` which hashes the kind+resource+actions into
 /// a predicate and terms via BLAKE3.
@@ -35,7 +35,7 @@ pub fn demo_fact_to_commit_fact(fact: &Fact) -> CommitFact {
     }
 }
 
-/// Build a `pyana_commit::TokenState` from a slice of demo facts and rules.
+/// Build a `dregg_commit::TokenState` from a slice of demo facts and rules.
 pub fn build_commit_state(facts: &[Fact], rules: &[crate::token::Rule]) -> CommitTokenState {
     let mut state = CommitTokenState::new();
 
@@ -53,7 +53,7 @@ pub fn build_commit_state(facts: &[Fact], rules: &[crate::token::Rule]) -> Commi
     state
 }
 
-/// Compute a real fold delta between two demo token states using `pyana-commit`.
+/// Compute a real fold delta between two demo token states using `dregg-commit`.
 ///
 /// Returns the `FoldDelta` and a bool indicating whether it verifies.
 pub fn compute_real_fold_delta(
@@ -94,7 +94,7 @@ pub fn compute_real_fold_delta(
         .collect();
 
     // Compute the fold delta.
-    let delta = pyana_commit::FoldDelta::compute(
+    let delta = dregg_commit::FoldDelta::compute(
         &mut old_state,
         &mut new_state,
         removed_commit_facts,

@@ -17,7 +17,7 @@
 //!    attesting to the chain of fold proofs' public inputs.
 //! 2. `plonky3_recursion_impl::recursive::prove_recursive_layer_for_air` —
 //!    the generalised recursive layer that wraps any `RecursableAir`
-//!    inner proof into a `RecursionOutput<PyanaRecursionConfig>` (a STARK
+//!    inner proof into a `RecursionOutput<DreggRecursionConfig>` (a STARK
 //!    proof that the inner aggregation proof was valid).
 //!
 //! The result is a **real** recursive proof, not a placeholder. The verifier
@@ -31,7 +31,7 @@ use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_matrix::dense::RowMajorMatrix;
 
 use crate::field::BabyBear;
-use crate::plonky3_prover::PyanaProof;
+use crate::plonky3_prover::DreggProof;
 
 /// Recursion strategy selection.
 ///
@@ -62,7 +62,7 @@ pub enum RecursionMode {
 /// `aggregation_proof` field below is kept for the caller's inspection
 /// path.
 pub struct RecursiveIvcStep {
-    pub proof: PyanaProof,
+    pub proof: DreggProof,
     pub public_inputs: Vec<BabyBear>,
     pub step_number: u32,
     /// Postcard-serialized outer recursive proof bytes, set when the
@@ -86,7 +86,7 @@ pub struct RecursiveIvcStep {
 ///
 /// On failure returns a precise error string.
 pub fn build_recursive_ivc_chain(
-    fold_proofs: &[(&PyanaProof, &[BabyBear])],
+    fold_proofs: &[(&DreggProof, &[BabyBear])],
 ) -> Result<RecursiveIvcStep, String> {
     use crate::plonky3_recursion::{RecursionInput, prove_recursive};
 
@@ -111,7 +111,7 @@ pub fn build_recursive_ivc_chain(
     }
 
     // p3_uni_stark::Proof does not implement `Clone`, so to land owned
-    // RecursionInput.proof values from `&PyanaProof` borrows we roundtrip
+    // RecursionInput.proof values from `&DreggProof` borrows we roundtrip
     // through postcard. This is the same path proof_from_bytes /
     // proof_to_bytes use for the on-wire shape; the (de)serialization cost
     // is negligible vs. the recursion work that follows.
@@ -119,9 +119,9 @@ pub fn build_recursive_ivc_chain(
         .iter()
         .map(|(proof, pi)| -> Result<RecursionInput, String> {
             let bytes = postcard::to_allocvec(*proof)
-                .map_err(|e| format!("PyanaProof postcard serialize: {e}"))?;
-            let owned: PyanaProof = postcard::from_bytes(&bytes)
-                .map_err(|e| format!("PyanaProof postcard deserialize: {e}"))?;
+                .map_err(|e| format!("DreggProof postcard serialize: {e}"))?;
+            let owned: DreggProof = postcard::from_bytes(&bytes)
+                .map_err(|e| format!("DreggProof postcard deserialize: {e}"))?;
             Ok(RecursionInput {
                 proof: owned,
                 public_inputs: pi[..2].to_vec(),
@@ -197,7 +197,7 @@ pub fn build_recursive_ivc_chain(
 /// config without restructuring the original entrypoint.
 #[cfg(feature = "recursion")]
 fn rebuild_aggregation_trace(
-    fold_proofs: &[(&PyanaProof, &[BabyBear])],
+    fold_proofs: &[(&DreggProof, &[BabyBear])],
     expected_final: BabyBear,
 ) -> Result<Vec<Vec<BabyBear>>, String> {
     use crate::poseidon2::hash_4_to_1;

@@ -91,7 +91,7 @@ async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotS
                 .map(|ts| format!("<t:{ts}:R>"))
                 .unwrap_or_else(|| "Never seen".to_string());
 
-            embeds::pyana_embed("Presence Status")
+            embeds::dregg_embed("Presence Status")
                 .field("Status", record.status.to_string(), true)
                 .field("Session Duration", duration_str, true)
                 .field("Last Online", last_online_str, true)
@@ -229,7 +229,7 @@ async fn handle_history(ctx: &Context, command: &CommandInteraction, state: &Bot
     let history = tracker.history(target_user_id, 86400); // last 24h
 
     let embed = if history.is_empty() {
-        embeds::pyana_embed("Presence History").description(format!(
+        embeds::dregg_embed("Presence History").description(format!(
             "No presence changes recorded for <@{target_user_id}> in the last 24h."
         ))
     } else {
@@ -248,7 +248,7 @@ async fn handle_history(ctx: &Context, command: &CommandInteraction, state: &Bot
             })
             .collect();
 
-        embeds::pyana_embed("Presence History").description(format!(
+        embeds::dregg_embed("Presence History").description(format!(
             "Last 24h for <@{target_user_id}> ({} events):\n{}",
             history.len(),
             entries.join("\n")

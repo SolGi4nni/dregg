@@ -33,7 +33,7 @@ to close the gap.
 |---|---|---|
 | **Cell declaration** | `cell/src/program.rs` (StateConstraint, 21+ variants), `cell/src/preconditions.rs` (EvalContext), `cell/src/predicate.rs` (WitnessedPredicate + registry), `cell/src/capability.rs` (CapabilityCaveat) | Authors declare what shape a cell program's perpetual invariants take. Single closed lifted enum + escape hatch (`Custom`). |
 | **Executor enforcement** | `turn/src/executor.rs::execute_tree` (around lines 4343–4393) | At runtime, post-effect, calls `target_cell.program.evaluate(new_state, old_state, Some(&ctx))`. The ctx is constructed at lines 4361–4373 with partial fidelity (see §2). |
-| **Token caveats** | `token/src/pyana_caveats.rs` (15 `PyanaGrant` variants), `macaroon/src/caveat.rs` (`CaveatType` ID space) | Macaroon/biscuit-ancestry authorization for tokens (orgs / apps / services / OAuth scopes / budgets / revocable). **Disjoint** vocabulary from `StateConstraint` — see §3. |
+| **Token caveats** | `token/src/dregg_caveats.rs` (15 `DreggGrant` variants), `macaroon/src/caveat.rs` (`CaveatType` ID space) | Macaroon/biscuit-ancestry authorization for tokens (orgs / apps / services / OAuth scopes / budgets / revocable). **Disjoint** vocabulary from `StateConstraint` — see §3. |
 | **Circuit AIR** | `circuit/src/effect_vm.rs` (Effect VM), `circuit/src/predicate_program.rs` (separate predicate AIR language), `circuit/src/temporal_predicate_dsl.rs`, `circuit/src/note_spending_air.rs`, `circuit/src/predicate_air.rs`, `circuit/src/compound_predicate_air.rs`, `circuit/src/effect_vm_p3_air.rs` | The per-effect AIRs proving that a turn was executed correctly. No AIR directly enforces a `StateConstraint` today (the per-cell `Circuit` program path is the escape hatch). |
 
 The four layers share NO common type beyond `WitnessedPredicate` (which `cell`
@@ -93,7 +93,7 @@ Legend:
 | 24 | `BoundDelta { local_slot, peer_cell, peer_slot, delta_relation }` | ⚠ | ❌❌ **exec REJECTS unconditionally** — cell evaluator returns `Err(BoundDeltaNotWired { peer_cell })`. The γ.2 cross-cell match loop exists in `turn/src/bilateral_schedule.rs` and `circuit/src/bilateral_aggregation_air.rs`, but the cell-program evaluator never gets the peer cell's state, so cross-cell BoundDelta caveats currently break any cell that declares them. | ❌ | 🟡 `circuit::bilateral_aggregation_air` exists for the aggregate γ.2 match; per-cell hookup missing | ✅ (multi-cell-eval portion of the lane) |
 | 25 | `AnyOf { variants: Vec<SimpleStateConstraint> }` | ✅ | ✅ exec lifts each Simple variant and tries each; returns Ok on first success. The `SimpleStateConstraint` set is intentionally restricted (no nested AnyOf, no Custom) per eval §4.3. | ❌ | ❌ | n/a |
 | 26 | `Witnessed { wp: WitnessedPredicate }` | ⚠ | ❌❌ **exec REJECTS unconditionally** — cell evaluator returns `Err(WitnessedPredicateRequiresExecutor { kind_name })`. The `WitnessedPredicateRegistry` exists in `cell/src/predicate.rs:412-490` with stubs (`with_stubs()`) and a `register_builtin` / `register_custom` shape, but **the executor's call site at executor.rs:4343-4393 does not consult any registry** — the sentinel just propagates to `TurnError::ProgramViolation`. So `Witnessed` cell programs are uncreatable in practice. | ❌ | 🟡 The seven `WitnessedPredicateKind` algebras (Dfa, Temporal, MerkleMembership, BlindedSet, BridgePredicate, PedersenEquality, Custom) all have AIRs in `circuit/src/dsl/circuit.rs:1711-1941` (Dfa), `temporal_predicate_dsl` (Temporal), `merkle_air` (MerkleMembership), `accumulator_air` (BlindedSet via non-membership), `predicate_air` / `compound_predicate_air` (Bridge), `committed_threshold` (Pedersen). None are wired through the cell-program path. | ✅ |
-| 27 | `Custom { ir_hash, descriptor, reads }` | ⚠ | ❌❌ **exec REJECTS unconditionally** — cell evaluator returns `Err(CustomConstraintUnevaluable { ir_hash })`. No DSL-IR-runtime lookup is wired. The `pyana-dsl-runtime` crate exists; the executor doesn't reach it from the program-evaluation path. | ❌ | ❌ (this is the open escape — by design no AIR is preregistered, but the dispatch path is also absent) | ❌ (out of caveat-correctness scope; tracked separately) |
+| 27 | `Custom { ir_hash, descriptor, reads }` | ⚠ | ❌❌ **exec REJECTS unconditionally** — cell evaluator returns `Err(CustomConstraintUnevaluable { ir_hash })`. No DSL-IR-runtime lookup is wired. The `dregg-dsl-runtime` crate exists; the executor doesn't reach it from the program-evaluation path. | ❌ | ❌ (this is the open escape — by design no AIR is preregistered, but the dispatch path is also absent) | ❌ (out of caveat-correctness scope; tracked separately) |
 
 **Tally:**
 
@@ -119,7 +119,7 @@ turn at all, because the executor surfaces the sentinel as
 The executor builds the slot-caveat context at `turn/src/executor.rs:4361-4373`:
 
 ```text
-let ctx = pyana_cell::EvalContext {
+let ctx = dregg_cell::EvalContext {
     block_height: self.block_height,                    // HONEST
     timestamp: self.current_timestamp,                  // HONEST
     current_epoch: self.block_height.saturating_div(1024), // HEURISTIC — no epoch oracle yet
@@ -162,7 +162,7 @@ executor today.
 
 ## §3 — Token-crate caveats vs slot caveats: disjoint vocabularies
 
-The token crate's caveat surface (`token/src/pyana_caveats.rs`, IDs 0–15
+The token crate's caveat surface (`token/src/dregg_caveats.rs`, IDs 0–15
 plus reserved 254/255) is **biscuit/macaroon-ancestry authorization**:
 
 | Token caveat | Concept | Closest `StateConstraint` |
@@ -564,7 +564,7 @@ Per-variant authority:
   `check_preconditions` @ 4450–4472,
   `convert_turn_effects_to_vm` @ 2400–3092,
   `verify_authorization` @ 4489+).
-- **Token caveats:** `token/src/pyana_caveats.rs` (PyanaGrant @ 86,
+- **Token caveats:** `token/src/dregg_caveats.rs` (DreggGrant @ 86,
   verify_caveats @ 376), `macaroon/src/caveat.rs` (CaveatType @ 22,
   ID ranges @ 24-45).
 - **Circuit AIRs:**

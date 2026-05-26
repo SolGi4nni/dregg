@@ -1,9 +1,9 @@
-//! Mina bridge: proof-carrying cross-chain interop between pyana and Mina Protocol.
+//! Mina bridge: proof-carrying cross-chain interop between dregg and Mina Protocol.
 //!
 //! # Architecture
 //!
 //! Unlike the Midnight bridge (Level 1.5, optimistic + attestation), the Mina bridge
-//! is **Level 2 (proof-carrying)** from day one. This is possible because pyana and
+//! is **Level 2 (proof-carrying)** from day one. This is possible because dregg and
 //! Mina share the same proof system family:
 //!
 //! - **Shared curves:** Pasta cycle (Pallas/Vesta)
@@ -38,18 +38,18 @@
 //!
 //! # Key Types
 //!
-//! - [`MinaBridgeState`]: Tracks the bridge's view of proven pyana state on Mina.
+//! - [`MinaBridgeState`]: Tracks the bridge's view of proven dregg state on Mina.
 //! - [`StateAdvance`]: A pending state root update with its proof.
-//! - [`MinaFederationPresence`]: A pyana federation's on-chain presence (zkApp).
+//! - [`MinaFederationPresence`]: A dregg federation's on-chain presence (zkApp).
 //! - [`MinaBridgeMessage`]: Wire protocol for bridge relay communication.
 
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
-// Cell identity (local definition to avoid pyana-types dependency)
+// Cell identity (local definition to avoid dregg-types dependency)
 // ============================================================================
 
-/// Cell identity (32 bytes). Matches pyana-types::CellId.
+/// Cell identity (32 bytes). Matches dregg-types::CellId.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct CellId(pub [u8; 32]);
 
@@ -128,11 +128,11 @@ impl std::error::Error for BridgeError {}
 // Bridge State
 // ============================================================================
 
-/// Tracks the bridge state: the latest proven pyana state root accepted by Mina,
+/// Tracks the bridge state: the latest proven dregg state root accepted by Mina,
 /// pending advances, and confirmation status.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MinaBridgeState {
-    /// Latest proven pyana state root accepted by Mina.
+    /// Latest proven dregg state root accepted by Mina.
     pub proven_root: [u8; 32],
     /// Latest proven height (monotonically increasing epoch/block number).
     pub proven_height: u64,
@@ -161,7 +161,7 @@ impl Default for MinaBridgeState {
     }
 }
 
-/// A state advance: proves that the pyana state root transitioned from
+/// A state advance: proves that the dregg state root transitioned from
 /// `old_root` to `new_root` at a given height, carrying the proof data
 /// needed for Mina-side verification.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,7 +203,7 @@ pub struct StateAdvance {
 /// The Pickles-wrapped proof bytes, ready for Mina submission.
 ///
 /// # Note
-/// This function requires the `mina` feature on `pyana-circuit`. The full pipeline
+/// This function requires the `mina` feature on `dregg-circuit`. The full pipeline
 /// exercises: STARK deserialization -> Kimchi circuit construction -> Kimchi proving
 /// -> Pickles recursive wrapping. In the current implementation, steps 2-4 are
 /// stubbed with a cryptographic binding commitment (BLAKE3 over STARK proof + inputs)
@@ -228,7 +228,7 @@ pub fn wrap_stark_for_mina(
     //
     // For now, we produce a binding commitment that allows the bridge state
     // machine to function while the full pipeline integration is completed.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-bridge-wrap-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-bridge-wrap-v1");
     hasher.update(stark_proof);
     for input in public_inputs {
         hasher.update(&input.to_le_bytes());
@@ -274,7 +274,7 @@ pub fn verify_wrapped_proof(
 
     let stark_proof = &wrapped_proof[33..];
 
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-bridge-wrap-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-bridge-wrap-v1");
     hasher.update(stark_proof);
     for input in public_inputs {
         hasher.update(&input.to_le_bytes());
@@ -393,9 +393,9 @@ pub fn wrap_stark_for_mina_recursive(
     stark_proof_bytes: &[u8],
     public_inputs: &[u32],
 ) -> Result<Vec<u8>, BridgeError> {
-    use pyana_circuit::backends::mina::{PicklesStateTransition, prove_recursive_step};
-    use pyana_circuit::poseidon_stark::PoseidonStarkProof;
-    use pyana_circuit::poseidon_stark_verifier_circuit::PoseidonStarkVerifierCircuit;
+    use dregg_circuit::backends::mina::{PicklesStateTransition, prove_recursive_step};
+    use dregg_circuit::poseidon_stark::PoseidonStarkProof;
+    use dregg_circuit::poseidon_stark_verifier_circuit::PoseidonStarkVerifierCircuit;
 
     if stark_proof_bytes.is_empty() {
         return Err(BridgeError::InvalidStarkProof {
@@ -433,7 +433,7 @@ pub fn wrap_stark_for_mina_recursive(
     //    inputs (not from the Kimchi proof bytes, which contain random blinders).
     //    This allows independent verification without re-proving.
     let pre_state_hash = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-pre-state-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-pre-state-v1");
         for &input in public_inputs {
             hasher.update(&input.to_le_bytes());
         }
@@ -441,7 +441,7 @@ pub fn wrap_stark_for_mina_recursive(
     };
 
     let post_state_hash = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-post-state-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-post-state-v1");
         hasher.update(stark_proof_bytes);
         for &input in public_inputs {
             hasher.update(&input.to_le_bytes());
@@ -499,7 +499,7 @@ pub fn verify_mina_wrapped_proof(
     pickles_proof_bytes: &[u8],
     expected_state_root: &[u8; 32],
 ) -> Result<bool, BridgeError> {
-    use pyana_circuit::backends::mina::{PicklesRecursiveProof, verify_recursive_proof};
+    use dregg_circuit::backends::mina::{PicklesRecursiveProof, verify_recursive_proof};
 
     if pickles_proof_bytes.is_empty() {
         return Err(BridgeError::InvalidStarkProof {
@@ -578,7 +578,7 @@ pub fn verify_mina_wrapped_proof(
 // Mina zkApp Bridge (Federation Presence as a zkApp)
 // ============================================================================
 
-/// Represents how the pyana federation appears as a Mina zkApp.
+/// Represents how the dregg federation appears as a Mina zkApp.
 ///
 /// The zkApp's on-chain state is the proven federation root. Each state advance
 /// is a zkApp transaction carrying a recursive proof. The proof attests that:
@@ -645,7 +645,7 @@ impl MinaZkAppBridge {
 
     /// Compute the verification key digest (for identifying the zkApp program).
     pub fn vk_digest(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-zkapp-vk-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-zkapp-vk-v1");
         hasher.update(&self.verification_key);
         *hasher.finalize().as_bytes()
     }
@@ -703,9 +703,9 @@ pub struct MinaZkAppTransaction {
 // Capability Bridging
 // ============================================================================
 
-/// A capability that has been bridged from pyana to Mina.
+/// A capability that has been bridged from dregg to Mina.
 ///
-/// This represents a pyana capability that has been proven valid (via STARK)
+/// This represents a dregg capability that has been proven valid (via STARK)
 /// and wrapped into a Mina-compatible proof, ready for use by a Mina zkApp.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BridgedCapability {
@@ -719,7 +719,7 @@ pub struct BridgedCapability {
     pub capability_hash: [u8; 32],
 }
 
-/// Bridge a capability: prove on pyana, wrap for Mina, submit.
+/// Bridge a capability: prove on dregg, wrap for Mina, submit.
 ///
 /// This function takes a STARK proof of a valid capability (produced by the
 /// Effect VM / presentation system) and wraps it into a Mina-compatible
@@ -727,7 +727,7 @@ pub struct BridgedCapability {
 ///
 /// # Arguments
 /// - `capability_proof`: Serialized STARK proof of the capability's validity.
-/// - `cell_id`: The pyana cell owning this capability.
+/// - `cell_id`: The dregg cell owning this capability.
 /// - `target_mina_address`: The Mina public key (Base58Check) that will use this capability.
 ///
 /// # Returns
@@ -756,7 +756,7 @@ pub fn bridge_capability(
 
     // Compute capability hash (binding the proof to the cell and target).
     let capability_hash = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-capability-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-capability-v1");
         hasher.update(cell_id.as_bytes());
         hasher.update(target_mina_address.as_bytes());
         hasher.update(capability_proof);
@@ -802,11 +802,11 @@ fn is_valid_mina_address(addr: &str) -> bool {
 // Sovereign Cell on Mina (Federation Presence)
 // ============================================================================
 
-/// Represents a pyana federation's presence on Mina.
+/// Represents a dregg federation's presence on Mina.
 ///
 /// The Mina zkApp stores the federation's state root and accepts
 /// proof-carrying state advances. This is the "anchor" contract that
-/// bridges trust from pyana's proof system to Mina's on-chain state.
+/// bridges trust from dregg's proof system to Mina's on-chain state.
 ///
 /// Unlike the Midnight bridge (which uses attestation signatures),
 /// the Mina federation presence is fully proof-carrying: state advances
@@ -858,13 +858,13 @@ impl MinaFederationPresence {
 // Wire Messages for Bridge Relay
 // ============================================================================
 
-/// Messages exchanged between pyana nodes and the Mina bridge relay.
+/// Messages exchanged between dregg nodes and the Mina bridge relay.
 ///
 /// The relay is responsible for:
 /// - Submitting proof-carrying state advances to Mina
 /// - Observing Mina zkApp state changes
 /// - Forwarding capability proofs to Mina zkApps
-/// - Relaying Mina-side state back to pyana for cross-chain validation
+/// - Relaying Mina-side state back to dregg for cross-chain validation
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MinaBridgeMessage {
     /// Relay submits a state advance proof to the Mina zkApp.
@@ -876,9 +876,9 @@ pub enum MinaBridgeMessage {
         proven_root: [u8; 32],
         proven_height: u64,
     },
-    /// Bridge a capability cross-chain (pyana -> Mina).
+    /// Bridge a capability cross-chain (dregg -> Mina).
     BridgeCapability { proof: Vec<u8>, cell_id: CellId },
-    /// Verify a Mina-side state (for pyana-side validation of Mina state).
+    /// Verify a Mina-side state (for dregg-side validation of Mina state).
     /// The proof demonstrates that `mina_root` is the current state of the
     /// Mina zkApp, verified via Mina's own block inclusion proof.
     VerifyMinaState { mina_root: [u8; 32], proof: Vec<u8> },
@@ -1155,11 +1155,11 @@ mod mina_tests {
     /// 5. Confirm the proven state root matches expectations
     #[test]
     fn test_full_stark_to_pickles_pipeline() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
-        use pyana_circuit::dsl::membership::generate_merkle_poseidon2_trace;
-        use pyana_circuit::poseidon_stark::prove_poseidon;
-        use pyana_circuit::stark::StarkAir;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+        use dregg_circuit::dsl::membership::generate_merkle_poseidon2_trace;
+        use dregg_circuit::poseidon_stark::prove_poseidon;
+        use dregg_circuit::stark::StarkAir;
 
         // 1. Create a real STARK proof using the sound Poseidon2-based DSL circuit
         // (migrated away from the deprecated linear-binding `MerkleStarkAir`).
@@ -1206,7 +1206,7 @@ mod mina_tests {
         // 7. Compute expected post_state_hash (same deterministic derivation as
         //    wrap_stark_for_mina_recursive — uses STARK proof bytes + public inputs)
         let post_state_hash = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-mina-post-state-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-mina-post-state-v1");
             hasher.update(&stark_proof_bytes);
             for &input in &public_inputs {
                 hasher.update(&input.to_le_bytes());

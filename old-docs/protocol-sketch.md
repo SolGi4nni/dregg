@@ -1,4 +1,4 @@
-# Pyana Protocol Sketch
+# `dregg` Protocol Sketch
 
 ## 1. State Model
 

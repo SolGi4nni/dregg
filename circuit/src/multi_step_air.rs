@@ -182,7 +182,7 @@ impl crate::stark::StarkAir for MultiStepStarkAir {
         3
     }
     fn air_name(&self) -> &'static str {
-        "pyana-multi_step-v1"
+        "dregg-multi_step-v1"
     }
     fn has_chain_continuity(&self) -> bool {
         true

@@ -8,7 +8,7 @@
 //! 5. Causally dependent events are always processed in correct order
 //! 6. Topological sort provides a valid total order respecting causality
 
-use pyana_types::causal::{CausalDag, hex_short};
+use dregg_types::causal::{CausalDag, hex_short};
 
 /// Create a deterministic event hash from an agent name and sequence number.
 fn event_hash(agent: &str, seq: u32) -> [u8; 32] {
@@ -17,7 +17,7 @@ fn event_hash(agent: &str, seq: u32) -> [u8; 32] {
 }
 
 fn main() {
-    println!("=== Pyana Causal Ordering Demo (DAG Without Consensus) ===\n");
+    println!("=== Dregg Causal Ordering Demo (DAG Without Consensus) ===\n");
 
     // ─── Setup: 3 Agents ─────────────────────────────────────────────────────
     println!("Agents:");

@@ -1,10 +1,10 @@
-//! Relocated helper-level tests for pyana-verifier utility functions.
+//! Relocated helper-level tests for dregg-verifier utility functions.
 //!
 //! These exercise `parse_public_inputs_json` and `resolve_vk_hash` — small
 //! pure utilities that do not merit coverage inflation in the main verifier
 //! feature-test count.
 
-use pyana_verifier::{
+use dregg_verifier::{
     EFFECT_VM_AIR_NAME, EFFECT_VM_VK_HASH_HEX, parse_public_inputs_json, resolve_vk_hash,
 };
 

@@ -41,18 +41,18 @@
 //! - Effect VM old_commitment is the cell state the actor is authorized to mutate
 //! - Non-revocation root matches the federation's published revocation accumulator
 
-use pyana_circuit::dsl::derivation::{derivation_circuit_descriptor, prove_derivation_dsl};
-use pyana_circuit::dsl::membership::{generate_merkle_poseidon2_trace, prove_membership_dsl};
-use pyana_circuit::dsl::revocation::{
+use dregg_circuit::dsl::derivation::{derivation_circuit_descriptor, prove_derivation_dsl};
+use dregg_circuit::dsl::membership::{generate_merkle_poseidon2_trace, prove_membership_dsl};
+use dregg_circuit::dsl::revocation::{
     DslRevocationTree, non_revocation_circuit_descriptor, prove_non_revocation_dsl,
 };
-use pyana_circuit::effect_vm::{self, CellState, EffectVmAir, generate_effect_vm_trace};
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark;
-use pyana_dsl_runtime::composition::{
+use dregg_circuit::effect_vm::{self, CellState, EffectVmAir, generate_effect_vm_trace};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::stark;
+use dregg_dsl_runtime::composition::{
     AttachedSubProof, ComposedProof, compose_aggregate, compute_proof_hash, generate_and_trace,
 };
-use pyana_dsl_runtime::{CircuitDescriptor, ComposedCircuitDescriptor, ComposedDslCircuit};
+use dregg_dsl_runtime::{CircuitDescriptor, ComposedCircuitDescriptor, ComposedDslCircuit};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SdkError;
@@ -136,7 +136,7 @@ pub struct FullTurnWitness {
 /// Authorization witness for the derivation sub-proof.
 pub struct AuthorizationWitness {
     /// The derivation witness (single-step or multi-step).
-    pub derivation: pyana_circuit::derivation_air::DerivationWitness,
+    pub derivation: dregg_circuit::derivation_air::DerivationWitness,
 }
 
 /// Membership witness for the Merkle sub-proof.
@@ -193,7 +193,7 @@ fn build_full_turn_descriptor(components: &TurnProofComponents) -> ComposedCircu
 
     // Membership (c-list Merkle proof).
     if components.has_membership {
-        circuits.push(pyana_circuit::dsl::descriptors::merkle_poseidon2_descriptor());
+        circuits.push(dregg_circuit::dsl::descriptors::merkle_poseidon2_descriptor());
     }
 
     // Non-revocation (sorted tree non-membership).
@@ -214,7 +214,7 @@ fn effect_vm_circuit_descriptor() -> CircuitDescriptor {
     // The Effect VM has 61 columns, degree 9, and 7+ public inputs.
     // We create a minimal descriptor that captures its identity for VK hashing.
     CircuitDescriptor {
-        name: "pyana-effect-vm-v1".into(),
+        name: "dregg-effect-vm-v1".into(),
         trace_width: effect_vm::EFFECT_VM_WIDTH,
         max_degree: 9,
         columns: vec![],     // Not needed for composition — VK hash suffices
@@ -317,7 +317,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
             proof_bytes: mem_proof_bytes,
             sub_public_inputs: mem_pi,
             vk_hash: compute_vk_hash_bytes(
-                &pyana_circuit::dsl::descriptors::merkle_poseidon2_descriptor(),
+                &dregg_circuit::dsl::descriptors::merkle_poseidon2_descriptor(),
             ),
         });
     }
@@ -459,15 +459,15 @@ pub fn verify_full_turn(
                 stark::verify(&air, &sub_proof, &attached.sub_public_inputs)
             }
             "authorization" => {
-                let circuit = pyana_circuit::dsl::derivation::derivation_dsl_circuit();
+                let circuit = dregg_circuit::dsl::derivation::derivation_dsl_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
             "membership" => {
-                let circuit = pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit();
+                let circuit = dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
             "non-revocation" => {
-                let circuit = pyana_circuit::dsl::revocation::non_revocation_dsl_circuit();
+                let circuit = dregg_circuit::dsl::revocation::non_revocation_dsl_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
             other => Err(format!("unknown sub-proof label: {}", other)),
@@ -669,7 +669,7 @@ impl std::error::Error for FullTurnVerifyError {}
 pub fn prove_turn_with_auth(
     initial_state: &CellState,
     effects: &[effect_vm::Effect],
-    derivation: &pyana_circuit::derivation_air::DerivationWitness,
+    derivation: &dregg_circuit::derivation_air::DerivationWitness,
     turn_hash: [u8; 32],
 ) -> Result<FullTurnProof, SdkError> {
     let witness = FullTurnWitness {
@@ -724,8 +724,8 @@ fn compute_vk_hash_bytes(descriptor: &CircuitDescriptor) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::effect_vm::{CellState, Effect as VmEffect};
-    use pyana_circuit::field::BabyBear;
+    use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
+    use dregg_circuit::field::BabyBear;
 
     /// Smoke test: prove and verify a self-sovereign turn (Effect VM only).
     #[test]

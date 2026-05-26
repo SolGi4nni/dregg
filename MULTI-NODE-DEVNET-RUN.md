@@ -4,10 +4,10 @@ Run date: 2026-05-25 (local tree, `main` @ commit 8a66164 with one minimal patch
 
 ## §1 Build status
 
-- Built `cargo build -p pyana-node -p pyana-verifier --release` locally (no
+- Built `cargo build -p dregg-node -p dregg-verifier --release` locally (no
   workspace flag, no persvati). Full log: `/tmp/multi-node-build.log`.
 - **First attempt:** compiled cleanly (30 warnings, 0 errors). Binaries
-  produced at `target/release/pyana-node` and `target/release/pyana-verifier`.
+  produced at `target/release/dregg-node` and `target/release/dregg-verifier`.
 - **Boot failed on every node** with an `axum 0.8` router panic at
   `node/src/api.rs:1039`:
 
@@ -20,7 +20,7 @@ Run date: 2026-05-25 (local tree, `main` @ commit 8a66164 with one minimal patch
 
 - **Minimal patch:** rewrote those three lines to `{id}`. The patch is
   3 insertions / 3 deletions in `node/src/api.rs` only. Rebuilt with
-  `cargo build -p pyana-node --release` (~34 s incremental).
+  `cargo build -p dregg-node --release` (~34 s incremental).
 
 - No cascade errors (no lifecycle Effects / OneOf / NonMembership compile
   failures hit this build slice).
@@ -140,9 +140,9 @@ baseline.
    and the CLI-side `register-federation` writer both need to be
    reconciled against the loader's expected schema, or vice versa.
 3. **Make the binary path discoverable to scenarios.** `lib/common.sh`
-   defaults to `target/debug/pyana-node`; the README's troubleshooting
+   defaults to `target/debug/dregg-node`; the README's troubleshooting
    step says "build it out-of-band" but doesn't mention `--release`.
-   Either (a) document `NODE_BIN=target/release/pyana-node` in the
+   Either (a) document `NODE_BIN=target/release/dregg-node` in the
    README's Prerequisites section, or (b) make `start_devnet.sh` fall
    back to release if debug is missing. Today every scenario invocation
    has to re-export `NODE_BIN` and `VERIFIER_BIN`.
@@ -159,9 +159,9 @@ baseline.
 
 - The schema-mismatch warning on successful boot (every node):
 
-      WARN pyana_node::state: skipping malformed federation descriptor
+      WARN dregg_node::state: skipping malformed federation descriptor
         path=.../known_federations/<peer_fed_id>.json
-      INFO pyana_node::state: loaded known_federations from disk count=0
+      INFO dregg_node::state: loaded known_federations from disk count=0
 
   The `count=0` is the load-bearing diagnostic — the cross-fed trust root
   exists on disk but is not in memory.
@@ -179,6 +179,6 @@ result JSON in `demo/multi-node-devnet/state/logs/scenarios/<name>/`.
 ## Run reproduction
 
     cd demo/multi-node-devnet
-    NODE_BIN=$PWD/../../target/release/pyana-node \
-    VERIFIER_BIN=$PWD/../../target/release/pyana-verifier \
+    NODE_BIN=$PWD/../../target/release/dregg-node \
+    VERIFIER_BIN=$PWD/../../target/release/dregg-verifier \
       ./start_devnet.sh && ./run_all_scenarios.sh && ./stop_devnet.sh

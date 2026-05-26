@@ -786,7 +786,7 @@ pub fn build_arithmetic_predicate_descriptor(
         .max(3);
 
     let descriptor = CircuitDescriptor {
-        name: "pyana-arithmetic-predicate-full-dsl-v1".into(),
+        name: "dregg-arithmetic-predicate-full-dsl-v1".into(),
         trace_width: layout.width,
         max_degree,
         columns,

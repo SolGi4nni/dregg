@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 
-use pyana_wire::message::WireMessage;
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Deterministic RNG

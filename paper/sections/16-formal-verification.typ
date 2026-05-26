@@ -6,7 +6,7 @@
 
 == Typed Composition Checker
 
-Pyana's proof system comprises 30+ circuit descriptors that must compose correctly. A _typed composition checker_ verifies at compile time that composed proofs maintain soundness---that public input/output types align, that witness bindings are consistent, and that trust assumptions compose without contradiction.
+Dregg's proof system comprises 30+ circuit descriptors that must compose correctly. A _typed composition checker_ verifies at compile time that composed proofs maintain soundness---that public input/output types align, that witness bindings are consistent, and that trust assumptions compose without contradiction.
 
 === Circuit Descriptors
 
@@ -51,7 +51,7 @@ The checker prevents:
 
 == The 30-Circuit Catalog
 
-Pyana's proof system comprises the following verified circuit descriptors:
+Dregg's proof system comprises the following verified circuit descriptors:
 
 === Core Cryptographic Circuits (8)
 

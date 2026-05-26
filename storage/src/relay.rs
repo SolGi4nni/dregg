@@ -1,6 +1,6 @@
 //! Metered store-and-forward relay.
 //!
-//! # DEPRECATED — folds into `pyana_storage_templates::relay_operator`
+//! # DEPRECATED — folds into `dregg_storage_templates::relay_operator`
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §3.5 + §6.1 this module's
 //! [`MeteredRelay`] / [`MeteredMessage`] surface folds into the
@@ -102,7 +102,7 @@ impl From<QueueError> for RelayError {
 /// Queue roots are content-addressed and verifiable.
 #[deprecated(
     since = "0.1.0",
-    note = "Folds into `pyana_storage_templates::relay_operator` per STORAGE-AS-CELL-PROGRAMS.md §3.5 + §6.1. Per-destination metering becomes the relay-operator cell's `RateLimitBySum` constraint on `bytes_relayed_this_epoch`."
+    note = "Folds into `dregg_storage_templates::relay_operator` per STORAGE-AS-CELL-PROGRAMS.md §3.5 + §6.1. Per-destination metering becomes the relay-operator cell's `RateLimitBySum` constraint on `bytes_relayed_this_epoch`."
 )]
 #[derive(Debug)]
 pub struct MeteredRelay {
@@ -375,7 +375,7 @@ fn payer_to_sender(_payer: &QuotaId) -> &[u8; 32] {
 // enabling cryptographic verification of delivery. MessageRelay just returns messages.
 //
 // Migration path:
-// 1. Add a `MerkleBackedRelay` wrapper in captp that delegates to pyana-storage
+// 1. Add a `MerkleBackedRelay` wrapper in captp that delegates to dregg-storage
 // 2. The wrapper translates QueuedMessage -> InboxMessage for enqueue
 // 3. On drain, wrapper returns QueuedMessage + DequeueProof pairs
 // 4. Existing tests continue to pass with the VecDeque-based MessageRelay

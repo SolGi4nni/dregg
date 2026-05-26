@@ -4,7 +4,7 @@
 //! Light clients sample K random chunks. If all K are retrievable,
 //! the full data is available with probability 1 - (1/2)^K.
 //!
-//! For pyana: when a blob is committed to the blocklace, it's erasure-encoded.
+//! For dregg: when a blob is committed to the blocklace, it's erasure-encoded.
 //! Phones (light clients) verify availability by sampling chunks from peers.
 //! This proves "the data exists and is retrievable" without downloading it all.
 //!

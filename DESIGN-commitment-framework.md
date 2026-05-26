@@ -1,4 +1,4 @@
-# Pyana Commitment Framework — Dual-Accumulator Design
+# `dregg` Commitment Framework — Dual-Accumulator Design
 
 **Status:** design proposal
 **Author:** ember
@@ -17,7 +17,7 @@ in `wire/`, `sdk/`, and `bridge/`.
 > *"…a dual-accumulator design with also BLAKE3 supported for fast
 > out-of-circuit things…"*
 
-Every authoritative content commitment in pyana SHOULD carry **two** companion
+Every authoritative content commitment in dregg SHOULD carry **two** companion
 digests:
 
 1. **`blake3: [u8; 32]`** — the canonical byte-domain commitment. Cheap,
@@ -47,7 +47,7 @@ boundary explicitly.
 
 | Commitment | Location | Domain | Shape | Has circuit form? |
 | --- | --- | --- | --- | --- |
-| Canonical cell state commitment | `cell/src/commitment.rs:100` (`compute_canonical_state_commitment`) | BLAKE3 derive_key `"pyana-cell:canonical-state-commitment v1"` | flat hash over tagged length-prefixed encoding | No — adapter `canonical_to_babybear_pi` (line 304) packs to 8 felts but no Poseidon2 binding exists |
+| Canonical cell state commitment | `cell/src/commitment.rs:100` (`compute_canonical_state_commitment`) | BLAKE3 derive_key `"dregg-cell:canonical-state-commitment v1"` | flat hash over tagged length-prefixed encoding | No — adapter `canonical_to_babybear_pi` (line 304) packs to 8 felts but no Poseidon2 binding exists |
 | Capability set root | `cell/src/commitment.rs:277` (`compute_canonical_capability_root`) | BLAKE3 derive_key | flat hash over CapabilityRefs | Partial — circuit uses `capability_root: BabyBear` from `effect_vm.rs:645` but with no documented binding to the BLAKE3 form |
 | Effect-VM cell state commitment | `circuit/src/effect_vm.rs:684` (`CellState::compute_commitment`) | Poseidon2 (`hash_4_to_1`) | 4-leaf tree of three intermediates over `(bal_lo, bal_hi, nonce, fields[0..8], capability_root)` | Yes — this **is** the circuit form, but commits to a strict subset (no identity, perms, VK) of the canonical state |
 | Ledger Merkle leaf | `cell/src/ledger.rs::hash_cell_canonical` (wrapper of canonical) | BLAKE3 | flat hash | No |
@@ -57,9 +57,9 @@ boundary explicitly.
 
 | Commitment | Location | Domain | Shape | Has circuit form? |
 | --- | --- | --- | --- | --- |
-| Note BLAKE3 commitment | `cell/src/note.rs:162` (`Note::commitment`) | BLAKE3 derive_key `"pyana-note commitment v1"` | flat hash over `(owner ‖ fields[8] ‖ randomness ‖ creation_nonce)` | Yes — companion `poseidon2_commitment` |
+| Note BLAKE3 commitment | `cell/src/note.rs:162` (`Note::commitment`) | BLAKE3 derive_key `"dregg-note commitment v1"` | flat hash over `(owner ‖ fields[8] ‖ randomness ‖ creation_nonce)` | Yes — companion `poseidon2_commitment` |
 | Note Poseidon2 commitment | `cell/src/note.rs:229` (`Note::poseidon2_commitment`) | Poseidon2 `hash_many` | sponge over 5 felts | **This is the existing dual-form prototype.** |
-| Note BLAKE3 nullifier | `cell/src/note.rs:179` (`Note::nullifier`) | BLAKE3 derive_key `"pyana-note nullifier v1"` | flat hash over `(commitment ‖ spending_key ‖ creation_nonce)` | The circuit AIR (`note_spending_air.rs`) computes a Poseidon2 nullifier from witness columns; the two are **not** explicitly bound |
+| Note BLAKE3 nullifier | `cell/src/note.rs:179` (`Note::nullifier`) | BLAKE3 derive_key `"dregg-note nullifier v1"` | flat hash over `(commitment ‖ spending_key ‖ creation_nonce)` | The circuit AIR (`note_spending_air.rs`) computes a Poseidon2 nullifier from witness columns; the two are **not** explicitly bound |
 | Poseidon2 note Merkle tree | `commit/src/poseidon2_tree.rs:79` (`Poseidon2MerkleTree`) | Poseidon2 4-ary | sparse Merkle, depth 16 | Yes — primary circuit form |
 | BLAKE3 4-ary tree | `commit/src/merkle.rs` (`MerkleTree`) | BLAKE3 | sparse Merkle, depth 16 | No |
 | Nullifier set Merkle tree | `cell/src/nullifier_set.rs:31` | BLAKE3 sibling-path | sparse Merkle | No |
@@ -72,28 +72,28 @@ boundary explicitly.
 | Turn receipt hash | `turn/src/turn.rs:303` (`TurnReceipt::receipt_hash`) | BLAKE3 plain | hash chain via `previous_receipt_hash` | No |
 | Effects hash | `turn/src/executor.rs:1606`, `executor.rs:1615` (`hash_tree_effects`) | BLAKE3 plain | DFS tree hash | Effect VM has a parallel `effects_hash` in PI computed from Poseidon2; **not bound** to BLAKE3 form |
 | Forest hash | `turn/src/forest.rs` (referenced in `TurnReceipt.forest_hash`) | BLAKE3 | flat hash | No |
-| Proof obligation id | `turn/src/obligation.rs:202` | BLAKE3 derive_key `"pyana-obligation-id-v1"` | flat hash | No |
-| Proof obligation hash | `turn/src/obligation.rs:161` | BLAKE3 derive_key `"pyana-proof-obligation-v1"` | flat hash | No |
-| Conditional turn hash | `turn/src/conditional.rs:106` | BLAKE3 derive_key `"pyana-conditional-turn-v1"` | flat hash | No |
-| Proof nullifier (conditional) | `turn/src/conditional.rs:229` | BLAKE3 derive_key `"pyana-proof-nullifier-v1"` | flat hash | No |
+| Proof obligation id | `turn/src/obligation.rs:202` | BLAKE3 derive_key `"dregg-obligation-id-v1"` | flat hash | No |
+| Proof obligation hash | `turn/src/obligation.rs:161` | BLAKE3 derive_key `"dregg-proof-obligation-v1"` | flat hash | No |
+| Conditional turn hash | `turn/src/conditional.rs:106` | BLAKE3 derive_key `"dregg-conditional-turn-v1"` | flat hash | No |
+| Proof nullifier (conditional) | `turn/src/conditional.rs:229` | BLAKE3 derive_key `"dregg-proof-nullifier-v1"` | flat hash | No |
 | Conflict-set bloom commitment | `turn/src/conflict.rs:108` | BLAKE3 plain (versioned tag in body) | flat hash over bloom bytes | No |
 
 ### 1.4 Wire and bridge
 
 | Commitment | Location | Domain | Shape | Has circuit form? |
 | --- | --- | --- | --- | --- |
-| Bridge receipt signing-message | `cell/src/note_bridge.rs:383` | BLAKE3 derive_key `"pyana-bridge-receipt-v1"` | flat hash | No |
+| Bridge receipt signing-message | `cell/src/note_bridge.rs:383` | BLAKE3 derive_key `"dregg-bridge-receipt-v1"` | flat hash | No |
 | Wire authorization-request hash | `wire/src/message.rs:67` | BLAKE3 derive_key | flat hash | No |
 | Federation root genesis | `wire/src/server.rs:472` | BLAKE3 plain | constant | No |
-| Revocation root | `wire/src/server.rs:536` | BLAKE3 derive_key `"pyana-wire revocation-root v1"` | hash over set | Partial — `circuit/src/non_membership.rs` uses a Poseidon2 polynomial accumulator; the two roots are tracked separately |
-| Peer-auth signing message | `wire/src/server.rs:869` | BLAKE3 derive_key `"pyana-wire peer-auth v1"` | flat hash | No |
+| Revocation root | `wire/src/server.rs:536` | BLAKE3 derive_key `"dregg-wire revocation-root v1"` | hash over set | Partial — `circuit/src/non_membership.rs` uses a Poseidon2 polynomial accumulator; the two roots are tracked separately |
+| Peer-auth signing message | `wire/src/server.rs:869` | BLAKE3 derive_key `"dregg-wire peer-auth v1"` | flat hash | No |
 
 ### 1.5 Capabilities, sealing, delegation
 
 | Commitment | Location | Domain | Shape | Has circuit form? |
 | --- | --- | --- | --- | --- |
-| Sealed-capability commitment | `cell/src/seal.rs:250` (`SealedCapability::compute_commitment`) | BLAKE3 derive_key `"pyana-seal commitment v2"` | flat hash | No |
-| Macaroon caveat-chain hash | `macaroon/src/lib.rs:518` (`caveat_chain_hash`) | BLAKE3 derive_key `"pyana-proof-key-v1"` | hash chain over caveats | No |
+| Sealed-capability commitment | `cell/src/seal.rs:250` (`SealedCapability::compute_commitment`) | BLAKE3 derive_key `"dregg-seal commitment v2"` | flat hash | No |
+| Macaroon caveat-chain hash | `macaroon/src/lib.rs:518` (`caveat_chain_hash`) | BLAKE3 derive_key `"dregg-proof-key-v1"` | hash chain over caveats | No |
 | Macaroon proof-key derivation | `macaroon/src/lib.rs:434` | BLAKE3 KDF | derive_key | No |
 | Macaroon envelope hash | `macaroon/src/lib.rs:761` (`envelope_hash`) | BLAKE3 | flat hash | No |
 | Committed threshold (privacy) | `macaroon/src/lib.rs:170` | Poseidon2 | flat hash over `(threshold, blinding)` | Yes — used only in circuit |
@@ -142,8 +142,8 @@ Reading the inventory across the codebase, four patterns recur:
 3. **Ad-hoc BLAKE3 with implicit domain separation.** `Turn::hash`,
    `TurnReceipt::receipt_hash`, and the various `hash_tree_effects` helpers
    use plain `blake3::Hasher::new()` and embed an in-body version tag
-   (e.g., `b"pyana-receipt-v2"`). This works but is inconsistent with the
-   rest of the codebase, which uses `new_derive_key("pyana-X v1")`. There
+   (e.g., `b"dregg-receipt-v2"`). This works but is inconsistent with the
+   rest of the codebase, which uses `new_derive_key("dregg-X v1")`. There
    is no central registry of domain tags.
 
 4. **Storage-layer hashes destined to be replaced.** `storage/src/blinded.rs`
@@ -245,14 +245,14 @@ A central `commit/src/domain.rs` module will export every domain tag used
 across the codebase as a `const &str`:
 
 ```rust
-pub const TAG_CELL_STATE:        &str = "pyana-cell:state v2";
-pub const TAG_CAPABILITY_ROOT:   &str = "pyana-cell:cap-root v2";
-pub const TAG_NOTE_COMMITMENT:   &str = "pyana-note:commitment v2";
-pub const TAG_NOTE_NULLIFIER:    &str = "pyana-note:nullifier v2";
-pub const TAG_TURN:              &str = "pyana-turn:turn v2";
-pub const TAG_RECEIPT:           &str = "pyana-turn:receipt v2";
-pub const TAG_OBLIGATION:        &str = "pyana-turn:obligation v2";
-pub const TAG_BRIDGE_RECEIPT:    &str = "pyana-bridge:receipt v2";
+pub const TAG_CELL_STATE:        &str = "dregg-cell:state v2";
+pub const TAG_CAPABILITY_ROOT:   &str = "dregg-cell:cap-root v2";
+pub const TAG_NOTE_COMMITMENT:   &str = "dregg-note:commitment v2";
+pub const TAG_NOTE_NULLIFIER:    &str = "dregg-note:nullifier v2";
+pub const TAG_TURN:              &str = "dregg-turn:turn v2";
+pub const TAG_RECEIPT:           &str = "dregg-turn:receipt v2";
+pub const TAG_OBLIGATION:        &str = "dregg-turn:obligation v2";
+pub const TAG_BRIDGE_RECEIPT:    &str = "dregg-bridge:receipt v2";
 // …
 ```
 
@@ -273,7 +273,7 @@ together.
 // commit/src/typed.rs (new)
 
 use core::marker::PhantomData;
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 /// A typed dual-form commitment.
 ///
@@ -498,7 +498,7 @@ pub struct ReceiptCommitment {
 
 impl CommitmentSchema for TurnReceipt {
     type Canonical = Vec<u8>;
-    const DOMAIN: &'static str = "pyana-turn:receipt v2";
+    const DOMAIN: &'static str = "dregg-turn:receipt v2";
 
     fn canonical(&self) -> Vec<u8> {
         // exactly the current bytes hashed by receipt_hash()

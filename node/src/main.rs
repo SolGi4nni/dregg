@@ -1,4 +1,4 @@
-//! `pyana-node`: The federation node daemon.
+//! `dregg-node`: The federation node daemon.
 //!
 //! This binary runs the backend that:
 //! - Hosts an AgentCipherclerk with token management
@@ -11,7 +11,7 @@ mod blocklace_sync;
 pub mod config;
 // The old `bridge` module is removed. Cross-group communication now happens
 // via multi_group.rs (unified blocklace cross-references + interest-based dissemination).
-// See: `pyana-node run --groups` for multi-group participation.
+// See: `dregg-node run --groups` for multi-group participation.
 mod genesis;
 pub mod gossip;
 mod mcp;
@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand};
 use tracing::{error, info};
 
 #[derive(Parser)]
-#[command(name = "pyana-node", about = "Pyana federation node daemon")]
+#[command(name = "dregg-node", about = "Dregg federation node daemon")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -53,7 +53,7 @@ enum Command {
         federation_peers: Vec<String>,
 
         /// Data directory for persistent state.
-        #[arg(long, default_value = "~/.pyana")]
+        #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
 
         /// Path to the node key file (relative to data-dir or absolute).
@@ -139,7 +139,7 @@ enum Command {
     /// Initialize the data directory and generate a node keypair.
     Init {
         /// Data directory to initialize.
-        #[arg(long, default_value = "~/.pyana")]
+        #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
     },
 
@@ -156,7 +156,7 @@ enum Command {
     /// Used by AI assistants (Claude, GPT, etc.) to interact with the node.
     Mcp {
         /// Data directory for persistent state.
-        #[arg(long, default_value = "~/.pyana")]
+        #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
 
         /// Federation peer addresses (host:port), comma-separated.
@@ -177,12 +177,12 @@ enum Command {
     /// `<data-dir>/known_federations/<federation_id>.json`.
     RegisterFederation {
         /// Local data directory.
-        #[arg(long, default_value = "~/.pyana")]
+        #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
         /// Path to the peer federation's descriptor JSON. The file must
         /// have the same shape as `genesis.json` (federation_id +
         /// committee_epoch + threshold + validators[].public_key) — i.e.
-        /// what `pyana-node genesis` already produces.
+        /// what `dregg-node genesis` already produces.
         #[arg(long)]
         descriptor: PathBuf,
     },
@@ -241,7 +241,7 @@ enum Command {
         state_file: PathBuf,
 
         /// Data directory (for reading operator key).
-        #[arg(long, default_value = "~/.pyana")]
+        #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
 
         /// Default inbox capacity for new subscriptions.
@@ -275,7 +275,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "pyana_node=info".into()),
+                .unwrap_or_else(|_| "dregg_node=info".into()),
         )
         .init();
 
@@ -399,7 +399,7 @@ async fn run_node(
 
     if !data_path.exists() {
         error!(
-            "data directory does not exist: {}. Run `pyana-node init` first.",
+            "data directory does not exist: {}. Run `dregg-node init` first.",
             data_path.display()
         );
         std::process::exit(1);
@@ -440,7 +440,7 @@ async fn run_node(
                             for v in validators {
                                 if let Some(pk_hex) = v["public_key"].as_str() {
                                     if let Some(pk_bytes) = hex_decode_32(pk_hex) {
-                                        fed_keys.push(pyana_types::PublicKey(pk_bytes));
+                                        fed_keys.push(dregg_types::PublicKey(pk_bytes));
                                     }
                                 }
                             }
@@ -456,7 +456,7 @@ async fn run_node(
                         // committee-derived id (audit F1: the writer of
                         // genesis.json doesn't get to pick an arbitrary id).
                         if let Some(declared_id) = genesis["federation_id"].as_str() {
-                            let derived = pyana_types::hex_encode(&s.federation_id);
+                            let derived = dregg_types::hex_encode(&s.federation_id);
                             if declared_id != derived {
                                 tracing::warn!(
                                     declared = %declared_id,
@@ -519,7 +519,7 @@ async fn run_node(
         // In solo mode, initialize the SoloConsensusState with the node's signing key.
         if is_solo_mode {
             let signing_key = s.cclerk.gossip_signing_key().to_bytes();
-            s.solo_consensus = Some(pyana_federation::solo::SoloConsensusState::new(signing_key));
+            s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(signing_key));
             info!("federation mode: solo (committee of one) — no quorum required");
         } else {
             info!("federation mode: full — BFT quorum required for finality");
@@ -569,7 +569,7 @@ async fn run_node(
         blocklace_wave_timeout_ms,
         faucet = enable_faucet,
         federation_mode = if is_solo_mode { "solo" } else { "full" },
-        "starting pyana-node"
+        "starting dregg-node"
     );
 
     // F-CRIT-2: gate auto-approval of federation join proposals on CLI flag or
@@ -693,13 +693,13 @@ fn init_node(data_dir: &str) {
         .collect();
 
     println!(
-        "Initialized pyana-node data directory: {}",
+        "Initialized dregg-node data directory: {}",
         data_path.display()
     );
     println!("Node public key: {pk_hex}");
     println!();
     println!("Start the node with:");
-    println!("  pyana-node run --data-dir {}", data_dir);
+    println!("  dregg-node run --data-dir {}", data_dir);
 }
 
 /// Check if the node is reachable on its HTTP port.
@@ -707,7 +707,7 @@ fn init_node(data_dir: &str) {
 /// Uses a raw TCP connect (no extra HTTP client dep in the node binary).
 /// This is a basic liveness check only; a full semantic probe of /status
 /// would require an HTTP client. On success we still recommend hitting the
-/// URL to confirm it's a real pyana-node (not another service on the port).
+/// URL to confirm it's a real dregg-node (not another service on the port).
 async fn check_status(port: u16) {
     let url = format!("http://127.0.0.1:{port}/status");
 
@@ -715,14 +715,14 @@ async fn check_status(port: u16) {
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
     match tokio::net::TcpStream::connect(addr).await {
         Ok(_) => {
-            println!("pyana-node port {port} is accepting TCP connections.");
+            println!("dregg-node port {port} is accepting TCP connections.");
             println!("  Try the status endpoint for full details: {url}");
             println!(
-                "  (If another service is bound there, the HTTP response will not be pyana's.)"
+                "  (If another service is bound there, the HTTP response will not be dregg's.)"
             );
         }
         Err(_) => {
-            println!("pyana-node is NOT listening on port {port}");
+            println!("dregg-node is NOT listening on port {port}");
             std::process::exit(1);
         }
     }
@@ -749,7 +749,7 @@ async fn run_mcp(data_dir: &str, peers: Vec<String>) {
 
     if !data_path.exists() {
         error!(
-            "data directory does not exist: {}. Run `pyana-node init` first.",
+            "data directory does not exist: {}. Run `dregg-node init` first.",
             data_path.display()
         );
         std::process::exit(1);
@@ -801,7 +801,7 @@ async fn run_relay(
         key
     } else {
         error!(
-            "no node.key found in {}. Run `pyana-node init` first.",
+            "no node.key found in {}. Run `dregg-node init` first.",
             data_path.display()
         );
         std::process::exit(1);
@@ -856,7 +856,7 @@ fn run_register_federation(data_dir: &str, descriptor: &std::path::Path) {
     let data_path = expand_path(data_dir);
     if !data_path.exists() {
         eprintln!(
-            "error: data directory does not exist: {}. Run `pyana-node init` first.",
+            "error: data directory does not exist: {}. Run `dregg-node init` first.",
             data_path.display()
         );
         std::process::exit(1);
@@ -897,7 +897,7 @@ fn run_register_federation(data_dir: &str, descriptor: &std::path::Path) {
             std::process::exit(1);
         }
     };
-    let mut pubkeys: Vec<pyana_types::PublicKey> = Vec::with_capacity(validators.len());
+    let mut pubkeys: Vec<dregg_types::PublicKey> = Vec::with_capacity(validators.len());
     for v in validators {
         let pk_hex = match v["public_key"].as_str() {
             Some(s) => s,
@@ -913,7 +913,7 @@ fn run_register_federation(data_dir: &str, descriptor: &std::path::Path) {
                 std::process::exit(1);
             }
         };
-        pubkeys.push(pyana_types::PublicKey(bytes));
+        pubkeys.push(dregg_types::PublicKey(bytes));
     }
     if pubkeys.is_empty() {
         eprintln!("error: descriptor has zero validators");
@@ -921,7 +921,7 @@ fn run_register_federation(data_dir: &str, descriptor: &std::path::Path) {
     }
 
     // Recompute the federation_id and reject a tampered descriptor.
-    let derived = pyana_federation::derive_federation_id_with_epoch(&pubkeys, committee_epoch);
+    let derived = dregg_federation::derive_federation_id_with_epoch(&pubkeys, committee_epoch);
     let derived_hex: String = derived.iter().map(|b| format!("{b:02x}")).collect();
     if derived_hex != declared_fed_id {
         eprintln!(

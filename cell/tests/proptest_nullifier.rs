@@ -7,8 +7,8 @@
 
 use proptest::prelude::*;
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
 
 /// A note operation: either create a note or spend one.
 #[derive(Clone, Debug)]

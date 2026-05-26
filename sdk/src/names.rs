@@ -17,8 +17,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use pyana_captp::uri::PyanaUri;
-use pyana_cell::CellId;
+use dregg_captp::uri::DreggUri;
+use dregg_cell::CellId;
 
 use crate::captp_client::CapTpClient;
 
@@ -32,7 +32,7 @@ pub struct PetnameEntry {
     /// The human-readable label you assigned.
     pub label: String,
     /// The sturdy ref this name points to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// Epoch when you assigned this petname.
     pub assigned_at: u64,
     /// Optional notes (e.g., "alice from the hackathon").
@@ -45,9 +45,9 @@ pub struct EdgeNameEntry {
     /// The label the contact claims.
     pub label: String,
     /// The sturdy ref this name points to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// The contact who claims this name (their URI).
-    pub source: PyanaUri,
+    pub source: DreggUri,
     /// Epoch when this was last fetched from the contact's profile.
     pub last_refreshed: u64,
 }
@@ -58,9 +58,9 @@ pub struct ProposedNameEntry {
     /// The community-assigned label.
     pub label: String,
     /// The sturdy ref this name points to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// Which federation directory this came from.
-    pub directory: PyanaUri,
+    pub directory: DreggUri,
     /// Governance vote weight at registration time.
     pub vote_weight: u64,
     /// Expiry epoch (from directory entry's expires_at).
@@ -75,7 +75,7 @@ pub struct ProposedNameEntry {
 #[derive(Clone, Debug)]
 pub struct ResolvedName {
     /// The sturdy ref this name resolved to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// How this resolution was achieved.
     pub provenance: NameProvenance,
     /// Confidence: 1.0 for petnames, 0.8 for edge, varies for proposed.
@@ -88,16 +88,16 @@ pub enum NameProvenance {
     /// Resolved from local petname DB.
     LocalPetname,
     /// Resolved from a contact's self-claimed edge name.
-    EdgeName { source: PyanaUri },
+    EdgeName { source: DreggUri },
     /// Resolved from a governed federation directory.
     FederationDirectory {
-        directory: PyanaUri,
+        directory: DreggUri,
         vote_weight: u64,
     },
     /// Resolved from a cross-federation meta-directory lookup.
     CrossFederation {
-        home_federation: PyanaUri,
-        target_federation: PyanaUri,
+        home_federation: DreggUri,
+        target_federation: DreggUri,
     },
     /// No resolution needed — raw URI passed through.
     Direct,
@@ -124,7 +124,7 @@ pub enum NameError {
     Unauthorized(String),
     /// Cannot traverse — intermediate segment is not a directory.
     NotADirectory { segment: String },
-    /// Unknown TLD (not ".pyana").
+    /// Unknown TLD (not ".dregg").
     UnknownTld(String),
     /// Malformed hierarchical name.
     MalformedHierarchy,
@@ -135,7 +135,7 @@ pub enum NameError {
     /// Network error during remote resolution.
     NetworkError(String),
     /// Federation directory is unreachable.
-    DirectoryUnreachable(PyanaUri),
+    DirectoryUnreachable(DreggUri),
 }
 
 impl std::fmt::Display for NameError {
@@ -230,7 +230,7 @@ impl PetnameDb {
     // =========================================================================
 
     /// Set a local petname. Overwrites any existing petname with the same label.
-    pub fn set_petname(&mut self, label: &str, target: PyanaUri, assigned_at: u64) {
+    pub fn set_petname(&mut self, label: &str, target: DreggUri, assigned_at: u64) {
         self.petnames.insert(
             label.to_string(),
             PetnameEntry {
@@ -246,7 +246,7 @@ impl PetnameDb {
     pub fn set_petname_with_notes(
         &mut self,
         label: &str,
-        target: PyanaUri,
+        target: DreggUri,
         assigned_at: u64,
         notes: &str,
     ) {
@@ -474,11 +474,11 @@ impl<'a> NameResolver<'a> {
         Err(NameError::NotFound(name.to_string()))
     }
 
-    /// Resolve a hierarchical name like "alice.federation-a.pyana".
+    /// Resolve a hierarchical name like "alice.federation-a.dregg".
     ///
     /// Algorithm:
     /// 1. Split on '.' from RIGHT
-    /// 2. Verify TLD is "pyana"
+    /// 2. Verify TLD is "dregg"
     /// 3. The second segment is the federation name
     /// 4. Remaining segments (left) are the path within that federation's directory
     ///
@@ -498,23 +498,23 @@ impl<'a> NameResolver<'a> {
             validate_name_segment(seg)?;
         }
 
-        // The last segment must be the TLD "pyana".
+        // The last segment must be the TLD "dregg".
         let tld = segments.last().unwrap();
-        if *tld != "pyana" {
+        if *tld != "dregg" {
             return Err(NameError::UnknownTld(tld.to_string()));
         }
 
         if segments.len() < 3 {
-            // Bare "federation-name.pyana" — would resolve to the federation directory itself.
+            // Bare "federation-name.dregg" — would resolve to the federation directory itself.
             // This requires network access to the meta-directory.
             return Err(NameError::NetworkError(
                 "hierarchical resolution requires network access to meta-directory".to_string(),
             ));
         }
 
-        // segments = ["alice", "federation-a", "pyana"]
+        // segments = ["alice", "federation-a", "dregg"]
         // federation_name = "federation-a"
-        // leaf_path = "alice" (or deeper nesting for "service.alice.federation-a.pyana")
+        // leaf_path = "alice" (or deeper nesting for "service.alice.federation-a.dregg")
         let _federation_name = segments[segments.len() - 2];
         let _leaf_segments = &segments[..segments.len() - 2];
 
@@ -533,7 +533,7 @@ impl<'a> NameResolver<'a> {
     /// Parse a dotted name into its hierarchical components.
     ///
     /// Returns (leaf_segments, federation_name, tld) if valid.
-    /// Example: "alice.my-fed.pyana" -> (["alice"], "my-fed", "pyana")
+    /// Example: "alice.my-fed.dregg" -> (["alice"], "my-fed", "dregg")
     pub fn parse_hierarchical(name: &str) -> Result<(Vec<&str>, &str, &str), NameError> {
         let segments: Vec<&str> = name.split('.').collect();
 
@@ -542,7 +542,7 @@ impl<'a> NameResolver<'a> {
         }
 
         let tld = segments.last().unwrap();
-        if *tld != "pyana" {
+        if *tld != "dregg" {
             return Err(NameError::UnknownTld(tld.to_string()));
         }
 
@@ -569,7 +569,7 @@ pub struct WhoisResult {
     /// Which category this name belongs to.
     pub provenance: NameProvenance,
     /// The directory the name lives in (if not a local petname).
-    pub directory: Option<PyanaUri>,
+    pub directory: Option<DreggUri>,
 }
 
 // =============================================================================
@@ -613,7 +613,7 @@ impl CipherclerkNames {
     ///
     /// This is YOUR name for this thing. It never leaves your device.
     /// Overwrites any existing petname with the same label.
-    pub fn set_petname(&mut self, label: &str, target: PyanaUri) -> Result<(), NameError> {
+    pub fn set_petname(&mut self, label: &str, target: DreggUri) -> Result<(), NameError> {
         validate_name_segment(label)?;
         self.db.set_petname(label, target, self.current_epoch);
         Ok(())
@@ -651,7 +651,7 @@ impl CipherclerkNames {
         name: &str,
         cell_id: CellId,
         _client: &CapTpClient,
-    ) -> Result<PyanaUri, NameError> {
+    ) -> Result<DreggUri, NameError> {
         validate_name_segment(name)?;
 
         // In production, this would:
@@ -661,7 +661,7 @@ impl CipherclerkNames {
         //
         // For the SDK client, we create the target URI from the cell_id and
         // the client's federation_id.
-        let target_uri = PyanaUri {
+        let target_uri = DreggUri {
             federation_id: _client.federation_id().0,
             cell_id: cell_id.0,
             swiss: [0u8; 32], // placeholder — real swiss comes from the mount
@@ -727,10 +727,10 @@ impl Default for CipherclerkNames {
 mod tests {
     use super::*;
     use crate::captp_client::{CapTpClient, CapTpConfig};
-    use pyana_captp::FederationId;
+    use dregg_captp::FederationId;
 
-    fn test_uri(id: u8) -> PyanaUri {
-        PyanaUri {
+    fn test_uri(id: u8) -> DreggUri {
+        DreggUri {
             federation_id: [id; 32],
             cell_id: [id + 1; 32],
             swiss: [id + 2; 32],
@@ -840,24 +840,24 @@ mod tests {
     #[test]
     fn dotted_name_parsing() {
         // Simple hierarchical
-        let (leaves, fed, tld) = NameResolver::parse_hierarchical("alice.my-fed.pyana").unwrap();
+        let (leaves, fed, tld) = NameResolver::parse_hierarchical("alice.my-fed.dregg").unwrap();
         assert_eq!(leaves, vec!["alice"]);
         assert_eq!(fed, "my-fed");
-        assert_eq!(tld, "pyana");
+        assert_eq!(tld, "dregg");
 
         // Multi-segment leaf
         let (leaves, fed, tld) =
-            NameResolver::parse_hierarchical("service.alice.community.pyana").unwrap();
+            NameResolver::parse_hierarchical("service.alice.community.dregg").unwrap();
         assert_eq!(leaves, vec!["service", "alice"]);
         assert_eq!(fed, "community");
-        assert_eq!(tld, "pyana");
+        assert_eq!(tld, "dregg");
 
         // Wrong TLD
         let err = NameResolver::parse_hierarchical("alice.my-fed.eth").unwrap_err();
         assert_eq!(err, NameError::UnknownTld("eth".to_string()));
 
         // Too few segments
-        let err = NameResolver::parse_hierarchical("just-tld.pyana").unwrap_err();
+        let err = NameResolver::parse_hierarchical("just-tld.dregg").unwrap_err();
         assert_eq!(err, NameError::MalformedHierarchy);
     }
 

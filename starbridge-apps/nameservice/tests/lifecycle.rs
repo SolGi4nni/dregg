@@ -25,10 +25,10 @@
 //! together) — duplicating that wiring here would just couple this
 //! crate to an executor it does not depend on.
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, Authorization, CellId, Effect, FieldElement,
 };
-use pyana_cell::{CellProgram, ProgramError, StateConstraint};
+use dregg_cell::{CellProgram, ProgramError, StateConstraint};
 use starbridge_nameservice::{
     EXPIRY_SLOT, NAME_FACTORY_VK, NAME_HASH_SLOT, OWNER_HASH_SLOT, RESOLVE_TARGET_SLOT,
     REVOKED_SLOT, build_register_action, build_renew_action, build_revoke_action,
@@ -52,11 +52,11 @@ fn fresh_program() -> CellProgram {
     CellProgram::Predicate(name_factory_descriptor().state_constraints.clone())
 }
 
-fn empty_state() -> pyana_cell::state::CellState {
-    pyana_cell::state::CellState::new(0)
+fn empty_state() -> dregg_cell::state::CellState {
+    dregg_cell::state::CellState::new(0)
 }
 
-fn project_setfield(action: &pyana_app_framework::Action, slot: usize) -> Option<FieldElement> {
+fn project_setfield(action: &dregg_app_framework::Action, slot: usize) -> Option<FieldElement> {
     for effect in &action.effects {
         if let Effect::SetField { index, value, .. } = effect {
             if *index == slot {
@@ -81,7 +81,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     let cell = registry_cell();
     let owner = [0xAAu8; 32];
     let new_owner = [0xBBu8; 32];
-    let name = "alice.pyana";
+    let name = "alice.dregg";
 
     // ── Step 1: register (creation; old = empty). ────────────────────
     let initial_expiry: u64 = 1_000;
@@ -100,7 +100,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     assert_eq!(state_after_register.fields[NAME_HASH_SLOT], name_hash(name));
 
     // ── Step 2: set-target (no slot caveat applies). ────────────────
-    let target = resolve_target("pyana://cell/alices-document");
+    let target = resolve_target("dregg://cell/alices-document");
     let set_target_action = build_set_target_action(&cipherclerk, cell, name, target);
     let mut state_after_set_target = state_after_register.clone();
     state_after_set_target.fields[RESOLVE_TARGET_SLOT] =
@@ -157,14 +157,14 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
 #[test]
 fn adversarial_duplicate_name_registration_rejected_by_write_once() {
     let program = fresh_program();
-    // Active "alice.pyana" on the cell.
+    // Active "alice.dregg" on the cell.
     let mut old = empty_state();
-    old.fields[NAME_HASH_SLOT] = name_hash("alice.pyana");
+    old.fields[NAME_HASH_SLOT] = name_hash("alice.dregg");
     old.fields[EXPIRY_SLOT] = expiry_field(1_000);
     old.set_nonce(1);
     // Attacker tries to repurpose the cell with a different name.
     let mut new = empty_state();
-    new.fields[NAME_HASH_SLOT] = name_hash("eve.pyana");
+    new.fields[NAME_HASH_SLOT] = name_hash("eve.dregg");
     new.fields[EXPIRY_SLOT] = expiry_field(1_000);
     new.set_nonce(2);
     let err = program
@@ -187,7 +187,7 @@ fn adversarial_duplicate_name_registration_rejected_by_write_once() {
 fn adversarial_expiry_decrement_rejected_by_monotonic() {
     let program = fresh_program();
     let mut old = empty_state();
-    old.fields[NAME_HASH_SLOT] = name_hash("alice.pyana");
+    old.fields[NAME_HASH_SLOT] = name_hash("alice.dregg");
     old.fields[EXPIRY_SLOT] = expiry_field(10_000);
     old.set_nonce(1);
     // Attacker tries to shorten the rental.
@@ -213,7 +213,7 @@ fn adversarial_expiry_held_equal_is_permitted_by_monotonic() {
     // rejected.
     let program = fresh_program();
     let mut old = empty_state();
-    old.fields[NAME_HASH_SLOT] = name_hash("alice.pyana");
+    old.fields[NAME_HASH_SLOT] = name_hash("alice.dregg");
     old.fields[EXPIRY_SLOT] = expiry_field(10_000);
     old.set_nonce(1);
     let mut new = old.clone();
@@ -231,14 +231,14 @@ fn adversarial_expiry_held_equal_is_permitted_by_monotonic() {
 fn adversarial_double_revoke_rejected_by_write_once_on_revoked_slot() {
     let program = fresh_program();
     let mut old = empty_state();
-    old.fields[NAME_HASH_SLOT] = name_hash("alice.pyana");
+    old.fields[NAME_HASH_SLOT] = name_hash("alice.dregg");
     old.fields[EXPIRY_SLOT] = expiry_field(10_000);
-    old.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
+    old.fields[REVOKED_SLOT] = revoked_tombstone("alice.dregg");
     old.set_nonce(2);
     // Attacker tries to write a different tombstone (e.g., to pretend
     // a different name was revoked at this cell).
     let mut new = old.clone();
-    new.fields[REVOKED_SLOT] = revoked_tombstone("eve.pyana");
+    new.fields[REVOKED_SLOT] = revoked_tombstone("eve.dregg");
     new.set_nonce(3);
     let err = program
         .evaluate(&new, Some(&old), None)
@@ -262,7 +262,7 @@ fn auth_register_action_carries_real_signature() {
     let action = build_register_action(
         &cipherclerk,
         registry_cell(),
-        "alice.pyana",
+        "alice.dregg",
         [3u8; 32],
         1_000,
     );
@@ -282,7 +282,7 @@ fn auth_all_lifecycle_actions_carry_real_signatures() {
     // Every entry point must emit an Authorization::Signature.
     let cipherclerk = cclerk_with_seed(0xCC);
     let cell = registry_cell();
-    let name = "alice.pyana";
+    let name = "alice.dregg";
     let actions = vec![
         (
             "register",
@@ -296,7 +296,7 @@ fn auth_all_lifecycle_actions_carry_real_signatures() {
         ("revoke", build_revoke_action(&cipherclerk, cell, name)),
         (
             "set_target",
-            build_set_target_action(&cipherclerk, cell, name, resolve_target("pyana://cell/x")),
+            build_set_target_action(&cipherclerk, cell, name, resolve_target("dregg://cell/x")),
         ),
     ];
     for (name, action) in actions {
@@ -370,7 +370,7 @@ fn adversarial_transfer_from_non_owner_authorization_diverges() {
     let owner_cclerk = cclerk_with_seed(0xA1);
     let impostor_cclerk = cclerk_with_seed(0xB2);
     let cell = registry_cell();
-    let name = "alice.pyana";
+    let name = "alice.dregg";
     let old_owner_pk = [0xAAu8; 32];
     let new_owner_pk = [0xCCu8; 32];
 
@@ -456,8 +456,8 @@ fn factory_descriptor_hash_changes_with_state_constraints() {
 #[test]
 fn register_function_is_idempotent_across_repeated_calls() {
     let cipherclerk = cclerk_with_seed(0x42);
-    let executor = pyana_app_framework::EmbeddedExecutor::new(&cipherclerk, "default");
-    let ctx = pyana_app_framework::StarbridgeAppContext::new(cipherclerk, executor);
+    let executor = dregg_app_framework::EmbeddedExecutor::new(&cipherclerk, "default");
+    let ctx = dregg_app_framework::StarbridgeAppContext::new(cipherclerk, executor);
     let vk1 = register(&ctx);
     let vk2 = register(&ctx);
     let vk3 = register(&ctx);

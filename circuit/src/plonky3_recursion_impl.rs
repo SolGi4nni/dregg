@@ -93,9 +93,9 @@ pub mod recursive {
     type InnerStarkConfig = StarkConfig<MyPcs, Challenge, Challenger>;
 
     /// The proof type produced by the recursion-compatible prover.
-    /// Uses `PyanaRecursionConfig` as the SC parameter so it's directly
+    /// Uses `DreggRecursionConfig` as the SC parameter so it's directly
     /// usable with `RecursionInput` without type mismatches.
-    pub type RecursionCompatibleProof = Proof<PyanaRecursionConfig>;
+    pub type RecursionCompatibleProof = Proof<DreggRecursionConfig>;
 
     /// FRI proof targets for the in-circuit verifier.
     type InnerFri = p3_recursion::pcs::FriProofTargets<
@@ -120,19 +120,19 @@ pub mod recursive {
     /// This implements both `StarkGenericConfig` (by delegation) and
     /// `FriRecursionConfig` (required by the recursion backend).
     #[derive(Clone)]
-    pub struct PyanaRecursionConfig {
+    pub struct DreggRecursionConfig {
         config: Arc<InnerStarkConfig>,
         fri_verifier_params: FriVerifierParams,
     }
 
-    impl core::ops::Deref for PyanaRecursionConfig {
+    impl core::ops::Deref for DreggRecursionConfig {
         type Target = InnerStarkConfig;
         fn deref(&self) -> &InnerStarkConfig {
             &self.config
         }
     }
 
-    impl StarkGenericConfig for PyanaRecursionConfig {
+    impl StarkGenericConfig for DreggRecursionConfig {
         type Challenge = Challenge;
         type Challenger = Challenger;
         type Pcs = MyPcs;
@@ -146,10 +146,10 @@ pub mod recursive {
         }
     }
 
-    impl FriRecursionConfig for PyanaRecursionConfig
+    impl FriRecursionConfig for DreggRecursionConfig
     where
         MyPcs: p3_recursion::traits::RecursivePcs<
-                PyanaRecursionConfig,
+                DreggRecursionConfig,
                 InputProofTargets<F, Challenge, RecValMmcs<F, DIGEST_ELEMS, MyHash, MyCompress>>,
                 InnerFri,
                 MerkleCapTargets<F, DIGEST_ELEMS>,
@@ -196,7 +196,7 @@ pub mod recursive {
         fn pcs_verifier_params(
             &self,
         ) -> &<MyPcs as p3_recursion::traits::RecursivePcs<
-            PyanaRecursionConfig,
+            DreggRecursionConfig,
             InputProofTargets<F, Challenge, RecValMmcs<F, DIGEST_ELEMS, MyHash, MyCompress>>,
             InnerFri,
             MerkleCapTargets<F, DIGEST_ELEMS>,
@@ -235,7 +235,7 @@ pub mod recursive {
     ///
     /// Uses Poseidon2 width-16 for all hash operations and the Duplex challenger.
     /// FRI parameters: log_blowup=3 (for degree-7 AIR), max_log_arity=1, 2 queries, no PoW.
-    pub fn create_recursion_config() -> PyanaRecursionConfig {
+    pub fn create_recursion_config() -> DreggRecursionConfig {
         let perm = default_babybear_poseidon2_16();
         let hash = MyHash::new(perm.clone());
         let compress = MyCompress::new(perm.clone());
@@ -269,7 +269,7 @@ pub mod recursive {
             PermConfig::poseidon2(Poseidon2Config::BABY_BEAR_D4_W16),
         );
 
-        PyanaRecursionConfig {
+        DreggRecursionConfig {
             config: Arc::new(config),
             fri_verifier_params,
         }
@@ -302,8 +302,8 @@ pub mod recursive {
     /// Plus `Sync + 'static` so the proof generator can hand the AIR around.
     pub trait RecursableAir:
         BaseAir<P3BabyBear>
-        + for<'a> Air<p3_uni_stark::ProverConstraintFolder<'a, PyanaRecursionConfig>>
-        + for<'a> Air<p3_uni_stark::VerifierConstraintFolder<'a, PyanaRecursionConfig>>
+        + for<'a> Air<p3_uni_stark::ProverConstraintFolder<'a, DreggRecursionConfig>>
+        + for<'a> Air<p3_uni_stark::VerifierConstraintFolder<'a, DreggRecursionConfig>>
         + for<'a> Air<p3_air::DebugConstraintBuilder<'a, P3BabyBear>>
         + Air<p3_uni_stark::SymbolicAirBuilder<P3BabyBear>>
         + Air<InteractionSymbolicBuilder<P3BabyBear, Challenge>>
@@ -314,8 +314,8 @@ pub mod recursive {
 
     impl<A> RecursableAir for A where
         A: BaseAir<P3BabyBear>
-            + for<'a> Air<p3_uni_stark::ProverConstraintFolder<'a, PyanaRecursionConfig>>
-            + for<'a> Air<p3_uni_stark::VerifierConstraintFolder<'a, PyanaRecursionConfig>>
+            + for<'a> Air<p3_uni_stark::ProverConstraintFolder<'a, DreggRecursionConfig>>
+            + for<'a> Air<p3_uni_stark::VerifierConstraintFolder<'a, DreggRecursionConfig>>
             + for<'a> Air<p3_air::DebugConstraintBuilder<'a, P3BabyBear>>
             + Air<p3_uni_stark::SymbolicAirBuilder<P3BabyBear>>
             + Air<InteractionSymbolicBuilder<P3BabyBear, Challenge>>
@@ -384,7 +384,7 @@ pub mod recursive {
     pub fn prove_recursive_layer(
         inner_proof: &RecursionCompatibleProof,
         public_inputs: &[BabyBear],
-    ) -> Result<RecursionOutput<PyanaRecursionConfig>, String> {
+    ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
         let air = P3MerklePoseidon2Air;
         prove_recursive_layer_for_air(&air, inner_proof, public_inputs)
     }
@@ -398,7 +398,7 @@ pub mod recursive {
         air: &A,
         inner_proof: &RecursionCompatibleProof,
         public_inputs: &[BabyBear],
-    ) -> Result<RecursionOutput<PyanaRecursionConfig>, String>
+    ) -> Result<RecursionOutput<DreggRecursionConfig>, String>
     where
         A: RecursableAir,
     {
@@ -415,7 +415,7 @@ pub mod recursive {
             preprocessed_commit: None,
         };
 
-        build_and_prove_next_layer::<PyanaRecursionConfig, A, _, D>(
+        build_and_prove_next_layer::<DreggRecursionConfig, A, _, D>(
             &input, &config, &backend, &params,
         )
         .map_err(|e| format!("Recursive proof generation failed: {:?}", e))
@@ -423,7 +423,7 @@ pub mod recursive {
 
     /// Verify a recursive proof output.
     pub fn verify_recursive_layer(
-        output: &RecursionOutput<PyanaRecursionConfig>,
+        output: &RecursionOutput<DreggRecursionConfig>,
     ) -> Result<(), String> {
         verify_recursive_batch_proof(&output.0)
     }
@@ -436,7 +436,7 @@ pub mod recursive {
     /// for verifying it). Block 3's scope-2 recursive replay path uses
     /// this entrypoint with postcard-decoded bytes.
     pub fn verify_recursive_batch_proof(
-        proof: &p3_circuit_prover::BatchStarkProof<PyanaRecursionConfig>,
+        proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
     ) -> Result<(), String> {
         let config = create_recursion_config();
         let mut prover = BatchStarkProver::new(config);
@@ -455,7 +455,7 @@ pub mod recursive {
     /// Convenience wrapper for the verifier side: decodes the
     /// `BatchStarkProof` then delegates to [`verify_recursive_batch_proof`].
     pub fn verify_recursive_layer_bytes(bytes: &[u8]) -> Result<(), String> {
-        let proof: p3_circuit_prover::BatchStarkProof<PyanaRecursionConfig> =
+        let proof: p3_circuit_prover::BatchStarkProof<DreggRecursionConfig> =
             postcard::from_bytes(bytes)
                 .map_err(|e| format!("Recursive proof postcard decode failed: {e}"))?;
         verify_recursive_batch_proof(&proof)
@@ -466,7 +466,7 @@ pub mod recursive {
         leaf_hash: BabyBear,
         siblings: &[[BabyBear; 3]],
         positions: &[u8],
-    ) -> Result<RecursionOutput<PyanaRecursionConfig>, String> {
+    ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
         let (trace, public_inputs) = generate_sound_merkle_trace(leaf_hash, siblings, positions);
         let inner_proof = prove_for_recursion(&trace, &public_inputs);
         verify_for_recursion(&inner_proof, &public_inputs)?;

@@ -8,17 +8,17 @@
 //! submissions either carry a witnessed_predicate or run against the strict
 //! verifier so the proof path is explicit.
 
-use pyana_cell::predicate::WitnessedPredicateRegistry;
-use pyana_federation::threshold_decrypt::{
+use dregg_cell::predicate::WitnessedPredicateRegistry;
+use dregg_federation::threshold_decrypt::{
     KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
     threshold_encrypt,
 };
-use pyana_intent::solver::{RingTrade, Settlement};
-use pyana_intent::trustless::{
+use dregg_intent::solver::{RingTrade, Settlement};
+use dregg_intent::trustless::{
     BatchState, DEFAULT_MIN_SOLVER_BOND, EncryptedIntent, EngineError, SolverSubmission,
     TrustlessIntentEngine, WitnessedProofVerifier,
 };
-use pyana_intent::{ActionPattern, CommitmentId, Intent, IntentId, IntentKind, MatchSpec};
+use dregg_intent::{ActionPattern, CommitmentId, Intent, IntentId, IntentKind, MatchSpec};
 
 // ============================================================================
 // Helpers

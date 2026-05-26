@@ -15,7 +15,7 @@ weak against "where did this witness come from" because the
 witness is unsigned and any node that has ever seen the cell
 state can produce one. The actor signature does not cover the
 witness either: `compute_turn_bytes` is still pinned to the
-`pyana-turn-v1:` domain (P2-10 open).
+`dregg-turn-v1:` domain (P2-10 open).
 
 ---
 
@@ -252,7 +252,7 @@ not binding inside the *AIR proof path*. The two are mutually
 exclusive at construction (the executor takes either branch based
 on `execution_proof.is_some()`).
 
-## 4. Comparison with `pyana_cell::peer_exchange::PeerStateTransition`
+## 4. Comparison with `dregg_cell::peer_exchange::PeerStateTransition`
 
 `cell/src/peer_exchange.rs:35-63`:
 
@@ -347,11 +347,11 @@ anywhere in the code.
 Session memory notes "Turn::hash v3 covers sovereign_witnesses."
 This is correct: `turn/src/turn.rs:149-275` walks every witness
 entry and hashes `(cell_id, state_proof, state_commitment)` per
-witness. v3's domain tag is `"pyana-turn-v3:"`.
+witness. v3's domain tag is `"dregg-turn-v3:"`.
 
 But the *signature* on the SignedTurn is over
 `AgentCipherclerk::compute_turn_bytes` (`sdk/src/cipherclerk.rs:3852-3908`),
-which uses `TURN_DOMAIN_PREFIX = b"pyana-turn-v1:"` and **does not
+which uses `TURN_DOMAIN_PREFIX = b"dregg-turn-v1:"` and **does not
 cover** `sovereign_witnesses`, `execution_proof`,
 `execution_proof_cell`, `execution_proof_new_commitment`,
 `conservation_proof`, or `custom_program_proofs`. The function
@@ -527,7 +527,7 @@ to proof-carrying form (per `sdk/src/cipherclerk.rs:4350-4416`).
    non-trivial cell, and §6 collapses to the receipt-vs-signature
    domain-tag mismatch only.
 
-7. **Is the `pyana-turn-v1:` → `pyana-turn-v3:` migration on the
+7. **Is the `dregg-turn-v1:` → `dregg-turn-v3:` migration on the
    cclerk signing message planned?** P2-10 flags it as deferred
    to "Stage 9 (Receipts overhaul)." Closing T9 properly probably
    requires closing P2-10 first; otherwise even a witness with a
@@ -571,7 +571,7 @@ to proof-carrying form (per `sdk/src/cipherclerk.rs:4350-4416`).
   (`execute_sovereign_turn` vs `execute_sovereign_turn_with_proof`).
 - `sdk/src/cipherclerk.rs:3852-3908` — `compute_turn_bytes` (the
   signed-message body that omits the witness; P2-10).
-- `sdk/src/cipherclerk.rs:916` — `TURN_DOMAIN_PREFIX = b"pyana-turn-v1:"`.
+- `sdk/src/cipherclerk.rs:916` — `TURN_DOMAIN_PREFIX = b"dregg-turn-v1:"`.
 - `tests/src/sovereign_proof.rs` — Phase 1 vs Phase 3 backward-
   compat test, demonstrating the mutual exclusion of the two
   paths.

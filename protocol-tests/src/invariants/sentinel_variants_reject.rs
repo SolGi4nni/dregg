@@ -13,10 +13,6 @@
 
 use crate::Invariant;
 use proptest::prelude::*;
-use pyana_cell::id::CellId;
-use pyana_cell::predicate::WitnessedPredicate;
-use pyana_cell::program::{CustomDescriptor, DeltaRelation, ReadSet};
-use pyana_cell::{CellProgram, CellState, InputRef, StateConstraint};
 
 pub struct SentinelVariantsReject;
 impl Invariant for SentinelVariantsReject {
@@ -32,7 +28,7 @@ proptest! {
     #[test]
     fn temporal_predicate_variant_always_rejects(state_seed in 0u64..256) {
         let mut state = CellState::default();
-        state.fields[0] = pyana_cell::field_from_u64(state_seed);
+        state.fields[0] = dregg_cell::field_from_u64(state_seed);
         let p = CellProgram::Predicate(vec![StateConstraint::TemporalPredicate {
             witness_index: 0,
             dsl_hash: [0u8; 32],
@@ -43,7 +39,7 @@ proptest! {
     #[test]
     fn bound_delta_variant_always_rejects(state_seed in 0u64..256, peer_seed in 0u8..255) {
         let mut state = CellState::default();
-        state.fields[0] = pyana_cell::field_from_u64(state_seed);
+        state.fields[0] = dregg_cell::field_from_u64(state_seed);
         let p = CellProgram::Predicate(vec![StateConstraint::BoundDelta {
             local_slot: 0,
             peer_cell: CellId([peer_seed; 32]),
@@ -56,7 +52,7 @@ proptest! {
     #[test]
     fn witnessed_variant_always_rejects(state_seed in 0u64..256, commit_seed in 0u8..255) {
         let mut state = CellState::default();
-        state.fields[0] = pyana_cell::field_from_u64(state_seed);
+        state.fields[0] = dregg_cell::field_from_u64(state_seed);
         let p = CellProgram::Predicate(vec![StateConstraint::Witnessed {
             wp: WitnessedPredicate::dfa([commit_seed; 32], InputRef::Sender, 0),
         }]);
@@ -66,7 +62,7 @@ proptest! {
     #[test]
     fn custom_variant_always_rejects(state_seed in 0u64..256, ir_seed in 0u8..255) {
         let mut state = CellState::default();
-        state.fields[0] = pyana_cell::field_from_u64(state_seed);
+        state.fields[0] = dregg_cell::field_from_u64(state_seed);
         let p = CellProgram::Predicate(vec![StateConstraint::Custom {
             ir_hash: [ir_seed; 32],
             descriptor: CustomDescriptor::default(),

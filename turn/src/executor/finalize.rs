@@ -185,7 +185,7 @@ impl TurnExecutor {
             }
         })?;
 
-        let proof: pyana_cell::ConservationProof =
+        let proof: dregg_cell::ConservationProof =
             postcard::from_bytes(proof_bytes).map_err(|e| {
                 TurnError::CommittedConservationFailed {
                     reason: format!("failed to deserialize conservation_proof: {e}"),
@@ -201,7 +201,7 @@ impl TurnExecutor {
         )?;
 
         let turn_hash = turn.hash();
-        pyana_cell::verify_conservation(
+        dregg_cell::verify_conservation(
             &input_commitments,
             &output_commitments,
             &proof,
@@ -743,7 +743,7 @@ impl TurnExecutor {
 
     /// Derive a synthetic CellId for a seal pair's sealer or unsealer capability.
     pub(super) fn seal_capability_id(pair_id: &[u8; 32], is_sealer: bool) -> CellId {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal capability-id v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-seal capability-id v1");
         hasher.update(pair_id);
         hasher.update(if is_sealer { b"sealer" } else { b"unsealer" });
         CellId::from_bytes(*hasher.finalize().as_bytes())
@@ -892,7 +892,7 @@ impl TurnExecutor {
     pub(super) fn collect_derivation_records(
         forest: &crate::forest::CallForest,
         timestamp: u64,
-    ) -> Vec<pyana_cell::DerivationRecord> {
+    ) -> Vec<dregg_cell::DerivationRecord> {
         let mut records = Vec::new();
         let mut slot_counter: u32 = 0;
         for tree in &forest.roots {
@@ -904,19 +904,19 @@ impl TurnExecutor {
     pub(super) fn collect_derivation_records_tree(
         tree: &CallTree,
         timestamp: u64,
-        records: &mut Vec<pyana_cell::DerivationRecord>,
+        records: &mut Vec<dregg_cell::DerivationRecord>,
         slot_counter: &mut u32,
     ) {
         for effect in &tree.action.effects {
             match effect {
                 Effect::GrantCapability { from, to, cap } => {
-                    records.push(pyana_cell::DerivationRecord {
+                    records.push(dregg_cell::DerivationRecord {
                         target_cell: *to,
                         target_slot: *slot_counter,
-                        edge: pyana_cell::DerivationEdge {
+                        edge: dregg_cell::DerivationEdge {
                             source_cell: *from,
                             source_slot: cap.slot,
-                            derivation_type: pyana_cell::DerivationType::Grant,
+                            derivation_type: dregg_cell::DerivationType::Grant,
                         },
                         created_at: timestamp,
                     });
@@ -927,13 +927,13 @@ impl TurnExecutor {
                     recipient,
                     ..
                 } => {
-                    records.push(pyana_cell::DerivationRecord {
+                    records.push(dregg_cell::DerivationRecord {
                         target_cell: *recipient,
                         target_slot: *slot_counter,
-                        edge: pyana_cell::DerivationEdge {
+                        edge: dregg_cell::DerivationEdge {
                             source_cell: *introducer,
                             source_slot: 0,
-                            derivation_type: pyana_cell::DerivationType::Introduce,
+                            derivation_type: dregg_cell::DerivationType::Introduce,
                         },
                         created_at: timestamp,
                     });
@@ -945,26 +945,26 @@ impl TurnExecutor {
                     ..
                 } => {
                     let child_id = CellId::derive_raw(child_public_key, child_token_id);
-                    records.push(pyana_cell::DerivationRecord {
+                    records.push(dregg_cell::DerivationRecord {
                         target_cell: child_id,
                         target_slot: *slot_counter,
-                        edge: pyana_cell::DerivationEdge {
+                        edge: dregg_cell::DerivationEdge {
                             source_cell: tree.action.target,
                             source_slot: 0,
-                            derivation_type: pyana_cell::DerivationType::Delegate,
+                            derivation_type: dregg_cell::DerivationType::Delegate,
                         },
                         created_at: timestamp,
                     });
                     *slot_counter += 1;
                 }
                 Effect::Unseal { recipient, .. } => {
-                    records.push(pyana_cell::DerivationRecord {
+                    records.push(dregg_cell::DerivationRecord {
                         target_cell: *recipient,
                         target_slot: *slot_counter,
-                        edge: pyana_cell::DerivationEdge {
+                        edge: dregg_cell::DerivationEdge {
                             source_cell: tree.action.target,
                             source_slot: 0,
-                            derivation_type: pyana_cell::DerivationType::Unseal,
+                            derivation_type: dregg_cell::DerivationType::Unseal,
                         },
                         created_at: timestamp,
                     });

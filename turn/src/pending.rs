@@ -406,7 +406,7 @@ mod tests {
     use super::*;
     use crate::action::{Action, Authorization, CommitmentMode, DelegationMode};
     use crate::forest::CallForest;
-    use pyana_cell::{CellId, Preconditions};
+    use dregg_cell::{CellId, Preconditions};
 
     /// Helper: create a minimal turn for testing.
     fn make_turn(agent_byte: u8, nonce: u64) -> Turn {

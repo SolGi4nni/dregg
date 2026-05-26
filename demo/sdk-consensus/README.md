@@ -1,8 +1,8 @@
 # SDK-Consensus Demo (no MCP)
 
 Sister demo to [`demo/two-ai-handoff`](../two-ai-handoff). The two-AI demo speaks
-**MCP over stdio** — a thin RPC layer on top of `pyana-node`. This demo bypasses
-MCP and exercises the lower-level pyana pathways directly, so a regression
+**MCP over stdio** — a thin RPC layer on top of `dregg-node`. This demo bypasses
+MCP and exercises the lower-level dregg pathways directly, so a regression
 in (for example) the wire codec or the federation consensus loop shows up here
 *without* having to also drag MCP into the picture.
 
@@ -10,23 +10,23 @@ in (for example) the wire codec or the federation consensus loop shows up here
 
 | Pathway                              | MCP demo                          | This demo                                                                                          |
 |--------------------------------------|-----------------------------------|----------------------------------------------------------------------------------------------------|
-| Agent identity                       | `pyana_create_agent` MCP tool     | `pyana_sdk::AgentCipherclerk::new()` directly                                                          |
-| Federation                           | implicit (`pyana-node mcp`, solo) | `pyana_federation::Federation::new(&[3 nodes])` + a real `run_consensus_round`                    |
+| Agent identity                       | `dregg_create_agent` MCP tool     | `dregg_sdk::AgentCipherclerk::new()` directly                                                          |
+| Federation                           | implicit (`dregg-node mcp`, solo) | `dregg_federation::Federation::new(&[3 nodes])` + a real `run_consensus_round`                    |
 | Attested root                        | not surfaced                      | `FederationNode::get_attested_root()` → postcard to disk → re-load → `is_valid(&fed_keys)`        |
-| Turn submission                      | `pyana_grant_capability` MCP tool | `pyana_turn::TurnExecutor::execute(&turn, &mut ledger)` against an in-memory `Ledger`             |
+| Turn submission                      | `dregg_grant_capability` MCP tool | `dregg_turn::TurnExecutor::execute(&turn, &mut ledger)` against an in-memory `Ledger`             |
 | Turn signing                         | inside the node                   | `AgentCipherclerk::sign_turn` on the caller side                                                       |
-| Receipt chain                        | `pyana_get_receipt_chain` MCP     | `AgentCipherclerk::append_receipt` + `verify_receipt_chain(cclerk.receipt_chain())`                    |
-| Capability handoff                   | `pyana_create_bearer_cap` MCP     | `captp::handoff::{HandoffCertificate, HandoffPresentation, validate_handoff}` + `SwissTable`      |
-| Wire framing                         | never seen                        | `pyana_wire::codec::{encode, decode}` round-trips `WireMessage::AttestedRoot` + `PresentHandoff`  |
+| Receipt chain                        | `dregg_get_receipt_chain` MCP     | `AgentCipherclerk::append_receipt` + `verify_receipt_chain(cclerk.receipt_chain())`                    |
+| Capability handoff                   | `dregg_create_bearer_cap` MCP     | `captp::handoff::{HandoffCertificate, HandoffPresentation, validate_handoff}` + `SwissTable`      |
+| Wire framing                         | never seen                        | `dregg_wire::codec::{encode, decode}` round-trips `WireMessage::AttestedRoot` + `PresentHandoff`  |
 
 ## How to run
 
 ```bash
-cargo run -p pyana-sdk-consensus-demo
+cargo run -p dregg-sdk-consensus-demo
 ```
 
 A successful run prints six checked-off pathways and writes the persisted
-`attested-root.postcard` artifact under `$TMPDIR/pyana-sdk-consensus-demo/`.
+`attested-root.postcard` artifact under `$TMPDIR/dregg-sdk-consensus-demo/`.
 
 If `cargo build` fails because a sibling cargo invocation holds the lock, retry
 after 60 s (matches the no-worktree concurrent-cargo policy).
@@ -66,7 +66,7 @@ mismatch in its step 6 today.
 The demo as committed validates the *structural* path (every API connects to
 every other API correctly). To upgrade it to a strong assertion of correctness:
 
-1. **Real TCP transport.** Run two `pyana_wire::server::SiloServer` instances on
+1. **Real TCP transport.** Run two `dregg_wire::server::SiloServer` instances on
    loopback and have one present the `HandoffCertificate` to the other over a
    real socket (instead of the in-memory codec round-trip).
 2. **AgentCipherclerk → captp::handoff bridge.** Today the demo derives a fresh

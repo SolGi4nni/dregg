@@ -1,12 +1,12 @@
 /**
- * <pyana-relay-operator uri="pyana://cell/<id>">
- * Uses DFA caveats for dispatch (Phase 5, after DFA lane). Cell program + <pyana-dfa> for routing rules.
+ * <dregg-relay-operator uri="dregg://cell/<id>">
+ * Uses DFA caveats for dispatch (Phase 5, after DFA lane). Cell program + <dregg-dfa> for routing rules.
  * RateLimitBySum + SenderAuthorized + FieldLte for quota.
  */
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError } from './_base.js';
 
-class PyanaRelayOperator extends InspectorBase {
+class DreggRelayOperator extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -19,13 +19,13 @@ class PyanaRelayOperator extends InspectorBase {
     const Component = () => {
       const cell = parsed && this._runtime.getCell ? this._runtime.getCell(parsed.id).value : null;
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pro">
-          <header><span class="pyana-inspector__kind">relay-operator</span> (DFA dispatch)</header>
-          ${cell ? html`<pyana-cell uri=${`pyana://cell/${parsed.id}`} mode="compact"></pyana-cell><pyana-dfa mode="compact"></pyana-dfa>` : ''}
+        <div class="dregg-inspector dregg-inspector--cell pro">
+          <header><span class="dregg-inspector__kind">relay-operator</span> (DFA dispatch)</header>
+          ${cell ? html`<dregg-cell uri=${`dregg://cell/${parsed.id}`} mode="compact"></dregg-cell><dregg-dfa mode="compact"></dregg-dfa>` : ''}
           <div style="font-size:0.7rem;">DFA caveat routing + quota cell-program. See STORAGE §3.5 + DFA-RATIONALIZATION.</div>
         </div>`;
     };
     this._dispose = effect(() => render(h(Component, {}), root));
   }
 }
-if (!customElements.get('pyana-relay-operator')) customElements.define('pyana-relay-operator', PyanaRelayOperator);
+if (!customElements.get('dregg-relay-operator')) customElements.define('dregg-relay-operator', DreggRelayOperator);

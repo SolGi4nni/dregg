@@ -4,7 +4,7 @@
 //! can only restrict access — adding caveats can never expand what a token allows.
 //!
 //! Caveat type ID ranges:
-//! - 0..31:  Reserved for Pyana platform caveats
+//! - 0..31:  Reserved for Dregg platform caveats
 //! - 32..47: User-registerable (registered at runtime)
 //! - 48+:    User-defined (no registration required)
 //! - 254:    Third-party caveat
@@ -23,9 +23,9 @@ pub type CaveatType = u16;
 
 // --- Reserved caveat type IDs ---
 
-/// Minimum ID for Pyana platform caveats.
+/// Minimum ID for Dregg platform caveats.
 pub const CAV_PLATFORM_MIN: CaveatType = 0;
-/// Maximum ID for Pyana platform caveats.
+/// Maximum ID for Dregg platform caveats.
 pub const CAV_PLATFORM_MAX: CaveatType = 31;
 
 /// Minimum ID for user-registerable caveats.

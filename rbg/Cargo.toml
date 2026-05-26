@@ -1,13 +1,13 @@
 [package]
-name = "pyana-rbg"
+name = "dregg-rbg"
 version.workspace = true
 edition.workspace = true
-description = "Robigalia-inspired directory / scoped-intent / VFS userspace primitives for pyana's capability-secure distributed runtime"
+description = "Robigalia-inspired directory / scoped-intent / VFS userspace primitives for dregg's capability-secure distributed runtime"
 
 [dependencies]
 blake3 = "1"
-pyana-types = { workspace = true }
-pyana-cell = { path = "../cell", default-features = false }
+dregg-types = { workspace = true }
+dregg-cell = { path = "../cell", default-features = false }
 
 [lints]
 workspace = true

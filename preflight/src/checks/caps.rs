@@ -1,14 +1,14 @@
 //! Capability model checks: c-list, bearer, facet, revocation.
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, CapabilitySet, Cell, CellId, Ledger, Permissions,
     facet::{
         EFFECT_ALL, EFFECT_SET_FIELD, EFFECT_TRANSFER, FacetBuilder, is_effect_permitted,
         is_facet_attenuation,
     },
 };
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 use crate::report::{CheckResult, run_check};
 

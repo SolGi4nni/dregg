@@ -1,7 +1,7 @@
-//! Axum extractors for verifying pyana presentation proofs from request headers.
+//! Axum extractors for verifying dregg presentation proofs from request headers.
 //!
-//! Extracts and verifies the `X-Pyana-Proof` header using
-//! `PyanaEngine::verify_presentation_bytes()`.
+//! Extracts and verifies the `X-Dregg-Proof` header using
+//! `DreggEngine::verify_presentation_bytes()`.
 //!
 //! Two extractors are provided:
 //!
@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! use axum::{Router, routing::get};
-//! use pyana_app_framework::middleware::StrictPresentation;
+//! use dregg_app_framework::middleware::StrictPresentation;
 //!
 //! async fn protected(proof: StrictPresentation) -> &'static str {
 //!     // If we got here, verification already passed.
@@ -35,7 +35,7 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 use tokio::sync::Mutex;
 
-use pyana_sdk::embed::PyanaEngine;
+use dregg_sdk::embed::DreggEngine;
 
 // =============================================================================
 // StrictPresentation
@@ -48,7 +48,7 @@ use pyana_sdk::embed::PyanaEngine;
 /// or the proof timestamp is stale, returns 403.
 /// The handler never sees unverified proofs.
 ///
-/// The `X-Pyana-Action` and `X-Pyana-Resource` headers MUST be present. These are
+/// The `X-Dregg-Action` and `X-Dregg-Resource` headers MUST be present. These are
 /// compared against the proof's cryptographic action binding commitment — a proof
 /// generated for action A will be rejected when presented claiming action B.
 #[derive(Clone, Debug)]
@@ -60,7 +60,7 @@ pub struct StrictPresentation {
     /// The federation root the proof was verified against.
     pub federation_root: [u8; 32],
     /// The verified proof with tier information. Always Production tier.
-    pub verified_proof: pyana_circuit::VerifiedProof,
+    pub verified_proof: dregg_circuit::VerifiedProof,
 }
 
 impl FromRequestParts<EngineState> for StrictPresentation {
@@ -74,12 +74,12 @@ impl FromRequestParts<EngineState> for StrictPresentation {
         let proof_header = parts
             .headers
             .get(PROOF_HEADER)
-            .ok_or((StatusCode::UNAUTHORIZED, "missing X-Pyana-Proof header"))?;
+            .ok_or((StatusCode::UNAUTHORIZED, "missing X-Dregg-Proof header"))?;
 
         let proof_b64 = proof_header.to_str().map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
-                "X-Pyana-Proof header is not valid UTF-8",
+                "X-Dregg-Proof header is not valid UTF-8",
             )
         })?;
 
@@ -87,14 +87,14 @@ impl FromRequestParts<EngineState> for StrictPresentation {
         use base64::Engine as _;
         let proof_bytes = base64::engine::general_purpose::STANDARD
             .decode(proof_b64)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Pyana-Proof is not valid base64"))?;
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Dregg-Proof is not valid base64"))?;
 
         // Extract action/resource strings from headers.
         // These are compared against the proof's action binding commitment.
         let action = extract_str_header(&parts.headers, ACTION_HEADER)
-            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Action header"))?;
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Dregg-Action header"))?;
         let resource = extract_str_header(&parts.headers, RESOURCE_HEADER)
-            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Resource header"))?;
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Dregg-Resource header"))?;
 
         // Verify against the engine with full action binding + freshness checks.
         let engine = state.0.lock().await;
@@ -115,9 +115,9 @@ impl FromRequestParts<EngineState> for StrictPresentation {
         // the proof is cryptographically valid. The tier is a prover-side concern, not
         // a verifier-side concern. Structural stubs cannot produce valid STARK proofs,
         // so they are rejected by the cryptographic check above.
-        let verified_proof = pyana_circuit::VerifiedProof::with_federation_root(
-            pyana_circuit::proof_tier::stark_tier(),
-            pyana_circuit::proof_tier::STARK_BACKEND,
+        let verified_proof = dregg_circuit::VerifiedProof::with_federation_root(
+            dregg_circuit::proof_tier::stark_tier(),
+            dregg_circuit::proof_tier::STARK_BACKEND,
             federation_root,
         );
 
@@ -171,7 +171,7 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some("missing X-Pyana-Proof header".into()),
+                    error: Some("missing X-Dregg-Proof header".into()),
                 });
             }
         };
@@ -184,7 +184,7 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some("X-Pyana-Proof header is not valid UTF-8".into()),
+                    error: Some("X-Dregg-Proof header is not valid UTF-8".into()),
                 });
             }
         };
@@ -199,7 +199,7 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some(format!("X-Pyana-Proof is not valid base64: {e}")),
+                    error: Some(format!("X-Dregg-Proof is not valid base64: {e}")),
                 });
             }
         };
@@ -218,7 +218,7 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
                     resource,
                     federation_root: None,
                     error: Some(
-                        "missing X-Pyana-Action or X-Pyana-Resource header for binding check"
+                        "missing X-Dregg-Action or X-Dregg-Resource header for binding check"
                             .into(),
                     ),
                 });
@@ -262,17 +262,17 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
 
 /// Shared engine state that the extractors read from (Mutex variant).
 ///
-/// Wrap your `PyanaEngine` in this type and pass it as axum state:
+/// Wrap your `DreggEngine` in this type and pass it as axum state:
 ///
 /// ```ignore
 /// let state = EngineState(Arc::new(Mutex::new(engine)));
 /// Router::new().with_state(state);
 /// ```
 ///
-/// Note: `PyanaEngine` is `Send` but not `Sync` (contains `RefCell` internally).
+/// Note: `DreggEngine` is `Send` but not `Sync` (contains `RefCell` internally).
 /// `tokio::sync::Mutex<T>` only requires `T: Send`, so this compiles correctly.
 #[derive(Clone)]
-pub struct EngineState(pub Arc<Mutex<PyanaEngine>>);
+pub struct EngineState(pub Arc<Mutex<DreggEngine>>);
 
 /// Shared engine state using `tokio::sync::Mutex` (single-accessor variant).
 ///
@@ -283,16 +283,16 @@ pub struct EngineState(pub Arc<Mutex<PyanaEngine>>);
 /// let state = MutexEngineState(Arc::new(Mutex::new(engine)));
 /// ```
 #[derive(Clone)]
-pub struct MutexEngineState(pub Arc<tokio::sync::Mutex<PyanaEngine>>);
+pub struct MutexEngineState(pub Arc<tokio::sync::Mutex<DreggEngine>>);
 
 /// Header name for the base64-encoded presentation proof.
-pub const PROOF_HEADER: &str = "x-pyana-proof";
+pub const PROOF_HEADER: &str = "x-dregg-proof";
 
 /// Header name for the action being authorized (REQUIRED for binding check).
-pub const ACTION_HEADER: &str = "x-pyana-action";
+pub const ACTION_HEADER: &str = "x-dregg-action";
 
 /// Header name for the resource being accessed (REQUIRED for binding check).
-pub const RESOURCE_HEADER: &str = "x-pyana-resource";
+pub const RESOURCE_HEADER: &str = "x-dregg-resource";
 
 /// Extract a header value as a string, or return None if absent.
 fn extract_str_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
@@ -316,24 +316,24 @@ impl FromRequestParts<MutexEngineState> for StrictPresentation {
         let proof_header = parts
             .headers
             .get(PROOF_HEADER)
-            .ok_or((StatusCode::UNAUTHORIZED, "missing X-Pyana-Proof header"))?;
+            .ok_or((StatusCode::UNAUTHORIZED, "missing X-Dregg-Proof header"))?;
 
         let proof_b64 = proof_header.to_str().map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
-                "X-Pyana-Proof header is not valid UTF-8",
+                "X-Dregg-Proof header is not valid UTF-8",
             )
         })?;
 
         use base64::Engine as _;
         let proof_bytes = base64::engine::general_purpose::STANDARD
             .decode(proof_b64)
-            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Pyana-Proof is not valid base64"))?;
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Dregg-Proof is not valid base64"))?;
 
         let action = extract_str_header(&parts.headers, ACTION_HEADER)
-            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Action header"))?;
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Dregg-Action header"))?;
         let resource = extract_str_header(&parts.headers, RESOURCE_HEADER)
-            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Resource header"))?;
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Dregg-Resource header"))?;
 
         let engine = state.0.lock().await;
         let federation_root = engine.federation_root();
@@ -348,9 +348,9 @@ impl FromRequestParts<MutexEngineState> for StrictPresentation {
             ));
         }
 
-        let verified_proof = pyana_circuit::VerifiedProof::with_federation_root(
-            pyana_circuit::proof_tier::stark_tier(),
-            pyana_circuit::proof_tier::STARK_BACKEND,
+        let verified_proof = dregg_circuit::VerifiedProof::with_federation_root(
+            dregg_circuit::proof_tier::stark_tier(),
+            dregg_circuit::proof_tier::STARK_BACKEND,
             federation_root,
         );
 
@@ -378,7 +378,7 @@ impl FromRequestParts<MutexEngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some("missing X-Pyana-Proof header".into()),
+                    error: Some("missing X-Dregg-Proof header".into()),
                 });
             }
         };
@@ -391,7 +391,7 @@ impl FromRequestParts<MutexEngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some("X-Pyana-Proof header is not valid UTF-8".into()),
+                    error: Some("X-Dregg-Proof header is not valid UTF-8".into()),
                 });
             }
         };
@@ -405,7 +405,7 @@ impl FromRequestParts<MutexEngineState> for OptionalPresentation {
                     action: None,
                     resource: None,
                     federation_root: None,
-                    error: Some(format!("X-Pyana-Proof is not valid base64: {e}")),
+                    error: Some(format!("X-Dregg-Proof is not valid base64: {e}")),
                 });
             }
         };
@@ -422,7 +422,7 @@ impl FromRequestParts<MutexEngineState> for OptionalPresentation {
                     resource,
                     federation_root: None,
                     error: Some(
-                        "missing X-Pyana-Action or X-Pyana-Resource header for binding check"
+                        "missing X-Dregg-Action or X-Dregg-Resource header for binding check"
                             .into(),
                     ),
                 });
@@ -474,8 +474,8 @@ pub fn verify_any_tier_presentation(
     federation_root: &[u8; 32],
     expected_action: &str,
     expected_resource: &str,
-) -> Result<pyana_circuit::VerifiedProof, pyana_sdk::SdkError> {
-    pyana_sdk::verify_any_tier(
+) -> Result<dregg_circuit::VerifiedProof, dregg_sdk::SdkError> {
+    dregg_sdk::verify_any_tier(
         proof_bytes,
         federation_root,
         expected_action,

@@ -1,31 +1,31 @@
 [package]
-name = "pyana-tests"
+name = "dregg-tests"
 version.workspace = true
 edition.workspace = true
 autobins = false
 
 [lib]
-name = "pyana_tests"
+name = "dregg_tests"
 path = "src/main.rs"
 
 [features]
-# `pyana-bridge` consumption is gated to the legacy/WIP test modules.
+# `dregg-bridge` consumption is gated to the legacy/WIP test modules.
 # When those features are enabled, the dependency is required; the default
 # build skips it so the workspace stays buildable while bridge undergoes
 # token-vocabulary changes.
 default = []
-__legacy_tests = ["dep:pyana-bridge"]
-__wip_tests = ["dep:pyana-bridge"]
+__legacy_tests = ["dep:dregg-bridge"]
+__wip_tests = ["dep:dregg-bridge"]
 
 [dependencies]
-pyana-circuit = { path = "../circuit" }
-pyana-turn = { path = "../turn" }
-pyana-cell = { path = "../cell" }
-pyana-sdk = { path = "../sdk" }
-pyana-types = { path = "../types" }
-pyana-bridge = { path = "../bridge", optional = true }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-circuit = { path = "../circuit" }
+dregg-turn = { path = "../turn" }
+dregg-cell = { path = "../cell" }
+dregg-sdk = { path = "../sdk" }
+dregg-types = { path = "../types" }
+dregg-bridge = { path = "../bridge", optional = true }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 blake3 = "1"
 getrandom = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }

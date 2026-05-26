@@ -26,8 +26,8 @@ and store-and-forward envelopes are trustless once signed.
 
 Submodules:
 
-- `captp/src/uri.rs:1-221` — `PyanaUri { federation_id, cell_id, swiss }` plus
-  `pyana://` string codec. **Complete.**
+- `captp/src/uri.rs:1-221` — `DreggUri { federation_id, cell_id, swiss }` plus
+  `dregg://` string codec. **Complete.**
 - `captp/src/sturdy.rs:1-365` — `SwissTable`: `HashMap<[u8;32], SwissEntry>`
   with `export`, `export_with_options`, `enliven`, `revoke`, `peek`, `make_uri`.
   `SwissEntry` holds `cell_id`, `permissions: AuthRequired`, `allowed_effects`,
@@ -146,14 +146,14 @@ root.
 Distilled from the OCapN spec (https://github.com/ocapn/ocapn) and the E
 heritage. Terms used throughout the rest of this doc.
 
-- **Vat** — a unit of synchronous execution holding capabilities. In pyana, a
+- **Vat** — a unit of synchronous execution holding capabilities. In dregg, a
   vat ≈ a federation (BFT consensus group), or equivalently a *strand* in the
   unified-lace model (`captp/src/lib.rs:135`).
 - **Live ref** — an in-session handle to a capability. Cheap, transient,
   represented by a cell ID plus a session-keyed routing slot in
   `CapSession::imports` / `CapSession::exports`.
 - **Sturdy ref** — a persistent, serializable capability identifier. In OCapN
-  this is `ocapn://<vat>/<swiss>`. In pyana it is `pyana://<federation>/<cell>/<swiss>`
+  this is `ocapn://<vat>/<swiss>`. In dregg it is `dregg://<federation>/<cell>/<swiss>`
   (`captp/src/uri.rs`). The bearer of a valid sturdy ref can ask the target
   to mint a live ref via the *enliven* operation.
 - **Swiss number** — a 32-byte unguessable random secret (`getrandom::fill` in
@@ -194,7 +194,7 @@ in `Self::convert_turn_effects_to_vm` (`turn/src/executor.rs:1362`).
 /// 1. Verifies the caller has authority over `cell` (cell owner or
 ///    DelegationMode::ParentsOwn parent with EXPORT capability).
 /// 2. Generates a swiss number deterministically:
-///       swiss = blake3("pyana-swiss-v1" || federation_id || cell || counter || random_seed)
+///       swiss = blake3("dregg-swiss-v1" || federation_id || cell || counter || random_seed)
 ///    where `counter` is `cell.state.fields[7]` interpreted as u64 LE.
 /// 3. Inserts the entry into the federation's `swiss_table` and bumps
 ///    `cell.state.fields[7]`.
@@ -375,7 +375,7 @@ table whose root is a committed column in the cell's (or federation's) state.
 ### 4.1 `EnlivenRef`: swiss-table Merkle binding
 
 **Where the root lives.** Add a `swiss_table_root: [u8; 32]` column to
-`pyana_cell::CellState` (`cell/src/state.rs:34-57`). It is included in
+`dregg_cell::CellState` (`cell/src/state.rs:34-57`). It is included in
 `compute_canonical_state_commitment` (the cell-fix work referenced in
 EFFECT-VM-SHAPE-A Stage 1). The root is initialised to the empty-tree hash;
 it is updated whenever `ExportSturdyRef` or `EnlivenRef` runs.
@@ -435,7 +435,7 @@ counter))` binding stays; the counter is additionally bound to `field[7]`
 **Where the root lives.** Federation-scoped, not cell-scoped. Add an
 `approved_handoffs_root: [u8; 32]` to the federation state (next to
 `federation_root` in `node/src/state.rs:53` `NodeState` / the executor's
-federation-state struct). The root is committed in `pyana_circuit::pi::PI`
+federation-state struct). The root is committed in `dregg_circuit::pi::PI`
 as a new public input `pi::APPROVED_HANDOFFS_ROOT` (4 BabyBears once Stage 1
 widens commitments).
 
@@ -520,8 +520,8 @@ End-to-end walk, showing each step's runtime + AIR + wire layer:
    - Wire: when the turn is committed, the federation's `CapTpState` notes
      the export (via `process_introduction_exports`-style hook if there is a
      recipient federation, or via a local-only mark if not).
-   - Output: `PyanaUri { federation_id, cell_id, swiss }`, serialized to a
-     `pyana://...` string. Alice can paste this anywhere.
+   - Output: `DreggUri { federation_id, cell_id, swiss }`, serialized to a
+     `dregg://...` string. Alice can paste this anywhere.
 
 2. **Out-of-band transmission.** Alice gives Bob the URI string. Could be QR
    code, email, BLE, file. Not a wire concern; not an AIR concern.
@@ -582,7 +582,7 @@ Alice introduces Bob to Carol.
    `HandoffCertificate::create(introducer_key=Alice, introducer_fed=A,
    target_fed=C, target_cell=Carol's cell, recipient_pk=Bob, ..., swiss=X)`
    (`captp/src/handoff.rs:142-177`). The cert is serialised to a
-   `pyana-handoff:...` string. **No runtime / AIR involvement.**
+   `dregg-handoff:...` string. **No runtime / AIR involvement.**
 
 3. **Alice transmits the cert to Bob** (out-of-band, like a sturdy ref).
 
@@ -633,7 +633,7 @@ don't conflict; the executor runs them in order.
 
 ## 7. Federation-level CapTP
 
-Pyana's twist: vats are BFT-replicated federations, not single processes.
+`dregg`'s twist: vats are BFT-replicated federations, not single processes.
 Sessions and refs cross federation boundaries.
 
 ### 7.1 Intra-federation CapTP

@@ -10,11 +10,11 @@
 //! 6. Sub-agent executes a turn using the capability
 //! 7. Print the full audit trail
 
-use pyana_sdk::{AgentCipherclerk, AgentRuntime, Attenuation, AuthRequest, Effect};
+use dregg_sdk::{AgentCipherclerk, AgentRuntime, Attenuation, AuthRequest, Effect};
 use std::sync::{Arc, RwLock};
 
 fn main() {
-    println!("=== Pyana Agent SDK Demo ===\n");
+    println!("=== Dregg Agent SDK Demo ===\n");
 
     // -------------------------------------------------------------------------
     // Step 1: Create an agent cipherclerk with a fresh Ed25519 identity.

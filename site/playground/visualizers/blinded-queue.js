@@ -3,7 +3,7 @@
 //   - `renderBlindedQueueSvg(html, commits, nullifiers)` — direct render
 //     helper for the playground section (data is reactive there).
 //   - `defineVisualizer('blinded-queue', ...)` — static registration for
-//     `<pyana-vizzer>` use in Learn pages (renders the rest state).
+//     `<dregg-vizzer>` use in Learn pages (renders the rest state).
 
 import { defineVisualizer } from '/_includes/visualizer-base.js';
 

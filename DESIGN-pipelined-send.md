@@ -33,7 +33,7 @@ to some mutations of *someone's* data structure" — is exactly right. The
 mutation is the **enqueue against the promise's pipeline buffer** (or the
 resolved object's inbox). The proof attests to that enqueue.
 
-In pyana's existing scaffolding:
+In dregg's existing scaffolding:
 
 - `captp/src/pipeline.rs` implements the runtime registry: `PipelineRegistry`,
   `PipelinedMessage`, `PipelineWireMessage::PipelineToPromise`. This is the
@@ -423,7 +423,7 @@ and `args_hash` are reachable from `action.hash()`. They are, transitively.
 This is the most important question. In OCapN, the right to send to an
 answer position is *implicit* — anyone who knows the answer position number
 can send to it. That works in OCapN because answer positions are scoped
-per-session and only the session participants know them. In pyana,
+per-session and only the session participants know them. In dregg,
 `EventualRef` is content-addressed and globally derivable from a turn hash;
 anyone who watches the chain can construct one. So we **must** require an
 explicit capability.
@@ -527,7 +527,7 @@ balance account.
    (it's the closest sibling) plus the `is_resolved`/`is_unresolved` gating
    from `DropRef`'s zero-or-inverse pattern.
 2. Reserve `field[3]` as `OUTBOX_ROOT` in the cell state convention. Update
-   `pyana_cell` documentation and any cell-init code that touches field[3].
+   `dregg_cell` documentation and any cell-init code that touches field[3].
 3. Wire `Effect::PipelinedSend` into `Effect::air_selector_index`
    (effect_vm.rs:2670-ish) → `sel::PIPELINED_SEND`.
 4. Add the witness-row writer in the `Effect::apply_to_row` loop (the giant

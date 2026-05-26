@@ -1,4 +1,4 @@
-// Content script: bridges page.js (window.pyana) <-> background service worker.
+// Content script: bridges page.js (window.dregg) <-> background service worker.
 // Security: validates origins, checks allowlists, uses nonce-based event channels.
 
 // Generate a random nonce for this injection session to prevent event spoofing.
@@ -6,31 +6,31 @@ const SESSION_NONCE = crypto.randomUUID();
 
 // Methods that any page origin can call without prior approval.
 const UNRESTRICTED_METHODS = new Set([
-  'pyana:isConnected',
-  'pyana:canAuthorize',
-  'pyana:subscribe',
-  'pyana:discoverServices',
-  'pyana:resolvePath',
-  'pyana:storageQuota',
-  'pyana:federationStatus',
+  'dregg:isConnected',
+  'dregg:canAuthorize',
+  'dregg:subscribe',
+  'dregg:discoverServices',
+  'dregg:resolvePath',
+  'dregg:storageQuota',
+  'dregg:federationStatus',
 ]);
 
 // Methods that require the origin to be in the user-approved allowlist.
 const RESTRICTED_METHODS = new Set([
-  'pyana:authorize',
-  'pyana:provision',
-  'pyana:postIntent',
-  'pyana:offerCapability',
-  'pyana:signTurn',
-  'pyana:queryBalance',
-  'pyana:shareCapability',
-  'pyana:acceptCapability',
-  'pyana:createHandoff',
-  'pyana:mountService',
-  'pyana:storageWrite',
-  'pyana:storageRead',
-  'pyana:proposeRoutes',
-  'pyana:voteOnProposal',
+  'dregg:authorize',
+  'dregg:provision',
+  'dregg:postIntent',
+  'dregg:offerCapability',
+  'dregg:signTurn',
+  'dregg:queryBalance',
+  'dregg:shareCapability',
+  'dregg:acceptCapability',
+  'dregg:createHandoff',
+  'dregg:mountService',
+  'dregg:storageWrite',
+  'dregg:storageRead',
+  'dregg:proposeRoutes',
+  'dregg:voteOnProposal',
 ]);
 
 // Pending permission prompts: origin -> { resolve, reject }[]
@@ -40,7 +40,7 @@ const pendingPermissions = new Map();
 // Note: NOT set as type="module" for Firefox MV3 compatibility.
 const script = document.createElement('script');
 script.src = chrome.runtime.getURL('page.js');
-script.dataset.pyanaNonce = SESSION_NONCE;
+script.dataset.dreggNonce = SESSION_NONCE;
 (document.head || document.documentElement).appendChild(script);
 script.onload = () => script.remove();
 
@@ -49,8 +49,8 @@ script.onload = () => script.remove();
  */
 async function isOriginAllowed(origin, method) {
   try {
-    const stored = await chrome.storage.local.get('pyana_allowed_origins');
-    const allowlist = stored.pyana_allowed_origins || {};
+    const stored = await chrome.storage.local.get('dregg_allowed_origins');
+    const allowlist = stored.dregg_allowed_origins || {};
     // Handle legacy array format.
     if (Array.isArray(allowlist)) {
       return allowlist.includes(origin);
@@ -73,7 +73,7 @@ async function isOriginAllowed(origin, method) {
 async function requestOriginPermission(origin, method) {
   // Send a permission request to the background, which will show the popup.
   const response = await chrome.runtime.sendMessage({
-    type: 'pyana:requestOriginPermission',
+    type: 'dregg:requestOriginPermission',
     origin,
     method,
   });
@@ -81,7 +81,7 @@ async function requestOriginPermission(origin, method) {
 }
 
 // Forward requests from page -> background (with security checks).
-window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
+window.addEventListener(`dregg:request:${SESSION_NONCE}`, async (event) => {
   // Bug 3 fix: only accept trusted events (not synthetically dispatched).
   if (!event.isTrusted) return;
 
@@ -98,7 +98,7 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
       // Request permission from the user for this specific method.
       const granted = await requestOriginPermission(origin, messageType);
       if (!granted) {
-        window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+        window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
           detail: { id: detail.id, error: 'Origin not authorized for this method. User denied permission.' },
         }));
         return;
@@ -106,7 +106,7 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
     }
   } else if (!UNRESTRICTED_METHODS.has(messageType)) {
     // Unknown or removed method — reject.
-    window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+    window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
       detail: { id: detail.id, error: `Method "${messageType}" is not available from page context.` },
     }));
     return;
@@ -117,13 +117,13 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
     ...detail,
     _origin: origin,
   });
-  window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, { detail: response }));
+  window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, { detail: response }));
 });
 
 // Forward event notifications from background -> page.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'pyana:event') {
-    window.dispatchEvent(new CustomEvent(`pyana:event:${SESSION_NONCE}`, {
+  if (message.type === 'dregg:event') {
+    window.dispatchEvent(new CustomEvent(`dregg:event:${SESSION_NONCE}`, {
       detail: { eventName: message.event, payload: message.payload },
     }));
     sendResponse({ ok: true });

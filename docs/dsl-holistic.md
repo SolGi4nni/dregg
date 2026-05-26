@@ -1,4 +1,4 @@
-# Pyana Holistic DSL: One Language, Three Modes
+# `dregg` Holistic DSL: One Language, Three Modes
 
 ## Answer: One language, three compilation modes
 
@@ -8,12 +8,12 @@ Not two separate languages. One syntax with three *scopes*:
 2. **Trace scope** (new: layout + topology) -- `layout!`, `transition!`, `for_each!`
 3. **Composition scope** (new: proof orchestration) -- `compose!`, `bind!`, `chain!`
 
-The proc macro `#[pyana_circuit]` dispatches on scope markers. The same token stream targets BabyBear STARK (`StarkAir`), Plonky3 (`Air<AB>`), and Kimchi (Poseidon gates) via backend trait selection at compile time.
+The proc macro `#[dregg_circuit]` dispatches on scope markers. The same token stream targets BabyBear STARK (`StarkAir`), Plonky3 (`Air<AB>`), and Kimchi (Poseidon gates) via backend trait selection at compile time.
 
 ## Derivation AIR in the DSL
 
 ```rust
-#[pyana_circuit(backend = "babybear | plonky3 | kimchi")]
+#[dregg_circuit(backend = "babybear | plonky3 | kimchi")]
 mod derivation {
     layout! {
         rule_id: Field,
@@ -74,7 +74,7 @@ Width: computed at compile time from `layout!`. The macro counts fields, expands
 ## Sovereign Transition in the DSL
 
 ```rust
-#[pyana_circuit]
+#[dregg_circuit]
 mod sovereign_transfer {
     layout! { old_balance: Field, amount: Field, new_balance: Field, direction: Binary }
 
@@ -91,7 +91,7 @@ mod sovereign_transfer {
 ## Temporal Predicate (Transition Constraints)
 
 ```rust
-#[pyana_circuit]
+#[dregg_circuit]
 mod temporal_predicate {
     layout! { step: Field, state_root: Field, value: Field, diff: Field,
               bits: [Binary; 30], accumulator: Field }
@@ -118,7 +118,7 @@ mod temporal_predicate {
 ## IVC Hash Chain (Multi-row with Poseidon2)
 
 ```rust
-#[pyana_circuit]
+#[dregg_circuit]
 mod ivc_chain {
     layout! { step: Field, old_hash: Field, new_root: Field, new_hash: Field }
 
@@ -138,7 +138,7 @@ mod ivc_chain {
 ## Composition (Presentation Proof)
 
 ```rust
-#[pyana_compose]
+#[dregg_compose]
 mod presentation {
     proofs! {
         fold: ivc_chain,
@@ -167,7 +167,7 @@ mod presentation {
 
 ## Design Decisions
 
-**Q1: One language or two?** One language. The `layout!`/`constraints!`/`transition!`/`boundary!` blocks are all proc-macro-recognized sections within a single `#[pyana_circuit]` attribute. Composition uses `#[pyana_compose]` -- same parser, different code-gen path.
+**Q1: One language or two?** One language. The `layout!`/`constraints!`/`transition!`/`boundary!` blocks are all proc-macro-recognized sections within a single `#[dregg_circuit]` attribute. Composition uses `#[dregg_compose]` -- same parser, different code-gen path.
 
 **Q2: Proc macro or standalone parser?** Proc macro. It generates `impl StarkAir` (for BabyBear), `impl Air<AB>` (for Plonky3), and Kimchi gate sequences. No separate toolchain. The `backend` attribute selects which impls to emit.
 

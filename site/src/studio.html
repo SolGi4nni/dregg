@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Studio — Pyana</title>
+<title>Studio — <code>dregg</code></title>
 
 <style>
   .studio { max-width: 1200px; margin: 0 auto; padding: var(--s4); }
@@ -15,21 +15,21 @@
   .studio__status[data-state="err"] { border-left-color: #d4685c; }
 
   /* Inspector chrome (tiny v0; will move to vizzer.css after Phase 0) */
-  .pyana-inspector { font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
-  .pyana-inspector--cell { padding: var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: 6px; margin-bottom: var(--s3); }
-  .pyana-inspector--cell header { display: flex; gap: 8px; align-items: baseline; margin-bottom: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
-  .pyana-inspector--cell .pyana-inspector__kind { padding: 2px 8px; background: var(--accent, #5b8a5a); color: #0a0f0d; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .pyana-inspector--cell .pyana-inspector__id { color: var(--fg-dim); word-break: break-all; }
-  .pyana-inspector__kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; margin: 0; }
-  .pyana-inspector__kv dt { color: var(--fg-dim); }
-  .pyana-inspector__kv dd { margin: 0; word-break: break-all; }
-  .pyana-inspector__kv code { font-size: 0.8rem; word-break: break-all; }
-  .pyana-inspector--compact { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised); border-radius: 4px; }
-  .pyana-inspector--cell-list ul { list-style: none; padding: 0; margin: var(--s2) 0 0; display: flex; flex-direction: column; gap: 6px; }
-  .pyana-inspector--cell-list header { color: var(--fg-dim); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
-  .pyana-inspector--cell-list li { display: block; }
-  .pyana-inspector--empty { color: var(--fg-dim); padding: var(--s3); border: 1px dashed var(--line); border-radius: 6px; }
-  .pyana-inspector--err { color: #d4685c; padding: var(--s2) var(--s3); border: 1px solid #d4685c; border-radius: 4px; }
+  .dregg-inspector { font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
+  .dregg-inspector--cell { padding: var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: 6px; margin-bottom: var(--s3); }
+  .dregg-inspector--cell header { display: flex; gap: 8px; align-items: baseline; margin-bottom: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
+  .dregg-inspector--cell .dregg-inspector__kind { padding: 2px 8px; background: var(--accent, #5b8a5a); color: #0a0f0d; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .dregg-inspector--cell .dregg-inspector__id { color: var(--fg-dim); word-break: break-all; }
+  .dregg-inspector__kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; margin: 0; }
+  .dregg-inspector__kv dt { color: var(--fg-dim); }
+  .dregg-inspector__kv dd { margin: 0; word-break: break-all; }
+  .dregg-inspector__kv code { font-size: 0.8rem; word-break: break-all; }
+  .dregg-inspector--compact { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised); border-radius: 4px; }
+  .dregg-inspector--cell-list ul { list-style: none; padding: 0; margin: var(--s2) 0 0; display: flex; flex-direction: column; gap: 6px; }
+  .dregg-inspector--cell-list header { color: var(--fg-dim); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
+  .dregg-inspector--cell-list li { display: block; }
+  .dregg-inspector--empty { color: var(--fg-dim); padding: var(--s3); border: 1px dashed var(--line); border-radius: 6px; }
+  .dregg-inspector--err { color: #d4685c; padding: var(--s2) var(--s3); border: 1px solid #d4685c; border-radius: 4px; }
 </style>
 
 <main class="studio">
@@ -37,16 +37,16 @@
     <h1>Studio <span style="color:var(--fg-dim);font-size:0.6em;font-weight:normal;">[ Phase 0 spike ]</span></h1>
     <p class="studio__intro">
       Vertical slice of the Studio runtime substrate (see
-      <code>site/STUDIO.md</code>). One inspector (<code>&lt;pyana-cell&gt;</code>),
+      <code>site/STUDIO.md</code>). One inspector (<code>&lt;dregg-cell&gt;</code>),
       one runtime (in-browser sim), live state that reacts to mutations.
       Open browser devtools to watch the <code>InMemoryRuntime</code> drive
-      the wasm <code>PyanaRuntime</code>.
+      the wasm <code>DreggRuntime</code>.
     </p>
   </header>
 
   <div id="status" class="studio__status">Loading…</div>
 
-  <pyana-app id="app">
+  <dregg-app id="app">
     <div class="studio__grid">
       <aside class="studio__controls">
         <label>actions</label>
@@ -68,14 +68,14 @@
 
       <section>
         <h2 style="margin-top:0;">Cells in this runtime</h2>
-        <pyana-cell-list></pyana-cell-list>
+        <dregg-cell-list></dregg-cell-list>
 
         <h2 style="margin-top:var(--s4);">Last turn result</h2>
-        <pre id="turn-result" class="pyana-inspector pyana-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.85rem;color:var(--fg-dim);">no turn submitted yet</pre>
+        <pre id="turn-result" class="dregg-inspector dregg-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.85rem;color:var(--fg-dim);">no turn submitted yet</pre>
 
         <h2 style="margin-top:var(--s4);">Peer exchange (Discord-paste UX)</h2>
         <p style="color:var(--fg-dim);font-size:0.85rem;">
-          Drives <code>pyana_cell::PeerExchange</code> directly. Use two browser
+          Drives <code>dregg_cell::PeerExchange</code> directly. Use two browser
           tabs (or two Studios in one tab) — copy a transition from one side,
           paste into the other. The bytes are postcard-encoded
           <code>PeerStateTransition</code>s, base64-wrapped for paste safety.
@@ -84,39 +84,39 @@
           <label>my latest transition</label>
           <button id="btn-px-copy" disabled>Copy my latest transition (Alice → bytes)</button>
           <textarea id="px-mine" rows="3" readonly style="font-family:var(--mono,monospace);font-size:0.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px;word-break:break-all;"></textarea>
-          <pyana-peer-transition id="px-mine-inspector" style="display:block;margin-top:4px;"></pyana-peer-transition>
+          <dregg-peer-transition id="px-mine-inspector" style="display:block;margin-top:4px;"></dregg-peer-transition>
 
           <hr>
           <label>paste peer transition</label>
           <textarea id="px-paste" rows="3" placeholder="paste base64 here" style="font-family:var(--mono,monospace);font-size:0.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px;word-break:break-all;"></textarea>
-          <pyana-peer-transition id="px-paste-inspector" style="display:block;margin-top:4px;"></pyana-peer-transition>
+          <dregg-peer-transition id="px-paste-inspector" style="display:block;margin-top:4px;"></dregg-peer-transition>
           <button id="btn-px-paste" disabled>Bob: register Alice + verify pasted transition</button>
 
           <hr>
           <label>peer-view (Bob's view of Alice)</label>
-          <pre id="px-view" class="pyana-inspector pyana-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.8rem;color:var(--fg-dim);">no peer registered yet</pre>
+          <pre id="px-view" class="dregg-inspector dregg-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.8rem;color:var(--fg-dim);">no peer registered yet</pre>
         </div>
 
         <h2 style="margin-top:var(--s4);">Spike findings</h2>
         <ul style="font-size:0.9rem;color:var(--fg-dim);line-height:1.6;">
-          <li><strong>Runtime substrate works.</strong> wasm <code>PyanaRuntime</code> creates cells, accepts turns, reports state. Signals propagate mutations to <code>&lt;pyana-cell&gt;</code> live.</li>
+          <li><strong>Runtime substrate works.</strong> wasm <code>DreggRuntime</code> creates cells, accepts turns, reports state. Signals propagate mutations to <code>&lt;dregg-cell&gt;</code> live.</li>
           <li><strong>Transfers commit.</strong> The sim runtime signs turns internally via <code>AgentCipherclerk::sign_action</code>. The transfer button declares <code>excess=500</code> to satisfy the conservation law (fee burn), so transfers now <strong>commit</strong> rather than reject.</li>
           <li><strong>Read paths fully exercised.</strong> <code>get_all_cells</code>, <code>get_cell_state</code>, version-based invalidation all work.</li>
-          <li><strong>Token mint works.</strong> <code>agent_mint_token</code> attaches a held capability without needing a turn — minted tokens accumulate on the agent record (visible only via state dump for now; needs a <code>&lt;pyana-capability&gt;</code> inspector).</li>
+          <li><strong>Token mint works.</strong> <code>agent_mint_token</code> attaches a held capability without needing a turn — minted tokens accumulate on the agent record (visible only via state dump for now; needs a <code>&lt;dregg-capability&gt;</code> inspector).</li>
           <li><strong>Next:</strong> JS-side signing (Ed25519 on the agent's private key), or a wasm-side helper that signs internally using the deterministic sim keys.</li>
         </ul>
       </section>
     </div>
-  </pyana-app>
+  </dregg-app>
 </main>
 
 <script type="module" src="/_includes/runtime-bootstrap.js"></script>
 <script type="module">
-  // Wait for the bootstrap to fire pyana:ready, then init wasm and the runtime.
+  // Wait for the bootstrap to fire dregg:ready, then init wasm and the runtime.
   function ready() {
     return new Promise(resolve => {
-      if (window.pyanaUi) return resolve(window.pyanaUi);
-      window.addEventListener('pyanaUi:ready', e => resolve(e.detail), { once: true });
+      if (window.dreggUi) return resolve(window.dreggUi);
+      window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
     });
   }
 
@@ -132,7 +132,7 @@
       const api = await ready();
 
       setStatus('Loading wasm runtime…');
-      const wasmMod = await import('/pkg/pyana_wasm.js');
+      const wasmMod = await import('/pkg/dregg_wasm.js');
       await wasmMod.default();
 
       setStatus('Creating in-memory runtime…');
@@ -213,9 +213,9 @@
 
       // --- Peer exchange UX --------------------------------------------------
       // The "Discord paste" surface: Alice exports a signed transition; Bob
-      // pastes the base64 and verifies it through `pyana_cell::PeerExchange`.
+      // pastes the base64 and verifies it through `dregg_cell::PeerExchange`.
       // Single-tab demo: Alice and Bob are both in this runtime — for real
-      // two-tab cooperation they'd be in distinct PyanaRuntime handles.
+      // two-tab cooperation they'd be in distinct DreggRuntime handles.
       const pxCopyBtn = document.getElementById('btn-px-copy');
       const pxPasteBtn = document.getElementById('btn-px-paste');
       const pxMine = document.getElementById('px-mine');

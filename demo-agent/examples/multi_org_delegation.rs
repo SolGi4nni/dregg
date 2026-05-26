@@ -11,11 +11,11 @@
 //! the internal delegation structure of Org A. They only verify a STARK proof
 //! that the presenter is authorized by *some* member of a known federation.
 
-use pyana_bridge::BridgePresentationBuilder;
-use pyana_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_bridge::BridgePresentationBuilder;
+use dregg_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 /// Compute the Poseidon2-based federation root for a given issuer key.
 /// This matches what BridgePresentationBuilder uses internally.
@@ -57,7 +57,7 @@ fn short_hex(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    println!("=== Pyana Multi-Org Delegation Demo ===");
+    println!("=== Dregg Multi-Org Delegation Demo ===");
     println!("    Cross-Organization ZK Authorization (Fully Private Mode)");
     println!();
 

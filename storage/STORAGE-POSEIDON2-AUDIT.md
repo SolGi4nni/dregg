@@ -26,9 +26,9 @@ P4.C–P4.D.
 1. **Workspace exclusion.** `storage/` is in the `exclude` list of the root
    `Cargo.toml` (not `members`). This is significant for the migration:
    the upstream `commit/src/typed.rs` framework cannot be depended on
-   without pulling the entire workspace's `pyana-dsl-runtime`. P4.B will
+   without pulling the entire workspace's `dregg-dsl-runtime`. P4.B will
    take option (i) — a local `commitment.rs` module in `storage/src/`
-   built atop `pyana_circuit::poseidon2`.
+   built atop `dregg_circuit::poseidon2`.
 2. **Domain separation is informal.** Most sites use a literal byte-string
    tag (`b"blinded-queue-commitment"`, `b"queue_program_vk_v1"`, etc.)
    absorbed into a `blake3::Hasher`. There is no central registry. The
@@ -224,19 +224,19 @@ transcripts.
 
 ## Notes on the Poseidon2 source
 
-The `pyana-circuit` crate is **already a viable upstream**:
+The `dregg-circuit` crate is **already a viable upstream**:
 
-- `pyana_circuit::field::BabyBear` is `pub`.
-- `pyana_circuit::poseidon2::hash_4_to_1(&[BabyBear; 4]) -> BabyBear` is
+- `dregg_circuit::field::BabyBear` is `pub`.
+- `dregg_circuit::poseidon2::hash_4_to_1(&[BabyBear; 4]) -> BabyBear` is
   `pub` (line 341 of `circuit/src/poseidon2.rs`).
-- `pyana_circuit::poseidon2::hash_many(&[BabyBear]) -> BabyBear` is `pub`
+- `dregg_circuit::poseidon2::hash_many(&[BabyBear]) -> BabyBear` is `pub`
   (line 369).
-- `pyana_circuit::field::BABYBEAR_P: u32` is `pub`.
+- `dregg_circuit::field::BABYBEAR_P: u32` is `pub`.
 
-This means P4.B can add `pyana-circuit = { path = "../circuit" }` to
+This means P4.B can add `dregg-circuit = { path = "../circuit" }` to
 `storage/Cargo.toml` as a normal path dependency **without widening any
 visibility upstream**. No `pub use` re-exports are needed; the existing
-Poseidon2 API at `pyana_circuit::poseidon2::*` is already public.
+Poseidon2 API at `dregg_circuit::poseidon2::*` is already public.
 
 This also means P4.B's local `commitment.rs` module can be a direct
 adaptation of `commit/src/typed.rs` (same domain-tagging strategy, same

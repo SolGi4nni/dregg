@@ -10,14 +10,14 @@
 
 | App | Crate name | LOC (Rust) | starbridge-apps counterpart | Notes |
 |-----|------------|------------|-----------------------------|-------|
-| apps/bounty-board | pyana-bounty-board | 3865 | none | CLAUDIT verdict: BROKEN. No payment ever moved; worker_commitment not bound; no STARK enforcement; dual divergent handler sets. |
+| apps/bounty-board | dregg-bounty-board | 3865 | none | CLAUDIT verdict: BROKEN. No payment ever moved; worker_commitment not bound; no STARK enforcement; dual divergent handler sets. |
 | apps/compute-exchange | compute-exchange | 3985 | none | CLAUDIT verdict: BROKEN. Optimistic settlement discarded; dispute resolution never implemented; finalize_settlement ignores failed escrow release. |
-| apps/gallery | pyana-gallery | 8489 | none | CLAUDIT verdict: BROKEN. Atomic settlement, NFT ownership, ZK proofs all decorative; Vickrey/Dutch modes unwired. |
-| apps/privacy-voting | pyana-privacy-voting | 1934 | none | CLAUDIT verdict: BROKEN. Authority deanonymizes every vote at submit time; voter_pk+commitment correlated in same handler. |
-| apps/identity | pyana-identity | 3083 | starbridge-apps/identity | CLAUDIT verdict: BROKEN (fails open at every trust boundary despite using real DSL circuits). Superseded. |
-| apps/governed-namespace | governed-namespace | 3759 | starbridge-apps/governed-namespace | CLAUDIT verdict: BROKEN. In-memory hex-keyed naming server; pyana:// strings are opaque labels only. Superseded. |
-| apps/nameservice | pyana-nameservice | 3191 | starbridge-apps/nameservice | CLAUDIT verdict: BROKEN. Superseded. |
-| apps/subscription | pyana-subscription | 2927 | starbridge-apps/subscription | CLAUDIT verdict: BROKEN (healthiest of batch — real delegation verification — but still incomplete). Superseded. |
+| apps/gallery | dregg-gallery | 8489 | none | CLAUDIT verdict: BROKEN. Atomic settlement, NFT ownership, ZK proofs all decorative; Vickrey/Dutch modes unwired. |
+| apps/privacy-voting | dregg-privacy-voting | 1934 | none | CLAUDIT verdict: BROKEN. Authority deanonymizes every vote at submit time; voter_pk+commitment correlated in same handler. |
+| apps/identity | dregg-identity | 3083 | starbridge-apps/identity | CLAUDIT verdict: BROKEN (fails open at every trust boundary despite using real DSL circuits). Superseded. |
+| apps/governed-namespace | governed-namespace | 3759 | starbridge-apps/governed-namespace | CLAUDIT verdict: BROKEN. In-memory hex-keyed naming server; dregg:// strings are opaque labels only. Superseded. |
+| apps/nameservice | dregg-nameservice | 3191 | starbridge-apps/nameservice | CLAUDIT verdict: BROKEN. Superseded. |
+| apps/subscription | dregg-subscription | 2927 | starbridge-apps/subscription | CLAUDIT verdict: BROKEN (healthiest of batch — real delegation verification — but still incomplete). Superseded. |
 
 **Total Rust LOC removed: ~31,233**
 

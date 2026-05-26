@@ -1,4 +1,4 @@
-# Pyana: Capability-Based Authorization for AI Agents
+# `dregg`: Capability-Based Authorization for AI Agents
 
 ## The Problem
 
@@ -13,7 +13,7 @@ Real-world agent deployments need six properties that identity-based auth cannot
 5. **Audit trail** -- what was done with what authority, cryptographically
 6. **Privacy** -- agent A calls agent B's API without B learning A's identity
 
-Pyana solves all six with one coherent primitive: cryptographic capability tokens verified by zero-knowledge proof.
+`dregg` solves all six with one coherent primitive: cryptographic capability tokens verified by zero-knowledge proof.
 
 ## How It Works
 
@@ -23,7 +23,7 @@ Each agent holds a **c-list** (`cell/src/capability.rs`) -- an enumerable set of
 
 ### Macaroon Tokens with Typed Caveats
 
-Authorization tokens (`token/src/pyana_caveats.rs`) are HMAC-chained macaroons with 16 typed caveat slots:
+Authorization tokens (`token/src/dregg_caveats.rs`) are HMAC-chained macaroons with 16 typed caveat slots:
 
 - **Service/App scope** -- which APIs the token can access
 - **ValidityWindow** -- not-before / not-after timestamps
@@ -78,15 +78,15 @@ In Private mode, the verifier learns only that the agent holds sufficient author
 
 ### Atomic Composition (2PC)
 
-When multiple agents must act together atomically (e.g., swap assets), pyana uses `CommitmentMode::Partial` signing. Each agent signs their fragment independently without seeing others' actions. A `TurnComposer` assembles fragments into one atomic turn. The call forest executes all-or-nothing -- if any fragment fails, everything rolls back.
+When multiple agents must act together atomically (e.g., swap assets), dregg uses `CommitmentMode::Partial` signing. Each agent signs their fragment independently without seeing others' actions. A `TurnComposer` assembles fragments into one atomic turn. The call forest executes all-or-nothing -- if any fragment fails, everything rolls back.
 
 ### Discovery and Marketplaces
 
 Agents discover each other via the **intent system**. An agent broadcasts "I need read access to storage with >= 1000 reputation" as a `MatchSpec`. Fulfillers match locally, generate attenuated tokens or STARK proofs, and deliver directly. Payment flows via conditional turns -- verified fulfillment triggers automatic transfer. Privacy is preserved end-to-end: the fulfiller proves capability without revealing identity.
 
-## What Pyana Offers That Existing Systems Lack
+## What `dregg` Offers That Existing Systems Lack
 
-| Property | OpenAI/Anthropic | LangChain | Pyana |
+| Property | OpenAI/Anthropic | LangChain | `dregg` |
 |----------|-----------------|-----------|-------|
 | Attenuation | None | None | Cryptographic (HMAC chain) |
 | Budget enforcement | None | Manual | Protocol-level (per-token + per-silo) |
@@ -101,4 +101,4 @@ Agents discover each other via the **intent system**. An agent broadcasts "I nee
 
 Every autonomous agent deployment will face the same question: how do you give an AI system enough authority to be useful while preventing it from exceeding its mandate? The answer is not better prompting or stronger guardrails -- it is cryptographically enforced least privilege with delegatable, attenuable, budget-bounded, instantly-revocable capability tokens whose exercise can be verified without revealing the holder's identity.
 
-Pyana is that infrastructure.
+`dregg` is that infrastructure.

@@ -23,7 +23,7 @@ export function initPrivateTransfers(wasm) {
       </div>
       <div class="control-group">
         <label>Passphrase</label>
-        <input type="text" id="pt-passphrase" value="pyana-demo" spellcheck="false" style="width: 120px;">
+        <input type="text" id="pt-passphrase" value="dregg-demo" spellcheck="false" style="width: 120px;">
       </div>
       <button class="btn btn-primary" id="pt-derive-keys" ${wasm ? '' : 'disabled'}>Derive Keys</button>
     </div>
@@ -189,7 +189,7 @@ export function initPrivateTransfers(wasm) {
     ]);
 
     showExplainer(explainerDiv, {
-      prover: `Sender derives one-time address:\n1. Generate ephemeral X25519 keypair\n2. DH: shared = X25519(eph_priv, view_pub)\n3. scalar = BLAKE3(shared, "pyana-stealth-derive")\n4. OT_pubkey = H(scalar || spend_pub)\n\nCommitment: C = BLAKE3(amount || blinding)\nAmount: ${transferAmount} (hidden in commitment)`,
+      prover: `Sender derives one-time address:\n1. Generate ephemeral X25519 keypair\n2. DH: shared = X25519(eph_priv, view_pub)\n3. scalar = BLAKE3(shared, "dregg-stealth-derive")\n4. OT_pubkey = H(scalar || spend_pub)\n\nCommitment: C = BLAKE3(amount || blinding)\nAmount: ${transferAmount} (hidden in commitment)`,
       verifier: `On-chain sees:\n- New commitment (hides amount)\n- Ephemeral pubkey (for recipient scanning)\n- One-time address (unlinkable to recipient)\n\nDoes NOT see:\n- Amount\n- Sender identity\n- Recipient identity\n- Linkage to any known address`,
       delta: `The transfer is fully private:\n- Stealth address: nobody can tell WHO received it\n- Commitment: nobody can tell HOW MUCH was sent\n- Ephemeral key: only recipient can detect it\n\nThis is stronger than Zcash shielded (which leaks timing) because the one-time address is fresh per-transfer.`,
       timing: elapsed,

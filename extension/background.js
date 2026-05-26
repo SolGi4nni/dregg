@@ -1,29 +1,29 @@
-// Pyana cipherclerk background service worker.
+// Dregg cipherclerk background service worker.
 // Manages cipherclerk state (signing keys, capability tokens, receipt chain),
 // evaluates authorization, and generates proofs via WASM.
 
-// Storage keys — legacy "pyana_cipherclerk*" keys are migrated on first startup.
-const LEGACY_STORAGE_KEY = 'pyana_cipherclerk';
-const LEGACY_ENCRYPTED_STATE_KEY = 'pyana_wallet_encrypted';
-const STORAGE_KEY = 'pyana_cipherclerk';
-const ENCRYPTED_STATE_KEY = 'pyana_cipherclerk_encrypted';
-const MNEMONIC_KEY = 'pyana_mnemonic_encrypted';
-const STEALTH_KEYS_KEY = 'pyana_stealth_keys_encrypted';
-const ALLOWED_ORIGINS_KEY = 'pyana_allowed_origins';
-const NODE_CONFIG_KEY = 'pyana_node_config';
-const DEFAULT_NODE_URL = 'https://devnet.pyana.fg-goose.online';
-const DEFAULT_NODE_WSS_URL = 'wss://devnet.pyana.fg-goose.online/ws';
+// Storage keys — legacy "dregg_cipherclerk*" keys are migrated on first startup.
+const LEGACY_STORAGE_KEY = 'dregg_cipherclerk';
+const LEGACY_ENCRYPTED_STATE_KEY = 'dregg_wallet_encrypted';
+const STORAGE_KEY = 'dregg_cipherclerk';
+const ENCRYPTED_STATE_KEY = 'dregg_cipherclerk_encrypted';
+const MNEMONIC_KEY = 'dregg_mnemonic_encrypted';
+const STEALTH_KEYS_KEY = 'dregg_stealth_keys_encrypted';
+const ALLOWED_ORIGINS_KEY = 'dregg_allowed_origins';
+const NODE_CONFIG_KEY = 'dregg_node_config';
+const DEFAULT_NODE_URL = 'https://devnet.dregg.fg-goose.online';
+const DEFAULT_NODE_WSS_URL = 'wss://devnet.dregg.fg-goose.online/ws';
 const DEFAULT_NODE_WS_URL = 'ws://localhost:8420/ws'; // Fallback for localhost only.
 const DISCOVERY_URL = 'https://emberian.github.io/dregg/discovery.json';
 const DISCOVERY_POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PBKDF2_ITERATIONS = 600000; // OWASP recommendation for PBKDF2-SHA256
-const DISCLOSURE_PREFS_KEY = 'pyana_disclosure_prefs'; // Per-origin disclosure preferences
+const DISCLOSURE_PREFS_KEY = 'dregg_disclosure_prefs'; // Per-origin disclosure preferences
 const LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes auto-lock
 const ORIGIN_PERMISSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours default
 const RATE_LIMIT_MAX_CALLS = 5; // Max authorize calls per origin per window
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60-second sliding window
 // Internal encryption key is now randomly generated per session (see getInternalEncryptionKey).
-const PRIVACY_STATE_KEY = 'pyana_privacy_state'; // Tracks active privacy features
+const PRIVACY_STATE_KEY = 'dregg_privacy_state'; // Tracks active privacy features
 
 // ---------------------------------------------------------------------------
 // Node configuration (user-configurable via settings page)
@@ -115,15 +115,15 @@ let wasmLoaded = false;
 let wasmLoadError = null;
 
 // Load WASM without ES module import() — uses fetch + WebAssembly.instantiate.
-// The pyana_wasm.js glue is loaded via importScripts (no-modules build) or
+// The dregg_wasm.js glue is loaded via importScripts (no-modules build) or
 // inlined initialization when built with --target web.
 const wasmReady = (async () => {
   try {
     // Try importScripts for no-modules build (Firefox-compatible).
     try {
-      importScripts('./pyana_wasm.js');
+      importScripts('./dregg_wasm.js');
     } catch (_importErr) {
-      // importScripts failed — pyana_wasm.js may not exist yet (dev mode).
+      // importScripts failed — dregg_wasm.js may not exist yet (dev mode).
       // Fall through to fetch-based loading below.
     }
 
@@ -131,19 +131,19 @@ const wasmReady = (async () => {
     // use it. Otherwise, try fetch-based loading for --target web builds.
     if (typeof wasm_bindgen !== 'undefined') {
       // wasm-bindgen no-modules pattern: wasm_bindgen is a global function.
-      const wasmUrl = chrome.runtime.getURL('pyana_wasm_bg.wasm');
+      const wasmUrl = chrome.runtime.getURL('dregg_wasm_bg.wasm');
       await wasm_bindgen(wasmUrl);
       wasm = wasm_bindgen;
       wasmLoaded = true;
-      console.log('[pyana] WASM module loaded via importScripts/wasm_bindgen');
-    } else if (typeof __pyana_wasm_init !== 'undefined') {
+      console.log('[dregg] WASM module loaded via importScripts/wasm_bindgen');
+    } else if (typeof __dregg_wasm_init !== 'undefined') {
       // Alternative: custom global init if we bundled differently.
-      wasm = await __pyana_wasm_init();
+      wasm = await __dregg_wasm_init();
       wasmLoaded = true;
-      console.log('[pyana] WASM module loaded via __pyana_wasm_init');
+      console.log('[dregg] WASM module loaded via __dregg_wasm_init');
     } else {
       // Fetch-based fallback: manually instantiate the WASM module.
-      const wasmUrl = chrome.runtime.getURL('pyana_wasm_bg.wasm');
+      const wasmUrl = chrome.runtime.getURL('dregg_wasm_bg.wasm');
       const response = await fetch(wasmUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch WASM: HTTP ${response.status}`);
@@ -152,10 +152,10 @@ const wasmReady = (async () => {
       const { instance } = await WebAssembly.instantiate(wasmBytes, {});
       wasm = instance.exports;
       wasmLoaded = true;
-      console.log('[pyana] WASM module loaded via fetch+instantiate');
+      console.log('[dregg] WASM module loaded via fetch+instantiate');
     }
   } catch (e) {
-    console.error('[pyana] WASM module failed to load:', e.message);
+    console.error('[dregg] WASM module failed to load:', e.message);
     wasm = null;
     wasmLoaded = false;
     wasmLoadError = e.message;
@@ -197,7 +197,7 @@ function resetLockTimer() {
     clearTimeout(lockTimer);
   }
   lockTimer = setTimeout(async () => {
-    console.log('[pyana] Auto-lock triggered after inactivity');
+    console.log('[dregg] Auto-lock triggered after inactivity');
     await lockCipherclerk();
     notifySubscribers('ready', { locked: true });
   }, LOCK_TIMEOUT_MS);
@@ -320,7 +320,7 @@ async function generateMnemonic() {
     try {
       return wasm.generate_mnemonic();
     } catch (e) {
-      console.warn('[pyana] WASM generate_mnemonic failed, using JS fallback:', e.message);
+      console.warn('[dregg] WASM generate_mnemonic failed, using JS fallback:', e.message);
     }
   }
   // JS fallback: generate 256 bits of entropy, compute SHA-256 checksum,
@@ -422,7 +422,7 @@ async function getWordlist() {
     _wordlistCache = text.trim().split('\n');
     if (_wordlistCache.length === 2048) return _wordlistCache;
   } catch (e) {
-    console.warn('[pyana] Failed to load wordlist from bundle:', e.message);
+    console.warn('[dregg] Failed to load wordlist from bundle:', e.message);
   }
   // Hardcoded fallback: return null (mnemonic operations will fail gracefully).
   _wordlistCache = null;
@@ -443,7 +443,7 @@ async function deriveKeypairFromMnemonic(mnemonic, passphrase) {
       const result = wasm.derive_keypair_from_mnemonic(mnemonic, passphrase);
       return { publicKey: result.public_key, secretKey: result.secret_key };
     } catch (e) {
-      console.warn('[pyana] WASM derive_keypair_from_mnemonic failed:', e.message);
+      console.warn('[dregg] WASM derive_keypair_from_mnemonic failed:', e.message);
     }
   }
   // WASM is required for Ed25519 keypair derivation. The Web Crypto API does not
@@ -465,15 +465,15 @@ async function deriveKeypairFromMnemonic(mnemonic, passphrase) {
  * Derive stealth keys from the cipherclerk seed (mnemonic).
  *
  * Produces a StealthMetaAddress consisting of:
- *   - spend_pubkey: Ed25519 public key for spending (derived via BLAKE3(seed, "pyana-stealth-spend"))
- *   - view_pubkey: X25519 public key for scanning (derived via BLAKE3(seed, "pyana-stealth-view"))
+ *   - spend_pubkey: Ed25519 public key for spending (derived via BLAKE3(seed, "dregg-stealth-spend"))
+ *   - view_pubkey: X25519 public key for scanning (derived via BLAKE3(seed, "dregg-stealth-view"))
  *
  * The private keys are stored encrypted alongside the cipherclerk state.
  *
  * TODO: WASM exports needed:
  *   - wasm.derive_stealth_keys(mnemonic, passphrase) -> { spend_pubkey, spend_privkey, view_pubkey, view_privkey }
- *     Must use BLAKE3(seed, "pyana-stealth-spend") for Ed25519 spend key
- *     and BLAKE3(seed, "pyana-stealth-view") for X25519 view key.
+ *     Must use BLAKE3(seed, "dregg-stealth-spend") for Ed25519 spend key
+ *     and BLAKE3(seed, "dregg-stealth-view") for X25519 view key.
  *   - wasm.stealth_pubkey_from_privkey(privkey_bytes, key_type) -> pubkey_bytes
  *     (key_type: "ed25519" | "x25519")
  */
@@ -482,8 +482,8 @@ async function deriveStealthKeys(mnemonic, passphrase) {
 
   // TODO: wasm.derive_stealth_keys should implement:
   //   1. seed = BIP39_to_seed(mnemonic, passphrase)
-  //   2. spend_seed = BLAKE3(seed, context="pyana-stealth-spend") -> 32 bytes
-  //   3. view_seed = BLAKE3(seed, context="pyana-stealth-view") -> 32 bytes
+  //   2. spend_seed = BLAKE3(seed, context="dregg-stealth-spend") -> 32 bytes
+  //   3. view_seed = BLAKE3(seed, context="dregg-stealth-view") -> 32 bytes
   //   4. spend_keypair = Ed25519::from_seed(spend_seed)
   //   5. view_keypair = X25519::from_seed(view_seed)
   if (!wasm.derive_stealth_keys) {
@@ -544,7 +544,7 @@ async function getStealthMetaAddress() {
       viewPubkey: keys.viewPubkey,
     };
   } catch (e) {
-    console.warn('[pyana] Failed to derive stealth keys:', e.message);
+    console.warn('[dregg] Failed to derive stealth keys:', e.message);
     return null;
   }
 }
@@ -572,7 +572,7 @@ function checkStealthOwnership(announcement, viewPrivkey, spendPubkey) {
 
   // TODO: wasm.check_stealth_ownership should implement:
   //   1. shared_secret = x25519(view_privkey, ephemeral_pubkey)
-  //   2. scalar = BLAKE3(shared_secret, context="pyana-stealth-derive")
+  //   2. scalar = BLAKE3(shared_secret, context="dregg-stealth-derive")
   //   3. expected_one_time = scalar * G_ed25519 + spend_pubkey
   //   4. return expected_one_time == one_time_pubkey
   //   5. If match: one_time_privkey = scalar + spend_privkey (mod L)
@@ -624,7 +624,7 @@ async function scanStealthNotes(announcements) {
       }
     } catch (e) {
       // Skip announcements that fail to check (malformed, etc.)
-      console.warn('[pyana] Stealth check failed for announcement:', e.message);
+      console.warn('[dregg] Stealth check failed for announcement:', e.message);
     }
   }
 
@@ -813,7 +813,7 @@ function extractKeywordsFromSpec(matchSpec) {
  *     Builds a Turn with committed value fields.
  *
  * @param {number} amount - The amount to transfer (hidden from network)
- * @param {string} assetType - Asset type identifier (e.g. "PYANA", "USDC")
+ * @param {string} assetType - Asset type identifier (e.g. "DREGG", "USDC")
  * @param {object} recipientStealthMeta - { spendPubkey: number[], viewPubkey: number[] }
  * @returns {object} { turnId, commitment, ephemeralPubkey, success }
  */
@@ -838,7 +838,7 @@ async function privateTransfer(amount, assetType, recipientStealthMeta) {
   // TODO: wasm.derive_stealth_one_time_address should implement:
   //   1. Generate ephemeral X25519 keypair
   //   2. shared_secret = X25519(ephemeral_privkey, recipient_view_pubkey)
-  //   3. scalar = BLAKE3(shared_secret, context="pyana-stealth-derive")
+  //   3. scalar = BLAKE3(shared_secret, context="dregg-stealth-derive")
   //   4. one_time_pubkey = scalar * G_ed25519 + recipient_spend_pubkey
   if (!wasm.derive_stealth_one_time_address) {
     throw new Error(
@@ -1037,7 +1037,7 @@ const subscribers = new Map(); // tabId -> Set of event names
 function notifySubscribers(event, payload) {
   for (const [tabId, events] of subscribers) {
     if (events.has(event)) {
-      chrome.tabs.sendMessage(tabId, { type: 'pyana:event', event, payload }).catch(() => {
+      chrome.tabs.sendMessage(tabId, { type: 'dregg:event', event, payload }).catch(() => {
         subscribers.delete(tabId);
       });
     }
@@ -1052,8 +1052,8 @@ let state = null;
 let cclerkPassphrase = null; // Held in memory while unlocked; cleared on lock.
 
 /**
- * One-time migration: copy legacy "pyana_cipherclerk*" localStorage keys to the new
- * "pyana_cipherclerk*" names so existing users don't lose their state.
+ * One-time migration: copy legacy "dregg_cipherclerk*" localStorage keys to the new
+ * "dregg_cipherclerk*" names so existing users don't lose their state.
  * Idempotent — if the new key already exists, nothing is copied.
  */
 async function migrateLegacyStorageKeys() {
@@ -1371,7 +1371,7 @@ async function recoverFromMnemonic(mnemonic, passphrase) {
 
 /**
  * Get the full origin allowlist. Format:
- * { "https://example.com": { methods: ["pyana:provision"], expires: 1716300000000 }, ... }
+ * { "https://example.com": { methods: ["dregg:provision"], expires: 1716300000000 }, ... }
  */
 async function getOriginAllowlist() {
   const stored = await chrome.storage.local.get(ALLOWED_ORIGINS_KEY);
@@ -1804,7 +1804,7 @@ function showDisclosurePicker(origin, request, tokenFacts) {
       focused: true,
     }, (win) => {
       const listener = (message, sender, sendResponse) => {
-        if (message.type !== 'pyana:disclosureDecision') return;
+        if (message.type !== 'dregg:disclosureDecision') return;
         chrome.runtime.onMessage.removeListener(listener);
         resolve(message);
       };
@@ -1946,7 +1946,7 @@ async function provisionToken(tokenData, senderTabId) {
       focused: true,
     }, (win) => {
       const listener = async (message, sender, sendResponse) => {
-        if (message.type !== 'pyana:provisionDecision') return;
+        if (message.type !== 'dregg:provisionDecision') return;
         chrome.runtime.onMessage.removeListener(listener);
 
         if (message.accepted) {
@@ -2203,7 +2203,7 @@ function showIntentConfirmation(action, matchSpec, options) {
       focused: true,
     }, (win) => {
       const listener = (message, sender, sendResponse) => {
-        if (message.type !== 'pyana:intentConfirmation') return;
+        if (message.type !== 'dregg:intentConfirmation') return;
         chrome.runtime.onMessage.removeListener(listener);
         resolve(message.confirmed === true);
       };
@@ -2356,7 +2356,7 @@ async function computeIntentId(kind, matchSpec, expiry) {
     try {
       return wasm.compute_intent_id(JSON.stringify(intentInput));
     } catch (e) {
-      console.warn('[pyana] WASM compute_intent_id failed, using SHA-256 fallback:', e.message);
+      console.warn('[dregg] WASM compute_intent_id failed, using SHA-256 fallback:', e.message);
     }
   }
 
@@ -2392,14 +2392,14 @@ setInterval(gcIntentPool, INTENT_GC_INTERVAL);
 // CapTP operations (share, accept, handoff)
 // ---------------------------------------------------------------------------
 
-const LIVE_REFS_KEY = 'pyana_live_refs';
-const CAPTP_STORAGE_KEY = 'pyana_captp_state';
+const LIVE_REFS_KEY = 'dregg_live_refs';
+const CAPTP_STORAGE_KEY = 'dregg_captp_state';
 
 // In-memory live ref tracking: refId -> { cellId, uri, permissions, tabId, createdAt }
 const liveRefs = new Map();
 
 /**
- * Share a cell as a pyana:// URI (export sturdy ref).
+ * Share a cell as a dregg:// URI (export sturdy ref).
  * @param {string} cellId - 64-char hex cell ID.
  * @returns {Promise<{uri: string, cellId: string}>}
  */
@@ -2422,7 +2422,7 @@ async function shareCapability(cellId) {
 
   const nodeId = resp.data?.node_id || 'local';
   const secret = resp.data?.secret || '';
-  const uri = `pyana://${nodeId}/${cellId}/${secret}`;
+  const uri = `dregg://${nodeId}/${cellId}/${secret}`;
 
   // Log the export
   cclerk.log.push({
@@ -2438,8 +2438,8 @@ async function shareCapability(cellId) {
 }
 
 /**
- * Accept (enliven) a pyana:// URI, returning live ref info.
- * @param {string} uri - A pyana:// URI.
+ * Accept (enliven) a dregg:// URI, returning live ref info.
+ * @param {string} uri - A dregg:// URI.
  * @returns {Promise<{refId: string, cellId: string, nodeId: string}>}
  */
 async function acceptCapability(uri, tabId) {
@@ -2448,13 +2448,13 @@ async function acceptCapability(uri, tabId) {
     return { error: 'Cipherclerk is locked' };
   }
 
-  if (!uri.startsWith('pyana://')) {
-    return { error: 'Invalid URI: must start with pyana://' };
+  if (!uri.startsWith('dregg://')) {
+    return { error: 'Invalid URI: must start with dregg://' };
   }
 
-  const parts = uri.replace('pyana://', '').split('/');
+  const parts = uri.replace('dregg://', '').split('/');
   if (parts.length < 3) {
-    return { error: 'Invalid URI format. Expected: pyana://<node>/<cell>/<secret>' };
+    return { error: 'Invalid URI format. Expected: dregg://<node>/<cell>/<secret>' };
   }
 
   const [nodeId, cellId, secret] = parts;
@@ -2785,14 +2785,14 @@ async function voteOnProposal(proposalId, approve) {
 // Create context menu on extension install.
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: 'pyana-share-capability',
+    id: 'dregg-share-capability',
     title: 'Share capability...',
     contexts: ['page', 'selection'],
   });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'pyana-share-capability') {
+  if (info.menuItemId === 'dregg-share-capability') {
     // Get selected text as cell ID or prompt.
     const cellId = info.selectionText?.trim() || '';
     if (cellId && /^[0-9a-fA-F]{64}$/.test(cellId)) {
@@ -2905,7 +2905,7 @@ function handleOriginPermissionRequest(origin, method) {
       focused: true,
     }, (win) => {
       const listener = async (message, sender, sendResponse) => {
-        if (message.type !== 'pyana:originPermissionDecision') return;
+        if (message.type !== 'dregg:originPermissionDecision') return;
         chrome.runtime.onMessage.removeListener(listener);
 
         if (message.granted) {
@@ -2937,7 +2937,7 @@ function handleOriginPermissionRequest(origin, method) {
 
 /**
  * Build a turn locally (via WASM), sign it with the cipherclerk key, and submit
- * it to the configured pyana node via HTTP POST.
+ * it to the configured dregg node via HTTP POST.
  *
  * @param {object} turnSpec - { action, resource, amount, recipient, metadata }
  * @returns {Promise<{turnId?: string, submitted: boolean, error?: string}>}
@@ -3047,72 +3047,72 @@ async function queryBalance() {
 
 // Methods accessible from page context (via content script).
 const PAGE_ALLOWED_METHODS = new Set([
-  'pyana:authorize',
-  'pyana:isConnected',
-  'pyana:canAuthorize',
-  'pyana:subscribe',
-  'pyana:provision',
-  'pyana:postIntent',
-  'pyana:getStealthAddress',
-  'pyana:postEncryptedIntent',
-  'pyana:privateTransfer',
-  'pyana:createBearerCap',
-  'pyana:verifyBearerCap',
-  'pyana:createFromFactory',
-  'pyana:verifyProvenance',
-  'pyana:makeCellSovereign',
-  'pyana:peerExchange',
-  'pyana:composeProofs',
-  'pyana:signTurn',
-  'pyana:queryBalance',
-  'pyana:getNodeConfig',
+  'dregg:authorize',
+  'dregg:isConnected',
+  'dregg:canAuthorize',
+  'dregg:subscribe',
+  'dregg:provision',
+  'dregg:postIntent',
+  'dregg:getStealthAddress',
+  'dregg:postEncryptedIntent',
+  'dregg:privateTransfer',
+  'dregg:createBearerCap',
+  'dregg:verifyBearerCap',
+  'dregg:createFromFactory',
+  'dregg:verifyProvenance',
+  'dregg:makeCellSovereign',
+  'dregg:peerExchange',
+  'dregg:composeProofs',
+  'dregg:signTurn',
+  'dregg:queryBalance',
+  'dregg:getNodeConfig',
   // CapTP
-  'pyana:shareCapability',
-  'pyana:acceptCapability',
-  'pyana:createHandoff',
+  'dregg:shareCapability',
+  'dregg:acceptCapability',
+  'dregg:createHandoff',
   // Directory
-  'pyana:mountService',
-  'pyana:discoverServices',
-  'pyana:resolvePath',
+  'dregg:mountService',
+  'dregg:discoverServices',
+  'dregg:resolvePath',
   // Storage
-  'pyana:storageWrite',
-  'pyana:storageRead',
-  'pyana:storageQuota',
+  'dregg:storageWrite',
+  'dregg:storageRead',
+  'dregg:storageQuota',
   // Federation
-  'pyana:federationStatus',
-  'pyana:proposeRoutes',
-  'pyana:voteOnProposal',
-  // Note: pyana:offerCapability, pyana:getCapabilities, pyana:listIntents are
+  'dregg:federationStatus',
+  'dregg:proposeRoutes',
+  'dregg:voteOnProposal',
+  // Note: dregg:offerCapability, dregg:getCapabilities, dregg:listIntents are
   // NOT accessible from page context — popup-only.
 ]);
 
 // Methods that ONLY the extension popup can call.
 const POPUP_ONLY_METHODS = new Set([
-  'pyana:unlock',
-  'pyana:lock',
-  'pyana:getCapabilities',
-  'pyana:listIntents',
-  'pyana:offerCapability',
-  'pyana:fulfillIntent',
-  'pyana:getFulfillableIntents',
-  'pyana:revoke',
-  'pyana:getState',
-  'pyana:getFederation',
-  'pyana:refreshDiscovery',
-  'pyana:setPassphrase',
-  'pyana:getMnemonic',
-  'pyana:recover',
-  'pyana:getDisclosurePrefs',
-  'pyana:clearDisclosurePref',
-  'pyana:getOriginPermissions',
-  'pyana:revokeOriginPermission',
-  'pyana:getPrivacyState',
-  'pyana:setCommittedTransferMode',
-  'pyana:getStealthNotes',
-  'pyana:getNodeConfig',
-  'pyana:setNodeConfig',
-  'pyana:getLiveRefs',
-  'pyana:dropLiveRef',
+  'dregg:unlock',
+  'dregg:lock',
+  'dregg:getCapabilities',
+  'dregg:listIntents',
+  'dregg:offerCapability',
+  'dregg:fulfillIntent',
+  'dregg:getFulfillableIntents',
+  'dregg:revoke',
+  'dregg:getState',
+  'dregg:getFederation',
+  'dregg:refreshDiscovery',
+  'dregg:setPassphrase',
+  'dregg:getMnemonic',
+  'dregg:recover',
+  'dregg:getDisclosurePrefs',
+  'dregg:clearDisclosurePref',
+  'dregg:getOriginPermissions',
+  'dregg:revokeOriginPermission',
+  'dregg:getPrivacyState',
+  'dregg:setCommittedTransferMode',
+  'dregg:getStealthNotes',
+  'dregg:getNodeConfig',
+  'dregg:setNodeConfig',
+  'dregg:getLiveRefs',
+  'dregg:dropLiveRef',
 ]);
 
 async function handleMessage(message, sender) {
@@ -3123,7 +3123,7 @@ async function handleMessage(message, sender) {
   }
 
   switch (message.type) {
-    case 'pyana:authorize': {
+    case 'dregg:authorize': {
       // Page-originated authorize requests go through the disclosure picker.
       // Popup/internal requests bypass it (they already specify a mode).
       if (isContentScript(sender) && !message.request._skipDisclosure) {
@@ -3140,24 +3140,24 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: await authorize(message.request) };
     }
 
-    case 'pyana:isConnected':
+    case 'dregg:isConnected':
       return { id: message.id, result: true };
 
-    case 'pyana:canAuthorize':
+    case 'dregg:canAuthorize':
       return { id: message.id, result: await canAuthorize(message.request) };
 
-    case 'pyana:getCapabilities':
+    case 'dregg:getCapabilities':
       return { id: message.id, result: await getCapabilities() };
 
-    case 'pyana:getState':
+    case 'dregg:getState':
       return { id: message.id, result: await getCipherclerkState() };
 
-    case 'pyana:lock': {
+    case 'dregg:lock': {
       await lockCipherclerk();
       return { id: message.id, result: true };
     }
 
-    case 'pyana:unlock': {
+    case 'dregg:unlock': {
       // Bug 1 fix: unlock ONLY from extension popup.
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Unlock is only available from the extension popup.' };
@@ -3170,7 +3170,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:setPassphrase': {
+    case 'dregg:setPassphrase': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3178,7 +3178,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: true };
     }
 
-    case 'pyana:getMnemonic': {
+    case 'dregg:getMnemonic': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3192,7 +3192,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: mnemonic };
     }
 
-    case 'pyana:recover': {
+    case 'dregg:recover': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3200,19 +3200,19 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:provision': {
+    case 'dregg:provision': {
       const tabId = sender?.tab?.id;
       const result = await provisionToken(message.tokenData, tabId);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:revoke': {
+    case 'dregg:revoke': {
       const result = await revokeToken(message.tokenId);
       return { id: message.id, result };
     }
 
-    case 'pyana:subscribe': {
+    case 'dregg:subscribe': {
       const tabId = sender?.tab?.id;
       if (tabId != null) {
         if (!subscribers.has(tabId)) subscribers.set(tabId, new Set());
@@ -3221,23 +3221,23 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: true };
     }
 
-    case 'pyana:provisionDecision':
+    case 'dregg:provisionDecision':
       return { id: message.id, result: true };
 
-    case 'pyana:intentConfirmation':
+    case 'dregg:intentConfirmation':
       return { id: message.id, result: true };
 
-    case 'pyana:disclosureDecision':
+    case 'dregg:disclosureDecision':
       return { id: message.id, result: true };
 
-    case 'pyana:getDisclosurePrefs': {
+    case 'dregg:getDisclosurePrefs': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
       return { id: message.id, result: await getDisclosurePrefs() };
     }
 
-    case 'pyana:clearDisclosurePref': {
+    case 'dregg:clearDisclosurePref': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3247,14 +3247,14 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: true };
     }
 
-    case 'pyana:getOriginPermissions': {
+    case 'dregg:getOriginPermissions': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
       return { id: message.id, result: await getAllOriginPermissions() };
     }
 
-    case 'pyana:revokeOriginPermission': {
+    case 'dregg:revokeOriginPermission': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3262,49 +3262,49 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: true };
     }
 
-    case 'pyana:postIntent': {
+    case 'dregg:postIntent': {
       const result = await postIntent(message.matchSpec, message.options);
       return { id: message.id, result };
     }
 
-    case 'pyana:offerCapability': {
+    case 'dregg:offerCapability': {
       const result = await offerCapability(message.matchSpec, message.options);
       return { id: message.id, result };
     }
 
-    case 'pyana:listIntents': {
+    case 'dregg:listIntents': {
       const result = listIntents(message.filter);
       return { id: message.id, result };
     }
 
-    case 'pyana:fulfillIntent': {
+    case 'dregg:fulfillIntent': {
       const result = await fulfillIntent(message.intentId, message.tokenId || null);
       return { id: message.id, result };
     }
 
-    case 'pyana:getFulfillableIntents': {
+    case 'dregg:getFulfillableIntents': {
       const result = await getFulfillableIntents();
       return { id: message.id, result };
     }
 
-    case 'pyana:getFederation':
+    case 'dregg:getFederation':
       return { id: message.id, result: federationState };
 
-    case 'pyana:refreshDiscovery':
+    case 'dregg:refreshDiscovery':
       await fetchDiscovery();
       return { id: message.id, result: federationState };
 
-    case 'pyana:requestOriginPermission': {
+    case 'dregg:requestOriginPermission': {
       const result = await handleOriginPermissionRequest(message.origin, message.method);
       return result;
     }
 
-    case 'pyana:originPermissionDecision':
+    case 'dregg:originPermissionDecision':
       return { id: message.id, result: true };
 
     // --- Privacy features ---
 
-    case 'pyana:getStealthAddress': {
+    case 'dregg:getStealthAddress': {
       const meta = await getStealthMetaAddress();
       if (!meta) {
         return { id: message.id, error: 'Stealth keys not available (cipherclerk locked or WASM missing)' };
@@ -3312,12 +3312,12 @@ async function handleMessage(message, sender) {
       return { id: message.id, result: meta };
     }
 
-    case 'pyana:postEncryptedIntent': {
+    case 'dregg:postEncryptedIntent': {
       const result = await postEncryptedIntent(message.matchSpec, message.options || {});
       return { id: message.id, result };
     }
 
-    case 'pyana:privateTransfer': {
+    case 'dregg:privateTransfer': {
       const result = await privateTransfer(
         message.amount,
         message.assetType,
@@ -3327,14 +3327,14 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:getPrivacyState': {
+    case 'dregg:getPrivacyState': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
       return { id: message.id, result: await getPrivacyState() };
     }
 
-    case 'pyana:setCommittedTransferMode': {
+    case 'dregg:setCommittedTransferMode': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3342,7 +3342,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:getStealthNotes': {
+    case 'dregg:getStealthNotes': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from extension popup.' };
       }
@@ -3355,7 +3355,7 @@ async function handleMessage(message, sender) {
 
     // --- Bearer capabilities ---
 
-    case 'pyana:createBearerCap': {
+    case 'dregg:createBearerCap': {
       // WASM-side audit fix: bearer caps are now real Ed25519 signatures by
       // the delegator. `create_bearer_cap` requires the cipherclerk's *secret*
       // signing seed (NOT the public key). Restricted to the extension popup
@@ -3388,7 +3388,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:verifyBearerCap': {
+    case 'dregg:verifyBearerCap': {
       requireWasm('verifyBearerCap');
       const currentTime = Math.floor(Date.now() / 1000);
       // verify_bearer_cap now takes the delegator PUBLIC key (not the
@@ -3407,7 +3407,7 @@ async function handleMessage(message, sender) {
 
     // --- Factory operations ---
 
-    case 'pyana:createFromFactory': {
+    case 'dregg:createFromFactory': {
       requireWasm('createFromFactory');
       const result = wasm.create_from_factory(
         message.factoryVkHex,
@@ -3417,7 +3417,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:verifyProvenance': {
+    case 'dregg:verifyProvenance': {
       requireWasm('verifyProvenance');
       const result = wasm.verify_provenance(
         message.cellVkHex,
@@ -3428,7 +3428,7 @@ async function handleMessage(message, sender) {
 
     // --- Sovereign cell operations ---
 
-    case 'pyana:makeCellSovereign': {
+    case 'dregg:makeCellSovereign': {
       requireWasm('makeCellSovereign');
       const cclerk = await loadState();
       if (cclerk.locked) {
@@ -3440,7 +3440,7 @@ async function handleMessage(message, sender) {
       return { id: message.id, result };
     }
 
-    case 'pyana:peerExchange': {
+    case 'dregg:peerExchange': {
       requireWasm('peerExchange');
       const cclerk = await loadState();
       if (cclerk.locked) {
@@ -3461,24 +3461,24 @@ async function handleMessage(message, sender) {
 
     // --- Turn submission and balance ---
 
-    case 'pyana:signTurn': {
+    case 'dregg:signTurn': {
       const result = await signTurn(message.turnSpec);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:queryBalance': {
+    case 'dregg:queryBalance': {
       const result = await queryBalance();
       return { id: message.id, result };
     }
 
     // --- Node configuration (popup/settings only) ---
 
-    case 'pyana:getNodeConfig': {
+    case 'dregg:getNodeConfig': {
       return { id: message.id, result: { ...nodeConfig, devnetKey: nodeConfig.devnetKey ? '***' : '' } };
     }
 
-    case 'pyana:setNodeConfig': {
+    case 'dregg:setNodeConfig': {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: 'Only available from the extension popup or settings page.' };
       }
@@ -3488,7 +3488,7 @@ async function handleMessage(message, sender) {
 
     // --- Proof composition ---
 
-    case 'pyana:composeProofs': {
+    case 'dregg:composeProofs': {
       requireWasm('composeProofs');
       const proofsInput = (message.proofs || []).map(p => ({
         proof_json: p.proofJson || p.proof_json || '',
@@ -3500,84 +3500,84 @@ async function handleMessage(message, sender) {
 
     // --- CapTP operations ---
 
-    case 'pyana:shareCapability': {
+    case 'dregg:shareCapability': {
       const result = await shareCapability(message.cellId);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:acceptCapability': {
+    case 'dregg:acceptCapability': {
       const tabId = sender?.tab?.id || null;
       const result = await acceptCapability(message.uri, tabId);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:createHandoff': {
+    case 'dregg:createHandoff': {
       const result = await createHandoff(message.cellId, message.recipientPk);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:getLiveRefs': {
+    case 'dregg:getLiveRefs': {
       return { id: message.id, result: getLiveRefs() };
     }
 
-    case 'pyana:dropLiveRef': {
+    case 'dregg:dropLiveRef': {
       const result = await dropLiveRef(message.refId);
       return { id: message.id, result };
     }
 
     // --- Directory / Namespace operations ---
 
-    case 'pyana:mountService': {
+    case 'dregg:mountService': {
       const result = await mountService(message.path, message.sturdyRef, message.kind, message.tags);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:discoverServices': {
+    case 'dregg:discoverServices': {
       const result = await discoverServices(message.tags);
       return { id: message.id, result };
     }
 
-    case 'pyana:resolvePath': {
+    case 'dregg:resolvePath': {
       const result = await resolvePath(message.path);
       return { id: message.id, result };
     }
 
     // --- Storage operations ---
 
-    case 'pyana:storageWrite': {
+    case 'dregg:storageWrite': {
       const result = await storageWrite(message.data);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:storageRead': {
+    case 'dregg:storageRead': {
       const result = await storageRead(message.hash);
       return { id: message.id, result };
     }
 
-    case 'pyana:storageQuota': {
+    case 'dregg:storageQuota': {
       const result = await storageQuota();
       return { id: message.id, result };
     }
 
     // --- Federation governance ---
 
-    case 'pyana:federationStatus': {
+    case 'dregg:federationStatus': {
       const result = await getFederationStatus();
       return { id: message.id, result };
     }
 
-    case 'pyana:proposeRoutes': {
+    case 'dregg:proposeRoutes': {
       const result = await proposeRoutes(message.routes);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case 'pyana:voteOnProposal': {
+    case 'dregg:voteOnProposal': {
       const result = await voteOnProposal(message.proposalId, message.approve);
       resetLockTimer();
       return { id: message.id, result };
@@ -3601,13 +3601,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // For page-sourced messages via content script: verify the method is page-accessible.
     if (isContentScript(sender) && !PAGE_ALLOWED_METHODS.has(msgType) && !POPUP_ONLY_METHODS.has(msgType)) {
       // Allow internal messages like requestOriginPermission from content script.
-      if (msgType !== 'pyana:requestOriginPermission') {
+      if (msgType !== 'dregg:requestOriginPermission') {
         return { id: message.id, error: `"${msgType}" is not available from page context.` };
       }
     }
 
     // Defer authorize calls until WASM is ready (other calls are fine without it).
-    if (message.type === 'pyana:authorize' && !ready) {
+    if (message.type === 'dregg:authorize' && !ready) {
       return new Promise((resolve) => {
         pendingQueue.push({ msg: message, sender, resolve });
       });
@@ -3621,7 +3621,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ---------------------------------------------------------------------------
-// WebSocket connection to pyana-node for real-time sync (Bug 6 fix: wss)
+// WebSocket connection to dregg-node for real-time sync (Bug 6 fix: wss)
 // ---------------------------------------------------------------------------
 
 let nodeWs = null;
@@ -3646,11 +3646,11 @@ async function fetchNodePublicKey() {
       const data = await resp.json();
       if (data.public_key) {
         nodePublicKey = data.public_key;
-        console.log('[pyana] Learned node public key:', nodePublicKey.slice(0, 16) + '...');
+        console.log('[dregg] Learned node public key:', nodePublicKey.slice(0, 16) + '...');
       }
     }
   } catch (_e) {
-    console.warn('[pyana] Could not fetch node public key from /status');
+    console.warn('[dregg] Could not fetch node public key from /status');
   }
 }
 
@@ -3678,11 +3678,11 @@ function validateNodeMessage(msg) {
   const SIGNED_TYPES = new Set(['revocation', 'receipt', 'root', 'intent', 'note_announcement']);
   if (!SIGNED_TYPES.has(msg.type)) return true; // informational, no signature needed
   if (!nodePublicKey) {
-    console.warn('[pyana] No node public key available; rejecting signed message');
+    console.warn('[dregg] No node public key available; rejecting signed message');
     return false;
   }
   if (!msg.signature || !msg.payload) {
-    console.warn('[pyana] WS message missing signature/payload field, type:', msg.type);
+    console.warn('[dregg] WS message missing signature/payload field, type:', msg.type);
     return false;
   }
   return validateNodeSignature(msg.payload, msg.signature, nodePublicKey);
@@ -3704,14 +3704,14 @@ async function connectNodeWs() {
   const wssUrl = nodeConfig.wssUrl || DEFAULT_NODE_WSS_URL;
   const wsUrl = nodeConfig.wsUrl || DEFAULT_NODE_WS_URL;
   tryConnect(wssUrl, () => {
-    console.warn('[pyana] wss:// connection failed, falling back to ws:// (localhost only)');
+    console.warn('[dregg] wss:// connection failed, falling back to ws:// (localhost only)');
     const parsedWsUrl = new URL(wsUrl);
     if (parsedWsUrl.hostname === 'localhost' || parsedWsUrl.hostname === '127.0.0.1' || parsedWsUrl.hostname === '::1') {
       tryConnect(wsUrl, () => {
         scheduleReconnect();
       });
     } else {
-      console.error('[pyana] Refusing ws:// fallback for non-localhost host:', parsedWsUrl.hostname);
+      console.error('[dregg] Refusing ws:// fallback for non-localhost host:', parsedWsUrl.hostname);
       scheduleReconnect();
     }
   });
@@ -3721,13 +3721,13 @@ function tryConnect(url, onFail) {
   try {
     nodeWs = new WebSocket(url);
   } catch (e) {
-    console.warn('[pyana] WebSocket construction failed:', e.message);
+    console.warn('[dregg] WebSocket construction failed:', e.message);
     if (onFail) onFail();
     return;
   }
 
   nodeWs.onopen = () => {
-    console.log('[pyana] WebSocket connected to node via', url);
+    console.log('[dregg] WebSocket connected to node via', url);
     wsReconnectDelay = 1000;
 
     // Security: send a challenge for the node to prove its identity.
@@ -3741,7 +3741,7 @@ function tryConnect(url, onFail) {
     // If the node does not respond with a valid auth_response within 5s, disconnect.
     const authTimer = setTimeout(() => {
       if (!wsAuthenticated && nodeWs) {
-        console.error('[pyana] WS auth timeout — node did not respond to challenge in time');
+        console.error('[dregg] WS auth timeout — node did not respond to challenge in time');
         nodeWs.close();
       }
     }, WS_AUTH_TIMEOUT_MS);
@@ -3765,27 +3765,27 @@ function tryConnect(url, onFail) {
         if (validateNodeSignature(nodeWs._authChallenge, msg.signature, nodePublicKey)) {
           wsAuthenticated = true;
           clearTimeout(nodeWs._authTimer);
-          console.log('[pyana] WS node authenticated successfully');
+          console.log('[dregg] WS node authenticated successfully');
           // Now subscribe after authentication.
           nodeWs.send(JSON.stringify({
             type: 'subscribe',
             topics: ['roots', 'revocations', 'receipts', 'intents', 'note_announcements'],
           }));
         } else {
-          console.error('[pyana] WS auth failed — invalid signature from node');
+          console.error('[dregg] WS auth failed — invalid signature from node');
           nodeWs.close();
         }
       } else if (!nodePublicKey) {
         // No public key available — accept connection but log warning.
         wsAuthenticated = true;
         clearTimeout(nodeWs._authTimer);
-        console.warn('[pyana] WS auth skipped — no node public key available');
+        console.warn('[dregg] WS auth skipped — no node public key available');
         nodeWs.send(JSON.stringify({
           type: 'subscribe',
           topics: ['roots', 'revocations', 'receipts', 'intents', 'note_announcements'],
         }));
       } else {
-        console.error('[pyana] WS auth_response missing signature');
+        console.error('[dregg] WS auth_response missing signature');
         nodeWs.close();
       }
       return;
@@ -3793,19 +3793,19 @@ function tryConnect(url, onFail) {
 
     // Reject state-mutating messages if authentication has not completed.
     if (!wsAuthenticated) {
-      console.warn('[pyana] Ignoring WS message before authentication:', msg.type);
+      console.warn('[dregg] Ignoring WS message before authentication:', msg.type);
       return;
     }
 
     // Validate signature on state-mutating messages.
     if (!validateNodeMessage(msg)) {
-      console.warn('[pyana] Rejecting WS message with invalid/missing signature:', msg.type);
+      console.warn('[dregg] Rejecting WS message with invalid/missing signature:', msg.type);
       return;
     }
 
     switch (msg.type) {
       case 'root': {
-        console.log('[pyana] New root:', msg.height, msg.merkle_root);
+        console.log('[dregg] New root:', msg.height, msg.merkle_root);
         notifySubscribers('root', { height: msg.height, merkle_root: msg.merkle_root });
         break;
       }
@@ -3815,7 +3815,7 @@ function tryConnect(url, onFail) {
         if (idx !== -1) {
           cclerk.tokens.splice(idx, 1);
           await saveState();
-          console.log('[pyana] Token revoked via WS:', msg.token_id);
+          console.log('[dregg] Token revoked via WS:', msg.token_id);
         }
         notifySubscribers('revoked', { tokenId: msg.token_id });
         break;
@@ -3837,28 +3837,28 @@ function tryConnect(url, onFail) {
         if (announcements.length > 0) {
           const matched = await scanStealthNotes(announcements);
           if (matched.length > 0) {
-            console.log('[pyana] Found', matched.length, 'stealth note(s) addressed to us');
+            console.log('[dregg] Found', matched.length, 'stealth note(s) addressed to us');
           }
         }
         break;
       }
       case 'subscribed':
-        console.log('[pyana] Subscribed to topics:', msg.topics);
+        console.log('[dregg] Subscribed to topics:', msg.topics);
         break;
       case 'error':
-        console.warn('[pyana] WS error from node:', msg.message);
+        console.warn('[dregg] WS error from node:', msg.message);
         break;
     }
   };
 
   nodeWs.onclose = () => {
-    console.log('[pyana] WebSocket disconnected from node');
+    console.log('[dregg] WebSocket disconnected from node');
     nodeWs = null;
     scheduleReconnect();
   };
 
   nodeWs.onerror = (err) => {
-    console.warn('[pyana] WebSocket error:', err);
+    console.warn('[dregg] WebSocket error:', err);
     nodeWs = null;
     if (onFail) onFail();
   };
@@ -3910,14 +3910,14 @@ async function fetchDiscovery() {
       fetchError: null,
     };
 
-    console.log('[pyana] Federation discovery updated:', federationState.nodes.length, 'nodes');
+    console.log('[dregg] Federation discovery updated:', federationState.nodes.length, 'nodes');
     notifySubscribers('federation', {
       nodes: federationState.nodes,
       intentService: federationState.intentService,
       lastUpdated: federationState.lastUpdated,
     });
   } catch (e) {
-    console.warn('[pyana] Federation discovery fetch failed:', e.message);
+    console.warn('[dregg] Federation discovery fetch failed:', e.message);
     federationState.fetchError = e.message;
   }
 }

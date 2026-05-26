@@ -44,7 +44,7 @@ Bob's relay brokers connections. Bob sends `RouteRequest { target: CellId, feder
 
 Route by `H(CellId)` through a DHT-like overlay, similar to iroh's content-addressed networking. The routing layer maps `H(CellId) -> relay_endpoint` without revealing which federation the cell belongs to. Federation membership is hidden from intermediaries.
 
-**Pros**: Maximum privacy -- routing reveals only a hash, not federation identity. Works across federations without explicit federation discovery. Aligns with pyana's ZK philosophy.
+**Pros**: Maximum privacy -- routing reveals only a hash, not federation identity. Works across federations without explicit federation discovery. Aligns with dregg's ZK philosophy.
 
 **Cons**: Requires a global overlay network (DHT or gossip). DHT maintenance has churn costs. Sybil resistance needed. Higher latency than direct relay-to-relay. CellId stability assumption (if cells migrate between federations, routing entries must update).
 

@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Pyana — Capability-Secure Distributed Runtime</title>
+<title><code>dregg</code> — Capability-Secure Distributed Runtime</title>
 
 <!-- ==================== HERO ==================== -->
 <header class="hero">
@@ -7,7 +7,7 @@
     <p class="hero__eyebrow">A capability-secure distributed runtime. One shared fabric. Emergent groups. Provable everything.</p>
     <h1>Cells, turns, proofs. <em>The sovereignty spectrum is continuous.</em></h1>
     <p class="hero__sub">
-      Pyana is a unified fabric built on a shared blocklace. Reference groups form emergently
+      <code>dregg</code> is a unified fabric built on a shared blocklace. Reference groups form emergently
       through mutual acknowledgment &mdash; there are no fixed federations to join or leave. Every
       state transition is proven by a 24-effect VM in a single STARK. Your phone is a node.
       A cloud cluster is a node. Move fluidly between sovereign operation and replicated consensus.
@@ -24,7 +24,7 @@
 
 <!-- ==================== DIFFERENTIATORS ==================== -->
 <section class="section wrap">
-  <span class="section__label">Why Pyana</span>
+  <span class="section__label">Why <code>dregg</code></span>
   <h2 class="section__title">Four things that are different here</h2>
   <div class="problems">
     <div class="problem">
@@ -204,7 +204,7 @@
   <div class="arch">
     <pre><code>Applications             Stablecoin | AMM | Orderbook | Namespace | Identity | Compute
   ────────────────────────────────────────────────────────────────────
-CLI                      pyana cell | turn | cap | namespace | route | storage | cclerk
+CLI                      dregg cell | turn | cap | namespace | route | storage | cclerk
   ────────────────────────────────────────────────────────────────────
 SDK                      AgentCipherclerk | AgentRuntime | HD keys | IT-PIR discovery
   ────────────────────────────────────────────────────────────────────
@@ -242,7 +242,7 @@ Policy                   Datalog (deny overrides allow) | Macaroon + Biscuit tok
 <!-- ==================== USE CASES ==================== -->
 <section class="section wrap">
   <span class="section__label">Use Cases</span>
-  <h2 class="section__title">Where pyana fits</h2>
+  <h2 class="section__title">Where dregg fits</h2>
   <div class="usecases">
     <div class="usecase">
       <p class="usecase__icon">agents</p>
@@ -314,27 +314,27 @@ Policy                   Datalog (deny overrides allow) | Macaroon + Biscuit tok
         <span class="quickstart__n">1</span>
         <div>
           <p>Build and run a node:</p>
-          <pre><code class="language-bash">git clone https://github.com/emberian/pyana && cd pyana
+          <pre><code class="language-bash">git clone https://github.com/emberian/dregg && cd dregg
 cargo build
-cargo run -p pyana-node run</code></pre>
+cargo run -p dregg-node run</code></pre>
         </div>
       </div>
       <div class="quickstart__step">
         <span class="quickstart__n">2</span>
         <div>
           <p>Interact via CLI:</p>
-          <pre><code class="language-bash">pyana cell list
-pyana cell create --name my-agent
-pyana cap grant &lt;cell-id&gt; --service storage --actions read
-pyana namespace register alice --target &lt;cell-id&gt;
-pyana intent post --spec '{"service": "compute", "action": "execute"}'</code></pre>
+          <pre><code class="language-bash">dregg cell list
+dregg cell create --name my-agent
+dregg cap grant &lt;cell-id&gt; --service storage --actions read
+dregg namespace register alice --target &lt;cell-id&gt;
+dregg intent post --spec '{"service": "compute", "action": "execute"}'</code></pre>
         </div>
       </div>
       <div class="quickstart__step">
         <span class="quickstart__n">3</span>
         <div>
           <p>Or use the SDK directly:</p>
-          <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation, VerificationMode, AuthRequest};
+          <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation, VerificationMode, AuthRequest};
 
 let mut cclerk = AgentCipherclerk::new();
 let root = cclerk.mint_token(b"secret-key-material-32-bytes!!!!", "inventory");
@@ -354,7 +354,7 @@ let proof = cclerk.authorize(&amp;child, &amp;req, VerificationMode::FullyPrivat
         <span class="quickstart__n">4</span>
         <div>
           <p>Run the full demo (federation + token + STARK + turn execution + intent solving):</p>
-          <pre><code class="language-bash">cargo run -p pyana-demo-agent</code></pre>
+          <pre><code class="language-bash">cargo run -p dregg-demo-agent</code></pre>
           <p style="margin-top: var(--s2);">
             <a href="/learn/developers/tutorial-first-app.html">Full tutorial</a> &middot;
             <a href="/learn/developers/typescript-sdk.html">TypeScript SDK docs</a> &middot;

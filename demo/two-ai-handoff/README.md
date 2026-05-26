@@ -1,9 +1,9 @@
 # Two-AI Capability Handoff Demo — Silver-Vision Edition
 
-End-to-end demo of pyana's Silver-Vision substrate pieces, driven by two
+End-to-end demo of dregg's Silver-Vision substrate pieces, driven by two
 simulated AI processes (`alice` and `bob`), verified by an
 independent process (`charlie`) shelling to the structurally-independent
-`pyana-verifier` binary.
+`dregg-verifier` binary.
 
 ## What this demo demonstrates
 
@@ -39,7 +39,7 @@ independent process (`charlie`) shelling to the structurally-independent
 5. **γ.2 bilateral binding** — A `BilateralBundle` is assembled for a
    single `Effect::Transfer { from: alice, to: bob, amount: 100 }`, with
    one fabricated `WitnessedReceipt` per cell carrying the γ.2 PI
-   layout. Charlie shells to `pyana-verifier bilateral-pair <bundle>`
+   layout. Charlie shells to `dregg-verifier bilateral-pair <bundle>`
    to confirm cross-cell pair-verification (the schedule's
    transfer-id-derived OUTGOING_TRANSFER_ROOT on Alice matches the
    INCOMING_TRANSFER_ROOT on Bob, with `IS_AGENT_CELL` exactly 1 on
@@ -47,7 +47,7 @@ independent process (`charlie`) shelling to the structurally-independent
    Alice's `OUTGOING_TRANSFER_ROOT`) **must** reject.
 
 The demo also continues to drive Alice's grant turn and Bob's exercise
-turn through `pyana-node`'s MCP layer so the receipt chain, balance
+turn through `dregg-node`'s MCP layer so the receipt chain, balance
 deltas, and per-turn STARK proofs are real ledger artifacts.
 
 ## How to run
@@ -57,7 +57,7 @@ cd demo/two-ai-handoff
 ./run.sh
 ```
 
-`run.sh` builds `pyana-node`, `pyana-verifier`, and `silver-helper`. On
+`run.sh` builds `dregg-node`, `dregg-verifier`, and `silver-helper`. On
 cargo failure it sleeps 60s and retries once (matches the no-worktree
 concurrent-cargo policy).
 
@@ -68,19 +68,19 @@ assertion was correctly rejected.
 
 | Component       | Crate              | Independent? |
 |-----------------|--------------------|--------------|
-| `pyana-node`    | `node`             | the prover (Alice, Bob each get their own data-dir) |
-| `pyana-verifier`| `verifier`         | structurally independent — links only `pyana-circuit`, `pyana-turn`, `pyana-federation`, `pyana-captp`, `pyana-types` |
-| `silver-helper` | `pyana-demo` (this directory hosts `silver_helper.rs`) | the demo-side helper that assembles canonical CapTP-delivered / sovereign / γ.2 artifacts using the substrate's real types but demo-local Ed25519 keys |
-| `alice.py`      | drives Alice's `pyana-node mcp` over JSON-RPC | runs in its own process |
-| `bob.py`        | drives Bob's `pyana-node mcp` over JSON-RPC | runs in its own process |
-| `charlie.py`    | drives `pyana-verifier` and `silver-helper` | NO MCP, NO node — pure off-disk verification |
+| `dregg-node`    | `node`             | the prover (Alice, Bob each get their own data-dir) |
+| `dregg-verifier`| `verifier`         | structurally independent — links only `dregg-circuit`, `dregg-turn`, `dregg-federation`, `dregg-captp`, `dregg-types` |
+| `silver-helper` | `dregg-demo` (this directory hosts `silver_helper.rs`) | the demo-side helper that assembles canonical CapTP-delivered / sovereign / γ.2 artifacts using the substrate's real types but demo-local Ed25519 keys |
+| `alice.py`      | drives Alice's `dregg-node mcp` over JSON-RPC | runs in its own process |
+| `bob.py`        | drives Bob's `dregg-node mcp` over JSON-RPC | runs in its own process |
+| `charlie.py`    | drives `dregg-verifier` and `silver-helper` | NO MCP, NO node — pure off-disk verification |
 
 ## Files
 
 - `run.sh` — orchestrator
 - `alice.py` — Alice's MCP driver (grant + bearer-cap-create + compress-history)
 - `bob.py` — Bob's MCP driver (identity + exercise)
-- `charlie.py` — verifier driver (shells to `pyana-verifier` + `silver-helper`)
+- `charlie.py` — verifier driver (shells to `dregg-verifier` + `silver-helper`)
 - `silver_helper.rs` — the demo's Rust helper binary; registered in
   `../Cargo.toml` as `[[bin]] name = "silver-helper"`
 - `expected.json` — declarative `must_pass` / `must_not_pass` post-conditions
@@ -93,23 +93,23 @@ These are the spots where `silver-helper` does in Rust what an MCP tool
 *should* do. Each is one MCP tool away from the demo running entirely
 through the node:
 
-1. **`pyana_exercise_handoff_cert`** — would build a Turn with
+1. **`dregg_exercise_handoff_cert`** — would build a Turn with
    `Authorization::CapTpDelivered` via the MCP layer. Today, the
-   existing `pyana_exercise_bearer_cap` uses `Authorization::Bearer`.
+   existing `dregg_exercise_bearer_cap` uses `Authorization::Bearer`.
 
-2. **`pyana_submit_sovereign_turn`** — would let an MCP client submit
+2. **`dregg_submit_sovereign_turn`** — would let an MCP client submit
    a Turn whose `sovereign_witnesses` map carries a cclerk-signed
-   `SovereignCellWitness`. Today, `pyana_make_sovereign` only registers
+   `SovereignCellWitness`. Today, `dregg_make_sovereign` only registers
    the cell as sovereign — there's no MCP path to land a witness-carrying
    turn.
 
-3. **`pyana_install_cell_program`** — would let an MCP client attach a
+3. **`dregg_install_cell_program`** — would let an MCP client attach a
    `CellProgram::Predicate(Vec<StateConstraint>)` to a cell so the
    executor enforces the slot caveats on every turn. Today, the
    constraint enforcement code (`cell/src/program.rs::evaluate`) is
    public but no MCP tool wires it onto a live cell.
 
-4. **Per-cell `WitnessedReceipt` emission** — `pyana_exercise_bearer_cap`
+4. **Per-cell `WitnessedReceipt` emission** — `dregg_exercise_bearer_cap`
    today produces a single agent-side WR. For γ.2 bilateral verification
    we need *one WR per touched cell*. This depends on Stage-7-γ.0
    per-cell proof emission landing throughout the executor's commit

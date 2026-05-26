@@ -8,7 +8,7 @@
 //! If both conditions hold, the turn qualifies for the fast path. Otherwise,
 //! it must be ordered via consensus to prevent double-spend and resolve conflicts.
 
-use pyana_cell::Ledger;
+use dregg_cell::Ledger;
 use serde::{Deserialize, Serialize};
 
 use crate::conflict::extract_access_sets;
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::action::{Action, Authorization, DelegationMode, Effect};
     use crate::forest::{CallForest, CallTree};
-    use pyana_cell::{Cell, CellId, Preconditions};
+    use dregg_cell::{Cell, CellId, Preconditions};
 
     fn insert_cell(ledger: &mut Ledger, public_key: [u8; 32], balance: u64) -> CellId {
         let token_id = [0u8; 32];

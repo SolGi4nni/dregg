@@ -10,8 +10,8 @@ file what isn't, push back on §6/§7 where the framing is wrong.
 The document has seven sections:
 
 - §1 — what Studio is today (the actual surface)
-- §2 — the extension-cclerk contract (`window.pyana`)
-- §3 — the wasm runtime contract (`PyanaRuntime`)
+- §2 — the extension-cclerk contract (`window.dregg`)
+- §3 — the wasm runtime contract (`DreggRuntime`)
 - §4 — refactor-by-refactor pickup table (the working surface)
 - §5 — prioritized resume tasks
 - §6 — things Studio wants but we haven't designed
@@ -32,7 +32,7 @@ Three surfaces share one substrate (per `site/STUDIO.md`):
 | Starbridge  | `/starbridge/`   | User-selected             | User-selected  |
 
 Plus a smaller "Studio Phase-0 spike" page at `/studio/` that demonstrates
-a single `<pyana-cell>` + `<pyana-cell-list>` + the peer-exchange
+a single `<dregg-cell>` + `<dregg-cell-list>` + the peer-exchange
 Discord-paste UX (`site/src/studio.html`).
 
 ### 1.2 Source-of-truth files
@@ -47,19 +47,19 @@ Discord-paste UX (`site/src/studio.html`).
     URI input, time cursor, object tree, raw JSON pane). 411 lines.
   - `starbridge.css`
   - `runtimes.js` — runtime-kind registry (`in-memory`, `remote`)
-  - `runtime-in-memory.js` — the JS driver around the wasm `PyanaRuntime`
+  - `runtime-in-memory.js` — the JS driver around the wasm `DreggRuntime`
     handle. 441 lines. Owns the signal cache and the JS-side intent
     ledger / block log (workarounds for missing wasm getters)
   - `runtime-remote.js` — read-only HTTP/SSE viewport onto a live node
-  - `inspectors.js` — barrel; defines `<pyana-cell>` + `<pyana-cell-list>`
+  - `inspectors.js` — barrel; defines `<dregg-cell>` + `<dregg-cell-list>`
     inline, imports the rest
   - `inspectors/_base.js` — shared `InspectorBase` custom-element class
     + `renderParseError` + `shortHex`
   - `inspectors/turn.js`, `receipt.js`, `receipt-list.js`,
     `capability.js`, `capability-list.js`, `intent.js`,
     `federation.js`, `block.js`
-  - `context.js` — `<pyana-app>` custom element + `findRuntime(host)`
-  - `uri.js` — `pyana://` URI parser
+  - `context.js` — `<dregg-app>` custom element + `findRuntime(host)`
+  - `uri.js` — `dregg://` URI parser
 
 **Page chrome:**
 
@@ -67,12 +67,12 @@ Discord-paste UX (`site/src/studio.html`).
 - `site/src/studio.html` — Phase-0 spike page (controls + cell list + peer
   exchange textareas)
 - `site/src/_includes/runtime-bootstrap.js` — loads Preact + signals +
-  htm, exposes them via `window.pyana` (NOT the cclerk — colliding name;
+  htm, exposes them via `window.dregg` (NOT the cclerk — colliding name;
   see §2 note)
 
 **Wasm shim (Studio depends on it):**
 
-- `wasm/src/runtime.rs` — `PyanaRuntime` (877 lines)
+- `wasm/src/runtime.rs` — `DreggRuntime` (877 lines)
 - `wasm/src/bindings.rs` — `#[wasm_bindgen]` JS surface (1900+ lines)
 - `wasm/src/lib.rs` — non-runtime crypto helpers (mint_token,
   stark proof helpers, etc.)
@@ -97,9 +97,9 @@ Discord-paste UX (`site/src/studio.html`).
 
 ### 1.3 What Studio does today (read paths verified)
 
-- Loads wasm, creates a `PyanaRuntime` handle, attaches it to a
-  `<pyana-app>` runtime context provider.
-- Parses `pyana://<kind>/<id>[/<sub>...]` URIs (no `?at=`/`@height`
+- Loads wasm, creates a `DreggRuntime` handle, attaches it to a
+  `<dregg-app>` runtime context provider.
+- Parses `dregg://<kind>/<id>[/<sub>...]` URIs (no `?at=`/`@height`
   fragments yet beyond URL state).
 - Reads via wasm getters: `get_cell_state`, `get_all_cells`,
   `get_receipt_chain`, `get_capability_tree`, `get_federation_state`,
@@ -110,10 +110,10 @@ Discord-paste UX (`site/src/studio.html`).
   `create_intent`, `propose_block`, `simulate_consensus_round`,
   `register_peer`, `create_peer_transition`, `verify_peer_transition`.
 - Renders all of the above through 9 custom elements:
-  `<pyana-app>`, `<pyana-cell>`, `<pyana-cell-list>`, `<pyana-turn>`,
-  `<pyana-receipt>`, `<pyana-receipt-list>`, `<pyana-capability>`,
-  `<pyana-capability-list>`, `<pyana-intent>`, `<pyana-federation>`,
-  `<pyana-block>`.
+  `<dregg-app>`, `<dregg-cell>`, `<dregg-cell-list>`, `<dregg-turn>`,
+  `<dregg-receipt>`, `<dregg-receipt-list>`, `<dregg-capability>`,
+  `<dregg-capability-list>`, `<dregg-intent>`, `<dregg-federation>`,
+  `<dregg-block>`.
 
 ### 1.4 What Studio does NOT do today (gaps documented in code)
 
@@ -128,7 +128,7 @@ Discord-paste UX (`site/src/studio.html`).
 - No turn-builder inspector. No debugger inspector. No time-travel
   cursor on the sim runtime (cursor advances on `advance_height` but is
   read-only; `caps.timeTravel = false`).
-- No `<pyana-proof>` inspector.
+- No `<dregg-proof>` inspector.
 - No discovery/peer pickers, no federation-registry UX, no slot-caveat
   editor.
 
@@ -139,18 +139,18 @@ Discord-paste UX (`site/src/studio.html`).
 ### 2.1 Where it lives
 
 - `extension/src/page.ts` — the page-injected script that exposes
-  `window.pyana` (frozen). 326 lines. Communicates with `content.ts`
+  `window.dregg` (frozen). 326 lines. Communicates with `content.ts`
   via nonce-keyed `CustomEvent`s on `window`.
 - `extension/src/types.ts` — shared TS definitions for the
   page↔content↔background message protocol
 - `extension/src/background.ts`, `content.ts`, `api.ts` — the rest of
   the extension; Studio doesn't talk to them directly
 
-**Naming collision warning:** `window.pyana` is overloaded.
-- The *extension* defines it as the **cclerk** (the `PyanaAPI`
+**Naming collision warning:** `window.dregg` is overloaded.
+- The *extension* defines it as the **cclerk** (the `DreggAPI`
   interface in `page.ts`, frozen).
 - The Studio's `site/src/_includes/runtime-bootstrap.js` ALSO sets
-  `window.pyana` to a Preact-and-signals namespace (`h`, `html`,
+  `window.dregg` to a Preact-and-signals namespace (`h`, `html`,
   `signal`, `effect`, `render`, `toast`, etc.).
 
 Both contexts assume they own the global. The page that hosts the
@@ -160,10 +160,10 @@ loaded with the extension installed* will have BOTH trying to claim it
 extension wins via `Object.defineProperty` with `writable: false`,
 which means the bootstrap's later assignment throws in strict mode).
 This is a **landmine for the studio agent** the moment a real
-starbridge-app needs to call `window.pyana.signTurn` AND mount a
-`<pyana-app>`. **See §6.1 for the fix-it-once proposal.**
+starbridge-app needs to call `window.dregg.signTurn` AND mount a
+`<dregg-app>`. **See §6.1 for the fix-it-once proposal.**
 
-### 2.2 The `PyanaAPI` surface (43 methods)
+### 2.2 The `DreggAPI` surface (43 methods)
 
 Grouped by concern. All return Promises.
 
@@ -226,15 +226,15 @@ Grouped by concern. All return Promises.
   `authorization`, `revoked`, `stealthNoteReceived`,
   `privateTransfer`, `intentFulfilled`, `privacyModeChanged`
 
-### 2.3 What Studio uses today from `window.pyana` (the cclerk)
+### 2.3 What Studio uses today from `window.dregg` (the cclerk)
 
 **Approximately nothing.** The Studio's `runtime-in-memory.js` drives
-the wasm `PyanaRuntime` directly — it does not call cclerk methods.
+the wasm `DreggRuntime` directly — it does not call cclerk methods.
 The `runtime-remote.js` similarly speaks raw HTTP to the node.
 
 The only place the cclerk contract enters Studio code today is the
 *expectation* in `starbridge-apps/shared/turn-builders/index.js`:
-those builders WILL call `window.pyana.signTurn(...)` once written.
+those builders WILL call `window.dregg.signTurn(...)` once written.
 None are written yet.
 
 This is the cleanest pickup point: **a starbridge-app's mutating UX
@@ -253,29 +253,29 @@ Anticipated by the refactor list:
 
 ---
 
-## §3. The wasm / PyanaRuntime contract
+## §3. The wasm / DreggRuntime contract
 
 ### 3.1 Wiring (real, not simulated)
 
 Per `site/STUDIO.md` § 3 and verified in `wasm/src/runtime.rs`:
 
-- **Ledger:** real `pyana_cell::Ledger`.
-- **Executor:** real `pyana_turn::TurnExecutor` with default
+- **Ledger:** real `dregg_cell::Ledger`.
+- **Executor:** real `dregg_turn::TurnExecutor` with default
   `ComputronCosts`. Timestamp + block height managed by the runtime
   (`set_timestamp`, `set_block_height`).
-- **AgentCipherclerk:** real `pyana_sdk::AgentCipherclerk`. Constructed from a
-  deterministic blake3-derived 32-byte seed (`pyana-wasm-agent-key`
+- **AgentCipherclerk:** real `dregg_sdk::AgentCipherclerk`. Constructed from a
+  deterministic blake3-derived 32-byte seed (`dregg-wasm-agent-key`
   derive-key + name + idx). Signing goes through
   `cclerk.sign_action(...)`. No JS-side cryptography.
-- **PeerExchange:** real `pyana_cell::PeerExchange`, one per agent,
+- **PeerExchange:** real `dregg_cell::PeerExchange`, one per agent,
   constructed via `cclerk.peer_exchange(WASM_SIM_DOMAIN)`. Uses
   `create_transition_at(...)` to thread the runtime's logical clock
   into the signed message (the default `create_transition` calls
   `SystemTime::now()` which panics on wasm32-unknown-unknown).
-- **NullifierSet:** real `pyana_cell::NullifierSet`.
-- **RevocationChannelSet:** real `pyana_cell::RevocationChannelSet`.
-- **Federation:** **real `pyana_federation::Federation`** — the
-  previous `SimFederation` was deleted. The `pyana-federation` crate
+- **NullifierSet:** real `dregg_cell::NullifierSet`.
+- **RevocationChannelSet:** real `dregg_cell::RevocationChannelSet`.
+- **Federation:** **real `dregg_federation::Federation`** — the
+  previous `SimFederation` was deleted. The `dregg-federation` crate
   gained a `runtime` Cargo feature that gates its tokio +
   crossbeam-channel transport (wasm-incompatible); the wasm crate
   pulls it in with `default-features = false`. Federations have real
@@ -288,7 +288,7 @@ Per `site/STUDIO.md` § 3 and verified in `wasm/src/runtime.rs`:
 - **IntentPool:** a `Vec<Intent>` lives directly on the runtime; no
   separate pool type. Intents created via `create_intent` are stored;
   matching via `match_intent_for_agent`.
-- **Conditional turns:** real `pyana_turn::ConditionalTurn` queue
+- **Conditional turns:** real `dregg_turn::ConditionalTurn` queue
   (`PendingConditional`).
 
 ### 3.2 What the JS layer fakes around the wasm
@@ -298,7 +298,7 @@ don't exist yet:
 
 - **Intent ledger** — wasm has no `get_intent(idx)` / `list_intents`.
   JS keeps `intentLedger[]` populated by `createIntent` calls. Intents
-  created out-of-band (none today) won't appear in `<pyana-intent>`.
+  created out-of-band (none today) won't appear in `<dregg-intent>`.
 - **Block log** — wasm has no `get_block(fed_idx, height)`. Wait, the
   comment in `block.js` says wasm exposes `get_federation_block` —
   and indeed `runtime-in-memory.js` uses it. The block inspector's
@@ -309,13 +309,13 @@ don't exist yet:
   local signal in `createFederation`. Federations created outside the
   JS path (none today) won't surface in `listBlocks()`.
 - **Capability per-id resolution** — caps are agent-indexed by slot,
-  not by global ID. URI form is `pyana://capability/<agent_idx>/<slot>`,
+  not by global ID. URI form is `dregg://capability/<agent_idx>/<slot>`,
   which violates STUDIO.md § 4's "stable URI" promise. This is a known
   protocol-level mismatch: caps don't *have* global IDs in this
   runtime; the sim addresses them by (holder, slot). Needs design
   closure before the URI scheme can stabilize.
 
-### 3.3 What `PyanaRuntime` exposes (the wasm side)
+### 3.3 What `DreggRuntime` exposes (the wasm side)
 
 **World management:** `create_runtime` / `destroy_runtime`
 
@@ -354,10 +354,10 @@ stealth addresses, range proofs, encrypted intents.
 ### 3.4 Trust model in the browser
 
 Every cryptographic primitive surfaced in the Studio is the canonical
-Rust implementation: Ed25519 from `pyana_sdk::AgentCipherclerk`,
-Poseidon2/STARK from `pyana_circuit`, federation consensus from
-`pyana_federation`, peer transitions from `pyana_cell::PeerExchange`,
-nullifiers from `pyana_cell::NullifierSet`. **No JS-side
+Rust implementation: Ed25519 from `dregg_sdk::AgentCipherclerk`,
+Poseidon2/STARK from `dregg_circuit`, federation consensus from
+`dregg_federation`, peer transitions from `dregg_cell::PeerExchange`,
+nullifiers from `dregg_cell::NullifierSet`. **No JS-side
 re-implementation of any of these.** This is the bedrock the studio
 agent should defend: a Studio bug is a real bug; a Studio passing
 test is a real test.
@@ -375,8 +375,8 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | None today — Studio drives `AgentCipherclerk` directly via `runtime.rs::SimAgent`. Starbridge-apps surface IS affected once the JS turn-builders land. |
-| **Where it lands** | `starbridge-apps/shared/turn-builders/index.js` is the JS analog: each builder constructs a turn-spec that the cclerk signs via `window.pyana.signTurn`. The Rust `AppCipherclerk` is the *server* / *node* side; the Studio is a thin viewer + signer, NOT an `AppCipherclerk` consumer in Rust. |
-| **Change to Studio** | Nothing structural in the inspectors. The doc `starbridge-apps/README.md` correctly frames the JS turn-builders as `window.pyana.signTurn` wrappers — that's the right pattern; the studio agent should write the first one (`nameservice.js` per the README example). |
+| **Where it lands** | `starbridge-apps/shared/turn-builders/index.js` is the JS analog: each builder constructs a turn-spec that the cclerk signs via `window.dregg.signTurn`. The Rust `AppCipherclerk` is the *server* / *node* side; the Studio is a thin viewer + signer, NOT an `AppCipherclerk` consumer in Rust. |
+| **Change to Studio** | Nothing structural in the inspectors. The doc `starbridge-apps/README.md` correctly frames the JS turn-builders as `window.dregg.signTurn` wrappers — that's the right pattern; the studio agent should write the first one (`nameservice.js` per the README example). |
 | **LOC delta** | ~60 (one nameservice turn-builder + its inspector hookup). |
 | **Prereqs** | None. `AppCipherclerk` is landed in Rust; the JS side is independent. |
 
@@ -384,9 +384,9 @@ prerequisites.
 
 | Field | Value |
 |---|---|
-| **Studio surface affected** | The mounting flow used by `starbridge-apps/*/pages/index.html`. Today `nameservice/pages/index.html` declares `factory-vk="..."` as an attribute on `<pyana-app>`; nothing reads it. |
-| **Where it lands** | `<pyana-app>` in `site/src/_includes/studio/context.js` should grow `factory-vk`, `registry-uri`, and a per-app `FactoryDescriptor[]` registration hook. The framework's preload contract (apps export `FACTORY_DESCRIPTORS`, host calls `register`) needs a JS mirror that hands the wasm runtime the array at boot — equivalent to the Rust `StarbridgeAppContext::register`. |
-| **Change to Studio** | (a) extend `<pyana-app>` to read `factory-vk` / `registry-uri` attrs and expose them to children via the same closest-ancestor protocol; (b) add `runtime.preloadFactory(descriptorJson)` on `InMemoryRuntime`; (c) wasm needs `preload_factory_descriptor(handle, json)` binding — Rust side. |
+| **Studio surface affected** | The mounting flow used by `starbridge-apps/*/pages/index.html`. Today `nameservice/pages/index.html` declares `factory-vk="..."` as an attribute on `<dregg-app>`; nothing reads it. |
+| **Where it lands** | `<dregg-app>` in `site/src/_includes/studio/context.js` should grow `factory-vk`, `registry-uri`, and a per-app `FactoryDescriptor[]` registration hook. The framework's preload contract (apps export `FACTORY_DESCRIPTORS`, host calls `register`) needs a JS mirror that hands the wasm runtime the array at boot — equivalent to the Rust `StarbridgeAppContext::register`. |
+| **Change to Studio** | (a) extend `<dregg-app>` to read `factory-vk` / `registry-uri` attrs and expose them to children via the same closest-ancestor protocol; (b) add `runtime.preloadFactory(descriptorJson)` on `InMemoryRuntime`; (c) wasm needs `preload_factory_descriptor(handle, json)` binding — Rust side. |
 | **LOC delta** | ~80 JS + ~40 Rust binding. |
 | **Prereqs** | Need the `StarbridgeAppContext` Rust trait stabilized in `app-framework`; today `starbridge-apps/README.md` says it's not yet defined. Coordinate with Lane I. |
 
@@ -395,8 +395,8 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | The receipt/turn inspectors. Today `inspectors/turn.js` and `inspectors/receipt.js` render `r.action_count` and `r.computrons_used` — they do NOT surface action authorization at all. So nothing breaks; the variant is invisible to Studio. |
-| **Where it lands** | `wasm/src/bindings.rs::get_receipt_chain` would have to grow per-action authorization fields (currently it returns only top-level receipt metadata; see the `Receipt shape` doc-comment in `inspectors/receipt.js`). Then `<pyana-turn>` and `<pyana-receipt>` grow an "authorization" row with a 6-variant badge: `Signature` / `Proof` / `Breadstuff` / `Bearer` / `Unchecked` / `CapTpDelivered`. |
-| **Change to Studio** | New inspector helper `<pyana-authorization>` (compact mode renders a badge; default mode shows the typed payload, e.g. for `CapTpDelivered` show capability_id + delivery_proof_hash). Wire it into `<pyana-turn>` (per-action) and `<pyana-receipt>`. |
+| **Where it lands** | `wasm/src/bindings.rs::get_receipt_chain` would have to grow per-action authorization fields (currently it returns only top-level receipt metadata; see the `Receipt shape` doc-comment in `inspectors/receipt.js`). Then `<dregg-turn>` and `<dregg-receipt>` grow an "authorization" row with a 6-variant badge: `Signature` / `Proof` / `Breadstuff` / `Bearer` / `Unchecked` / `CapTpDelivered`. |
+| **Change to Studio** | New inspector helper `<dregg-authorization>` (compact mode renders a badge; default mode shows the typed payload, e.g. for `CapTpDelivered` show capability_id + delivery_proof_hash). Wire it into `<dregg-turn>` (per-action) and `<dregg-receipt>`. |
 | **LOC delta** | ~120 JS (new inspector + integration). ~30 Rust (binding enrichment). |
 | **Prereqs** | Wasm binding must surface per-action authorization. Today it doesn't. |
 
@@ -406,7 +406,7 @@ prerequisites.
 |---|---|
 | **Studio surface affected** | `inspectors/federation.js`, `runtime-in-memory.js::createFederation`, `runtime-remote.js::pickHeight` (status payload changes). |
 | **Where it lands** | The new `Federation` type subsumes `SimFederation`, `Federation`, `FederationNode`, `FederationState` (the latter two live in `extension/src/types.ts`). The studio agent owns the JS-side unification: collapse `SimFederation` (in `runtime.rs`) and the federation summaries returned by `get_federation_state` into one shape that matches the unified Rust type. The `KnownFederations` registry needs a Studio UX: a "Federations" pane listing the federations this runtime knows, with add/remove. |
-| **Change to Studio** | (a) new `<pyana-federation-list>` inspector that reads `runtime.listKnownFederations()` — new method. (b) new `<pyana-federation-add>` form (Lane N CLI will exist; this is the GUI sibling) talking to `window.pyana` via a new `registerFederation` method (see §2.4). (c) extend `runtime-remote.js` to discover via `GET /api/federations`. |
+| **Change to Studio** | (a) new `<dregg-federation-list>` inspector that reads `runtime.listKnownFederations()` — new method. (b) new `<dregg-federation-add>` form (Lane N CLI will exist; this is the GUI sibling) talking to `window.dregg` via a new `registerFederation` method (see §2.4). (c) extend `runtime-remote.js` to discover via `GET /api/federations`. |
 | **LOC delta** | ~180 JS. Lane M Rust + Lane N CLI + extension cclerk additions are dependencies. |
 | **Prereqs** | Lane M (Federation type unification) must land; Lane N CLI shape should be stable so the GUI doesn't drift; extension cclerk needs `registerFederation` / `listKnownFederations` methods. |
 
@@ -415,18 +415,18 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | `inspectors/federation.js` (the `latest_root` field — but that's a different hash). The actual federation_id is sourced from `executor.local_federation_id` in `wasm/src/runtime.rs::execute_turn_for_agent`; it never reaches the JS layer. |
-| **Where it lands** | (a) `bindings.rs::get_federation_state` should return `federation_id` derived from committee_pubkeys (per `pyana_federation::Federation::id()`, if such a getter exists or needs to be added). (b) `<pyana-federation>` shows the derived `federation_id` as a top-level field. |
-| **Change to Studio** | Add `federation_id` to the federation summary serde struct in `bindings.rs`. Add a row to `<pyana-federation>`. |
+| **Where it lands** | (a) `bindings.rs::get_federation_state` should return `federation_id` derived from committee_pubkeys (per `dregg_federation::Federation::id()`, if such a getter exists or needs to be added). (b) `<dregg-federation>` shows the derived `federation_id` as a top-level field. |
+| **Change to Studio** | Add `federation_id` to the federation summary serde struct in `bindings.rs`. Add a row to `<dregg-federation>`. |
 | **LOC delta** | ~20 JS + ~10 Rust. |
 | **Prereqs** | None — landed. |
-| **Acceptance test** | Display value must equal `BLAKE3-derive("pyana-federation-id-v1", concat(sort(committee_pubkeys)))` (or whatever Lane D specifies); the studio agent must NOT show random bytes from the federation node's local config. |
+| **Acceptance test** | Display value must equal `BLAKE3-derive("dregg-federation-id-v1", concat(sort(committee_pubkeys)))` (or whatever Lane D specifies); the studio agent must NOT show random bytes from the federation node's local config. |
 
 ### Refactor 6 — Slot caveats (`cell::program::StateConstraint` → 21 variants, in flight)
 
 | Field | Value |
 |---|---|
-| **Studio surface affected** | No existing inspector reads cell-program state constraints. `<pyana-cell>` renders `permissions` as `JSON.stringify` — the StateConstraint shape is hidden inside `cell.state` / `cell.program` which the JS layer doesn't unpack. |
-| **Where it lands** | (a) `bindings.rs::get_cell_state` must surface `cell.program.constraints: Vec<StateConstraint>` as a structured field; today the `CellStateView` struct omits the program entirely. (b) New `<pyana-cell-program>` inspector renders the 21-variant list with per-variant compact display. (c) `<pyana-cell>` shows the program inspector in a tab or sub-pane. |
+| **Studio surface affected** | No existing inspector reads cell-program state constraints. `<dregg-cell>` renders `permissions` as `JSON.stringify` — the StateConstraint shape is hidden inside `cell.state` / `cell.program` which the JS layer doesn't unpack. |
+| **Where it lands** | (a) `bindings.rs::get_cell_state` must surface `cell.program.constraints: Vec<StateConstraint>` as a structured field; today the `CellStateView` struct omits the program entirely. (b) New `<dregg-cell-program>` inspector renders the 21-variant list with per-variant compact display. (c) `<dregg-cell>` shows the program inspector in a tab or sub-pane. |
 | **LOC delta** | ~250 JS (the 21-variant switch is large) + ~80 Rust binding. |
 | **Prereqs** | The 21-variant enum must be stable. Today `SLOT-CAVEATS-DESIGN.md` and `SLOT-CAVEATS-EVALUATION.md` exist; the variants list should be locked before the studio agent writes the inspector — otherwise the inspector enum-switch becomes the canonical reference, which is upside-down. |
 
@@ -434,8 +434,8 @@ prerequisites.
 
 | Field | Value |
 |---|---|
-| **Studio surface affected** | The receipt inspector. Today `<pyana-receipt>` shows `pre_state_hash`, `post_state_hash`, `computrons_used`, `timestamp`, `action_count`. Bilateral PI slots are part of the proof attached to a receipt; the Studio doesn't surface proofs at all. |
-| **Where it lands** | (a) `bindings.rs::get_receipt_chain` exposes per-receipt proof metadata: `proof_kind`, `public_inputs`, bilateral binding slots. (b) New `<pyana-proof>` inspector (mentioned in STUDIO.md table but not built yet) renders the PI vector, marking the γ.2 bilateral slots. (c) `<pyana-receipt>` links to `<pyana-proof uri="pyana://proof/<hash>">`. |
+| **Studio surface affected** | The receipt inspector. Today `<dregg-receipt>` shows `pre_state_hash`, `post_state_hash`, `computrons_used`, `timestamp`, `action_count`. Bilateral PI slots are part of the proof attached to a receipt; the Studio doesn't surface proofs at all. |
+| **Where it lands** | (a) `bindings.rs::get_receipt_chain` exposes per-receipt proof metadata: `proof_kind`, `public_inputs`, bilateral binding slots. (b) New `<dregg-proof>` inspector (mentioned in STUDIO.md table but not built yet) renders the PI vector, marking the γ.2 bilateral slots. (c) `<dregg-receipt>` links to `<dregg-proof uri="dregg://proof/<hash>">`. |
 | **LOC delta** | ~150 JS + ~50 Rust binding. |
 | **Prereqs** | γ.2 design must land (`STAGE-7-GAMMA-2-PI-DESIGN.md` exists; check status). |
 
@@ -444,8 +444,8 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | The peer-exchange UI in `site/src/studio.html` calls `runtime.createPeerTransition(...)` and `runtime.verifyPeerTransition(...)`; the witness shape is opaque (postcard bytes; base64'd for paste). The witness's *internal structure* is not displayed. |
-| **Where it lands** | New `<pyana-peer-transition>` inspector that decodes the postcard bytes and renders `{ cell_id, sequence, old_commitment, new_commitment, effects_hash, signature, optional_stark_proof }`. The new shape per the soundness sweep is `PeerStateTransition`-shaped (sig + sequence + optional STARK); studio renders all four fields. |
-| **Change to Studio** | (a) wasm binding `decode_peer_transition(bytes) -> JsValue` returning the structured shape (currently the JS layer only sees the encoded bytes). (b) `<pyana-peer-transition>` inspector. (c) studio.html surfaces it next to `pxMine` and `pxView`. |
+| **Where it lands** | New `<dregg-peer-transition>` inspector that decodes the postcard bytes and renders `{ cell_id, sequence, old_commitment, new_commitment, effects_hash, signature, optional_stark_proof }`. The new shape per the soundness sweep is `PeerStateTransition`-shaped (sig + sequence + optional STARK); studio renders all four fields. |
+| **Change to Studio** | (a) wasm binding `decode_peer_transition(bytes) -> JsValue` returning the structured shape (currently the JS layer only sees the encoded bytes). (b) `<dregg-peer-transition>` inspector. (c) studio.html surfaces it next to `pxMine` and `pxView`. |
 | **LOC delta** | ~140 JS + ~40 Rust binding. |
 | **Prereqs** | Soundness sweep — Sovereign witness redesign must land. |
 
@@ -454,7 +454,7 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | The wasm runtime signs via `cclerk.sign_action(...)` and the executor verifies — if both sides upgrade together, the runtime is fine. But the *extension* cclerk has its own `signTurn` path that must also upgrade, AND the receipt now must surface `sovereign_witnesses` so the user can see what was bound. |
-| **Where it lands** | (a) `extension/src/page.ts::signTurn` may need to accept a `sovereign_witnesses?: Witness[]` field in `turnSpec`. (b) `<pyana-receipt>` shows a "sovereign witnesses" section if non-empty. (c) `<pyana-turn>` likewise. |
+| **Where it lands** | (a) `extension/src/page.ts::signTurn` may need to accept a `sovereign_witnesses?: Witness[]` field in `turnSpec`. (b) `<dregg-receipt>` shows a "sovereign witnesses" section if non-empty. (c) `<dregg-turn>` likewise. |
 | **LOC delta** | ~80 JS (UI) + ~30 extension cclerk (types + envelope). |
 | **Prereqs** | The v3 message format must be locked; the extension cclerk author must agree on the new `signTurn` shape. |
 
@@ -463,7 +463,7 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | Indirect. Routing DFAs are referenced in `site/src/index.html` and `site/src/learn/*` as a marketing/learn topic but not surfaced anywhere in Studio inspectors. |
-| **Where it lands** | A new `<pyana-route>` / `<pyana-dfa>` inspector that shows the routing DFA for a given service path. URI form: `pyana://dfa/<service>` or `pyana://route/<id>`. Reads `runtime.getRoute(serviceId)` — new method, needs wasm binding and (for Remote) HTTP endpoint. |
+| **Where it lands** | A new `<dregg-route>` / `<dregg-dfa>` inspector that shows the routing DFA for a given service path. URI form: `dregg://dfa/<service>` or `dregg://route/<id>`. Reads `runtime.getRoute(serviceId)` — new method, needs wasm binding and (for Remote) HTTP endpoint. |
 | **LOC delta** | ~200 JS (the DFA viz is non-trivial — node-and-edge SVG) + wasm binding. |
 | **Prereqs** | `DFA-RATIONALIZATION-DESIGN.md` must conclude; the userspace primitive shape must be fixed. |
 
@@ -472,11 +472,11 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | Site/marketing content, NOT the Studio substrate. References found: |
-| | `site/src/index.html` lines 133, 138, 143, 218, 260 — "stablecoin", "amm", "orderbook" icons in the "usecases" section and a code block of `cargo run -p pyana-stablecoin --example demo`-style snippets |
-| | `site/src/apps.html` lines 174-200 — multiple references to `pyana-stablecoin`, `pyana-amm`, `pyana-orderbook` examples |
+| | `site/src/index.html` lines 133, 138, 143, 218, 260 — "stablecoin", "amm", "orderbook" icons in the "usecases" section and a code block of `cargo run -p dregg-stablecoin --example demo`-style snippets |
+| | `site/src/apps.html` lines 174-200 — multiple references to `dregg-stablecoin`, `dregg-amm`, `dregg-orderbook` examples |
 | | `site/src/paper.html`, `site/src/learn/architecture/{consensus,privacy,overview}.html`, `site/src/learn/users/{captp,cli}.html`, `site/src/learn/developers/building-apps.html` — text/snippet references |
 | | `apps/` directory still contains `amm/`, `lending/`, `orderbook/`, `stablecoin/`, etc. (the brief says deleted; verify against current git state — `ls apps/` at survey time shows them still present). The brief may mean "scheduled for deletion in Lane I" or "deleted in the in-flight branch". |
-| **Change to Studio** | Marketing copy edit, NOT inspector work. The inspector surface is generic (`<pyana-cell>` doesn't care whether the cell is an AMM pool or a name registration). The studio agent should: (a) remove dead `cargo run -p pyana-X --example Y` snippets from `apps.html`; (b) replace the marketing icons in `index.html` with starbridge-app names that exist (nameservice today; more per `STARBRIDGE-APPS-PLAN.md §6`); (c) ensure no inspector silently special-cases an app domain. |
+| **Change to Studio** | Marketing copy edit, NOT inspector work. The inspector surface is generic (`<dregg-cell>` doesn't care whether the cell is an AMM pool or a name registration). The studio agent should: (a) remove dead `cargo run -p dregg-X --example Y` snippets from `apps.html`; (b) replace the marketing icons in `index.html` with starbridge-app names that exist (nameservice today; more per `STARBRIDGE-APPS-PLAN.md §6`); (c) ensure no inspector silently special-cases an app domain. |
 | **LOC delta** | ~50 HTML/markup edits. |
 | **Prereqs** | Confirm with Lane I which apps are *actually* deleted (not "scheduled"). |
 
@@ -485,9 +485,9 @@ prerequisites.
 | Field | Value |
 |---|---|
 | **Studio surface affected** | The "app browser" surface. There is no app browser today; `starbridge-apps/nameservice/pages/index.html` exists but is a standalone page, not surfaced from the Studio top-bar. |
-| **Where it lands** | (a) New "Apps" tab in Starbridge: read `starbridge-apps/*/manifest.json` (a file that doesn't exist yet; needs design) and render an app card grid linking to each app's `pages/index.html`. (b) Write the first turn-builder (`starbridge-apps/shared/turn-builders/nameservice.js`) per the README example. (c) Write the first inspectors (`shared/inspectors/name.js` exporting `NameInspector`, `NameRegistryInspector`). (d) Hook them into `nameservice/pages/index.html` (today references `<pyana-name-registry>` / `<pyana-name-inspector>` which are undefined custom elements — would log a "no inspector registered" message). |
+| **Where it lands** | (a) New "Apps" tab in Starbridge: read `starbridge-apps/*/manifest.json` (a file that doesn't exist yet; needs design) and render an app card grid linking to each app's `pages/index.html`. (b) Write the first turn-builder (`starbridge-apps/shared/turn-builders/nameservice.js`) per the README example. (c) Write the first inspectors (`shared/inspectors/name.js` exporting `NameInspector`, `NameRegistryInspector`). (d) Hook them into `nameservice/pages/index.html` (today references `<dregg-name-registry>` / `<dregg-name-inspector>` which are undefined custom elements — would log a "no inspector registered" message). |
 | **LOC delta** | ~400 (~200 JS for inspectors, ~80 for turn-builders, ~100 for the app browser, ~20 for manifest plumbing). |
-| **Prereqs** | (a) `FactoryDescriptor` preload contract from refactor 2; (b) `window.pyana.createFromFactory(NAME_FACTORY_VK, ...)` resolution must work — needs the descriptor to be in scope on the cclerk side; (c) app-manifest format design. |
+| **Prereqs** | (a) `FactoryDescriptor` preload contract from refactor 2; (b) `window.dregg.createFromFactory(NAME_FACTORY_VK, ...)` resolution must work — needs the descriptor to be in scope on the cclerk side; (c) app-manifest format design. |
 
 ### Refactor 13 — Discord-bot moved to top-level
 
@@ -518,25 +518,25 @@ Ordered by (a) prereqs satisfied, (b) blast radius, (c) value to other lanes.
    correct.
 4. **Refactor 5** — Add `federation_id` derived from committee_pubkeys
    to the wasm `get_federation_state` response, surface it in
-   `<pyana-federation>`. Acceptance: not a random byte string.
+   `<dregg-federation>`. Acceptance: not a random byte string.
 
 ### Inspector enrichment (prereqs landed; ~1 day each)
 
-5. **Refactor 3** — `<pyana-authorization>` inspector + wire into
-   `<pyana-turn>` and `<pyana-receipt>`. Wasm binding enrichment
+5. **Refactor 3** — `<dregg-authorization>` inspector + wire into
+   `<dregg-turn>` and `<dregg-receipt>`. Wasm binding enrichment
    (`get_receipt_chain` returns per-action auth).
-6. **Refactor 8** — `<pyana-peer-transition>` inspector. New wasm
+6. **Refactor 8** — `<dregg-peer-transition>` inspector. New wasm
    binding `decode_peer_transition`. Replaces the opaque base64 blob
    in `site/src/studio.html` with structured display.
-7. **Refactor 7 / Refactor 9** — `<pyana-proof>` inspector + sovereign-
-   witness section on `<pyana-receipt>`. Bilateral PI slots and v3
+7. **Refactor 7 / Refactor 9** — `<dregg-proof>` inspector + sovereign-
+   witness section on `<dregg-receipt>`. Bilateral PI slots and v3
    `sovereign_witnesses` both need the same binding enrichment, so
    batch them.
 
 ### Structural (prereqs in flight; coordinate with other lanes)
 
 8. **Refactor 2** — `StarbridgeAppContext` JS mirror: extend
-   `<pyana-app>` with `factory-vk` / `registry-uri` attrs, add
+   `<dregg-app>` with `factory-vk` / `registry-uri` attrs, add
    `runtime.preloadFactory()`, add `preload_factory_descriptor` wasm
    binding. Block on the Rust trait stabilizing (Lane I).
 9. **Refactor 12 piece A** — Write `starbridge-apps/shared/turn-builders/nameservice.js`
@@ -544,7 +544,7 @@ Ordered by (a) prereqs satisfied, (b) blast radius, (c) value to other lanes.
    actually mount the (now-defined) custom elements.
 10. **Refactor 12 piece B** — Write `starbridge-apps/shared/inspectors/name.js`
     exporting `NameInspector` and `NameRegistryInspector`. Register
-    via `window.pyana.register('pyana-name', ...)`. The starbridge-app
+    via `window.dregg.register('dregg-name', ...)`. The starbridge-app
     page becomes the first end-to-end demonstration.
 11. **Refactor 12 piece C** — "Apps" tab in Starbridge with manifest
     discovery. Coordinate on manifest format (§7 Q4).
@@ -558,9 +558,9 @@ Ordered by (a) prereqs satisfied, (b) blast radius, (c) value to other lanes.
 
 ### Cross-cutting cleanup (any time)
 
-15. Resolve the `window.pyana` naming collision (see §6.1). Either
-    rename the Preact bootstrap namespace to `window.pyanaUi` /
-    `window.pyanaRt`, or wrap them both behind a `window.pyana = {
+15. Resolve the `window.dregg` naming collision (see §6.1). Either
+    rename the Preact bootstrap namespace to `window.dreggUi` /
+    `window.dreggRt`, or wrap them both behind a `window.dregg = {
     cclerk: ..., runtime: ... }` indirection. **Either path is a
     breaking change for whichever side moves; coordinate with the
     extension author.**
@@ -573,20 +573,20 @@ Ordered by (a) prereqs satisfied, (b) blast radius, (c) value to other lanes.
 
 ## §6. Things Studio might WANT but we haven't designed
 
-### 6.1 Resolution of `window.pyana` collision
+### 6.1 Resolution of `window.dregg` collision
 
 Already flagged in §2.1. The fix is structural and the two owners
 (extension page-injection, Studio runtime-bootstrap) don't currently
 talk. Options:
 
-- **(a) Rename bootstrap.** `window.pyanaUi = { h, html, render, ... }`.
+- **(a) Rename bootstrap.** `window.dreggUi = { h, html, render, ... }`.
   Cheapest. Forces every inspector and starbridge-app page to update.
-- **(b) Namespace both.** `window.pyana = { cclerk: <api>, ui: <api>,
+- **(b) Namespace both.** `window.dregg = { cclerk: <api>, ui: <api>,
   runtime: <studio rt registry> }`. Requires the extension to define
-  `pyana.cclerk` instead of `pyana.<flat methods>`. Breaking change
+  `dregg.cclerk` instead of `dregg.<flat methods>`. Breaking change
   for every dapp consuming the cclerk today.
 - **(c) Detection + merge.** Bootstrap checks for an existing
-  `window.pyana`; if it's the cclerk, attach UI fields to a sibling
+  `window.dregg`; if it's the cclerk, attach UI fields to a sibling
   rather than overwriting. The `Object.freeze` on the cclerk side
   makes this awkward.
 
@@ -596,14 +596,14 @@ The studio agent should NOT pick this unilaterally; surface as §7 Q1.
 
 Cross-federation receipt chains are referenced in
 `WITNESSED-RECEIPT-CHAIN-DESIGN.md`. Studio shows a *list* of receipts
-(`<pyana-receipt-list>`) but no chain navigation — clicking a receipt
+(`<dregg-receipt-list>`) but no chain navigation — clicking a receipt
 doesn't surface its predecessor. The `previous_receipt_hash` link is
-the obvious primitive; a `<pyana-receipt-chain>` inspector that walks
+the obvious primitive; a `<dregg-receipt-chain>` inspector that walks
 backward visually would close the loop.
 
 ### 6.3 Cross-federation peer discovery UX
 
-`pyana_cell::PeerExchange` is the "Discord-paste" primitive; the
+`dregg_cell::PeerExchange` is the "Discord-paste" primitive; the
 studio demonstrates it manually. A real discovery mechanism (e.g.
 "my agent is in federation A; show me what federation B knows about
 my counterparty") is not designed. The brief mentions
@@ -620,7 +620,7 @@ scope for the resumed agent unless requested.
 
 ### 6.5 Turn-builder inspector (mentioned in STUDIO.md, never built)
 
-`<pyana-turn-builder>` is in the STUDIO.md inspector table. There's
+`<dregg-turn-builder>` is in the STUDIO.md inspector table. There's
 no implementation. A mutation-mode inspector that walks the user
 through "select cell → select method → fill effects → sign" would
 make Starbridge a real IDE rather than a viewer. Highest user value
@@ -628,7 +628,7 @@ once the basics land; do not build before refactors 2, 5, 8 stabilize.
 
 ### 6.6 Debugger inspector (also in the STUDIO.md table)
 
-`<pyana-debugger>` is mentioned, never built. The Trace step type
+`<dregg-debugger>` is mentioned, never built. The Trace step type
 exists in `wasm/src/runtime.rs::TraceStep`; the wasm binding to expose
 it does not. A step-into / step-over / breakpoint UI for turn
 execution would close a real gap — there's no way to debug a failing
@@ -637,7 +637,7 @@ turn in the browser today.
 ### 6.7 Snapshot export/import (STUDIO.md § 8)
 
 The Snapshot button alerts "will be wired up". The Rust side
-(`PyanaRuntime::serializeHistory`) doesn't exist. The pyana-node
+(`DreggRuntime::serializeHistory`) doesn't exist. The dregg-node
 ingest path doesn't exist. This is a feature, not a refactor; it
 deserves its own design pass.
 
@@ -647,20 +647,20 @@ deserves its own design pass.
 
 These need a human/designer call. Decisions here gate sections of §5.
 
-**Q1.** `window.pyana` collision — see §6.1. Rename, namespace, or
+**Q1.** `window.dregg` collision — see §6.1. Rename, namespace, or
 merge? Whichever path, BOTH the extension cclerk team and the studio
 team must agree before either changes. **Blocking** for any
 starbridge-app that needs both extension cclerk AND Studio inspectors.
 
 **Q2.** URI scheme stability for things-without-global-IDs.
-`pyana://capability/<agent_idx>/<slot>` is sim-specific. Real
+`dregg://capability/<agent_idx>/<slot>` is sim-specific. Real
 capabilities don't have stable IDs either (they're attenuated tokens
 or in-cell slots). What's the canonical addressing? **Blocking** for
 the Federation/Remote runtime growing capability inspection.
 
 **Q3.** App manifest format for the "Apps" browser (refactor 12 piece
 C). JSON file in each `starbridge-apps/*/manifest.json` with name,
-description, factory_vks, page-fragment URL, required `window.pyana`
+description, factory_vks, page-fragment URL, required `window.dregg`
 methods? Or something more dynamic via the Rust crate's
 `StarbridgeAppContext::register`? **Blocking** §5 task 11.
 
@@ -671,10 +671,10 @@ parallel runtimes for the last N heights (memory-bound); (c) declare
 time-travel an Explorer-only feature backed by a recorded snapshot.
 **Blocking** the cursor scrubber actually being writable.
 
-**Q5.** Inspector registration namespace. Today `<pyana-cell>` etc. are
+**Q5.** Inspector registration namespace. Today `<dregg-cell>` etc. are
 in the global custom-elements registry. Starbridge-apps want to add
-their own (`<pyana-name>`, `<pyana-name-registry>`, etc.). Naming
-conflict risk: two apps both want `<pyana-token>`. Should we namespace
+their own (`<dregg-name>`, `<dregg-name-registry>`, etc.). Naming
+conflict risk: two apps both want `<dregg-token>`. Should we namespace
 (`<starbridge-nameservice-name>`)? Or rely on per-app reservation?
 
 **Q6.** Read-only Remote runtime parity. Today it exposes only
@@ -683,7 +683,7 @@ applies. Should the studio agent treat parity as a phase-1 goal, or is
 "Explorer = read cells + status" a permanent floor and the full
 inspector set is in-memory-only?
 
-**Q7.** Should `<pyana-app>` accept multiple runtimes (e.g.
+**Q7.** Should `<dregg-app>` accept multiple runtimes (e.g.
 `runtime-write="sim" runtime-read="remote"`) so a starbridge-app can
 preview locally and submit upstream? STUDIO.md doesn't say.
 
@@ -725,7 +725,7 @@ app-framework/src/cipherclerk.rs              (the AppCipherclerk — Rust-side)
 turn/src/action.rs                       (Authorization::CapTpDelivered)
 ```
 
-## Appendix B — counted methods on `window.pyana` (cclerk)
+## Appendix B — counted methods on `window.dregg` (cclerk)
 
 43 methods total. 6 are the canonical ones called out in the brief
 (`signTurn`, `createFromFactory`, `verifyProvenance` named explicitly;
@@ -737,7 +737,7 @@ queue ops). Studio uses zero of them today.
 ## Appendix C — quick verifications done during this survey
 
 - Federation is wired (not "removed for wasm" as memory suggested);
-  `wasm/src/runtime.rs::SimFederation` wraps `pyana_federation::Federation`.
+  `wasm/src/runtime.rs::SimFederation` wraps `dregg_federation::Federation`.
 - `Authorization::CapTpDelivered` is landed in `turn/src/action.rs`.
 - `AppCipherclerk` is landed in `app-framework/src/cipherclerk.rs`.
 - `starbridge-apps/nameservice/` exists with the README example

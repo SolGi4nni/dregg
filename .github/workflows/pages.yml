@@ -1,4 +1,4 @@
-name: Deploy Pyana site to GitHub Pages
+name: Deploy Dregg site to GitHub Pages
 
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
 
       - name: Build WASM
         # Output must match the path imported by the playground/sandbox
-        # (../pkg/pyana_wasm.js). The build script copies site/pkg/ verbatim
+        # (../pkg/dregg_wasm.js). The build script copies site/pkg/ verbatim
         # into dist/pkg/. (Was ../site/demo/pkg, which nothing imported, so
         # deployments shipped without any WASM bundle at all.)
         #
@@ -67,13 +67,13 @@ jobs:
           mkdir -p site/extension
           cd extension
           if [ -d pkg ]; then
-            zip -r ../site/extension/pyana-wallet.zip \
+            zip -r ../site/extension/dregg-wallet.zip \
               manifest.json background.js content.js page.js \
               popup.html popup-script.js provision.html provision.js \
               recovery.html recovery.js confirm-intent.html origin-permission.html \
               bip39_english.txt pkg/
           else
-            zip -r ../site/extension/pyana-wallet.zip \
+            zip -r ../site/extension/dregg-wallet.zip \
               manifest.json background.js content.js page.js \
               popup.html popup-script.js provision.html provision.js \
               recovery.html recovery.js confirm-intent.html origin-permission.html \
@@ -118,7 +118,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p site/paper
-          typst compile paper/pyana.typ site/paper/pyana.pdf
+          typst compile paper/dregg.typ site/paper/dregg.pdf
 
       - name: Build site
         # BASE_PATH rewrites absolute hrefs/srcs so the site works under

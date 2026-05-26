@@ -9,8 +9,8 @@
 //   - Builder fns that return plain TurnSpec objects (the "typed" shape
 //     consumed by signTurn / runtime submit).
 //   - createNameserviceTurnBuilders(runtime) — runtime-bound preset for
-//     InMemoryRuntime / RemoteRuntime use in Studio / <pyana-app> context.
-//     The runtime param (PyanaRuntime shape) allows future typed calls
+//     InMemoryRuntime / RemoteRuntime use in Studio / <dregg-app> context.
+//     The runtime param (DreggRuntime shape) allows future typed calls
 //     e.g. runtime.blake3(...) instead of window.
 //
 // All policy (slot caveats, VK, constraints) lives in the Rust crate.
@@ -31,7 +31,7 @@ const TOPIC_TRANSFERRED  = 'name-transferred';
 const TOPIC_REVOKED      = 'name-revoked';
 const TOPIC_TARGET_SET   = 'name-target-set';
 
-const REVOKED_TOMBSTONE_PREFIX = new TextEncoder().encode('pyana-nameservice-revoked:');
+const REVOKED_TOMBSTONE_PREFIX = new TextEncoder().encode('dregg-nameservice-revoked:');
 
 // --- pure helpers (usable in any context, including tests / node) ---
 
@@ -66,8 +66,8 @@ async function blake3Field(bytes, runtime = null) {
     const out = await runtime.blake3(bytes);
     return Array.from(asUint8(out));
   }
-  if (typeof window !== 'undefined' && window.pyana?.blake3) {
-    const out = await window.pyana.blake3(bytes);
+  if (typeof window !== 'undefined' && window.dregg?.blake3) {
+    const out = await window.dregg.blake3(bytes);
     return Array.from(asUint8(out));
   }
   // Fallback (demo only — not executor-identical)
@@ -178,7 +178,7 @@ async function set_target_name(registryUri, { name, target }, runtime = null) {
 // --- runtime-bound API (the "typed" entrypoint for Studio / SDK consumers) ---
 
 export function createNameserviceTurnBuilders(runtime) {
-  // runtime: PyanaRuntime (or compatible with .blake3 etc.)
+  // runtime: DreggRuntime (or compatible with .blake3 etc.)
   const bound = (fn) => async (uri, args) => fn(uri, args, runtime);
   return {
     register_name: bound(register_name),
@@ -198,11 +198,11 @@ export function createNameserviceTurnBuilders(runtime) {
 // --- default / window registration (cclerk path, for pages that have signTurn) ---
 
 async function submitViaWindow(turnSpec) {
-  if (typeof window === 'undefined' || !window.pyana?.signTurn) {
-    console.warn('[nameservice-shared] window.pyana.signTurn not available; turnSpec was', turnSpec);
-    throw new Error('nameservice: window.pyana.signTurn is not available');
+  if (typeof window === 'undefined' || !window.dregg?.signTurn) {
+    console.warn('[nameservice-shared] window.dregg.signTurn not available; turnSpec was', turnSpec);
+    throw new Error('nameservice: window.dregg.signTurn is not available');
   }
-  return window.pyana.signTurn(turnSpec);
+  return window.dregg.signTurn(turnSpec);
 }
 
 const windowBuilders = {
@@ -219,10 +219,10 @@ const windowBuilders = {
 };
 
 if (typeof window !== 'undefined') {
-  window.pyana ??= {};
-  window.pyana.builders ??= {};
-  window.pyana.builders.nameservice = {
-    ...(window.pyana.builders.nameservice ?? {}),
+  window.dregg ??= {};
+  window.dregg.builders ??= {};
+  window.dregg.builders.nameservice = {
+    ...(window.dregg.builders.nameservice ?? {}),
     ...windowBuilders,
   };
 }

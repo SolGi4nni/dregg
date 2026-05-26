@@ -1,15 +1,15 @@
 /**
- * <pyana-cell-program> — renders a CellProgramView with its slot-caveat tree.
- * <pyana-state-constraint> — renders a single StateConstraintView row.
+ * <dregg-cell-program> — renders a CellProgramView with its slot-caveat tree.
+ * <dregg-state-constraint> — renders a single StateConstraintView row.
  *
  * Both are platform-vocabulary elements (not per-app widgets).
  *
  * Usage:
- *   <pyana-cell-program mode="compact|default"></pyana-cell-program>
+ *   <dregg-cell-program mode="compact|default"></dregg-cell-program>
  *   element.program = cellStateView.program;   // set JS property directly
  *
  * Or pass JSON via attribute:
- *   <pyana-cell-program data-program='{"kind":"Predicate","constraints":[…]}'></pyana-cell-program>
+ *   <dregg-cell-program data-program='{"kind":"Predicate","constraints":[…]}'></dregg-cell-program>
  *
  * CellProgramView shape (from wasm/src/bindings.rs Refactor 6):
  *   { kind: "None" }
@@ -146,10 +146,10 @@ function constraintSummary(c) {
 }
 
 // ---------------------------------------------------------------------------
-// <pyana-state-constraint>
+// <dregg-state-constraint>
 // ---------------------------------------------------------------------------
 
-class PyanaStateConstraint extends HTMLElement {
+class DreggStateConstraint extends HTMLElement {
   static get observedAttributes() { return ['mode']; }
 
   set constraint(v) {
@@ -169,9 +169,9 @@ class PyanaStateConstraint extends HTMLElement {
     const summary = constraintSummary(c);
 
     if (mode === 'compact') {
-      this.innerHTML = `<span class="pyana-sc pyana-sc--compact">` +
-        `<span class="pyana-sc__chip" style="${colors}">${c.kind}</span>` +
-        (summary ? ` <span class="pyana-sc__summary">${_esc(summary)}</span>` : '') +
+      this.innerHTML = `<span class="dregg-sc dregg-sc--compact">` +
+        `<span class="dregg-sc__chip" style="${colors}">${c.kind}</span>` +
+        (summary ? ` <span class="dregg-sc__summary">${_esc(summary)}</span>` : '') +
         `</span>`;
       return;
     }
@@ -179,45 +179,45 @@ class PyanaStateConstraint extends HTMLElement {
     // Default: one row with chip + summary, expandable for AnyOf
     let extra = '';
     if (c.kind === 'AnyOf' && Array.isArray(c.variants) && c.variants.length) {
-      extra = `<ul class="pyana-sc__anyof">` +
+      extra = `<ul class="dregg-sc__anyof">` +
         c.variants.map(v => {
-          const el = document.createElement('pyana-state-constraint');
+          const el = document.createElement('dregg-state-constraint');
           el.setAttribute('mode', 'compact');
           el.constraint = v;
           return `<li>${el.outerHTML}</li>`;
         }).join('') +
         `</ul>`;
       // Can't use outerHTML for custom elements with JS state, so we render manually:
-      extra = `<ul class="pyana-sc__anyof">` +
+      extra = `<ul class="dregg-sc__anyof">` +
         c.variants.map(v => {
           const ch = chipColors(v.kind);
           const cs = constraintSummary(v);
-          return `<li><span class="pyana-sc pyana-sc--compact">` +
-            `<span class="pyana-sc__chip" style="${ch}">${_esc(v.kind)}</span>` +
-            (cs ? ` <span class="pyana-sc__summary">${_esc(cs)}</span>` : '') +
+          return `<li><span class="dregg-sc dregg-sc--compact">` +
+            `<span class="dregg-sc__chip" style="${ch}">${_esc(v.kind)}</span>` +
+            (cs ? ` <span class="dregg-sc__summary">${_esc(cs)}</span>` : '') +
             `</span></li>`;
         }).join('') +
         `</ul>`;
     }
 
     this.innerHTML =
-      `<div class="pyana-sc pyana-sc--row">` +
-        `<span class="pyana-sc__chip" style="${colors}">${_esc(c.kind)}</span>` +
-        (summary ? ` <span class="pyana-sc__summary">${_esc(summary)}</span>` : '') +
+      `<div class="dregg-sc dregg-sc--row">` +
+        `<span class="dregg-sc__chip" style="${colors}">${_esc(c.kind)}</span>` +
+        (summary ? ` <span class="dregg-sc__summary">${_esc(summary)}</span>` : '') +
         extra +
       `</div>`;
   }
 }
 
-if (!customElements.get('pyana-state-constraint')) {
-  customElements.define('pyana-state-constraint', PyanaStateConstraint);
+if (!customElements.get('dregg-state-constraint')) {
+  customElements.define('dregg-state-constraint', DreggStateConstraint);
 }
 
 // ---------------------------------------------------------------------------
-// <pyana-cell-program>
+// <dregg-cell-program>
 // ---------------------------------------------------------------------------
 
-class PyanaCellProgram extends HTMLElement {
+class DreggCellProgram extends HTMLElement {
   static get observedAttributes() { return ['mode', 'data-program']; }
 
   /** Set program directly as a JS object (preferred from parent cell inspector). */
@@ -245,35 +245,35 @@ class PyanaCellProgram extends HTMLElement {
     if (!prog || prog.kind === 'None' || prog.kind == null) {
       this.innerHTML =
         mode === 'compact'
-          ? `<span class="pyana-cp pyana-cp--compact pyana-cp--none">None</span>`
-          : `<div class="pyana-cp pyana-cp--empty">No program — any authorized state change is valid.</div>`;
+          ? `<span class="dregg-cp dregg-cp--compact dregg-cp--none">None</span>`
+          : `<div class="dregg-cp dregg-cp--empty">No program — any authorized state change is valid.</div>`;
       return;
     }
 
     if (mode === 'compact') {
-      this.innerHTML = `<span class="pyana-cp pyana-cp--compact">${_esc(_compactLabel(prog))}</span>`;
+      this.innerHTML = `<span class="dregg-cp dregg-cp--compact">${_esc(_compactLabel(prog))}</span>`;
       return;
     }
 
     // Default mode: full expansion
     this.replaceChildren();
     const root = document.createElement('div');
-    root.className = 'pyana-cp';
+    root.className = 'dregg-cp';
 
     switch (prog.kind) {
       case 'Predicate': {
         const constraints = prog.constraints || [];
         root.innerHTML =
-          `<div class="pyana-cp__header">` +
-            `<span class="pyana-cp__kind-badge">Predicate</span>` +
-            `<span class="pyana-cp__count">${constraints.length} constraint${constraints.length === 1 ? '' : 's'}</span>` +
+          `<div class="dregg-cp__header">` +
+            `<span class="dregg-cp__kind-badge">Predicate</span>` +
+            `<span class="dregg-cp__count">${constraints.length} constraint${constraints.length === 1 ? '' : 's'}</span>` +
           `</div>`;
         if (constraints.length) {
           const list = document.createElement('ul');
-          list.className = 'pyana-cp__constraints';
+          list.className = 'dregg-cp__constraints';
           for (const c of constraints) {
             const li = document.createElement('li');
-            const sc = document.createElement('pyana-state-constraint');
+            const sc = document.createElement('dregg-state-constraint');
             sc.constraint = c;
             li.appendChild(sc);
             list.appendChild(li);
@@ -286,25 +286,25 @@ class PyanaCellProgram extends HTMLElement {
       case 'Cases': {
         const cases = prog.cases || [];
         root.innerHTML =
-          `<div class="pyana-cp__header">` +
-            `<span class="pyana-cp__kind-badge">Cases</span>` +
-            `<span class="pyana-cp__count">${cases.length} case${cases.length === 1 ? '' : 's'}</span>` +
+          `<div class="dregg-cp__header">` +
+            `<span class="dregg-cp__kind-badge">Cases</span>` +
+            `<span class="dregg-cp__count">${cases.length} case${cases.length === 1 ? '' : 's'}</span>` +
           `</div>`;
         for (let i = 0; i < cases.length; i++) {
           const tc = cases[i];
           const caseEl = document.createElement('div');
-          caseEl.className = 'pyana-cp__case';
+          caseEl.className = 'dregg-cp__case';
           caseEl.innerHTML =
-            `<div class="pyana-cp__case-guard">` +
-              `<span class="pyana-cp__case-idx">#${i}</span>` +
-              `<span class="pyana-cp__guard-tag">${_esc(_guardLabel(tc.guard))}</span>` +
+            `<div class="dregg-cp__case-guard">` +
+              `<span class="dregg-cp__case-idx">#${i}</span>` +
+              `<span class="dregg-cp__guard-tag">${_esc(_guardLabel(tc.guard))}</span>` +
             `</div>`;
           if (tc.constraints && tc.constraints.length) {
             const list = document.createElement('ul');
-            list.className = 'pyana-cp__constraints pyana-cp__constraints--incase';
+            list.className = 'dregg-cp__constraints dregg-cp__constraints--incase';
             for (const c of tc.constraints) {
               const li = document.createElement('li');
-              const sc = document.createElement('pyana-state-constraint');
+              const sc = document.createElement('dregg-state-constraint');
               sc.constraint = c;
               li.appendChild(sc);
               list.appendChild(li);
@@ -312,7 +312,7 @@ class PyanaCellProgram extends HTMLElement {
             caseEl.appendChild(list);
           } else {
             const empty = document.createElement('div');
-            empty.className = 'pyana-cp__case-empty';
+            empty.className = 'dregg-cp__case-empty';
             empty.textContent = 'no constraints (pass-through)';
             caseEl.appendChild(empty);
           }
@@ -323,18 +323,18 @@ class PyanaCellProgram extends HTMLElement {
 
       case 'Circuit': {
         root.innerHTML =
-          `<div class="pyana-cp__header">` +
-            `<span class="pyana-cp__kind-badge pyana-cp__kind-badge--circuit">Circuit</span>` +
+          `<div class="dregg-cp__header">` +
+            `<span class="dregg-cp__kind-badge dregg-cp__kind-badge--circuit">Circuit</span>` +
           `</div>` +
-          `<div class="pyana-cp__circuit">` +
-            `<span class="pyana-cp__circuit-label">VK hash</span>` +
-            `<code class="pyana-cp__circuit-hash" title="${_esc(prog.circuit_hash||'')}">${_esc(shortHex(prog.circuit_hash, 24))}</code>` +
+          `<div class="dregg-cp__circuit">` +
+            `<span class="dregg-cp__circuit-label">VK hash</span>` +
+            `<code class="dregg-cp__circuit-hash" title="${_esc(prog.circuit_hash||'')}">${_esc(shortHex(prog.circuit_hash, 24))}</code>` +
           `</div>`;
         break;
       }
 
       default: {
-        root.innerHTML = `<div class="pyana-inspector pyana-inspector--err">unknown program kind: ${_esc(String(prog.kind))}</div>`;
+        root.innerHTML = `<div class="dregg-inspector dregg-inspector--err">unknown program kind: ${_esc(String(prog.kind))}</div>`;
         break;
       }
     }
@@ -343,8 +343,8 @@ class PyanaCellProgram extends HTMLElement {
   }
 }
 
-if (!customElements.get('pyana-cell-program')) {
-  customElements.define('pyana-cell-program', PyanaCellProgram);
+if (!customElements.get('dregg-cell-program')) {
+  customElements.define('dregg-cell-program', DreggCellProgram);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,16 +391,16 @@ function _esc(s) {
 // ---------------------------------------------------------------------------
 
 (function injectStyles() {
-  if (document.getElementById('pyana-cell-program-styles')) return;
+  if (document.getElementById('dregg-cell-program-styles')) return;
   const s = document.createElement('style');
-  s.id = 'pyana-cell-program-styles';
+  s.id = 'dregg-cell-program-styles';
   s.textContent = `
-/* ---- <pyana-cell-program> ---- */
-.pyana-cp {
+/* ---- <dregg-cell-program> ---- */
+.dregg-cp {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;
 }
-.pyana-cp--compact {
+.dregg-cp--compact {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -411,18 +411,18 @@ function _esc(s) {
   font-size: 0.82rem;
   color: var(--fg);
 }
-.pyana-cp--none {
+.dregg-cp--none {
   color: var(--fg-dim);
   border-style: dashed;
 }
-.pyana-cp--empty {
+.dregg-cp--empty {
   color: var(--fg-dim);
   padding: var(--s2, 6px) var(--s3, 10px);
   border: 1px dashed var(--line);
   border-radius: 4px;
   font-size: 0.82rem;
 }
-.pyana-cp__header {
+.dregg-cp__header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -430,7 +430,7 @@ function _esc(s) {
   padding-bottom: var(--s2, 6px);
   border-bottom: 1px solid var(--line);
 }
-.pyana-cp__kind-badge {
+.dregg-cp__kind-badge {
   padding: 2px 10px;
   background: var(--accent, #5b8a5a);
   color: #0a0f0d;
@@ -440,15 +440,15 @@ function _esc(s) {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.pyana-cp__kind-badge--circuit {
+.dregg-cp__kind-badge--circuit {
   background: color-mix(in srgb, #a050a0 80%, var(--bg));
   color: #fff;
 }
-.pyana-cp__count {
+.dregg-cp__count {
   font-size: 0.78rem;
   color: var(--fg-dim);
 }
-.pyana-cp__constraints {
+.dregg-cp__constraints {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -456,18 +456,18 @@ function _esc(s) {
   flex-direction: column;
   gap: 4px;
 }
-.pyana-cp__constraints--incase {
+.dregg-cp__constraints--incase {
   margin-left: var(--s4, 16px);
   margin-top: 4px;
 }
-.pyana-cp__case {
+.dregg-cp__case {
   margin-bottom: var(--s3, 10px);
   padding: var(--s2, 6px) var(--s3, 10px);
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: 4px;
 }
-.pyana-cp__case-guard {
+.dregg-cp__case-guard {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -475,12 +475,12 @@ function _esc(s) {
   font-size: 0.78rem;
   color: var(--fg-dim);
 }
-.pyana-cp__case-idx {
+.dregg-cp__case-idx {
   font-size: 0.72rem;
   color: var(--fg-muted, var(--fg-dim));
   min-width: 1.8em;
 }
-.pyana-cp__guard-tag {
+.dregg-cp__guard-tag {
   padding: 1px 7px;
   background: color-mix(in srgb, var(--fg-dim) 12%, var(--bg-raised));
   border: 1px solid var(--line-strong, var(--line));
@@ -488,48 +488,48 @@ function _esc(s) {
   font-size: 0.72rem;
   color: var(--fg-dim);
 }
-.pyana-cp__case-empty {
+.dregg-cp__case-empty {
   font-size: 0.78rem;
   color: var(--fg-dim);
   padding-left: var(--s4, 16px);
   font-style: italic;
 }
-.pyana-cp__circuit {
+.dregg-cp__circuit {
   display: flex;
   align-items: center;
   gap: var(--s3, 10px);
   padding: var(--s2, 6px) 0;
 }
-.pyana-cp__circuit-label {
+.dregg-cp__circuit-label {
   font-size: 0.75rem;
   color: var(--fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.pyana-cp__circuit-hash {
+.dregg-cp__circuit-hash {
   font-size: 0.82rem;
   color: var(--fg);
   word-break: break-all;
 }
 
-/* ---- <pyana-state-constraint> ---- */
-.pyana-sc {
+/* ---- <dregg-state-constraint> ---- */
+.dregg-sc {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.82rem;
 }
-.pyana-sc--compact {
+.dregg-sc--compact {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.pyana-sc--row {
+.dregg-sc--row {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 6px;
   padding: 3px 0;
 }
-.pyana-sc__chip {
+.dregg-sc__chip {
   display: inline-block;
   padding: 1px 7px;
   border-radius: 3px;
@@ -539,11 +539,11 @@ function _esc(s) {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-.pyana-sc__summary {
+.dregg-sc__summary {
   color: var(--fg-dim);
   font-size: 0.80rem;
 }
-.pyana-sc__anyof {
+.dregg-sc__anyof {
   list-style: none;
   padding: 0;
   margin: 4px 0 0 var(--s4, 16px);

@@ -1,14 +1,14 @@
 [package]
-name = "pyana-bounty-board"
+name = "dregg-bounty-board"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
-pyana-storage = { path = "../../storage" }
-pyana-turn = { path = "../../turn" }
-pyana-sdk = { path = "../../sdk" }
+dregg-app-framework = { path = "../../app-framework" }
+dregg-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+dregg-storage = { path = "../../storage" }
+dregg-turn = { path = "../../turn" }
+dregg-sdk = { path = "../../sdk" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

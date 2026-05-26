@@ -35,8 +35,8 @@ jobs:
             git rm -rf . 2>/dev/null || true
             mkdir -p nodes
             echo '{}' > nodes/.gitkeep
-            git config user.name "pyana-federation[bot]"
-            git config user.email "federation@pyana.dev"
+            git config user.name "dregg-federation[bot]"
+            git config user.email "federation@dregg.dev"
             git add .
             git commit -m "Initialize federation-state branch"
             git push origin federation-state
@@ -94,10 +94,10 @@ jobs:
 
           # Gateway node (always-on Graviton instance)
           GATEWAY=$(jq -n '{
-            "url": "https://pyana.commonquant.com",
-            "ws": "wss://pyana.commonquant.com/ws",
-            "api": "https://pyana.commonquant.com/api",
-            "gossip": "pyana.commonquant.com:9420"
+            "url": "https://dregg.commonquant.com",
+            "ws": "wss://dregg.commonquant.com/ws",
+            "api": "https://dregg.commonquant.com/api",
+            "gossip": "dregg.commonquant.com:9420"
           }')
 
           # Build final discovery file
@@ -132,8 +132,8 @@ jobs:
             git rm -rf . 2>/dev/null || true
             mkdir -p nodes
             echo '{}' > nodes/.gitkeep
-            git config user.name "pyana-federation[bot]"
-            git config user.email "federation@pyana.dev"
+            git config user.name "dregg-federation[bot]"
+            git config user.email "federation@dregg.dev"
             git add .
             git commit -m "Initialize federation-state branch"
           }
@@ -141,8 +141,8 @@ jobs:
           cp "$GITHUB_WORKSPACE/site/discovery.json" discovery.json
           git add discovery.json
           git diff --cached --quiet || {
-            git config user.name "pyana-federation[bot]"
-            git config user.email "federation@pyana.dev"
+            git config user.name "dregg-federation[bot]"
+            git config user.email "federation@dregg.dev"
             git commit -m "Update discovery.json [skip ci]"
             git push origin federation-state
           }

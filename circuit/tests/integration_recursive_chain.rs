@@ -3,7 +3,7 @@
 //!
 //! The Golden Vision recursive STARK path is gated behind `feature = "recursion"`.
 //! These tests target the always-available Silver Vision / IVC path, which uses
-//! `prove_ivc_stark` + `verify_ivc_stark` from `pyana_circuit::ivc`.
+//! `prove_ivc_stark` + `verify_ivc_stark` from `dregg_circuit::ivc`.
 //!
 //! Tests verify end-to-end that:
 //!   1. An N-step IVC proof verifies.
@@ -13,7 +13,7 @@
 //!   4. A two-step IVC chain where the per-step STARK proofs are individually
 //!      valid can be compressed into one IVC proof that also verifies.
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{generate_effect_vm_trace, pi},
     ivc::{prove_ivc_stark, verify_ivc_stark},

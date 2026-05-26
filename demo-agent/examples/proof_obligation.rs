@@ -15,9 +15,9 @@
 //! ## Adversarial Path
 //! 4. Bob fails to deliver proof -> Alice slashes Bob's stake as compensation
 
-use pyana_cell::CellId;
-use pyana_cell::note::NoteCommitment;
-use pyana_turn::{
+use dregg_cell::CellId;
+use dregg_cell::note::NoteCommitment;
+use dregg_turn::{
     ConditionProof, DEFAULT_MAX_ROOT_AGE, ProofCondition, ProofObligation, TrustedRoot,
     obligation::{ObligationOutcome, check_expiry, create_obligation, fulfill_obligation},
 };

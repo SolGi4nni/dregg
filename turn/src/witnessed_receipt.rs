@@ -104,7 +104,7 @@ pub enum WitnessAvailability {
 /// semantic contract — "RecursiveProof attests the same acceptance as
 /// re-running the AIR over the inline trace" — is preserved.
 ///
-/// [`BabyBear`]: pyana_circuit::field::BabyBear
+/// [`BabyBear`]: dregg_circuit::field::BabyBear
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WitnessBundle {
     /// Trace rows as canonical-BabyBear `u32` cells. Shape:
@@ -126,14 +126,14 @@ pub struct WitnessBundle {
 /// AIR's constraints.
 ///
 /// The proof is produced by
-/// `pyana_circuit::recursive_witness_bundle::RecursiveProofProducer` and
+/// `dregg_circuit::recursive_witness_bundle::RecursiveProofProducer` and
 /// verified by
-/// `pyana_circuit::recursive_witness_bundle::verify_recursive_proof_variant`.
+/// `dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`.
 /// Both sides share a registry of `recursive_vk_hash` values (VK v2
 /// layered encoding) so an unknown hash → reject at registry lookup.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecursiveProofVariant {
-    /// Postcard-encoded `BatchStarkProof<PyanaRecursionConfig>` bytes from
+    /// Postcard-encoded `BatchStarkProof<DreggRecursionConfig>` bytes from
     /// the recursive layer.
     pub proof_bytes: Vec<u8>,
     /// Public inputs the recursive proof commits to, as canonical-BabyBear
@@ -149,7 +149,7 @@ pub struct RecursiveProofVariant {
 
 impl WitnessBundle {
     /// Construct an inline witness bundle from the prover's in-memory trace.
-    pub fn inline_from_trace(trace: &[Vec<pyana_circuit::field::BabyBear>]) -> Self {
+    pub fn inline_from_trace(trace: &[Vec<dregg_circuit::field::BabyBear>]) -> Self {
         let trace_rows: Vec<Vec<u32>> = trace
             .iter()
             .map(|row| row.iter().map(|x| x.as_u32()).collect())
@@ -164,7 +164,7 @@ impl WitnessBundle {
     /// Like [`inline_from_trace`] but additionally attaches a recursive
     /// compression proof. The two replay modes are then both available.
     pub fn inline_with_recursive(
-        trace: &[Vec<pyana_circuit::field::BabyBear>],
+        trace: &[Vec<dregg_circuit::field::BabyBear>],
         recursive: RecursiveProofVariant,
     ) -> Self {
         let mut wb = Self::inline_from_trace(trace);
@@ -199,23 +199,23 @@ impl WitnessBundle {
 /// receipt's public inputs.
 ///
 /// Thin wrapper around
-/// [`pyana_circuit::recursive_witness_bundle::RecursiveProofProducer::produce`]
+/// [`dregg_circuit::recursive_witness_bundle::RecursiveProofProducer::produce`]
 /// so [`WitnessedReceipt::from_components_with_compression`] does not have
 /// to thread `BabyBear` through its signature. Returns the compressed
 /// variant on success; on failure returns the error string from the
 /// recursion library (e.g. AIR build failure, postcard encode error).
 ///
-/// Relies on the `recursion` feature being enabled in `pyana-circuit`
+/// Relies on the `recursion` feature being enabled in `dregg-circuit`
 /// (which is in its default feature set). If the host disables the
 /// feature, this entry point becomes a link-time error — which is the
 /// honest signal: opt-in recursive compression requires the recursion
 /// substrate.
 fn produce_recursive_variant(
-    trace: &[Vec<pyana_circuit::field::BabyBear>],
+    trace: &[Vec<dregg_circuit::field::BabyBear>],
     public_inputs_u32: &[u32],
 ) -> Result<RecursiveProofVariant, String> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::recursive_witness_bundle::RecursiveProofProducer;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::recursive_witness_bundle::RecursiveProofProducer;
 
     let pi: Vec<BabyBear> = public_inputs_u32
         .iter()
@@ -238,7 +238,7 @@ fn produce_recursive_variant(
 ///
 /// On-disk / wire shape. In-memory the hot paths still pass plain
 /// [`TurnReceipt`]; lift to `WitnessedReceipt` only at archival, audit-export,
-/// or `pyana-verifier` consumption time.
+/// or `dregg-verifier` consumption time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WitnessedReceipt {
     /// The receipt itself. Unchanged from today, so existing chains stay valid.
@@ -276,7 +276,7 @@ impl WitnessedReceipt {
         receipt: TurnReceipt,
         proof_bytes: Vec<u8>,
         public_inputs: Vec<u32>,
-        trace: Option<&[Vec<pyana_circuit::field::BabyBear>]>,
+        trace: Option<&[Vec<dregg_circuit::field::BabyBear>]>,
     ) -> Self {
         Self::from_components_with_compression(receipt, proof_bytes, public_inputs, trace, false)
     }
@@ -285,7 +285,7 @@ impl WitnessedReceipt {
     /// recursive compression flag.
     ///
     /// When `recursive_compress` is `true` AND `trace` is `Some`, this
-    /// runs `pyana_circuit::recursive_witness_bundle::RecursiveProofProducer`
+    /// runs `dregg_circuit::recursive_witness_bundle::RecursiveProofProducer`
     /// on the trace + public inputs and attaches a [`RecursiveProofVariant`]
     /// to the resulting [`WitnessBundle`]. The inline trace is kept
     /// alongside, so downstream replayers may pick *either* mode (re-run
@@ -305,7 +305,7 @@ impl WitnessedReceipt {
         receipt: TurnReceipt,
         proof_bytes: Vec<u8>,
         public_inputs: Vec<u32>,
-        trace: Option<&[Vec<pyana_circuit::field::BabyBear>]>,
+        trace: Option<&[Vec<dregg_circuit::field::BabyBear>]>,
         recursive_compress: bool,
     ) -> Self {
         let (witness_bundle, witness_hash) = match trace {
@@ -338,7 +338,7 @@ impl WitnessedReceipt {
         receipt: TurnReceipt,
         proof_bytes: Vec<u8>,
         public_inputs: Vec<u32>,
-        trace: &[Vec<pyana_circuit::field::BabyBear>],
+        trace: &[Vec<dregg_circuit::field::BabyBear>],
     ) -> Result<Self, String> {
         let rp = produce_recursive_variant(trace, &public_inputs)?;
         let wb = WitnessBundle::inline_with_recursive(trace, rp);
@@ -372,12 +372,12 @@ impl WitnessedReceipt {
     /// Returns `Ok(())` on success or a human-readable error on rejection.
     /// This is the verifier-side gate from `STAGE-7-GAMMA-2-PI-DESIGN.md` §4.
     pub fn verify_bilateral_chain(
-        wrs: &[(pyana_types::CellId, &WitnessedReceipt)],
+        wrs: &[(dregg_types::CellId, &WitnessedReceipt)],
         turn: &Turn,
     ) -> Result<(), crate::error::TurnError> {
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::field::BabyBear;
 
-        let bundle: Vec<(pyana_types::CellId, Vec<BabyBear>)> = wrs
+        let bundle: Vec<(dregg_types::CellId, Vec<BabyBear>)> = wrs
             .iter()
             .map(|(cid, wr)| {
                 let pi: Vec<BabyBear> = wr
@@ -398,13 +398,13 @@ impl WitnessedReceipt {
     ///
     /// See [`verify_bilateral_chain`] for the rest of the contract.
     pub fn verify_bilateral_chain_with_schedule(
-        wrs: &[(pyana_types::CellId, &WitnessedReceipt)],
+        wrs: &[(dregg_types::CellId, &WitnessedReceipt)],
         turn: &Turn,
         schedule: &crate::bilateral_schedule::ExpectedBilateral,
     ) -> Result<(), crate::error::TurnError> {
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::field::BabyBear;
 
-        let bundle: Vec<(pyana_types::CellId, Vec<BabyBear>)> = wrs
+        let bundle: Vec<(dregg_types::CellId, Vec<BabyBear>)> = wrs
             .iter()
             .map(|(cid, wr)| {
                 let pi: Vec<BabyBear> = wr
@@ -440,7 +440,7 @@ impl WitnessedReceipt {
 mod tests {
     use super::*;
     use crate::turn::TurnReceipt;
-    use pyana_types::CellId;
+    use dregg_types::CellId;
 
     fn dummy_receipt() -> TurnReceipt {
         TurnReceipt {
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn from_components_with_trace_binds_witness_hash() {
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::field::BabyBear;
         let trace: Vec<Vec<BabyBear>> = (0..4)
             .map(|i| (0..3).map(|j| BabyBear::new((i * 3 + j) as u32)).collect())
             .collect();

@@ -12,36 +12,36 @@ test.afterAll(async () => {
   await mockNode.stop();
 });
 
-test.describe('window.pyana injection', () => {
-  test('window.pyana is available on navigated pages', async ({ context }) => {
+test.describe('window.dregg injection', () => {
+  test('window.dregg is available on navigated pages', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
     await page.waitForLoadState('domcontentloaded');
 
     // Wait for the content script to inject page.js.
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
-    const hasPyana = await page.evaluate(() => typeof (window as any).pyana === 'object');
-    expect(hasPyana).toBe(true);
+    const hasDregg = await page.evaluate(() => typeof (window as any).dregg === 'object');
+    expect(hasDregg).toBe(true);
     await page.close();
   });
 
-  test('window.pyana is frozen (not modifiable)', async ({ context }) => {
+  test('window.dregg is frozen (not modifiable)', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
-    const isFrozen = await page.evaluate(() => Object.isFrozen((window as any).pyana));
+    const isFrozen = await page.evaluate(() => Object.isFrozen((window as any).dregg));
     expect(isFrozen).toBe(true);
     await page.close();
   });
 
-  test('window.pyana has expected API methods', async ({ context }) => {
+  test('window.dregg has expected API methods', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
-    const methods = await page.evaluate(() => Object.keys((window as any).pyana));
+    const methods = await page.evaluate(() => Object.keys((window as any).dregg));
     expect(methods).toContain('authorize');
     expect(methods).toContain('isConnected');
     expect(methods).toContain('canAuthorize');
@@ -62,10 +62,10 @@ test.describe('Unrestricted methods', () => {
   test('isConnected returns true when extension is loaded', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     const connected = await page.evaluate(async () => {
-      return await (window as any).pyana.isConnected();
+      return await (window as any).dregg.isConnected();
     });
     expect(connected).toBe(true);
     await page.close();
@@ -74,12 +74,12 @@ test.describe('Unrestricted methods', () => {
   test('canAuthorize works without permission prompt', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     // canAuthorize is unrestricted. With a locked cipherclerk or no matching token,
     // it should return false without prompting.
     const result = await page.evaluate(async () => {
-      return await (window as any).pyana.canAuthorize({
+      return await (window as any).dregg.canAuthorize({
         action: 'read',
         resource: 'documents/test',
       });
@@ -92,12 +92,12 @@ test.describe('Unrestricted methods', () => {
   test('storageQuota is accessible without permission', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     // storageQuota is unrestricted.
     const result = await page.evaluate(async () => {
       try {
-        return await (window as any).pyana.storageQuota();
+        return await (window as any).dregg.storageQuota();
       } catch (e: any) {
         return { error: e.message };
       }
@@ -112,7 +112,7 @@ test.describe('Restricted methods', () => {
   test('authorize from unpermitted origin triggers permission request', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     // authorize is a restricted method. Without prior permission, it should
     // either prompt the user or return a permission error.
@@ -121,7 +121,7 @@ test.describe('Restricted methods', () => {
         // Use a short timeout to avoid hanging on the popup.
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000);
-        const promise = (window as any).pyana.authorize({
+        const promise = (window as any).dregg.authorize({
           action: 'read',
           resource: 'documents/test',
         });
@@ -143,26 +143,26 @@ test.describe('Restricted methods', () => {
   test('unknown method is rejected with clear error', async ({ context }) => {
     const page = await context.newPage();
     await page.goto('https://example.com');
-    await page.waitForFunction(() => 'pyana' in window, null, { timeout: 5000 });
+    await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     // Try to call a method that does not exist via the internal sendMessage.
     const result = await page.evaluate(async () => {
       try {
         // Dispatch a raw event with an unknown method type.
-        const nonce = document.querySelector('script[data-pyana-nonce]')?.getAttribute('data-pyana-nonce');
+        const nonce = document.querySelector('script[data-dregg-nonce]')?.getAttribute('data-dregg-nonce');
         if (!nonce) return { error: 'no nonce found' };
 
         return new Promise((resolve) => {
           const id = 'test_unknown_method';
           const handler = (event: any) => {
             if (event.detail?.id === id) {
-              window.removeEventListener(`pyana:response:${nonce}`, handler);
+              window.removeEventListener(`dregg:response:${nonce}`, handler);
               resolve(event.detail);
             }
           };
-          window.addEventListener(`pyana:response:${nonce}`, handler);
-          window.dispatchEvent(new CustomEvent(`pyana:request:${nonce}`, {
-            detail: { type: 'pyana:nonExistentMethod', id },
+          window.addEventListener(`dregg:response:${nonce}`, handler);
+          window.dispatchEvent(new CustomEvent(`dregg:request:${nonce}`, {
+            detail: { type: 'dregg:nonExistentMethod', id },
           }));
           setTimeout(() => resolve({ timeout: true }), 3000);
         });

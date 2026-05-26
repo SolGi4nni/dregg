@@ -10,11 +10,8 @@
 //! rejected and the on-ledger nonce is unchanged.
 
 use crate::Invariant;
-use crate::generators::cell::{LedgerSpec, build_open_ledger};
-use crate::generators::turn::build_no_op_turn;
 
 use proptest::prelude::*;
-use pyana_turn::{ComputronCosts, TurnExecutor, TurnResult};
 
 /// Marker for documentation / future tooling.
 pub struct NonceMonotonicity;
@@ -62,7 +59,7 @@ proptest! {
 
             // Thread the receipt chain forward so the next turn passes the
             // executor's ReceiptChainMismatch enforcement.
-            if let pyana_turn::TurnResult::Committed { ref receipt, .. } = result {
+            if let dregg_turn::TurnResult::Committed { ref receipt, .. } = result {
                 prev_receipt_hash = Some(receipt.receipt_hash());
             }
 
@@ -99,7 +96,7 @@ proptest! {
             let turn = build_no_op_turn(agent, n, prev_receipt_hash);
             let res = executor.execute(&turn, &mut ledger);
             prop_assert!(res.is_committed());
-            if let pyana_turn::TurnResult::Committed { ref receipt, .. } = res {
+            if let dregg_turn::TurnResult::Committed { ref receipt, .. } = res {
                 prev_receipt_hash = Some(receipt.receipt_hash());
             }
         }

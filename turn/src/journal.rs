@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use pyana_cell::{
+use dregg_cell::{
     CapabilityRef, CellId, DelegatedRef, Ledger, NoteCommitment, Nullifier, Permissions,
     VerificationKey, lifecycle::CellLifecycle, note_bridge::BridgedNullifierSet,
     nullifier_set::NullifierSet, permissions::AuthRequired, state::FieldElement,
@@ -122,7 +122,7 @@ pub(crate) enum JournalEntry {
         cell: CellId,
         slot: u32,
         old_permissions: AuthRequired,
-        old_allowed_effects: Option<pyana_cell::EffectMask>,
+        old_allowed_effects: Option<dregg_cell::EffectMask>,
         old_expires_at: Option<u64>,
     },
 }
@@ -351,7 +351,7 @@ impl LedgerJournal {
         cell: CellId,
         slot: u32,
         old_permissions: AuthRequired,
-        old_allowed_effects: Option<pyana_cell::EffectMask>,
+        old_allowed_effects: Option<dregg_cell::EffectMask>,
         old_expires_at: Option<u64>,
     ) {
         self.entries.push(JournalEntry::AttenuateCapability {

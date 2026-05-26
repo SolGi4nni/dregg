@@ -1,6 +1,6 @@
-# AUDIT: Offline mode in pyana
+# AUDIT: Offline mode in dregg
 
-**Question:** Can pyana operate fully offline? What can happen offline, what requires consensus, and how does the offline/online seam work?
+**Question:** Can dregg operate fully offline? What can happen offline, what requires consensus, and how does the offline/online seam work?
 
 **Read-only audit.** Tracing call sites in `sdk/src/cipherclerk.rs`, `sdk/src/runtime.rs`, `turn/src/executor.rs`, `turn/src/fast_path.rs`, `turn/src/turn.rs`, `turn/src/verify.rs`, `federation/src/solo.rs`, `federation/src/lib.rs`, `node/src/api.rs`, `node/src/blocklace_sync.rs`, `captp/src/store_forward.rs`, `captp/src/session.rs`, `sdk/src/captp_client.rs`.
 
@@ -8,15 +8,15 @@
 
 ## TL;DR
 
-Pyana is offline-first in its primitives and online-only in its safety claims.
+`dregg` is offline-first in its primitives and online-only in its safety claims.
 
 - **Crypto/proof construction.** The `AgentCipherclerk` and `AgentRuntime` paths that build, sign, prove and apply turns are **pure, synchronous, in-process functions.** They reach the network only via three explicitly `async + #[cfg(feature = "federation-client")]` methods that ship as opt-in REST clients.
 - **Execution.** `TurnExecutor::execute` is `fn execute(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult` — no I/O, no peer lookup, no clock except what the caller injects via `set_timestamp`. It will happily commit turns and emit receipts against a local in-memory `Ledger`.
-- **Consensus.** Safety against forks/equivocation/double-spend lives one layer up in `pyana-blocklace` (Cordial Miners DAG + tau ordering), `pyana-federation` (BFT quorum, attested roots), and `node/src/blocklace_sync.rs` (gossip + replay).
+- **Consensus.** Safety against forks/equivocation/double-spend lives one layer up in `dregg-blocklace` (Cordial Miners DAG + tau ordering), `dregg-federation` (BFT quorum, attested roots), and `node/src/blocklace_sync.rs` (gossip + replay).
 - **Bridge.** The offline → online transition has **two distinct seams**:
   1. **Same-node-rejoin** (the node was running but partitioned): `FederationMode::Solo` produces `Finality::Tentative` receipts and a `NullifierLog` that peers replay-and-validate when the partition heals (`federation/src/solo.rs`).
   2. **Independent cclerk → federation** (the cclerk was never connected): the cclerk just hangs on to its in-memory ledger and receipt chain. To make it externally visible, *some* online node must accept and re-execute the turn through the blocklace path (`node/src/api.rs::post_submit_turn` → `gossip_turn` → `execute_finalized_turn`).
-- **The non-answer.** What pyana does **not** have today is a "pure offline cclerk that accumulates receipts then atomically posts them to consensus." The cipherclerk's offline receipts are *self-attested only*; nothing in the on-chain path consumes a cclerk-generated `TurnReceipt`. The chain rebuilds its own receipt by re-executing the turn.
+- **The non-answer.** What dregg does **not** have today is a "pure offline cclerk that accumulates receipts then atomically posts them to consensus." The cipherclerk's offline receipts are *self-attested only*; nothing in the on-chain path consumes a cclerk-generated `TurnReceipt`. The chain rebuilds its own receipt by re-executing the turn.
 
 ---
 
@@ -55,9 +55,9 @@ Everything else is pure compute. The "core dance" methods we care about are all 
 | `make_action` (cipherclerk.rs:2440) | Constructs an unsigned `Action` and sends it through `sign_action`. |
 | `make_turn` / `make_turn_for` (cipherclerk.rs:2475, 2480) | Wraps an `Action` in a `CallTree`/`CallForest`/`Turn`. Reads `self.receipt_chain.last()` to populate `previous_receipt_hash`. |
 | `build_authorized_turn` (cipherclerk.rs:2548) | Builds an `AuthRequest`, calls `self.authorize(...)` → STARK proof bytes, wraps into a `Turn`, calls `sign_turn`. |
-| `prove_authorization` (cipherclerk.rs:2882) | Calls `pyana_bridge::BridgePresentationBuilder::prove(...)` — pure prover. |
+| `prove_authorization` (cipherclerk.rs:2882) | Calls `dregg_bridge::BridgePresentationBuilder::prove(...)` — pure prover. |
 | `prove_authorization_with_issuer_key` (cipherclerk.rs:2957) | Same, with out-of-band issuer key for attenuated tokens. |
-| `prove_program`, `prove_predicate`, `prove_arithmetic`, `prove_relational`, `prove_committed_threshold`, `prove_for_intent_predicates`, `prove_with_chain` | All synchronous, all delegate to in-process `pyana-circuit` provers. |
+| `prove_program`, `prove_predicate`, `prove_arithmetic`, `prove_relational`, `prove_committed_threshold`, `prove_for_intent_predicates`, `prove_with_chain` | All synchronous, all delegate to in-process `dregg-circuit` provers. |
 | `mint_token`, `attenuate`, `delegate*`, `receive_signed_delegation`, `receive_local_delegation` | Macaroon caveat operations, BLAKE3-keyed; pure. |
 | `append_receipt`, `verify_own_chain`, `current_state_commitment` | Local receipt-chain bookkeeping. |
 
@@ -129,7 +129,7 @@ All inputs are functions of the in-memory `Ledger`, the `Turn`, the executor's c
 
 ### 2b. What is the "meaning" of an offline receipt?
 
-**Pyana's receipts have no consensus-derived ground truth baked into them.** A receipt with `finality: Final` produced by an offline `TurnExecutor` looks structurally identical to a receipt produced by a quorum of validators. The chain doesn't sign the receipt — at most one executor does.
+**`dregg`'s receipts have no consensus-derived ground truth baked into them.** A receipt with `finality: Final` produced by an offline `TurnExecutor` looks structurally identical to a receipt produced by a quorum of validators. The chain doesn't sign the receipt — at most one executor does.
 
 Specifically:
 - `executor_signature` is only populated when `executor_signing_key` is set (executor.rs:621, 762-776). The default `TurnExecutor::new()` leaves it `None`. The runtime in `sdk/src/runtime.rs:123` constructs the executor with `TurnExecutor::new(...)` and never sets a key. **Therefore, every receipt the SDK's `AgentRuntime` produces has `executor_signature = None`.**
@@ -173,7 +173,7 @@ The structural reasons:
 
 ### 3a. Can Alice fork her own chain?
 
-**Yes — and pyana relies on consensus to expose the fork, not to prevent its construction.**
+**Yes — and dregg relies on consensus to expose the fork, not to prevent its construction.**
 
 `AgentCipherclerk::reset_receipt_chain()` doesn't exist as a public method, but `append_receipt` does (cipherclerk.rs:1775). Alice can:
 
@@ -187,7 +187,7 @@ Nothing in `sdk/src/cipherclerk.rs` or `turn/src/executor.rs` detects this — t
 **The defense against forks is at consensus time:**
 
 - The fast-path lock table (`turn/src/fast_path.rs:203-247`) keyed on `(CellId, nonce)` ensures at most one fast-path turn per cell+nonce gets a quorum (`process_fast_path_lock` line 322 + `assemble_certificate` line 430 + `effective_quorum_threshold` from `federation/src/solo.rs:80`).
-- The blocklace's equivocation detection (`pyana_blocklace::finality::BlockError::Equivocation`, surfaced in `node/src/blocklace_sync.rs:803-823`) auto-evicts creators who sign two blocks at the same `(creator, seq)`. The constitution manager records the proof.
+- The blocklace's equivocation detection (`dregg_blocklace::finality::BlockError::Equivocation`, surfaced in `node/src/blocklace_sync.rs:803-823`) auto-evicts creators who sign two blocks at the same `(creator, seq)`. The constitution manager records the proof.
 - The `NullifierLog` (federation/src/solo.rs:114) gives a sequenced, signed record of nullifier insertions; rejoin replays it (`validate_remote_entries`, line 187) and rejects on conflict.
 
 **Net effect:** offline Alice can _construct_ contradictory receipts, but the moment two contradictory turns hit consensus from different replicas, one is rejected. The receipt chain alone is insufficient evidence of uniqueness; it must be combined with consensus-level uniqueness commitment.
@@ -200,7 +200,7 @@ Nothing in `sdk/src/cipherclerk.rs` or `turn/src/executor.rs` detects this — t
 
 ### 4a. The block-replay contract
 
-The unit of sync is a `pyana_blocklace::finality::Block`, not a `TurnReceipt`. From `node/src/blocklace_sync.rs`:
+The unit of sync is a `dregg_blocklace::finality::Block`, not a `TurnReceipt`. From `node/src/blocklace_sync.rs`:
 
 ```rust
 pub enum BlocklaceGossipMessage {
@@ -347,7 +347,7 @@ Distilled from the above:
 | Resolve a fast-path certificate | requires 2f+1 signatures | yes once cert is assembled | `fast_path.rs:430 assemble_certificate`. |
 | Detect a fork / double-spend | only by re-running consensus | no | Solo mode papers over this with the assumption "single operator, no Byzantine adversary" (`solo.rs:7-12`). |
 
-**The contract:** offline = "I can compute everything that would be valid if the world agreed with me." Consensus = "the world is forced to agree, or at least to expose disagreement." Pyana's receipt chain is the bridge: offline-built receipts become true once they've been re-executed under consensus and the resulting consensus-side chain agrees.
+**The contract:** offline = "I can compute everything that would be valid if the world agreed with me." Consensus = "the world is forced to agree, or at least to expose disagreement." `dregg`'s receipt chain is the bridge: offline-built receipts become true once they've been re-executed under consensus and the resulting consensus-side chain agrees.
 
 ---
 

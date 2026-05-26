@@ -1,15 +1,15 @@
 //! Proof generation and verification checks:
 //! STARK (MerklePoseidon2), derivation, temporal predicate, effect VM.
 
-use pyana_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
-use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::stark::proof_from_bytes;
-use pyana_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
-use pyana_commit::poseidon2_tree::Poseidon2MerkleTree;
-use pyana_token::{Attenuation, AuthRequest, MacaroonToken};
+use dregg_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::stark::proof_from_bytes;
+use dregg_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
+use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
+use dregg_token::{Attenuation, AuthRequest, MacaroonToken};
 
 use crate::report::{CheckResult, run_check};
 
@@ -31,7 +31,7 @@ pub fn run() -> Vec<CheckResult> {
 /// Compute the synthetic Poseidon2 federation root for an issuer key.
 /// Same logic as the full_pipeline tests.
 fn compute_federation_root_poseidon2(issuer_key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::poseidon2;
+    use dregg_circuit::poseidon2;
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -75,7 +75,7 @@ fn check_stark_proof() -> Result<(), String> {
         federation_root_bytes,
         federation_root_bb,
     );
-    let root_token = MacaroonToken::mint(issuer_key, b"stark-kid", "compute.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"stark-kid", "compute.dregg.dev");
     builder.set_root_token(root_token);
 
     let att = Attenuation {
@@ -204,7 +204,7 @@ fn check_derivation_proof() -> Result<(), String> {
 
 fn check_effect_vm_proof() -> Result<(), String> {
     // Prove a multi-effect turn via the effect VM STARK.
-    use pyana_circuit::effect_vm::{
+    use dregg_circuit::effect_vm::{
         CellState, Effect as VmEffect, EffectVmAir, compute_effects_hash, generate_effect_vm_trace,
     };
 
@@ -246,7 +246,7 @@ fn check_effect_vm_proof() -> Result<(), String> {
 
 fn check_ivc_proof() -> Result<(), String> {
     // Generate a 3-step IVC proof and verify it.
-    use pyana_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
 
     let initial_root = BabyBear::new(12345);
 
@@ -290,7 +290,7 @@ fn check_stark_tampered_rejected() -> Result<(), String> {
         federation_root_bytes,
         federation_root_bb,
     );
-    let root_token = MacaroonToken::mint(issuer_key, b"tamper-kid", "compute.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"tamper-kid", "compute.dregg.dev");
     builder.set_root_token(root_token);
 
     let att = Attenuation {
@@ -344,7 +344,7 @@ fn check_stark_tampered_rejected() -> Result<(), String> {
 
 /// Adversarial: IVC proof verified against WRONG initial root must be rejected.
 fn check_ivc_wrong_initial_root() -> Result<(), String> {
-    use pyana_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
 
     let real_root = BabyBear::new(55555);
     let wrong_root = BabyBear::new(99999);

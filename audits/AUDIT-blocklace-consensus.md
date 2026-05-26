@@ -2,10 +2,10 @@
 
 ## Scope and starting context
 
-Pyana's live BFT consensus lives in `blocklace/`. The earlier
+`dregg`'s live BFT consensus lives in `blocklace/`. The earlier
 `AUDIT-morpheus-federation-blocklace.md` established that
-`pyana-federation::{node,transport}` is a dead in-process simulator and
-`pyana-blocklace` is the only consensus engine actually wired into the
+`dregg-federation::{node,transport}` is a dead in-process simulator and
+`dregg-blocklace` is the only consensus engine actually wired into the
 running node (`node/src/main.rs --consensus blocklace`, the only accepted
 value). `AUDIT-morpheus-federation-blocklace-phase3a.md` classified the
 dead-code consumers. This audit goes deeper on blocklace itself.
@@ -23,7 +23,7 @@ Crate layout (`blocklace/src/`):
 | `dissemination.rs` | 2077  | Cordial Dissemination (push/pull/frontier exchange)        |
 | `cross_reference.rs` | 772 | Phase-4 cross-group references / DAG-delivered proofs     |
 | `delegation.rs`    |   950 | Off-strand delegation primitives (not central to BFT)      |
-| `pyana_bridge.rs`  |   207 | Execution-tier classifier + receipt extractor              |
+| `dregg_bridge.rs`  |   207 | Execution-tier classifier + receipt extractor              |
 | `finality_tests.rs`|   698 | Tests for finality.rs                                      |
 
 ## 1. What kind of consensus is it?
@@ -123,12 +123,12 @@ proof. The code IS the spec.
 Significant safety **gaps** found while walking the code:
 
 - **A. Two parallel `Block` types, one stripped of its signature.**
-  The live consensus loop maintains a `pyana_blocklace::finality::Blocklace`
+  The live consensus loop maintains a `dregg_blocklace::finality::Blocklace`
   (the signed/equivocation-aware one), but `ordering::tau` operates on
-  `pyana_blocklace::Blocklace` from `lib.rs` (no signatures, no
+  `dregg_blocklace::Blocklace` from `lib.rs` (no signatures, no
   equivocation set). `node/src/blocklace_sync.rs:381-426
   build_ordering_blocklace` converts every finality block into an
-  "ordering block" by calling `pyana_blocklace::Block::new(...)` which
+  "ordering block" by calling `dregg_blocklace::Block::new(...)` which
   per `lib.rs:134-147` produces a block with `signature: [0u8; 64]`.
   Signatures are verified once at receive time (`finality.rs:540`) and
   then discarded for ordering.
@@ -138,7 +138,7 @@ Significant safety **gaps** found while walking the code:
     contract is non-obvious; any code that ever runs `tau` over a
     blocklace whose blocks came from a less-validated source (e.g., a
     test, a future feature) would silently lose authenticity. The
-    `pyana_blocklace::Block::id()` even hashes WITHOUT the signature
+    `dregg_blocklace::Block::id()` even hashes WITHOUT the signature
     (`lib.rs:118-131`), so the two BlockId namespaces are not
     interchangeable — `blocklace_sync.rs` maintains a bidirectional
     `HashMap` to translate between them. This is brittle.
@@ -206,7 +206,7 @@ Significant safety **gaps** found while walking the code:
   `mark_ordered` is called only from `blocklace/src/finality_tests.rs`
   and `preflight/src/checks/blocklace.rs`. **No code path calls
   `mark_ordered` after `tau` finalizes a block.** Consequently
-  `PyanaBlocklaceBridge::process_finalized` (`pyana_bridge.rs:175-201`,
+  `DreggBlocklaceBridge::process_finalized` (`dregg_bridge.rs:175-201`,
   which reads `blocklace.finality.ordering.ordered`) would return
   nothing on a live node — but that method is never called by the live
   node either. The actual production path is
@@ -359,9 +359,9 @@ There are **two** federation concepts in the tree:
    for threshold changes (`constitution.rs:94-104`). This is what
    `tau` uses.
 
-2. The `pyana-federation` crate's BLS threshold attestation
+2. The `dregg-federation` crate's BLS threshold attestation
    (`federation/src/threshold.rs`, `federation/src/checkpoint.rs`).
-   Live consumers from `pyana-federation` that the running node
+   Live consumers from `dregg-federation` that the running node
    actually uses are: `solo::FederationMode`, `SoloConsensusState`,
    `NullifierLog`, `quorum_threshold(n)`, `fault_tolerance(n)`,
    `threshold`, `threshold_decrypt`, `checkpoint`, `revocation`,
@@ -403,7 +403,7 @@ The seam is `node/src/blocklace_sync.rs` (in particular
    block uses ALL CURRENT TIPS as predecessors
    (`finality.rs:502`).
 2. The new block is gossiped via `BlocklaceGossipMessage::Push` over
-   the `pyana/blocklace` gossip topic (`blocklace_sync.rs:44`).
+   the `dregg/blocklace` gossip topic (`blocklace_sync.rs:44`).
 3. Peers receive, `receive_block` runs signature/closure/equivocation
    checks, and they may produce their own blocks acknowledging the new
    one in their causal past.
@@ -419,7 +419,7 @@ The seam is `node/src/blocklace_sync.rs` (in particular
      prefix, advancing the cursor.
 5. `spawn_finality_executor` (lines 1036-1151) consumes the
    `FinalizedBlock`s. For each `FinalizedBlock::Turn`:
-   - Deserialize as `pyana_sdk::SignedTurn` (line 1164).
+   - Deserialize as `dregg_sdk::SignedTurn` (line 1164).
    - Verify the turn's Ed25519 signature against the signer's public
      key (line 1177-ish, just past the snippet).
    - Set `executor.set_timestamp(now)` and
@@ -432,7 +432,7 @@ The seam is `node/src/blocklace_sync.rs` (in particular
 So a turn becomes "consensus-committed" the moment
 `poll_finalized_blocks` emits a `FinalizedBlock::Turn` for its block ID,
 AND the executor produces `TurnResult::Committed`. The receipt itself
-is a `pyana_turn::TurnReceipt` which lives in the cclerk and emits a
+is a `dregg_turn::TurnReceipt` which lives in the cclerk and emits a
 WebSocket event; **the receipt is not re-embedded as a new blocklace
 block** (no on-chain receipt feedback). Receipts may be signed by the
 executor (`maybe_sign_receipt` in `turn/src/executor.rs:762`), but the
@@ -569,8 +569,8 @@ and external verifiers have no quorum-signed checkpoint to verify
 against; (3) the `FinalityLevel` Bilateral/Attested/Ordered ladder
 and `Payload::Ack`-driven attestation tracking are dead in the live
 path — only the binary "in tau's prefix" matters, which is fine but
-makes a third of `finality.rs` and all of `pyana_bridge.rs` vestigial.
-Net: the **algorithm is sound, the integration is partial**. Pyana
+makes a third of `finality.rs` and all of `dregg_bridge.rs` vestigial.
+Net: the **algorithm is sound, the integration is partial**. `dregg`
 will not produce wrong answers; it will produce CORRECT but
 **unattested** answers, with brittle internal seams that a future
 refactor could trip over.
@@ -594,7 +594,7 @@ refactor could trip over.
    `has_equivocation_in_past` be augmented with the seq-based check
    from `lace.equivocators`, or vice versa.
 
-3. **Is `pyana_bridge::PyanaBlocklaceBridge` deprecated?** It's the
+3. **Is `dregg_bridge::DreggBlocklaceBridge` deprecated?** It's the
    only consumer of `FinalityTracker::ordered`, which is never
    populated. Live code uses `BlocklaceHandle::poll_finalized_blocks`
    instead. If deprecated, recommend removing
@@ -605,7 +605,7 @@ refactor could trip over.
    (separation of concerns: ordering vs. validation), or an artifact
    of incremental development? If the former, the contract should be
    documented; if the latter, consider merging into a single
-   `pyana_blocklace::SignedBlock` that `tau` accepts directly.
+   `dregg_blocklace::SignedBlock` that `tau` accepts directly.
 
 5. **What is the recovery story if `tau` ever returns a different
    prefix on two honest nodes?** The algorithm's correctness proof

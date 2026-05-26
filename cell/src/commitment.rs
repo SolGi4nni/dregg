@@ -5,10 +5,10 @@
 //! Prior to this module, the codebase had **three** disjoint state-commitment
 //! schemes with no cross-binding:
 //!
-//! 1. `Cell::state_commitment()` — BLAKE3, `pyana-cell-state-v1` derive key,
+//! 1. `Cell::state_commitment()` — BLAKE3, `dregg-cell-state-v1` derive key,
 //!    committed to a **subset** of state (no visibility, no commitments, no
 //!    delegation/program/proved_state).
-//! 2. `Ledger::hash_cell()` — BLAKE3, `pyana-cell:merkle-leaf v2` derive key,
+//! 2. `Ledger::hash_cell()` — BLAKE3, `dregg-cell:merkle-leaf v2` derive key,
 //!    committed to a **superset** (all of `state_commitment` plus visibility,
 //!    commitments, delegation_epoch, proved_state, program, delegate, delegation).
 //! 3. `circuit::CellState::compute_commitment()` — Poseidon2 over BabyBear,
@@ -58,10 +58,10 @@ use crate::state::{CellState, FieldVisibility};
 /// circuit public inputs derive their domain separation transitively from this
 /// context — bumping it cleanly invalidates stale commitments rather than
 /// allowing silent cross-version collisions.
-pub const CANONICAL_COMMITMENT_CONTEXT: &str = "pyana-cell:canonical-state-commitment v2";
+pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v2";
 
 /// Domain-separation context for the canonical capability-set root.
-pub const CANONICAL_CAP_ROOT_CONTEXT: &str = "pyana-cell:canonical-capability-root v1";
+pub const CANONICAL_CAP_ROOT_CONTEXT: &str = "dregg-cell:canonical-capability-root v1";
 
 /// Compute the canonical tier-byte for a single `AuthRequired` value.
 ///

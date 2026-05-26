@@ -83,7 +83,7 @@ else
 fi
 
 # ── 5: the F1 threshold is >= 2 in this 3-node topology ─────────────
-# `pyana_federation::quorum_threshold(3)` = 3 - floor(2/3) = 3.
+# `dregg_federation::quorum_threshold(3)` = 3 - floor(2/3) = 3.
 # For n=3 we want threshold=2 (a "(2 of 3)"). Greenfield correction
 # target: the devnet's federation_mode=solo runs with threshold=1
 # regardless, so this is informational.

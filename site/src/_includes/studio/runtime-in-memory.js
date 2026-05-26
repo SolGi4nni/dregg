@@ -1,5 +1,5 @@
 /**
- * InMemoryRuntime — JS driver around the wasm PyanaRuntime handle.
+ * InMemoryRuntime — JS driver around the wasm DreggRuntime handle.
  *
  * Owns one wasm runtime handle. Exposes a Runtime-shaped API (see STUDIO.md
  * § 3). All getters return Preact signals so inspectors auto-re-render when
@@ -23,24 +23,24 @@ const CAPS = Object.freeze({
 export async function createInMemoryRuntime({ wasm, signals }) {
   const { signal, computed } = signals;
 
-  // §4.6 SDK integration COMPLETED (STARBRIDGE-FOLLOWUP-05): instantiate typed PyanaRuntime
-  // from @pyana/sdk. All public mutations + high-level calls (create*, execute*,
+  // §4.6 SDK integration COMPLETED (STARBRIDGE-FOLLOWUP-05): instantiate typed DreggRuntime
+  // from @dregg/sdk. All public mutations + high-level calls (create*, execute*,
   // peer*, federation*, intent*) now go through typed SDK surface (eliminates
   // raw `(wasm as any).foo()` class of bugs for starbridge-apps + Studio).
   // Getters for signal-driven inspectors use direct canonical wasm passthrough
   // (SDK runtime.ts does the identical (wasm as any) internally; no JS reimpl,
   // per substrate rule). Hybrid is required for sync computed() reactivity;
   // high-level app/turn-builder paths are fully typed.
-  // When served, `/pkg/@pyana/sdk/index.mjs` is the bundled ESM from sdk-ts/.
+  // When served, `/pkg/@dregg/sdk/index.mjs` is the bundled ESM from sdk-ts/.
   let sdkRuntime = null;
   try {
-    const sdkMod = await import('/pkg/@pyana/sdk/index.mjs');
-    if (sdkMod && sdkMod.PyanaRuntime) {
-      sdkRuntime = new sdkMod.PyanaRuntime(wasm);
-      console.log('[runtime-in-memory] §4.6 SDK wired (FOLLOWUP-05 complete): using @pyana/sdk PyanaRuntime for all mutators + typed surface');
+    const sdkMod = await import('/pkg/@dregg/sdk/index.mjs');
+    if (sdkMod && sdkMod.DreggRuntime) {
+      sdkRuntime = new sdkMod.DreggRuntime(wasm);
+      console.log('[runtime-in-memory] §4.6 SDK wired (FOLLOWUP-05 complete): using @dregg/sdk DreggRuntime for all mutators + typed surface');
     }
   } catch (e) {
-    console.warn('[runtime-in-memory] §4.6 SDK not available (no /pkg/@pyana/sdk or import fail), falling back to raw wasm (visible gap):', e?.message || e);
+    console.warn('[runtime-in-memory] §4.6 SDK not available (no /pkg/@dregg/sdk or import fail), falling back to raw wasm (visible gap):', e?.message || e);
   }
 
   const handle = wasm.create_runtime();
@@ -97,13 +97,13 @@ export async function createInMemoryRuntime({ wasm, signals }) {
     }
     return receiptCache.get(turnHash);
   }
-  // <pyana-turn> uses the same source-of-truth: a "turn" in this runtime is
+  // <dregg-turn> uses the same source-of-truth: a "turn" in this runtime is
   // identified by its turn_hash and surfaces the matching receipt.
   function getTurn(turnHash) { return getReceipt(turnHash); }
 
   // --- Capabilities ---------------------------------------------------------
   // Capabilities are agent-indexed (no global ID in the sim). URI form:
-  //   pyana://capability/<agent_idx>/<token_idx>
+  //   dregg://capability/<agent_idx>/<token_idx>
   const capTreeCache = new Map();
   function listCapabilities(agentIdx) {
     const key = String(agentIdx);
@@ -165,7 +165,7 @@ export async function createInMemoryRuntime({ wasm, signals }) {
   }
 
   // --- Federations + Blocks -------------------------------------------------
-  // Now wired. The wasm runtime constructs real `pyana_federation::Federation`
+  // Now wired. The wasm runtime constructs real `dregg_federation::Federation`
   // instances; the inspector reads through `get_federation_state` /
   // `get_federation_block` / `list_federation_blocks`, all of which return
   // shapes derived directly from the canonical RevocationBlock /
@@ -183,7 +183,7 @@ export async function createInMemoryRuntime({ wasm, signals }) {
     }
     return fedCache.get(key);
   }
-  // Blocks are addressed as `pyana://block/<fedIdx>/<height>` upstream, but
+  // Blocks are addressed as `dregg://block/<fedIdx>/<height>` upstream, but
   // existing inspectors pass just the height-portion. To keep block lookup
   // self-contained, we default to fed_index=0 when callers pass a bare height;
   // callers that want a specific federation pass an object { fedIndex, height }.
@@ -382,7 +382,7 @@ export async function createInMemoryRuntime({ wasm, signals }) {
     return result;
   }
   // `propose_block(fed_index, events)` accepts an array of token-id strings
-  // (each becomes a real `pyana_federation::RevocationEvent` signed by node 0).
+  // (each becomes a real `dregg_federation::RevocationEvent` signed by node 0).
   // Returns `{ block_hash, height, finalized }`; `finalized: false` means the
   // round didn't reach quorum (the canonical Federation enforces n - floor(n/3)
   // online votes — not any-N like the deleted sim).
@@ -434,9 +434,9 @@ export async function createInMemoryRuntime({ wasm, signals }) {
   }
 
   // --- Observability trace events (Task #30) --------------------------------
-  // Signal-cached; the live feed for <pyana-activity>. Bumps on any mutation
+  // Signal-cached; the live feed for <dregg-activity>. Bumps on any mutation
   // (via version) cause re-fetch of the JSON from wasm (canonical EventLog).
-  // No JS reimplementation of pyana — pure passthrough + signal.
+  // No JS reimplementation of dregg — pure passthrough + signal.
   const traceEventsSignal = computed(() => {
     version.value; // dep on mutations (executeTurn etc)
     try {
@@ -455,7 +455,7 @@ export async function createInMemoryRuntime({ wasm, signals }) {
   }
 
   // --- Peer exchange (sovereign-cell P2P) ---------------------------------
-  // Thin signal-cached facade over the canonical `pyana_cell::PeerExchange`
+  // Thin signal-cached facade over the canonical `dregg_cell::PeerExchange`
   // surface exposed by the wasm crate. Mutations bump `version`; reads come
   // through cached computeds keyed on (agentIdx, peerCellId).
   const peerViewCache = new Map();
@@ -639,11 +639,11 @@ export async function createInMemoryRuntime({ wasm, signals }) {
     destroy,
 
     // Escape hatch for spikes/tests: direct wasm + handle access (internal).
-    // §4.6 SDK wiring COMPLETE (FOLLOWUP-05): _sdk is the @pyana/sdk PyanaRuntime
+    // §4.6 SDK wiring COMPLETE (FOLLOWUP-05): _sdk is the @dregg/sdk DreggRuntime
     // (all mutators + peer/intent/fed/turn paths are typed). Getters in signals
     // use canonical wasm (SDK does same under the hood; no reimpl, visible
     // only for reactivity driver). starbridge-apps/shared/turn-builders use
-    // runtime: PyanaRuntime where passed.
+    // runtime: DreggRuntime where passed.
     _wasm: wasm,
     _handle: handle,
     _sdk: sdkRuntime,

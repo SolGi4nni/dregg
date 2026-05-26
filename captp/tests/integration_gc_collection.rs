@@ -8,9 +8,9 @@
 //! - Multi-holder independence: only last holder triggers CanRevoke
 //! - Import side: multiple local holders; DropMessage sent only on final release
 
-use pyana_captp::{DropResult, ExportGcManager, FederationId, ImportGcManager, SwissTable};
-use pyana_cell::AuthRequired;
-use pyana_types::CellId;
+use dregg_captp::{DropResult, ExportGcManager, FederationId, ImportGcManager, SwissTable};
+use dregg_cell::AuthRequired;
+use dregg_types::CellId;
 
 fn fed(b: u8) -> FederationId {
     FederationId([b; 32])
@@ -68,7 +68,7 @@ fn export_import_drop_sweep_stale_ref_fails() {
     let err = swiss_table
         .enliven(&swiss, 200)
         .expect_err("stale ref must fail");
-    assert_eq!(err, pyana_captp::EnlivenError::NotFound);
+    assert_eq!(err, dregg_captp::EnlivenError::NotFound);
 }
 
 // =============================================================================

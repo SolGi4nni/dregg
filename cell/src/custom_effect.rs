@@ -1,10 +1,10 @@
 //! Custom-effect verifier registry — vk_hash → (canonical bytes,
-//! verifier) for [`pyana_circuit::effect_vm::Effect::Custom`].
+//! verifier) for [`dregg_circuit::effect_vm::Effect::Custom`].
 //!
 //! Mirrors the [`WitnessedPredicateRegistry`](crate::predicate::WitnessedPredicateRegistry)
 //! shape: the executor holds an instance, looks up entries by the
 //! 32-byte `vk_hash`, and dispatches the proof to the registered
-//! verifier. Designed so that *every place pyana names a custom
+//! verifier. Designed so that *every place dregg names a custom
 //! verifier by hash* (slot-caveat `Custom`, `WitnessedPredicateKind::Custom`,
 //! `Effect::Custom`, `FactoryDescriptor.child_program_vk`) shares the
 //! same registration + dispatch + audit surface.
@@ -39,7 +39,7 @@
 //! registration surface + a stub verifier (accepts non-empty proof
 //! bytes, rejects empty) so the executor's dispatch can be exercised
 //! without pulling in the heavyweight circuit. Production wiring
-//! registers `pyana_circuit::dsl::circuit::CellProgram` verifiers via
+//! registers `dregg_circuit::dsl::circuit::CellProgram` verifiers via
 //! [`CustomEffectRegistry::register`].
 //!
 //! ## Boundary contract
@@ -151,7 +151,7 @@ impl std::error::Error for CustomEffectError {}
 /// The trait is object-safe so the registry can hold
 /// `Arc<dyn CustomEffectVerifier>` and dispatch by vk_hash at runtime.
 /// Implementations live wherever the underlying program lives —
-/// `pyana_circuit::dsl::circuit::CellProgram` for DSL-authored
+/// `dregg_circuit::dsl::circuit::CellProgram` for DSL-authored
 /// programs, app-side crates for app-defined verifiers.
 pub trait CustomEffectVerifier: Send + Sync {
     /// Human-readable name for diagnostics.

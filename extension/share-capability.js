@@ -24,7 +24,7 @@ async function init() {
   if (!NONCE) return;
   try {
     const resp = await chrome.runtime.sendMessage({
-      type: 'pyana:getPendingDecision',
+      type: 'dregg:getPendingDecision',
       nonce: NONCE,
     });
     if (resp && resp.result && resp.result.payload) {
@@ -55,7 +55,7 @@ generateBtn.addEventListener('click', async () => {
   generateBtn.disabled = true;
 
   const response = await chrome.runtime.sendMessage({
-    type: 'pyana:shareCapability',
+    type: 'dregg:shareCapability',
     id: `share_${Date.now()}`,
     cellId,
   });

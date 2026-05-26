@@ -9,13 +9,13 @@
 //! - `GET /status` — queue status JSON.
 //!
 //! All heavy lifting (Merkle accounting, constraint validation) is performed by the
-//! underlying `ProgrammableQueue` from `pyana-storage`. This module is a thin HTTP skin.
+//! underlying `ProgrammableQueue` from `dregg-storage`. This module is a thin HTTP skin.
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::queue_endpoint::QueueEndpoint;
-//! use pyana_storage::programmable::{ProgrammableQueue, programs};
+//! use dregg_app_framework::queue_endpoint::QueueEndpoint;
+//! use dregg_storage::programmable::{ProgrammableQueue, programs};
 //!
 //! let queue = ProgrammableQueue::new("orders".into(), owner, programs::open(0), None, 1024);
 //! let endpoint = QueueEndpoint::new(queue)
@@ -37,7 +37,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use pyana_storage::{
+use dregg_storage::{
     programmable::{ProgrammableQueue, ValidationContext},
     queue::QueueEntry,
 };
@@ -304,7 +304,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Method, Request};
-    use pyana_storage::programmable::programs;
+    use dregg_storage::programmable::programs;
     use tower::ServiceExt;
 
     fn make_queue() -> ProgrammableQueue {

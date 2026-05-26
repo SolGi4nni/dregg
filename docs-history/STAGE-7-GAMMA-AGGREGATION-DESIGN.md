@@ -258,7 +258,7 @@ in a signature gadget); the original cell-state commitments at leaves
 leaf in a turn-chain IVC (this is 7-ζ).
 
 **Engineering risk.** High. Requires either picking a folding scheme
-(Nova, ProtoStar, HyperNova — none of these are in `pyana-circuit`
+(Nova, ProtoStar, HyperNova — none of these are in `dregg-circuit`
 today) or building the Plonky3-native recursive verifier into a
 proof-of-proofs loop. `circuit/src/ivc.rs` and
 `circuit/src/plonky3_verifier_air.rs` have *some* of the primitives
@@ -422,7 +422,7 @@ For algebraic replay to work, we need three things bundled together.
 
 ### 4.1 The `WitnessedReceipt` structure
 
-A proposed shape (lives in `pyana-turn` next to `TurnReceipt`):
+A proposed shape (lives in `dregg-turn` next to `TurnReceipt`):
 
 ```rust
 pub struct WitnessedReceipt {
@@ -474,7 +474,7 @@ Three options, mirroring the choices in `STAGE-7-PLUS-DESIGN.md §5.2`:
   AE, say) to the federation's recovery key, and shipped alongside
   the receipt. A new field `encrypted_witness_root: [u8; 32]` in
   `TurnReceipt` binds the ciphertext. The federation can decrypt to
-  audit; outside parties cannot. **Default for Pyana.**
+  audit; outside parties cannot. **Default for `dregg`.**
 - **Split-key.** Same as encrypted, but the recovery key is sharded
   across federation members via Shamir; reconstruction requires
   threshold cooperation. Higher censorship-resistance.
@@ -509,13 +509,13 @@ provenance, by re-execution.** It does not detect authorization fraud
 (P5 stays executor-trusted in 7-γ). It does not detect bridge
 double-spend across federations (Stage 6). It detects everything else.
 
-### 4.4 Relationship to `pyana_compress_history` IVC
+### 4.4 Relationship to `dregg_compress_history` IVC
 
 `node/src/mcp.rs::tool_compress_history` (`node/src/mcp.rs:2250`)
 runs an IVC over state roots derived from receipts — it produces a
 proof attesting to a chain of state-root transitions, *without
 witness data*. That tool is the chain-side complement of 7-γ: 7-γ
-compresses *one turn's N proofs into one*, `pyana_compress_history`
+compresses *one turn's N proofs into one*, `dregg_compress_history`
 compresses *N turn proofs into one chain proof*. The two compose to
 Stage 7-ζ's IVC-over-receipt-chain story.
 
@@ -572,8 +572,8 @@ prove and use as a golden output), but not ship it as the artifact.
 - In `verify_proof_carrying_turn`, add a PI-matching loop that
   requires all N per-cell proofs of the same turn to agree on the
   four new PI fields.
-- Crate ownership: `pyana-circuit` (effect_vm PI extensions);
-  `pyana-turn` (`convert_turn_effects_to_vm`, executor verify path).
+- Crate ownership: `dregg-circuit` (effect_vm PI extensions);
+  `dregg-turn` (`convert_turn_effects_to_vm`, executor verify path).
 - Tests: differential test that produces a turn where two per-cell
   proofs claim different `turn_hash` → rejected.
 
@@ -588,7 +588,7 @@ prove and use as a golden output), but not ship it as the artifact.
 - The outer proof carries both the N inner proofs and this aggregation
   proof. Verifier runs N inner verifications, then one aggregation
   verification, then asserts the shared PIs.
-- Crate ownership: `pyana-circuit::turn_aggregation`; `pyana-turn`
+- Crate ownership: `dregg-circuit::turn_aggregation`; `dregg-turn`
   prover-side glue.
 - Tests: differential test where prover swaps `effects_local[bob]`
   contents between two `Transfer` proofs of different turns → the
@@ -610,7 +610,7 @@ prove and use as a golden output), but not ship it as the artifact.
     PI today, lifted to bilateral pairs.)
   - `intro_log_acc` matches across all three contributors (three
     rows in the aggregation trace must hash to the same final value).
-- Crate ownership: `pyana-circuit::turn_aggregation`. This is the
+- Crate ownership: `dregg-circuit::turn_aggregation`. This is the
   meat of "the algebra binds bilateral".
 - Tests: adversarial — produce `Transfer(a, b, 100)` and `Transfer(a,
   b, 50)` proofs and try to bundle them as a single turn. The
@@ -622,11 +622,11 @@ shared fields." Everything else is algebra.
 
 ### Companion: 7-δ (`WitnessedReceipt`) lands in parallel after γ.0
 
-Pure engineering. Independent crate-slice (`pyana-turn` + `pyana-node`
+Pure engineering. Independent crate-slice (`dregg-turn` + `dregg-node`
 for storage). Lands the replay piece. Crate ownership:
-`pyana-turn::witnessed_receipt` (the struct, serialization); `pyana-
-node` for the storage layer; `pyana-cipherclerk` / `pyana-sdk` for the
-export interface; `pyana-storage` for the encrypted-witness blob
+`dregg-turn::witnessed_receipt` (the struct, serialization); `dregg-
+node` for the storage layer; `dregg-cipherclerk` / `dregg-sdk` for the
+export interface; `dregg-storage` for the encrypted-witness blob
 table.
 
 ---
@@ -709,7 +709,7 @@ of items, rather than as a vague "the executor is trusted."
 ## 8. Closing
 
 Stage 7-γ is the proof-system response to a precise observation:
-*Pyana's algebra speaks of cells, but its semantics speak of turns,
+*`dregg`'s algebra speaks of cells, but its semantics speak of turns,
 and the two languages have not been joined.* The cleanest, lowest-risk
 join is approach A — shared-PI bundle plus a small aggregation
 micro-AIR that captures projection totality (P2) and bilateral

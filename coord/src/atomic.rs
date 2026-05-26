@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use pyana_cell::{CellId, Ledger, Preconditions};
-use pyana_turn::{CallForest, ComputronCosts, Turn, TurnExecutor, TurnReceipt, TurnResult};
+use dregg_cell::{CellId, Ledger, Preconditions};
+use dregg_turn::{CallForest, ComputronCosts, Turn, TurnExecutor, TurnReceipt, TurnResult};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoordError;
@@ -71,7 +71,7 @@ impl AtomicForest {
         fee: u64,
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-coord:atomic-forest");
+        hasher.update(b"dregg-coord:atomic-forest");
         for p in participants {
             hasher.update(p);
         }
@@ -575,7 +575,7 @@ impl Coordinator {
         let agent_cell = ledger
             .get(&forest.initiator)
             .ok_or(CoordError::TurnExecution(
-                pyana_turn::TurnError::CellNotFound {
+                dregg_turn::TurnError::CellNotFound {
                     id: forest.initiator,
                 },
             ))?;
@@ -781,7 +781,7 @@ impl Coordinator {
     /// Compute a unique proposal ID.
     fn compute_proposal_id(&self, forest: &AtomicForest) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-coord:proposal");
+        hasher.update(b"dregg-coord:proposal");
         hasher.update(&forest.hash);
         hasher.update(&self.node_id);
         *hasher.finalize().as_bytes()
@@ -979,7 +979,7 @@ impl Participant {
             .ledger
             .get(&forest.initiator)
             .ok_or(CoordError::TurnExecution(
-                pyana_turn::TurnError::CellNotFound {
+                dregg_turn::TurnError::CellNotFound {
                     id: forest.initiator,
                 },
             ))?;

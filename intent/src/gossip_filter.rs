@@ -47,7 +47,7 @@
 
 use std::sync::Arc;
 
-use pyana_dfa::{
+use dregg_dfa::{
     Classification, GovernedRouter, KindRegistry, Pattern, RouteTableBuilder, RouteTarget,
 };
 
@@ -76,7 +76,7 @@ impl TopicDecision {
 
 /// A DFA-mediated topic filter for the intent gossip layer.
 ///
-/// Wraps a [`pyana_dfa::GovernedRouter`]; the route table commits to which
+/// Wraps a [`dregg_dfa::GovernedRouter`]; the route table commits to which
 /// topics the local peer subscribes to, supports atomic CAS-based swaps when
 /// subscriptions change, and (when a `ThresholdVerifier` is wired) supports
 /// federation-bound governance over the subscription set.
@@ -228,15 +228,15 @@ mod tests {
 
     #[test]
     fn accept_carries_userspace_payload() {
-        use pyana_dfa::Pattern;
-        let table = pyana_dfa::RouteTableBuilder::new()
+        use dregg_dfa::Pattern;
+        let table = dregg_dfa::RouteTableBuilder::new()
             .route_pattern(
                 Pattern::path_prefix("topic:auth:"),
                 RouteTarget::userspace(TOPIC_ACCEPT_KIND, b"auth_subscription".to_vec()),
             )
             .compile();
-        let mut router = pyana_dfa::GovernedRouter::new(table);
-        let mut reg = pyana_dfa::KindRegistry::new();
+        let mut router = dregg_dfa::GovernedRouter::new(table);
+        let mut reg = dregg_dfa::KindRegistry::new();
         reg.register(TOPIC_ACCEPT_KIND);
         router.set_kind_registry(reg);
         let f = GossipTopicFilter::from_router(router);

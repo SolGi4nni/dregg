@@ -1,13 +1,13 @@
-//! Vault event listener: watches for deposit events on Base and creates pyana notes.
+//! Vault event listener: watches for deposit events on Base and creates dregg notes.
 //!
-//! The listener polls the PyanaVault contract for `Deposit` events and converts each
-//! into a `NoteCreationRequest` that the pyana node processes to mirror the deposit
+//! The listener polls the DreggVault contract for `Deposit` events and converts each
+//! into a `NoteCreationRequest` that the dregg node processes to mirror the deposit
 //! in its private note tree.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Base L2 (PyanaVault contract)
+//! Base L2 (DreggVault contract)
 //!   │
 //!   │  emits Deposit(token, amount, noteCommitment, leafIndex)
 //!   │
@@ -23,7 +23,7 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use pyana_chain::listener::{VaultEventListener, NoteCreationRequest};
+//! use dregg_chain::listener::{VaultEventListener, NoteCreationRequest};
 //! use tokio::sync::mpsc;
 //!
 //! # async fn example() {
@@ -54,7 +54,7 @@ use tokio::sync::mpsc;
 /// A 20-byte Ethereum address.
 pub type Address = [u8; 20];
 
-/// Request to create a note in the pyana ledger mirroring an on-chain deposit.
+/// Request to create a note in the dregg ledger mirroring an on-chain deposit.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoteCreationRequest {
     /// The ERC-20 token address (all zeros for native ETH).
@@ -76,7 +76,7 @@ pub struct NoteCreationRequest {
 pub struct ListenerConfig {
     /// JSON-RPC endpoint for Base L2.
     pub rpc_url: String,
-    /// Address of the PyanaVault contract (hex string with 0x prefix).
+    /// Address of the DreggVault contract (hex string with 0x prefix).
     pub vault_address: String,
     /// Poll interval in seconds (for chains without WebSocket subscription support).
     pub poll_interval_secs: u64,
@@ -105,7 +105,7 @@ impl Default for ListenerConfig {
 /// sent through the provided channel.
 pub struct VaultEventListener {
     config: ListenerConfig,
-    /// Channel to send note creation requests to the pyana node.
+    /// Channel to send note creation requests to the dregg node.
     note_tx: mpsc::Sender<NoteCreationRequest>,
     /// Last processed block number (persisted across restarts via the node).
     last_block: u64,
@@ -116,7 +116,7 @@ impl VaultEventListener {
     ///
     /// # Arguments
     /// * `rpc_url` - Base L2 JSON-RPC endpoint
-    /// * `vault_address` - PyanaVault contract address (hex with 0x prefix)
+    /// * `vault_address` - DreggVault contract address (hex with 0x prefix)
     /// * `note_tx` - Channel for sending note creation requests to the node
     pub fn new(
         rpc_url: &str,

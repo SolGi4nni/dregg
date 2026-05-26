@@ -1,4 +1,4 @@
-//! DSL-to-Kimchi bridge: converts `KimchiCircuitDescriptor` (produced by the pyana DSL
+//! DSL-to-Kimchi bridge: converts `KimchiCircuitDescriptor` (produced by the dregg DSL
 //! codegen) into real Kimchi `CircuitGate<Fp>` structures, generates witnesses, and
 //! integrates with the Pickles recursive composition backend.
 //!
@@ -28,13 +28,13 @@ use super::{
 // ============================================================================
 // DSL Descriptor Types (canonical definitions)
 //
-// These are the types that the pyana-dsl proc-macro generates references to.
+// These are the types that the dregg-dsl proc-macro generates references to.
 // They live here (behind the `mina` feature) because the converter needs access
-// to Kimchi types. `pyana-dsl-runtime` re-exports them as
-// `pyana_dsl_runtime::{KimchiCircuitDescriptor, KimchiGate, DslGateType}`.
+// to Kimchi types. `dregg-dsl-runtime` re-exports them as
+// `dregg_dsl_runtime::{KimchiCircuitDescriptor, KimchiGate, DslGateType}`.
 // ============================================================================
 
-/// Descriptor for a Kimchi circuit generated from a pyana constraint.
+/// Descriptor for a Kimchi circuit generated from a dregg constraint.
 #[derive(Debug, Clone)]
 pub struct DslCircuitDescriptor {
     /// The gates in the circuit.

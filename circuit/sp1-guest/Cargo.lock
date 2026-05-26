@@ -929,23 +929,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-cell"
+name = "dregg-cell"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "postcard",
- "pyana-types",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-datalog-evaluation-guest"
+name = "dregg-datalog-evaluation-guest"
 version = "0.2.0"
 dependencies = [
  "blake3",
  "globset",
- "pyana-cell",
+ "dregg-cell",
  "rmp-serde",
  "serde",
  "sp1-zkvm",
@@ -953,7 +953,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-types"
+name = "dregg-types"
 version = "0.1.0"
 dependencies = [
  "blake3",

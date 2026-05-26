@@ -1,7 +1,7 @@
 //! Preflight: bridge phase-log + portable-note sanity checks.
 //!
 //! Layer: lightweight. These checks exist so that if any of the
-//! `pyana_cell::note_bridge` invariants regress, the whole heavier
+//! `dregg_cell::note_bridge` invariants regress, the whole heavier
 //! bridge suite is short-circuited at preflight time.
 //!
 //! See `teasting/tests/bridge_four_phase.rs` (existing happy/adversarial
@@ -9,13 +9,13 @@
 //! (extended adversarial coverage). This preflight is a quick smoke
 //! test, not exhaustive.
 
-use pyana_cell::note::{NoteCommitment, Nullifier};
-use pyana_cell::note_bridge::{
+use dregg_cell::note::{NoteCommitment, Nullifier};
+use dregg_cell::note_bridge::{
     BridgePhase, BridgePhaseError, BridgePhaseLog, BridgeReceiptEnvelope, BridgedNullifierSet,
     PendingBridgeSet, compute_bridge_id, create_portable_note, initiate_bridge,
     verify_portable_note,
 };
-use pyana_types::{AttestedRoot, FederationId};
+use dregg_types::{AttestedRoot, FederationId};
 
 use crate::report::{CheckResult, run_check};
 

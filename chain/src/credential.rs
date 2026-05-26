@@ -1,8 +1,8 @@
 //! Anonymous credential wrapping for on-chain verification.
 //!
-//! This module provides the host-side logic for wrapping pyana anonymous credential
+//! This module provides the host-side logic for wrapping dregg anonymous credential
 //! presentations into SP1/Groth16 proofs that can be verified by the
-//! [`IPyanaCredentialGate`] contract on Base.
+//! [`IDreggCredentialGate`] contract on Base.
 //!
 //! # Architecture
 //!
@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// An anonymous credential presentation ready for on-chain submission.
 ///
 /// This is the input to `wrap_credential_for_chain`. In production, it comes from
-/// `pyana-bridge`'s `BridgePresentationBuilder::prove()` which generates the full
+/// `dregg-bridge`'s `BridgePresentationBuilder::prove()` which generates the full
 /// STARK proof of ring membership + predicate satisfaction.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnonymousPresentation {
@@ -54,7 +54,7 @@ pub struct AnonymousPresentation {
     pub presentation_nullifier: [u8; 32],
 }
 
-/// A credential proof formatted for the IPyanaCredentialGate contract.
+/// A credential proof formatted for the IDreggCredentialGate contract.
 ///
 /// Contains the Groth16 proof and the public inputs that the contract will check.
 /// The contract calls the SP1 Verifier Gateway to verify the Groth16 proof,
@@ -102,7 +102,7 @@ struct CredentialPublicValues {
 
 /// Wrap an anonymous credential presentation for on-chain verification.
 ///
-/// The resulting proof can be verified by the `IPyanaCredentialGate` contract on Base.
+/// The resulting proof can be verified by the `IDreggCredentialGate` contract on Base.
 ///
 /// # Arguments
 /// * `presentation` - The anonymous presentation (STARK proof of ring membership + predicate)
@@ -111,7 +111,7 @@ struct CredentialPublicValues {
 ///
 /// # Returns
 /// An `EvmCredentialProof` containing the Groth16 proof and public inputs ready for
-/// submission to the `IPyanaCredentialGate` contract.
+/// submission to the `IDreggCredentialGate` contract.
 ///
 /// # Mock Mode
 /// Without the `prove` feature, this produces a simulated proof suitable for testing
@@ -218,7 +218,7 @@ pub fn verify_credential_proof_locally(proof: &EvmCredentialProof) -> Result<boo
 /// Compute the predicate hash for a given predicate string.
 ///
 /// On-chain, this would be `keccak256(predicate_string)`. Off-chain, we use blake3
-/// for consistency with pyana's hash function. The contract would map between the two.
+/// for consistency with dregg's hash function. The contract would map between the two.
 pub fn compute_predicate_hash(predicate: &str) -> [u8; 32] {
     *blake3::hash(predicate.as_bytes()).as_bytes()
 }
@@ -228,7 +228,7 @@ pub fn compute_predicate_hash(predicate: &str) -> [u8; 32] {
 /// The nullifier is deterministic from the credential serial and action domain,
 /// but unlinkable to the credential's identity.
 ///
-/// `nullifier = blake3("pyana-presentation-nullifier-v1", credential_serial || action_domain)`
+/// `nullifier = blake3("dregg-presentation-nullifier-v1", credential_serial || action_domain)`
 pub fn compute_presentation_nullifier(
     credential_serial: &[u8; 32],
     action_domain: &str,
@@ -236,7 +236,7 @@ pub fn compute_presentation_nullifier(
     let mut input = Vec::with_capacity(32 + action_domain.len());
     input.extend_from_slice(credential_serial);
     input.extend_from_slice(action_domain.as_bytes());
-    blake3::derive_key("pyana-presentation-nullifier-v1", &input)
+    blake3::derive_key("dregg-presentation-nullifier-v1", &input)
 }
 
 #[cfg(test)]

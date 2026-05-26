@@ -275,7 +275,7 @@ fn bootstrap(checkpoint: &CheckpointProof) -> Result<(), Error> {
 | `prove_ivc_stark` (circuit/src/ivc.rs) | Hash-chain accumulation within each fold level |
 | `StateTransitionAir` | Verifies Poseidon2 hash chain of state roots |
 | `FullTurnProof` (sdk/src/full_turn_proof.rs) | The leaf-level block proof content |
-| `compose_aggregate` (pyana-dsl-runtime/src/composition.rs) | Combining sub-proofs into composed proof |
+| `compose_aggregate` (dregg-dsl-runtime/src/composition.rs) | Combining sub-proofs into composed proof |
 | `STARK-in-Pickles` (circuit/src/backends/stark_in_pickles.rs) | Wrapping BabyBear STARKs to constant-size |
 | `SovereignHistory` (cell/src/ledger.rs) | Per-cell IVC accumulation (existing pattern) |
 | `PicklesRecursiveProof` (circuit/src/backends/mina/) | Recursively composable constant-size proof |
@@ -451,7 +451,7 @@ folding work over more time.
 
 1. Define `ScanState` struct and push/fold operations
 2. Implement level-carry logic (binary counter pattern)
-3. Add persistence (serialize scan state to `pyana-store`)
+3. Add persistence (serialize scan state to `dregg-store`)
 4. Handle edge cases: node restart, concurrent block arrival
 
 ### Phase 3: Fold Circuit (Week 3-5)
@@ -488,7 +488,7 @@ folding work over more time.
 
 **Goal**: Nodes can prune historical data and bootstrap from checkpoints.
 
-1. Pruning logic in `pyana-store`: delete block payloads below checkpoint
+1. Pruning logic in `dregg-store`: delete block payloads below checkpoint
 2. Bootstrap protocol: fetch latest checkpoint proof + blocks since
 3. Header retention: keep lightweight block headers for DAG provenance
 4. Retention policy configuration (archive/full/light modes)

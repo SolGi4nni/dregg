@@ -66,7 +66,7 @@ Replace X25519 in tokenizer with ML-KEM (FIPS 203) for sealed secrets. This is s
 
 The Dyna-hinTS model (give every agent one long-term key, choose any threshold subset later, no committee-specific setup) has no PQ equivalent. The lattice line assumes fixed committees.
 
-For pyana this is acceptable because:
+For dregg this is acceptable because:
 - Federations are relatively stable (nodes don't change per-request)
 - Cross-silo presentation uses STARK proofs (PQ), not threshold sigs
 - The "dynamic subset" need is at the authorization layer, handled by the ZK proof

@@ -1,4 +1,4 @@
-//! `pyana-turn`: Call-forest transaction model for atomic agent execution turns.
+//! `dregg-turn`: Call-forest transaction model for atomic agent execution turns.
 //!
 //! # Trust Model
 //!
@@ -140,7 +140,7 @@ pub use pending::{
     BrokenReason, PendingEntry, PendingHandle, PendingStatus, PendingTurnRegistry,
     ResolutionCondition, ResolutionEvent, ResolutionOutcome,
 };
-// `Precondition` and friends collapsed into `pyana_cell::preconditions`
+// `Precondition` and friends collapsed into `dregg_cell::preconditions`
 // per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any
 // callers that still reach for them through the turn crate root.
 pub use aggregate_bilateral_prover::{
@@ -150,7 +150,7 @@ pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,
     PresenceDischargeError, verify_presence_discharge,
 };
-pub use pyana_cell::{Precondition, Preconditions, PreconditionsBuilder};
+pub use dregg_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use queue_programs::{
     EnqueueValidationContext, QueueConstraint, QueueProgram, QueueProgramError,
     QueueProgramRegistry, ValidationResult, compute_validation_hash, validate_enqueue,

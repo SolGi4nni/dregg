@@ -268,7 +268,7 @@ impl MerkleTree {
                 .chain(proof.bucket_siblings.iter().copied())
                 .collect();
             all_leaves.sort();
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-commit collision-bucket v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-commit collision-bucket v1");
             for leaf in &all_leaves {
                 hasher.update(leaf.as_slice());
             }
@@ -411,7 +411,7 @@ impl MerkleTree {
                     // in sorted order (they are already sorted since BTreeMap is sorted)
                     // to maintain determinism.
                     let mut hasher =
-                        blake3::Hasher::new_derive_key("pyana-commit collision-bucket v1");
+                        blake3::Hasher::new_derive_key("dregg-commit collision-bucket v1");
                     for leaf in &leaves_at_pos {
                         hasher.update(leaf.as_slice());
                     }

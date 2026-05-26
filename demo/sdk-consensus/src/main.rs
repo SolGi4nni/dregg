@@ -1,18 +1,18 @@
-//! SDK-Consensus Demo: end-to-end pyana flow that bypasses MCP.
+//! SDK-Consensus Demo: end-to-end dregg flow that bypasses MCP.
 //!
 //! Sister demo to `demo/two-ai-handoff/` (which uses MCP). This binary stitches
-//! together the lower-level pyana pathways that the MCP demo doesn't reach:
+//! together the lower-level dregg pathways that the MCP demo doesn't reach:
 //!
-//! 1. Federation startup — instantiates a 3-node `pyana_federation::Federation`
-//!    backed by per-node `pyana_blocklace::finality::Blocklace` instances. The
+//! 1. Federation startup — instantiates a 3-node `dregg_federation::Federation`
+//!    backed by per-node `dregg_blocklace::finality::Blocklace` instances. The
 //!    "consensus round" is the canonical Cordial Miners `tau` ordering over the
 //!    gossiped blocklace; the federation crate's `build_attested_root` then
-//!    binds a `pyana_types::AttestedRoot` to the finalized blocklace tip.
+//!    binds a `dregg_types::AttestedRoot` to the finalized blocklace tip.
 //! 2. Attested root persistence — postcard-encodes the `AttestedRoot` to disk
 //!    and verifies an external party can re-load and cryptographically validate
 //!    it against the federation's committee public keys.
 //! 3. CapTP wire — round-trips a `WireMessage::AttestedRoot` and a
-//!    `WireMessage::PresentHandoff` through `pyana_wire::codec::{encode, decode}`
+//!    `WireMessage::PresentHandoff` through `dregg_wire::codec::{encode, decode}`
 //!    (the framed protocol the silo server actually speaks).
 //! 4. SDK-direct turn submission — Alice creates an `AgentCipherclerk`, builds a
 //!    `Turn` carrying a `Transfer` effect, submits it directly to a local
@@ -25,7 +25,7 @@
 //!    and an `EffectMask`-attenuated capability lands at Bob's cell.
 //!
 //! Run with:
-//!   cargo run -p pyana-sdk-consensus-demo
+//!   cargo run -p dregg-sdk-consensus-demo
 //!
 //! All assertions panic on failure; a clean exit means each pathway worked.
 
@@ -33,22 +33,22 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
-use pyana_blocklace::finality::{Blocklace, Payload};
-use pyana_captp::FederationId;
-use pyana_captp::handoff::{HandoffCertificate, HandoffPresentation, validate_handoff};
-use pyana_captp::sturdy::SwissTable;
-use pyana_cell::permissions::Permissions;
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger};
-use pyana_federation::{Federation, LocalSeat};
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::action::{Action, Authorization, DelegationMode};
-use pyana_turn::{
+use dregg_blocklace::finality::{Blocklace, Payload};
+use dregg_captp::FederationId;
+use dregg_captp::handoff::{HandoffCertificate, HandoffPresentation, validate_handoff};
+use dregg_captp::sturdy::SwissTable;
+use dregg_cell::permissions::Permissions;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger};
+use dregg_federation::{Federation, LocalSeat};
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::action::{Action, Authorization, DelegationMode};
+use dregg_turn::{
     CallForest, CallTree, ComputronCosts, Effect, Turn, TurnExecutor, TurnResult,
     verify_receipt_chain,
 };
-use pyana_types::{PublicKey as FedPublicKey, SigningKey, generate_keypair};
-use pyana_wire::codec::{decode, encode};
-use pyana_wire::prelude::WireMessage;
+use dregg_types::{PublicKey as FedPublicKey, SigningKey, generate_keypair};
+use dregg_wire::codec::{decode, encode};
+use dregg_wire::prelude::WireMessage;
 
 fn section(label: &str) {
     println!();
@@ -85,23 +85,23 @@ fn open_permissions() -> Permissions {
 
 fn artifact_dir() -> PathBuf {
     let mut p = std::env::temp_dir();
-    p.push("pyana-sdk-consensus-demo");
+    p.push("dregg-sdk-consensus-demo");
     let _ = std::fs::create_dir_all(&p);
     p
 }
 
 /// Build an ordering blocklace from a finality blocklace. Mirrors
 /// `node::blocklace_sync::build_ordering_blocklace` — the production seam
-/// between `pyana_blocklace::finality::Blocklace` (signed, equivocation-aware)
-/// and `pyana_blocklace::Blocklace` (the simple ordering DAG `tau` consumes).
+/// between `dregg_blocklace::finality::Blocklace` (signed, equivocation-aware)
+/// and `dregg_blocklace::Blocklace` (the simple ordering DAG `tau` consumes).
 fn build_ordering_blocklace(
     finality_lace: &Blocklace,
 ) -> (
-    pyana_blocklace::Blocklace,
-    HashMap<pyana_blocklace::BlockId, pyana_blocklace::finality::BlockId>,
+    dregg_blocklace::Blocklace,
+    HashMap<dregg_blocklace::BlockId, dregg_blocklace::finality::BlockId>,
 ) {
-    let mut ordering_lace = pyana_blocklace::Blocklace::new();
-    let mut f2o: HashMap<pyana_blocklace::finality::BlockId, pyana_blocklace::BlockId> =
+    let mut ordering_lace = dregg_blocklace::Blocklace::new();
+    let mut f2o: HashMap<dregg_blocklace::finality::BlockId, dregg_blocklace::BlockId> =
         HashMap::new();
     let mut o2f = HashMap::new();
 
@@ -112,13 +112,13 @@ fn build_ordering_blocklace(
 
     // Walk finality blocks in (seq, creator) order so predecessors are inserted first.
     let mut all: Vec<(
-        pyana_blocklace::finality::BlockId,
-        &pyana_blocklace::finality::Block,
+        dregg_blocklace::finality::BlockId,
+        &dregg_blocklace::finality::Block,
     )> = Vec::new();
     // The finality blocklace exposes per-block `get` only, but we can iterate via tips → predecessors.
     // Simpler: rely on the demo's small block set by snapshotting via `to_bytes` round-trip not needed —
     // we use a BFS from tips here.
-    let mut frontier: Vec<pyana_blocklace::finality::BlockId> =
+    let mut frontier: Vec<dregg_blocklace::finality::BlockId> =
         finality_lace.tips().values().copied().collect();
     let mut seen = std::collections::HashSet::new();
     while let Some(id) = frontier.pop() {
@@ -135,7 +135,7 @@ fn build_ordering_blocklace(
     all.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
 
     for (fid, block) in all {
-        let predecessors: Vec<pyana_blocklace::BlockId> = block
+        let predecessors: Vec<dregg_blocklace::BlockId> = block
             .predecessors
             .iter()
             .filter_map(|p| f2o.get(p).copied())
@@ -153,7 +153,7 @@ fn build_ordering_blocklace(
             Payload::Data(data) => data.clone(),
         };
         let ordering_block =
-            pyana_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
+            dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
         let oid = ordering_block.id();
         let _ = ordering_lace.insert(ordering_block);
         f2o.insert(fid, oid);
@@ -164,7 +164,7 @@ fn build_ordering_blocklace(
 
 fn main() {
     println!();
-    println!("######  PYANA SDK-CONSENSUS DEMO (no MCP)  ######");
+    println!("######  DREGG SDK-CONSENSUS DEMO (no MCP)  ######");
     println!();
     println!("Sister demo to demo/two-ai-handoff (which uses MCP).");
     println!("Exercises the SDK / federation / wire / captp pathways directly.");
@@ -205,7 +205,7 @@ fn main() {
     let mut blocklaces: Vec<Blocklace> = node_sks
         .iter()
         .map(|sk| {
-            // Convert pyana_types::SigningKey to ed25519_dalek::SigningKey.
+            // Convert dregg_types::SigningKey to ed25519_dalek::SigningKey.
             let bytes: [u8; 32] = sk.to_bytes();
             Blocklace::new(Ed25519SigningKey::from_bytes(&bytes), 2)
         })
@@ -263,7 +263,7 @@ fn main() {
     // total order under Cordial Miners safety).
     let participants: Vec<[u8; 32]> = node_pks.iter().map(|pk| pk.0).collect();
     let (ordering_lace, _id_map) = build_ordering_blocklace(&blocklaces[0]);
-    let finalized = pyana_blocklace::ordering::tau(&ordering_lace, &participants);
+    let finalized = dregg_blocklace::ordering::tau(&ordering_lace, &participants);
     step(&format!(
         "tau finalized {} block(s) at node {}'s view",
         finalized.len(),
@@ -313,7 +313,7 @@ fn main() {
     // Independent re-load + verification, simulating a downstream verifier
     // that has only the bytes and the federation's known public keys.
     let reloaded_bytes = std::fs::read(&attested_path).expect("re-read artifact");
-    let reloaded: pyana_types::AttestedRoot =
+    let reloaded: dregg_types::AttestedRoot =
         postcard::from_bytes(&reloaded_bytes).expect("decode attested");
     assert_eq!(reloaded, attested, "attested root round-trip must be exact");
     assert!(

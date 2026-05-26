@@ -1,11 +1,11 @@
 //! Intent solver checks: ring detection (2-party, 3-party), validation, generalized.
 
-use pyana_intent::CommitmentId;
-use pyana_intent::generalized::{
+use dregg_intent::CommitmentId;
+use dregg_intent::generalized::{
     ExchangeItem, GeneralizedExchange, GeneralizedIntentNode, GeneralizedSolver, can_satisfy,
     item_satisfies,
 };
-use pyana_intent::solver::{ExchangeSpec, IntentNode, RingSolver, SolverError};
+use dregg_intent::solver::{ExchangeSpec, IntentNode, RingSolver, SolverError};
 
 use crate::report::{CheckResult, run_check};
 

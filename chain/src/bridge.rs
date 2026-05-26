@@ -1,14 +1,14 @@
-//! Base bridge integration: connects the pyana node to the PyanaVault on Base L2.
+//! Base bridge integration: connects the dregg node to the DreggVault on Base L2.
 //!
 //! This module provides the top-level entry point for the Base bridge, which:
 //! 1. Watches for deposit events on Base (via `VaultEventListener`)
-//! 2. Creates corresponding notes in the pyana ledger
+//! 2. Creates corresponding notes in the dregg ledger
 //! 3. Handles withdrawal proof generation and on-chain submission
 //!
 //! # Usage from the node
 //!
 //! ```rust,no_run
-//! use pyana_chain::bridge::{BaseBridgeConfig, start_base_bridge};
+//! use dregg_chain::bridge::{BaseBridgeConfig, start_base_bridge};
 //!
 //! # async fn example() {
 //! let config = BaseBridgeConfig {
@@ -35,7 +35,7 @@ use tokio::task::JoinHandle;
 pub struct BaseBridgeConfig {
     /// JSON-RPC endpoint for Base L2 (e.g., "https://mainnet.base.org").
     pub rpc_url: String,
-    /// Address of the deployed PyanaVault contract (hex with 0x prefix).
+    /// Address of the deployed DreggVault contract (hex with 0x prefix).
     pub vault_address: String,
     /// SP1 program verification key (identifies the correct guest program).
     pub program_vkey: [u8; 32],
@@ -137,7 +137,7 @@ impl BridgeHandle {
 ///
 /// This spawns background tasks that:
 /// 1. Watch for deposit events on Base (via the VaultEventListener)
-/// 2. Process each deposit event into a note creation in the pyana ledger
+/// 2. Process each deposit event into a note creation in the dregg ledger
 ///
 /// Returns a `BridgeHandle` that can be used to monitor or await the bridge.
 ///
@@ -190,7 +190,7 @@ pub async fn start_base_bridge(
 ///
 /// In a full implementation, this would:
 /// - Verify the deposit event against the on-chain state
-/// - Create a corresponding note in the pyana ledger
+/// - Create a corresponding note in the dregg ledger
 /// - Update the local note tree to match the on-chain tree
 ///
 /// For now, it logs the events and tracks statistics.
@@ -220,9 +220,9 @@ async fn process_note_requests(mut rx: mpsc::Receiver<NoteCreationRequest>) {
             "deposit event -> note creation"
         );
 
-        // TODO: Integrate with the pyana node's ledger:
+        // TODO: Integrate with the dregg node's ledger:
         // 1. Verify the deposit was confirmed on-chain (re-check via RPC)
-        // 2. Create a NoteCell in the pyana ledger
+        // 2. Create a NoteCell in the dregg ledger
         // 3. Update the local Merkle tree
         // 4. Notify the federation of the new note commitment
     }

@@ -1,4 +1,4 @@
-//! Adversarial test suite for the pyana ZK token system.
+//! Adversarial test suite for the dregg ZK token system.
 //!
 //! This test crate exercises all security-critical boundaries of the system
 //! with malicious inputs, Byzantine behavior, and edge cases.
@@ -34,7 +34,7 @@ mod adversarial_boundaries;
 #[cfg(feature = "__wip_tests")]
 mod adversarial_pipeline;
 
-// Wire format end-to-end: cclerk.authorize() -> postcard -> PyanaEngine::verify
+// Wire format end-to-end: cclerk.authorize() -> postcard -> DreggEngine::verify
 #[cfg(feature = "__wip_tests")]
 mod wire_format_e2e;
 

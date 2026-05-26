@@ -1,11 +1,11 @@
 //! Privacy stack checks: stealth addresses, Pedersen commitments, range proofs, SSE.
 
-use pyana_cell::stealth::StealthKeys;
-use pyana_cell::value_commitment::{
+use dregg_cell::stealth::StealthKeys;
+use dregg_cell::value_commitment::{
     BulletproofRangeProof, ValueCommitment, prove_conservation, verify_conservation,
 };
-use pyana_intent::sse::EncryptedIntent;
-use pyana_intent::{CommitmentId, MatchSpec};
+use dregg_intent::sse::EncryptedIntent;
+use dregg_intent::{CommitmentId, MatchSpec};
 
 use crate::report::{CheckResult, run_check};
 
@@ -180,7 +180,7 @@ fn check_pedersen_tampered_rejected() -> Result<(), String> {
 
 /// Verify the note -> nullifier -> double-spend detection path end-to-end.
 fn check_note_nullifier_derivation() -> Result<(), String> {
-    use pyana_cell::{Note, NullifierSet};
+    use dregg_cell::{Note, NullifierSet};
 
     let owner = *blake3::hash(b"note-owner-key").as_bytes();
     let spending_key = *blake3::hash(b"spending-key-secret").as_bytes();

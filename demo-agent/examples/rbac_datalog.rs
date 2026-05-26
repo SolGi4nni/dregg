@@ -6,18 +6,18 @@
 //! 3. Admin can access everything, editor can read/write docs and read API, viewer read-only
 //! 4. Mint tokens with role facts, attenuate to specific resources
 //! 5. Show Datalog evaluation deciding allow/deny for various request combinations
-//! 6. Use `pyana-trace` (the Datalog evaluator) directly, showing derivation traces
+//! 6. Use `dregg-trace` (the Datalog evaluator) directly, showing derivation traces
 //! 7. Prove one of the decisions in a STARK (using prove_authorization_stark)
 
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::multi_step_air::{
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::multi_step_air::{
     ALLOW_PREDICATE, build_multi_step_witness, prove_authorization_stark,
     verify_authorization_stark,
 };
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::stark::proof_to_bytes;
-use pyana_trace::{
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::stark::proof_to_bytes;
+use dregg_trace::{
     Atom, AuthorizationRequest, AuthorizationTrace, Check, Conclusion, Evaluator, Fact, Rule, Term,
     symbol_from_str, verify_trace,
 };
@@ -273,7 +273,7 @@ fn evaluate_and_print(
 }
 
 fn main() {
-    println!("=== Pyana RBAC Datalog Demo ===\n");
+    println!("=== Dregg RBAC Datalog Demo ===\n");
 
     // =========================================================================
     // STEP 1: Define the RBAC policy and fact set

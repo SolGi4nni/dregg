@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Architecture Overview — Pyana</title>
+<title>Architecture Overview — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Architecture Overview</h1>
 
     <p>
-      Pyana is a sovereign capability runtime. Agents own cells, execute
+      <code>dregg</code> is a sovereign capability runtime. Agents own cells, execute
       transitions locally, and prove validity with STARKs. The federation is a
       notary: it orders, detects double-spends, and anchors 32-byte
       commitments. It never sees cell contents.
@@ -58,7 +58,7 @@
     </ul>
 
     <p>
-      The DSL (<code>#[pyana_caveat]</code> / <code>#[pyana_effect]</code>)
+      The DSL (<code>#[dregg_caveat]</code> / <code>#[dregg_effect]</code>)
       compiles constraints to 8 backends from a single source: Rust, AIR,
       Datalog, Kimchi, Midnight ZKIR, Plonky3, SP1, and native STARK.
     </p>
@@ -70,7 +70,7 @@
     </p>
 
     <ul>
-      <li><strong>Sturdy refs</strong> -- durable <code>pyana://</code> URIs with swiss numbers. Survive disconnection.</li>
+      <li><strong>Sturdy refs</strong> -- durable <code>dregg://</code> URIs with swiss numbers. Survive disconnection.</li>
       <li><strong>Live refs</strong> -- ephemeral handles within an active session.</li>
       <li><strong>Strands</strong> -- logical communication channels within a session, identified by StrandId.</li>
       <li><strong>Handoff</strong> -- offline three-party introduction with Ed25519-signed certificates.</li>

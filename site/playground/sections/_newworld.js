@@ -8,13 +8,13 @@ let readyPromise = null;
 export function whenRuntime() {
   if (readyPromise) return readyPromise;
   readyPromise = new Promise(resolve => {
-    if (window.pyana) return resolve(window.pyana);
-    window.addEventListener('pyana:ready', e => resolve(e.detail), { once: true });
+    if (window.dregg) return resolve(window.dregg);
+    window.addEventListener('dregg:ready', e => resolve(e.detail), { once: true });
     // If after 4 seconds the runtime never fires, surface a noop so sections
     // at least render their fallback content.
     setTimeout(() => {
-      if (!window.pyana) {
-        console.warn('[pyana] runtime not ready after 4s — sections will use fallback content.');
+      if (!window.dregg) {
+        console.warn('[dregg] runtime not ready after 4s — sections will use fallback content.');
         resolve(null);
       }
     }, 4000);
@@ -40,7 +40,7 @@ export async function mountSection(sectionId, factory, meta) {
         <h2>${meta.title}</h2>
         <p>${meta.lede}</p>
       </div>
-      <div data-mount class="pyana-card" role="region" aria-label="${meta.title}">
+      <div data-mount class="dregg-card" role="region" aria-label="${meta.title}">
         <p style="color: var(--fg-muted); font-size: var(--text-sm);">
           ${meta.fallback || 'Loading interactive demo…'}
         </p>
@@ -64,7 +64,7 @@ export async function mountSection(sectionId, factory, meta) {
       api.render(tree, mountPoint);
     }
   } catch (e) {
-    console.error(`[pyana] section ${sectionId} mount failed`, e);
+    console.error(`[dregg] section ${sectionId} mount failed`, e);
     mountPoint.innerHTML = `<p style="color: var(--danger); font-size: var(--text-sm);">
       Interactive demo failed to load: ${String(e.message || e)}
     </p>`;
@@ -75,7 +75,7 @@ export async function mountSection(sectionId, factory, meta) {
 //
 // We prefer SubtleCrypto where available (built-in, no third-party JS) and
 // fall back to a small JS implementation only for BLAKE3 commitments derived
-// from the existing pyana wasm pkg.
+// from the existing dregg wasm pkg.
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -116,8 +116,8 @@ export function randomBytes(n) {
   return out;
 }
 
-/** BLAKE3-compatible commitment via the pyana wasm pkg `compute_merkle_root`.
- *  Pyana's storage layer uses 4-ary BLAKE3 merkle commitments; a single-leaf
+/** BLAKE3-compatible commitment via the dregg wasm pkg `compute_merkle_root`.
+ *  Dregg's storage layer uses 4-ary BLAKE3 merkle commitments; a single-leaf
  *  root is exactly `BLAKE3(leaf || ":0")`. We don't need to round-trip the
  *  exact internal serialization to get a deterministic, BLAKE3-derived
  *  32-byte commitment for visualization purposes.

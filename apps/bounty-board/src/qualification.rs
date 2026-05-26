@@ -25,8 +25,8 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use pyana_app_framework::{PredicateType, PyanaEngine};
-use pyana_circuit::{
+use dregg_app_framework::{PredicateType, DreggEngine};
+use dregg_circuit::{
     BabyBear, IvcProof, IvcVerification, PredicateProof, verify_ivc, verify_predicate,
 };
 
@@ -209,7 +209,7 @@ impl std::error::Error for QualificationError {}
 ///
 /// # Arguments
 ///
-/// * `engine` - The PyanaEngine instance for federation membership verification.
+/// * `engine` - The DreggEngine instance for federation membership verification.
 /// * `requirement` - What the worker must prove.
 /// * `proof` - The cryptographic proof bytes (format depends on requirement type).
 /// * `root_history` - The federation root history (recent roots window).
@@ -219,7 +219,7 @@ impl std::error::Error for QualificationError {}
 /// `Ok(true)` if the proof is valid, `Ok(false)` if it's structurally valid but doesn't meet
 /// the threshold, or an error if the proof is malformed or verification fails.
 pub fn verify_qualification(
-    engine: &PyanaEngine,
+    engine: &DreggEngine,
     requirement: &QualificationRequirement,
     proof: &[u8],
     root_history: &FederationRootHistory,
@@ -248,7 +248,7 @@ pub fn verify_qualification(
 /// Wraps the single root in a `FederationRootHistory` for use by code that
 /// only tracks a single root (tests, simple setups).
 pub fn verify_qualification_single_root(
-    engine: &PyanaEngine,
+    engine: &DreggEngine,
     requirement: &QualificationRequirement,
     proof: &[u8],
     federation_root: [u8; 32],
@@ -264,10 +264,10 @@ pub fn verify_qualification_single_root(
 /// that this node hasn't yet adopted as "current" due to propagation lag. Accepting
 /// any root from the recent window resolves this coherence issue.
 ///
-/// Uses the PyanaEngine's `verify_membership_proof()` to perform real STARK verification
+/// Uses the DreggEngine's `verify_membership_proof()` to perform real STARK verification
 /// of the federation membership proof.
 fn verify_federation_membership_multi(
-    engine: &PyanaEngine,
+    engine: &DreggEngine,
     proof: &[u8],
     root_history: &FederationRootHistory,
 ) -> Result<bool, QualificationError> {
@@ -420,14 +420,14 @@ fn verify_standing_proof(
 /// These are re-exported from the same source so they are identical, but
 /// we call this to be explicit about the conversion in case the types
 /// ever diverge.
-fn to_circuit_predicate_type(pt: PredicateType) -> pyana_circuit::PredicateType {
+fn to_circuit_predicate_type(pt: PredicateType) -> dregg_circuit::PredicateType {
     match pt {
-        PredicateType::Gte => pyana_circuit::PredicateType::Gte,
-        PredicateType::Lte => pyana_circuit::PredicateType::Lte,
-        PredicateType::Gt => pyana_circuit::PredicateType::Gt,
-        PredicateType::Lt => pyana_circuit::PredicateType::Lt,
-        PredicateType::Neq => pyana_circuit::PredicateType::Neq,
-        PredicateType::InRangeLow => pyana_circuit::PredicateType::InRangeLow,
-        PredicateType::InRangeHigh => pyana_circuit::PredicateType::InRangeHigh,
+        PredicateType::Gte => dregg_circuit::PredicateType::Gte,
+        PredicateType::Lte => dregg_circuit::PredicateType::Lte,
+        PredicateType::Gt => dregg_circuit::PredicateType::Gt,
+        PredicateType::Lt => dregg_circuit::PredicateType::Lt,
+        PredicateType::Neq => dregg_circuit::PredicateType::Neq,
+        PredicateType::InRangeLow => dregg_circuit::PredicateType::InRangeLow,
+        PredicateType::InRangeHigh => dregg_circuit::PredicateType::InRangeHigh,
     }
 }

@@ -3,7 +3,7 @@
 # Run once to create initial state, or re-run to reset devnet.
 #
 # Prerequisites:
-#   - Rust toolchain (for pyana-node binary)
+#   - Rust toolchain (for dregg-node binary)
 #   - openssl (fallback key generation)
 #
 # Usage:
@@ -41,9 +41,9 @@ for i in $(seq 0 $((VALIDATORS - 1))); do
   KEY_FILE="keys/node-${i}.key"
   PUB_FILE="keys/node-${i}.pub"
 
-  if command -v pyana-node &>/dev/null; then
-    echo "  [pyana-node] Generating validator key node-${i}..."
-    pyana-node keygen --output "$KEY_FILE"
+  if command -v dregg-node &>/dev/null; then
+    echo "  [dregg-node] Generating validator key node-${i}..."
+    dregg-node keygen --output "$KEY_FILE"
   else
     echo "  [openssl] Generating validator key node-${i}..."
     openssl genpkey -algorithm ed25519 -outform DER 2>/dev/null | tail -c 32 > "$KEY_FILE"
@@ -52,8 +52,8 @@ for i in $(seq 0 $((VALIDATORS - 1))); do
   chmod 600 "$KEY_FILE"
 
   # Extract public key (first 32 bytes of Ed25519 public from private)
-  if command -v pyana-node &>/dev/null; then
-    pyana-node pubkey --key "$KEY_FILE" > "$PUB_FILE"
+  if command -v dregg-node &>/dev/null; then
+    dregg-node pubkey --key "$KEY_FILE" > "$PUB_FILE"
   else
     # openssl extraction of Ed25519 public from DER private
     openssl pkey -outform DER -pubout 2>/dev/null < <(
@@ -74,9 +74,9 @@ for name in "${ACCOUNTS[@]}"; do
   KEY_FILE="keys/${name}.key"
   PUB_FILE="keys/${name}.pub"
 
-  if command -v pyana-node &>/dev/null; then
-    echo "  [pyana-node] Generating account key: ${name}..."
-    pyana-node keygen --output "$KEY_FILE"
+  if command -v dregg-node &>/dev/null; then
+    echo "  [dregg-node] Generating account key: ${name}..."
+    dregg-node keygen --output "$KEY_FILE"
   else
     echo "  [openssl] Generating account key: ${name}..."
     openssl genpkey -algorithm ed25519 -outform DER 2>/dev/null | tail -c 32 > "$KEY_FILE"
@@ -84,8 +84,8 @@ for name in "${ACCOUNTS[@]}"; do
 
   chmod 600 "$KEY_FILE"
 
-  if command -v pyana-node &>/dev/null; then
-    pyana-node pubkey --key "$KEY_FILE" > "$PUB_FILE"
+  if command -v dregg-node &>/dev/null; then
+    dregg-node pubkey --key "$KEY_FILE" > "$PUB_FILE"
   else
     openssl pkey -outform DER -pubout 2>/dev/null < <(
       printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'
@@ -113,18 +113,18 @@ echo "  Commitment: $ROUTES_HASH"
 echo ""
 echo "--- Assembling genesis.json ---"
 
-# If pyana-node is available, use its genesis subcommand for a proper build
-if command -v pyana-node &>/dev/null; then
-  echo "  Using pyana-node genesis command..."
-  pyana-node genesis \
+# If dregg-node is available, use its genesis subcommand for a proper build
+if command -v dregg-node &>/dev/null; then
+  echo "  Using dregg-node genesis command..."
+  dregg-node genesis \
     --validators "$VALIDATORS" \
     --epoch-length 100 \
     --checkpoint-interval 10 \
     --output .
-  echo "  genesis.json written by pyana-node."
+  echo "  genesis.json written by dregg-node."
 else
-  echo "  pyana-node not found; using template genesis.json with placeholder keys."
-  echo "  NOTE: Run 'cargo build --release -p pyana-node' then re-run to get real keys."
+  echo "  dregg-node not found; using template genesis.json with placeholder keys."
+  echo "  NOTE: Run 'cargo build --release -p dregg-node' then re-run to get real keys."
 fi
 
 # --- Write .devnet marker ---
@@ -145,8 +145,8 @@ echo "  keys/            — Ed25519 keypairs (DO NOT COMMIT)"
 echo "  secrets/         — federation secrets (DO NOT COMMIT)"
 echo ""
 echo "Deploy with:"
-echo "  scp genesis.json devnet.pyana.fg-goose.online:/opt/pyana-data/"
-echo "  ssh devnet.pyana.fg-goose.online sudo systemctl restart pyana-gateway"
+echo "  scp genesis.json devnet.dregg.fg-goose.online:/opt/dregg-data/"
+echo "  ssh devnet.dregg.fg-goose.online sudo systemctl restart dregg-gateway"
 echo ""
 echo "Or use the deploy script:"
 echo "  ./deploy/aws/update.sh"

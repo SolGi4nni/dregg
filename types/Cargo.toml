@@ -1,11 +1,11 @@
 [package]
-name = "pyana-types"
+name = "dregg-types"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Canonical shared types for the pyana federation: PublicKey, Signature, AttestedRoot, etc."
+description = "Canonical shared types for the dregg federation: PublicKey, Signature, AttestedRoot, etc."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -19,7 +19,7 @@
 //!
 //! ```bash
 //! # Self-contained: starts the server in-process, no external node required.
-//! cargo run -p pyana-bounty-board --example devnet_demo
+//! cargo run -p dregg-bounty-board --example devnet_demo
 //! ```
 //!
 //! ## Notes
@@ -31,11 +31,11 @@
 
 use std::time::Instant;
 
-use pyana_circuit::ivc::IvcBuilder;
-use pyana_sdk::{AgentCipherclerk, AuthRequest, BabyBear};
+use dregg_circuit::ivc::IvcBuilder;
+use dregg_sdk::{AgentCipherclerk, AuthRequest, BabyBear};
 
-use pyana_bounty_board::server::{ServerConfig, start_server};
-use pyana_bounty_board::{
+use dregg_bounty_board::server::{ServerConfig, start_server};
+use dregg_bounty_board::{
     ApproveRequest, ClaimRequest, CompletionEvidence, CreateBountyRequest,
     QualificationRequirement, SubmitRequest, compute_worker_commitment,
 };
@@ -49,7 +49,7 @@ const WORKER_ROOT_KEY: [u8; 32] = [0x42; 32];
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Pyana Bounty Board: Privacy-Preserving Devnet Demo ===\n");
+    println!("=== Dregg Bounty Board: Privacy-Preserving Devnet Demo ===\n");
 
     // =========================================================================
     // Step 0: Start the bounty board server in-process
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compute the federation root that matches this worker's proof key BEFORE
     // starting the server, so we can configure it from the start.
-    let proof_key = blake3::derive_key("pyana-proof-key-v1", &WORKER_ROOT_KEY);
+    let proof_key = blake3::derive_key("dregg-proof-key-v1", &WORKER_ROOT_KEY);
     let federation_root_bb = compute_synthetic_federation_root(&proof_key);
     let federation_root_bytes = bb_to_bytes(federation_root_bb);
 
@@ -358,7 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build a 3-step IVC chain (simulating 3 completed bounties).
     // Uses create_test_chain which generates valid fold witnesses with proper
     // Merkle membership proofs for removed facts.
-    let (initial_root, deltas) = pyana_circuit::ivc::create_test_chain(3);
+    let (initial_root, deltas) = dregg_circuit::ivc::create_test_chain(3);
     let mut builder = IvcBuilder::new(initial_root);
 
     for delta in &deltas {
@@ -384,15 +384,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "    Verification: {:?}",
-        pyana_circuit::verify_ivc(&ivc_proof, Some(initial_root))
+        dregg_circuit::verify_ivc(&ivc_proof, Some(initial_root))
     );
     println!();
 
     // Verify the IVC proof
-    let verification = pyana_circuit::verify_ivc(&ivc_proof, Some(initial_root));
+    let verification = dregg_circuit::verify_ivc(&ivc_proof, Some(initial_root));
     assert_eq!(
         verification,
-        pyana_circuit::IvcVerification::Valid,
+        dregg_circuit::IvcVerification::Valid,
         "IVC proof should verify as valid"
     );
 
@@ -430,7 +430,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// This replicates `AgentCipherclerk::compute_federation_root_bb` so the bounty board's
 /// root matches what the cclerk produces as public input in its STARK proof.
 fn compute_synthetic_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::compute_parent_poseidon2;
+    use dregg_circuit::merkle_air::compute_parent_poseidon2;
 
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
@@ -450,7 +450,7 @@ fn compute_synthetic_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
 /// Convert a 32-byte array to a BabyBear field element via Poseidon2 hash.
 fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
     let limbs = BabyBear::encode_hash(bytes);
-    pyana_circuit::poseidon2::hash_many(&limbs)
+    dregg_circuit::poseidon2::hash_many(&limbs)
 }
 
 /// Convert a BabyBear field element to a 32-byte array.
@@ -470,7 +470,7 @@ fn hash_index(level: usize, sibling: usize, key: &[u8; 32]) -> u32 {
     hasher.update(key);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % pyana_circuit::field::BABYBEAR_P
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % dregg_circuit::field::BABYBEAR_P
 }
 
 /// Hex encoding helper.

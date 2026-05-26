@@ -92,7 +92,7 @@ step 3 "bob registers bob.dev in nameservice attested tier (CredentialSet)"
 run_step "bob.py register" "03.bob.register" "$PY" "$HERE/bob.py" register --state-dir "$STATE_DIR" || exit 1
 
 # ── Step 4: bob mounts namespace route ────────────────────────────────
-step 4 "bob mounts pyana://bob.dev under governed-namespace"
+step 4 "bob mounts dregg://bob.dev under governed-namespace"
 run_step "bob.py mount" "04.bob.mount" "$PY" "$HERE/bob.py" mount --state-dir "$STATE_DIR" || exit 1
 
 # ── Step 5: carol posts bounty + subscription ─────────────────────────
@@ -133,34 +133,34 @@ else
 fi
 
 # ── Step 11: MCP-subprocess driver + verify_real.py (real TurnReceipts + STARK proofs) ─
-# Prefers the new cross_app_mcp.py path (pyana-node mcp subprocess, JSON-RPC
+# Prefers the new cross_app_mcp.py path (dregg-node mcp subprocess, JSON-RPC
 # over stdio) over the legacy compiled cross-app-helper binary.
-# Falls back to the compiled binary if both pyana-node and the Python script
+# Falls back to the compiled binary if both dregg-node and the Python script
 # are absent.
 step 11 "MCP-subprocess driver + verify_real.py (real TurnReceipts + STARK proofs)"
-NODE_BIN="${PYANA_NODE_BIN:-$HERE/../../target/debug/pyana-node}"
+NODE_BIN="${DREGG_NODE_BIN:-$HERE/../../target/debug/dregg-node}"
 HELPER_BIN="${CROSS_APP_HELPER_BIN:-$HERE/../../target/debug/cross-app-helper}"
-VERIFIER_BIN="${PYANA_VERIFIER_BIN:-$HERE/../../target/debug/pyana-verifier}"
+VERIFIER_BIN="${DREGG_VERIFIER_BIN:-$HERE/../../target/debug/dregg-verifier}"
 MCP_DRIVER="$HERE/cross_app_mcp.py"
 REAL_VERDICT="$STATE_DIR/verdict.real.json"
 
 # Determine which driver to use.
-MCP_DATA_DIR="${PYANA_NODE_DATA_DIR:-$HOME/.pyana}"
+MCP_DATA_DIR="${DREGG_NODE_DATA_DIR:-$HOME/.dregg}"
 if [ -x "$NODE_BIN" ] && [ -f "$MCP_DRIVER" ]; then
-    ok "pyana-node found at $NODE_BIN; using MCP subprocess driver"
+    ok "dregg-node found at $NODE_BIN; using MCP subprocess driver"
     DRIVER_CMD=("$PY" "$MCP_DRIVER" --state-dir "$STATE_DIR" --node-bin "$NODE_BIN" --data-dir "$MCP_DATA_DIR")
     DRIVER_LOG_A="11a.cross-app-mcp.stdout"
     DRIVER_LOG_B="11a.cross-app-mcp.stderr"
-    DRIVER_LABEL="cross_app_mcp.py (pyana-node mcp)"
+    DRIVER_LABEL="cross_app_mcp.py (dregg-node mcp)"
 elif [ -x "$HELPER_BIN" ]; then
-    warn "pyana-node not found; falling back to compiled cross-app-helper"
+    warn "dregg-node not found; falling back to compiled cross-app-helper"
     DRIVER_CMD=("$HELPER_BIN" --state-dir "$STATE_DIR")
     DRIVER_LOG_A="11a.cross-app-helper.stdout"
     DRIVER_LOG_B="11a.cross-app-helper.stderr"
     DRIVER_LABEL="cross-app-helper (EmbeddedExecutor)"
 else
-    warn "neither pyana-node nor cross-app-helper found; skipping step 11"
-    warn "build pyana-node with: cargo build -p pyana-node"
+    warn "neither dregg-node nor cross-app-helper found; skipping step 11"
+    warn "build dregg-node with: cargo build -p dregg-node"
     REAL_VERIFY_OK=-1
 fi
 
@@ -172,9 +172,9 @@ if [ "${REAL_VERIFY_OK:-}" != "-1" ]; then
         VERIFIER_FLAG=""
         if [ -x "$VERIFIER_BIN" ]; then
             VERIFIER_FLAG="--verifier-bin $VERIFIER_BIN"
-            ok "pyana-verifier available; proof verification will be invoked"
+            ok "dregg-verifier available; proof verification will be invoked"
         else
-            warn "pyana-verifier not found at $VERIFIER_BIN; skipping proof verification step"
+            warn "dregg-verifier not found at $VERIFIER_BIN; skipping proof verification step"
         fi
         if "$PY" "$HERE/verify_real.py" \
                 --state-dir "$STATE_DIR" \
@@ -215,7 +215,7 @@ case "$REAL_VERIFY_OK" in
         SUMMARY_FAIL=1
         ;;
     -1)
-        printf '%s — MCP-driver verify_real.py SKIPPED (pyana-node and cross-app-helper both absent)\n' \
+        printf '%s — MCP-driver verify_real.py SKIPPED (dregg-node and cross-app-helper both absent)\n' \
             "$(color_dim '[demo]')"
         ;;
 esac

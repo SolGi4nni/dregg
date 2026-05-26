@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use pyana_wire::codec;
-use pyana_wire::message::{AuthorizationRequest, PROTOCOL_VERSION, WireMessage};
+use dregg_wire::codec;
+use dregg_wire::message::{AuthorizationRequest, PROTOCOL_VERSION, WireMessage};
 
 // =============================================================================
 // Message encoding/decoding benchmarks
@@ -24,7 +24,7 @@ fn make_present_token_message() -> WireMessage {
 }
 
 fn make_submit_revocation_message() -> WireMessage {
-    use pyana_wire::message::{PublicKey, Signature};
+    use dregg_wire::message::{PublicKey, Signature};
     WireMessage::SubmitRevocation {
         token_id: "revoked-token-42".into(),
         authority: PublicKey([0x42; 32]),
@@ -113,10 +113,10 @@ fn bench_throughput(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_stark_over_wire(c: &mut Criterion) {
-    use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
-    use pyana_circuit::dsl::membership::prove_membership_dsl;
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::{self, proof_to_bytes};
+    use dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+    use dregg_circuit::dsl::membership::prove_membership_dsl;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark::{self, proof_to_bytes};
 
     // Generate a real STARK proof using the Poseidon2-based membership circuit
     // (replaces the deprecated MerkleStarkAir which uses a linear hash binding).

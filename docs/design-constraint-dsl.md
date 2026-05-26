@@ -1,4 +1,4 @@
-# Pyana Constraint DSL
+# `dregg` Constraint DSL
 
 ## Problem
 
@@ -7,23 +7,23 @@ Authorization logic is duplicated across imperative Rust (`verify_caveats`), Dat
 ## What Developers Write
 
 ```rust
-#[pyana_caveat]
+#[dregg_caveat]
 fn not_after(token_expiry: u64, current_time: u64) {
     require current_time <= token_expiry;
 }
 
-#[pyana_caveat]
+#[dregg_caveat]
 fn budget(remaining: u64) -> Mutation {
     require remaining >= 1;
     mutate remaining -= 1;
 }
 
-#[pyana_caveat]
+#[dregg_caveat]
 fn service_scope(allowed_services: Set<ServiceId>, requested: ServiceId) {
     require allowed_services.contains(requested);
 }
 
-#[pyana_effect]
+#[dregg_effect]
 fn transfer(balance: u64, amount: u64, direction: Direction) -> Mutation {
     match direction {
         Outgoing => {
@@ -36,7 +36,7 @@ fn transfer(balance: u64, amount: u64, direction: Direction) -> Mutation {
     }
 }
 
-#[pyana_predicate]
+#[dregg_predicate]
 fn balance_gte(balance: u64, threshold: u64) {
     require balance >= threshold;
 }
@@ -49,7 +49,7 @@ Each annotated function expands to four compilation targets:
 ### Target 1: Rust Evaluator
 
 ```rust
-// From #[pyana_caveat] fn not_after
+// From #[dregg_caveat] fn not_after
 pub fn not_after_verify(token_expiry: u64, current_time: u64) -> Result<(), CaveatError> {
     if !(current_time <= token_expiry) {
         return Err(CaveatError::RequireFailed("not_after"));
@@ -58,24 +58,24 @@ pub fn not_after_verify(token_expiry: u64, current_time: u64) -> Result<(), Cave
 }
 ```
 
-Replaces hand-written logic in `token/src/pyana_caveats.rs`. Used for trusted-mode verification and the hosted cell executor.
+Replaces hand-written logic in `token/src/dregg_caveats.rs`. Used for trusted-mode verification and the hosted cell executor.
 
 ### Target 2: Datalog Rules
 
 ```rust
-// From #[pyana_caveat] fn not_after
+// From #[dregg_caveat] fn not_after
 pub fn not_after_datalog() -> Rule {
     rule!("satisfied_not_after(Token) :- \
            token_expiry(Token, Exp), context_time(Now), lte(Now, Exp).")
 }
 ```
 
-Replaces `pyana.rs::attenuation_datalog()`. Caveats become rule bodies; composition is conjunction of rules. Used in the token authorization engine and multi-step derivation chains.
+Replaces `dregg.rs::attenuation_datalog()`. Caveats become rule bodies; composition is conjunction of rules. Used in the token authorization engine and multi-step derivation chains.
 
 ### Target 3: AIR Constraints (BabyBear STARK)
 
 ```rust
-// From #[pyana_caveat] fn not_after
+// From #[dregg_caveat] fn not_after
 impl NotAfterAir {
     const TRACE_WIDTH: usize = 18; // 2 inputs + 16-bit decomposition
 
@@ -144,24 +144,24 @@ Caveats compose by conjunction (all must pass). Effects compose by sequencing (a
 
 | Phase | Scope | Replaces |
 |---|---|---|
-| 1 | Proc macro for caveats -> Rust + AIR | `pyana_caveats.rs`, `derivation_air.rs` constraint logic |
+| 1 | Proc macro for caveats -> Rust + AIR | `dregg_caveats.rs`, `derivation_air.rs` constraint logic |
 | 2 | Proc macro for effects -> executor + sovereign AIR | `sovereign_transition_air.rs`, executor mutation code |
 | 3 | User-defined constraint programs (the DSL becomes the cell language) | `predicate_program.rs` |
-| 4 | Standalone `.pyana` language + LSP if macros prove limiting | -- |
+| 4 | Standalone `.dregg` language + LSP if macros prove limiting | -- |
 
 ## Why Proc Macro First
 
-A proc macro means zero new tooling: `cargo build` compiles constraints, `rust-analyzer` provides completions, existing test infrastructure works unchanged. The macro inspects the function body's AST, extracts `require` and `mutate` nodes, and emits the four target implementations as sibling items. If Rust syntax becomes too constraining (likely around Phase 3 when users write programs), we introduce `.pyana` files with a custom parser that still outputs Rust via `build.rs`.
+A proc macro means zero new tooling: `cargo build` compiles constraints, `rust-analyzer` provides completions, existing test infrastructure works unchanged. The macro inspects the function body's AST, extracts `require` and `mutate` nodes, and emits the four target implementations as sibling items. If Rust syntax becomes too constraining (likely around Phase 3 when users write programs), we introduce `.dregg` files with a custom parser that still outputs Rust via `build.rs`.
 
 ## Crate Layout
 
 ```
-pyana-dsl/
-  pyana-macro/       # proc macro crate (#[pyana_caveat], #[pyana_effect], #[pyana_predicate])
-  pyana-ir/          # intermediate representation (constraint graph, mutation DAG)
-  pyana-air-gen/     # IR -> AIR trace layout + constraint eval + witness gen
-  pyana-datalog-gen/ # IR -> Datalog rules
-  pyana-runtime/     # shared types (CaveatError, CellState, Context)
+dregg-dsl/
+  dregg-macro/       # proc macro crate (#[dregg_caveat], #[dregg_effect], #[dregg_predicate])
+  dregg-ir/          # intermediate representation (constraint graph, mutation DAG)
+  dregg-air-gen/     # IR -> AIR trace layout + constraint eval + witness gen
+  dregg-datalog-gen/ # IR -> Datalog rules
+  dregg-runtime/     # shared types (CaveatError, CellState, Context)
 ```
 
 The IR is the key artifact: a directed graph of require-nodes and mutate-nodes with typed edges. Each backend walks this graph to emit its target. Adding a new backend (e.g., Noir for Aztec integration) means implementing one trait over the IR.

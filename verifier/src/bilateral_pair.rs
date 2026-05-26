@@ -22,13 +22,13 @@
 //! `STAGE-7-GAMMA-2-PI-DESIGN.md` §4 for the full algorithm.
 //!
 //! This module exposes a JSON-friendly bundle shape (`BilateralBundle`) for
-//! the `pyana-verifier bilateral-pair` CLI subcommand. The CLI consumes one
+//! the `dregg-verifier bilateral-pair` CLI subcommand. The CLI consumes one
 //! JSON file containing both the turn and the WR entries; the design choice
 //! is for the bundle to be a single artifact so an auditor can ship one file
 //! and rerun the verification.
 
-use pyana_turn::{Turn, WitnessedReceipt};
-use pyana_types::CellId;
+use dregg_turn::{Turn, WitnessedReceipt};
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ pub struct BilateralBundle {
     #[serde(default)]
     pub unilateral_attestations: std::collections::BTreeMap<
         CellId,
-        Vec<pyana_turn::bilateral_schedule::UnilateralAttestation>,
+        Vec<dregg_turn::bilateral_schedule::UnilateralAttestation>,
     >,
 }
 
@@ -165,7 +165,7 @@ pub fn verify_bilateral_bundle(bundle: &BilateralBundle) -> BilateralVerdict {
         .collect();
     // Build the schedule and inject unilateral attestations from the bundle
     // (γ.2 1-arity sibling — cell-side data that doesn't live in the Turn).
-    let mut sched = pyana_turn::bilateral_schedule::ExpectedBilateral::from_turn(&bundle.turn);
+    let mut sched = dregg_turn::bilateral_schedule::ExpectedBilateral::from_turn(&bundle.turn);
     for (cell, attestations) in &bundle.unilateral_attestations {
         for att in attestations {
             sched.push_unilateral(cell.clone(), att.clone());
@@ -202,7 +202,7 @@ impl BilateralVerdict {
         if !self.verified {
             return self;
         }
-        use pyana_circuit::effect_vm::pi as p;
+        use dregg_circuit::effect_vm::pi as p;
         for (i, e) in bundle.entries.iter().enumerate() {
             if e.witnessed_receipt.public_inputs.len() < p::BASE_COUNT {
                 self.verified = false;
@@ -234,13 +234,13 @@ impl BilateralVerdict {
 pub fn fabricate_witnessed_receipt(
     turn: &Turn,
     cell_id: &CellId,
-    receipt: pyana_turn::TurnReceipt,
+    receipt: dregg_turn::TurnReceipt,
 ) -> WitnessedReceipt {
     fabricate_witnessed_receipt_with_schedule(
         turn,
         cell_id,
         receipt,
-        &pyana_turn::bilateral_schedule::ExpectedBilateral::from_turn(turn),
+        &dregg_turn::bilateral_schedule::ExpectedBilateral::from_turn(turn),
     )
 }
 
@@ -250,19 +250,19 @@ pub fn fabricate_witnessed_receipt(
 pub fn fabricate_witnessed_receipt_with_schedule(
     turn: &Turn,
     cell_id: &CellId,
-    receipt: pyana_turn::TurnReceipt,
-    schedule: &pyana_turn::bilateral_schedule::ExpectedBilateral,
+    receipt: dregg_turn::TurnReceipt,
+    schedule: &dregg_turn::bilateral_schedule::ExpectedBilateral,
 ) -> WitnessedReceipt {
-    use pyana_circuit::effect_vm::pi as p;
-    use pyana_circuit::field::BabyBear;
-    use pyana_turn::bilateral_schedule::project_into_pi;
+    use dregg_circuit::effect_vm::pi as p;
+    use dregg_circuit::field::BabyBear;
+    use dregg_turn::bilateral_schedule::project_into_pi;
 
     let counts = schedule.counts_for(cell_id);
     let roots = schedule.roots_for(cell_id, turn.nonce);
 
     let mut pi_bb = vec![BabyBear::ZERO; p::BASE_COUNT];
     // Populate turn-identity slots (shared across all per-cell proofs of one turn).
-    let (th, eg, _, prev) = pyana_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
+    let (th, eg, _, prev) = dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
     for i in 0..4 {
         pi_bb[p::TURN_HASH_BASE + i] = th[i];
         pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
@@ -287,8 +287,8 @@ pub fn fabricate_witnessed_receipt_with_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::effect_vm::pi as p;
-    use pyana_turn::{ActionBuilder, TurnBuilder, TurnReceipt};
+    use dregg_circuit::effect_vm::pi as p;
+    use dregg_turn::{ActionBuilder, TurnBuilder, TurnReceipt};
 
     fn cid(b: u8) -> CellId {
         CellId::from_bytes([b; 32])
@@ -575,10 +575,10 @@ mod tests {
             .effect_grant_capability(
                 alice,
                 bob,
-                pyana_cell::CapabilityRef {
+                dregg_cell::CapabilityRef {
                     target,
                     slot: 0,
-                    permissions: pyana_cell::AuthRequired::Signature,
+                    permissions: dregg_cell::AuthRequired::Signature,
                     expires_at: None,
                     breadstuff: None,
                     allowed_effects: None,
@@ -628,7 +628,7 @@ mod tests {
         // Alice transfers to Bob *and* publishes a SelfStateTransition
         // attestation. The bundle carries the attestation; the verifier
         // confirms Alice's PI[UNILATERAL_*] matches what the schedule predicts.
-        use pyana_turn::bilateral_schedule::{
+        use dregg_turn::bilateral_schedule::{
             ExpectedBilateral, UnilateralAttestation, UnilateralAttestationKind,
         };
         let alice = cid(0xA1);
@@ -681,7 +681,7 @@ mod tests {
     fn unilateral_tampered_root_rejects() {
         // Same as the happy-path setup but the prover's PI carries a different
         // unilateral root than what the bundle declares.
-        use pyana_turn::bilateral_schedule::{
+        use dregg_turn::bilateral_schedule::{
             ExpectedBilateral, UnilateralAttestation, UnilateralAttestationKind,
         };
         let alice = cid(0xA1);
@@ -738,7 +738,7 @@ mod tests {
         // The bundle declares no attestation; the schedule expects a sentinel;
         // but Alice's PI carries a garbage non-sentinel unilateral root.
         // The PI-vs-schedule mismatch must reject.
-        use pyana_circuit::effect_vm::pi as p;
+        use dregg_circuit::effect_vm::pi as p;
         let alice = cid(0xA1);
         let bob = cid(0xB2);
         let turn = make_transfer_turn(alice, bob, 100, 1);
@@ -777,7 +777,7 @@ mod tests {
         let carol = cid(0xC3);
         let mut builder = TurnBuilder::new(alice, 1);
         let action = ActionBuilder::new_unchecked_for_tests(alice, "introduce", alice)
-            .effect_introduce(alice, bob, carol, pyana_cell::AuthRequired::Signature)
+            .effect_introduce(alice, bob, carol, dregg_cell::AuthRequired::Signature)
             .build();
         builder.add_action(action);
         let turn = builder.fee(0).build();

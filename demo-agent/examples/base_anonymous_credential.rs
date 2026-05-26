@@ -1,6 +1,6 @@
 //! Base Anonymous Credential Demo — On-Chain Anonymous Verification
 //!
-//! **Flagship integration**: Proves that pyana enables something no other system can:
+//! **Flagship integration**: Proves that dregg enables something no other system can:
 //! anonymous credential presentation ON A PUBLIC BLOCKCHAIN.
 //!
 //! **Story**: Alice wants to mint an age-restricted NFT on Base. The contract requires
@@ -11,16 +11,16 @@
 //!   - That she's the same person who minted before (unlinkable)
 //!
 //! **Architecture**:
-//!   Alice's credential (pyana)
+//!   Alice's credential (dregg)
 //!     -> Anonymous presentation (ring membership + committed-threshold STARK)
 //!       -> SP1 wrapping (STARK -> Groth16, ~200k gas to verify)
 //!         -> Base smart contract verifies and gates the NFT mint
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example base_anonymous_credential
+//! Run with: cargo run --release -p dregg-demo-agent --example base_anonymous_credential
 
 use std::time::Instant;
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear,
     committed_threshold::{
         CommittedThresholdWitness, compute_threshold_commitment, generate_blinding,
@@ -32,7 +32,7 @@ use pyana_circuit::{
 };
 
 /// Simulates the on-chain credential verification flow.
-/// In production this would be `IPyanaCredentialGate.verifyCredential()` on Base.
+/// In production this would be `IDreggCredentialGate.verifyCredential()` on Base.
 fn simulate_onchain_verify(
     federation_root: &[u8; 32],
     predicate_hash: &[u8; 32],
@@ -55,7 +55,7 @@ fn simulate_onchain_verify(
 
 /// Compute a mock federation root from member keys.
 fn compute_federation_root(member_keys: &[[u8; 32]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-federation-root-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-federation-root-v1");
     for key in member_keys {
         hasher.update(key);
     }
@@ -72,7 +72,7 @@ fn presentation_nullifier(credential_serial: &[u8; 32], action: &str) -> [u8; 32
     let mut input = Vec::with_capacity(32 + action.len());
     input.extend_from_slice(credential_serial);
     input.extend_from_slice(action.as_bytes());
-    blake3::derive_key("pyana-presentation-nullifier-v1", &input)
+    blake3::derive_key("dregg-presentation-nullifier-v1", &input)
 }
 
 fn main() {
@@ -81,7 +81,7 @@ fn main() {
     println!("  On-Chain Anonymous Verification via SP1-Wrapped STARK Proofs");
     println!("===============================================================================");
     println!();
-    println!("  This demo shows pyana's flagship capability: proving facts about yourself");
+    println!("  This demo shows dregg's flagship capability: proving facts about yourself");
     println!("  to a smart contract on Base WITHOUT revealing your identity.");
     println!();
     println!("  Scenario: Alice mints an age-restricted NFT on Base.");
@@ -99,7 +99,7 @@ fn main() {
     // A federation of identity providers. Alice is one of 1000 members.
     // The federation attests to members' attributes via credentials.
     let federation_members: Vec<[u8; 32]> = (0u64..1000)
-        .map(|i| blake3::derive_key("pyana-demo-member-key", &i.to_le_bytes()))
+        .map(|i| blake3::derive_key("dregg-demo-member-key", &i.to_le_bytes()))
         .collect();
 
     let alice_index = 42; // Alice is member #42 (hidden from the contract)
@@ -129,7 +129,7 @@ fn main() {
 
     // The credential serial binds Alice's proof to HER specific credential.
     let credential_serial: [u8; 32] =
-        blake3::derive_key("pyana-demo-credential-serial", &alice_key);
+        blake3::derive_key("dregg-demo-credential-serial", &alice_key);
 
     // The fact commitment binds the proof to Alice's specific credential.
     let age_fact_hash = poseidon2::hash_fact(
@@ -406,7 +406,7 @@ fn main() {
     println!("      - No credential binding (proofs are interchangeable)");
     println!("      - Requires trusted setup (powers of tau ceremony)");
     println!();
-    println!("  Approach 3: PYANA (this demo)");
+    println!("  Approach 3: DREGG (this demo)");
     println!("    Alice proves BOTH membership AND a predicate about a private attribute:");
     println!("      - Ring membership hides identity (which member = unknown)");
     println!("      - Committed-threshold hides exact value (only >= 18 proven)");

@@ -220,7 +220,7 @@ For a typical batch of 100 intents with 10-20 discovered rings:
 
 ### vs. Anoma Solver Market
 
-| Aspect | Anoma | Pyana Trustless |
+| Aspect | Anoma | `dregg` Trustless |
 |--------|-------|----------------|
 | Intent visibility | Public to solvers immediately | Encrypted until batch decrypt |
 | Front-running | Possible (solver sees before execution) | Impossible (threshold encryption) |
@@ -230,7 +230,7 @@ For a typical batch of 100 intents with 10-20 discovered rings:
 
 ### vs. Flashbots SUAVE
 
-| Aspect | SUAVE | Pyana Trustless |
+| Aspect | SUAVE | `dregg` Trustless |
 |--------|-------|----------------|
 | Privacy mechanism | SGX enclaves (hardware trust) | Threshold encryption (crypto trust) |
 | Ordering fairness | Block builder has ordering power | Consensus-determined batch boundary |
@@ -239,7 +239,7 @@ For a typical batch of 100 intents with 10-20 discovered rings:
 
 ### vs. CoW Protocol (Ethereum)
 
-| Aspect | CoW Protocol | Pyana Trustless |
+| Aspect | CoW Protocol | `dregg` Trustless |
 |--------|-------------|----------------|
 | Batch auction | Yes (fixed intervals) | Yes (consensus-determined intervals) |
 | Solver trust | Reputation + governance | STARK proofs + economic incentives |
@@ -263,7 +263,7 @@ Settled batches are archived in the federation's state. The `settled_batches` ma
 
 ### Bridge Integration
 
-Cross-federation intents (e.g., swap Pyana-native asset for a Midnight-bridged asset) compose with the conditional turn mechanism from `turn/src/conditional.rs`:
+Cross-federation intents (e.g., swap `dregg`-native asset for a Midnight-bridged asset) compose with the conditional turn mechanism from `turn/src/conditional.rs`:
 
 ```
 1. Batch includes an intent referencing a bridged asset

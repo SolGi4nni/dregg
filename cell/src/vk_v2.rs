@@ -1,6 +1,6 @@
 //! VK v2 — layered cell-program / predicate / effect verifying-key hashes.
 //!
-//! Per `VK-AS-RE-EXECUTION-RECIPE.md` §v2, a `vk_hash` in pyana commits
+//! Per `VK-AS-RE-EXECUTION-RECIPE.md` §v2, a `vk_hash` in dregg commits
 //! to **four** components, not one:
 //!
 //! 1. **Program bytes** — the canonical encoding of the executable
@@ -37,8 +37,8 @@
 //!
 //! ## Domain string
 //!
-//! `"pyana-vk-v2"`. Disjoint from v1's `"pyana-cellprogram-vk-v1"` and
-//! `"pyana-witnessed-predicate-vk-v1"` keys, so a v2 hash cannot
+//! `"dregg-vk-v2"`. Disjoint from v1's `"dregg-cellprogram-vk-v1"` and
+//! `"dregg-witnessed-predicate-vk-v1"` keys, so a v2 hash cannot
 //! collide with a v1 hash. v1 and v2 callers compute different bytes
 //! for the same program — exactly as intended.
 
@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 /// fingerprints match. Mixing them into the vk_hash prevents
 /// cross-system collisions.
 ///
-/// For pyana today, cell-program VKs all use
+/// For dregg today, cell-program VKs all use
 /// `Plonky3BabyBearFri { p3_rev: "82cfad73..." }` matching the rev
 /// pinned in the workspace `Cargo.toml`. Apps that target Kimchi
 /// (Mina interop) or SP1 use the matching variant.
@@ -151,7 +151,7 @@ impl VerifierFingerprint {
             VerifierFingerprint::WasmHash(h) => (1u8, h),
             VerifierFingerprint::CompiledVkHash(h) => (2u8, h),
         };
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-verifier-fingerprint-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-verifier-fingerprint-v1");
         hasher.update(&[tag]);
         hasher.update(h);
         *hasher.finalize().as_bytes()
@@ -170,7 +170,7 @@ pub struct VkComponents<'a> {
     /// provided bytes (custom effects).
     pub program_bytes: &'a [u8],
     /// 32-byte hash of the AIR descriptor; see
-    /// `pyana_circuit::air_descriptor::fingerprint`.
+    /// `dregg_circuit::air_descriptor::fingerprint`.
     pub air_fingerprint: [u8; 32],
     /// Verifier-impl fingerprint (source/wasm/compiled-vk).
     pub verifier_fingerprint: VerifierFingerprint,
@@ -183,7 +183,7 @@ pub struct VkComponents<'a> {
 /// Encoding:
 ///
 /// ```text
-/// vk_hash_v2 = BLAKE3_keyed("pyana-vk-v2",
+/// vk_hash_v2 = BLAKE3_keyed("dregg-vk-v2",
 ///                            len(program_bytes) || program_bytes ||
 ///                            air_fingerprint ||
 ///                            verifier_fingerprint.canonical_bytes() ||
@@ -207,11 +207,11 @@ pub struct VkComponents<'a> {
 /// - Out-of-band:       everyone else.
 ///
 /// Enforced by: BLAKE3 keyed-hash domain separation under
-/// `"pyana-vk-v2"`. Failure mode if violated: validators with
+/// `"dregg-vk-v2"`. Failure mode if violated: validators with
 /// mismatched components compute a different vk_hash and reject the
 /// claim — a soundness signal, not a soundness loss.
 pub fn canonical_vk_v2(components: &VkComponents<'_>) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vk-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vk-v2");
     hasher.update(&(components.program_bytes.len() as u64).to_le_bytes());
     hasher.update(components.program_bytes);
     hasher.update(&components.air_fingerprint);

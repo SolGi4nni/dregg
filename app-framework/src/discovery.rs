@@ -1,18 +1,18 @@
-//! Nameservice auto-registration for pyana apps.
+//! Nameservice auto-registration for dregg apps.
 //!
 //! `NameserviceClient` is an HTTP client that registers an app in the federation's
 //! nameservice on startup and deregisters on clean shutdown. The nameservice
-//! server endpoint is read from `PYANA_NAMESERVICE_URL` (default:
+//! server endpoint is read from `DREGG_NAMESERVICE_URL` (default:
 //! `http://127.0.0.1:9100`).
 //!
 //! This module provides the **client** contract. The nameservice app itself
-//! is a separate pyana app that exposes the matching server endpoints
+//! is a separate dregg app that exposes the matching server endpoints
 //! (`POST /register`, `DELETE /names/{name}`).
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::discovery::{NameRegistration, NameserviceClient};
+//! use dregg_app_framework::discovery::{NameRegistration, NameserviceClient};
 //!
 //! let client = NameserviceClient::from_env();
 //! client.register(&NameRegistration {
@@ -32,11 +32,11 @@ pub struct NameRegistration {
     /// Searchable tags (e.g. `["defi", "stablecoin"]`).
     pub tags: Vec<String>,
     /// The URI at which this app is reachable.
-    /// May be a `pyana://` URI or an `http://` fallback.
+    /// May be a `dregg://` URI or an `http://` fallback.
     pub target_uri: String,
 }
 
-/// HTTP client for the pyana nameservice.
+/// HTTP client for the dregg nameservice.
 ///
 /// Cheap to clone — wraps an `Arc` internally.
 #[derive(Clone, Debug)]
@@ -57,10 +57,10 @@ pub enum DiscoveryError {
 }
 
 impl NameserviceClient {
-    /// Build a client pointed at the URL in `PYANA_NAMESERVICE_URL`, or the
+    /// Build a client pointed at the URL in `DREGG_NAMESERVICE_URL`, or the
     /// default `http://127.0.0.1:9100` if the variable is unset.
     pub fn from_env() -> Self {
-        let base_url = std::env::var("PYANA_NAMESERVICE_URL")
+        let base_url = std::env::var("DREGG_NAMESERVICE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:9100".into());
         Self::new(base_url)
     }

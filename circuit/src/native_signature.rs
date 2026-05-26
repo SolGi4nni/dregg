@@ -141,7 +141,7 @@ pub fn wots_keygen(seed: &[u8; 32]) -> (WotsSecretKey, WotsPublicKey) {
 
     // Derive chain bottoms from seed
     for i in 0..WOTS_TOTAL_CHAINS {
-        let derived = blake3::derive_key(&format!("pyana-wots-chain-{i}"), seed);
+        let derived = blake3::derive_key(&format!("dregg-wots-chain-{i}"), seed);
         let val = u32::from_le_bytes([derived[0], derived[1], derived[2], derived[3]]);
         chain_bottoms[i] = BabyBear::new(val);
     }

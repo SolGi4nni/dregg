@@ -13,7 +13,7 @@
 //!   *commitment encodings*, not executor outcomes. They never call
 //!   `submit_action` and never produce a `TurnReceipt`.  These tests do.
 
-use pyana_cell::state::FieldElement;
+use dregg_cell::state::FieldElement;
 use starbridge_subscription::{
     BountyState, bounty_state_payload_hash, build_bounty_state_publish_action,
     build_consume_action, build_grant_consumer_action, build_grant_publisher_action,
@@ -25,7 +25,7 @@ use starbridge_subscription::{
 // =============================================================================
 
 mod common {
-    use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+    use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 
     pub fn make_cipherclerk(seed: u8) -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [seed; 32])

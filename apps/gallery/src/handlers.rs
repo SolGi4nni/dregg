@@ -1,7 +1,7 @@
 //! HTTP handlers for the gallery API.
 //!
 //! All handlers are async functions that take Axum extractors and return JSON responses.
-//! Admin endpoints are protected by the `AdminAuth` extractor from `pyana-app-framework`.
+//! Admin endpoints are protected by the `AdminAuth` extractor from `dregg-app-framework`.
 
 use axum::{
     Json,
@@ -12,10 +12,10 @@ use axum::{
 use serde_json::json;
 use tracing::{info, warn};
 
-use pyana_app_framework::auth::AdminAuth;
-use pyana_app_framework::authorizer::{Authorizer, SignedAuthorizer};
-use pyana_app_framework::hex::hex_to_bytes32;
-use pyana_app_framework::{CellId, EscrowCondition};
+use dregg_app_framework::auth::AdminAuth;
+use dregg_app_framework::authorizer::{Authorizer, SignedAuthorizer};
+use dregg_app_framework::hex::hex_to_bytes32;
+use dregg_app_framework::{CellId, EscrowCondition};
 
 use crate::persistence::StateSnapshot;
 use crate::server::AppState;
@@ -384,7 +384,7 @@ pub async fn submit_bid(
 
     let mut engine = state.engine.lock().await;
     let mut mgr =
-        pyana_app_framework::escrow::EscrowManager::new(&mut engine, make_escrow_authorizer());
+        dregg_app_framework::escrow::EscrowManager::new(&mut engine, make_escrow_authorizer());
     let escrow_id = match mgr.create_payment_escrow(
         bidder,
         auction.artist,
@@ -577,11 +577,11 @@ pub async fn get_auction_result(
 }
 
 // =============================================================================
-// Admin Handlers (protected by AdminAuth extractor from pyana-app-framework)
+// Admin Handlers (protected by AdminAuth extractor from dregg-app-framework)
 // =============================================================================
 
 /// POST /admin/height — Advance block height (devnet utility).
-/// Protected by AdminAuth extractor (reads PYANA_ADMIN_TOKEN from state).
+/// Protected by AdminAuth extractor (reads DREGG_ADMIN_TOKEN from state).
 pub async fn advance_height(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -594,7 +594,7 @@ pub async fn advance_height(
 }
 
 /// POST /admin/settle/:id — Trigger settlement for an auction.
-/// Protected by AdminAuth extractor (reads PYANA_ADMIN_TOKEN from state).
+/// Protected by AdminAuth extractor (reads DREGG_ADMIN_TOKEN from state).
 pub async fn trigger_settle(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -675,7 +675,7 @@ pub async fn trigger_settle(
 }
 
 /// POST /admin/persist — Force persist state to disk.
-/// Protected by AdminAuth extractor (reads PYANA_ADMIN_TOKEN from state).
+/// Protected by AdminAuth extractor (reads DREGG_ADMIN_TOKEN from state).
 pub async fn persist_state(_auth: AdminAuth, State(state): State<AppState>) -> impl IntoResponse {
     match do_persist(&state).await {
         Ok(path) => Json(json!({"status": "persisted", "path": path})).into_response(),
@@ -701,7 +701,7 @@ pub async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
 
     Json(json!({
         "status": "running",
-        "service": "pyana-gallery",
+        "service": "dregg-gallery",
         "block_height": height,
         "artworks": {
             "total": artworks.len(),
@@ -745,18 +745,18 @@ async fn do_persist(state: &AppState) -> Result<String, String> {
 
 /// Build the default `Authorizer` used by the gallery's escrow turns.
 ///
-/// Reads `PYANA_GALLERY_ESCROW_KEY` (32-byte hex) from the environment when set;
+/// Reads `DREGG_GALLERY_ESCROW_KEY` (32-byte hex) from the environment when set;
 /// otherwise falls back to a deterministic dev-only key and emits a warning.
-/// Production deployments MUST set `PYANA_GALLERY_ESCROW_KEY`.
+/// Production deployments MUST set `DREGG_GALLERY_ESCROW_KEY`.
 fn make_escrow_authorizer() -> Box<dyn Authorizer> {
-    let secret = match std::env::var("PYANA_GALLERY_ESCROW_KEY") {
+    let secret = match std::env::var("DREGG_GALLERY_ESCROW_KEY") {
         Ok(hex) => parse_hex_32(&hex).unwrap_or_else(|| {
-            eprintln!("WARNING: PYANA_GALLERY_ESCROW_KEY is not valid 32-byte hex; using dev key");
+            eprintln!("WARNING: DREGG_GALLERY_ESCROW_KEY is not valid 32-byte hex; using dev key");
             dev_key_bytes()
         }),
         Err(_) => {
             eprintln!(
-                "WARNING: PYANA_GALLERY_ESCROW_KEY not set; using deterministic dev key. \
+                "WARNING: DREGG_GALLERY_ESCROW_KEY not set; using deterministic dev key. \
                  DO NOT use this in production."
             );
             dev_key_bytes()
@@ -766,7 +766,7 @@ fn make_escrow_authorizer() -> Box<dyn Authorizer> {
 }
 
 fn dev_key_bytes() -> [u8; 32] {
-    *blake3::hash(b"pyana-gallery-dev-escrow-key-v1").as_bytes()
+    *blake3::hash(b"dregg-gallery-dev-escrow-key-v1").as_bytes()
 }
 
 fn parse_hex_32(s: &str) -> Option<[u8; 32]> {

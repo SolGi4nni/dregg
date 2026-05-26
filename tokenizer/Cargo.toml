@@ -1,5 +1,5 @@
 [package]
-name = "pyana-tokenizer"
+name = "dregg-tokenizer"
 version = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
@@ -25,7 +25,7 @@ criterion = { workspace = true }
 tokio = { version = "1", features = ["time"] }
 
 [lib]
-name = "pyana_tokenizer"
+name = "dregg_tokenizer"
 crate-type = ["lib"]
 
 [[bench]]

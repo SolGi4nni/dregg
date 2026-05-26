@@ -37,7 +37,7 @@ function parseProof(hex) {
   const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
   const bytes = cleanHex.length / 2;
 
-  // Parse the proof structure based on pyana's STARK proof format
+  // Parse the proof structure based on dregg's STARK proof format
   // Header: [magic(4)] [version(1)] [air_id(1)] [trace_len(4)] [num_cols(2)] [num_queries(2)] [fri_layers(1)]
   // This is a best-effort parse — real proofs follow the serialization from circuit/src/stark.rs
 

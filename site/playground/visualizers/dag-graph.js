@@ -4,7 +4,7 @@
  * Two entry points:
  *   - `render(container, data, opts)` — legacy direct-render helper used
  *     by the playground blocklace simulator.
- *   - `defineVisualizer('dag-graph', ...)` — `<pyana-vizzer>` registration.
+ *   - `defineVisualizer('dag-graph', ...)` — `<dregg-vizzer>` registration.
  *
  * Dataset (JSON in data-dataset):
  *   {

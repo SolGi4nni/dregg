@@ -1,8 +1,8 @@
 //! Decentralized AI Compute Marketplace
 //!
-//! Ported from Persvati's 2245-line demo into pyana's higher-level APIs.
+//! Ported from Persvati's 2245-line demo into dregg's higher-level APIs.
 //!
-//! This demonstrates pyana doing something a blockchain CANNOT:
+//! This demonstrates dregg doing something a blockchain CANNOT:
 //!   - INSTANT FINALITY: turns commit in microseconds, no block times
 //!   - ATOMIC MULTI-PARTY SETTLEMENT: single turn atomically debits escrow,
 //!     credits provider, updates reputation, and logs receipt. If ANY fails, ALL roll back.
@@ -29,14 +29,14 @@
 //!   6. Atomic settlement: TurnComposer atomically settles across 6 cells
 //!   7. Dispute: rollback demonstrated when escrow conditions fail
 
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::program::{CellProgram, StateConstraint, field_from_u64};
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::action::{DelegationMode, Effect};
-use pyana_turn::budget_gate::{BudgetGate, BudgetSlice};
-use pyana_turn::builder::{ActionBuilder, TurnBuilder};
-use pyana_turn::executor::{ComputronCosts, TurnExecutor};
-use pyana_turn::turn::TurnResult;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::program::{CellProgram, StateConstraint, field_from_u64};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::action::{DelegationMode, Effect};
+use dregg_turn::budget_gate::{BudgetGate, BudgetSlice};
+use dregg_turn::builder::{ActionBuilder, TurnBuilder};
+use dregg_turn::executor::{ComputronCosts, TurnExecutor};
+use dregg_turn::turn::TurnResult;
 
 // =========================================================================
 // Helpers
@@ -71,7 +71,7 @@ fn field_u64(field: &[u8; 32]) -> u64 {
 // =========================================================================
 
 fn main() {
-    println!("=== Pyana Decentralized AI Compute Marketplace ===");
+    println!("=== Dregg Decentralized AI Compute Marketplace ===");
     println!("    (ported from Persvati — demonstrating blockchain-impossible properties)\n");
 
     // =====================================================================
@@ -250,7 +250,7 @@ fn main() {
     let commit_c = hash_commit(bid_c, &nonce_c);
 
     // Insert commitments as nullifiers (they can only be used once)
-    use pyana_cell::note::Nullifier;
+    use dregg_cell::note::Nullifier;
     nullifier_set.insert(Nullifier(commit_a)).unwrap();
     nullifier_set.insert(Nullifier(commit_b)).unwrap();
     nullifier_set.insert(Nullifier(commit_c)).unwrap();
@@ -791,7 +791,7 @@ fn main() {
     // =====================================================================
     // SUMMARY
     // =====================================================================
-    println!("=== SUMMARY: What pyana does that blockchains CANNOT ===\n");
+    println!("=== SUMMARY: What dregg does that blockchains CANNOT ===\n");
     println!("  1. INSTANT FINALITY: All turns committed in microseconds.");
     println!("     (No block times, no mempool, no waiting for confirmations)");
     println!();

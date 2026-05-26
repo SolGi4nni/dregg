@@ -24,12 +24,12 @@ export interface FoldOptions {
 }
 
 /**
- * TokenOps provides operations on pyana token state: fold chains,
+ * TokenOps provides operations on dregg token state: fold chains,
  * content-addressed hashing, and intent ID computation.
  *
  * @example
  * ```ts
- * import { TokenOps } from "@pyana/sdk";
+ * import { TokenOps } from "@dregg/sdk";
  *
  * const ops = new TokenOps(wasm);
  *
@@ -53,9 +53,9 @@ export interface FoldOptions {
  * ```
  */
 export class TokenOps {
-  private wasm: typeof import("pyana-wasm");
+  private wasm: typeof import("dregg-wasm");
 
-  constructor(wasm: typeof import("pyana-wasm")) {
+  constructor(wasm: typeof import("dregg-wasm")) {
     this.wasm = wasm;
   }
 
@@ -63,7 +63,7 @@ export class TokenOps {
    * Demonstrate a fold operation: create a token state, then attenuate it
    * by removing facts, showing the Merkle root transition.
    *
-   * This models the core pyana attenuation primitive where tokens can only
+   * This models the core dregg attenuation primitive where tokens can only
    * monotonically lose capabilities (facts are removed, never added).
    *
    * @param options - The facts and removal list.
@@ -99,7 +99,7 @@ export class TokenOps {
    * intent engine (postcard serialization + BLAKE3 domain-separated hash).
    *
    * This produces a deterministic 32-byte ID that matches `Intent::compute_id()`
-   * in the `pyana-intent` crate.
+   * in the `dregg-intent` crate.
    *
    * @param input - The intent specification.
    * @returns 64-character hex-encoded intent ID.
@@ -115,7 +115,7 @@ export class TokenOps {
   }
 
   /**
-   * Derive a keypair from a BIP39 mnemonic using pyana's BLAKE3 derivation path.
+   * Derive a keypair from a BIP39 mnemonic using dregg's BLAKE3 derivation path.
    *
    * Returns 64 bytes: first 32 are the secret key seed, last 32 are reserved
    * for the public key (computed externally with Ed25519).

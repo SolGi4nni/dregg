@@ -6,13 +6,13 @@
 //! forming a directed acyclic graph.
 //!
 //! This module layers domain-specific entry storage (`DagEntry`) on top of the
-//! shared `pyana_types::CausalDag` graph structure.
+//! shared `dregg_types::CausalDag` graph structure.
 
 use std::collections::{HashMap, HashSet};
 
-// Re-export the shared CausalDag and CausalError from pyana-types.
-pub use pyana_types::causal::hex_short;
-pub use pyana_types::{CausalDag as DagGraph, CausalError};
+// Re-export the shared CausalDag and CausalError from dregg-types.
+pub use dregg_types::causal::hex_short;
+pub use dregg_types::{CausalDag as DagGraph, CausalError};
 
 /// A single entry in the causal DAG, representing one turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,9 +31,9 @@ pub struct DagEntry {
 
 /// Per-entry DAG that tracks turns and their happened-before relationships.
 ///
-/// Wraps the shared `pyana_types::CausalDag` graph (imported here as
+/// Wraps the shared `dregg_types::CausalDag` graph (imported here as
 /// `DagGraph`) with per-entry metadata storage needed by the gossip
-/// network layer. Use `pyana_types::CausalDag` directly if you only need
+/// network layer. Use `dregg_types::CausalDag` directly if you only need
 /// the graph topology; use `EntryDag` if you need the `DagEntry` metadata.
 ///
 /// Invariants:
@@ -42,7 +42,7 @@ pub struct DagEntry {
 /// - The graph is always a DAG (no cycles).
 #[derive(Debug, Clone)]
 pub struct EntryDag {
-    /// The underlying graph structure (shared with pyana-coord).
+    /// The underlying graph structure (shared with dregg-coord).
     graph: DagGraph,
     /// All turns indexed by their hash (entry metadata).
     turns: HashMap<[u8; 32], DagEntry>,

@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, Cell, CellId, CellProgram, Ledger, Permissions, StateConstraint, field_from_u64,
 };
-use pyana_turn::action::symbol;
-use pyana_turn::{
+use dregg_turn::action::symbol;
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, Turn, TurnExecutor,
     TurnResult,
 };
@@ -51,7 +51,7 @@ fn build_set_field_turn(
     agent: CellId,
     nonce: u64,
     field_idx: u8,
-    value: pyana_cell::FieldElement,
+    value: dregg_cell::FieldElement,
 ) -> Turn {
     let mut forest = CallForest::new();
     let action = Action {
@@ -321,8 +321,8 @@ fn executor_rejects_cell_declaring_temporal_predicate_variant_today() {
 
 #[test]
 fn executor_rejects_cell_declaring_witnessed_variant_today() {
-    use pyana_cell::InputRef;
-    use pyana_cell::predicate::WitnessedPredicate;
+    use dregg_cell::InputRef;
+    use dregg_cell::predicate::WitnessedPredicate;
     let program = CellProgram::Predicate(vec![StateConstraint::Witnessed {
         wp: WitnessedPredicate::dfa([1u8; 32], InputRef::Sender, 0),
     }]);
@@ -339,7 +339,7 @@ fn executor_rejects_cell_declaring_witnessed_variant_today() {
 
 #[test]
 fn executor_rejects_cell_declaring_custom_variant_today() {
-    use pyana_cell::program::{CustomDescriptor, ReadSet};
+    use dregg_cell::program::{CustomDescriptor, ReadSet};
     let program = CellProgram::Predicate(vec![StateConstraint::Custom {
         ir_hash: [3u8; 32],
         descriptor: CustomDescriptor::default(),
@@ -358,7 +358,7 @@ fn executor_rejects_cell_declaring_custom_variant_today() {
 
 #[test]
 fn executor_rejects_cell_declaring_bound_delta_variant_today() {
-    use pyana_cell::program::DeltaRelation;
+    use dregg_cell::program::DeltaRelation;
     let program = CellProgram::Predicate(vec![StateConstraint::BoundDelta {
         local_slot: 0,
         peer_cell: CellId([42u8; 32]),
@@ -404,7 +404,7 @@ fn executor_rejects_cell_declaring_renounced_variant_today() {
     // registry, so the cell-side evaluator returns `MissingContextField
     // { field: "sender" }` (fail-closed sentinel). The executor surfaces it
     // as `TurnResult::Rejected`.
-    use pyana_cell::program::RenouncedSet;
+    use dregg_cell::program::RenouncedSet;
     let program = CellProgram::Predicate(vec![StateConstraint::Renounced {
         set: RenouncedSet::BlindedSet {
             commitment: [0xCDu8; 32],
@@ -431,9 +431,9 @@ fn executor_renounced_accepts_when_sender_not_in_set() {
     // lower=0x0A.. and upper=0x0C..  The executor wires default_builtins()
     // (SortedNeighborNonMembershipVerifier), and the action carries the 96-byte
     // neighbor proof as a ProofBytes witness blob.
-    use pyana_cell::predicate::NonMembershipNeighborProof;
-    use pyana_cell::program::RenouncedSet;
-    use pyana_turn::action::{WitnessBlob, WitnessKind};
+    use dregg_cell::predicate::NonMembershipNeighborProof;
+    use dregg_cell::program::RenouncedSet;
+    use dregg_turn::action::{WitnessBlob, WitnessKind};
 
     let commitment = [0xABu8; 32];
     // Agent pk is controlled by make_cell_with_program(seed=11, …):

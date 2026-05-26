@@ -10,13 +10,13 @@
 //! - Member addition changes the id; member removal also changes the id
 //! - Order-independence: same members in different order produce the same id
 
-use pyana_federation::{
+use dregg_federation::{
     Federation, FederationReceipt, FederationReceiptBody,
     identity::derive_federation_id_with_epoch,
     threshold::generate_test_committee,
     types::{PublicKey, SigningKey, generate_keypair, sign},
 };
-use pyana_types::CellId;
+use dregg_types::CellId;
 
 // =============================================================================
 // Helpers

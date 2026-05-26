@@ -39,7 +39,7 @@ Four candidate replay scopes:
 1. **Re-verify only.** Third party has the receipt chain plus the prover's
    STARK proofs (`StarkProof` bytes). They reconstruct each AIR by name,
    read the embedded public inputs, and run `stark::verify`. This is
-   essentially the current `pyana-verifier` binary path, just generalized
+   essentially the current `dregg-verifier` binary path, just generalized
    to a chain instead of a single proof. Catches malformed proofs and
    tampered public inputs (boundary commitment binds PI to trace cells).
    Does **not** catch a witness that produces the same proof for
@@ -98,14 +98,14 @@ clamp later is additive, not breaking. So (2) is also the right
 /// A `TurnReceipt` enriched with sufficient material for trace re-derivation.
 /// This is the on-disk / wire shape; in-memory we still pass `TurnReceipt`
 /// around hot paths and lift to `WitnessedReceipt` only for archival,
-/// audit-export, or `pyana-verifier` consumption.
+/// audit-export, or `dregg-verifier` consumption.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WitnessedReceipt {
     /// The receipt itself. Unchanged from today, so existing chains stay valid.
     pub receipt: TurnReceipt,
 
     /// Identity of the AIR that proved this turn. For v1 always
-    /// `pyana-effect-vm-v1`; future versions may carry per-cell program VKs.
+    /// `dregg-effect-vm-v1`; future versions may carry per-cell program VKs.
     pub air_name: String,
 
     /// STARK proof bytes (`stark::proof_to_bytes` output). Verifiable
@@ -144,13 +144,13 @@ pub struct WitnessBundle {
     /// The cell state as it entered the turn. Includes all 8 field
     /// elements, balance, nonce, c-list, etc. — everything the trace
     /// generator consumes.
-    pub pre_state: pyana_cell::state::CellState,
+    pub pre_state: dregg_cell::state::CellState,
 
     /// The effect sequence the executor produced. NOT the original `Turn`
     /// — that may not survive (it's been validated, decomposed, and
     /// stripped of e.g. preconditions that no longer matter). This is
     /// the post-validation flat effect list that the AIR consumed.
-    pub effects: Vec<pyana_circuit::effect_vm::Effect>,
+    pub effects: Vec<dregg_circuit::effect_vm::Effect>,
 
     /// EffectVm extra context (block height, max custom effects,
     /// handoffs root). Required to reproduce the widened PI layout.
@@ -265,7 +265,7 @@ linearly. Fine for chains up to ~10⁴ turns.
 
 **Option β — IVC-folded chain.** Each `WitnessedReceipt` carries a
 folded IVC proof that the chain up-to-and-including this turn is
-internally consistent. Equivalent to today's `pyana_compress_history`
+internally consistent. Equivalent to today's `dregg_compress_history`
 but witness-aware: the IVC step's witness is *itself* the prior step's
 PI plus the current `WitnessBundle::witness_hash`. Verifier work is
 constant in chain length (one IVC verify), but you cannot replay
@@ -284,7 +284,7 @@ shape (it's what the cipherclerk's `receipt_chain` already produces) and
 add Option γ as an optional accumulator commitment that the executor
 publishes alongside each receipt (the Merkle root over receipts so far).
 Option β remains the "compression" mode invoked by
-`pyana_compress_history` for telling outsiders "this chain is N turns
+`dregg_compress_history` for telling outsiders "this chain is N turns
 long and internally consistent" without shipping all N receipts.
 
 **Interaction with capability revocation.** A revoked-cap exercise
@@ -315,7 +315,7 @@ strip `federation_id` from the witness side.
 
 ## 5. Replayer API
 
-A natural extension of `pyana-verifier`:
+A natural extension of `dregg-verifier`:
 
 ```rust
 // in verifier/src/lib.rs (additive)
@@ -323,7 +323,7 @@ pub struct ReplayInput {
     pub witnessed_receipts: Vec<WitnessedReceipt>,
     /// Optional: cell state at the start of the chain. If absent, the
     /// replayer assumes a fresh genesis state.
-    pub initial_state: Option<pyana_cell::state::CellState>,
+    pub initial_state: Option<dregg_cell::state::CellState>,
 }
 
 pub struct ReplayOutput {
@@ -360,10 +360,10 @@ honest" — that part still requires per-turn scope-(2) work.
 
 The replayer is a *pure* function: input bytes, output verdict. No
 network, no shared state. Same OS-process isolation as today's
-`pyana-verifier`. The user can pipe a chain to a separate process,
+`dregg-verifier`. The user can pipe a chain to a separate process,
 get a yes/no, and walk away — which is what makes this trust-minimal.
 
-## 6. Integration with `pyana_compress_history`
+## 6. Integration with `dregg_compress_history`
 
 Today's `tool_compress_history` (`node/src/mcp.rs:2250`) calls
 `prove_ivc_stark(initial_root, &new_roots)`, producing a single proof
@@ -448,7 +448,7 @@ Smallest first step that lands a real `WitnessedReceipt`:
    into a `WitnessBundle` and pair it with the proof bytes. Cost:
    ~50 lines in `executor.rs`. Default to in-line witness (strategy A,
    `Inline` availability) — no encryption yet.
-3. Extend `pyana-verifier` with a `replay-chain` subcommand reading a
+3. Extend `dregg-verifier` with a `replay-chain` subcommand reading a
    JSON / postcard array of `WitnessedReceipt`. Implementation: the
    loop in §5 above.
 4. Add a single demo path: the existing demo binary (or the MCP tool)
@@ -458,7 +458,7 @@ Smallest first step that lands a real `WitnessedReceipt`:
 What this delivers:
 
 * A real on-disk artifact a third party can run against an unmodified
-  `pyana-verifier` binary and get scope-(2) replay.
+  `dregg-verifier` binary and get scope-(2) replay.
 * A migration path: existing `TurnReceipt` chains keep working because
   `WitnessedReceipt` is a strict super-set with the receipt nested.
 * A binding point for the gamma work: when cross-cell aggregation

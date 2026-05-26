@@ -1,4 +1,4 @@
-# Statistical Primitives in the Pyana DSL
+# Statistical Primitives in the `dregg` DSL
 
 ## Problem
 
@@ -19,7 +19,7 @@ The proof says: "I correctly computed sum=X, sum_squares=Y, count=N, over_thresh
 
 ## What Exists Today
 
-The temporal accumulator (`design-temporal-accumulation.md`) already defines columns for `sum`, `sum_squares`, `min_val`, `max_val`, `ema`, and wires them through IVC. The `ConstraintExpr` enum in `pyana-dsl-runtime/src/circuit.rs` provides `Polynomial`, `Transition`, `Binary`, `Gated`, and `SelectiveWrite` -- all needed for statistical constraints.
+The temporal accumulator (`design-temporal-accumulation.md`) already defines columns for `sum`, `sum_squares`, `min_val`, `max_val`, `ema`, and wires them through IVC. The `ConstraintExpr` enum in `dregg-dsl-runtime/src/circuit.rs` provides `Polynomial`, `Transition`, `Binary`, `Gated`, and `SelectiveWrite` -- all needed for statistical constraints.
 
 No new `ConstraintExpr` variants are required. Statistical primitives decompose entirely into existing constraint types.
 
@@ -123,7 +123,7 @@ No new `ConstraintExpr` variants. No changes to `DslCircuit` evaluation. No chan
 ## Complete Example: GPU Worker Latency SLA
 
 ```rust
-#[pyana_circuit]
+#[dregg_circuit]
 mod latency_sla {
     layout! {
         measurement: Field,           // col 0: this step's latency (ms)
@@ -217,7 +217,7 @@ Total additional: ~50 columns. Combined with the existing temporal accumulator (
 | Threshold percentile (is_over + boundary check) | Expressible NOW | Zero -- use existing `Binary` + `Polynomial` |
 | EMA constraint | Expressible NOW | Zero -- single `Polynomial` term |
 | Histogram bucket selectors + gated accumulation | Expressible NOW | Zero -- use `Binary` + `Gated` + `Transition` |
-| DSL macro sugar (`running_sum!`, `histogram!`, etc.) | Needs new code | Macro expansion in `pyana-macro` crate |
+| DSL macro sugar (`running_sum!`, `histogram!`, etc.) | Needs new code | Macro expansion in `dregg-macro` crate |
 | Witness generation for range-check bits | Needs new code | `WitnessOracle` impl for bit decomposition |
 | IVC wiring for statistical accumulator | Exists | Wire `state_root` column to `IvcBuilder` |
 

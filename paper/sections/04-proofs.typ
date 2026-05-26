@@ -8,7 +8,7 @@
 
 === 4-ary Merkle Trees
 
-Pyana uses quaternary Merkle trees: each internal node hashes 4 children via $"Poseidon2"(c_0, c_1, c_2, c_3)$ over BabyBear (width 8, $alpha = 7$, 8 external + 22 internal rounds). The 4-ary structure halves tree height relative to binary trees.
+Dregg uses quaternary Merkle trees: each internal node hashes 4 children via $"Poseidon2"(c_0, c_1, c_2, c_3)$ over BabyBear (width 8, $alpha = 7$, 8 external + 22 internal rounds). The 4-ary structure halves tree height relative to binary trees.
 
 === Multi-Hash Roots
 
@@ -368,9 +368,9 @@ Stage 7-$gamma$.2 Phase 1 closes that gap with new PI fields whose canonical der
 
 Three bilateral effects each get a deterministic instance id:
 
-$ "transfer_id" &= "Poseidon2"("pyana-transfer-id-v1" || "from" || "to" || "amount" || "ACTOR_NONCE") \
-  "grant_id" &= "Poseidon2"("pyana-grant-id-v1" || "from" || "to" || "cap_entry_hash" || "ACTOR_NONCE") \
-  "intro_id" &= "Poseidon2"("pyana-intro-id-v1" || "introducer" || "recipient" || "target" || "permissions_bits" || "introducer_nonce") $
+$ "transfer_id" &= "Poseidon2"("dregg-transfer-id-v1" || "from" || "to" || "amount" || "ACTOR_NONCE") \
+  "grant_id" &= "Poseidon2"("dregg-grant-id-v1" || "from" || "to" || "cap_entry_hash" || "ACTOR_NONCE") \
+  "intro_id" &= "Poseidon2"("dregg-intro-id-v1" || "introducer" || "recipient" || "target" || "permissions_bits" || "introducer_nonce") $
 
 `ACTOR_NONCE` is already in PI (from $gamma$.0), so the verifier can re-derive any id from the bilateral effect's surface inputs without additional witness data.
 
@@ -385,7 +385,7 @@ Per-cell PI grows by 35 felts to accommodate Phase 1's bilateral accumulators (p
 
 === Off-AIR verifier algorithm
 
-The `pyana-verifier` standalone binary gains a `bilateral-pair <receipt_a> <receipt_b>` subcommand that verifies cross-cell consistency:
+The `dregg-verifier` standalone binary gains a `bilateral-pair <receipt_a> <receipt_b>` subcommand that verifies cross-cell consistency:
 
 + Parse both receipts; verify each per-cell STARK independently.
 + Recompute the canonical id (e.g., `transfer_id`) from the bilateral effect's surface inputs `(from, to, amount, ACTOR_NONCE)`.
@@ -413,7 +413,7 @@ Phase 2 recurses into the optional `transition_proof: Option<Vec<u8>>` on the wi
 
 == Proof Backend Agility: The Constraint DSL
 
-Rather than manually implementing circuits for each proof system, Pyana provides a constraint DSL (`#[pyana_caveat]` and `#[pyana_effect]` proc macros) that compiles a single `CircuitDescriptor` into 8 code generation backends:
+Rather than manually implementing circuits for each proof system, Dregg provides a constraint DSL (`#[dregg_caveat]` and `#[dregg_effect]` proc macros) that compiles a single `CircuitDescriptor` into 8 code generation backends:
 
 #figure(
   table(
@@ -475,13 +475,13 @@ The STARK-in-Pickles pipeline wraps a BabyBear STARK proof in a Kimchi verifier 
 + Verify the STARK algebraically inside a Kimchi circuit (FRI folding + Fiat-Shamir replay).
 + Produce a Pickles recursive proof (constant-size, Mina-compatible).
 
-This enables Mina-native verification of Pyana proofs and constant-size proof accumulation regardless of the number of underlying STARK proofs.
+This enables Mina-native verification of Dregg proofs and constant-size proof accumulation regardless of the number of underlying STARK proofs.
 
 === EVM Bridge via SP1
 
-For Ethereum/Base settlement, the SP1 backend wraps Pyana STARKs in Groth16:
+For Ethereum/Base settlement, the SP1 backend wraps Dregg STARKs in Groth16:
 
-+ Pyana STARK proof (large, not EVM-friendly).
++ Dregg STARK proof (large, not EVM-friendly).
 + SP1 guest program verifies the STARK inside a RISC-V zkVM.
 + SP1 produces a Groth16 proof (~200K gas on EVM).
 + On-chain verification via Succinct's deployed SP1 Verifier Gateway.
@@ -676,7 +676,7 @@ The Effect VM is the primary sovereign proof mechanism: a single STARK proves an
 The system maintains a *living threat ledger* enumerating attacks an malicious executor could attempt, the layer at which each is prevented, and the status of each defense. Defenses live at three layers in order of strength:
 
 + *AIR (Effect VM)*: the strongest. The prover-side STARK constrains the *transition* itself; a dishonest executor cannot produce a passing proof.
-+ *Canonical-message signing*: the actor signs a domain-separated hash (`pyana-turn-v3:`) of the turn body; the executor signs a receipt hash (`executor-receipt-sig-v1:`). Any verifier with the relevant public key can detect deviation.
++ *Canonical-message signing*: the actor signs a domain-separated hash (`dregg-turn-v3:`) of the turn body; the executor signs a receipt hash (`executor-receipt-sig-v1:`). Any verifier with the relevant public key can detect deviation.
 + *Verifier-side replay (witnessed-receipt chain)*: a verifier replays the chain, checking each STARK against its PI and (scope-2) re-deriving post-state from inline witness data.
 
 #figure(
@@ -697,7 +697,7 @@ The system maintains a *living threat ledger* enumerating attacks an malicious e
     [T11: Submit a stale / cached proof for a new turn], [AIR (`TURN_HASH` in PI, $gamma$.0) + verifier match], [Closed by verifier PI completeness],
     [T12: Lie about balance deltas], [AIR (`compute_balance_delta_from_effects` derives delta)], [Single-cell closed; conservation-derivation landed in builder (Stage 8 P2.D)],
     [T13: Cross-cell aliasing (same cell ID across federations)], [Signature (`federation_id` in cell ID derivation)], [Closed for normal cells; `Cell::remote_stub_with_id` escape hatch audited],
-    [T14: Skip the AIR proof entirely], [Verifier (rejects receipts without valid proofs)], [Closed by `pyana-verifier` standalone binary],
+    [T14: Skip the AIR proof entirely], [Verifier (rejects receipts without valid proofs)], [Closed by `dregg-verifier` standalone binary],
     [T15: Forge `effects_hash` (prove over E' while signing E)], [AIR (in-trace `EFFECTS_HASH_GLOBAL` termination $arrow.r$ PI; verifier matches PI to signed turn)], [Closed at AIR (single-cell) via Stage 7 cont §B; multi-cell $gamma$.2],
   ),
   caption: [Executor honesty threats and current defense status. The "closed at AIR" / "closed by signature" / "closed by verifier completeness" labels are the soundness rule of thumb: AIR $>$ signature $>$ verifier. Each step down is a soundness reduction; we want as much at AIR level as we can afford.],

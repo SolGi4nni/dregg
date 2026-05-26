@@ -12,8 +12,8 @@
 
 use std::collections::HashMap;
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_2_to_1;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::hash_2_to_1;
 
 // ============================================================================
 // Queue Program Types
@@ -259,7 +259,7 @@ pub fn compute_validation_hash(
 /// Uses the first 4 bytes (little-endian), reduced mod p.
 pub fn vk_hash_to_field(vk_hash: &[u8; 32]) -> BabyBear {
     let val = u32::from_le_bytes([vk_hash[0], vk_hash[1], vk_hash[2], vk_hash[3]]);
-    BabyBear::new(val % pyana_circuit::field::BABYBEAR_P)
+    BabyBear::new(val % dregg_circuit::field::BABYBEAR_P)
 }
 
 // ============================================================================

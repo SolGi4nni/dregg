@@ -1,6 +1,6 @@
 //! Fast-path vs consensus routing integration test.
 //!
-//! Pyana uses two execution paths:
+//! Dregg uses two execution paths:
 //! - **Fast path (single-owner)**: A turn that only touches cells owned by the submitter
 //!   can be applied immediately without consensus (local signature suffices).
 //! - **Consensus path (shared cells)**: A turn touching cells owned by multiple agents
@@ -10,16 +10,16 @@
 //! that both paths produce consistent results.
 
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use pyana_cell::permissions::{AuthRequired, Permissions};
-use pyana_cell::{Cell, CellId, Ledger, Preconditions};
-use pyana_turn::action::{Action, Authorization, DelegationMode, Effect};
-use pyana_turn::executor::{ComputronCosts, TurnExecutor};
-use pyana_turn::fast_path::{
+use dregg_cell::permissions::{AuthRequired, Permissions};
+use dregg_cell::{Cell, CellId, Ledger, Preconditions};
+use dregg_turn::action::{Action, Authorization, DelegationMode, Effect};
+use dregg_turn::executor::{ComputronCosts, TurnExecutor};
+use dregg_turn::fast_path::{
     CellLockTable, FastPathError, assemble_certificate, execute_certified_turn,
     process_fast_path_lock,
 };
-use pyana_turn::forest::{CallForest, CallTree};
-use pyana_turn::{ExecutionPath, Turn, TurnResult, compute_execution_path};
+use dregg_turn::forest::{CallForest, CallTree};
+use dregg_turn::{ExecutionPath, Turn, TurnResult, compute_execution_path};
 
 /// Derive a deterministic Ed25519 keypair from a u8 seed.
 fn keypair_from_seed(seed: u8) -> ([u8; 32], [u8; 32]) {

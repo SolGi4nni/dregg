@@ -1,7 +1,7 @@
 //! Typed dual-form commitment framework.
 //!
 //! Per `DESIGN-commitment-framework.md`. Every authoritative content
-//! commitment in pyana carries two companion digests:
+//! commitment in dregg carries two companion digests:
 //!
 //! 1. **`blake3: [u8; 32]`** — canonical byte-domain commitment. Cheap, used
 //!    everywhere outside a STARK: storage keys, gossip dedup, signatures,
@@ -25,7 +25,7 @@
 //!
 //! impl CommitmentSchema for MyMarker {
 //!     type Value = MyValue;
-//!     const DOMAIN: &'static str = "pyana-myvalue v1";
+//!     const DOMAIN: &'static str = "dregg-myvalue v1";
 //!     fn canonical(value: &Self::Value) -> Vec<u8> { /* … */ }
 //!     fn to_felts(value: &Self::Value) -> Vec<BabyBear> { /* … */ }
 //! }
@@ -36,7 +36,7 @@
 //! See `DESIGN-commitment-framework.md` §3 for the full design.
 
 use core::marker::PhantomData;
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -46,19 +46,19 @@ use serde::{Deserialize, Serialize};
 /// Central domain-tag registry. Bumping a tag invalidates both BLAKE3 and
 /// Poseidon2 forms together. Tags MUST end in a version suffix.
 pub mod domain {
-    pub const TAG_CELL_STATE: &str = "pyana-cell:state v2";
-    pub const TAG_CAPABILITY_ROOT: &str = "pyana-cell:cap-root v2";
-    pub const TAG_NOTE_COMMITMENT: &str = "pyana-note:commitment v2";
-    pub const TAG_NOTE_NULLIFIER: &str = "pyana-note:nullifier v2";
-    pub const TAG_TURN: &str = "pyana-turn:turn v2";
-    pub const TAG_RECEIPT: &str = "pyana-turn:receipt v2";
-    pub const TAG_OBLIGATION: &str = "pyana-turn:obligation v2";
-    pub const TAG_BRIDGE_RECEIPT: &str = "pyana-bridge:receipt v2";
-    pub const TAG_QUEUE_STATE: &str = "pyana-queue:state v2";
-    pub const TAG_SWISS_TABLE: &str = "pyana-captp:swiss-table v2";
-    pub const TAG_REFCOUNT_TABLE: &str = "pyana-captp:refcount-table v2";
-    pub const TAG_APPROVED_HANDOFFS: &str = "pyana-captp:approved-handoffs v2";
-    pub const TAG_EFFECTS: &str = "pyana-turn:effects v2";
+    pub const TAG_CELL_STATE: &str = "dregg-cell:state v2";
+    pub const TAG_CAPABILITY_ROOT: &str = "dregg-cell:cap-root v2";
+    pub const TAG_NOTE_COMMITMENT: &str = "dregg-note:commitment v2";
+    pub const TAG_NOTE_NULLIFIER: &str = "dregg-note:nullifier v2";
+    pub const TAG_TURN: &str = "dregg-turn:turn v2";
+    pub const TAG_RECEIPT: &str = "dregg-turn:receipt v2";
+    pub const TAG_OBLIGATION: &str = "dregg-turn:obligation v2";
+    pub const TAG_BRIDGE_RECEIPT: &str = "dregg-bridge:receipt v2";
+    pub const TAG_QUEUE_STATE: &str = "dregg-queue:state v2";
+    pub const TAG_SWISS_TABLE: &str = "dregg-captp:swiss-table v2";
+    pub const TAG_REFCOUNT_TABLE: &str = "dregg-captp:refcount-table v2";
+    pub const TAG_APPROVED_HANDOFFS: &str = "dregg-captp:approved-handoffs v2";
+    pub const TAG_EFFECTS: &str = "dregg-turn:effects v2";
 }
 
 // =============================================================================
@@ -519,7 +519,7 @@ pub fn tag_hash_31(domain: &str) -> u32 {
     let h = blake3::hash(domain.as_bytes());
     let bytes = h.as_bytes();
     let raw = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    raw % pyana_circuit::field::BABYBEAR_P
+    raw % dregg_circuit::field::BABYBEAR_P
 }
 
 /// Pack arbitrary bytes into BabyBear felts at 30 bits/limb.
@@ -586,10 +586,10 @@ pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
 pub fn canonical_32_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
     let eight = canonical_32_to_felts_8(canonical);
     // Two hash_4_to_1 compressions to fold 8 -> 4.
-    let a = pyana_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
-    let b = pyana_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
-    let c = pyana_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
-    let d = pyana_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
+    let a = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
+    let b = dregg_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
+    let c = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
+    let d = dregg_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
     [a, b, c, d]
 }
 
@@ -599,7 +599,7 @@ fn poseidon2_single_with_tag(domain: &str, felts: &[BabyBear]) -> BabyBear {
     let mut tagged = Vec::with_capacity(felts.len() + 1);
     tagged.push(tag);
     tagged.extend_from_slice(felts);
-    pyana_circuit::poseidon2::hash_many(&tagged)
+    dregg_circuit::poseidon2::hash_many(&tagged)
 }
 
 /// Squeeze 4 BabyBears from a domain-tagged sponge over felts.
@@ -608,7 +608,7 @@ fn poseidon2_single_with_tag(domain: &str, felts: &[BabyBear]) -> BabyBear {
 /// to a final hash_4_to_1 compression, mirroring the AIR's commitment-tree
 /// design (see `circuit/src/effect_vm.rs::CellState::compute_commitment`).
 pub fn poseidon2_quad_with_tag(domain: &str, felts: &[BabyBear]) -> [BabyBear; 4] {
-    use pyana_circuit::poseidon2::{hash_4_to_1, hash_many};
+    use dregg_circuit::poseidon2::{hash_4_to_1, hash_many};
     let tag = BabyBear::new(tag_hash_31(domain));
     let mut tagged = Vec::with_capacity(felts.len() + 1);
     tagged.push(tag);
@@ -625,7 +625,7 @@ pub fn poseidon2_quad_with_tag(domain: &str, felts: &[BabyBear]) -> [BabyBear; 4
 /// Absorb a 4-felt block into a 4-felt sponge state via hash_4_to_1 over the
 /// component-wise pairing of chain and block.
 fn absorb_4(chain: [BabyBear; 4], block: [BabyBear; 4]) -> [BabyBear; 4] {
-    use pyana_circuit::poseidon2::hash_4_to_1;
+    use dregg_circuit::poseidon2::hash_4_to_1;
     [
         hash_4_to_1(&[chain[0], block[0], chain[1], block[1]]),
         hash_4_to_1(&[chain[1], block[1], chain[2], block[2]]),

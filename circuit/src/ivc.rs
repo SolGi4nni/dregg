@@ -599,7 +599,7 @@ impl StarkAir for StateTransitionAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-state-transition-v1"
+        "dregg-state-transition-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -938,7 +938,7 @@ pub fn fold_and_accumulate(prev: &AccumulatedProof, delta: &FoldDelta) -> Option
     // Accumulate trace commitment: combine previous commitment with this step's trace data.
     let step_commitment = compute_trace_commitment(&fold_trace);
     let mut tc_hasher = blake3::Hasher::new();
-    tc_hasher.update(b"pyana-ivc-trace-accum-v1");
+    tc_hasher.update(b"dregg-ivc-trace-accum-v1");
     tc_hasher.update(&prev.trace_commitment);
     tc_hasher.update(&step_commitment);
     tc_hasher.update(&new_step_count.to_le_bytes());
@@ -978,7 +978,7 @@ pub fn initial_accumulation(initial_root: BabyBear) -> AccumulatedProof {
         proof,
         trace_commitment: {
             let mut h = blake3::Hasher::new();
-            h.update(b"pyana-ivc-trace-init-v1");
+            h.update(b"dregg-ivc-trace-init-v1");
             h.update(&initial_root.0.to_le_bytes());
             *h.finalize().as_bytes()
         },
@@ -1049,7 +1049,7 @@ fn compute_ivc_digest(
     trace_commitment: &[u8; 32],
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-ivc-v1");
+    hasher.update(b"dregg-ivc-v1");
     hasher.update(&initial_root.0.to_le_bytes());
     hasher.update(&final_root.0.to_le_bytes());
     hasher.update(&step_count.to_le_bytes());
@@ -1061,7 +1061,7 @@ fn compute_ivc_digest(
 /// Compute the trace commitment from the IVC AIR execution trace.
 fn compute_trace_commitment(trace: &[Vec<BabyBear>]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-ivc-trace-v1");
+    hasher.update(b"dregg-ivc-trace-v1");
     for row in trace {
         for elem in row {
             hasher.update(&elem.0.to_le_bytes());
@@ -1425,7 +1425,7 @@ impl IvcBuilder {
             None
         } else {
             Some(Err(
-                "ExperimentalPickles backend requires the pyana-circuit `mina` feature".to_string(),
+                "ExperimentalPickles backend requires the dregg-circuit `mina` feature".to_string(),
             ))
         }
     }
@@ -1839,7 +1839,7 @@ impl IvcBuilder {
 #[cfg(feature = "plonky3")]
 pub mod recursive_ivc {
     use super::*;
-    use crate::plonky3_prover::PyanaProof;
+    use crate::plonky3_prover::DreggProof;
     use crate::plonky3_verifier_air::{RecursionMode, RecursiveIvcStep, build_recursive_ivc_chain};
 
     /// An IVC builder that supports both hash-chain and recursive modes.
@@ -1852,7 +1852,7 @@ pub mod recursive_ivc {
         /// Standard hash-chain builder (always maintained for fallback).
         hash_chain_builder: IvcBuilder,
         /// Plonky3 fold proofs accumulated for recursive finalization.
-        fold_proofs: Vec<(PyanaProof, Vec<BabyBear>)>,
+        fold_proofs: Vec<(DreggProof, Vec<BabyBear>)>,
     }
 
     impl RecursiveIvcBuilder {
@@ -1911,7 +1911,7 @@ pub mod recursive_ivc {
                 return Ok(None);
             }
 
-            let proof_refs: Vec<(&PyanaProof, &[BabyBear])> = self
+            let proof_refs: Vec<(&DreggProof, &[BabyBear])> = self
                 .fold_proofs
                 .iter()
                 .map(|(p, pi)| (p, pi.as_slice()))

@@ -6,7 +6,7 @@
 //! `Transfer` / `NoteSpend` / `NoteCreate` / `CreateEscrow` effects
 //! emitted by the action, summed from the perspective of the caller.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 
 use crate::action::Effect;
 
@@ -45,7 +45,7 @@ pub fn derive_balance_change(target: CellId, effects: &[Effect]) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_cell::CellId;
+    use dregg_cell::CellId;
 
     fn cell(b: u8) -> CellId {
         CellId::from_bytes([b; 32])

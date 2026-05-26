@@ -85,11 +85,11 @@ impl std::str::FromStr for TokenFormat {
 }
 
 /// Authorization header scheme.
-pub const AUTH_HEADER_SCHEME: &str = "PyanaV1";
+pub const AUTH_HEADER_SCHEME: &str = "DreggV1";
 
 /// Format tokens for an Authorization header.
 ///
-/// `PyanaV1 <token>[,<discharge>...]`
+/// `DreggV1 <token>[,<discharge>...]`
 pub fn format_auth_header(tokens: &[&str]) -> String {
     format!("{} {}", AUTH_HEADER_SCHEME, tokens.join(","))
 }
@@ -98,7 +98,7 @@ pub fn format_auth_header(tokens: &[&str]) -> String {
 pub fn parse_auth_header(header: &str) -> Result<Vec<String>, TokenError> {
     let stripped = header
         .strip_prefix(AUTH_HEADER_SCHEME)
-        .ok_or_else(|| TokenError::Malformed("missing PyanaV1 scheme".into()))?
+        .ok_or_else(|| TokenError::Malformed("missing DreggV1 scheme".into()))?
         .trim_start();
     Ok(stripped
         .split(',')

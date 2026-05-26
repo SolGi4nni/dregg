@@ -12,20 +12,20 @@
 //! 6. Proof submission through the TurnExecutor with StarkProofVerifier
 //! 7. Tampered proof rejection at all verification layers
 
-use pyana_bridge::present::{
+use dregg_bridge::present::{
     bytes_to_babybear, hash_index, verify_presentation, verify_presentation_bb,
     BridgePresentationBuilder,
 };
-use pyana_bridge::StarkProofVerifier;
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, VerificationKey};
-use pyana_circuit::poseidon2;
-use pyana_circuit::{self, proof_from_bytes, proof_to_bytes};
-use pyana_circuit::BabyBear;
-use pyana_sdk::cipherclerk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
-use pyana_sdk::verify::verify_authorization_proof;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{
+use dregg_bridge::StarkProofVerifier;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, VerificationKey};
+use dregg_circuit::poseidon2;
+use dregg_circuit::{self, proof_from_bytes, proof_to_bytes};
+use dregg_circuit::BabyBear;
+use dregg_sdk::cipherclerk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
+use dregg_sdk::verify::verify_authorization_proof;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{
     ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
 };
 
@@ -34,7 +34,7 @@ use pyana_turn::{
 // =============================================================================
 
 fn test_key(name: &str) -> [u8; 32] {
-    *blake3::hash(format!("pyana-fully-private-e2e:{name}").as_bytes()).as_bytes()
+    *blake3::hash(format!("dregg-fully-private-e2e:{name}").as_bytes()).as_bytes()
 }
 
 /// Compute the synthetic Poseidon2 federation root for an issuer key.
@@ -78,16 +78,16 @@ fn test_fully_private_end_to_end() {
     // =========================================================================
     // Phase 1: Create cclerk from mnemonic
     // =========================================================================
-    let mnemonic = pyana_sdk::generate_mnemonic();
+    let mnemonic = dregg_sdk::generate_mnemonic();
     let mut cclerk = AgentCipherclerk::from_mnemonic(&mnemonic, "test-passphrase").unwrap();
     assert!(cclerk.export_mnemonic().is_some());
-    assert_eq!(cclerk.derivation_path(), Some("pyana/0"));
+    assert_eq!(cclerk.derivation_path(), Some("dregg/0"));
 
     // =========================================================================
     // Phase 2: Mint a token with specific capabilities
     // =========================================================================
     let root_key = test_key("issuer-root-key");
-    let root_token = cclerk.mint_token(&root_key, "storage.pyana.dev");
+    let root_token = cclerk.mint_token(&root_key, "storage.dregg.dev");
 
     // The root token should be held in the cclerk
     assert_eq!(cclerk.tokens().len(), 1);
@@ -193,8 +193,8 @@ fn test_fully_private_end_to_end() {
     //
     // We use the same issuer key (root_key) to generate a compact proof with
     // Poseidon2 hashing, bound to the specific turn action's signing message.
-    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     let token_id = test_key("e2e-domain");
     let mut ledger = Ledger::new();
@@ -446,11 +446,11 @@ fn test_fully_private_end_to_end() {
 /// exceeds the token's capabilities.
 #[test]
 fn test_fully_private_attenuated_token() {
-    let mnemonic = pyana_sdk::generate_mnemonic();
+    let mnemonic = dregg_sdk::generate_mnemonic();
     let mut cclerk = AgentCipherclerk::from_mnemonic(&mnemonic, "").unwrap();
 
     let root_key = test_key("attenuated-issuer");
-    let root_token = cclerk.mint_token(&root_key, "compute.pyana.dev");
+    let root_token = cclerk.mint_token(&root_key, "compute.dregg.dev");
 
     // The root token with unrestricted access should work for any request
     let any_request = AuthRequest {
@@ -489,11 +489,11 @@ fn test_fully_private_attenuated_token() {
 /// conclusion and verification result must be the same).
 #[test]
 fn test_fully_private_deterministic_conclusion() {
-    let mnemonic = pyana_sdk::generate_mnemonic();
+    let mnemonic = dregg_sdk::generate_mnemonic();
     let mut cclerk = AgentCipherclerk::from_mnemonic(&mnemonic, "det-test").unwrap();
 
     let root_key = test_key("det-issuer");
-    let root_token = cclerk.mint_token(&root_key, "dns.pyana.dev");
+    let root_token = cclerk.mint_token(&root_key, "dns.dregg.dev");
 
     let request = AuthRequest {
         service: Some("dns".into()),
@@ -544,7 +544,7 @@ fn test_fully_private_deterministic_conclusion() {
 /// valid FullyPrivate proofs independently.
 #[test]
 fn test_fully_private_sub_agent() {
-    let mnemonic = pyana_sdk::generate_mnemonic();
+    let mnemonic = dregg_sdk::generate_mnemonic();
     let mut main_cclerk = AgentCipherclerk::from_mnemonic(&mnemonic, "").unwrap();
     let mut sub_cclerk = main_cclerk.derive_sub_agent(1).unwrap();
 
@@ -555,8 +555,8 @@ fn test_fully_private_sub_agent() {
     let main_root_key = test_key("main-issuer");
     let sub_root_key = test_key("sub-issuer");
 
-    let main_token = main_cclerk.mint_token(&main_root_key, "api.pyana.dev");
-    let sub_token = sub_cclerk.mint_token(&sub_root_key, "api.pyana.dev");
+    let main_token = main_cclerk.mint_token(&main_root_key, "api.dregg.dev");
+    let sub_token = sub_cclerk.mint_token(&sub_root_key, "api.dregg.dev");
 
     let request = AuthRequest {
         service: Some("api".into()),

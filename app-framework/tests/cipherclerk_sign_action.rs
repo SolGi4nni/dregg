@@ -6,7 +6,7 @@
 //! starts from an `Unchecked` action and verifies that `sign_action`
 //! replaces the authorization with a real signature.
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     Action, AgentCipherclerk, AppCipherclerk, Authorization, CellId, DelegationMode, symbol,
 };
 

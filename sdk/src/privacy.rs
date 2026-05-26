@@ -1,6 +1,6 @@
 //! High-level privacy APIs for application developers.
 //!
-//! This module provides ergonomic wrappers around pyana's privacy primitives,
+//! This module provides ergonomic wrappers around dregg's privacy primitives,
 //! making it simple to perform common privacy-preserving operations:
 //!
 //! - **Anonymous authorization**: Prove you are authorized without revealing your identity.
@@ -16,19 +16,19 @@
 //! - What **the verifier learns** (the public inputs / revealed information).
 //! - What **stays hidden** (the private witness / secret data).
 
-use pyana_cell::note::{Note, NoteCommitment, Nullifier};
-use pyana_circuit::BabyBear;
-use pyana_circuit::field::BABYBEAR_P;
-use pyana_circuit::note_spending_air::{NoteSpendingWitness, key_to_field_elements};
-use pyana_circuit::poseidon2;
-use pyana_circuit::stark::{self, StarkProof};
-use pyana_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
-use pyana_dsl_runtime::note_spending::prove_note_spend;
-use pyana_dsl_runtime::revocation::{
+use dregg_cell::note::{Note, NoteCommitment, Nullifier};
+use dregg_circuit::BabyBear;
+use dregg_circuit::field::BABYBEAR_P;
+use dregg_circuit::note_spending_air::{NoteSpendingWitness, key_to_field_elements};
+use dregg_circuit::poseidon2;
+use dregg_circuit::stark::{self, StarkProof};
+use dregg_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
+use dregg_dsl_runtime::note_spending::prove_note_spend;
+use dregg_dsl_runtime::revocation::{
     DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
     revocation_hash_to_field,
 };
-use pyana_token::AuthRequest;
+use dregg_token::AuthRequest;
 
 // `discovery` is gated behind `network` (tokio-using); the lone method below
 // that needs it is gated the same way.
@@ -49,7 +49,7 @@ use crate::error::SdkError;
 #[derive(Clone, Debug)]
 pub struct AnonymousPresentation {
     /// The STARK-backed presentation proof (wire-safe form).
-    pub proof: pyana_bridge::present::WirePresentationProof,
+    pub proof: dregg_bridge::present::WirePresentationProof,
     /// The blinded presentation tag (unique per presentation, unlinkable across shows).
     ///
     /// The verifier cannot determine which federation member produced this tag.
@@ -93,7 +93,7 @@ pub struct UnlinkablePredicateProof {
     /// cannot link two proofs to the same holder.
     pub blinded_fact_commitment: BabyBear,
     /// The underlying predicate proof (STARK-backed).
-    pub predicate_proof: pyana_bridge::BridgePredicateProof,
+    pub predicate_proof: dregg_bridge::BridgePredicateProof,
     /// The blinding factor used (keep private; needed if you want to open the commitment later).
     pub blinding: BabyBear,
 }
@@ -187,7 +187,7 @@ impl AgentCipherclerk {
 
         // Extract the presentation tag from the circuit proof's public inputs.
         // The tag is [BabyBear; 4]; hash to a single element for the wire representation.
-        let presentation_tag = pyana_circuit::poseidon2::hash_many(&[proof
+        let presentation_tag = dregg_circuit::poseidon2::hash_many(&[proof
             .circuit_proof
             .public_inputs
             .presentation_tag]);
@@ -236,7 +236,7 @@ impl AgentCipherclerk {
         asset_type: u64,
     ) -> Result<(NoteCommitment, NoteSecret), SdkError> {
         // Derive a spending key from the cipherclerk's signing key material.
-        let spending_key = self.derive_symmetric_key("pyana-note-spending-key-v1");
+        let spending_key = self.derive_symmetric_key("dregg-note-spending-key-v1");
 
         // Create the note with this cipherclerk's public key as owner.
         let owner = self.public_key().0;
@@ -318,7 +318,7 @@ impl AgentCipherclerk {
         // Here we use a deterministic derivation from the recipient's public key
         // as a placeholder — the recipient must replace this with their own key.
         let mut recipient_spending_key_hasher =
-            blake3::Hasher::new_derive_key("pyana-note-recipient-spending-key-v1");
+            blake3::Hasher::new_derive_key("dregg-note-recipient-spending-key-v1");
         recipient_spending_key_hasher.update(recipient_key);
         let recipient_spending_key: [u8; 32] = *recipient_spending_key_hasher.finalize().as_bytes();
 
@@ -400,7 +400,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         attribute: &str,
         attribute_value: u32,
-        predicate_type: pyana_circuit::PredicateType,
+        predicate_type: dregg_circuit::PredicateType,
         threshold: BabyBear,
     ) -> Result<UnlinkablePredicateProof, SdkError> {
         // Decode the token to verify it's valid.
@@ -429,14 +429,14 @@ impl AgentCipherclerk {
 
         // Generate the predicate proof.
         let bridge_predicate = Self::predicate_type_to_bridge(predicate_type, threshold.as_u32());
-        let predicate_proof = pyana_bridge::prove_predicate_for_fact(
+        let predicate_proof = dregg_bridge::prove_predicate_for_fact(
             attribute_value,
             fact_hash,
             state_root,
             &bridge_predicate,
         )
         .ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                 "predicate proof generation failed: '{attribute}' {:?}({}) not satisfiable for value {attribute_value}",
                 predicate_type, threshold.as_u32()
             )))
@@ -547,7 +547,7 @@ impl AgentCipherclerk {
         // Each segment of the token ID (split by ':') represents a derivation step.
         let id_parts: Vec<&str> = token.id().split(':').collect();
         for (i, _part) in id_parts.iter().enumerate().skip(1) {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-revocation-hash-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-revocation-hash-v1");
             hasher.update(issuer_key);
             hasher.update(&(i as u64).to_le_bytes());
             let step_hash = *hasher.finalize().as_bytes();
@@ -564,7 +564,7 @@ impl AgentCipherclerk {
         let witness = revocation_tree
             .prove_non_membership(primary_hash)
             .ok_or_else(|| {
-                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
                     "non-revocation proof generation failed: one or more ancestors are revoked"
                         .to_string(),
                 ))
@@ -573,7 +573,7 @@ impl AgentCipherclerk {
         // Verify all other ancestors are also not revoked.
         for hash in &ancestor_hashes[1..] {
             if revocation_tree.prove_non_membership(hash).is_none() {
-                return Err(SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                return Err(SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
                     "non-revocation proof generation failed: one or more ancestors are revoked"
                         .to_string(),
                 )));
@@ -636,7 +636,7 @@ impl AgentCipherclerk {
         let witness = accumulator
             .non_membership_witness(revocation_hash)
             .ok_or_else(|| {
-                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
                     "accumulator non-membership proof failed: token's revocation hash is in the \
                  revocation set (token is revoked)"
                         .to_string(),
@@ -683,12 +683,12 @@ pub fn verify_anonymous_presentation(
         let air_name = &real_stark.issuer_membership_stark_proof.air_name;
 
         // Must be a blinded proof for anonymous presentation.
-        if air_name != pyana_dsl_runtime::descriptors::BLINDED_MERKLE_AIR_NAME {
+        if air_name != dregg_dsl_runtime::descriptors::BLINDED_MERKLE_AIR_NAME {
             return false;
         }
 
         // Verify the STARK proof using DSL blinded Merkle circuit.
-        let circuit = pyana_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit();
+        let circuit = dregg_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit();
         if stark::verify(&circuit, &real_stark.issuer_membership_stark_proof, &pi).is_err() {
             return false;
         }
@@ -721,7 +721,7 @@ pub fn verify_anonymous_presentation(
 pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), String> {
     let circuit = non_revocation_dsl_circuit();
     let public_inputs = vec![proof.revocation_root];
-    pyana_circuit::stark::verify(&circuit, &proof.proof, &public_inputs)
+    dregg_circuit::stark::verify(&circuit, &proof.proof, &public_inputs)
 }
 
 /// Verify an accumulator-based non-membership proof.
@@ -769,7 +769,7 @@ pub fn verify_note_spending(
     asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
-    pyana_dsl_runtime::note_spending::verify_note_spend(
+    dregg_dsl_runtime::note_spending::verify_note_spend(
         nullifier,
         merkle_root,
         value,
@@ -818,7 +818,7 @@ mod tests {
         let (_, secret) = cclerk.create_private_note(500, 2).unwrap();
 
         // The spending key should be deterministic for the same cipherclerk.
-        let expected_key = cclerk.derive_symmetric_key("pyana-note-spending-key-v1");
+        let expected_key = cclerk.derive_symmetric_key("dregg-note-spending-key-v1");
         assert_eq!(secret.spending_key, expected_key);
     }
 
@@ -834,7 +834,7 @@ mod tests {
                 &token,
                 "balance",
                 5000,
-                pyana_circuit::PredicateType::Gte,
+                dregg_circuit::PredicateType::Gte,
                 BabyBear::new(1000),
             )
             .unwrap();
@@ -844,7 +844,7 @@ mod tests {
                 &token,
                 "balance",
                 5000,
-                pyana_circuit::PredicateType::Gte,
+                dregg_circuit::PredicateType::Gte,
                 BabyBear::new(1000),
             )
             .unwrap();
@@ -870,7 +870,7 @@ mod tests {
             &token,
             "balance",
             500,
-            pyana_circuit::PredicateType::Gte,
+            dregg_circuit::PredicateType::Gte,
             BabyBear::new(1000),
         );
 
@@ -931,7 +931,7 @@ mod tests {
         // that feature, prove_authorization returns IssuerNotInFederation.
         let pres1 = match cclerk.authorize_anonymously(&token, &request) {
             Ok(p) => p,
-            Err(SdkError::Auth(pyana_bridge::AuthError::IssuerNotInFederation)) => {
+            Err(SdkError::Auth(dregg_bridge::AuthError::IssuerNotInFederation)) => {
                 // Bridge crate compiled without test-utils feature; skip this test.
                 return;
             }

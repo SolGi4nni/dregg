@@ -511,7 +511,7 @@ impl StarkAir for NoteSpendingAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-note-spending-v1"
+        "dregg-note-spending-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {

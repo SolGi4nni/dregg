@@ -25,7 +25,7 @@ async function sendMessage(type, extra) {
 }
 
 async function refresh() {
-  const state = await sendMessage('pyana:getState');
+  const state = await sendMessage('dregg:getState');
   if (!state) return;
   if (state.locked) {
     statusDot.classList.add('locked');
@@ -61,8 +61,8 @@ function escapeHtml(str) {
 }
 
 async function loadLog() {
-  const stored = await chrome.storage.local.get('pyana_cipherclerk');
-  const cclerk = stored['pyana_cipherclerk'];
+  const stored = await chrome.storage.local.get('dregg_cipherclerk');
+  const cclerk = stored['dregg_cipherclerk'];
   if (!cclerk || !cclerk.log || cclerk.log.length === 0) {
     logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
     return;
@@ -76,11 +76,11 @@ async function loadLog() {
 }
 
 lockBtn.addEventListener('click', async () => {
-  const state = await sendMessage('pyana:getState');
+  const state = await sendMessage('dregg:getState');
   if (!state) return;
   if (state.locked) {
     const passphrase = passphraseInput.value;
-    const result = await sendMessage('pyana:unlock', { passphrase });
+    const result = await sendMessage('dregg:unlock', { passphrase });
     if (result && !result.success) {
       passphraseInput.style.borderColor = '#f87171';
       passphraseInput.value = '';
@@ -91,7 +91,7 @@ lockBtn.addEventListener('click', async () => {
     passphraseInput.style.borderColor = '';
     passphraseInput.placeholder = 'Enter passphrase to unlock';
   } else {
-    await sendMessage('pyana:lock');
+    await sendMessage('dregg:lock');
   }
   await refresh();
 });
@@ -111,7 +111,7 @@ setPassphraseBtn.addEventListener('click', async () => {
     confirmPassphraseInput.placeholder = 'Passphrases do not match';
     return;
   }
-  await sendMessage('pyana:setPassphrase', { passphrase: newPass });
+  await sendMessage('dregg:setPassphrase', { passphrase: newPass });
   newPassphraseInput.value = '';
   confirmPassphraseInput.value = '';
   newPassphraseInput.style.borderColor = '';
@@ -133,7 +133,7 @@ managePermsBtn.addEventListener('click', async () => {
 });
 
 async function loadPermissions() {
-  const perms = await sendMessage('pyana:getOriginPermissions');
+  const perms = await sendMessage('dregg:getOriginPermissions');
   if (!perms || perms.length === 0) {
     permissionsContainer.innerHTML = '<div class="empty">No origins approved</div>';
     return;
@@ -152,19 +152,19 @@ async function loadPermissions() {
   // Attach revoke handlers.
   permissionsContainer.querySelectorAll('.revoke-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await sendMessage('pyana:revokeOriginPermission', { origin: btn.dataset.origin });
+      await sendMessage('dregg:revokeOriginPermission', { origin: btn.dataset.origin });
       await loadPermissions();
     });
   });
 }
 
 backupBtn.addEventListener('click', async () => {
-  const state = await sendMessage('pyana:getState');
+  const state = await sendMessage('dregg:getState');
   if (state && state.locked) {
     alert('Unlock your cipherclerk first to view the recovery phrase.');
     return;
   }
-  const mnemonic = await sendMessage('pyana:getMnemonic');
+  const mnemonic = await sendMessage('dregg:getMnemonic');
   if (!mnemonic) {
     alert('No recovery phrase available for this cipherclerk.');
     return;
@@ -217,7 +217,7 @@ intentsBtn.addEventListener('click', async () => {
 });
 
 async function loadFulfillableIntents() {
-  const intents = await sendMessage('pyana:getFulfillableIntents');
+  const intents = await sendMessage('dregg:getFulfillableIntents');
   if (!intents || intents.length === 0) {
     intentsContainer.innerHTML = '<div class="empty">No fulfillable intents available</div>';
     return;
@@ -241,7 +241,7 @@ async function loadFulfillableIntents() {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       btn.textContent = '...';
-      const result = await sendMessage('pyana:fulfillIntent', {
+      const result = await sendMessage('dregg:fulfillIntent', {
         intentId: btn.dataset.intentId,
         tokenId: btn.dataset.tokenId,
       });
@@ -301,7 +301,7 @@ const shareResultUri = document.getElementById('shareResultUri');
 const copyUriBtn = document.getElementById('copyUriBtn');
 
 async function loadLiveRefs() {
-  const refs = await sendMessage('pyana:getLiveRefs');
+  const refs = await sendMessage('dregg:getLiveRefs');
   if (!refs || refs.length === 0) {
     liveRefsContainer.innerHTML = '<div class="empty">No live references held</div>';
     return;
@@ -319,7 +319,7 @@ async function loadLiveRefs() {
 
   liveRefsContainer.querySelectorAll('.drop-ref-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await sendMessage('pyana:dropLiveRef', { refId: btn.dataset.refId });
+      await sendMessage('dregg:dropLiveRef', { refId: btn.dataset.refId });
       await loadLiveRefs();
     });
   });
@@ -330,7 +330,7 @@ acceptCapBtn.addEventListener('click', async () => {
   if (!uri) return;
   acceptCapBtn.textContent = '...';
   acceptCapBtn.disabled = true;
-  const result = await sendMessage('pyana:acceptCapability', { uri });
+  const result = await sendMessage('dregg:acceptCapability', { uri });
   if (result && !result.error) {
     acceptUriInput.value = '';
     acceptCapBtn.textContent = 'Accepted!';
@@ -362,7 +362,7 @@ shareCapBtn.addEventListener('click', async () => {
   shareCellInput.style.borderColor = '';
   shareCapBtn.textContent = '...';
   shareCapBtn.disabled = true;
-  const result = await sendMessage('pyana:shareCapability', { cellId });
+  const result = await sendMessage('dregg:shareCapability', { cellId });
   shareCapBtn.textContent = 'Share as URI';
   shareCapBtn.disabled = false;
   if (result && result.uri) {
@@ -393,7 +393,7 @@ const discoveryResults = document.getElementById('discoveryResults');
 
 async function loadDirectory() {
   // Try to load root directory listing.
-  const result = await sendMessage('pyana:resolvePath', { path: '/' });
+  const result = await sendMessage('dregg:resolvePath', { path: '/' });
   if (result && result.entries) {
     const entries = result.entries || [];
     if (entries.length === 0) {
@@ -416,7 +416,7 @@ discoverBtn.addEventListener('click', async () => {
   const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
   discoverBtn.textContent = '...';
   discoverBtn.disabled = true;
-  const result = await sendMessage('pyana:discoverServices', { tags });
+  const result = await sendMessage('dregg:discoverServices', { tags });
   discoverBtn.textContent = 'Search';
   discoverBtn.disabled = false;
 
@@ -453,7 +453,7 @@ function formatBytes(bytes) {
 }
 
 async function loadStorageQuota() {
-  const result = await sendMessage('pyana:storageQuota', {});
+  const result = await sendMessage('dregg:storageQuota', {});
   if (result && !result.error) {
     quotaBytesStored.textContent = formatBytes(result.bytesStored || 0);
     quotaBytesLimit.textContent = formatBytes(result.bytesLimit || 0);
@@ -484,12 +484,12 @@ async function checkWasmStatus() {
   // Send a lightweight message to check WASM status.
   try {
     const response = await chrome.runtime.sendMessage({
-      type: 'pyana:isConnected',
+      type: 'dregg:isConnected',
       id: 'wasm_check',
     });
     // If we get here, background is alive. Check for WASM error indicator
     // by trying canAuthorize which requires WASM — if it throws, show the error.
-    const canAuth = await sendMessage('pyana:canAuthorize', {
+    const canAuth = await sendMessage('dregg:canAuthorize', {
       request: { action: '__wasm_check__', resource: '__probe__' }
     });
     // If canAuthorize returns false (no token), WASM is working fine.

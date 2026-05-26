@@ -1,6 +1,6 @@
-//! Boot checks: verify the PyanaEngine starts and is operational.
+//! Boot checks: verify the DreggEngine starts and is operational.
 
-use pyana_sdk::{EngineConfig, PyanaEngine};
+use dregg_sdk::{EngineConfig, DreggEngine};
 
 use crate::report::{CheckResult, run_check};
 
@@ -9,7 +9,7 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn check_height_advances() -> Result<(), String> {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+    let mut engine = DreggEngine::new(EngineConfig::for_testing());
     engine.set_block_height(0);
 
     // Simulate block advancement

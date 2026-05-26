@@ -7,11 +7,11 @@
 ## §1. Thesis
 
 > Until plonky3 recursion lands, every `vk_hash`, `child_program_vk`, and
-> `WitnessedPredicateKind::Custom { vk_hash }` in pyana commits to a
+> `WitnessedPredicateKind::Custom { vk_hash }` in dregg commits to a
 > **canonical encoding of executable bytes** that any validator can
 > re-execute against witness data to verify the executor's claim.
 
-A VK in pyana, today, is not the verifying key of a recursive SNARK. It is
+A VK in dregg, today, is not the verifying key of a recursive SNARK. It is
 the cryptographic name of *what the validator is supposed to run*. When a
 factory says "I create cells with program VK `H`", an honest peer should be
 able to recover the program text whose canonical hash is `H`, run that
@@ -31,7 +31,7 @@ recursive VKs preserves the `vk_hash` identifier.
 
 ## §2. Canonical encodings (per VK kind)
 
-Pyana has three places where a `[u8; 32]` VK identifier names an
+`dregg` has three places where a `[u8; 32]` VK identifier names an
 executable artifact. Each gets a canonical encoding.
 
 ### §2.1. `FactoryDescriptor.child_program_vk`
@@ -42,20 +42,20 @@ governor installed on cells produced by the factory.
 **Canonical bytes:**
 
 ```
-H_program_vk = BLAKE3_keyed("pyana-cellprogram-vk-v1", postcard(CellProgram))
+H_program_vk = BLAKE3_keyed("dregg-cellprogram-vk-v1", postcard(CellProgram))
 ```
 
-- `postcard` is already pyana's canonical serialization for cell-side
+- `postcard` is already dregg's canonical serialization for cell-side
   types (used by `FactoryDescriptor::hash`, `Cell::seal`, etc.); it is
   deterministic given `Serialize` implementations are.
-- BLAKE3 keyed-derive with the domain string `"pyana-cellprogram-vk-v1"`
+- BLAKE3 keyed-derive with the domain string `"dregg-cellprogram-vk-v1"`
   prevents cross-domain collisions with other `[u8; 32]` hashes
   (factory descriptor hashes, child-vk derivation hashes, …).
 - `v1` in the domain string is the encoding-format version. A future
   change to `CellProgram`'s shape that breaks postcard determinism
   bumps to `v2`.
 
-The encoder is `pyana_cell::factory::canonical_program_vk(&CellProgram) -> [u8; 32]`.
+The encoder is `dregg_cell::factory::canonical_program_vk(&CellProgram) -> [u8; 32]`.
 
 ### §2.2. `WitnessedPredicateKind::Custom { vk_hash }`
 
@@ -66,10 +66,10 @@ circuit serialization). v1 commits the *opaque bytes* the app author
 provides:
 
 ```
-H_predicate_vk = BLAKE3_keyed("pyana-witnessed-predicate-vk-v1", canonical_bytes)
+H_predicate_vk = BLAKE3_keyed("dregg-witnessed-predicate-vk-v1", canonical_bytes)
 ```
 
-The encoder is `pyana_cell::predicate::canonical_predicate_vk(&[u8]) -> [u8; 32]`.
+The encoder is `dregg_cell::predicate::canonical_predicate_vk(&[u8]) -> [u8; 32]`.
 
 Apps that author DSL predicates pass `postcard(dsl_ast)`. Apps that
 author WASM pass the WASM bytecode. The choice of authoring representation
@@ -238,7 +238,7 @@ authorizations, effects) reference by hash; bytes live once.
   enforcing `WriteOnce`-by-hash semantics — anyone can audit "the
   registry has not been tampered with."
 - **Con:** validators must pull from the registry; offline validation
-  needs the registry replicated. Pyana already replicates federation
+  needs the registry replicated. `dregg` already replicates federation
   state, so this is no worse than existing reach.
 
 ### §6.2. Option B — inline bytes on receipts
@@ -269,7 +269,7 @@ admits a `Cleartext` kind that holds the canonical bytes;
 the validator computes `BLAKE3_keyed` and rejects mismatches.
 
 This **defaults to compact** (compute-cheap, bytes-cheap) and
-**degrades to self-contained** when network conditions demand. Pyana
+**degrades to self-contained** when network conditions demand. `dregg`
 already has both layers wired (registries + witness blobs); the
 program registry is one more registry of the same shape.
 
@@ -287,7 +287,7 @@ layer. If Pickles becomes the outer recursion, the canonical encoding
 generalizes:
 
 ```
-H_program_vk = BLAKE3_keyed("pyana-pickles-circuit-v1", pickles_serialization(circuit))
+H_program_vk = BLAKE3_keyed("dregg-pickles-circuit-v1", pickles_serialization(circuit))
 ```
 
 The same `vk_hash` discipline holds: the hash names a canonical
@@ -331,9 +331,9 @@ the program text.
 
 What lands this lane:
 
-1. `pyana_cell::factory::canonical_program_vk(&CellProgram) -> [u8; 32]`
+1. `dregg_cell::factory::canonical_program_vk(&CellProgram) -> [u8; 32]`
    — postcard + BLAKE3_keyed.
-2. `pyana_cell::predicate::canonical_predicate_vk(&[u8]) -> [u8; 32]`
+2. `dregg_cell::predicate::canonical_predicate_vk(&[u8]) -> [u8; 32]`
    — opaque bytes + BLAKE3_keyed.
 3. `FactoryDescriptor::validate_child_vk_canonical(&CellProgram) ->
    Result<(), FactoryError>` — checks that `self.child_program_vk ==
@@ -419,7 +419,7 @@ pub struct VkComponents<'a> {
 }
 
 pub fn canonical_vk_v2(c: &VkComponents) -> [u8; 32] {
-    BLAKE3_keyed("pyana-vk-v2",
+    BLAKE3_keyed("dregg-vk-v2",
         len(c.program_bytes) || c.program_bytes ||
         c.air_fingerprint ||
         c.verifier_fingerprint.canonical_bytes() ||
@@ -463,8 +463,8 @@ pub struct AirDescriptor {
 }
 ```
 
-`pyana_circuit::air_descriptor::fingerprint(&d)` BLAKE3-keyed-derives
-`"pyana-air-fingerprint-v1"` over the descriptor's fields, with
+`dregg_circuit::air_descriptor::fingerprint(&d)` BLAKE3-keyed-derives
+`"dregg-air-fingerprint-v1"` over the descriptor's fields, with
 length-prefixed encoding so concatenation attacks cannot collide two
 distinct descriptors.
 
@@ -490,7 +490,7 @@ pub enum ProvingSystemId {
 }
 ```
 
-For pyana today, cell-program VKs all use `Plonky3BabyBearFri { p3_rev: PLONKY3_PINNED_REV }`
+For dregg today, cell-program VKs all use `Plonky3BabyBearFri { p3_rev: PLONKY3_PINNED_REV }`
 where `PLONKY3_PINNED_REV` is the workspace's plonky3 git rev. A
 plonky3 bump that changes the rev cascades into every cell-program
 vk_hash — by design.
@@ -506,37 +506,37 @@ pub enum VerifierFingerprint {
 ```
 
 For the three in-tree hand-written AIRs, the v2 lane initially uses
-`SourceHash(keyed_derive("pyana-effect-vm-verifier-v1", AIR_DESCRIPTOR.air_id))`
+`SourceHash(keyed_derive("dregg-effect-vm-verifier-v1", AIR_DESCRIPTOR.air_id))`
 as a sentinel — pinned to the AIR identifier rather than the literal
 source file hash. A follow-on lane wires `git hash-object` into the
 build so the fingerprint binds to the live source-tree state.
 
 ### §v2.6. Consumer surface
 
-- **`pyana_cell::factory::canonical_program_vk_v2(program, air_fp,
+- **`dregg_cell::factory::canonical_program_vk_v2(program, air_fp,
   verifier_fp, proving_system)`** — the v2 cell-program VK encoder.
   Layered hash; commits to all four components.
-- **`pyana_cell::predicate::canonical_predicate_vk_v2(bytes, ...)`** —
+- **`dregg_cell::predicate::canonical_predicate_vk_v2(bytes, ...)`** —
   the v2 custom-predicate VK encoder.
-- **`pyana_cell::CustomEffectRegistry::register(canonical_bytes,
+- **`dregg_cell::CustomEffectRegistry::register(canonical_bytes,
   air_fp, verifier_fp, proving_system, verifier)`** — registration
   upgraded to validate the layered hash. Returns
   `CustomEffectError::LayeredBindingMismatch` when the verifier's
   claimed vk_hash does not match the v2 hash of the components.
-- **`pyana_app_framework::canonical_program_vk(program)`** — the
+- **`dregg_app_framework::canonical_program_vk(program)`** — the
   user-facing entry point for app authors. Hides the four-tuple
   behind the same one-argument shape v1 used; fills in Effect VM AIR
   fingerprint, sentinel verifier fingerprint, and Plonky3 proving
   system. Starbridge-apps' `*_child_program_vk()` functions pick up
   v2 hashes automatically through this wrapper.
-- **`pyana_app_framework::validate_child_vk_canonical(descriptor,
+- **`dregg_app_framework::validate_child_vk_canonical(descriptor,
   program)`** — v2 validation wrapper; calls
   `FactoryDescriptor::validate_child_vk_canonical_v2` with the same
   four components.
 
-The legacy `pyana_cell::canonical_program_vk(program)` (v1, program-
+The legacy `dregg_cell::canonical_program_vk(program)` (v1, program-
 bytes only) remains as a building block exposed under the explicit
-name `pyana_app_framework::canonical_program_bytes_hash` for callers
+name `dregg_app_framework::canonical_program_bytes_hash` for callers
 that want the unlayered hash (e.g., to print both v1 and v2 in an
 inspector during migration).
 
@@ -551,12 +551,12 @@ sweep:
 - Receivers (factory registries, custom-predicate registries,
   custom-effect registries) accept the new hashes uniformly.
 - v1 and v2 *never* collide — domain separation under
-  `"pyana-vk-v2"` (vs. `"pyana-cellprogram-vk-v1"` and
-  `"pyana-witnessed-predicate-vk-v1"`) guarantees disjoint hash
+  `"dregg-vk-v2"` (vs. `"dregg-cellprogram-vk-v1"` and
+  `"dregg-witnessed-predicate-vk-v1"`) guarantees disjoint hash
   spaces. A v1 hash and a v2 hash for the same program are
   guaranteed-different values.
 - Receipts and consensus state that pinned v1 hashes need to be
-  regenerated. (For pyana today this is acceptable — there is no
+  regenerated. (For dregg today this is acceptable — there is no
   long-lived consensus state pinning the old VK constants outside
   test fixtures; greenfield migration discards the v1 values.)
 
@@ -573,7 +573,7 @@ sweep:
 /// - Acceptance-inside: post-recursion validators (proof + verifying
 ///                      key; do not need the program bytes).
 /// - Out-of-band:       everyone else.
-/// Enforced by: BLAKE3 keyed-hash domain separation under "pyana-vk-v2",
+/// Enforced by: BLAKE3 keyed-hash domain separation under "dregg-vk-v2",
 ///   length-prefixed encoding around variable-length components.
 /// Failure mode if violated: validator computes a vk_hash that does
 ///   not match the executor's claim → reject; soundness signal, not

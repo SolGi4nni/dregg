@@ -4,16 +4,16 @@
 `.md`. **Scope:** lift the transition-aware constraint vocabulary that
 already lives in `storage::programmable::QueueConstraint` (Rust enums in
 operator-side memory) into `cell::program::StateConstraint` (turn-side,
-AIR-adjacent, cell-program-bound), and let `pyana-dsl` author them.
+AIR-adjacent, cell-program-bound), and let `dregg-dsl` author them.
 
 ## 0. The seam
 
 Three components, designed years apart, now meet:
 
-1. **macaroons / biscuits** — the very first pyana ancestor: caveat
-   predicates over data. Today's `pyana-dsl` is the modern shape of
-   that ancestry: `#[pyana_caveat]` functions with `require!()`
-   predicates (`pyana-dsl/src/parse.rs:18` `parse_caveat`).
+1. **macaroons / biscuits** — the very first dregg ancestor: caveat
+   predicates over data. Today's `dregg-dsl` is the modern shape of
+   that ancestry: `#[dregg_caveat]` functions with `require!()`
+   predicates (`dregg-dsl/src/parse.rs:18` `parse_caveat`).
 
 2. **`cell::program::StateConstraint`** — declares schemas for cell
    state and post-state predicates
@@ -38,7 +38,7 @@ were authored in the right shape, in the wrong crate. Lifting them —
 with `old_state` access — closes the loop:
 
 ```
-pyana-dsl  (caveat authoring, biscuit ancestry)
+dregg-dsl  (caveat authoring, biscuit ancestry)
     │ compiles to
     ▼
 cell::program::StateConstraint  (schema declared on the cell)
@@ -50,7 +50,7 @@ turn::executor  (evaluates new_state, old_state, validation context)
 circuit::effect_vm AIR  (binds caveat to proof of transition)
 ```
 
-Three components, one seam, each in its designed-for role. `pyana-dsl`
+Three components, one seam, each in its designed-for role. `dregg-dsl`
 authors slot caveats; cells declare them as their schema; the executor
 verifies the caveat on every state-modifying turn.
 
@@ -171,7 +171,7 @@ pub enum StateConstraint {
 
     /// DSL-authored predicate compiled to an opaque expression. The
     /// executor evaluates by name lookup against a registered
-    /// expression table (the pyana-dsl runtime). Sibling to the audit's
+    /// expression table (the dregg-dsl runtime). Sibling to the audit's
     /// proposed StateConstraint::ExpressionEquals.
     Custom {
         constraint_hash: [u8; 32],
@@ -248,24 +248,24 @@ ignored. The lift is backward-compatible.
 
 ## §3. DSL surface
 
-**Choice:** **predicate-shaped, in the `#[pyana_caveat]` body, with
+**Choice:** **predicate-shaped, in the `#[dregg_caveat]` body, with
 `require!()` macros, keyed by slot index.** Justified below.
 
 **Rejected alternatives:**
 
 - *`caveat write_once on slot 0 { ... }` block syntax* — would require a
-  new DSL grammar layer. pyana-dsl is already an attribute-macro DSL
-  parsed via `syn` (`pyana-dsl/src/parse.rs`). A new top-level keyword
+  new DSL grammar layer. dregg-dsl is already an attribute-macro DSL
+  parsed via `syn` (`dregg-dsl/src/parse.rs`). A new top-level keyword
   costs a parser fork.
 
 - *`slot 0: WriteOnce` enum-listing syntax* — looks tidy but loses
-  composability. The whole point of pyana-dsl is *predicates compose*;
+  composability. The whole point of dregg-dsl is *predicates compose*;
   reducing to an enum literal throws that away.
 
-**Chosen syntax — `#[pyana_caveat]` extension:**
+**Chosen syntax — `#[dregg_caveat]` extension:**
 
 ```rust
-#[pyana_caveat]
+#[dregg_caveat]
 fn name_slot_write_once(old: CellState, new: CellState, ctx: EvalContext) {
     require!(slot(old, 0) == FIELD_ZERO || slot(new, 0) == slot(old, 0));
 }
@@ -275,7 +275,7 @@ The parser learns three new param types: `CellState` (read access to
 `fields[0..8]` and `nonce`), `EvalContext` (read `current_height`,
 `current_epoch`, `sender`, `revealed_preimage`), and the `slot(state,
 i)` accessor that produces a `FieldElement`. The compiler emits one
-`StateConstraint::*` variant per `#[pyana_caveat]` function, picking
+`StateConstraint::*` variant per `#[dregg_caveat]` function, picking
 the most-specific named variant if the predicate pattern-matches a
 named one (`WriteOnce`, `Monotonic`, etc.); otherwise emits
 `StateConstraint::Custom { constraint_hash, description }` and
@@ -286,12 +286,12 @@ registers the compiled expression in the runtime's expression table
 
 ```rust
 // apps/nameservice/src/program.rs
-use pyana_dsl::pyana_caveat;
-use pyana_app_framework::{CellState, EvalContext, FIELD_ZERO};
+use dregg_dsl::dregg_caveat;
+use dregg_app_framework::{CellState, EvalContext, FIELD_ZERO};
 
 const NAME_HASH_SLOT: u8 = 0;
 
-#[pyana_caveat]
+#[dregg_caveat]
 fn name_hash_write_once(old: CellState, new: CellState) {
     // Either it's the first write (old slot was zero),
     // or the new value matches the old (slot is frozen).
@@ -302,7 +302,7 @@ fn name_hash_write_once(old: CellState, new: CellState) {
 }
 ```
 
-The pyana-dsl compiler pattern-matches this against the `WriteOnce`
+The dregg-dsl compiler pattern-matches this against the `WriteOnce`
 shape and emits:
 
 ```rust
@@ -314,13 +314,13 @@ CellProgram::Predicate(vec![
 If the predicate had been more general (e.g., "either zero or equal to
 old, AND new < 2^128"), the compiler emits `Custom { constraint_hash,
 description: "name_hash_write_once" }` and the predicate body lives in
-the pyana-dsl-runtime expression table at the hash key.
+the dregg-dsl-runtime expression table at the hash key.
 
 **The slot caveat shows up at three layers:**
 
 | Layer | Form |
 |---|---|
-| Author (app dev) | `#[pyana_caveat] fn name_hash_write_once(...) { require!(...) }` |
+| Author (app dev) | `#[dregg_caveat] fn name_hash_write_once(...) { require!(...) }` |
 | Schema (cell metadata) | `CellProgram::Predicate(vec![StateConstraint::WriteOnce { index: 0 }])` |
 | Enforcement (executor) | `program.evaluate(new, old, ctx)?` on each state-modifying effect |
 
@@ -470,10 +470,10 @@ pub fn nameservice_cell_program() -> CellProgram {
 }
 ```
 
-DSL form (authored via `pyana-dsl`):
+DSL form (authored via `dregg-dsl`):
 
 ```rust
-#[pyana_caveat]
+#[dregg_caveat]
 fn name_hash_write_once(old: CellState, new: CellState) {
     require!(
         slot(old, 0) == FIELD_ZERO || slot(new, 0) == slot(old, 0)
@@ -516,7 +516,7 @@ pub fn auction_cell_program() -> CellProgram {
 DSL form:
 
 ```rust
-#[pyana_caveat]
+#[dregg_caveat]
 fn bid_monotonic(old: CellState, new: CellState) {
     require!(slot(new, 0) >= slot(old, 0));
 }
@@ -671,15 +671,15 @@ Add the 10 new variants to `cell::program::StateConstraint`, update
 
 ### Phase 2 — DSL surface (~200 LOC)
 
-Extend `pyana-dsl` parser to recognize `CellState` and `EvalContext`
+Extend `dregg-dsl` parser to recognize `CellState` and `EvalContext`
 parameter types, and add a `slot(state, i)` pattern. Add a
 `compile_to_state_constraint(ir) -> StateConstraint` pass that
 pattern-matches common predicate shapes (`WriteOnce`, `Monotonic`,
 `FieldDelta`, …) and falls back to `Custom`.
 
-- `pyana-dsl/src/parse.rs` +60 LOC param types + slot accessor
-- `pyana-dsl/src/ir.rs` +40 LOC IR additions
-- `pyana-dsl/src/gen_state_constraint.rs` (new) +100 LOC compiler
+- `dregg-dsl/src/parse.rs` +60 LOC param types + slot accessor
+- `dregg-dsl/src/ir.rs` +40 LOC IR additions
+- `dregg-dsl/src/gen_state_constraint.rs` (new) +100 LOC compiler
 
 ### Phase 3 — Executor verification (~150 LOC)
 
@@ -731,5 +731,5 @@ of nameservice cruft removed. The seam closes by deleting code, not
 adding it.**
 
 The ouroboros now eats its tail in the right shape: macaroons →
-pyana-dsl → `StateConstraint` → executor → cell. Each component in
+dregg-dsl → `StateConstraint` → executor → cell. Each component in
 the role it was designed for. Three components, one seam.

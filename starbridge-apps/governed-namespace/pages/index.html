@@ -15,23 +15,23 @@
       would lift the constant from the Rust crate at build time.
 
       Wired-in JS:
-        - /pkg/pyana_wasm.js                                — in-browser node
+        - /pkg/dregg_wasm.js                                — in-browser node
         - /_includes/studio/runtimes.js                     — runtime registry
         - /starbridge-apps/shared/inspectors/index.js       — inspector registry
-        - /starbridge-apps/governed-namespace/inspectors.js — <pyana-namespace>,
-                                                              <pyana-namespace-route-table>,
-                                                              <pyana-namespace-proposal>,
-                                                              <pyana-namespace-dispatch>
+        - /starbridge-apps/governed-namespace/inspectors.js — <dregg-namespace>,
+                                                              <dregg-namespace-route-table>,
+                                                              <dregg-namespace-proposal>,
+                                                              <dregg-namespace-dispatch>
         - /starbridge-apps/shared/turn-builders/index.js    — signed Action presets
     -->
     <link rel="stylesheet" href="/_includes/studio/styles.css" />
   </head>
   <body>
     <header class="starbridge-governed-namespace-chrome">
-      <h1>Pyana Governed Namespace</h1>
+      <h1><code>dregg</code> Governed Namespace</h1>
       <p>Governance-bound atomic route table swaps on a sovereign cell.
-         Composes <code>pyana-dfa</code>'s <code>GovernedRouter</code>
-         with <code>pyana-cell</code>'s slot caveats
+         Composes <code>dregg-dfa</code>'s <code>GovernedRouter</code>
+         with <code>dregg-cell</code>'s slot caveats
          (<code>MonotonicSequence</code> on version,
          <code>Immutable</code> on committee + threshold,
          <code>SenderAuthorized</code> against the committee root)
@@ -48,18 +48,18 @@
          <code>apps/governed-namespace</code> HTTP service.</em></p>
     </header>
     <main>
-      <pyana-app
+      <dregg-app
         runtime="in-memory"
         factory-vk="73746172627269646765-2d676f7665726e65642d6e616d6573706163652d6661"
-        registry-uri="pyana://cell/governed-namespace-default"
+        registry-uri="dregg://cell/governed-namespace-default"
       >
-        <pyana-namespace slot="primary"></pyana-namespace>
-        <pyana-namespace-route-table slot="routes"></pyana-namespace-route-table>
-        <pyana-namespace-proposal slot="governance"></pyana-namespace-proposal>
-        <pyana-namespace-dispatch slot="dispatch"></pyana-namespace-dispatch>
-      </pyana-app>
+        <dregg-namespace slot="primary"></dregg-namespace>
+        <dregg-namespace-route-table slot="routes"></dregg-namespace-route-table>
+        <dregg-namespace-proposal slot="governance"></dregg-namespace-proposal>
+        <dregg-namespace-dispatch slot="dispatch"></dregg-namespace-dispatch>
+      </dregg-app>
     </main>
-    <script type="module" src="/pkg/pyana_wasm.js"></script>
+    <script type="module" src="/pkg/dregg_wasm.js"></script>
     <script type="module" src="/_includes/studio/runtimes.js"></script>
     <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
     <script type="module" src="/starbridge-apps/governed-namespace/inspectors.js"></script>

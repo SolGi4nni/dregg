@@ -1,4 +1,4 @@
-# Pyana Gallery
+# `dregg` Gallery
 
 Privacy-preserving art auction platform with zero-knowledge proofs.
 
@@ -6,14 +6,14 @@ Privacy-preserving art auction platform with zero-knowledge proofs.
 
 ```bash
 # Headless demo
-cargo run -p pyana-gallery --example demo
+cargo run -p dregg-gallery --example demo
 
 # Full API server
-cargo run -p pyana-gallery --example devnet_gallery
+cargo run -p dregg-gallery --example devnet_gallery
 
 # Production
-cargo build --release -p pyana-gallery
-PYANA_ADMIN_TOKEN=secret ./target/release/pyana-gallery --listen 0.0.0.0:3000
+cargo build --release -p dregg-gallery
+DREGG_ADMIN_TOKEN=secret ./target/release/dregg-gallery --listen 0.0.0.0:3000
 ```
 
 ## Auction Modes
@@ -52,13 +52,13 @@ A single protocol that achieves full auction privacy. Nobody learns anything exc
 ## Architecture
 
 ```
-Browser (frontend/)         Extension (window.pyana.signTurn)
+Browser (frontend/)         Extension (window.dregg.signTurn)
     |                           |
     +------ REST + WebSocket ---+
                 |
     Axum Server (server.rs)
                 |
-    PyanaEngine (turns, proofs)
+    DreggEngine (turns, proofs)
                 |
     Blocklace (consensus, finality)
 ```
@@ -100,9 +100,9 @@ Verifiable ownership chain:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `PYANA_ADMIN_TOKEN` | Admin auth | (unset = open) |
-| `PYANA_STATE_FILE` | Persistence | `gallery_state.json` |
-| `PYANA_NODE_URL` | Node API | `http://localhost:8080` |
+| `DREGG_ADMIN_TOKEN` | Admin auth | (unset = open) |
+| `DREGG_STATE_FILE` | Persistence | `gallery_state.json` |
+| `DREGG_NODE_URL` | Node API | `http://localhost:8080` |
 
 ## Cryptography
 

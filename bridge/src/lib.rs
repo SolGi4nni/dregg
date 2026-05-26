@@ -1,9 +1,9 @@
-//! `pyana-bridge`: Connects plaintext token crates to the ZK proof system.
+//! `dregg-bridge`: Connects plaintext token crates to the ZK proof system.
 //!
 //! This crate bridges two worlds:
 //! - **Plaintext tokens** (`token`, `macaroon`): MacaroonToken/BiscuitToken with HMAC
 //!   verification, caveat-based authorization, and attenuation.
-//! - **ZK proof system** (`pyana-commit`, `pyana-trace`, `pyana-circuit`): Merkle-committed
+//! - **ZK proof system** (`dregg-commit`, `dregg-trace`, `dregg-circuit`): Merkle-committed
 //!   fact sets, Datalog derivation traces, and STARK-based presentation proofs.
 //!
 //! The bridge performs four key transformations:
@@ -39,7 +39,7 @@ pub mod mina;
 pub mod present;
 
 /// Full-fidelity bridge-action binding: a thin re-export plus a wrapper for
-/// the new sibling AIR `pyana_circuit::bridge_action_air` that pins
+/// the new sibling AIR `dregg_circuit::bridge_action_air` that pins
 /// (nullifier, recipient, destination_federation, amount) at full byte/bit
 /// fidelity (no 30-bit amount truncation, no Poseidon2 compression of 32-byte
 /// values into a single felt). See module docs for the integration shape.

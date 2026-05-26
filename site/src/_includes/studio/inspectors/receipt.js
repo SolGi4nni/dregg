@@ -1,5 +1,5 @@
 /**
- * <pyana-receipt uri="pyana://receipt/<hex32>"> — single TurnReceipt.
+ * <dregg-receipt uri="dregg://receipt/<hex32>"> — single TurnReceipt.
  *
  * The wasm sim exposes only `get_receipt_chain(handle)` returning the entire
  * chain; the JS runtime caches it and we look up by turn_hash.
@@ -12,7 +12,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaReceipt extends InspectorBase {
+class DreggReceipt extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -31,10 +31,10 @@ class PyanaReceipt extends InspectorBase {
 
     const Component = () => {
       const r = sig.value;
-      if (!r) return html`<div class="pyana-inspector pyana-inspector--empty">receipt not found: <code>${shortHex(parsed.id, 16)}</code></div>`;
+      if (!r) return html`<div class="dregg-inspector dregg-inspector--empty">receipt not found: <code>${shortHex(parsed.id, 16)}</code></div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code title=${parsed.id}>${shortHex(parsed.id)}</code>
             · ${String(r.action_count)} actions
             · ${String(r.computrons_used)} comp
@@ -55,7 +55,7 @@ class PyanaReceipt extends InspectorBase {
                     <code style="font-size:0.78rem;" title=${a.target_cell || ''}>${shortHex(a.target_cell, 10)}</code>
                     <span style="color:var(--fg-dim);font-size:0.78rem;">${shortHex(a.method, 8)}</span>
                     ${authJson
-                      ? html`<pyana-authorization data=${authJson} mode="compact"></pyana-authorization>`
+                      ? html`<dregg-authorization data=${authJson} mode="compact"></dregg-authorization>`
                       : null}
                   </li>`;
               })}
@@ -64,12 +64,12 @@ class PyanaReceipt extends InspectorBase {
         : html`<dt>actions</dt><dd>${String(r.action_count)}</dd>`;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">receipt</span>
-            <code class="pyana-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 24)}</code>
+            <span class="dregg-inspector__kind">receipt</span>
+            <code class="dregg-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 24)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>turn hash</dt><dd><code>${r.turn_hash}</code></dd>
             <dt>pre state</dt><dd><code>${r.pre_state_hash}</code></dd>
             <dt>post state</dt><dd><code>${r.post_state_hash}</code></dd>
@@ -79,11 +79,11 @@ class PyanaReceipt extends InspectorBase {
           </dl>
           <details style="margin-top:var(--s3,8px);">
             <summary style="cursor:pointer;color:var(--fg-dim);font-size:0.82rem;user-select:none;">Proof</summary>
-            <pyana-proof uri=${`pyana://receipt/${r.turn_hash}`} mode="default"></pyana-proof>
+            <dregg-proof uri=${`dregg://receipt/${r.turn_hash}`} mode="default"></dregg-proof>
           </details>
           <details style="margin-top:var(--s3,8px);">
             <summary style="cursor:pointer;color:var(--fg-dim);font-size:0.82rem;user-select:none;">Witnessed (Wave 3 cross-embed)</summary>
-            <pyana-witnessed-receipt uri=${`pyana://receipt/${r.turn_hash}`} mode="compact"></pyana-witnessed-receipt>
+            <dregg-witnessed-receipt uri=${`dregg://receipt/${r.turn_hash}`} mode="compact"></dregg-witnessed-receipt>
           </details>
         </div>`;
     };
@@ -91,4 +91,4 @@ class PyanaReceipt extends InspectorBase {
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-receipt')) customElements.define('pyana-receipt', PyanaReceipt);
+if (!customElements.get('dregg-receipt')) customElements.define('dregg-receipt', DreggReceipt);

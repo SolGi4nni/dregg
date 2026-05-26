@@ -1,19 +1,19 @@
 /**
- * <pyana-blocklace-sim node-count="4" block-rate="1" mode="default">
+ * <dregg-blocklace-sim node-count="4" block-rate="1" mode="default">
  *
  * Self-contained Cordial Miners DAG simulator (educational what-if with equivocator injection).
  * Ported from site/playground/sections/blocklace-sim.js. Pure JS for interactive demo of
  * waves, tau-ordering, finality threshold (2f+1), and Byzantine injection.
  *
  * IMPORTANT (per STARBRIDGE-PLAN §4.9 carve-out + Houyhnhnm substrate rule):
- *   - This is NOT the live blocklace. It does NOT reimplement pyana consensus, ordering,
+ *   - This is NOT the live blocklace. It does NOT reimplement dregg consensus, ordering,
  *     AR threshold sigs, receipt chains, or finality (see blocklace/src/ordering.rs:1,
  *     finality.rs, constitution.rs:24 for real Rust impl of tau/waves/leaders/ratification,
  *     MembershipProposal, Constitution {participants, threshold, version}).
  *   - For real federation blocklace DAG + QC/finalized roots from live node or sim runtime:
- *     use <pyana-block-dag uri="pyana://federation/0"> (backed by wasm list_federation_blocks
+ *     use <dregg-block-dag uri="dregg://federation/0"> (backed by wasm list_federation_blocks
  *     + get_federation_block; see wasm/src/bindings.rs:1055, wasm/src/runtime.rs:161 SimFederation,
- *     node/src/blocklace_sync.rs:1 for node live + pyana_federation).
+ *     node/src/blocklace_sync.rs:1 for node live + dregg_federation).
  *   - Configurability (genesis, ordering params, committee): surfaced via MCP on node
  *     (node/src/mcp.rs:3841 tool_get_blocklace_status + tool_get_constitution) and
  *     devnet samples e.g. demo/multi-node-devnet/state/logs/scenarios/.../f1_committee.json
@@ -34,7 +34,7 @@
  * Does NOT extend InspectorBase (no uri/runtime dep by design for standalone educational use).
  * Follows connected/disconnected/attributeChangedCallback + self-render pattern.
  * See _base.js:21 and barrel inspectors.js:304 for full platform pattern (cell.js style uses
- * InspectorBase + effect + signals + <pyana-*> reuse + data= where appropriate).
+ * InspectorBase + effect + signals + <dregg-*> reuse + data= where appropriate).
  */
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -298,7 +298,7 @@ function renderDagThumbnailSvg(sim) {
 
 // ── custom element ────────────────────────────────────────────────────────────
 
-class PyanaBlocklaceSim extends HTMLElement {
+class DreggBlocklaceSim extends HTMLElement {
   static get observedAttributes() {
     return ['node-count', 'block-rate', 'mode', 'equivocator-index'];
   }
@@ -380,12 +380,12 @@ class PyanaBlocklaceSim extends HTMLElement {
   }
 
   _injectStyle() {
-    if (this._styleInjected || document.getElementById('pyana-blocklace-sim-style')) {
+    if (this._styleInjected || document.getElementById('dregg-blocklace-sim-style')) {
       this._styleInjected = true;
       return;
     }
     const el = document.createElement('style');
-    el.id = 'pyana-blocklace-sim-style';
+    el.id = 'dregg-blocklace-sim-style';
     el.textContent = CSS;
     document.head.appendChild(el);
     this._styleInjected = true;
@@ -555,6 +555,6 @@ class PyanaBlocklaceSim extends HTMLElement {
   }
 }
 
-if (!customElements.get('pyana-blocklace-sim')) {
-  customElements.define('pyana-blocklace-sim', PyanaBlocklaceSim);
+if (!customElements.get('dregg-blocklace-sim')) {
+  customElements.define('dregg-blocklace-sim', DreggBlocklaceSim);
 }

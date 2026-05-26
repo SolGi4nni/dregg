@@ -2,7 +2,7 @@
 //!
 //! These tests exercise the four canonical credential operations through
 //! the `starbridge-identity` turn-builders, against the underlying
-//! `pyana-credentials` primitives. The crypto heavy-lifting lives in the
+//! `dregg-credentials` primitives. The crypto heavy-lifting lives in the
 //! credentials crate; these tests verify the userspace composition.
 //!
 //! Coverage:
@@ -24,8 +24,8 @@
 //!    forged predicate is rejected and the builder emits a
 //!    `presentation-rejected` event.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, Effect};
-use pyana_token::AuthRequest;
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, Effect};
+use dregg_token::AuthRequest;
 
 use starbridge_identity::{
     AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest, PresentationOptions,

@@ -1,4 +1,4 @@
-# CapTP / OCapN Integration into Pyana
+# CapTP / OCapN Integration into `dregg`
 
 ## 1. What the Spritely Whitepapers Contain
 
@@ -23,13 +23,13 @@ Petname systems for mapping human-readable names to cryptographic identifiers. T
 ### content-addressed-descriptors-and-interfaces.org
 Content Addressed Descriptors (CADs): hash a description to create a universally unique method/type identifier. Used for interface discovery across networks. Includes an IDL sketch using Preserves Schema. Uses "wards and incanters" (energetic secrets from Joule) for hidden behavior that only authorized parties can invoke.
 
-## 2. CapTP Concepts Mapped to Pyana Equivalents
+## 2. CapTP Concepts Mapped to `dregg` Equivalents
 
-| CapTP/OCapN Concept | Pyana Equivalent | Gap/Notes |
+| CapTP/OCapN Concept | `dregg` Equivalent | Gap/Notes |
 |---|---|---|
-| **Object reference** (near/far) | `CellId` | Pyana cells are the atomic unit; near = same-federation, far = cross-federation |
+| **Object reference** (near/far) | `CellId` | `dregg` cells are the atomic unit; near = same-federation, far = cross-federation |
 | **Vat** (event loop + actormap) | Federation executor within a silo | Our "vat" is the single-threaded TurnExecutor processing one turn atomically |
-| **Turn** (atomic message processing) | `Turn` struct (forest of actions + effects) | Nearly identical semantically; pyana turns are already transactional |
+| **Turn** (atomic message processing) | `Turn` struct (forest of actions + effects) | Nearly identical semantically; dregg turns are already transactional |
 | **`$` synchronous call** | Effects within a single turn | Effects in a turn tree are synchronous; cross-cell effects within one action forest |
 | **`<-` asynchronous send** | Intent submission / cross-federation EventualRef | Intents are "fire and await"; EventualRef awaits cross-fed resolution |
 | **Promise** | `EventualRef` / `PendingEntry` | EventualRef references future turn output; PendingTurnRegistry handles resolution |
@@ -51,14 +51,14 @@ Content Addressed Descriptors (CADs): hash a description to create a universally
 
 ### Critical (enables new capabilities)
 
-#### 3.1 Sturdy References (`pyana://` URIs)
+#### 3.1 Sturdy References (`dregg://` URIs)
 **What**: A serializable, long-lived capability URI that can be stored, shared out-of-band, and rehydrated into a live capability reference.
 
 **Why**: Currently, all capability references are ephemeral (c-list entries or BearerCapProofs). If a phone goes offline, all references to it are gone. Sturdy refs let you bookmark a capability.
 
 **Design sketch**:
 ```
-pyana://<federation-id-base58>/<cell-id-base58>/<swiss-number>
+dregg://<federation-id-base58>/<cell-id-base58>/<swiss-number>
 ```
 The swiss number is a secret known only to the holder and the target cell. Presenting it over CapTP "enlivens" the reference into a live capability. This is exactly how Goblins' `ocapn://` URIs work.
 
@@ -111,7 +111,7 @@ The swiss number is a secret known only to the holder and the target cell. Prese
 ### Nice-to-Have (improves UX)
 
 #### 3.6 Petname Registry
-Local petname mapping: `"Alice's phone" -> pyana://3eF.../cell-abc.../swiss`
+Local petname mapping: `"Alice's phone" -> dregg://3eF.../cell-abc.../swiss`
 
 #### 3.7 Content Addressed Descriptors for Cell Interfaces
 Extend cell metadata to include a CAD-style interface descriptor (what methods/effects the cell supports), queryable over the wire.
@@ -130,7 +130,7 @@ enum WireMessage {
     CapGoodbye { dropped_refs: Vec<CellId> },
     
     // Sturdy ref resolution
-    EnlivenSturdyRef { uri: PyanaUri, requester_pk: [u8; 32] },
+    EnlivenSturdyRef { uri: DreggUri, requester_pk: [u8; 32] },
     EnlivenResponse { cell_id: CellId, routing_token: [u8; 32] },
     
     // Distributed GC
@@ -185,13 +185,13 @@ captp/
     gc.rs            -- Reference counting + drop protocol
     handoff.rs       -- Handoff certificate creation/validation
     pipeline.rs      -- Cross-federation promise pipeline registry
-    uri.rs           -- pyana:// URI parsing and construction
+    uri.rs           -- dregg:// URI parsing and construction
 ```
 
 ### SDK Changes
 
 For the phone/agent SDK:
-- `SturdyRef::new(cell_id) -> PyanaUri` -- export a capability as a durable link
+- `SturdyRef::new(cell_id) -> DreggUri` -- export a capability as a durable link
 - `SturdyRef::enliven(uri) -> LiveRef` -- connect to a sturdy ref
 - `LiveRef::send(action) -> EventualRef` -- send a message, get a promise
 - `EventualRef::pipeline(action) -> EventualRef` -- pipeline a message to an unresolved promise
@@ -200,7 +200,7 @@ For the phone/agent SDK:
 ## 5. Priority Order
 
 ### Phase 1: Sturdy References (highest value, enables everything else)
-- Define `pyana://` URI scheme
+- Define `dregg://` URI scheme
 - Implement swiss number table in executor
 - Wire message for enliven/resolve
 - **Unlocks**: Offline sharing, QR code delegation, bookmark-able capabilities
@@ -241,7 +241,7 @@ The ultimate vision: phones form a local mesh, cloud nodes provide persistence a
 
 ### What CapTP integration enables for this:
 
-**Sturdy refs** allow a phone to share a QR code containing a `pyana://` URI. The recipient scans it, their phone enlivens it (either through the mesh if the source is nearby, or via a cloud relay), and they have a live reference. No centralized directory required.
+**Sturdy refs** allow a phone to share a QR code containing a `dregg://` URI. The recipient scans it, their phone enlivens it (either through the mesh if the source is nearby, or via a cloud relay), and they have a live reference. No centralized directory required.
 
 **Distributed GC** means phones don't accumulate unbounded state from old interactions. When you stop using a capability, the source learns this and can reclaim resources. Critical for resource-constrained devices.
 

@@ -46,7 +46,7 @@ impl UsageEvent {
 
     /// Compute the canonical hash of this event (used as the Merkle leaf).
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-audit event v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-audit event v1");
         hasher.update(&self.token_id);
         hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.action_hash);
@@ -87,7 +87,7 @@ pub struct AuditReceipt {
 /// Proof that a specific event is included in the audit log Merkle tree.
 ///
 /// This is a 4-ary Merkle inclusion proof, reusing the same structure as
-/// `pyana-commit`'s `MerkleProof` but wrapped with audit-specific semantics.
+/// `dregg-commit`'s `MerkleProof` but wrapped with audit-specific semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InclusionProof {
     /// The leaf hash being proved.
@@ -101,7 +101,7 @@ pub struct InclusionProof {
 impl InclusionProof {
     /// Verify this inclusion proof against a given root.
     pub fn verify(&self, root: &[u8; 32]) -> bool {
-        use pyana_commit::hash::{HASH_ARITY, hash_node};
+        use dregg_commit::hash::{HASH_ARITY, hash_node};
 
         if self.path_indices.len() != self.siblings.len() {
             return false;

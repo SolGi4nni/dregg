@@ -154,7 +154,7 @@ export async function blockWasm(page: Page) {
   await page.route('**/*.wasm', route => {
     return route.abort();
   });
-  await page.route('**/pyana_wasm.js', route => {
+  await page.route('**/dregg_wasm.js', route => {
     // Return a minimal module that immediately rejects init
     return route.fulfill({
       contentType: 'application/javascript',

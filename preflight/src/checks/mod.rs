@@ -31,6 +31,6 @@ pub mod wire;
 pub mod state_constraints;
 
 // Preflight: bridge phase-log + portable-note sanity checks. Smoke
-// tests for `pyana_cell::note_bridge` invariants. Separate from
+// tests for `dregg_cell::note_bridge` invariants. Separate from
 // `bridges.rs` (Mina bridge state machine).
 pub mod note_bridge;

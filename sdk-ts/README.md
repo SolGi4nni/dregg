@@ -1,24 +1,24 @@
-# @pyana/sdk
+# @dregg/sdk
 
-TypeScript SDK for the pyana distributed authorization system.
+TypeScript SDK for the dregg distributed authorization system.
 
-Wraps the `pyana-wasm` module into ergonomic, type-safe APIs for token management, zero-knowledge proofs, Merkle trees, Datalog authorization, and full runtime simulation.
+Wraps the `dregg-wasm` module into ergonomic, type-safe APIs for token management, zero-knowledge proofs, Merkle trees, Datalog authorization, and full runtime simulation.
 
 ## Installation
 
 ```bash
-npm install @pyana/sdk pyana-wasm
+npm install @dregg/sdk dregg-wasm
 ```
 
 ## Quick Start
 
 ```ts
-import init from "pyana-wasm";
-import { PyanaClient } from "@pyana/sdk";
+import init from "dregg-wasm";
+import { DreggClient } from "@dregg/sdk";
 
 // Initialize WASM and create client
 const wasm = await init();
-const client = await PyanaClient.init(wasm);
+const client = await DreggClient.init(wasm);
 
 // Mint a token
 const token = await client.cclerk.mint("api-gateway");
@@ -123,13 +123,13 @@ runtime.destroy();
 
 | Class | Purpose |
 |-------|---------|
-| `PyanaClient` | Main entry point combining all subsystems |
+| `DreggClient` | Main entry point combining all subsystems |
 | `AgentCipherclerk` | Token mint/attenuate/verify |
 | `TokenOps` | Fold chains, BLAKE3 hashing, intent IDs |
 | `ProofEngine` | STARK proofs, predicates, Schnorr, garbled circuits |
 | `MerkleTree` | Root computation, membership/non-membership proofs |
 | `PredicateEvaluator` | Datalog authorization engine |
-| `PyanaRuntime` | Full distributed system simulation |
+| `DreggRuntime` | Full distributed system simulation |
 
 ## License
 

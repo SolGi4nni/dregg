@@ -7,7 +7,7 @@
 //!
 //! This ensures neither party can defect without losing their bond.
 
-use pyana_app_framework::{CellId, EscrowCondition, EscrowRecord};
+use dregg_app_framework::{CellId, EscrowCondition, EscrowRecord};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -182,9 +182,9 @@ pub fn build_payment_escrow_effect(
     timeout_height: u64,
     escrow_id: [u8; 32],
     settlement_id: &SettlementId,
-) -> pyana_turn::Effect {
+) -> dregg_turn::Effect {
     let vk = compute_delivery_verification_key(settlement_id);
-    pyana_turn::Effect::CreateEscrow {
+    dregg_turn::Effect::CreateEscrow {
         cell: *consumer,
         recipient: *provider,
         amount,
@@ -203,8 +203,8 @@ pub fn build_sla_bond_escrow_effect(
     amount: u64,
     timeout_height: u64,
     escrow_id: [u8; 32],
-) -> pyana_turn::Effect {
-    pyana_turn::Effect::CreateEscrow {
+) -> dregg_turn::Effect {
+    dregg_turn::Effect::CreateEscrow {
         cell: *provider,
         recipient: *consumer,
         amount,
@@ -217,16 +217,16 @@ pub fn build_sla_bond_escrow_effect(
 }
 
 /// Build an `Effect::ReleaseEscrow` for when the provider proves delivery.
-pub fn build_release_escrow_effect(escrow_id: [u8; 32], proof: Vec<u8>) -> pyana_turn::Effect {
-    pyana_turn::Effect::ReleaseEscrow {
+pub fn build_release_escrow_effect(escrow_id: [u8; 32], proof: Vec<u8>) -> dregg_turn::Effect {
+    dregg_turn::Effect::ReleaseEscrow {
         escrow_id,
         proof: Some(proof),
     }
 }
 
 /// Build an `Effect::RefundEscrow` for when timeout passes without delivery.
-pub fn build_refund_escrow_effect(escrow_id: [u8; 32]) -> pyana_turn::Effect {
-    pyana_turn::Effect::RefundEscrow { escrow_id }
+pub fn build_refund_escrow_effect(escrow_id: [u8; 32]) -> dregg_turn::Effect {
+    dregg_turn::Effect::RefundEscrow { escrow_id }
 }
 
 /// SLA bond is typically 10% of the payment amount.

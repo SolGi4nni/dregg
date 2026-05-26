@@ -142,7 +142,7 @@ All tests are structural property checks (determinism, order-independence, rekey
 
 ---
 
-## Does Pyana Actually Test the CapTP Three-Party Handoff End-to-End?
+## Does `dregg` Actually Test the CapTP Three-Party Handoff End-to-End?
 
 **Answer: YES, but with gaps.**
 

@@ -1,5 +1,5 @@
 /**
- * Playwright test for <pyana-cipherclerk> inspector.
+ * Playwright test for <dregg-cipherclerk> inspector.
  *
  * Run with:
  *   node tests/studio/cipherclerk.mjs
@@ -9,11 +9,11 @@
  *
  * Tests:
  *  1. Component mounts and renders all four tabs (Identity, Holdings, History, Stealth)
- *  2. KV grid is present with cell-deeplink embedding <pyana-cell>
+ *  2. KV grid is present with cell-deeplink embedding <dregg-cell>
  *  3. Clicking Holdings tab renders the tab panel
  *  4. Clicking History tab renders the History panel (shows chain or empty note)
  *  5. Clicking Stealth tab renders the Stealth panel
- *  6. cell deeplink (<pyana-cell>) is present in KV grid after agent creation
+ *  6. cell deeplink (<dregg-cell>) is present in KV grid after agent creation
  *  7. Compact mode renders name + counts line
  *  8. Bad URI shows error
  *  9. No unexpected JS errors
@@ -37,11 +37,11 @@ async function run() {
   console.log('[test] Navigating to /studio …');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyanaUi (the rename from window.pyana per STARBRIDGE-PLAN §4.2).
-  // Fall back to window.pyana for compatibility with runtimes that haven't
+  // Wait for dreggUi (the rename from window.dregg per STARBRIDGE-PLAN §4.2).
+  // Fall back to window.dregg for compatibility with runtimes that haven't
   // completed the rename yet.
-  await page.waitForFunction(() => !!(window.pyanaUi || window.pyana), { timeout: 20000 });
-  console.log('[test] pyanaUi/pyana ready.');
+  await page.waitForFunction(() => !!(window.dreggUi || window.dregg), { timeout: 20000 });
+  console.log('[test] dreggUi/dregg ready.');
 
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
@@ -76,13 +76,13 @@ async function run() {
     url: `${BASE}/_includes/studio/inspectors/cipherclerk.js`,
     type: 'module',
   });
-  await page.waitForFunction(() => !!customElements.get('pyana-cipherclerk'), { timeout: 5000 });
-  console.log('[test] <pyana-cipherclerk> registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-cipherclerk'), { timeout: 5000 });
+  console.log('[test] <dregg-cipherclerk> registered.');
 
   // ── Step 3: Mount element ─────────────────────────────────────────────────
   await page.evaluate((agentIdx) => {
-    const el = document.createElement('pyana-cipherclerk');
-    el.setAttribute('uri', `pyana://cipherclerk/${agentIdx}`);
+    const el = document.createElement('dregg-cipherclerk');
+    el.setAttribute('uri', `dregg://cipherclerk/${agentIdx}`);
     el.setAttribute('id', 'test-cc');
     document.getElementById('app').appendChild(el);
   }, aliceInfo.agent_index);
@@ -91,7 +91,7 @@ async function run() {
     const el = document.getElementById('test-cc');
     return el && el.querySelector('[data-testid="pcc-root"]') !== null;
   }, { timeout: 8000 });
-  console.log('[test] <pyana-cipherclerk> rendered.');
+  console.log('[test] <dregg-cipherclerk> rendered.');
 
   // ── Test 1: header is present with agent name + badge ────────────────────
   const headerText = await page.evaluate(() => {
@@ -179,22 +179,22 @@ async function run() {
     return el ? !!el.querySelector('[data-testid="pcc-panel-identity"]') : false;
   }, { timeout: 3000 });
 
-  // The KV grid should contain a <pyana-cell> deeplink for the agent's cell_id.
-  // pyana-cell is registered in inspectors.js (loaded by studio page).
+  // The KV grid should contain a <dregg-cell> deeplink for the agent's cell_id.
+  // dregg-cell is registered in inspectors.js (loaded by studio page).
   const cellDeeplinkPresent = await page.evaluate(() => {
     const el = document.getElementById('test-cc');
-    // Look for pyana-cell anywhere inside the component
-    return el ? el.querySelector('pyana-cell') !== null : false;
+    // Look for dregg-cell anywhere inside the component
+    return el ? el.querySelector('dregg-cell') !== null : false;
   });
   if (!cellDeeplinkPresent) {
-    throw new Error('TEST 8 FAILED: no <pyana-cell> deeplink found inside <pyana-cipherclerk>');
+    throw new Error('TEST 8 FAILED: no <dregg-cell> deeplink found inside <dregg-cipherclerk>');
   }
-  console.log('[test 8] PASS: <pyana-cell> deeplink present in Identity/KV grid.');
+  console.log('[test 8] PASS: <dregg-cell> deeplink present in Identity/KV grid.');
 
   // ── Test 9: Compact mode renders summary ────────────────────────────────
   await page.evaluate((agentIdx) => {
-    const el = document.createElement('pyana-cipherclerk');
-    el.setAttribute('uri', `pyana://cipherclerk/${agentIdx}`);
+    const el = document.createElement('dregg-cipherclerk');
+    el.setAttribute('uri', `dregg://cipherclerk/${agentIdx}`);
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-cc-compact');
     document.getElementById('app').appendChild(el);
@@ -218,8 +218,8 @@ async function run() {
 
   // ── Test 10: Bad URI shows error ─────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-cipherclerk');
-    el.setAttribute('uri', 'pyana://cell/notacipherclerk');
+    const el = document.createElement('dregg-cipherclerk');
+    el.setAttribute('uri', 'dregg://cell/notacipherclerk');
     el.setAttribute('id', 'test-cc-bad');
     document.getElementById('app').appendChild(el);
   });

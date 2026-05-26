@@ -3,9 +3,9 @@
 //!
 //! Per STAGE-7-GAMMA-2-PI-DESIGN.md §3 the three canonical preimages are:
 //!
-//!   transfer_id = Poseidon2(b"pyana-transfer-id-v1" || from || to || amount_be || sender_nonce_be)
-//!   grant_id    = Poseidon2(b"pyana-grant-id-v1"    || from || to || cap_entry_hash || sender_nonce_be)
-//!   intro_id    = Poseidon2(b"pyana-intro-id-v1"    || introducer || recipient || target || permissions_bits || introducer_nonce_be)
+//!   transfer_id = Poseidon2(b"dregg-transfer-id-v1" || from || to || amount_be || sender_nonce_be)
+//!   grant_id    = Poseidon2(b"dregg-grant-id-v1"    || from || to || cap_entry_hash || sender_nonce_be)
+//!   intro_id    = Poseidon2(b"dregg-intro-id-v1"    || introducer || recipient || target || permissions_bits || introducer_nonce_be)
 //!
 //! Invariant: changing **any** preimage component changes the preimage
 //! bytes. (This is a necessary condition for the id-hash to differ; the
@@ -14,7 +14,7 @@
 
 use crate::Invariant;
 use proptest::prelude::*;
-use pyana_cell::id::CellId;
+use dregg_cell::id::CellId;
 
 pub struct Gamma2IdInjectivity;
 impl Invariant for Gamma2IdInjectivity {
@@ -24,7 +24,7 @@ impl Invariant for Gamma2IdInjectivity {
 
 fn transfer_pre(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-transfer-id-v1");
+    v.extend_from_slice(b"dregg-transfer-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(&amount.to_be_bytes());
@@ -34,7 +34,7 @@ fn transfer_pre(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> V
 
 fn grant_pre(from: &CellId, to: &CellId, cap: &[u8; 32], sender_nonce: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-grant-id-v1");
+    v.extend_from_slice(b"dregg-grant-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(cap);
@@ -50,7 +50,7 @@ fn intro_pre(
     nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(160);
-    v.extend_from_slice(b"pyana-intro-id-v1");
+    v.extend_from_slice(b"dregg-intro-id-v1");
     v.extend_from_slice(&introducer.0);
     v.extend_from_slice(&recipient.0);
     v.extend_from_slice(&target.0);

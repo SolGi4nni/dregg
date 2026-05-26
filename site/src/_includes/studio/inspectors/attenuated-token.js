@@ -1,18 +1,18 @@
 /**
- * <pyana-attenuated-token uri="pyana://attenuated-token/<id-hex>" data="...">
+ * <dregg-attenuated-token uri="dregg://attenuated-token/<id-hex>" data="...">
  *
  * Token chain: each attenuation step + restrictions (caveats).
  * Can drill into DelegatedToken envelope.
  *
  * Canonical: cipherclerk.attenuate, HeldToken (token crate macaroon/biscuit backends
- * + pyana_caveats). Replaces playground bearer/attenuated bits.
+ * + dregg_caveats). Replaces playground bearer/attenuated bits.
  *
- * URI: pyana://attenuated-token/<token-id or root>
+ * URI: dregg://attenuated-token/<token-id or root>
  * data=: JSON { root_token, chain: [{attenuator, restrictions, ...}] , ... }
  *
  * Modes: compact | default | demo (interactive attenuate)
  *
- * Platform vocabulary: reuses <pyana-bearer-cap> concepts, <pyana-caveat> future.
+ * Platform vocabulary: reuses <dregg-bearer-cap> concepts, <dregg-caveat> future.
  * No JS reimpl of macaroon/biscuit crypto — delegates to wasm.
  * Visible gap if no direct list_held_tokens binding yet (TODO in cipherclerk).
  *
@@ -21,7 +21,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaAttenuatedToken extends InspectorBase {
+class DreggAttenuatedToken extends InspectorBase {
   _render() {
     const { h, render, html, effect, signal } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -58,8 +58,8 @@ class PyanaAttenuatedToken extends InspectorBase {
       if (mode === 'compact') {
         const len = (tok.chain || []).length;
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
-            <span class="pyana-inspector__kind">attenuated-token</span>
+          <span class="dregg-inspector dregg-inspector--compact">
+            <span class="dregg-inspector__kind">attenuated-token</span>
             <code>${shortHex(tok.root_token || '', 10)}</code>
             ${len ? html`· ${len} attenuation${len === 1 ? '' : 's'}` : ''}
           </span>`;
@@ -91,12 +91,12 @@ class PyanaAttenuatedToken extends InspectorBase {
       ` : null;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--attoken">
+        <div class="dregg-inspector dregg-inspector--attoken">
           <header>
-            <span class="pyana-inspector__kind">attenuated-token</span>
-            <code class="pyana-inspector__id" title=${tok.root_token || ''}>${shortHex(tok.root_token || 'n/a', 20)}</code>
+            <span class="dregg-inspector__kind">attenuated-token</span>
+            <code class="dregg-inspector__id" title=${tok.root_token || ''}>${shortHex(tok.root_token || 'n/a', 20)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>root</dt><dd><code title=${tok.root_token}>${shortHex(tok.root_token || '', 24)}</code></dd>
             <dt>depth</dt><dd>${String(chain.length)}</dd>
           </dl>
@@ -131,4 +131,4 @@ class PyanaAttenuatedToken extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-attenuated-token')) customElements.define('pyana-attenuated-token', PyanaAttenuatedToken);
+if (!customElements.get('dregg-attenuated-token')) customElements.define('dregg-attenuated-token', DreggAttenuatedToken);

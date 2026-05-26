@@ -1,8 +1,8 @@
-# Pyana Caveat Discharge Model
+# `dregg` Caveat Discharge Model
 
 ## What Caveat Discharge Is Here
 
-Pyana extends standard macaroon discharge in two directions. First, classic third-party caveats: a `MacaroonToken` carries `discharges: Vec<Macaroon>` which are verified during the HMAC chain check (`self.inner.verify(&*self.root_key, &self.discharges)`). The holder collects discharge macaroons from external services before presentation.
+`dregg` extends standard macaroon discharge in two directions. First, classic third-party caveats: a `MacaroonToken` carries `discharges: Vec<Macaroon>` which are verified during the HMAC chain check (`self.inner.verify(&*self.root_key, &self.discharges)`). The holder collects discharge macaroons from external services before presentation.
 
 Second, and more novel: the `Revocable` caveat (type 15) and `Budget` caveat (type 14) implement *stateful discharge*. These require the verifier to supply external state (`not_revoked`, `budget_states`) proving the caveat still holds. This inverts standard discharge: instead of the holder obtaining a discharge token, the *verifier* must attest freshness. The fail-closed semantics mean missing state is denial, not passthrough.
 
@@ -43,9 +43,9 @@ But NOT: which issuer, which rules fired, what attestation facts existed, or how
 
 ## Delegation Chains as Selective Disclosure
 
-In Pyana, attenuation IS the disclosure mechanism. The fold chain (root state -> attenuated state -> further attenuated state) is proven via STARK without revealing intermediate states. Each fold step removes facts (narrowing), and the `FoldWitness` proves the removal was from the committed state.
+In `dregg`, attenuation IS the disclosure mechanism. The fold chain (root state -> attenuated state -> further attenuated state) is proven via STARK without revealing intermediate states. Each fold step removes facts (narrowing), and the `FoldWitness` proves the removal was from the committed state.
 
-This differs fundamentally from BBS+/Idemix attribute selection. In those systems, you select which attributes to reveal from a fixed credential. In Pyana, you *construct a narrower credential* by adding caveats, then prove the narrowed version satisfies the request. The attenuation chain itself is the privacy tool: you never present the root token, only a provably-derived restriction of it. The `MAX_FOLD_DEPTH` limit exists for soundness, not expressiveness.
+This differs fundamentally from BBS+/Idemix attribute selection. In those systems, you select which attributes to reveal from a fixed credential. In `dregg`, you *construct a narrower credential* by adding caveats, then prove the narrowed version satisfies the request. The attenuation chain itself is the privacy tool: you never present the root token, only a provably-derived restriction of it. The `MAX_FOLD_DEPTH` limit exists for soundness, not expressiveness.
 
 ## Private Policy Evaluation (The Datalog Dimension)
 

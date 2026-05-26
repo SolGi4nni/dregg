@@ -1,7 +1,7 @@
 [workspace]
 
 [package]
-name = "pyana-sp1-program"
+name = "dregg-sp1-program"
 version = "0.1.0"
 edition = "2021"
 # Note: SP1 guest programs use edition 2021 and target riscv32im-succinct-zkvm-elf.

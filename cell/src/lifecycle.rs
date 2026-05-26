@@ -219,7 +219,7 @@ impl DeathCertificate {
     /// Compute the BLAKE3 hash of this certificate (the value bound into
     /// [`CellLifecycle::Destroyed`]).
     pub fn certificate_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-cell:death-certificate v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-cell:death-certificate v1");
         hasher.update(self.cell_id.as_bytes());
         hasher.update(&self.last_receipt_hash);
         hasher.update(&self.final_state_commitment);
@@ -268,7 +268,7 @@ impl ArchivalAttestation {
     /// Compute the canonical hash of this attestation. The 32-byte output
     /// is what gets folded into [`CellLifecycle::Archived::checkpoint_hash`].
     pub fn checkpoint_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-cell:archival-attestation v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-cell:archival-attestation v1");
         hasher.update(self.cell_id.as_bytes());
         hasher.update(&self.archive_start_height.to_le_bytes());
         hasher.update(&self.archive_end_height.to_le_bytes());

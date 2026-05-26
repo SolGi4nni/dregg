@@ -6,11 +6,11 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::{AuthRequired, EffectMask};
-use pyana_types::CellId;
+use dregg_cell::{AuthRequired, EffectMask};
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
-use crate::uri::PyanaUri;
+use crate::uri::DreggUri;
 
 /// Errors that can occur when enlivening a sturdy reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,7 +62,7 @@ pub struct SwissEntry {
 /// Swiss number table: maps swiss numbers to capability metadata.
 ///
 /// This is the server-side data structure that a federation node maintains.
-/// When a peer presents a swiss number (from a `pyana://` URI), the node
+/// When a peer presents a swiss number (from a `dregg://` URI), the node
 /// looks it up here to determine whether to grant access.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SwissTable {
@@ -80,7 +80,7 @@ impl SwissTable {
     /// Export a cell as a sturdy reference, generating a new swiss number.
     ///
     /// Returns the generated swiss number. The caller is responsible for
-    /// constructing the full `PyanaUri` by combining this with the federation
+    /// constructing the full `DreggUri` by combining this with the federation
     /// and cell IDs.
     pub fn export(
         &mut self,
@@ -136,13 +136,13 @@ impl SwissTable {
         swiss
     }
 
-    /// Construct a full `PyanaUri` for an exported swiss number.
+    /// Construct a full `DreggUri` for an exported swiss number.
     ///
     /// This is a convenience that combines the swiss number with the federation
     /// and cell IDs to produce the shareable URI.
-    pub fn make_uri(&self, federation_id: [u8; 32], swiss: &[u8; 32]) -> Option<PyanaUri> {
+    pub fn make_uri(&self, federation_id: [u8; 32], swiss: &[u8; 32]) -> Option<DreggUri> {
         let entry = self.entries.get(swiss)?;
-        Some(PyanaUri {
+        Some(DreggUri {
             federation_id,
             cell_id: entry.cell_id.0,
             swiss: *swiss,
@@ -329,8 +329,8 @@ mod tests {
 
         // The URI string should be parseable
         let uri_str = uri.to_uri_string();
-        assert!(uri_str.starts_with("pyana://"));
-        let parsed = PyanaUri::parse(&uri_str).unwrap();
+        assert!(uri_str.starts_with("dregg://"));
+        let parsed = DreggUri::parse(&uri_str).unwrap();
         assert_eq!(parsed, uri);
     }
 

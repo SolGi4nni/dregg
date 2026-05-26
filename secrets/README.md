@@ -9,7 +9,7 @@ can store and retrieve secrets without caring about the underlying backend.
 Secrets (OAuth client credentials, API keys, signing keys) need to be stored
 securely at rest. This crate provides two backends behind a common trait:
 
-- **EncryptedFileStore**: AES-256-GCM encrypted files in `~/.pyana/secrets/`.
+- **EncryptedFileStore**: AES-256-GCM encrypted files in `~/.dregg/secrets/`.
   Portable across all platforms. Files are created with 0600 permissions on Unix.
 - **KeychainStore** (feature `keychain`): Delegates to the OS credential manager
   via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux
@@ -38,13 +38,13 @@ Use `CompositeStore` to try the keychain first and fall back to encrypted files.
 ## Usage
 
 ```rust
-use pyana_secrets::{EncryptedFileStore, SecretId, SecretStore};
+use dregg_secrets::{EncryptedFileStore, SecretId, SecretStore};
 use std::path::PathBuf;
 
 // Create an encrypted file store with a 256-bit master key
 let master_key: [u8; 32] = /* derive or load your master key */;
 let store = EncryptedFileStore::new(
-    PathBuf::from("/home/user/.pyana/secrets"),
+    PathBuf::from("/home/user/.dregg/secrets"),
     master_key,
 )?;
 
@@ -72,7 +72,7 @@ store.delete(&id)?;
 ### Composite Store
 
 ```rust
-use pyana_secrets::{CompositeStore, EncryptedFileStore, KeychainStore};
+use dregg_secrets::{CompositeStore, EncryptedFileStore, KeychainStore};
 
 let composite = CompositeStore::new(vec![
     Box::new(KeychainStore::new()),

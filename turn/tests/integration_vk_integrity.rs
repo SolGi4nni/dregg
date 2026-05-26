@@ -6,10 +6,10 @@
 //! a hash deliberately wrong for the data. The executor must reject
 //! the apply with `InvalidEffect`.
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Permissions, VerificationKey, VerificationKeyIntegrityError,
 };
-use pyana_turn::{
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
 };

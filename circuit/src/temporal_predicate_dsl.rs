@@ -1,14 +1,14 @@
 //! DSL-generated temporal predicate AIR.
 //!
 //! This module replaces the hand-written `temporal_predicate_air.rs` with the
-//! equivalent of the `#[pyana_circuit]` macro-generated implementation. The
-//! macro version (in `pyana-dsl-tests/src/temporal_macro.rs`) passes full STARK
+//! equivalent of the `#[dregg_circuit]` macro-generated implementation. The
+//! macro version (in `dregg-dsl-tests/src/temporal_macro.rs`) passes full STARK
 //! prove/verify and is bit-for-bit equivalent to the manual descriptor in
-//! `pyana-dsl-tests/src/temporal_dsl.rs`.
+//! `dregg-dsl-tests/src/temporal_dsl.rs`.
 //!
-//! Because proc-macro-generated code references `pyana_circuit::*` which cannot
-//! resolve when compiled *within* the `pyana-circuit` crate itself, this file
-//! contains the manually-expanded equivalent of what `#[pyana_circuit]` would
+//! Because proc-macro-generated code references `dregg_circuit::*` which cannot
+//! resolve when compiled *within* the `dregg-circuit` crate itself, this file
+//! contains the manually-expanded equivalent of what `#[dregg_circuit]` would
 //! produce.
 //!
 //! # Migration
@@ -23,7 +23,7 @@ use crate::predicate_air::PredicateType;
 use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DSL-equivalent core AIR (manual expansion of #[pyana_circuit] output)
+// DSL-equivalent core AIR (manual expansion of #[dregg_circuit] output)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Column layout constants for the DSL temporal AIR.
@@ -91,7 +91,7 @@ pub const PI_INITIAL_STATE_ROOT: usize = 2;
 pub const PI_FINAL_STATE_ROOT: usize = 3;
 pub const DSL_PUBLIC_INPUT_COUNT: usize = 4;
 
-/// Column index submodule (mirrors the `mod col` in the `#[pyana_circuit]` definition).
+/// Column index submodule (mirrors the `mod col` in the `#[dregg_circuit]` definition).
 pub mod col {
     pub const VALUE: usize = 0;
     pub const THRESHOLD: usize = 1;
@@ -114,7 +114,7 @@ pub mod col {
 
 /// The DSL-generated temporal predicate AIR struct.
 ///
-/// This is the equivalent of what `#[pyana_circuit] mod temporal_predicate_dsl { ... }`
+/// This is the equivalent of what `#[dregg_circuit] mod temporal_predicate_dsl { ... }`
 /// would produce: a unit struct implementing `StarkAir`.
 pub struct TemporalPredicateDsl;
 
@@ -128,7 +128,7 @@ impl StarkAir for TemporalPredicateDsl {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-temporal_predicate_dsl-v1"
+        "dregg-temporal_predicate_dsl-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -418,7 +418,7 @@ impl StarkAir for TemporalPredicateAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-temporal_predicate_dsl-v1"
+        "dregg-temporal_predicate_dsl-v1"
     }
 
     fn eval_constraints(
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(circuit.width(), DSL_TRACE_WIDTH);
         assert_eq!(DSL_TRACE_WIDTH, 38);
         assert_eq!(circuit.constraint_degree(), 2);
-        assert_eq!(circuit.air_name(), "pyana-temporal_predicate_dsl-v1");
+        assert_eq!(circuit.air_name(), "dregg-temporal_predicate_dsl-v1");
     }
 
     #[test]

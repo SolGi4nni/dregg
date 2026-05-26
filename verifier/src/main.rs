@@ -1,10 +1,10 @@
-//! `pyana-verifier`: Standalone Effect VM proof verifier.
+//! `dregg-verifier`: Standalone Effect VM proof verifier.
 //!
 //! # Usage
 //!
 //! ## CLI mode
 //! ```text
-//! pyana-verifier \
+//! dregg-verifier \
 //!   --proof /path/to/proof.bin \
 //!   --pi /path/to/pi.json \
 //!   --vk-hash 8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a
@@ -12,7 +12,7 @@
 //!
 //! ## stdin (JSON) mode
 //! ```text
-//! echo '{"proof_hex":"...","public_inputs":[...],"vk_hash":"auto"}' | pyana-verifier
+//! echo '{"proof_hex":"...","public_inputs":[...],"vk_hash":"auto"}' | dregg-verifier
 //! ```
 //!
 //! ## Exit codes
@@ -21,11 +21,11 @@
 //! - 2 — error (bad inputs, unknown VK, deserialisation failure)
 //!
 //! # Isolation guarantee
-//! This binary imports ONLY `pyana-circuit` and `pyana-types`. It carries no
+//! This binary imports ONLY `dregg-circuit` and `dregg-types`. It carries no
 //! prover state, no ledger, no executor, no program registry. The only
 //! dependencies on shared context are the bytes it reads from disk / stdin.
 
-use pyana_verifier::{
+use dregg_verifier::{
     CommitteeDescriptor, JsonRequest, ReplayEntry, VerifierOutput, exit_code,
     parse_public_inputs_json, replay_chain, replay_chain_recursive, verify_aggregated_bundle_json,
     verify_bilateral_bundle_json, verify_cross_fed_bundle, verify_effect_vm_proof,
@@ -70,8 +70,8 @@ fn main() {
         match parse_cli(&args[1..]) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Usage: pyana-verifier --proof <file> --pi <file> --vk-hash <hex>");
-                eprintln!("       pyana-verifier  (reads JSON from stdin)");
+                eprintln!("Usage: dregg-verifier --proof <file> --pi <file> --vk-hash <hex>");
+                eprintln!("       dregg-verifier  (reads JSON from stdin)");
                 eprintln!("Error: {}", e);
                 process::exit(exit_code::ERROR);
             }
@@ -149,10 +149,10 @@ fn read_json_stdin() -> Result<(Vec<u8>, Vec<u32>, String), String> {
 // replay-chain subcommand
 // ---------------------------------------------------------------------------
 
-/// `pyana-verifier replay-chain <path-to-chain.json>`
+/// `dregg-verifier replay-chain <path-to-chain.json>`
 ///
 /// Reads a JSON array of `WitnessedReceipt` entries (the on-disk shape
-/// produced by `pyana_turn::WitnessedReceipt::chain_to_json`), runs the
+/// produced by `dregg_turn::WitnessedReceipt::chain_to_json`), runs the
 /// v1 replay loop (proof verify + trace re-check + witness_hash binding),
 /// and prints a JSON verdict object. Exit code matches the chain-level
 /// verdict (0 = all verified, 1 = at least one rejection, 2 = read/parse error).
@@ -160,7 +160,7 @@ fn run_replay_chain(args: &[String]) -> ! {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("Usage: pyana-verifier replay-chain <path-to-chain.json>");
+            eprintln!("Usage: dregg-verifier replay-chain <path-to-chain.json>");
             process::exit(exit_code::ERROR);
         }
     };
@@ -199,9 +199,9 @@ fn run_replay_chain(args: &[String]) -> ! {
 // verify-cross-fed-bundle subcommand
 // ---------------------------------------------------------------------------
 
-/// `pyana-verifier verify-cross-fed-bundle --bundle <path> --known-issuer <path> --known-recipient <path>`
+/// `dregg-verifier verify-cross-fed-bundle --bundle <path> --known-issuer <path> --known-recipient <path>`
 ///
-/// Reads a JSON-encoded `pyana_federation::CrossFedReceiptBundle` and two
+/// Reads a JSON-encoded `dregg_federation::CrossFedReceiptBundle` and two
 /// committee descriptors (issuing + receiving federation), runs the 8-step
 /// cross-federation verification from `SILVER-VISION-E2E-VERIFICATION.md`
 /// §1 Step 6, and prints a `CrossFedVerdict` JSON to stdout. Exit code
@@ -229,7 +229,7 @@ fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
             other => {
                 eprintln!("unknown flag: {other}");
                 eprintln!(
-                    "Usage: pyana-verifier verify-cross-fed-bundle --bundle <path> \
+                    "Usage: dregg-verifier verify-cross-fed-bundle --bundle <path> \
                      --known-issuer <path> --known-recipient <path>"
                 );
                 process::exit(exit_code::ERROR);
@@ -266,7 +266,7 @@ fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
             process::exit(exit_code::ERROR);
         }
     };
-    let bundle: pyana_federation::CrossFedReceiptBundle = match serde_json::from_str(&bundle_text) {
+    let bundle: dregg_federation::CrossFedReceiptBundle = match serde_json::from_str(&bundle_text) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("cannot parse bundle JSON ({bundle_path}): {e}");
@@ -310,10 +310,10 @@ fn run_verify_cross_fed_bundle(args: &[String]) -> ! {
 // bilateral-pair subcommand (Stage 7-γ.2 Phase 1)
 // ---------------------------------------------------------------------------
 
-/// `pyana-verifier bilateral-pair <bundle.json>`
+/// `dregg-verifier bilateral-pair <bundle.json>`
 ///
 /// Reads a JSON-encoded `BilateralBundle` (the on-disk shape produced by
-/// `pyana_verifier::BilateralBundle`), runs the off-AIR bilateral
+/// `dregg_verifier::BilateralBundle`), runs the off-AIR bilateral
 /// cross-cell consistency check from `STAGE-7-GAMMA-2-PI-DESIGN.md` §4,
 /// and prints a `BilateralVerdict` JSON to stdout.
 ///
@@ -333,7 +333,7 @@ fn run_bilateral_pair(args: &[String]) -> ! {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("Usage: pyana-verifier bilateral-pair <bundle.json>");
+            eprintln!("Usage: dregg-verifier bilateral-pair <bundle.json>");
             process::exit(exit_code::ERROR);
         }
     };
@@ -362,8 +362,8 @@ fn run_bilateral_pair(args: &[String]) -> ! {
 // scope-recursive subcommand (Golden Vision Block 3)
 // ---------------------------------------------------------------------------
 
-/// `pyana-verifier scope-recursive <path-to-chain.json>` or
-/// `pyana-verifier scope-recursive <path-to-wr.json>` (single entry)
+/// `dregg-verifier scope-recursive <path-to-chain.json>` or
+/// `dregg-verifier scope-recursive <path-to-wr.json>` (single entry)
 ///
 /// Reads either a JSON array of `WitnessedReceipt`s or a single object,
 /// runs the **Golden Vision** scope-2 replay loop (verify the recursive
@@ -383,7 +383,7 @@ fn run_scope_recursive(args: &[String]) -> ! {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("Usage: pyana-verifier scope-recursive <path-to-chain.json>");
+            eprintln!("Usage: dregg-verifier scope-recursive <path-to-chain.json>");
             process::exit(exit_code::ERROR);
         }
     };
@@ -429,16 +429,16 @@ fn run_scope_recursive(args: &[String]) -> ! {
 // aggregated-bundle subcommand (Stage 7-γ.2 Phase 2)
 // ---------------------------------------------------------------------------
 
-/// `pyana-verifier aggregated-bundle <bundle.json>`
+/// `dregg-verifier aggregated-bundle <bundle.json>`
 ///
-/// Reads a JSON-encoded `pyana_turn::AggregatedBundle` and runs the Phase-2
+/// Reads a JSON-encoded `dregg_turn::AggregatedBundle` and runs the Phase-2
 /// joint aggregation verifier (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`).
 /// Exit code: 0 = verified, 1 = rejected, 2 = read / parse error.
 fn run_aggregated_bundle(args: &[String]) -> ! {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("Usage: pyana-verifier aggregated-bundle <bundle.json>");
+            eprintln!("Usage: dregg-verifier aggregated-bundle <bundle.json>");
             process::exit(exit_code::ERROR);
         }
     };

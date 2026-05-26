@@ -64,7 +64,7 @@ impl PreflightReport {
 
 impl fmt::Display for PreflightReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "\n=== PYANA PREFLIGHT v1 ===")?;
+        writeln!(f, "\n=== DREGG PREFLIGHT v1 ===")?;
 
         for subsystem in &self.subsystems {
             let icon = if subsystem.all_passed() {

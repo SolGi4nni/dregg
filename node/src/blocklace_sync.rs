@@ -2,7 +2,7 @@
 //!
 //! Implements the live BFT consensus using the blocklace DAG structure from the
 //! Cordial Miners paper (this superseded an earlier propose/vote/finalize BFT
-//! simulation in `pyana_federation::node`). The blocklace provides:
+//! simulation in `dregg_federation::node`). The blocklace provides:
 //! - Quiescent operation (no messages when idle)
 //! - Efficient cordial dissemination (send peers blocks you think they need)
 //! - Leaderless total ordering via the tau function
@@ -20,19 +20,19 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pyana_blocklace::constitution::{
+use dregg_blocklace::constitution::{
     Constitution, ConstitutionManager, LeaveReason, MembershipProposal, MembershipVote,
 };
-use pyana_blocklace::dissemination::MAX_BLOCKS_PER_PUSH;
-use pyana_blocklace::finality::{
+use dregg_blocklace::dissemination::MAX_BLOCKS_PER_PUSH;
+use dregg_blocklace::finality::{
     Block, BlockError, BlockId, Blocklace, FinalityLevel, MembershipAction, Payload,
 };
-use pyana_blocklace::ordering::tau;
-use pyana_blocklace::pyana_bridge::PyanaBlocklaceBridge;
-use pyana_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
-use pyana_net::message::PeerMessage;
-use pyana_net::node::{NodeId, PeerNode, PeerNodeConfig};
-use pyana_persist::BlocklaceMeta;
+use dregg_blocklace::ordering::tau;
+use dregg_blocklace::dregg_bridge::DreggBlocklaceBridge;
+use dregg_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
+use dregg_net::message::PeerMessage;
+use dregg_net::node::{NodeId, PeerNode, PeerNodeConfig};
+use dregg_persist::BlocklaceMeta;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -41,7 +41,7 @@ use crate::state::{NodeEvent, NodeState};
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /// Gossip topic for blocklace dissemination messages.
-pub const TOPIC_BLOCKLACE: &str = "pyana/blocklace";
+pub const TOPIC_BLOCKLACE: &str = "dregg/blocklace";
 
 /// Default for blocklace checkpoint production interval (finalized blocks).
 /// Overridable via --blocklace-checkpoint-interval for devnet vs. production tuning.
@@ -97,7 +97,7 @@ pub struct BlocklaceHandle {
     /// The local blocklace (with signing key, equivocation detection, finality).
     pub lace: Arc<RwLock<Blocklace>>,
     /// The bridge for classifying turns and producing receipts.
-    pub bridge: Arc<Mutex<PyanaBlocklaceBridge>>,
+    pub bridge: Arc<Mutex<DreggBlocklaceBridge>>,
     /// Constitution manager tracking participants and membership amendments.
     pub constitution: Arc<RwLock<ConstitutionManager>>,
     /// The gossip network for broadcasting messages.
@@ -131,7 +131,7 @@ pub struct BlocklaceHandle {
 /// membership votes (constitution amendments), and other payload types.
 #[derive(Clone, Debug)]
 pub enum FinalizedBlock {
-    /// A pyana turn ready for ledger execution.
+    /// A dregg turn ready for ledger execution.
     Turn { block_id: BlockId, data: Vec<u8> },
     /// A membership vote/proposal ready for constitution processing.
     Membership {
@@ -382,7 +382,7 @@ impl BlocklaceHandle {
     }
 }
 
-/// Build a `pyana_blocklace::Blocklace` (the ordering-compatible type) from
+/// Build a `dregg_blocklace::Blocklace` (the ordering-compatible type) from
 /// the finality-layer blocklace. The ordering module's `tau()` function
 /// operates on the simpler `Blocklace` from `lib.rs`.
 ///
@@ -391,14 +391,14 @@ impl BlocklaceHandle {
 fn build_ordering_blocklace(
     finality_lace: &Blocklace,
 ) -> (
-    pyana_blocklace::Blocklace,
-    HashMap<pyana_blocklace::BlockId, BlockId>,
+    dregg_blocklace::Blocklace,
+    HashMap<dregg_blocklace::BlockId, BlockId>,
 ) {
-    let mut ordering_lace = pyana_blocklace::Blocklace::new();
+    let mut ordering_lace = dregg_blocklace::Blocklace::new();
     // Mapping from finality block ID -> ordering block ID (for predecessor translation)
-    let mut finality_to_ordering: HashMap<BlockId, pyana_blocklace::BlockId> = HashMap::new();
+    let mut finality_to_ordering: HashMap<BlockId, dregg_blocklace::BlockId> = HashMap::new();
     // Reverse mapping: ordering block ID -> finality block ID (for result translation)
-    let mut ordering_to_finality: HashMap<pyana_blocklace::BlockId, BlockId> = HashMap::new();
+    let mut ordering_to_finality: HashMap<dregg_blocklace::BlockId, BlockId> = HashMap::new();
 
     // Insert blocks in topological order (by sequence, then by creator for ties).
     let mut blocks: Vec<(&BlockId, &Block)> = finality_lace.iter().collect();
@@ -406,7 +406,7 @@ fn build_ordering_blocklace(
 
     for (finality_id, block) in blocks {
         // Translate predecessors from finality IDs to ordering IDs.
-        let predecessors: Vec<pyana_blocklace::BlockId> = block
+        let predecessors: Vec<dregg_blocklace::BlockId> = block
             .predecessors
             .iter()
             .filter_map(|p| finality_to_ordering.get(p).copied())
@@ -424,7 +424,7 @@ fn build_ordering_blocklace(
             Payload::Data(data) => data.clone(),
         };
         let ordering_block =
-            pyana_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
+            dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
         let ordering_id = ordering_block.id();
         let _ = ordering_lace.insert(ordering_block);
 
@@ -531,7 +531,7 @@ pub async fn run_blocklace_sync(
             }
         }
     };
-    let bridge = PyanaBlocklaceBridge::new(cod_budget);
+    let bridge = DreggBlocklaceBridge::new(cod_budget);
 
     // Create the PeerNode (QUIC endpoint) for gossip.
     let bind_addr_str = format!("0.0.0.0:{gossip_port}");
@@ -552,7 +552,7 @@ pub async fn run_blocklace_sync(
     let endpoint = peer_node.endpoint().clone();
 
     info!(
-        node_id = %pyana_net::node::fmt_node_id(&node_id),
+        node_id = %dregg_net::node::fmt_node_id(&node_id),
         local_addr = %peer_node.local_addr(),
         "blocklace PeerNode ready"
     );
@@ -560,7 +560,7 @@ pub async fn run_blocklace_sync(
     // Build the signing key registry from known federation keys.
     let peer_keys_map = {
         let s = state.read().await;
-        let mut peer_keys: std::collections::HashMap<NodeId, pyana_types::PublicKey> =
+        let mut peer_keys: std::collections::HashMap<NodeId, dregg_types::PublicKey> =
             std::collections::HashMap::new();
         for fed_key in &s.known_federation_keys {
             let peer_node_id = *blake3::hash(fed_key.as_bytes()).as_bytes();
@@ -1176,11 +1176,11 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
 /// and is ready for deterministic execution.
 ///
 /// On successful commit this function ALSO:
-/// 1. Produces a [`pyana_federation::FederationReceipt`] (audit F7) signed by
+/// 1. Produces a [`dregg_federation::FederationReceipt`] (audit F7) signed by
 ///    the local cipherclerk (Ed25519 vote-signature flavor; the BLS aggregate path
 ///    requires a multi-node ceremony we don't run inline). The receipt is
 ///    emitted via [`crate::state::NodeEvent::FederationReceipt`].
-/// 2. Writes a fresh [`pyana_types::AttestedRoot`] anchored to the blocklace
+/// 2. Writes a fresh [`dregg_types::AttestedRoot`] anchored to the blocklace
 ///    `block_id` + finality round (audit F3 / gap D), so the executor on the
 ///    next turn no longer sees `block_height = 0`.
 async fn execute_finalized_turn(
@@ -1190,7 +1190,7 @@ async fn execute_finalized_turn(
     turn_data: &[u8],
 ) {
     // Deserialize the signed turn.
-    let signed_turn: pyana_sdk::SignedTurn = match postcard::from_bytes(turn_data) {
+    let signed_turn: dregg_sdk::SignedTurn = match postcard::from_bytes(turn_data) {
         Ok(st) => st,
         Err(e) => {
             warn!(
@@ -1226,7 +1226,7 @@ async fn execute_finalized_turn(
 
     // Execute the turn against the local ledger.
     let mut s = state.write().await;
-    let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
     // Configure the executor with the canonical federation_id (audit F1).
     // Falls back to discovery-mode (cipherclerk-hash) only if no committee has
@@ -1259,7 +1259,7 @@ async fn execute_finalized_turn(
     let exec_result = executor.execute(&signed_turn.turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash_hex: String = receipt
                 .turn_hash
                 .iter()
@@ -1269,13 +1269,13 @@ async fn execute_finalized_turn(
             // Resolve any pending turns waiting on this receipt.
             s.pending_turns.resolve(
                 computed_hash,
-                pyana_turn::ResolutionOutcome::Resolved(receipt.clone()),
+                dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
             );
 
             // Process note commitments from NoteCreate effects.
             for tree in &signed_turn.turn.call_forest.roots {
                 for effect in &tree.action.effects {
-                    if let pyana_turn::Effect::NoteCreate { commitment, .. } = effect {
+                    if let dregg_turn::Effect::NoteCreate { commitment, .. } = effect {
                         s.note_tree_append_commitment(&commitment.0);
                         let _ = s.store.store_note_commitment(commitment);
                     }
@@ -1319,12 +1319,12 @@ async fn execute_finalized_turn(
             // turn would produce a different `receipt_stream_root`, making
             // the "WitnessedReceipt chain IS the persistence layer" property
             // enforceable at signature-check time.
-            let receipt_stream_root = Some(pyana_types::merkle_root_of_receipt_hashes(&[
+            let receipt_stream_root = Some(dregg_types::merkle_root_of_receipt_hashes(&[
                 receipt.receipt_hash()
             ]));
 
             // Build the attested root struct, then sign its canonical message.
-            let mut attested = pyana_types::AttestedRoot {
+            let mut attested = dregg_types::AttestedRoot {
                 merkle_root,
                 note_tree_root,
                 nullifier_set_root: None,
@@ -1335,13 +1335,13 @@ async fn execute_finalized_turn(
                 quorum_signatures: Vec::new(),
                 threshold_qc: None,
                 threshold: federation_threshold,
-                federation_id: pyana_types::FederationId(s.federation_id),
+                federation_id: dregg_types::FederationId(s.federation_id),
                 receipt_stream_root,
             };
             let signing_msg = attested.signing_message();
             let local_pk = s.cclerk.public_key().clone();
-            let signing_key = pyana_types::SigningKey::from_bytes(&signing_key_bytes);
-            let sig = pyana_types::sign(&signing_key, &signing_msg);
+            let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
+            let sig = dregg_types::sign(&signing_key, &signing_msg);
             // In solo / single-validator mode our signature alone meets the
             // threshold (threshold defaults to 1 if the genesis-declared
             // value is zero). In full mode this is one signature; peer
@@ -1352,7 +1352,7 @@ async fn execute_finalized_turn(
 
             // Persist the attested root so the next turn's executor sees
             // its height (closes audit gap D — was never written).
-            let stored = pyana_persist::StoredAttestedRoot {
+            let stored = dregg_persist::StoredAttestedRoot {
                 merkle_root: attested.merkle_root,
                 note_tree_root: attested.note_tree_root,
                 nullifier_set_root: attested.nullifier_set_root,
@@ -1379,7 +1379,7 @@ async fn execute_finalized_turn(
 
             if let Some(fed_receipt) = fed_receipt_opt {
                 tracing::debug!(
-                    federation_id = %pyana_types::hex_encode(&fed_receipt.federation_id),
+                    federation_id = %dregg_types::hex_encode(&fed_receipt.federation_id),
                     height = fed_receipt.body.block_height,
                     "federation receipt produced",
                 );
@@ -1393,7 +1393,7 @@ async fn execute_finalized_turn(
                 "finalized turn executed (blocklace consensus)"
             );
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             warn!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
@@ -1401,14 +1401,14 @@ async fn execute_finalized_turn(
                 "finalized turn rejected"
             );
         }
-        pyana_turn::TurnResult::Expired => {
+        dregg_turn::TurnResult::Expired => {
             warn!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
                 "finalized turn expired"
             );
         }
-        pyana_turn::TurnResult::Pending => {
+        dregg_turn::TurnResult::Pending => {
             debug!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
@@ -1536,7 +1536,7 @@ async fn maybe_produce_checkpoint(state: &NodeState, handle: &BlocklaceHandle) {
     // Snapshot the ledger state (cell contents).
     let ledger_data = {
         let s = state.read().await;
-        let cells: Vec<(&pyana_cell::CellId, &pyana_cell::Cell)> = s.ledger.iter().collect();
+        let cells: Vec<(&dregg_cell::CellId, &dregg_cell::Cell)> = s.ledger.iter().collect();
         match postcard::to_stdvec(&cells) {
             Ok(data) => data,
             Err(e) => {
@@ -1649,7 +1649,7 @@ pub struct BlocklaceCheckpointQuery {
 }
 
 pub fn load_blocklace_checkpoint(
-    store: &pyana_persist::PersistentStore,
+    store: &dregg_persist::PersistentStore,
     height: u64,
 ) -> Option<BlocklaceCheckpointResponse> {
     let checkpoint_key = format!("blocklace_checkpoint_{}", height);
@@ -1676,7 +1676,7 @@ pub fn load_blocklace_checkpoint(
     })
 }
 
-pub fn latest_blocklace_checkpoint_height(store: &pyana_persist::PersistentStore) -> u64 {
+pub fn latest_blocklace_checkpoint_height(store: &dregg_persist::PersistentStore) -> u64 {
     store
         .get_config("blocklace_checkpoint_latest_height")
         .ok()
@@ -1697,10 +1697,10 @@ pub async fn bootstrap_from_checkpoint(
     self_key: ed25519_dalek::SigningKey,
     quorum_threshold: usize,
 ) -> Option<(
-    pyana_blocklace::finality::Blocklace,
-    Vec<(pyana_cell::CellId, pyana_cell::Cell)>,
+    dregg_blocklace::finality::Blocklace,
+    Vec<(dregg_cell::CellId, dregg_cell::Cell)>,
 )> {
-    use pyana_blocklace::finality::CheckpointData;
+    use dregg_blocklace::finality::CheckpointData;
 
     info!(peer = %peer_url, "attempting checkpoint-based bootstrap");
 
@@ -1726,7 +1726,7 @@ pub async fn bootstrap_from_checkpoint(
         }
     };
 
-    let blocklace = match pyana_blocklace::finality::Blocklace::from_checkpoint(
+    let blocklace = match dregg_blocklace::finality::Blocklace::from_checkpoint(
         &checkpoint_data,
         self_key,
         quorum_threshold,
@@ -1748,7 +1748,7 @@ pub async fn bootstrap_from_checkpoint(
         return None;
     }
 
-    let cells: Vec<(pyana_cell::CellId, pyana_cell::Cell)> =
+    let cells: Vec<(dregg_cell::CellId, dregg_cell::Cell)> =
         match postcard::from_bytes(&ledger_bytes) {
             Ok(cells) => cells,
             Err(e) => {
@@ -2063,7 +2063,7 @@ async fn advance_constitution_wave(handle: &BlocklaceHandle) {
 
 // ─── Federation Receipt + Attested Root Helpers ─────────────────────────────
 
-/// Build a [`pyana_federation::FederationReceipt`] for a committed turn.
+/// Build a [`dregg_federation::FederationReceipt`] for a committed turn.
 ///
 /// Closes audit finding F7 (`AUDIT-federation.md`): the production path now
 /// emits a federation-shaped receipt after every successful turn execution,
@@ -2080,13 +2080,13 @@ async fn advance_constitution_wave(handle: &BlocklaceHandle) {
 /// for the per-turn vote-collection scaffold).
 fn build_federation_receipt(
     state_guard: &crate::state::NodeStateInner,
-    turn: &pyana_turn::Turn,
-    receipt: &pyana_turn::TurnReceipt,
+    turn: &dregg_turn::Turn,
+    receipt: &dregg_turn::TurnReceipt,
     block_height: u64,
     block_id: BlockId,
-) -> Option<pyana_federation::FederationReceipt> {
-    use pyana_federation::FederationReceiptBody;
-    use pyana_federation::receipt::FederationReceipt;
+) -> Option<dregg_federation::FederationReceipt> {
+    use dregg_federation::FederationReceiptBody;
+    use dregg_federation::receipt::FederationReceipt;
 
     // Federation id MUST come from state (audit F1). In discovery mode we
     // skip producing a federation receipt — there is no committee to attest.
@@ -2111,8 +2111,8 @@ fn build_federation_receipt(
 
     let body_hash = body.body_hash();
     let signing_key_bytes = state_guard.cclerk.gossip_signing_key().to_bytes();
-    let signing_key = pyana_types::SigningKey::from_bytes(&signing_key_bytes);
-    let sig = pyana_types::sign(&signing_key, &body_hash);
+    let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
+    let sig = dregg_types::sign(&signing_key, &body_hash);
     let local_pk = state_guard.cclerk.public_key().clone();
 
     Some(FederationReceipt::with_vote_signatures(
@@ -2127,9 +2127,9 @@ fn build_federation_receipt(
 ///
 /// Folds each cell's id + state-hash into a domain-separated BLAKE3 hash,
 /// sorted lexicographically by cell id for determinism. This is the
-/// `merkle_root` field carried in [`pyana_types::AttestedRoot`].
-fn canonical_ledger_root(ledger: &pyana_cell::Ledger) -> [u8; 32] {
-    let mut entries: Vec<(pyana_types::CellId, [u8; 32])> = ledger
+/// `merkle_root` field carried in [`dregg_types::AttestedRoot`].
+fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
+    let mut entries: Vec<(dregg_types::CellId, [u8; 32])> = ledger
         .iter()
         .map(|(id, cell)| {
             // Hash the cell's state via postcard serialization. Postcard is
@@ -2141,7 +2141,7 @@ fn canonical_ledger_root(ledger: &pyana_cell::Ledger) -> [u8; 32] {
         })
         .collect();
     entries.sort_by(|a, b| a.0.0.cmp(&b.0.0));
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-ledger-root-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v1");
     hasher.update(&(entries.len() as u64).to_le_bytes());
     for (id, h) in &entries {
         hasher.update(id.as_bytes());

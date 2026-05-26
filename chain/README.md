@@ -1,13 +1,13 @@
-# pyana-chain
+# dregg-chain
 
-EVM settlement layer for pyana. Wraps pyana STARK proofs in SP1/Groth16 for
+EVM settlement layer for dregg. Wraps dregg STARK proofs in SP1/Groth16 for
 on-chain verification at ~200K gas on Base (or any EVM chain with an SP1 verifier
 gateway deployment).
 
 ## Architecture
 
 ```
-pyana STARK proof (BabyBear field, FRI-based, large)
+dregg STARK proof (BabyBear field, FRI-based, large)
        |
        v
 SP1 Guest Program (full STARK verifier running inside RISC-V zkVM)
@@ -67,7 +67,7 @@ cd chain/program && cargo prove build
 ## API
 
 ```rust
-use pyana_chain::{wrap_for_evm, verify_on_chain, EvmProof};
+use dregg_chain::{wrap_for_evm, verify_on_chain, EvmProof};
 
 // Wrap a STARK proof for EVM verification
 let evm_proof = wrap_for_evm(&stark_proof_bytes, &public_inputs).await?;
@@ -78,7 +78,7 @@ let valid = verify_on_chain(&evm_proof, rpc_url, verifier_address).await?;
 
 ## Workspace Isolation
 
-This crate lives in its own Cargo workspace (separate from the main pyana
+This crate lives in its own Cargo workspace (separate from the main dregg
 workspace) because SP1's dependency tree pins `generic-array = 1.1.0`, which
 conflicts with `nova-snark`'s requirement of `generic-array >= 1.2.0` in the
 main workspace.

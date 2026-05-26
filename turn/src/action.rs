@@ -4,14 +4,14 @@
 //! Each action targets a cell, specifies a method, carries authorization, declares
 //! preconditions, and produces effects.
 
-use pyana_cell::lifecycle::{ArchivalAttestation, DeathCertificate};
-use pyana_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
-use pyana_cell::permissions::AuthRequired;
-use pyana_cell::predicate::WitnessedPredicate;
-use pyana_cell::state::FieldElement;
-use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
+use dregg_cell::lifecycle::{ArchivalAttestation, DeathCertificate};
+use dregg_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
+use dregg_cell::permissions::AuthRequired;
+use dregg_cell::predicate::WitnessedPredicate;
+use dregg_cell::state::FieldElement;
+use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
 #[allow(unused_imports)]
-use pyana_cell::{ValueCommitment, ValueCommitmentBytes};
+use dregg_cell::{ValueCommitment, ValueCommitmentBytes};
 use serde::{Deserialize, Serialize};
 
 use crate::conditional::{ConditionProof, ProofCondition};
@@ -85,7 +85,7 @@ pub struct Action {
     ///
     /// Each blob is an opaque bytestring identified by its index in this vec.
     /// `WitnessedPredicate` clauses (in [`Preconditions::witnessed`] or in
-    /// [`pyana_cell::StateConstraint::Witnessed`]) reference a blob by index
+    /// [`dregg_cell::StateConstraint::Witnessed`]) reference a blob by index
     /// via `WitnessedPredicate::proof_witness_index`. Variant-specific
     /// witnesses (Merkle paths for `SenderAuthorized`, preimage bytes for
     /// `PreimageGate`, per-(cell,sender) epoch counters for `RateLimit`,
@@ -243,7 +243,7 @@ pub enum Authorization {
     /// effect in the action.
     CapTpDelivered {
         /// The introducer-signed handoff certificate that authorized this delivery.
-        handoff_cert: pyana_captp::HandoffCertificate,
+        handoff_cert: dregg_captp::HandoffCertificate,
         /// The introducer's public key (used to verify `handoff_cert.introducer_signature`).
         /// Must derive from `handoff_cert.introducer` (the federation id) — the executor
         /// rejects the variant if they disagree.
@@ -259,7 +259,7 @@ pub enum Authorization {
     /// at THIS nonce position (per `AUTHORIZATION-CUSTOM-DESIGN.md`).
     ///
     /// The predicate's `input_ref` SHOULD be
-    /// [`InputRef::SigningMessage`](pyana_cell::InputRef::SigningMessage),
+    /// [`InputRef::SigningMessage`](dregg_cell::InputRef::SigningMessage),
     /// which the executor binds to the bytes
     /// `compute_partial_signing_message(action, position, federation_id,
     /// turn_nonce)` produces. The same federation/nonce binding the
@@ -358,7 +358,7 @@ pub struct BearerCapProof {
     /// Enforces E-language facet attenuation: a delegated bearer can only restrict,
     /// never amplify, the delegator's facet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_effects: Option<pyana_cell::EffectMask>,
+    pub allowed_effects: Option<dregg_cell::EffectMask>,
 }
 
 /// How the delegation chain is proven for a bearer capability.
@@ -387,10 +387,10 @@ pub enum DelegationProofData {
 impl Authorization {
     /// Map this authorization to the corresponding AuthKind for permission checking.
     /// Returns None for Authorization::Unchecked, Breadstuff, and Bearer (handled separately).
-    pub fn to_auth_kind(&self) -> Option<pyana_cell::AuthKind> {
+    pub fn to_auth_kind(&self) -> Option<dregg_cell::AuthKind> {
         match self {
-            Authorization::Signature(_, _) => Some(pyana_cell::AuthKind::Signature),
-            Authorization::Proof { .. } => Some(pyana_cell::AuthKind::Proof),
+            Authorization::Signature(_, _) => Some(dregg_cell::AuthKind::Signature),
+            Authorization::Proof { .. } => Some(dregg_cell::AuthKind::Proof),
             Authorization::Breadstuff(_) => None,
             Authorization::Bearer(_) => None,
             Authorization::Unchecked => None,
@@ -419,7 +419,7 @@ impl Authorization {
     /// Canonical signing message for `Authorization::CapTpDelivered`.
     ///
     /// Binds the sender's signature to:
-    /// - domain separator (`b"pyana-captp-delivered-v1"`),
+    /// - domain separator (`b"dregg-captp-delivered-v1"`),
     /// - the handoff certificate's nonce (cert-binding — same delegation),
     /// - the agent CellId (who runs the turn at the receiving federation),
     /// - the target CellId (which cell the action mutates),
@@ -431,13 +431,13 @@ impl Authorization {
     /// claim to a different turn.
     pub fn captp_delivered_signing_message(
         cert_nonce: &[u8; 32],
-        agent: &pyana_cell::CellId,
-        target: &pyana_cell::CellId,
+        agent: &dregg_cell::CellId,
+        target: &dregg_cell::CellId,
         turn_nonce: u64,
         effects: &[Effect],
     ) -> Vec<u8> {
         let mut msg = Vec::with_capacity(128);
-        msg.extend_from_slice(b"pyana-captp-delivered-v1");
+        msg.extend_from_slice(b"dregg-captp-delivered-v1");
         msg.extend_from_slice(cert_nonce);
         msg.extend_from_slice(&agent.0);
         msg.extend_from_slice(&target.0);
@@ -474,7 +474,7 @@ pub enum DelegationMode {
 
 /// Linearity discipline of an [`Effect`] family.
 ///
-/// Per `HOUYHNHNM-COMPARISON.md` §4.3, §8.2: pyana already enforces
+/// Per `HOUYHNHNM-COMPARISON.md` §4.3, §8.2: dregg already enforces
 /// conservation per effect family — `Transfer` conserves balances,
 /// `Mint`/`Burn` is the asymmetric pair, capability grant/revoke is the
 /// cap pair, the bilateral schedule (γ.2) is almost a linear-logic
@@ -522,7 +522,7 @@ pub enum LinearityClass {
     Monotonic,
     /// One-way structural transition with no inverse (revoke, destroy,
     /// drop, archive). The cell-lifecycle state machine
-    /// (`pyana_cell::lifecycle::CellLifecycle::is_terminal`) is the
+    /// (`dregg_cell::lifecycle::CellLifecycle::is_terminal`) is the
     /// canonical example.
     Terminal,
     /// Creates a resource ex nihilo (Mint without a paired Burn,
@@ -613,14 +613,14 @@ pub enum Effect {
     /// subsequent effects within the same action.
     SetPermissions {
         cell: CellId,
-        new_permissions: pyana_cell::Permissions,
+        new_permissions: dregg_cell::Permissions,
     },
     /// Update the verification key on a cell.
     ///
     /// SECURITY: Like SetPermissions, this is applied LAST within an action.
     SetVerificationKey {
         cell: CellId,
-        new_vk: Option<pyana_cell::VerificationKey>,
+        new_vk: Option<dregg_cell::VerificationKey>,
     },
     /// Spend (consume) a note by revealing its nullifier.
     /// The proof must demonstrate: the nullifier corresponds to a valid note
@@ -759,7 +759,7 @@ pub enum Effect {
         introducer: CellId,
         recipient: CellId,
         target: CellId,
-        permissions: pyana_cell::AuthRequired,
+        permissions: dregg_cell::AuthRequired,
     },
     PipelinedSend {
         /// The eventual target — resolved during pipeline execution.
@@ -914,7 +914,7 @@ pub enum Effect {
         /// Token domain for the new cell.
         token_id: [u8; 32],
         /// Creation parameters (validated against factory descriptor).
-        params: pyana_cell::factory::FactoryCreationParams,
+        params: dregg_cell::factory::FactoryCreationParams,
     },
 
     // ─── Queue Operations ─────────────────────────────────────────────────────
@@ -1009,7 +1009,7 @@ pub enum Effect {
         /// apply time. A forged value diverges from the entry the
         /// federation mirror records → subsequent `EnlivenRef` against
         /// this swiss number surfaces a mismatch.
-        permissions: pyana_cell::permissions::AuthRequired,
+        permissions: dregg_cell::permissions::AuthRequired,
     },
     /// Enliven a sturdy ref: validate a presented swiss number against the
     /// committed swiss-table state and grant a routing entry to `bearer`.
@@ -1043,7 +1043,7 @@ pub enum Effect {
         /// AIR's `ENLIVEN_PERMISSIONS` PARAM via the leaf's inner
         /// hash. The apply site cross-checks this against the
         /// federation's swiss-table mirror entry for `swiss_number`.
-        expected_permissions: pyana_cell::permissions::AuthRequired,
+        expected_permissions: dregg_cell::permissions::AuthRequired,
     },
     /// Drop a remote reference / GC decrement (CapTP). The executor verifies
     /// the refcount is > 0 and decrements it (state.fields[5]).
@@ -1103,7 +1103,7 @@ pub enum Effect {
         /// multiple `Refusal` effects.
         cell: CellId,
         /// 32-byte commitment to the (action, offerer, window) tuple
-        /// the prover is refusing. Typically `blake3("pyana-offered-
+        /// the prover is refusing. Typically `blake3("dregg-offered-
         /// action-v1" || offerer || action_bytes || window_start ||
         /// window_end)`. The verifier of the carried non-action
         /// witness checks the witness binds to this commitment.
@@ -1214,7 +1214,7 @@ pub enum Effect {
         /// existing permissions.
         narrower_permissions: AuthRequired,
         /// New effect-mask facet (subset-only). `None` leaves it as-is.
-        narrower_effects: Option<pyana_cell::EffectMask>,
+        narrower_effects: Option<dregg_cell::EffectMask>,
         /// New expiry. Can only shrink relative to the existing expiry
         /// (or bind a finite expiry to a previously unbounded cap).
         narrower_expiry: Option<u64>,
@@ -1288,7 +1288,7 @@ impl Action {
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         // Domain separation: prevents type confusion with other hash preimages.
-        hasher.update(b"pyana-action-v2:");
+        hasher.update(b"dregg-action-v2:");
         hasher.update(self.target.as_bytes());
         hasher.update(&self.method);
         for arg in &self.args {
@@ -1638,22 +1638,22 @@ impl Effect {
                 ];
                 for p in perms {
                     match p {
-                        pyana_cell::AuthRequired::None => {
+                        dregg_cell::AuthRequired::None => {
                             hasher.update(&[0u8]);
                         }
-                        pyana_cell::AuthRequired::Signature => {
+                        dregg_cell::AuthRequired::Signature => {
                             hasher.update(&[1u8]);
                         }
-                        pyana_cell::AuthRequired::Proof => {
+                        dregg_cell::AuthRequired::Proof => {
                             hasher.update(&[2u8]);
                         }
-                        pyana_cell::AuthRequired::Either => {
+                        dregg_cell::AuthRequired::Either => {
                             hasher.update(&[3u8]);
                         }
-                        pyana_cell::AuthRequired::Impossible => {
+                        dregg_cell::AuthRequired::Impossible => {
                             hasher.update(&[4u8]);
                         }
-                        pyana_cell::AuthRequired::Custom { vk_hash } => {
+                        dregg_cell::AuthRequired::Custom { vk_hash } => {
                             hasher.update(&[5u8]);
                             hasher.update(vk_hash);
                         }
@@ -1805,22 +1805,22 @@ impl Effect {
                 hasher.update(recipient.as_bytes());
                 hasher.update(target.as_bytes());
                 match permissions {
-                    pyana_cell::AuthRequired::None => {
+                    dregg_cell::AuthRequired::None => {
                         hasher.update(&[0u8]);
                     }
-                    pyana_cell::AuthRequired::Signature => {
+                    dregg_cell::AuthRequired::Signature => {
                         hasher.update(&[1u8]);
                     }
-                    pyana_cell::AuthRequired::Proof => {
+                    dregg_cell::AuthRequired::Proof => {
                         hasher.update(&[2u8]);
                     }
-                    pyana_cell::AuthRequired::Either => {
+                    dregg_cell::AuthRequired::Either => {
                         hasher.update(&[3u8]);
                     }
-                    pyana_cell::AuthRequired::Impossible => {
+                    dregg_cell::AuthRequired::Impossible => {
                         hasher.update(&[4u8]);
                     }
-                    pyana_cell::AuthRequired::Custom { vk_hash } => {
+                    dregg_cell::AuthRequired::Custom { vk_hash } => {
                         hasher.update(&[5u8]);
                         hasher.update(vk_hash);
                     }
@@ -2046,8 +2046,8 @@ impl Effect {
                 hasher.update(token_id);
                 // Hash params deterministically.
                 let mode_byte = match params.mode {
-                    pyana_cell::CellMode::Hosted => 0u8,
-                    pyana_cell::CellMode::Sovereign => 1u8,
+                    dregg_cell::CellMode::Hosted => 0u8,
+                    dregg_cell::CellMode::Sovereign => 1u8,
                 };
                 hasher.update(&[mode_byte]);
                 match &params.program_vk {
@@ -2491,60 +2491,60 @@ impl Effect {
     ///
     /// Used by `ExerciseViaCapability` to check whether a faceted capability
     /// permits this operation. Each effect type maps to exactly one bit in the
-    /// [`EffectMask`](pyana_cell::EffectMask).
-    pub fn effect_kind_mask(&self) -> pyana_cell::EffectMask {
+    /// [`EffectMask`](dregg_cell::EffectMask).
+    pub fn effect_kind_mask(&self) -> dregg_cell::EffectMask {
         match self {
-            Effect::SetField { .. } => pyana_cell::EFFECT_SET_FIELD,
-            Effect::Transfer { .. } => pyana_cell::EFFECT_TRANSFER,
-            Effect::GrantCapability { .. } => pyana_cell::EFFECT_GRANT_CAPABILITY,
-            Effect::RevokeCapability { .. } => pyana_cell::EFFECT_REVOKE_CAPABILITY,
-            Effect::EmitEvent { .. } => pyana_cell::EFFECT_EMIT_EVENT,
-            Effect::IncrementNonce { .. } => pyana_cell::EFFECT_INCREMENT_NONCE,
-            Effect::CreateCell { .. } => pyana_cell::EFFECT_CREATE_CELL,
-            Effect::SetPermissions { .. } => pyana_cell::EFFECT_SET_PERMISSIONS,
-            Effect::SetVerificationKey { .. } => pyana_cell::EFFECT_SET_VERIFICATION_KEY,
-            Effect::NoteSpend { .. } => pyana_cell::EFFECT_NOTE_SPEND,
-            Effect::NoteCreate { .. } => pyana_cell::EFFECT_NOTE_CREATE,
+            Effect::SetField { .. } => dregg_cell::EFFECT_SET_FIELD,
+            Effect::Transfer { .. } => dregg_cell::EFFECT_TRANSFER,
+            Effect::GrantCapability { .. } => dregg_cell::EFFECT_GRANT_CAPABILITY,
+            Effect::RevokeCapability { .. } => dregg_cell::EFFECT_REVOKE_CAPABILITY,
+            Effect::EmitEvent { .. } => dregg_cell::EFFECT_EMIT_EVENT,
+            Effect::IncrementNonce { .. } => dregg_cell::EFFECT_INCREMENT_NONCE,
+            Effect::CreateCell { .. } => dregg_cell::EFFECT_CREATE_CELL,
+            Effect::SetPermissions { .. } => dregg_cell::EFFECT_SET_PERMISSIONS,
+            Effect::SetVerificationKey { .. } => dregg_cell::EFFECT_SET_VERIFICATION_KEY,
+            Effect::NoteSpend { .. } => dregg_cell::EFFECT_NOTE_SPEND,
+            Effect::NoteCreate { .. } => dregg_cell::EFFECT_NOTE_CREATE,
             Effect::CreateSealPair { .. } | Effect::Seal { .. } | Effect::Unseal { .. } => {
-                pyana_cell::EFFECT_SEAL_OPS
+                dregg_cell::EFFECT_SEAL_OPS
             }
             Effect::BridgeMint { .. }
             | Effect::BridgeLock { .. }
             | Effect::BridgeFinalize { .. }
-            | Effect::BridgeCancel { .. } => pyana_cell::EFFECT_BRIDGE_OPS,
-            Effect::Introduce { .. } | Effect::PipelinedSend { .. } => pyana_cell::EFFECT_INTRODUCE,
+            | Effect::BridgeCancel { .. } => dregg_cell::EFFECT_BRIDGE_OPS,
+            Effect::Introduce { .. } | Effect::PipelinedSend { .. } => dregg_cell::EFFECT_INTRODUCE,
             Effect::CreateObligation { .. }
             | Effect::FulfillObligation { .. }
-            | Effect::SlashObligation { .. } => pyana_cell::EFFECT_OBLIGATION_OPS,
+            | Effect::SlashObligation { .. } => dregg_cell::EFFECT_OBLIGATION_OPS,
             Effect::CreateEscrow { .. }
             | Effect::ReleaseEscrow { .. }
             | Effect::RefundEscrow { .. }
             | Effect::CreateCommittedEscrow { .. }
             | Effect::ReleaseCommittedEscrow { .. }
-            | Effect::RefundCommittedEscrow { .. } => pyana_cell::EFFECT_ESCROW_OPS,
+            | Effect::RefundCommittedEscrow { .. } => dregg_cell::EFFECT_ESCROW_OPS,
             Effect::SpawnWithDelegation { .. }
             | Effect::RefreshDelegation
-            | Effect::RevokeDelegation { .. } => pyana_cell::EFFECT_DELEGATION_OPS,
-            Effect::ExerciseViaCapability { .. } => pyana_cell::EFFECT_ALL,
-            Effect::MakeSovereign { .. } => pyana_cell::EFFECT_SOVEREIGN_OPS,
-            Effect::CreateCellFromFactory { .. } => pyana_cell::EFFECT_CREATE_CELL,
+            | Effect::RevokeDelegation { .. } => dregg_cell::EFFECT_DELEGATION_OPS,
+            Effect::ExerciseViaCapability { .. } => dregg_cell::EFFECT_ALL,
+            Effect::MakeSovereign { .. } => dregg_cell::EFFECT_SOVEREIGN_OPS,
+            Effect::CreateCellFromFactory { .. } => dregg_cell::EFFECT_CREATE_CELL,
             Effect::QueueAllocate { .. }
             | Effect::QueueEnqueue { .. }
             | Effect::QueueDequeue { .. }
             | Effect::QueueResize { .. }
             | Effect::QueueAtomicTx { .. }
-            | Effect::QueuePipelineStep { .. } => pyana_cell::EFFECT_QUEUE_OPS,
+            | Effect::QueuePipelineStep { .. } => dregg_cell::EFFECT_QUEUE_OPS,
             Effect::ExportSturdyRef { .. }
             | Effect::EnlivenRef { .. }
             | Effect::DropRef { .. }
-            | Effect::ValidateHandoff { .. } => pyana_cell::EFFECT_CAPTP_OPS,
-            Effect::Refusal { .. } => pyana_cell::EFFECT_REFUSAL,
+            | Effect::ValidateHandoff { .. } => dregg_cell::EFFECT_CAPTP_OPS,
+            Effect::Refusal { .. } => dregg_cell::EFFECT_REFUSAL,
             Effect::CellSeal { .. }
             | Effect::CellUnseal { .. }
             | Effect::CellDestroy { .. }
-            | Effect::ReceiptArchive { .. } => pyana_cell::EFFECT_LIFECYCLE_OPS,
-            Effect::Burn { .. } => pyana_cell::EFFECT_BURN,
-            Effect::AttenuateCapability { .. } => pyana_cell::EFFECT_ATTENUATE_CAPABILITY,
+            | Effect::ReceiptArchive { .. } => dregg_cell::EFFECT_LIFECYCLE_OPS,
+            Effect::Burn { .. } => dregg_cell::EFFECT_BURN,
+            Effect::AttenuateCapability { .. } => dregg_cell::EFFECT_ATTENUATE_CAPABILITY,
         }
     }
 }

@@ -98,7 +98,7 @@ impl CellState {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::CellState;
+    /// # use dregg_cell::CellState;
     /// let mut s = CellState::new(0);
     /// s.nonce = 42;
     /// ```
@@ -111,7 +111,7 @@ impl CellState {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::CellState;
+    /// # use dregg_cell::CellState;
     /// let mut s = CellState::new(0);
     /// s.balance = u64::MAX;
     /// ```
@@ -124,7 +124,7 @@ impl CellState {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::CellState;
+    /// # use dregg_cell::CellState;
     /// let mut s = CellState::new(0);
     /// s.proved_state = true;
     /// ```
@@ -137,7 +137,7 @@ impl CellState {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::CellState;
+    /// # use dregg_cell::CellState;
     /// let mut s = CellState::new(0);
     /// s.delegation_epoch = 7;
     /// ```

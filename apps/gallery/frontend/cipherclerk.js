@@ -1,7 +1,7 @@
 /**
- * cipherclerk.js — Extension bridge for the pyana browser extension.
+ * cipherclerk.js — Extension bridge for the dregg browser extension.
  *
- * Connects to the pyana browser extension via window.pyana interface.
+ * Connects to the dregg browser extension via window.dregg interface.
  * Provides identity management and turn signing for the gallery UI.
  */
 
@@ -10,20 +10,20 @@ const Cipherclerk = (() => {
     let _connected = false;
 
     /**
-     * Check if the pyana extension is available.
+     * Check if the dregg extension is available.
      */
     function isExtensionAvailable() {
-        return typeof window.pyana !== 'undefined';
+        return typeof window.dregg !== 'undefined';
     }
 
     /**
-     * Connect to the pyana extension and retrieve identity.
+     * Connect to the dregg extension and retrieve identity.
      * Falls back to a demo identity if the extension is not installed.
      */
     async function connect() {
         if (isExtensionAvailable()) {
             try {
-                _identity = await window.pyana.getIdentity();
+                _identity = await window.dregg.getIdentity();
                 _connected = true;
                 updateUI(true, _identity.cellId);
                 return _identity;
@@ -70,7 +70,7 @@ const Cipherclerk = (() => {
     async function signTurn(turnData) {
         if (isExtensionAvailable() && _connected) {
             try {
-                return await window.pyana.signTurn(turnData);
+                return await window.dregg.signTurn(turnData);
             } catch (err) {
                 console.warn('Extension signTurn failed:', err);
             }

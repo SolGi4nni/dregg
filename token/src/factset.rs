@@ -24,11 +24,11 @@
 //! | Budget{..}       | "budget"           | [hash(id), limit, _]            |
 //! | (no caveats)     | "unrestricted"     | [1, _, _]                       |
 
-use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable};
+use dregg_commit::{Fact, FactSet, FieldElement, SymbolTable};
 
 #[cfg(feature = "rand-deps")]
 use crate::MacaroonToken;
-use crate::pyana_caveats::{self, PyanaGrant};
+use crate::dregg_caveats::{self, DreggGrant};
 use crate::traits::Attenuation;
 
 /// Convert a MacaroonToken's caveats into a `FactSet` and `SymbolTable`.
@@ -56,7 +56,7 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
     }
 
     for wc in &caveats {
-        let grant = pyana_caveats::decode_grant(wc)
+        let grant = dregg_caveats::decode_grant(wc)
             .map_err(|e| format!("failed to decode caveat: {}", e))
             .expect("malformed caveat in verified token");
 
@@ -71,35 +71,35 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
 
 /// Convert a single decoded grant (caveat) into one or more Facts,
 /// interning all symbol names into the provided symbol table.
-pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
+pub fn grant_to_facts(grant: &DreggGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
     match grant {
-        PyanaGrant::App { id, actions } => {
+        DreggGrant::App { id, actions } => {
             let pred = symbols.intern("app");
             let id_fe = symbols.intern(id);
             let actions_fe = symbols.intern(&actions.to_string());
             vec![Fact::binary(pred, id_fe, actions_fe)]
         }
 
-        PyanaGrant::Service { name, actions } => {
+        DreggGrant::Service { name, actions } => {
             let pred = symbols.intern("service");
             let name_fe = symbols.intern(name);
             let actions_fe = symbols.intern(&actions.to_string());
             vec![Fact::binary(pred, name_fe, actions_fe)]
         }
 
-        PyanaGrant::Feature(name) => {
+        DreggGrant::Feature(name) => {
             let pred = symbols.intern("feature");
             let name_fe = symbols.intern(name);
             vec![Fact::unary(pred, name_fe)]
         }
 
-        PyanaGrant::ConfineUser(uid) => {
+        DreggGrant::ConfineUser(uid) => {
             let pred = symbols.intern("confine_user");
             let uid_fe = symbols.intern(uid);
             vec![Fact::unary(pred, uid_fe)]
         }
 
-        PyanaGrant::ValidityWindow {
+        DreggGrant::ValidityWindow {
             not_before,
             not_after,
         } => {
@@ -117,19 +117,19 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             facts
         }
 
-        PyanaGrant::OAuthProvider(provider) => {
+        DreggGrant::OAuthProvider(provider) => {
             let pred = symbols.intern("oauth_provider");
             let prov_fe = symbols.intern(provider);
             vec![Fact::unary(pred, prov_fe)]
         }
 
-        PyanaGrant::OAuthScope(scope) => {
+        DreggGrant::OAuthScope(scope) => {
             let pred = symbols.intern("oauth_scope");
             let scope_fe = symbols.intern(scope);
             vec![Fact::unary(pred, scope_fe)]
         }
 
-        PyanaGrant::FeatureGlob { include, exclude } => {
+        DreggGrant::FeatureGlob { include, exclude } => {
             let mut facts = Vec::new();
             for pat in include {
                 let pred = symbols.intern("feature_glob_include");
@@ -144,14 +144,14 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             facts
         }
 
-        PyanaGrant::Budget { id, limit, .. } => {
+        DreggGrant::Budget { id, limit, .. } => {
             let pred = symbols.intern("budget");
             let id_fe = symbols.intern(id);
             let limit_fe = FieldElement::from_u64(*limit);
             vec![Fact::binary(pred, id_fe, limit_fe)]
         }
 
-        PyanaGrant::Unknown(_, _) => {
+        DreggGrant::Unknown(_, _) => {
             // Unknown caveats are not committed -- they're opaque.
             vec![]
         }
@@ -162,11 +162,11 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
 ///
 /// Used when computing the FactSet for an attenuated token.
 pub fn attenuation_to_facts(attenuation: &Attenuation, symbols: &mut SymbolTable) -> Vec<Fact> {
-    let wire_caveats = pyana_caveats::attenuation_to_wire_caveats(attenuation);
+    let wire_caveats = dregg_caveats::attenuation_to_wire_caveats(attenuation);
     let mut facts = Vec::new();
 
     for wc in &wire_caveats {
-        if let Ok(grant) = pyana_caveats::decode_grant(wc) {
+        if let Ok(grant) = dregg_caveats::decode_grant(wc) {
             facts.extend(grant_to_facts(&grant, symbols));
         }
     }
@@ -183,7 +183,7 @@ pub fn attenuation_to_facts(attenuation: &Attenuation, symbols: &mut SymbolTable
 /// fail-closed behavior: malformed caveats MUST NOT be silently dropped, as that
 /// would effectively remove restrictions from the token.
 pub fn caveat_set_to_factset(
-    caveat_set: &pyana_macaroon::caveat::CaveatSet,
+    caveat_set: &dregg_macaroon::caveat::CaveatSet,
 ) -> Result<(FactSet, SymbolTable), crate::error::TokenError> {
     let mut factset = FactSet::new();
     let mut symbols = SymbolTable::new();
@@ -199,7 +199,7 @@ pub fn caveat_set_to_factset(
     }
 
     for wc in &caveats {
-        let grant = pyana_caveats::decode_grant(wc).map_err(|e| {
+        let grant = dregg_caveats::decode_grant(wc).map_err(|e| {
             crate::error::TokenError::MalformedCaveat(format!("failed to decode caveat: {}", e))
         })?;
 
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn test_unrestricted_token_to_factset() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
         let (mut factset, symbols) = macaroon_to_factset(&token);
         assert_eq!(factset.len(), 1);
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_attenuated_token_to_factset() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
         let restricted = token
             .attenuate(&Attenuation {
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn test_grant_to_facts_validity_window_both() {
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::ValidityWindow {
+        let grant = DreggGrant::ValidityWindow {
             not_before: Some(1000),
             not_after: Some(5000),
         };
@@ -328,17 +328,17 @@ mod tests {
     // Security test: malformed caveats must be rejected, not silently skipped.
     #[test]
     fn test_caveat_set_to_factset_rejects_malformed_caveat() {
-        use pyana_macaroon::caveat::{CaveatSet, WireCaveat};
+        use dregg_macaroon::caveat::{CaveatSet, WireCaveat};
 
         let mut set = CaveatSet::new();
         // Add a valid caveat first
         set.push(WireCaveat::new(
-            crate::pyana_caveats::CAV_APP,
-            crate::pyana_caveats::encode_name_actions("my-app", "rw"),
+            crate::dregg_caveats::CAV_APP,
+            crate::dregg_caveats::encode_name_actions("my-app", "rw"),
         ));
         // Add a malformed caveat: known type ID but garbage body that cannot decode
         set.push(WireCaveat::new(
-            crate::pyana_caveats::CAV_APP,
+            crate::dregg_caveats::CAV_APP,
             vec![0xFF, 0xFF, 0xFF], // invalid msgpack for a (String, String) tuple
         ));
 
@@ -361,12 +361,12 @@ mod tests {
 
     #[test]
     fn test_caveat_set_to_factset_succeeds_with_valid_caveats() {
-        use pyana_macaroon::caveat::{CaveatSet, WireCaveat};
+        use dregg_macaroon::caveat::{CaveatSet, WireCaveat};
 
         let mut set = CaveatSet::new();
         set.push(WireCaveat::new(
-            crate::pyana_caveats::CAV_APP,
-            crate::pyana_caveats::encode_name_actions("my-app", "rw"),
+            crate::dregg_caveats::CAV_APP,
+            crate::dregg_caveats::encode_name_actions("my-app", "rw"),
         ));
 
         let result = caveat_set_to_factset(&set);

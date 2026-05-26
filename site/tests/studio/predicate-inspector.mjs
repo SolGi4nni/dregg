@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-predicate> inspector.
+ * Playwright ad-hoc test for <dregg-predicate> inspector.
  *
  * Run from site/ root:
  *   node tests/studio/predicate-inspector.mjs
@@ -9,15 +9,15 @@
  * (or the wasm-enabled dev server — any server that has the studio + wasm bundle)
  *
  * What this test does:
- *  1. Navigate to /studio (wasm runtime attached at <pyana-app#app>)
- *  2. Wait for pyana:ready + runtime attached
+ *  1. Navigate to /studio (wasm runtime attached at <dregg-app#app>)
+ *  2. Wait for dregg:ready + runtime attached
  *  3. Inject predicate.js module
  *  4. Test compact mode: "N facts · M rules" summary renders
  *  5. Test read mode: facts list + rules list render without errors
  *  6. Test editor mode: facts list, rules pane, evaluate button render
  *  7. Evaluate with a real wasm call: allow case — ALLOW badge appears, trace renders
  *  8. Evaluate deny case — DENY badge appears
- *  9. Verify derivation trace steps render (step rows with .pyana-pred__trace-step)
+ *  9. Verify derivation trace steps render (step rows with .dregg-pred__trace-step)
  * 10. JS error check: no unexpected errors during the run
  */
 
@@ -39,11 +39,11 @@ async function run() {
   console.log('[test] Navigating to /studio ...');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for Preact/signals + pyanaUi ready
-  await page.waitForFunction(() => !!window.pyanaUi, { timeout: 20000 });
-  console.log('[test] pyanaUi ready.');
+  // Wait for Preact/signals + dreggUi ready
+  await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
+  console.log('[test] dreggUi ready.');
 
-  // Wait for wasm runtime attached to <pyana-app#app>
+  // Wait for wasm runtime attached to <dregg-app#app>
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
@@ -55,12 +55,12 @@ async function run() {
     url: `${BASE}/_includes/studio/inspectors/predicate.js`,
     type: 'module',
   });
-  await page.waitForFunction(() => !!customElements.get('pyana-predicate'), { timeout: 8000 });
-  console.log('[test] <pyana-predicate> custom element registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-predicate'), { timeout: 8000 });
+  console.log('[test] <dregg-predicate> custom element registered.');
 
   // ── Test 1: compact mode ────────────────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-predicate');
+    const el = document.createElement('dregg-predicate');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-pred-compact');
     el.setAttribute('data-predicate', JSON.stringify({
@@ -85,7 +85,7 @@ async function run() {
 
   // ── Test 2: read mode with facts ───────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-predicate');
+    const el = document.createElement('dregg-predicate');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-pred-read');
     el.setAttribute('data-predicate', JSON.stringify({
@@ -100,20 +100,20 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-pred-read');
-    return el && el.querySelector('.pyana-pred__badge');
+    return el && el.querySelector('.dregg-pred__badge');
   }, { timeout: 5000 });
 
-  const hasBadge = await page.$eval('#test-pred-read', el => !!el.querySelector('.pyana-pred__badge'));
+  const hasBadge = await page.$eval('#test-pred-read', el => !!el.querySelector('.dregg-pred__badge'));
   if (!hasBadge) throw new Error('TEST FAILED: read mode missing badge');
 
   const factRowCount = await page.$eval('#test-pred-read', el =>
-    el.querySelectorAll('.pyana-pred__fact-row').length
+    el.querySelectorAll('.dregg-pred__fact-row').length
   );
   console.log(`[test 2] Fact rows in read mode: ${factRowCount}`);
   if (factRowCount < 3) throw new Error(`TEST FAILED: expected ≥3 fact rows, got ${factRowCount}`);
 
   const ruleRowCount = await page.$eval('#test-pred-read', el =>
-    el.querySelectorAll('.pyana-pred__rule-row').length
+    el.querySelectorAll('.dregg-pred__rule-row').length
   );
   console.log(`[test 2] Rule rows in read mode: ${ruleRowCount}`);
   if (ruleRowCount < 3) throw new Error(`TEST FAILED: expected ≥3 rule rows (incl. default), got ${ruleRowCount}`);
@@ -121,9 +121,9 @@ async function run() {
   console.log('[test 2] PASS: read mode renders facts list + rules list.');
 
   // ── Test 3: editor mode renders ────────────────────────────────────────────
-  // Mount editor inside <pyana-app#app> so it can find the runtime
+  // Mount editor inside <dregg-app#app> so it can find the runtime
   await page.evaluate(() => {
-    const el = document.createElement('pyana-predicate');
+    const el = document.createElement('dregg-predicate');
     el.setAttribute('mode', 'editor');
     el.setAttribute('id', 'test-pred-editor');
     document.getElementById('app').appendChild(el);
@@ -131,21 +131,21 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-pred-editor');
-    return el && el.querySelector('.pyana-pred__eval-btn');
+    return el && el.querySelector('.dregg-pred__eval-btn');
   }, { timeout: 8000 });
 
   const hasEvalBtn = await page.$eval('#test-pred-editor', el =>
-    !!el.querySelector('.pyana-pred__eval-btn')
+    !!el.querySelector('.dregg-pred__eval-btn')
   );
   if (!hasEvalBtn) throw new Error('TEST FAILED: editor mode missing evaluate button');
 
   const hasReqInputs = await page.$eval('#test-pred-editor', el =>
-    el.querySelectorAll('.pyana-pred__req-input').length >= 2
+    el.querySelectorAll('.dregg-pred__req-input').length >= 2
   );
   if (!hasReqInputs) throw new Error('TEST FAILED: editor mode missing request inputs');
 
   const editorFactRows = await page.$eval('#test-pred-editor', el =>
-    el.querySelectorAll('.pyana-pred__fact-row').length
+    el.querySelectorAll('.dregg-pred__fact-row').length
   );
   console.log(`[test 3] Editor initial fact rows: ${editorFactRows}`);
   if (editorFactRows < 1) throw new Error('TEST FAILED: editor mode should start with default facts');
@@ -154,22 +154,22 @@ async function run() {
 
   // ── Test 4: evaluate — ALLOW case ──────────────────────────────────────────
   // Default facts include app=my-app,read,write + request app_id=my-app action=read → ALLOW
-  await page.click('#test-pred-editor .pyana-pred__eval-btn');
+  await page.click('#test-pred-editor .dregg-pred__eval-btn');
 
   // Wait for decision badge to appear
   await page.waitForFunction(() => {
     const el = document.getElementById('test-pred-editor');
-    return el && el.querySelector('.pyana-pred__decision') !== null;
+    return el && el.querySelector('.dregg-pred__decision') !== null;
   }, { timeout: 8000 });
 
-  const decisionText = await page.$eval('#test-pred-editor .pyana-pred__decision', el =>
+  const decisionText = await page.$eval('#test-pred-editor .dregg-pred__decision', el =>
     el.textContent.trim()
   );
   console.log(`[test 4] Decision badge: "${decisionText}"`);
   if (decisionText !== 'ALLOW') throw new Error(`TEST FAILED: expected ALLOW, got "${decisionText}"`);
 
   // Trace pane should be visible
-  const traceVisible = await page.$eval('#test-pred-editor .pyana-pred__section--trace', el => {
+  const traceVisible = await page.$eval('#test-pred-editor .dregg-pred__section--trace', el => {
     return window.getComputedStyle(el).display !== 'none';
   });
   if (!traceVisible) throw new Error('TEST FAILED: trace pane not visible after evaluation');
@@ -178,19 +178,19 @@ async function run() {
 
   // ── Test 5: trace steps render ─────────────────────────────────────────────
   const traceStepCount = await page.$eval('#test-pred-editor', el =>
-    el.querySelectorAll('.pyana-pred__trace-step').length
+    el.querySelectorAll('.dregg-pred__trace-step').length
   );
   console.log(`[test 5] Trace step rows: ${traceStepCount}`);
   // The trace may have 0 or more steps depending on which rule matched.
   // Either trace-step rows OR trace-empty message should be present.
   const traceEmpty = await page.$eval('#test-pred-editor', el =>
-    !!el.querySelector('.pyana-pred__trace-empty, .pyana-pred__trace-step')
+    !!el.querySelector('.dregg-pred__trace-empty, .dregg-pred__trace-step')
   );
   if (!traceEmpty) throw new Error('TEST FAILED: neither trace steps nor empty message rendered');
 
   // If steps exist, verify first step has the expected structure
   if (traceStepCount > 0) {
-    const firstStepHtml = await page.$eval('#test-pred-editor .pyana-pred__trace-step', el =>
+    const firstStepHtml = await page.$eval('#test-pred-editor .dregg-pred__trace-step', el =>
       el.innerHTML
     );
     const hasRuleLabel = firstStepHtml.includes('rule #') || firstStepHtml.includes('allow_');
@@ -201,25 +201,25 @@ async function run() {
   }
 
   // ── Test 6: DENY case via "Try denied request" button ────────────────────
-  await page.click('#test-pred-editor .pyana-pred__deny-btn');
+  await page.click('#test-pred-editor .dregg-pred__deny-btn');
   // Verify inputs were updated
   const appIdAfterDeny = await page.$eval(
-    '#test-pred-editor .pyana-pred__req-input[name="app_id"]',
+    '#test-pred-editor .dregg-pred__req-input[name="app_id"]',
     el => el.value
   );
   console.log(`[test 6] App ID after deny-example: "${appIdAfterDeny}"`);
   if (appIdAfterDeny !== 'unknown-app') throw new Error(`TEST FAILED: expected "unknown-app", got "${appIdAfterDeny}"`);
 
   // Now evaluate
-  await page.click('#test-pred-editor .pyana-pred__eval-btn');
+  await page.click('#test-pred-editor .dregg-pred__eval-btn');
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-pred-editor');
-    const badge = el && el.querySelector('.pyana-pred__decision');
+    const badge = el && el.querySelector('.dregg-pred__decision');
     return badge && badge.textContent.trim() === 'DENY';
   }, { timeout: 8000 });
 
-  const denyDecision = await page.$eval('#test-pred-editor .pyana-pred__decision', el =>
+  const denyDecision = await page.$eval('#test-pred-editor .dregg-pred__decision', el =>
     el.textContent.trim()
   );
   console.log(`[test 6] Decision after deny example: "${denyDecision}"`);
@@ -229,7 +229,7 @@ async function run() {
 
   // ── Test 7: compact mode with last_result ─────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-predicate');
+    const el = document.createElement('dregg-predicate');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-pred-compact-result');
     el.setAttribute('data-predicate', JSON.stringify({
@@ -241,11 +241,11 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-pred-compact-result');
-    return el && el.querySelector('.pyana-pred__decision');
+    return el && el.querySelector('.dregg-pred__decision');
   }, { timeout: 5000 });
 
   const compactDecision = await page.$eval(
-    '#test-pred-compact-result .pyana-pred__decision',
+    '#test-pred-compact-result .dregg-pred__decision',
     el => el.textContent.trim()
   );
   console.log(`[test 7] Compact with result: "${compactDecision}"`);

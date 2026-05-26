@@ -18,13 +18,8 @@
 
 use crate::Invariant;
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use proptest::prelude::*;
-use pyana_cell::{AuthRequired, Cell, EffectMask, is_facet_attenuation};
-use pyana_turn::{
-    Action, Authorization, BearerCapProof, CallForest, ComputronCosts, DelegationMode,
-    DelegationProofData, Effect, TurnExecutor, TurnResult, turn::Turn,
-};
 
 pub struct FacetAttenuation;
 
@@ -62,7 +57,7 @@ proptest! {
         let (_bearer_sk, bearer_pk) = keypair_from_seed(102);
         let token_id = [0u8; 32];
 
-        let permissive = pyana_cell::Permissions {
+        let permissive = dregg_cell::Permissions {
             send: AuthRequired::None,
             receive: AuthRequired::None,
             set_state: AuthRequired::None,
@@ -77,7 +72,7 @@ proptest! {
         // be tied to specific public keys (so the delegation signature
         // verifies). The `build_open_ledger` helper assigns synthetic keys
         // we can't sign with.
-        let mut ledger = pyana_cell::Ledger::new();
+        let mut ledger = dregg_cell::Ledger::new();
 
         let mut delegator_cell = Cell::with_balance(delegator_pk, token_id, 10_000);
         delegator_cell.permissions = permissive.clone();
@@ -139,7 +134,7 @@ proptest! {
             preconditions: Default::default(),
             effects: vec![Effect::EmitEvent {
                 cell: target_id,
-                event: pyana_turn::Event {
+                event: dregg_turn::Event {
                     topic: [0u8; 32],
                     data: vec![],
                 },

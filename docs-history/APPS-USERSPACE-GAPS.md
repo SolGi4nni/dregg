@@ -6,18 +6,18 @@ Written 2026-05-24. Companion to `SDK-REVIEW.md` and `AUDIT-protocol-composition
 
 Apps are *userspace*. They consume primitives the SDK/framework provides;
 they do not reach past those layers into the kernel
-(`pyana-turn::builder::ActionBuilder`, `pyana-cell::*`, `pyana-types::*`).
+(`dregg-turn::builder::ActionBuilder`, `dregg-cell::*`, `dregg-types::*`).
 
 Two-layer composition:
 
 ```
 apps/* (userspace)
    ↓ (narrow surface)
-pyana-app-framework  (holds AppCipherclerk, exposes Effect/Action/Turn re-exports)
+dregg-app-framework  (holds AppCipherclerk, exposes Effect/Action/Turn re-exports)
    ↓
-pyana-sdk           (holds AgentCipherclerk, makes signed actions/turns)
+dregg-sdk           (holds AgentCipherclerk, makes signed actions/turns)
    ↓
-pyana-turn / pyana-cell / pyana-circuit  (kernel)
+dregg-turn / dregg-cell / dregg-circuit  (kernel)
 ```
 
 If an app needs something userspace can't express, the answer is *almost
@@ -29,7 +29,7 @@ never* "add a new `Effect::Foo` variant." It is one of:
    `SDK-REVIEW.md`).
 3. **A missing cell-program primitive** — a *caveat* on a state slot, a
    predicate the cell enforces. Documented below.
-4. **Genuine pyana primitive gap** — the kernel can't express a
+4. **Genuine dregg primitive gap** — the kernel can't express a
    property of state transitions that a class of apps need. Rare; should
    be a Stage-N design pass, not an app-side workaround.
 
@@ -41,8 +41,8 @@ should live in app code, composing `SetField` / `EmitEvent` / `Transfer`
 
 ## What landed this round (Lane: apps-userspace)
 
-- **`pyana-app-framework::AppCipherclerk`** — a narrow cclerk handle
-  wrapping `pyana_sdk::AgentCipherclerk`. Exposes `make_action`, `sign_action`,
+- **`dregg-app-framework::AppCipherclerk`** — a narrow cclerk handle
+  wrapping `dregg_sdk::AgentCipherclerk`. Exposes `make_action`, `sign_action`,
   `make_turn`, `cell_id`, `public_key`. Does *not* expose key export,
   receipt-chain mutation, token operations, or the 90+ other SDK
   methods. Cheap to clone (`Arc<AgentCipherclerk>` internally).
@@ -53,9 +53,9 @@ should live in app code, composing `SetField` / `EmitEvent` / `Transfer`
 
 - **Framework re-exports** — `Action`, `Authorization`, `Effect`,
   `Event`, `symbol`, `Turn`, `CellId`, `FieldElement`. Apps no longer
-  need `pyana-turn`, `pyana-cell`, `pyana-types` in their `Cargo.toml`
+  need `dregg-turn`, `dregg-cell`, `dregg-types` in their `Cargo.toml`
   for primitive-construction; they import from
-  `pyana_app_framework::*`.
+  `dregg_app_framework::*`.
 
 - **`apps/nameservice` migrated** — `effects.rs` no longer constructs
   `ActionBuilder::new(...).signed_by([0u8; 64])`. It calls
@@ -74,12 +74,12 @@ All five remaining apps follow the same pattern:
    to the app's `main.rs`.
 2. Add `cclerk: AppCipherclerk` to the app's shared state struct.
 3. Add `.with_cclerk(cclerk)` to the `AppServer` builder chain.
-4. In each handler, replace direct `pyana_turn::action::Effect::*`
+4. In each handler, replace direct `dregg_turn::action::Effect::*`
    struct-literal construction with framework re-exports + signed
    actions via `state.cclerk.make_action(...)`.
 5. Delete the `[0u8; 64]` / `placeholder_sig` lines and any
    `Authorization::Unchecked` literals in app code.
-6. Drop `pyana-turn`, `pyana-cell`, `pyana-types` from `Cargo.toml` if
+6. Drop `dregg-turn`, `dregg-cell`, `dregg-types` from `Cargo.toml` if
    the framework re-exports cover all uses.
 
 Per-app specifics:
@@ -89,9 +89,9 @@ Per-app specifics:
 **Today:**
 ```rust
 // apps/orderbook/src/escrow.rs:19-21, 120-150
-use pyana_turn::action::Effect;
-use pyana_turn::escrow::EscrowCondition;
-use pyana_types::CellId;
+use dregg_turn::action::Effect;
+use dregg_turn::escrow::EscrowCondition;
+use dregg_types::CellId;
 
 pub fn build_order_escrow_effect(...) -> Effect {
     Effect::CreateEscrow {
@@ -107,8 +107,8 @@ pub fn build_order_escrow_effect(...) -> Effect {
 
 **Migration:**
 ```rust
-use pyana_app_framework::{AppCipherclerk, CellId, Effect};
-use pyana_turn::escrow::EscrowCondition; // (a) re-export EscrowCondition from framework
+use dregg_app_framework::{AppCipherclerk, CellId, Effect};
+use dregg_turn::escrow::EscrowCondition; // (a) re-export EscrowCondition from framework
 
 pub fn build_order_escrow_action(
     cclerk: &AppCipherclerk,
@@ -132,7 +132,7 @@ pub fn build_order_escrow_action(
 ```
 
 **Userspace primitive gap (low):** `EscrowCondition` is currently in
-`pyana-turn::escrow`. Framework should re-export it. Should
+`dregg-turn::escrow`. Framework should re-export it. Should
 escrow-creation get a builder helper on `AppCipherclerk`? Probably yes —
 five required fields with one good default (timeout = height + 1000).
 Tier-1 SDK helper per `SDK-REVIEW.md`.
@@ -140,8 +140,8 @@ Tier-1 SDK helper per `SDK-REVIEW.md`.
 ### `apps/prediction-market`
 
 **Today:** `apps/prediction-market/src/server.rs` doesn't touch
-`pyana-sdk` at all; effects flow through `pyana_app_framework::ring_trade`
-and `pyana_storage::blinded::BlindedQueue`. No direct
+`dregg-sdk` at all; effects flow through `dregg_app_framework::ring_trade`
+and `dregg_storage::blinded::BlindedQueue`. No direct
 `ActionBuilder`, but also no signed actions emitted — the app sits
 entirely off-ledger today.
 
@@ -153,7 +153,7 @@ Action), it follows the nameservice pattern exactly. No special primitives neede
 **Today:** the heaviest case. `apps/gallery/src/settlement.rs:17-20`
 imports `Action, Authorization, CommitmentMode, DelegationMode, Effect,
 symbol`, `ActionBuilder`, `CallForest, CallTree`, `Turn` *all directly
-from pyana_turn*. Lines 1325-1380 construct a `Turn { ... }` struct
+from dregg_turn*. Lines 1325-1380 construct a `Turn { ... }` struct
 literal carrying `Effect::RefundEscrow`. Allowlisted in
 `scripts/no-unchecked-auth.sh` as a known-bad migration baseline.
 
@@ -173,7 +173,7 @@ escrow-effects; the kernel primitives cover it.
 ### `apps/escrow` (or escrow-using apps)
 
 **Today:** the `escrow` test scaffolding lives in `app-framework/src/escrow.rs`
-(production helpers wrapping `PyanaEngine` escrow creation/release).
+(production helpers wrapping `DreggEngine` escrow creation/release).
 Production apps call into it; no migration of the framework module
 itself needed except to gain a `cclerk: &AppCipherclerk` parameter to
 optionally sign rather than going through `Authorizer::*`.
@@ -192,7 +192,7 @@ migration — copy the nameservice diff verbatim.
 
 **Migration:**
 ```rust
-use pyana_app_framework::{Action, AppCipherclerk, CellId, Effect, Event};
+use dregg_app_framework::{Action, AppCipherclerk, CellId, Effect, Event};
 
 pub fn build_ballot_submit_action(
     cclerk: &AppCipherclerk,
@@ -204,7 +204,7 @@ pub fn build_ballot_submit_action(
         Effect::EmitEvent {
             cell: ballot_cell,
             event: Event::new(
-                pyana_app_framework::symbol("ballot-submitted"),
+                dregg_app_framework::symbol("ballot-submitted"),
                 vec![proposal_id, commitment],
             ),
         },
@@ -240,7 +240,7 @@ primitive that would close this is a **cell program caveat**: a
 predicate the cell's `CellProgram` enforces on the *new* value before
 accepting the `SetField` effect.
 
-**Current state:** `pyana_cell::Cell::with_program(CellProgram)` exists,
+**Current state:** `dregg_cell::Cell::with_program(CellProgram)` exists,
 but `CellProgram` is a STARK verification key — it expresses a
 predicate the action's proof must satisfy *globally*, not a per-slot
 write-once invariant.
@@ -327,7 +327,7 @@ that would consume and replay these actions is downstream of this
 lane.
 
 **Current workaround:** apps either run their own embedded executor
-(via `pyana_sdk::PyanaEngine`) or POST to a federation node. Neither
+(via `dregg_sdk::DreggEngine`) or POST to a federation node. Neither
 is currently wired through `AppServer`.
 
 **Proposed primitive (Tier-1 framework method):**
@@ -335,7 +335,7 @@ is currently wired through `AppServer`.
 impl AppServer {
     /// Install an embedded executor and ledger so handlers can submit
     /// actions through `cclerk.submit(action)` and observe receipts.
-    pub fn with_embedded_executor(self, engine: PyanaEngine) -> Self;
+    pub fn with_embedded_executor(self, engine: DreggEngine) -> Self;
 }
 ```
 
@@ -378,7 +378,7 @@ Trivial; add when orderbook or gallery migration starts.
 - **`signed_by([0u8; 64])`.** The placeholder pattern is exactly what
   this lane retired. Closed in nameservice; the migration sketch above
   closes it in the remaining apps.
-- **Reaching into `pyana_turn::builder::ActionBuilder` from app code.**
+- **Reaching into `dregg_turn::builder::ActionBuilder` from app code.**
   Apps should call `cclerk.make_action(...)`. If the builder's
   typestate offers a feature the framework method doesn't, that's a
   framework gap — add the missing method.
@@ -389,7 +389,7 @@ Trivial; add when orderbook or gallery migration starts.
 
 Ranked by "what's the next migration blocked on":
 
-1. **Re-export `pyana_turn::escrow::EscrowCondition` and `EscrowRecord`
+1. **Re-export `dregg_turn::escrow::EscrowCondition` and `EscrowRecord`
    from the framework.** Unblocks orderbook + gallery.
 2. **Add `AppCipherclerk::make_turn_with_actions(Vec<Action>) -> Turn`.**
    Unblocks orderbook settlement.

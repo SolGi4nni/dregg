@@ -1,7 +1,7 @@
-//! Canonical shared types for the pyana federation protocol.
+//! Canonical shared types for the dregg federation protocol.
 //!
 //! This crate defines the ONE TRUE version of cryptographic primitives and
-//! consensus types used across `pyana-wire`, `pyana-persist`, `pyana-federation`,
+//! consensus types used across `dregg-wire`, `dregg-persist`, `dregg-federation`,
 //! and other crates.
 //!
 //! # Key invariants
@@ -34,7 +34,7 @@ pub use causal::{CausalDag, CausalError};
 /// # Serialization
 ///
 /// Uses `serde_32` which serializes as a length-prefixed byte sequence (Vec<u8>)
-/// for format compatibility. Note that this differs from `pyana_cell::NoteCommitment`
+/// for format compatibility. Note that this differs from `dregg_cell::NoteCommitment`
 /// which derives Serialize/Deserialize directly on its `[u8; 32]` (raw fixed array,
 /// no length prefix in postcard). Both are correct for their respective wire formats:
 /// `PublicKey` appears in variable-length structures (AttestedRoot signatures) while
@@ -93,7 +93,7 @@ impl fmt::Display for PublicKey {
 /// Ed25519 signature (64 bytes).
 ///
 /// This is the CORRECT size for Ed25519 signatures. Previous versions of
-/// `pyana-wire` and `pyana-persist` incorrectly used 32-byte arrays, which
+/// `dregg-wire` and `dregg-persist` incorrectly used 32-byte arrays, which
 /// truncated signatures and made verification impossible.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Signature(#[serde(with = "serde_64")] pub [u8; 64]);
@@ -195,10 +195,10 @@ pub struct ThresholdQC(pub Vec<u8>);
 /// Identifies a federation in the unified model.
 ///
 /// **Canonical home.** Previously, two disjoint definitions lived in
-/// `pyana-captp` and `pyana-blocklace`; both now re-export this single type
+/// `dregg-captp` and `dregg-blocklace`; both now re-export this single type
 /// (see `FEDERATION-UNIFICATION-DESIGN.md` step 2). The id is a commitment to
 /// the federation's committee — `H(sorted(members) || epoch)` — derived via
-/// `pyana_federation::derive_federation_id_with_epoch`.
+/// `dregg_federation::derive_federation_id_with_epoch`.
 ///
 /// In the unified lace model, a `FederationId` is semantically equivalent to a
 /// `GroupId` (the content-hash of a reference group's strands). Routing layers
@@ -363,7 +363,7 @@ pub fn merkle_root_of_receipt_hashes(receipts: &[[u8; 32]]) -> [u8; 32] {
         .iter()
         .map(|h| {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"\x00pyana-receipt-leaf-v1");
+            hasher.update(b"\x00dregg-receipt-leaf-v1");
             hasher.update(h);
             *hasher.finalize().as_bytes()
         })
@@ -376,7 +376,7 @@ pub fn merkle_root_of_receipt_hashes(receipts: &[[u8; 32]]) -> [u8; 32] {
         let mut next: Vec<[u8; 32]> = Vec::with_capacity(layer.len() / 2);
         for pair in layer.chunks_exact(2) {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"\x01pyana-receipt-inner-v1");
+            hasher.update(b"\x01dregg-receipt-inner-v1");
             hasher.update(&pair[0]);
             hasher.update(&pair[1]);
             next.push(*hasher.finalize().as_bytes());
@@ -550,7 +550,7 @@ impl AttestedRoot {
         // v2 binds the blocklace block_id + finality_round so that two
         // attested roots at the same `height` from different blocklace forks
         // are distinguishable (closes audit F3).
-        msg.extend_from_slice(b"pyana-attested-root-v4");
+        msg.extend_from_slice(b"dregg-attested-root-v4");
         msg.extend_from_slice(&self.federation_id.0);
         msg.extend_from_slice(&self.merkle_root);
         match self.note_tree_root {
@@ -685,7 +685,7 @@ pub struct CellId(pub [u8; 32]);
 impl CellId {
     /// Derive a CellId by hashing a public key and domain string.
     pub fn derive(pubkey: &PublicKey, domain: &str) -> Self {
-        let hash = blake3::derive_key("pyana-cell-id-v1", &{
+        let hash = blake3::derive_key("dregg-cell-id-v1", &{
             let mut buf = Vec::with_capacity(32 + domain.len());
             buf.extend_from_slice(&pubkey.0);
             buf.extend_from_slice(domain.as_bytes());
@@ -699,7 +699,7 @@ impl CellId {
     /// Uses domain-separated BLAKE3. This is the derivation method used by the
     /// cell/agent model where both inputs are 32-byte arrays.
     pub fn derive_raw(public_key: &[u8; 32], token_id: &[u8; 32]) -> Self {
-        let hash = blake3::derive_key("pyana-cell-id-v1", &{
+        let hash = blake3::derive_key("dregg-cell-id-v1", &{
             let mut buf = Vec::with_capacity(64);
             buf.extend_from_slice(public_key);
             buf.extend_from_slice(token_id);
@@ -1051,12 +1051,12 @@ mod tests {
     #[test]
     fn v4_signing_message_distinct_from_v3_legacy_preimage() {
         // Bumping the domain tag from v3 to v4 means a v4 root's
-        // signing message starts with "pyana-attested-root-v4" — a v3
+        // signing message starts with "dregg-attested-root-v4" — a v3
         // verifier reconstructing the preimage with v3 tag would fail
         // signature check, so legacy verifiers MUST be upgraded.
         let v4_root = root_with_receipts([0xCC; 32], &[[0x99; 32]]);
         let msg = v4_root.signing_message();
-        assert!(msg.starts_with(b"pyana-attested-root-v4"));
+        assert!(msg.starts_with(b"dregg-attested-root-v4"));
         // The receipt_stream_root tag (0x01) precedes the 32-byte hash
         // at the end of the preimage.
         assert_eq!(msg[msg.len() - 33], 0x01u8);

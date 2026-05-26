@@ -86,7 +86,7 @@ Note: `from_parts_checked` is the *correct* constructor for untrusted input path
 `new(data)` would fabricate synthetic `VkComponents` — treating `data` as `program_bytes` and using a placeholder AIR fingerprint, verifier fingerprint, and proving-system identifier (e.g., zeros or a "legacy" sentinel). The resulting hash would be consistently computed but would *not* match any real proving-system identity.
 
 **Pros**: no API change for callers.  
-**Cons**: mechanically invalid — the hash would commit to "program_bytes = arbitrary opaque bytes" and "AIR = zero sentinel", which is not what any real prover produces. This would make test VKs produce hashes with domain-string `"pyana-vk-v2"` but nonsense semantics. Validators that cross-check VK hashes against real circuit parameters would reject correctly-generated VKs if they were ever constructed this way. The current tests would need their expected-hash values updated or their assertions would silently pass against synthetic values. Net result: Option B is a soundness regression dressed as a fix.
+**Cons**: mechanically invalid — the hash would commit to "program_bytes = arbitrary opaque bytes" and "AIR = zero sentinel", which is not what any real prover produces. This would make test VKs produce hashes with domain-string `"dregg-vk-v2"` but nonsense semantics. Validators that cross-check VK hashes against real circuit parameters would reject correctly-generated VKs if they were ever constructed this way. The current tests would need their expected-hash values updated or their assertions would silently pass against synthetic values. Net result: Option B is a soundness regression dressed as a fix.
 
 ### Option C — Leave `VerificationKey::new` as-is (BLAKE3 of raw data); accept non-canonical hashes for now
 
@@ -148,11 +148,11 @@ The 24 fixture call sites in `tests/`, `turn/src/tests.rs`, `cell/src/tests.rs`,
 
 ### Current state
 
-`VerificationKey::new(data)` computes `hash = blake3(data)`. It does **not** use the `"pyana-vk-v2"` domain key. Therefore, any VK created via `new` has a `hash` that is:
+`VerificationKey::new(data)` computes `hash = blake3(data)`. It does **not** use the `"dregg-vk-v2"` domain key. Therefore, any VK created via `new` has a `hash` that is:
 
 - Consistent internally (`blake3(data)` matches the data).
 - **Not** a `canonical_vk_v2` hash for any real proving system.
-- **Not** in the `"pyana-vk-v2"` domain.
+- **Not** in the `"dregg-vk-v2"` domain.
 
 The cell commitment scheme (`cell/src/commitment.rs`) binds the `hash` field into the cell's content address. So what is committed is `blake3(data)`, not `canonical_vk_v2(4 components)`.
 

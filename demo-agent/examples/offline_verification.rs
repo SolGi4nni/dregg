@@ -13,13 +13,13 @@
 //! - A cached copy of the federation's attested root (may be stale)
 //! - The federation's public keys (for root validity check)
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::stark::{
+use dregg_circuit::BabyBear;
+use dregg_circuit::stark::{
     MerkleStarkAir, StarkProof, generate_merkle_trace, proof_from_bytes, proof_to_bytes, prove,
     verify,
 };
-use pyana_federation::types::{AttestedRoot, PublicKey};
-use pyana_federation::{FederationId, generate_keypair, sign};
+use dregg_federation::types::{AttestedRoot, PublicKey};
+use dregg_federation::{FederationId, generate_keypair, sign};
 
 fn short_hex(bytes: &[u8]) -> String {
     bytes[..4].iter().map(|b| format!("{b:02x}")).collect()
@@ -126,7 +126,7 @@ enum OfflineVerifyResult {
 }
 
 fn main() {
-    println!("=== Pyana Offline Verification Demo ===\n");
+    println!("=== Dregg Offline Verification Demo ===\n");
     println!("  Key property: ZERO network calls during verification.");
     println!("  The verifier operates entirely on cached local data.\n");
 

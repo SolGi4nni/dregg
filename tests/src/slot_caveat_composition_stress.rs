@@ -33,8 +33,8 @@
 
 #![allow(clippy::field_reassign_with_default)]
 
-use pyana_cell::program::{SimpleStateConstraint, TransitionCase, TransitionGuard, TransitionMeta};
-use pyana_cell::{
+use dregg_cell::program::{SimpleStateConstraint, TransitionCase, TransitionGuard, TransitionMeta};
+use dregg_cell::{
     CellProgram, CellState, EvalContext, FIELD_ZERO, StateConstraint, field_from_u64,
 };
 
@@ -288,7 +288,7 @@ fn any_of_inside_conjunction_with_static_and_transition_constraints() {
 ///   3. A turn whose method doesn't match any guard default-denies.
 #[test]
 fn cases_program_with_five_operation_arms_dispatches_per_method() {
-    use pyana_turn::action::symbol;
+    use dregg_turn::action::symbol;
     let m_mint = symbol("mint");
     let m_burn = symbol("burn");
     let m_transfer = symbol("transfer");
@@ -364,7 +364,7 @@ fn cases_program_with_five_operation_arms_dispatches_per_method() {
 /// only the matching arm runs — so the program must reject.
 #[test]
 fn cases_program_does_not_try_other_arms_when_matching_arm_rejects() {
-    use pyana_turn::action::symbol;
+    use dregg_turn::action::symbol;
     let m_mint = symbol("mint");
     let m_burn = symbol("burn");
 
@@ -405,7 +405,7 @@ fn cases_program_does_not_try_other_arms_when_matching_arm_rejects() {
 /// This stresses the guard-tree composition.
 #[test]
 fn cases_with_compound_transition_guards() {
-    use pyana_turn::action::symbol;
+    use dregg_turn::action::symbol;
     let m_a = symbol("act_a");
     let m_b = symbol("act_b");
 
@@ -473,8 +473,8 @@ fn cases_with_compound_transition_guards() {
 /// still accepts.
 #[test]
 fn sentinel_variant_inside_long_conjunction_collapses_program() {
-    use pyana_cell::InputRef;
-    use pyana_cell::predicate::WitnessedPredicate;
+    use dregg_cell::InputRef;
+    use dregg_cell::predicate::WitnessedPredicate;
 
     let constraints = vec![
         StateConstraint::FieldEquals {

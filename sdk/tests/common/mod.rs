@@ -4,8 +4,8 @@
 //! file does not duplicate the same boilerplate.
 #![allow(dead_code)]
 
-use pyana_sdk::{AgentCipherclerk, CellId};
-use pyana_turn::TurnReceipt;
+use dregg_sdk::{AgentCipherclerk, CellId};
+use dregg_turn::TurnReceipt;
 use zeroize::Zeroizing;
 
 /// Build a deterministic `AgentCipherclerk` from a label string.

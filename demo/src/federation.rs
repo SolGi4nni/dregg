@@ -10,12 +10,12 @@
 //! with the issuing silo.
 //!
 //! NOTE: This module is standalone for membership tracking and role-based access.
-//! The real `pyana_federation` crate provides attested roots with quorum
+//! The real `dregg_federation` crate provides attested roots with quorum
 //! certificates and Merkle-based revocation (live BFT consensus itself lives
-//! in `pyana_blocklace`); those features are exercised via `revocation.rs`
+//! in `dregg_blocklace`); those features are exercised via `revocation.rs`
 //! (RevocationTree) and `main.rs` (STARK proof of issuer membership).
 //!
-//! // TODO: integrate with real pyana_federation::node::Federation for full consensus-
+//! // TODO: integrate with real dregg_federation::node::Federation for full consensus-
 //! // based membership attestation (AttestedRoot with quorum signatures over the
 //! // member set). Currently membership is checked via a simple HashMap lookup.
 
@@ -111,7 +111,7 @@ impl Federation {
     /// This serves as a compact commitment to the federation membership.
     pub fn compute_root(&mut self) {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-federation-v1");
+        hasher.update(b"dregg-federation-v1");
         hasher.update(&[0xff]);
         hasher.update(self.name.as_bytes());
         hasher.update(&[0xfe]);

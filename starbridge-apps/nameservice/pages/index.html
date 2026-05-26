@@ -8,17 +8,17 @@
       Starbridge-app fragment for the nameservice. Mounts under
       /starbridge-apps/nameservice/ on the site build.
 
-      The page mounts the same `<pyana-app>` context the Studio uses
+      The page mounts the same `<dregg-app>` context the Studio uses
       (see site/STUDIO.md §6) and contributes three domain-specific
       web components defined in ./inspectors.js:
 
-        <pyana-name>                 — read-only view of one name cell
-        <pyana-name-registry>        — browse / filter / paginate names
-        <pyana-name-register-form>   — mutation surface (register, renew,
+        <dregg-name>                 — read-only view of one name cell
+        <dregg-name-registry>        — browse / filter / paginate names
+        <dregg-name-register-form>   — mutation surface (register, renew,
                                        transfer, revoke, set-target)
 
       The mutation surface dispatches signed turns through the extension
-      cipherclerk's window.pyana.signTurn (see extension/src/page.ts); the
+      cipherclerk's window.dregg.signTurn (see extension/src/page.ts); the
       thin JS shim in ./turn-builders.js produces the right turnSpec
       shape. The browser never holds raw private keys.
 
@@ -46,55 +46,55 @@
   </head>
   <body>
     <header class="starbridge-nameservice-chrome">
-      <h1>Pyana Nameservice</h1>
+      <h1><code>dregg</code> Nameservice</h1>
       <p class="lede">
         Register, renew, transfer, and revoke federation names — composed
-        from pyana-native primitives only. Backed by the
+        from dregg-native primitives only. Backed by the
         <code>name_factory_descriptor()</code> in
         <code>starbridge-apps/nameservice/src/lib.rs</code>.
       </p>
     </header>
     <main>
-      <pyana-app
+      <dregg-app
         runtime="in-memory"
         factory-vk="737461726272696467652d6e616d65736572766963652d666163746f72792121"
-        registry-uri="pyana://cell/registry-default"
+        registry-uri="dregg://cell/registry-default"
       >
         <section class="layout">
           <div>
             <h2>Registry</h2>
-            <pyana-name-registry
-              uri="pyana://cell/registry-default"
+            <dregg-name-registry
+              uri="dregg://cell/registry-default"
               page-size="25"
-            ></pyana-name-registry>
+            ></dregg-name-registry>
           </div>
           <aside>
             <h2>Detail</h2>
-            <pyana-name uri="pyana://cell/registry-default" name=""></pyana-name>
+            <dregg-name uri="dregg://cell/registry-default" name=""></dregg-name>
             <h2 style="margin-top:1.5rem;">Mutate</h2>
-            <pyana-name-register-form
-              registry-uri="pyana://cell/registry-default"
+            <dregg-name-register-form
+              registry-uri="dregg://cell/registry-default"
               mode="register"
-            ></pyana-name-register-form>
+            ></dregg-name-register-form>
           </aside>
         </section>
-      </pyana-app>
+      </dregg-app>
     </main>
     <footer>
       Slot layout — NAME_HASH=2, OWNER_HASH=3, EXPIRY=4, REVOKED=5, RESOLVE_TARGET=6.
       Slot caveats: WriteOnce on NAME_HASH and REVOKED, Monotonic on
       EXPIRY. See <code>src/lib.rs</code> for the full descriptor.
     </footer>
-    <!-- The in-browser pyana node + the shared Studio chrome. -->
-    <script type="module" src="/pkg/pyana_wasm.js"></script>
+    <!-- The in-browser dregg node + the shared Studio chrome. -->
+    <script type="module" src="/pkg/dregg_wasm.js"></script>
     <script type="module" src="/_includes/studio/runtimes.js"></script>
     <!-- The shared inspector registry lazy-imports this app's
          inspectors and turn-builders (now canonical typed versions in
          shared/ per §4.8), plus the legacy full impl for standalone.
          This page is the first end-to-end starbridge-app demonstration
-         (register name → see cell-program slot caveats in <pyana-name>
-         which reuses platform <pyana-cell> etc.). Surfaced via the new
-         Apps tab + <pyana-app-list> in /starbridge/. -->
+         (register name → see cell-program slot caveats in <dregg-name>
+         which reuses platform <dregg-cell> etc.). Surfaced via the new
+         Apps tab + <dregg-app-list> in /starbridge/. -->
     <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
     <script type="module" src="./inspectors.js"></script>
     <script type="module" src="./turn-builders.js"></script>

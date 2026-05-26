@@ -193,7 +193,7 @@ extension cipherclerk's `createFromFactory` method
 code is:
 
 ```ts
-const inboxCellId = await window.pyana.createFromFactory(
+const inboxCellId = await window.dregg.createFromFactory(
     INBOX_FACTORY_VK,
     ownerPubkeyHex,
     /* initial_fields */ { 0: minDeposit, 1: capacity, 7: senderSetRoot }
@@ -277,7 +277,7 @@ observability, what it replaces, migration risk.
 Source today: `storage/src/inbox.rs` (588 LOC). The "store-and-forward
 subscriber delivery" primitive used by `apps/subscription`
 (`apps/subscription/src/delivery.rs:138`). Per the CLAUDIT, the
-only "real Pyana primitive use" in the subscription app — and
+only "real `dregg` primitive use" in the subscription app — and
 also the surface where the authorization gap (§1) bites hardest.
 
 #### Slot layout
@@ -1307,7 +1307,7 @@ Net LOC delta: **~−800 in storage, ~+250 in cell-program**.
   place; until then, slashes are operator-authority-only (which is
   the current state anyway, so no regression).
 - **Multi-cell dispatch.** A `relay` action that touches *both* the
-  relay cell and the target inbox is a cross-cell turn. Pyana
+  relay cell and the target inbox is a cross-cell turn. `dregg`
   already supports multi-cell turns (per `turn::Turn`'s effect
   vector). The constraint is that **all** affected cells'
   `CellPrograms` are evaluated. The relay cell's program must allow
@@ -1417,10 +1417,10 @@ and availability. The two coordinate via the
 `AttestedRoot`-bound availability protocol (relays attest that
 they hold the bytes; clients verify by hash).
 
-**Open question §7.3:** is content-addressed blob storage pyana's
+**Open question §7.3:** is content-addressed blob storage dregg's
 responsibility at all, or does it belong to the host node (with
-pyana committing only to hashes)? The recommendation leans toward
-"host node responsibility; pyana commits to hashes" — which means
+dregg committing only to hashes)? The recommendation leans toward
+"host node responsibility; dregg commits to hashes" — which means
 `storage::content` becomes a *host*-level concern, not a workspace
 crate.
 
@@ -1631,7 +1631,7 @@ These files become thin re-exports of cell-program / factory machinery:
 | App-framework HTTP shims (5 endpoints) | ~−1000 |
 | **Net** | **~−5000** |
 
-Roughly **5000 LOC removed from `pyana-storage` and `app-framework`**,
+Roughly **5000 LOC removed from `dregg-storage` and `app-framework`**,
 replaced by **~1400 LOC of cell-program declarations and factory
 descriptors**, plus the (separately budgeted)
 `WitnessedPredicateRegistry` infrastructure from
@@ -1697,7 +1697,7 @@ factory.
 
 ### §7.4. `ContentStore` disposition
 
-**Recommendation (per §4.2): host-level concern; pyana commits
+**Recommendation (per §4.2): host-level concern; dregg commits
 only to hashes**. The `storage::content::ContentStore` becomes a
 *host*-level (not workspace-level) concern. `Effect::BindBlob`
 records the commitment in cell state; the host node serves the
@@ -1705,9 +1705,9 @@ bytes; the federation attests to availability via the existing
 relay protocols.
 
 This implies a doc-level boundary: blob storage moves out of
-`pyana-storage` and into the **node-operator's** infrastructure.
+`dregg-storage` and into the **node-operator's** infrastructure.
 Apps that need blob storage talk to the host through a
-`pyana-content-adapter` shim (probably in `node/` or a new crate).
+`dregg-content-adapter` shim (probably in `node/` or a new crate).
 
 ### §7.5. Migration ordering — which primitive migrates first?
 

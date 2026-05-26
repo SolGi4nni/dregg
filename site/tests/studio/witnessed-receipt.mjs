@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-witnessed-receipt> inspector.
+ * Playwright ad-hoc test for <dregg-witnessed-receipt> inspector.
  *
  * Run with:
  *   node tests/studio/witnessed-receipt.mjs
@@ -8,13 +8,13 @@
  *   npx serve dist -l 4818
  *
  * What this test does:
- *  1. Navigates to /studio.html (has wasm + in-memory runtime + pyana-app#app)
+ *  1. Navigates to /studio.html (has wasm + in-memory runtime + dregg-app#app)
  *  2. Waits for wasm init and runtime-ready
  *  3. Creates an agent, executes a turn to generate a turn_hash → receipt
  *  4. Injects witnessed-receipt.js + its dependencies (proof.js, receipt.js)
- *  5. Mounts <pyana-witnessed-receipt uri="pyana://receipt/<hash>">
+ *  5. Mounts <dregg-witnessed-receipt uri="dregg://receipt/<hash>">
  *  6. Verifies scope-0 + Placeholder tier render (sim runtime → no proof_view)
- *  7. Verifies embedded <pyana-receipt> and <pyana-proof> mount correctly
+ *  7. Verifies embedded <dregg-receipt> and <dregg-proof> mount correctly
  *  8. Tests compact mode output
  */
 
@@ -36,16 +36,16 @@ async function run() {
   console.log('[test] Navigating to /studio ...');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyanaUi:ready (Preact + signals loaded; dist uses window.pyanaUi)
-  await page.waitForFunction(() => !!window.pyanaUi, { timeout: 20000 });
-  console.log('[test] pyanaUi:ready fired.');
+  // Wait for dreggUi:ready (Preact + signals loaded; dist uses window.dreggUi)
+  await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
+  console.log('[test] dreggUi:ready fired.');
 
   // Wait for the wasm runtime to be attached to the app element
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
   }, { timeout: 20000 });
-  console.log('[test] runtime attached to <pyana-app#app>.');
+  console.log('[test] runtime attached to <dregg-app#app>.');
 
   // ─── Step 1: create agent + execute a turn ──────────────────────────────────
   const turnHash = await page.evaluate(() => {
@@ -77,15 +77,15 @@ async function run() {
     type: 'module',
   });
   await page.waitForFunction(
-    () => !!customElements.get('pyana-witnessed-receipt'),
+    () => !!customElements.get('dregg-witnessed-receipt'),
     { timeout: 5000 }
   );
-  console.log('[test] <pyana-witnessed-receipt> custom element registered.');
+  console.log('[test] <dregg-witnessed-receipt> custom element registered.');
 
-  // ─── Step 3: mount inside <pyana-app#app> ───────────────────────────────────
+  // ─── Step 3: mount inside <dregg-app#app> ───────────────────────────────────
   await page.evaluate((hash) => {
-    const el = document.createElement('pyana-witnessed-receipt');
-    el.setAttribute('uri', `pyana://receipt/${hash}`);
+    const el = document.createElement('dregg-witnessed-receipt');
+    el.setAttribute('uri', `dregg://receipt/${hash}`);
     el.setAttribute('id', 'test-wr');
     document.getElementById('app').appendChild(el);
   }, turnHash);
@@ -95,7 +95,7 @@ async function run() {
     const el = document.getElementById('test-wr');
     return el && el.children.length > 0;
   }, { timeout: 8000 });
-  console.log('[test] <pyana-witnessed-receipt> rendered.');
+  console.log('[test] <dregg-witnessed-receipt> rendered.');
 
   // ─── Test 1: scope-0 badge present ─────────────────────────────────────────
   const scopeBadgeText = await page.evaluate(() => {
@@ -121,18 +121,18 @@ async function run() {
   }
   console.log('[test 2] PASS: Placeholder tier badge rendered.');
 
-  // ─── Test 3: embedded <pyana-receipt> mounts ────────────────────────────────
-  // The sub-pane uses a <details open> + <pyana-receipt uri=...> child element.
+  // ─── Test 3: embedded <dregg-receipt> mounts ────────────────────────────────
+  // The sub-pane uses a <details open> + <dregg-receipt uri=...> child element.
   // We wait for the sub-element to have rendered children.
   const receiptMounted = await page.waitForFunction(() => {
     const el = document.getElementById('test-wr');
     if (!el) return false;
-    const sub = el.querySelector('pyana-receipt');
-    // pyana-receipt renders a div child once it resolves
+    const sub = el.querySelector('dregg-receipt');
+    // dregg-receipt renders a div child once it resolves
     return sub && sub.children.length > 0;
   }, { timeout: 8000 }).then(() => true).catch(() => false);
 
-  console.log(`[test 3] <pyana-receipt> mounted: ${receiptMounted}`);
+  console.log(`[test 3] <dregg-receipt> mounted: ${receiptMounted}`);
   if (!receiptMounted) {
     // Inspect the DOM to understand the state
     const wrHtml = await page.evaluate(() => {
@@ -140,36 +140,36 @@ async function run() {
       return el ? el.innerHTML.slice(0, 800) : '(no element)';
     });
     console.log('[test 3] witnessed-receipt innerHTML:', wrHtml);
-    throw new Error('TEST FAILED: embedded <pyana-receipt> did not render children');
+    throw new Error('TEST FAILED: embedded <dregg-receipt> did not render children');
   }
-  console.log('[test 3] PASS: embedded <pyana-receipt> rendered.');
+  console.log('[test 3] PASS: embedded <dregg-receipt> rendered.');
 
-  // ─── Test 4: embedded <pyana-proof> mounts ──────────────────────────────────
+  // ─── Test 4: embedded <dregg-proof> mounts ──────────────────────────────────
   const proofMounted = await page.waitForFunction(() => {
     const el = document.getElementById('test-wr');
     if (!el) return false;
-    const sub = el.querySelector('pyana-proof');
+    const sub = el.querySelector('dregg-proof');
     return sub && sub.children.length > 0;
   }, { timeout: 8000 }).then(() => true).catch(() => false);
 
-  console.log(`[test 4] <pyana-proof> mounted: ${proofMounted}`);
+  console.log(`[test 4] <dregg-proof> mounted: ${proofMounted}`);
   if (!proofMounted) {
-    throw new Error('TEST FAILED: embedded <pyana-proof> did not render children');
+    throw new Error('TEST FAILED: embedded <dregg-proof> did not render children');
   }
   // The proof element should contain a scope-0 indicator (no proof in sim)
   const proofText = await page.evaluate(() => {
     const el = document.getElementById('test-wr');
-    const sub = el && el.querySelector('pyana-proof');
+    const sub = el && el.querySelector('dregg-proof');
     return sub ? sub.innerText.slice(0, 400) : '';
   });
-  console.log(`[test 4] <pyana-proof> text: "${proofText.slice(0, 120)}"`);
+  console.log(`[test 4] <dregg-proof> text: "${proofText.slice(0, 120)}"`);
   const proofShowsScope0 = proofText.toLowerCase().includes('scope-0') ||
     proofText.toLowerCase().includes('no proof') ||
     proofText.toLowerCase().includes('placeholder');
   if (!proofShowsScope0) {
-    console.warn('[test 4] WARN: <pyana-proof> did not show scope-0 language (may be ok if tier badge shown)');
+    console.warn('[test 4] WARN: <dregg-proof> did not show scope-0 language (may be ok if tier badge shown)');
   } else {
-    console.log('[test 4] PASS: embedded <pyana-proof> shows scope-0 / no proof content.');
+    console.log('[test 4] PASS: embedded <dregg-proof> shows scope-0 / no proof content.');
   }
 
   // ─── Test 5: scope strip renders scope description ──────────────────────────
@@ -186,8 +186,8 @@ async function run() {
 
   // ─── Test 6: compact mode ───────────────────────────────────────────────────
   await page.evaluate((hash) => {
-    const el = document.createElement('pyana-witnessed-receipt');
-    el.setAttribute('uri', `pyana://receipt/${hash}`);
+    const el = document.createElement('dregg-witnessed-receipt');
+    el.setAttribute('uri', `dregg://receipt/${hash}`);
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-wr-compact');
     document.getElementById('app').appendChild(el);
@@ -215,8 +215,8 @@ async function run() {
 
   // ─── Test 7: bad URI shows error ────────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-witnessed-receipt');
-    el.setAttribute('uri', 'pyana://cell/notAreceiptURI');
+    const el = document.createElement('dregg-witnessed-receipt');
+    el.setAttribute('uri', 'dregg://cell/notAreceiptURI');
     el.setAttribute('id', 'test-wr-bad');
     document.getElementById('app').appendChild(el);
   });

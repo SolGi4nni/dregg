@@ -1,4 +1,4 @@
-# AUDIT-coord-crate.md — Deep audit of `pyana-coord`
+# AUDIT-coord-crate.md — Deep audit of `dregg-coord`
 
 > Read-only audit of the `coord/` workspace member.
 > Generated 2026-05-24 against `main` @ commit `8a66164` (working tree
@@ -10,8 +10,8 @@
 
 Scope: every file in `coord/src/` (~6.9 KLOC implementation + 1.9 KLOC
 tests in `tests.rs`), plus `Cargo.toml`, plus every consumer that
-imports `pyana_coord::*` in the workspace. Reverse-dep search was
-`grep -rn 'pyana_coord\|pyana-coord' --include='*.rs' --include='*.toml'`.
+imports `dregg_coord::*` in the workspace. Reverse-dep search was
+`grep -rn 'dregg_coord\|dregg-coord' --include='*.rs' --include='*.toml'`.
 
 The crate's self-description (from `Cargo.toml`):
 
@@ -23,7 +23,7 @@ distinct mechanisms living in `coord/`, two of which are wired into
 production:
 
 1. **Layer 1 — Causal chaining DAG.** Hash-pointer happened-before
-   relationships between turns. Backed by `pyana_types::CausalDag`
+   relationships between turns. Backed by `dregg_types::CausalDag`
    plus turn-aware wrappers (`CausalTurn`, `CausalLedger`).
 2. **Layer 2 — Atomic multi-party 2PC.** Propose / Vote / Commit-or-
    Abort over a multi-participant call forest, with Ed25519 vote
@@ -56,8 +56,8 @@ node level).
 | `lib.rs` | 67 | Module wiring + re-exports + two-layer architecture doc |
 | `atomic.rs` | 1113 | 2PC state machine: `AtomicForest`, `Coordinator`, `Participant`, `Vote`, signed messages |
 | `budget.rs` | 1237 | Stingray bounded counter (`BudgetCoordinator`) + `FastUnlockManager` + `SpendingCertificate` + tests |
-| `causal.rs` | 408 | Layer-1 `CausalTurn`, `CausalLedger`, `CausalTurnBuilder`; re-exports `pyana_types::CausalDag` |
-| `error.rs` | 221 | `CoordError` enum + `From<TurnError>` / `From<LedgerError>` / `From<pyana_types::CausalError>` |
+| `causal.rs` | 408 | Layer-1 `CausalTurn`, `CausalLedger`, `CausalTurnBuilder`; re-exports `dregg_types::CausalDag` |
+| `error.rs` | 221 | `CoordError` enum + `From<TurnError>` / `From<LedgerError>` / `From<dregg_types::CausalError>` |
 | `serde_sig.rs` | 25 | Serde adapter for `[u8; 64]` Ed25519 signature serialization |
 | `shared_budget.rs` | 1897 | `SharedResourceBudget`, `SharedBudgetObserver`, debit payload encode/decode, Tier-2→Tier-3 state machine, blocklace integration, tests |
 | `tests.rs` | 1897 | Integration tests for Layer 1 + Layer 2 (does not exercise `budget.rs` or `shared_budget.rs` — those have inline `#[cfg(test)] mod tests`) |
@@ -65,11 +65,11 @@ node level).
 Cargo dependency graph (from `Cargo.toml`):
 
 ```
-pyana-coord
-├── pyana-cell   (CellId, Ledger, Preconditions)
-├── pyana-blocklace (Block, Blocklace, Payload — used by shared_budget only)
-├── pyana-turn   (Turn, TurnExecutor, TurnReceipt, CallForest, ComputronCosts)
-├── pyana-types  (CausalDag re-export)
+dregg-coord
+├── dregg-cell   (CellId, Ledger, Preconditions)
+├── dregg-blocklace (Block, Blocklace, Payload — used by shared_budget only)
+├── dregg-turn   (Turn, TurnExecutor, TurnReceipt, CallForest, ComputronCosts)
+├── dregg-types  (CausalDag re-export)
 ├── blake3
 ├── ed25519-dalek (Signer/Verifier/SigningKey/VerifyingKey)
 └── serde
@@ -112,7 +112,7 @@ Where the meat is. Five top-level types:
   Preconditions)>`, `initiator: CellId`, `fee: u64`, `hash: [u8; 32]`.
   Computes its identity hash over **participants × forest_hash ×
   full precondition contents × initiator × fee** under domain tag
-  `b"pyana-coord:atomic-forest"`. A security comment on
+  `b"dregg-coord:atomic-forest"`. A security comment on
   `compute_hash` (lines 60–87) calls out specifically that the full
   precondition contents are hashed (via `Preconditions::hash()`) to
   prevent hash collisions where two different precondition sets
@@ -143,7 +143,7 @@ Where the meat is. Five top-level types:
   `propose()` transitions Idle → Proposing; validates the forest,
   checks `0 < threshold <= participants.len()`, **gates on
   `estimated_cost <= max_budget`** (a per-proposal computron budget
-  ceiling), assigns a `proposal_id = blake3("pyana-coord:proposal"
+  ceiling), assigns a `proposal_id = blake3("dregg-coord:proposal"
   ‖ forest_hash ‖ coordinator_node_id)`, and records the proposal's
   start `Instant` for timeout tracking. `receive_vote()` looks up
   the participant's registered Ed25519 pubkey in
@@ -340,13 +340,13 @@ is not tested.
 
 ### `causal.rs`
 
-Wraps `pyana_types::CausalDag` (re-exported) with turn-aware
+Wraps `dregg_types::CausalDag` (re-exported) with turn-aware
 machinery. Three types:
 
 - `CausalTurn` (lines 41–95). A turn plus its causal metadata:
   `(turn, causal_deps: Vec<[u8; 32]>, node_id, sequence, hash)`.
   The hash binds all five components under domain tag
-  `b"pyana-coord:causal-turn"`. `verify_hash()` recomputes and
+  `b"dregg-coord:causal-turn"`. `verify_hash()` recomputes and
   compares.
 
 - `CausalLedger` (lines 99–377). A `Ledger` + `CausalDag` + per-
@@ -376,7 +376,7 @@ machinery. Three types:
   `causal_deps` from `ledger.frontier()` and `sequence` from
   `ledger.next_sequence(node_id)`.
 
-The `From<pyana_types::CausalError>` conversion (lines 23–35)
+The `From<dregg_types::CausalError>` conversion (lines 23–35)
 maps `MissingDeps { turn_hash, missing }` to
 `CoordError::MissingDependency { turn_hash, dep_hash: missing[0] }`
 — it drops all but the first missing dependency. That's lossy: a
@@ -441,7 +441,7 @@ resource split across agents." Key changes vs `budget.rs`:
   prefixes a `0x44` tag byte, then the 32-byte resource_id, then
   the 8-byte LE amount. `extract_debit_for_resource` and
   `extract_resource_debit` decode the same format. The 41-byte
-  payload is embedded inside a `pyana_blocklace::Payload::Turn`
+  payload is embedded inside a `dregg_blocklace::Payload::Turn`
   or `::Data`.
 
 Additional types:
@@ -596,7 +596,7 @@ Exhaustive list of consumers, by source file:
   `BudgetSlice` struct that is *structurally identical* to
   `coord::budget::BudgetSlice` but lives in `turn/` to avoid a
   circular dep. The doc comment (lines 6–9) says: "The
-  BudgetCoordinator in `pyana-coord` manages distribution and
+  BudgetCoordinator in `dregg-coord` manages distribution and
   rebalancing at a higher level." This is one of those duplication-
   by-necessity layouts that comes from `coord` depending on
   `turn` already; in §3 below this audit explores whether the
@@ -614,9 +614,9 @@ Exhaustive list of consumers, by source file:
 
 ### `types/` and `net/`
 - These crates each define their own `CausalDag` wrapper around
-  `pyana_types::CausalDag`. They do NOT depend on `pyana-coord`.
-  The Layer-1 type is shared via `pyana-types`, not via this
-  crate. `coord/src/causal.rs` re-exports `pyana_types::CausalDag`
+  `dregg_types::CausalDag`. They do NOT depend on `dregg-coord`.
+  The Layer-1 type is shared via `dregg-types`, not via this
+  crate. `coord/src/causal.rs` re-exports `dregg_types::CausalDag`
   for convenience.
 
 **Summary of integration breadth:**
@@ -638,12 +638,12 @@ Exhaustive list of consumers, by source file:
   escalation: NOT used in production. Only demo-agent
   payment-channel examples. The `preflight/` mention is a
   comment in a docstring. **Aspirational scaffolding.**
-- `CausalLedger`: NOT imported by node directly. `pyana_types::
+- `CausalLedger`: NOT imported by node directly. `dregg_types::
   CausalDag` is imported by `net/` and `types/`, but
-  `pyana_coord::CausalLedger` is not pulled into any non-test
+  `dregg_coord::CausalLedger` is not pulled into any non-test
   caller I could find. Demo-agent examples
   (`unified_harness.rs:37`, `causal_ordering.rs:11`) use
-  `pyana_types::causal::CausalDag` directly, bypassing
+  `dregg_types::causal::CausalDag` directly, bypassing
   `coord::causal`. **The Layer-1 wrappers in `coord/` are
   effectively unused by production code.**
 
@@ -654,7 +654,7 @@ practice:
 - Layer 2 (atomic multi-party 2PC): **in production, driven by
   node HTTP API.**
 - Layer 1 (causal chaining): **in production via
-  `pyana_types::CausalDag` directly, not via this crate's
+  `dregg_types::CausalDag` directly, not via this crate's
   wrappers.** `coord::CausalLedger`, `coord::CausalTurn`, and
   `coord::CausalTurnBuilder` are dead from the perspective of
   the node binary.
@@ -682,7 +682,7 @@ An **`AtomicForest`** is the unit of coordination. It contains:
 
 - A list of participating `node_id`s (one per node that must
   agree). These are the "voters."
-- A `CallForest` (from `pyana-turn`) containing the actions
+- A `CallForest` (from `dregg-turn`) containing the actions
   contributed by all participants — flattened into one forest.
 - A `Vec<(CellId, Preconditions)>` of per-cell preconditions that
   must hold on each participant's local ledger view.
@@ -762,7 +762,7 @@ client POST /turn/atomic
         │ check participants nonempty, forest nonempty
         │ check 0 < threshold <= |participants|
         │ check estimated_cost <= max_budget
-        │ assign proposal_id = blake3("pyana-coord:proposal"
+        │ assign proposal_id = blake3("dregg-coord:proposal"
         │                              ‖ forest_hash ‖ self.node_id)
         │ state = Proposing { forest, votes={}, proposed_at=Now() }
         ▼
@@ -1004,7 +1004,7 @@ design:
   Tier 3 ordering for tau-based conflict resolution.
 
 This module is the only place in the crate that depends on
-`pyana_blocklace`. The wire format (`encode_debit_payload`,
+`dregg_blocklace`. The wire format (`encode_debit_payload`,
 lines 822–831) is described in the docstring as "a simplified
 wire format; production would use postcard or a more structured
 encoding" — so the payload encoding is a deliberate
@@ -1111,8 +1111,8 @@ single type.
 
 3. Rename one of them so the duplication-by-name doesn't
    continue confusing readers. The cleanest rename is to call
-   the coord type `pyana_coord::budget::StingrayCounter` (or
-   `pyana_coord::budget::BoundedCounterCoordinator`), keeping
+   the coord type `dregg_coord::budget::StingrayCounter` (or
+   `dregg_coord::budget::BoundedCounterCoordinator`), keeping
    `BudgetEnforcer` as the per-token name. This makes the
    distinct semantics impossible to confuse.
 
@@ -1122,9 +1122,9 @@ single type.
 
 ---
 
-## §4. Composition with the rest of pyana
+## §4. Composition with the rest of dregg
 
-Searching for where `pyana_coord` types appear in other crates'
+Searching for where `dregg_coord` types appear in other crates'
 public surfaces:
 
 - **`turn/`** — `turn::budget_gate::BudgetSlice` duplicates
@@ -1143,7 +1143,7 @@ public surfaces:
   about budgets; it just stores blocks.
 
 - **`federation/`** — No direct dep. Federation does not import
-  `pyana_coord`. The atomic-2PC protocol does not interact with
+  `dregg_coord`. The atomic-2PC protocol does not interact with
   federation membership rotation; the participant pubkeys are
   passed in from outside.
 
@@ -1197,7 +1197,7 @@ public surfaces:
   literally `AtomicForest` (the request takes them
   unstructured) but the deserialisation in
   `post_evaluate_proposal` (api.rs:2668) parses a literal
-  `pyana_coord::AtomicForest` from JSON. So `AtomicForest` is
+  `dregg_coord::AtomicForest` from JSON. So `AtomicForest` is
   effectively part of the node's HTTP surface.
 
 No other crate exposes coord types in its public API. The
@@ -1349,7 +1349,7 @@ revealed at rebalance via `SpendingCertificate`s.
 
 `CausalLedger.dag` is public information. Causal predecessors
 are not secret — they're hash links that any verifier needs.
-This is consistent with `pyana_types::CausalDag`'s broader
+This is consistent with `dregg_types::CausalDag`'s broader
 design.
 
 ### Inconsistency to flag
@@ -1380,7 +1380,7 @@ catches the "we thought it was private" mistakes early.
 1. **Causal layer drift.** `coord::CausalLedger` /
    `coord::CausalTurn` / `coord::CausalTurnBuilder` are
    effectively unused in production; node, types, and net all
-   reach for `pyana_types::CausalDag` directly. Was the
+   reach for `dregg_types::CausalDag` directly. Was the
    intention for these wrappers to be the canonical caller
    surface, and the divergence is an oversight? Or are these
    wrappers vestigial from an earlier design, and should they
@@ -1474,7 +1474,7 @@ catches the "we thought it was private" mistakes early.
   protocol-correctness gap, not a cosmetic one.
 - **`causal.rs`**: either wire `CausalLedger` into node (so
   the wrappers earn their keep) or delete them and have
-  demo-agent use `pyana_types::CausalDag` like the rest of
+  demo-agent use `dregg_types::CausalDag` like the rest of
   the workspace. The current state — wrappers exist, but no
   production code uses them — is worse than either
   alternative. **Priority: medium.**
@@ -1482,7 +1482,7 @@ catches the "we thought it was private" mistakes early.
   **`coord::budget::BudgetSlice`** duplication: either accept
   the duplication and document it explicitly in both files,
   or restructure the dep graph (e.g., move `BudgetSlice` into
-  `pyana-types`) so a single definition can be shared.
+  `dregg-types`) so a single definition can be shared.
   **Priority: low.** The duplication is small and structural.
 
 ### Promote (add documentation, no code change)
@@ -1532,7 +1532,7 @@ living. But:
   `node::state::ledger: Ledger` with
   `node::state::causal_ledger: CausalLedger` so that every
   receipt automatically enters the DAG) or to fold their logic
-  into `pyana_types::CausalDag` and remove the wrappers.
+  into `dregg_types::CausalDag` and remove the wrappers.
 
 ### Rename (clarity)
 
@@ -1622,12 +1622,12 @@ lineage:
   exact list per arXiv abstract page)
 - **arXiv:** 2501.06531
 - **Year:** 2025
-- **Core idea relevant to pyana:** the *bounded counter*
+- **Core idea relevant to dregg:** the *bounded counter*
   primitive with `ceiling = balance * (f+1) / (2f+1)` per
   silo, plus the *fast unlock* protocol for 2PC abort
   recovery.
 
-The pyana implementation in `budget.rs` faithfully transcribes
+The dregg implementation in `budget.rs` faithfully transcribes
 the math; the divergences from the paper (per §2 of this
 audit) are (a) missing signature verification on certificates
 and unlock votes, and (b) no production wire-up of the

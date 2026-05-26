@@ -10,7 +10,7 @@ import type {
 } from "./types";
 
 /**
- * PredicateEvaluator wraps the pyana Datalog authorization engine,
+ * PredicateEvaluator wraps the dregg Datalog authorization engine,
  * providing a high-level interface for policy evaluation.
  *
  * The Datalog engine uses a standard policy with built-in rules for
@@ -19,7 +19,7 @@ import type {
  *
  * @example
  * ```ts
- * import { PredicateEvaluator } from "@pyana/sdk";
+ * import { PredicateEvaluator } from "@dregg/sdk";
  *
  * const evaluator = new PredicateEvaluator(wasm);
  *
@@ -36,16 +36,16 @@ import type {
  * ```
  */
 export class PredicateEvaluator {
-  private wasm: typeof import("pyana-wasm");
+  private wasm: typeof import("dregg-wasm");
 
-  constructor(wasm: typeof import("pyana-wasm")) {
+  constructor(wasm: typeof import("dregg-wasm")) {
     this.wasm = wasm;
   }
 
   /**
    * Evaluate a Datalog authorization request against a set of facts.
    *
-   * Uses the standard pyana policy rules to derive an allow/deny conclusion.
+   * Uses the standard dregg policy rules to derive an allow/deny conclusion.
    * The derivation trace is returned for debugging and auditability.
    *
    * @param facts - The facts representing the current authorization state.

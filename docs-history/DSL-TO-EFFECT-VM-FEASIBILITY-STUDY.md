@@ -1,7 +1,7 @@
 # DSL-to-Effect-VM feasibility study
 
 > Can the `EffectVmAir` in `circuit/src/effect_vm.rs` (8,339 lines, hand-written) be
-> regenerated from an enhanced `pyana-dsl` IR, such that all 7 backends
+> regenerated from an enhanced `dregg-dsl` IR, such that all 7 backends
 > (`gen_air`, `gen_kimchi`, `gen_plonky3`, `gen_sp1`, `gen_midnight`, `gen_datalog`,
 > `gen_rust`) can produce the AIR + executor projection from a single declarative
 > source?
@@ -9,7 +9,7 @@
 **Verdict: FOOL'S ERRAND, in the strict form.** The Effect VM is not a row-shaped
 constraint at all; it is a 46-instruction VM whose state, aux, PI, witness, and
 boundary layouts encode the entire abstract machine, with hand-tuned aux-column
-sharing and Lagrange tricks for degree control. Pyana-dsl is a row-shaped
+sharing and Lagrange tricks for degree control. `dregg`-dsl is a row-shaped
 constraint DSL with no aux-column abstraction, no inter-row constraint kind, no
 boundary kind, and stubs for the hash/Merkle primitives the VM is *built out of*.
 
@@ -28,7 +28,7 @@ wiring + cross-backend differential testing).
 
 ## 1. The expressiveness gap, enumerated concretely
 
-Each row is "DSL feature → can current IR (see `pyana-dsl/src/ir.rs`) express it?"
+Each row is "DSL feature → can current IR (see `dregg-dsl/src/ir.rs`) express it?"
 
 ### 1.1 Selector exclusivity: `Σ s_i = 1` and `s_i ∈ {0,1}` for 46 selectors
 
@@ -143,7 +143,7 @@ PI[OLD_COMMIT], last_row state_commit == PI[NEW_COMMIT], row 0 balance_lo ==
 PI[INIT_BAL_LO], etc.
 
 The IR has no boundary statement kind. `BoundaryConstraint` exists in the
-runtime (`pyana_circuit::stark::BoundaryConstraint`) but is not surfaced in the
+runtime (`dregg_circuit::stark::BoundaryConstraint`) but is not surfaced in the
 IR.
 
 **Verdict: not expressible.**
@@ -333,7 +333,7 @@ backends?" — fails on several grounds simultaneously:
    moving target through DSL extensions afterward is a poor allocation.
 
 The Effect VM is a specific, hand-tuned compiler IR for a specific abstract
-machine. Pyana-dsl is a row-shaped constraint description language. Saying
+machine. `dregg`-dsl is a row-shaped constraint description language. Saying
 "can the second express the first" is roughly like asking "can our YAML schema
 language emit our Rust borrow checker." The answer is yes, in some Turing-
 universal sense, by growing the YAML schema language into a programming
@@ -424,7 +424,7 @@ DSL→Custom path is not end-to-end:
   presently used only to *describe* — not to verify — DSL constraints.
 - The Custom dispatch needs a VK registry: `vk_hash → StarkAir + verifier
   parameters`. That registry doesn't exist.
-- The DSL produces three things per `#[pyana_effect]`: a Rust evaluator
+- The DSL produces three things per `#[dregg_effect]`: a Rust evaluator
   (used in `turn/src/executor.rs`), an AIR descriptor (currently unused at
   runtime), and a Plonky3 Air struct (currently unused). Wiring Custom to
   invoke either of the latter two is a finite engineering task: ~300 lines,
@@ -452,7 +452,7 @@ DSL ROI tips positive (probably 4+ micro-AIRs).**
 
 ### (d) Cross-backend differential testing for the Effect VM
 
-`pyana-dsl/src/gen_diff_test.rs` already builds differential tests that run
+`dregg-dsl/src/gen_diff_test.rs` already builds differential tests that run
 the Rust evaluator and the proven AIR against the same inputs and assert they
 agree on accept/reject. For the **Effect VM specifically**, an analogous
 differential between the executor's Rust evaluator and `EffectVmAir` is the

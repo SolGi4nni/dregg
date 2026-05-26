@@ -29,7 +29,7 @@ struct GenesisCell {
 #[derive(Serialize)]
 struct GenesisConfig {
     /// Hex-encoded 32-byte federation id, derived from the sorted committee
-    /// public keys via [`pyana_federation::derive_federation_id`]. Closes
+    /// public keys via [`dregg_federation::derive_federation_id`]. Closes
     /// audit finding F1: not random bytes anymore.
     federation_id: String,
     /// The committee epoch this id was minted for. Always 0 at genesis;
@@ -58,7 +58,7 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // Generate keypairs for each validator. Federation_id is derived from
     // the committee pubkeys AFTER this loop — see below.
     let mut genesis_validators = Vec::with_capacity(validators);
-    let mut committee_pubkeys: Vec<pyana_types::PublicKey> = Vec::with_capacity(validators);
+    let mut committee_pubkeys: Vec<dregg_types::PublicKey> = Vec::with_capacity(validators);
 
     for i in 0..validators {
         // Generate a 32-byte signing key.
@@ -75,10 +75,10 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         eprintln!(
             "warning: generating placeholder XMSS root for node-{i} (not post-quantum secure)"
         );
-        let xmss_root = blake3::derive_key("pyana-devnet-xmss-root-v1", &key_bytes);
+        let xmss_root = blake3::derive_key("dregg-devnet-xmss-root-v1", &key_bytes);
         let xmss_root_hex = hex_encode(&xmss_root);
 
-        committee_pubkeys.push(pyana_types::PublicKey(public_key.to_bytes()));
+        committee_pubkeys.push(dregg_types::PublicKey(public_key.to_bytes()));
         genesis_validators.push(GenesisValidator {
             name: format!("node-{i}"),
             public_key: pk_hex,
@@ -113,12 +113,12 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
             .collect();
         let env_content = format!(
             "RUST_LOG=info\n\
-             PYANA_NODE_INDEX={i}\n\
-             PYANA_FEDERATION_SIZE={validators}\n\
-             PYANA_FEDERATION_PEERS={peers}\n\
-             PYANA_DATA_DIR=/data\n\
-             PYANA_PORT=8420\n\
-             PYANA_GOSSIP_PORT=9420\n",
+             DREGG_NODE_INDEX={i}\n\
+             DREGG_FEDERATION_SIZE={validators}\n\
+             DREGG_FEDERATION_PEERS={peers}\n\
+             DREGG_DATA_DIR=/data\n\
+             DREGG_PORT=8420\n\
+             DREGG_GOSSIP_PORT=9420\n",
             peers = peers.join(","),
         );
         std::fs::write(&env_path, &env_content).unwrap_or_else(|e| {
@@ -128,14 +128,14 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     }
 
     // BFT quorum threshold: n - floor((n-1)/3) for n validators.
-    let threshold = pyana_federation::quorum_threshold(validators);
+    let threshold = dregg_federation::quorum_threshold(validators);
 
     // Derive federation_id = H(sorted committee pubkeys || epoch=0).
     // Closes audit F1: federation_id is now a commitment to the committee,
     // not random bytes. Adding/removing/rekeying a member changes the id.
     let committee_epoch: u64 = 0;
     let federation_id_bytes =
-        pyana_federation::derive_federation_id_with_epoch(&committee_pubkeys, committee_epoch);
+        dregg_federation::derive_federation_id_with_epoch(&committee_pubkeys, committee_epoch);
     let federation_id = hex_encode(&federation_id_bytes);
 
     // Build genesis config.

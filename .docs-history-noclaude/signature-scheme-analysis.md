@@ -1,8 +1,8 @@
-# Signature Scheme Analysis for Pyana QC
+# Signature Scheme Analysis for `dregg` QC
 
 ## Decision Summary
 
-For pyana's quorum certificates, the signature situation has three distinct layers with different requirements:
+For dregg's quorum certificates, the signature situation has three distinct layers with different requirements:
 
 ### Layer 1: Consensus Protocol Signatures (gossip, voting, view-change)
 **Recommendation: Ed25519 (keep current)**
@@ -35,7 +35,7 @@ The kimi review found:
 
 **This means we currently have NO working proof-carrying QC.** The infrastructure exists but is non-functional.
 
-## What Actually Matters for Pyana Right Now
+## What Actually Matters for `dregg` Right Now
 
 Given federation size 4-50 nodes and the "home for AI" use case:
 

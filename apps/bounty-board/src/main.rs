@@ -1,11 +1,11 @@
-//! Pyana Bounty Board — federated work marketplace with privacy-preserving qualifications.
+//! Dregg Bounty Board — federated work marketplace with privacy-preserving qualifications.
 //!
 //! A standalone HTTP server (axum) providing a bounty board where:
 //! - Issuers post bounties with rewards and qualification requirements.
 //! - Workers claim bounties by proving qualifications anonymously.
 //! - Payment is released atomically via conditional turns on completion.
 //!
-//! Uses the shared `AppServer` from `pyana-app-framework` for standard middleware
+//! Uses the shared `AppServer` from `dregg-app-framework` for standard middleware
 //! (health, CORS, admin auth) and environment-based configuration.
 
 use std::collections::HashMap;
@@ -25,15 +25,15 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 
-use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
-use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
-use pyana_app_framework::persistence::JsonPersistence;
-use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_app_framework::{CellId, EngineConfig, EscrowCondition, PyanaEngine};
-use pyana_bounty_board::payment::{self, Escrow};
-use pyana_bounty_board::qualification::{FederationRootHistory, verify_qualification};
-use pyana_bounty_board::state::BoardState;
-use pyana_bounty_board::{
+use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+use dregg_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
+use dregg_app_framework::persistence::JsonPersistence;
+use dregg_app_framework::server::{AppConfig, AppServer};
+use dregg_app_framework::{CellId, EngineConfig, EscrowCondition, DreggEngine};
+use dregg_bounty_board::payment::{self, Escrow};
+use dregg_bounty_board::qualification::{FederationRootHistory, verify_qualification};
+use dregg_bounty_board::state::BoardState;
+use dregg_bounty_board::{
     ApproveRequest, Bounty, BountyFilter, BountyStatus, BountyStatusResponse, ClaimRequest,
     CreateBountyRequest, SubmitRequest, bounty_id_from_hex, bounty_id_hex, compute_bounty_id,
 };
@@ -42,31 +42,31 @@ use pyana_bounty_board::{
 // CLI Arguments
 // =============================================================================
 
-/// Pyana Bounty Board — federated work marketplace with privacy-preserving qualifications.
+/// Dregg Bounty Board — federated work marketplace with privacy-preserving qualifications.
 #[derive(Parser, Debug)]
 #[command(name = "bounty-board")]
 struct Args {
     /// Federation root hash (64 hex chars). If not provided, fetches from the node.
-    #[arg(long, env = "PYANA_FEDERATION_ROOT")]
+    #[arg(long, env = "DREGG_FEDERATION_ROOT")]
     federation_root: Option<String>,
 
-    /// URL of a running pyana-node to fetch the federation root from.
+    /// URL of a running dregg-node to fetch the federation root from.
     /// The app will query /status and /federation/roots on startup and
     /// periodically sync the latest attested root.
-    #[arg(long, default_value = "http://127.0.0.1:8420", env = "PYANA_NODE_URL")]
+    #[arg(long, default_value = "http://127.0.0.1:8420", env = "DREGG_NODE_URL")]
     node_url: String,
 
     /// Listen address.
-    #[arg(long, default_value = "127.0.0.1:3030", env = "PYANA_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:3030", env = "DREGG_LISTEN")]
     listen: String,
 
     /// Root sync interval in seconds (how often to poll the node for new roots).
-    #[arg(long, default_value = "30", env = "PYANA_SYNC_INTERVAL")]
+    #[arg(long, default_value = "30", env = "DREGG_SYNC_INTERVAL")]
     sync_interval: u64,
 
     /// Path for persisting state across restarts. If not set, state is in-memory only.
     /// Uses the framework's atomic JSON persistence (write-then-rename).
-    #[arg(long, env = "PYANA_STATE_FILE")]
+    #[arg(long, env = "DREGG_STATE_FILE")]
     state_file: Option<PathBuf>,
 }
 
@@ -84,8 +84,8 @@ struct AppState {
     root_history: Arc<RwLock<FederationRootHistory>>,
     /// When the federation root was last updated.
     root_last_updated: Arc<RwLock<Option<Instant>>>,
-    /// The pyana engine for cryptographic proof verification.
-    engine: Arc<Mutex<PyanaEngine>>,
+    /// The dregg engine for cryptographic proof verification.
+    engine: Arc<Mutex<DreggEngine>>,
     /// The node URL used for root syncing.
     node_url: Arc<String>,
     /// Whether the node is currently reachable.
@@ -299,7 +299,7 @@ async fn main() {
                     error!(
                         "cannot reach node at {}: {e}\n\
                          A federation root is required for verification. Either:\n\
-                         - Start a devnet node (pyana-node) at the default address, or\n\
+                         - Start a devnet node (dregg-node) at the default address, or\n\
                          - Pass --node-url pointing to a running node, or\n\
                          - Pass --federation-root explicitly.",
                         args.node_url
@@ -318,7 +318,7 @@ async fn main() {
             federation_root,
         ))),
         root_last_updated: Arc::new(RwLock::new(root_updated)),
-        engine: Arc::new(Mutex::new(PyanaEngine::new(EngineConfig::new(
+        engine: Arc::new(Mutex::new(DreggEngine::new(EngineConfig::new(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
@@ -339,7 +339,7 @@ async fn main() {
 
     // Serve using the AppServer builder.
     AppServer::new(config)
-        .service_name("pyana-bounty-board")
+        .service_name("dregg-bounty-board")
         .with_health()
         .with_cors()
         .routes(app_routes)
@@ -841,7 +841,7 @@ struct WorkerQuery {
 /// POST /admin/height — advance the simulated block height.
 ///
 /// Protected by the framework's `AdminAuth` extractor which validates the
-/// `Authorization: Bearer <token>` header against `PYANA_ADMIN_TOKEN`.
+/// `Authorization: Bearer <token>` header against `DREGG_ADMIN_TOKEN`.
 async fn advance_height(
     _auth: AdminAuth,
     State(state): State<AppState>,

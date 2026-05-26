@@ -42,7 +42,7 @@ use std::sync::Mutex;
 use tracing::info;
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
     RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
     note::NoteError,
@@ -52,7 +52,7 @@ use pyana_cell::{
     predicate::{InputRef, PredicateInput, WitnessedPredicateError, WitnessedPredicateKind},
     state::STATE_SLOTS,
 };
-use pyana_types::AttestedRoot;
+use dregg_types::AttestedRoot;
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Authorization, DelegationMode, Effect, Event};
@@ -66,7 +66,7 @@ use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;
 use crate::turn::{EmittedEvent, Turn, TurnReceipt, TurnResult};
 
-use pyana_dsl_runtime::ProgramRegistry;
+use dregg_dsl_runtime::ProgramRegistry;
 
 /// Whether a single `Effect` is a `Burn`, recursing into
 /// `ExerciseViaCapability::inner_effects`. Powers `was_burn` disclosure.
@@ -137,7 +137,7 @@ fn estimate_authorization_cost(auth: &Authorization, costs: &ComputronCosts) -> 
 /// Cav-Codex Block 3: project a cell-program's declared
 /// `StateConstraint` list into the Effect-VM slot-caveat manifest
 /// (the (count, entries[]) PI surface that
-/// `pyana_circuit::effect_vm::verify_slot_caveat_manifest` will
+/// `dregg_circuit::effect_vm::verify_slot_caveat_manifest` will
 /// re-evaluate).
 ///
 /// Returns `(count, manifest)` where `count <= MAX_SLOT_CAVEATS` and
@@ -152,14 +152,14 @@ fn estimate_authorization_cost(auth: &Authorization, costs: &ComputronCosts) -> 
 /// binds them — see `SLOT-CAVEATS-DESIGN.md` §4 ("AIR enforcement is
 /// strong-soundness opt-in").
 pub fn project_slot_caveat_manifest(
-    constraints: &[pyana_cell::StateConstraint],
+    constraints: &[dregg_cell::StateConstraint],
 ) -> (
     u32,
-    [pyana_circuit::effect_vm::SlotCaveatEntry; pyana_circuit::effect_vm::pi::MAX_SLOT_CAVEATS],
+    [dregg_circuit::effect_vm::SlotCaveatEntry; dregg_circuit::effect_vm::pi::MAX_SLOT_CAVEATS],
 ) {
-    use pyana_circuit::effect_vm::SlotCaveatEntry;
-    use pyana_circuit::effect_vm::pi;
-    use pyana_circuit::field::BabyBear;
+    use dregg_circuit::effect_vm::SlotCaveatEntry;
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::field::BabyBear;
 
     let mut entries = [SlotCaveatEntry::zero(); pi::MAX_SLOT_CAVEATS];
     let mut count: usize = 0;
@@ -178,17 +178,17 @@ pub fn project_slot_caveat_manifest(
             break;
         }
         let entry = match c {
-            pyana_cell::StateConstraint::Immutable { index } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::Immutable { index } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_IMMUTABLE,
                 slot_index: *index,
                 params: [BabyBear::ZERO; 4],
             }),
-            pyana_cell::StateConstraint::WriteOnce { index } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::WriteOnce { index } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_WRITE_ONCE,
                 slot_index: *index,
                 params: [BabyBear::ZERO; 4],
             }),
-            pyana_cell::StateConstraint::FieldDelta { index, delta } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::FieldDelta { index, delta } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_FIELD_DELTA,
                 slot_index: *index,
                 params: [
@@ -198,12 +198,12 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
-            pyana_cell::StateConstraint::MonotonicSequence { seq_index } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::MonotonicSequence { seq_index } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_MONOTONIC_SEQUENCE,
                 slot_index: *seq_index,
                 params: [BabyBear::ZERO; 4],
             }),
-            pyana_cell::StateConstraint::FieldEquals { index, value } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::FieldEquals { index, value } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_FIELD_EQUALS,
                 slot_index: *index,
                 params: [
@@ -213,7 +213,7 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
-            pyana_cell::StateConstraint::FieldGte { index, value } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::FieldGte { index, value } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_FIELD_GTE,
                 slot_index: *index,
                 params: [
@@ -223,7 +223,7 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
-            pyana_cell::StateConstraint::FieldLte { index, value } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::FieldLte { index, value } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_FIELD_LTE,
                 slot_index: *index,
                 params: [
@@ -233,17 +233,17 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
-            pyana_cell::StateConstraint::Monotonic { index } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::Monotonic { index } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_MONOTONIC,
                 slot_index: *index,
                 params: [BabyBear::ZERO; 4],
             }),
-            pyana_cell::StateConstraint::StrictMonotonic { index } => Some(SlotCaveatEntry {
+            dregg_cell::StateConstraint::StrictMonotonic { index } => Some(SlotCaveatEntry {
                 type_tag: pi::SLOT_CAVEAT_TAG_STRICT_MONOTONIC,
                 slot_index: *index,
                 params: [BabyBear::ZERO; 4],
             }),
-            pyana_cell::StateConstraint::TemporalGate {
+            dregg_cell::StateConstraint::TemporalGate {
                 not_before,
                 not_after,
             } => Some(SlotCaveatEntry {
@@ -258,17 +258,17 @@ pub fn project_slot_caveat_manifest(
                     BabyBear::ZERO,
                 ],
             }),
-            pyana_cell::StateConstraint::SenderAuthorized { set } => {
+            dregg_cell::StateConstraint::SenderAuthorized { set } => {
                 let slot_index = match set {
-                    pyana_cell::program::AuthorizedSet::PublicRoot { set_root_index } => {
+                    dregg_cell::program::AuthorizedSet::PublicRoot { set_root_index } => {
                         *set_root_index
                     }
-                    pyana_cell::program::AuthorizedSet::BlindedSet { .. } => 0,
+                    dregg_cell::program::AuthorizedSet::BlindedSet { .. } => 0,
                     // CredentialSet dispatches via the BlindedSet verifier
                     // off-chain (see AuthorizedSet::credential_set_commitment).
                     // No public-slot root to index — use 0 as the
                     // "no-slot" sentinel like BlindedSet.
-                    pyana_cell::program::AuthorizedSet::CredentialSet { .. } => 0,
+                    dregg_cell::program::AuthorizedSet::CredentialSet { .. } => 0,
                 };
                 Some(SlotCaveatEntry {
                     type_tag: pi::SLOT_CAVEAT_TAG_SENDER_AUTHORIZED,
@@ -276,7 +276,7 @@ pub fn project_slot_caveat_manifest(
                     params: [BabyBear::ZERO; 4],
                 })
             }
-            pyana_cell::StateConstraint::AllowedTransitions { slot_index, .. } => {
+            dregg_cell::StateConstraint::AllowedTransitions { slot_index, .. } => {
                 Some(SlotCaveatEntry {
                     type_tag: pi::SLOT_CAVEAT_TAG_ALLOWED_TRANSITIONS,
                     slot_index: *slot_index,
@@ -284,26 +284,26 @@ pub fn project_slot_caveat_manifest(
                 })
             }
             // Deferred — no AIR teeth in Block 3 first wave.
-            pyana_cell::StateConstraint::SumEquals { .. }
-            | pyana_cell::StateConstraint::BoundedBy { .. }
-            | pyana_cell::StateConstraint::FieldDeltaInRange { .. }
-            | pyana_cell::StateConstraint::FieldGteHeight { .. }
-            | pyana_cell::StateConstraint::FieldLteHeight { .. }
-            | pyana_cell::StateConstraint::SumEqualsAcross { .. }
-            | pyana_cell::StateConstraint::CapabilityUniqueness { .. }
-            | pyana_cell::StateConstraint::RateLimit { .. }
-            | pyana_cell::StateConstraint::RateLimitBySum { .. }
-            | pyana_cell::StateConstraint::PreimageGate { .. }
-            | pyana_cell::StateConstraint::TemporalPredicate { .. }
-            | pyana_cell::StateConstraint::BoundDelta { .. }
-            | pyana_cell::StateConstraint::AnyOf { .. }
-            | pyana_cell::StateConstraint::Witnessed { .. }
+            dregg_cell::StateConstraint::SumEquals { .. }
+            | dregg_cell::StateConstraint::BoundedBy { .. }
+            | dregg_cell::StateConstraint::FieldDeltaInRange { .. }
+            | dregg_cell::StateConstraint::FieldGteHeight { .. }
+            | dregg_cell::StateConstraint::FieldLteHeight { .. }
+            | dregg_cell::StateConstraint::SumEqualsAcross { .. }
+            | dregg_cell::StateConstraint::CapabilityUniqueness { .. }
+            | dregg_cell::StateConstraint::RateLimit { .. }
+            | dregg_cell::StateConstraint::RateLimitBySum { .. }
+            | dregg_cell::StateConstraint::PreimageGate { .. }
+            | dregg_cell::StateConstraint::TemporalPredicate { .. }
+            | dregg_cell::StateConstraint::BoundDelta { .. }
+            | dregg_cell::StateConstraint::AnyOf { .. }
+            | dregg_cell::StateConstraint::Witnessed { .. }
             // `Renounced` is the categorical dual of SenderAuthorized
             // (CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.2). No AIR projection
             // in Block-3 first wave; the witness side is checked by the
             // `WitnessedPredicateRegistry` NonMembership verifier.
-            | pyana_cell::StateConstraint::Renounced { .. }
-            | pyana_cell::StateConstraint::Custom { .. } => None,
+            | dregg_cell::StateConstraint::Renounced { .. }
+            | dregg_cell::StateConstraint::Custom { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;
@@ -420,7 +420,7 @@ pub struct TurnExecutor {
     /// source-side state machine). On `BridgeFinalize`, the executor admits a
     /// synthetic `Witnessed → Finalized` envelope pair so a future Refund for
     /// the same bridge_id is rejected as non-monotone.
-    pub bridge_phase_log: Mutex<pyana_cell::note_bridge::BridgePhaseLog>,
+    pub bridge_phase_log: Mutex<dregg_cell::note_bridge::BridgePhaseLog>,
     /// Trusted Ed25519 public keys for destination federation receipt verification.
     /// Used during BridgeFinalize to validate that the receipt was signed by a
     /// legitimate destination federation.
@@ -462,7 +462,7 @@ pub struct TurnExecutor {
     /// are validated and budget is checked/recorded.
     /// Uses `RefCell` for interior mutability: `apply_effect` takes `&self` but
     /// factory validation needs `&mut` for recording budget usage.
-    pub factory_registry: std::cell::RefCell<pyana_cell::FactoryRegistry>,
+    pub factory_registry: std::cell::RefCell<dregg_cell::FactoryRegistry>,
     /// Optional epoch minter for computron supply management.
     ///
     /// When configured, the executor calls `maybe_mint()` at each block to
@@ -531,18 +531,18 @@ pub struct TurnExecutor {
     /// action's `witness_blobs`.
     ///
     /// Block 3.5: defaults to
-    /// [`pyana_cell::WitnessedPredicateRegistry::default_builtins`] on
+    /// [`dregg_cell::WitnessedPredicateRegistry::default_builtins`] on
     /// every `TurnExecutor` constructor, so the dispatch path is
     /// always live and programs that declare `Witnessed { wp }` always
     /// evaluate. Hosts that want to swap in real (non-stub) verifiers
     /// call `set_witnessed_registry` with a registry pre-populated by
-    /// `pyana_circuit::witnessed_predicate::default_registry()` (or
+    /// `dregg_circuit::witnessed_predicate::default_registry()` (or
     /// register kinds piecemeal). `None` is *legal* — it disables
     /// dispatch and reverts to the legacy sentinel surface — but
     /// nothing inside `turn` constructs an executor that way anymore.
-    pub witnessed_registry: Option<pyana_cell::WitnessedPredicateRegistry>,
+    pub witnessed_registry: Option<dregg_cell::WitnessedPredicateRegistry>,
     /// Optional custom-effect verifier registry, parallel structure to
-    /// [`pyana_cell::WitnessedPredicateRegistry`] but keyed on the
+    /// [`dregg_cell::WitnessedPredicateRegistry`] but keyed on the
     /// `Effect::Custom` vk_hash. The proof-carrying turn path consults
     /// this registry **before** falling back to the program registry,
     /// so app-side custom effects (whose canonical bytes are not
@@ -551,7 +551,7 @@ pub struct TurnExecutor {
     ///
     /// Absent: the executor uses the existing program-registry path
     /// (legacy DSL-authored cells).
-    pub custom_effect_registry: Option<pyana_cell::CustomEffectRegistry>,
+    pub custom_effect_registry: Option<dregg_cell::CustomEffectRegistry>,
 }
 
 impl TurnExecutor {
@@ -569,7 +569,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
+            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
@@ -580,13 +580,13 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
-            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
-            witnessed_registry: Some(pyana_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
         }
     }
@@ -609,7 +609,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
+            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
@@ -620,13 +620,13 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
-            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
-            witnessed_registry: Some(pyana_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
         }
     }
@@ -645,7 +645,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
+            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
@@ -656,13 +656,13 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
-            factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
-            witnessed_registry: Some(pyana_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
         }
     }
@@ -727,13 +727,13 @@ impl TurnExecutor {
     /// the action's `witness_blobs`.
     pub fn with_witnessed_registry(
         mut self,
-        registry: pyana_cell::WitnessedPredicateRegistry,
+        registry: dregg_cell::WitnessedPredicateRegistry,
     ) -> Self {
         self.witnessed_registry = Some(registry);
         self
     }
     /// Set the witnessed-predicate registry after construction.
-    pub fn set_witnessed_registry(&mut self, registry: pyana_cell::WitnessedPredicateRegistry) {
+    pub fn set_witnessed_registry(&mut self, registry: dregg_cell::WitnessedPredicateRegistry) {
         self.witnessed_registry = Some(registry);
     }
 
@@ -743,7 +743,7 @@ impl TurnExecutor {
     /// **before** falling back to `program_registry`, so app-defined
     /// custom effects (whose canonical bytes are not `CellProgram`s)
     /// can be dispatched through a unified surface.
-    pub fn set_custom_effect_registry(&mut self, registry: pyana_cell::CustomEffectRegistry) {
+    pub fn set_custom_effect_registry(&mut self, registry: dregg_cell::CustomEffectRegistry) {
         self.custom_effect_registry = Some(registry);
     }
 
@@ -1109,7 +1109,7 @@ impl TurnExecutor {
     /// which distributes via governance (staking rewards, grants, fee subsidies).
     pub fn apply_epoch_minting(
         &self,
-        ledger: &mut pyana_cell::Ledger,
+        ledger: &mut dregg_cell::Ledger,
     ) -> Option<crate::economics::MintResult> {
         let minter_cell = self.epoch_minter.as_ref()?;
         let mut minter = minter_cell.borrow_mut();
@@ -1269,12 +1269,12 @@ impl TurnExecutor {
     }
 
     /// Get a mutable reference to the factory registry (for deploying factories).
-    pub fn factory_registry_mut(&mut self) -> std::cell::RefMut<'_, pyana_cell::FactoryRegistry> {
+    pub fn factory_registry_mut(&mut self) -> std::cell::RefMut<'_, dregg_cell::FactoryRegistry> {
         self.factory_registry.borrow_mut()
     }
 
     /// Deploy a factory into the executor's registry.
-    pub fn deploy_factory(&mut self, descriptor: pyana_cell::FactoryDescriptor) -> [u8; 32] {
+    pub fn deploy_factory(&mut self, descriptor: dregg_cell::FactoryDescriptor) -> [u8; 32] {
         self.factory_registry.borrow_mut().deploy(descriptor)
     }
 }

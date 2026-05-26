@@ -1,12 +1,12 @@
 //! Relay operator obligation model.
 //!
-//! # DEPRECATED — migrate to `pyana_storage_templates::relay_operator`
+//! # DEPRECATED — migrate to `dregg_storage_templates::relay_operator`
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §3.5 this module's
 //! [`RelayOperator`] / [`HostedInbox`] / [`DeliveryDispute`] surface
 //! is the legacy operator-side bond / quota / dispute primitive.
 //! The canonical replacement is the cell-program template
-//! [`pyana_storage_templates::relay_operator`], whose
+//! [`dregg_storage_templates::relay_operator`], whose
 //! `relay_operator_factory_descriptor()` exports a
 //! `FactoryDescriptor` whose `CellProgram::Cases` enforces
 //! `RateLimitBySum` quota, `BoundedBy` bond-decrement-on-dispute,
@@ -51,7 +51,7 @@ const OPERATOR_GC_FEE_PCT: u64 = 10;
 /// A relay operator that bonds computrons to host inboxes.
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_storage_templates::relay_operator::relay_operator_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.5. The cell-program template's `RateLimitBySum` quota, `BoundedBy` slash-only-on-dispute, monotonic dispute counter, and `WitnessedPredicate::Dfa` dispatch are enforced by the executor on every turn."
+    note = "Use `dregg_storage_templates::relay_operator::relay_operator_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.5. The cell-program template's `RateLimitBySum` quota, `BoundedBy` slash-only-on-dispute, monotonic dispute counter, and `WitnessedPredicate::Dfa` dispatch are enforced by the executor on every turn."
 )]
 #[derive(Debug, Clone)]
 pub struct RelayOperator {

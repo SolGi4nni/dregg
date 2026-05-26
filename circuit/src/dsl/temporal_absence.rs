@@ -192,7 +192,7 @@ pub fn temporal_absence_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-temporal-absence-dsl-v1".into(),
+        name: "dregg-temporal-absence-dsl-v1".into(),
         trace_width: TRACE_WIDTH,
         max_degree: 2,
         columns,

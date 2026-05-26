@@ -8,20 +8,20 @@
 //! - Handoff: offline capability transfer to third parties
 //! - Store-and-forward: encrypted message queueing during offline periods
 
-use pyana_captp::session::CapSession;
-use pyana_captp::store_forward::{
+use dregg_captp::session::CapSession;
+use dregg_captp::store_forward::{
     MessagePriority, MessageRelay, RelayInfo, StoreForwardClient, generate_x25519_keypair,
 };
-use pyana_captp::sturdy::SwissTable;
-use pyana_captp::uri::PyanaUri;
-use pyana_captp::{
+use dregg_captp::sturdy::SwissTable;
+use dregg_captp::uri::DreggUri;
+use dregg_captp::{
     DropResult, ExportGcManager, FederationId, HandoffCertificate, HandoffPresentation,
     ImportGcManager, PipelineRegistry, PipelinedAction, validate_handoff,
 };
-use pyana_cell::AuthRequired;
-use pyana_teasting::federation::dual_federation;
-use pyana_teasting::harness::SimulationHarness;
-use pyana_types::{CellId, generate_keypair};
+use dregg_cell::AuthRequired;
+use dregg_teasting::federation::dual_federation;
+use dregg_teasting::harness::SimulationHarness;
+use dregg_types::{CellId, generate_keypair};
 
 // =============================================================================
 // Helpers
@@ -110,12 +110,12 @@ fn test_export_and_enliven_sturdy_ref() {
     // Construct the shareable URI.
     let uri = swiss_table.make_uri(federation_id, &swiss).unwrap();
     let uri_string = uri.to_uri_string();
-    assert!(uri_string.starts_with("pyana://"));
+    assert!(uri_string.starts_with("dregg://"));
 
     // --- Transit: URI travels out-of-band to Fed B ---
 
     // --- Fed B: parse the URI and enliven ---
-    let parsed_uri = PyanaUri::parse(&uri_string).unwrap();
+    let parsed_uri = DreggUri::parse(&uri_string).unwrap();
     assert_eq!(parsed_uri.federation_id, federation_id);
     assert_eq!(parsed_uri.cell_id, target_cell.0);
     assert_eq!(parsed_uri.swiss, swiss);
@@ -228,7 +228,7 @@ fn test_pipeline_three_actions_resolve() {
     // Verify final promise is fulfilled.
     assert!(matches!(
         registry.promise_state(final_promise),
-        Some(pyana_captp::PipelinePromiseState::Fulfilled { resolved_cell }) if *resolved_cell == final_cell
+        Some(dregg_captp::PipelinePromiseState::Fulfilled { resolved_cell }) if *resolved_cell == final_cell
     ));
 }
 

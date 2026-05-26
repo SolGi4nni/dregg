@@ -1,4 +1,4 @@
-//! CLI functionality checks: spawn the pyana CLI binary as a subprocess.
+//! CLI functionality checks: spawn the dregg CLI binary as a subprocess.
 
 use std::process::Command;
 
@@ -13,16 +13,16 @@ pub fn run() -> Vec<CheckResult> {
     ]
 }
 
-/// Helper: run a cargo command for pyana-cli with given args.
+/// Helper: run a cargo command for dregg-cli with given args.
 /// Returns Ok((stdout, stderr)) on exit 0, Err on non-zero exit or spawn failure.
 fn run_cli(args: &[&str]) -> Result<(String, String), String> {
-    let mut cmd_args = vec!["run", "-p", "pyana-cli", "--"];
+    let mut cmd_args = vec!["run", "-p", "dregg-cli", "--"];
     cmd_args.extend_from_slice(args);
 
     let output = Command::new("cargo")
         .args(&cmd_args)
         .env(
-            "PYANA_HOME",
+            "DREGG_HOME",
             std::env::temp_dir().join("preflight-cli-home"),
         )
         .output()
@@ -61,8 +61,8 @@ fn check_cli_config_init() -> Result<(), String> {
     std::fs::create_dir_all(&tmp_home).map_err(|e| format!("create tmp dir failed: {e}"))?;
 
     let output = Command::new("cargo")
-        .args(["run", "-p", "pyana-cli", "--", "config", "init"])
-        .env("PYANA_HOME", &tmp_home)
+        .args(["run", "-p", "dregg-cli", "--", "config", "init"])
+        .env("DREGG_HOME", &tmp_home)
         .output()
         .map_err(|e| format!("failed to spawn: {e}"))?;
 
@@ -79,7 +79,7 @@ fn check_cli_config_init() -> Result<(), String> {
 
     // Check if config file was created.
     let config_path = tmp_home.join("config.toml");
-    let alt_config_path = tmp_home.join("pyana.toml");
+    let alt_config_path = tmp_home.join("dregg.toml");
     if !config_path.exists() && !alt_config_path.exists() {
         // This is acceptable - the CLI may use a different config path
         // or may not have created one due to missing node.
@@ -92,9 +92,9 @@ fn check_cli_config_init() -> Result<(), String> {
 
 fn check_cli_doctor() -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["run", "-p", "pyana-cli", "--", "doctor"])
+        .args(["run", "-p", "dregg-cli", "--", "doctor"])
         .env(
-            "PYANA_HOME",
+            "DREGG_HOME",
             std::env::temp_dir().join("preflight-cli-doctor"),
         )
         .output()
@@ -118,7 +118,7 @@ fn check_cli_doctor() -> Result<(), String> {
 
 fn check_cli_completions() -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["run", "-p", "pyana-cli", "--", "completions", "zsh"])
+        .args(["run", "-p", "dregg-cli", "--", "completions", "zsh"])
         .output()
         .map_err(|e| format!("failed to spawn: {e}"))?;
 
@@ -133,7 +133,7 @@ fn check_cli_completions() -> Result<(), String> {
     }
 
     // Basic sanity: zsh completions typically contain compdef or _arguments.
-    if !stdout.contains("compdef") && !stdout.contains("_pyana") && !stdout.contains("#compdef") {
+    if !stdout.contains("compdef") && !stdout.contains("_dregg") && !stdout.contains("#compdef") {
         // May use clap_complete format which looks different, just verify non-empty.
         if stdout.len() < 50 {
             return Err("completions output seems too short to be valid".into());

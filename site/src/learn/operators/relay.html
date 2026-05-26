@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Relay Operators — Pyana</title>
+<title>Relay Operators — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -46,18 +46,18 @@
     <h2 id="quickstart">Quick Start</h2>
 
     <pre><code># Initialize the node data directory (generates operator keypair)
-pyana-node init --data-dir ~/.pyana
+dregg-node init --data-dir ~/.dregg
 
 # Start the relay operator service
-pyana-node relay \
+dregg-node relay \
   --bond 10000 \
   --port 3100 \
   --state-file ./relay-state.json \
-  --data-dir ~/.pyana</code></pre>
+  --data-dir ~/.dregg</code></pre>
 
     <p>
       The relay service starts an HTTP API on the specified port. It reads the
-      operator identity from <code>~/.pyana/node.key</code>.
+      operator identity from <code>~/.dregg/node.key</code>.
     </p>
 
     <h2 id="config">Configuration Options</h2>
@@ -74,7 +74,7 @@ pyana-node relay \
         <tr><td><code>--message-ttl</code></td><td>1000</td><td>Message TTL in blocks (expired messages are GC'd)</td></tr>
         <tr><td><code>--max-delivery-latency</code></td><td>50</td><td>SLA: max blocks before delivery is required</td></tr>
         <tr><td><code>--state-file</code></td><td>./relay-state.json</td><td>Path for persistent relay state</td></tr>
-        <tr><td><code>--data-dir</code></td><td>~/.pyana</td><td>Data directory (operator key location)</td></tr>
+        <tr><td><code>--data-dir</code></td><td>~/.dregg</td><td>Data directory (operator key location)</td></tr>
         <tr><td><code>--default-inbox-capacity</code></td><td>100</td><td>Default capacity for new inbox subscriptions</td></tr>
         <tr><td><code>--default-min-deposit</code></td><td>100</td><td>Default minimum deposit per message</td></tr>
         <tr><td><code>--min-message-deposit</code></td><td>100</td><td>Global minimum deposit per message (computrons)</td></tr>

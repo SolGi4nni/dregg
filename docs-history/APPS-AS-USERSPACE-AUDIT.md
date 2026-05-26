@@ -10,13 +10,13 @@ that would let userspace compose the same workflow.
 The question this document answers, per app:
 
 1. **What domain semantics does the app encode?**
-2. **What pyana primitives does it currently reach past the SDK to compose?** (file:line cites)
-3. **What pyana primitives would let it be "pure userspace"?** —
+2. **What dregg primitives does it currently reach past the SDK to compose?** (file:line cites)
+3. **What dregg primitives would let it be "pure userspace"?** —
    composing only `Effect::{SetField, EmitEvent, Transfer, Grant, Spend, Custom, …}`
    + cell-program caveats + DSL predicates.
 4. **What primitives are missing?** Concrete, named, *generic*.
 
-This complements `PYANA-FLAWS-FROM-APPS.md`: that doc catalogues *bugs*
+This complements `DREGG-FLAWS-FROM-APPS.md`: that doc catalogues *bugs*
 caused by missing primitives; this one catalogues *the design-level holes
 in the userspace surface area* — and prioritizes them by leverage.
 
@@ -63,17 +63,17 @@ target URIs (capabilities or cells), with:
 
 Effectively *nothing*. From `apps/nameservice/CLAUDIT.md` and a fresh grep:
 
-- `apps/nameservice/src/registry.rs:18` — `pub type PyanaUri = String;`
-  (the real `captp::uri::PyanaUri` is never imported).
-- `apps/nameservice/Cargo.toml:9-10` — pulls in `pyana_cell` and
-  `pyana_captp` as dead deps. `grep -rn "pyana_"` across `src/`
-  returns only `use pyana_app_framework::server::{AppConfig, AppServer}`
+- `apps/nameservice/src/registry.rs:18` — `pub type DreggUri = String;`
+  (the real `captp::uri::DreggUri` is never imported).
+- `apps/nameservice/Cargo.toml:9-10` — pulls in `dregg_cell` and
+  `dregg_captp` as dead deps. `grep -rn "dregg_"` across `src/`
+  returns only `use dregg_app_framework::server::{AppConfig, AppServer}`
   in `main.rs:36`.
 - `main.rs:85` — `current_epoch: 1` hardcoded; no clock source.
 - No `Effect::*`, no `Turn`, no `Authorization::*`, no `SwissTable`,
   no `Sovereign`, no `Cipherclerk`.
 
-The "Pyana app" is an in-memory `tokio::sync::RwLock<BTreeMap<String,
+The "`dregg` app" is an in-memory `tokio::sync::RwLock<BTreeMap<String,
 NameEntry>>` (`registry.rs`) plus an HTTP layer. Authentication is
 "the caller sends their public key in the request body and we trust
 them." Storage is process-local. Rent never expires. Cross-fed
@@ -165,7 +165,7 @@ table inside the federation; it has `make_uri / enliven / export`
 and an AIR-bindable `swiss_table_root`. Userspace needs the *same
 shape* for any keyed registry: nameservice's `BTreeMap<String,
 NameEntry>` is the same problem. Promote the data structure to a
-reusable `pyana-storage::CommittedMap<K, V>` with Merkle root and
+reusable `dregg-storage::CommittedMap<K, V>` with Merkle root and
 the same AIR plumbing.
 
 **(e) Sub-delegation as a userspace pattern.**
@@ -217,7 +217,7 @@ The orderbook *imports* primitive types but never executes through them:
   (hardcoded sentinel; no authentication).
 
 The HTTP server is a freestanding axum daemon doing in-memory matching
-on a `BTreeMap<Price, VecDeque<Order>>` (`book.rs:119-138`). The Pyana
+on a `BTreeMap<Price, VecDeque<Order>>` (`book.rs:119-138`). The `dregg`
 imports are decorative.
 
 ### 2.3 Pure-userspace version
@@ -281,13 +281,13 @@ Same as §1.4(a). Order cancellation needs "post-cancel collateral
 field is the pre-cancel value plus refund-amount." Today no transition
 predicate exists; orderbook implements this in Rust outside the AIR.
 
-**(c) Matching-priority reference circuit (G15 from PYANA-FLAWS).**
+**(c) Matching-priority reference circuit (G15 from DREGG-FLAWS).**
 The match-AIR needs to prove "this maker was the head of its price
 level." Today every orderbook-shaped app rolls its own (and gets it
 wrong). The generic primitive: a *committed sorted-collection*
 storage type with an AIR-bindable `head_proof(level) → (entry, witness)`.
 
-In SDK terms: extend `pyana-storage::ProgrammableQueue` with a
+In SDK terms: extend `dregg-storage::ProgrammableQueue` with a
 **priority-ordered variant** (`PriorityQueue<K, V>`) whose AIR-side
 constraint vocabulary includes `head(K, V_expected)` and
 `pop_head_to(K, new_root)`.
@@ -303,7 +303,7 @@ where the release condition can be:
 - A STARK proof (already supported via `EscrowCondition::ProofPresented`,
   but the verification key shape is broken — `EscrowCondition::
   ProofPresented { verification_key: [u8; 32] }` in `turn/src/escrow.rs:53-56`
-  is the wrong shape per `PYANA-FLAWS-FROM-APPS.md` G3).
+  is the wrong shape per `DREGG-FLAWS-FROM-APPS.md` G3).
 - A *predicate over cell state* — `EscrowCondition::PredicateSatisfied`
   is declared at `turn/src/escrow.rs:53` but **unimplemented in the
   executor** (G18). This is the missing piece: cancel-on-state =
@@ -331,7 +331,7 @@ target cell, with:
 Generic, not orderbook-specific: every app with live state (auction
 bid count, voting tally, prediction-market resolution) wants this.
 
-**(f) `BlindedQueue` payload return channel (G41 from PYANA-FLAWS).**
+**(f) `BlindedQueue` payload return channel (G41 from DREGG-FLAWS).**
 The orderbook's commit-reveal needs *the committed order's bytes* on
 reveal. `BlindedQueue::consume` returns a nullifier; the order bytes
 have to travel separately. Need a `BlindedQueue::Consumed { nullifier,
@@ -355,9 +355,9 @@ payload }` variant or a sibling "blinded mailbox" keyed by commitment.
 
 ### 3.2 What it reaches past the SDK to compose
 
-Imports `pyana_storage::blinded::crypto` and `pyana_storage::commitment::
+Imports `dregg_storage::blinded::crypto` and `dregg_storage::commitment::
 BlindedItemCommitment` (`apps/prediction-market/src/bets.rs:18-19`).
-Uses `RingTradeParticipant` from `pyana_app_framework`. From the
+Uses `RingTradeParticipant` from `dregg_app_framework`. From the
 `lib.rs` doc block, it claims:
 
 1. Blinded queue of outcome commitments.
@@ -389,7 +389,7 @@ u64>` in `market.rs`.
 
 ### 3.4 What's missing
 
-**(a) Oracle primitive (G7 from PYANA-FLAWS, reserved by user).**
+**(a) Oracle primitive (G7 from DREGG-FLAWS, reserved by user).**
 Every market needs a trusted resolution source. The shape: a
 *federation-attested signer registry* (`Effect::RegisterAttester
 { category: oracle, pubkey, scope }`) with on-chain rotation and
@@ -405,7 +405,7 @@ direction; **the better direction** is letting cell programs invoke a
 named *math gadget* — `StateConstraint::ExpressionEquals { lhs:
 ExprId, rhs: ExprId }` where `ExprId` references a registered
 constraint expression. The expression registry sits in
-`pyana-dsl::predicates`.
+`dregg-dsl::predicates`.
 
 This generalizes: prediction-market's pro-rata, stablecoin's CDP
 collateralization ratio, lending's interest accrual — all want
@@ -464,7 +464,7 @@ From `apps/gallery/CLAUDIT.md`:
   pseudo-mint).
 - `apps/gallery/src/settlement.rs:71-153` — composed turn with
   `Effect::ReleaseEscrow` + `Effect::Transfer`. Aborts because
-  `PyanaEngine::new()` doesn't set a proof verifier
+  `DreggEngine::new()` doesn't set a proof verifier
   (`sdk/src/embed.rs:223-265`).
 - `handlers.rs:381-383` — uses `EscrowCondition::ProofPresented
   { verification_key: auction_id }` — semantically wrong (G3).
@@ -538,7 +538,7 @@ schedule.
 **(c) Blob primitive (G23).** Artwork images / metadata aren't on-chain.
 Need `Effect::BindBlob { cell, blob_hash, storage_uri }` so the
 artwork cell carries a content-addressed pointer with integrity
-guarantees. The blob lives in `pyana-storage::BlobStore` (today does
+guarantees. The blob lives in `dregg-storage::BlobStore` (today does
 not exist as a distinct primitive; the closest is the `ContentStore`
 gallery rolls its own).
 
@@ -615,7 +615,7 @@ the existing `CellProgram::Predicate` evaluator closes a third of
 the per-app escrow holes.
 
 **(c) `Effect::ReleaseEscrow` has no default proof verifier (G2).**
-`PyanaEngine::new()` doesn't set one; apps fall through to "no proof
+`DreggEngine::new()` doesn't set one; apps fall through to "no proof
 verifier configured" rejection. The framework should refuse engine
 construction without a verifier (or default to one and document
 overrides).
@@ -690,7 +690,7 @@ From `apps/privacy-voting/CLAUDIT.md`:
 - `apps/privacy-voting/src/eligibility.rs:75-103` — uses
   `cclerk::DelegatedToken` for credentials (bearer; replayable).
 - `apps/privacy-voting/src/ballot.rs:39-49` — uses
-  `blake3-derive("pyana-ballot-v1" || pid || opt || randomness)`
+  `blake3-derive("dregg-ballot-v1" || pid || opt || randomness)`
   for commitments (not Poseidon2, not in-circuit-able).
 - `apps/privacy-voting/src/server.rs:62, 343-356` — server-private
   `HashSet<PublicKey>` for double-vote prevention; written in the
@@ -711,7 +711,7 @@ From `apps/privacy-voting/CLAUDIT.md`:
   capability with `Caveat::ProposalScope { proposal_id }`). To vote,
   voter presents a **STARK presentation proof** (via `bridge::present::
   BridgePresentationProof`, the existing right pattern per
-  PYANA-FLAWS G31) proving they hold a non-revoked credential, without
+  DREGG-FLAWS G31) proving they hold a non-revoked credential, without
   revealing which.
 - **Nullifier per (voter, proposal).** `nullifier =
   Poseidon2(voter_secret, proposal_id)`. Published in the presentation.
@@ -744,7 +744,7 @@ P") and *nullifier* — never the underlying credential.
 This generalizes: every privacy-preserving app wants
 `Presented<EligibilityProof>` as a request extractor.
 
-**(b) Nullifier set primitive (G17, `Effect::ClaimSlot`).** Pyana has
+**(b) Nullifier set primitive (G17, `Effect::ClaimSlot`).** `dregg` has
 `NoteSpend` nullifiers and `BlindedQueue` nullifiers. They're per-
 domain. Voting wants `(proposal_id, voter_secret) → spent` — same
 shape, different keying. The generic primitive:
@@ -776,9 +776,9 @@ resolution). Should live in `circuit/src/dsl/predicates::tally`.
 
 **(e) Bulletin-board primitive (G27).** Append-only, federation-
 attested, with per-leaf inclusion proofs. Voting's commitment list
-*is* a bulletin board. `pyana-storage::BlindedQueue` is close but
+*is* a bulletin board. `dregg-storage::BlindedQueue` is close but
 lacks the federation-attested-root angle. Promote to a
-`pyana-storage::BulletinBoard<L>` with explicit signed-root per
+`dregg-storage::BulletinBoard<L>` with explicit signed-root per
 epoch.
 
 ---
@@ -788,7 +788,7 @@ epoch.
 Across all six apps, the same generic primitives keep recurring. The
 following is the **prioritized list of missing primitives**, ranked
 by leverage (number of apps unblocked, severity of current
-workarounds, structural alignment with existing pyana shapes).
+workarounds, structural alignment with existing dregg shapes).
 
 ### 7.1 Prioritized list of missing primitives
 
@@ -817,7 +817,7 @@ workarounds, structural alignment with existing pyana shapes).
    - **Effort:** small-medium.
 
 3. **`AuthenticatedRequest<C>` axum extractor (G1).** Already named
-   in PYANA-FLAWS; this is the single highest-leverage fix.
+   in DREGG-FLAWS; this is the single highest-leverage fix.
    - **Affects:** all 6 apps + the other 4 audited.
    - **Where:** `app-framework/src/auth.rs`.
    - **Effort:** small.
@@ -853,13 +853,13 @@ workarounds, structural alignment with existing pyana shapes).
      program pattern in `app-framework::swap`.
    - **Effort:** medium.
 
-7. **Promote `bridge::present` to `pyana-credentials` (G31).** The
+7. **Promote `bridge::present` to `dregg-credentials` (G31).** The
    identity / eligibility / KYC pattern across apps is currently
    each reinventing a subset of `BridgePresentationBuilder` — badly.
    - **Affects:** privacy-voting, identity, gallery (gated auctions),
      prediction-market (KYC'd markets).
    - **Where:** lift `bridge/src/present.rs::BridgePresentationBuilder`
-     to a top-level `pyana-credentials` crate; add
+     to a top-level `dregg-credentials` crate; add
      `Presented<P>` axum extractor (G30).
    - **Effort:** small-medium (mostly refactor).
 
@@ -887,7 +887,7 @@ workarounds, structural alignment with existing pyana shapes).
     update proofs. Generalizes `SwissTable`, `approved_handoffs`,
     nameservice's `BTreeMap`, gallery's `ContentStore`.
     - **Affects:** nameservice, gallery, identity (revocation roots).
-    - **Where:** new `pyana-storage::CommittedMap` + per-effect AIR
+    - **Where:** new `dregg-storage::CommittedMap` + per-effect AIR
       bindings (the bilateral pattern from γ.2 mirrors here).
     - **Effort:** large (storage + AIR + migration).
 
@@ -914,7 +914,7 @@ workarounds, structural alignment with existing pyana shapes).
     Categorized signer registry with rotation.
     - **Affects:** prediction-market (oracle), stablecoin (price feed),
       privacy-voting (eligibility issuer), identity.
-    - **Where:** new `pyana-attesters` crate + per-category cells.
+    - **Where:** new `dregg-attesters` crate + per-category cells.
     - **Effort:** medium.
 
 14. **Coordinator-key threshold-decrypt primitive (G29).** Federation
@@ -928,7 +928,7 @@ workarounds, structural alignment with existing pyana shapes).
     storage pointer with integrity.
     - **Affects:** gallery (artwork), identity (credential evidence),
       governance (proposal text).
-    - **Where:** new `pyana-storage::BlobStore` +
+    - **Where:** new `dregg-storage::BlobStore` +
       `Effect::BindBlob { cell, hash, uri }`.
     - **Effort:** small.
 
@@ -983,7 +983,7 @@ horizontal, not vertical.
 
 The path from the current "BROKEN, BROKEN, BROKEN" verdict to a
 working app ecosystem is **Tier 1 in full + Tier 2 #6 (paired escrow,
-which γ.2 enables) + Tier 2 #7 (`pyana-credentials` promotion)**.
+which γ.2 enables) + Tier 2 #7 (`dregg-credentials` promotion)**.
 That's roughly 4-6 weeks of platform work and unblocks all 6 apps
-to be 80%+ pure userspace, with Pyana primitives carrying the
+to be 80%+ pure userspace, with `dregg` primitives carrying the
 load that's currently rolled in app code.

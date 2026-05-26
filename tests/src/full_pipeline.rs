@@ -12,30 +12,30 @@
 
 use std::collections::HashSet;
 
-use pyana_bridge::present::{
+use dregg_bridge::present::{
     BridgePresentationBuilder, bytes_to_babybear, hash_index, verify_presentation,
     verify_presentation_bb,
 };
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, DelegatedRef, Ledger, Note, NoteCommitment,
     Nullifier, NullifierSet, Permissions, VerificationKey,
 };
-use pyana_circuit::body_membership::BodyFactMerkleProof;
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::multi_step_air::{self, ALLOW_PREDICATE, build_multi_step_witness};
-use pyana_circuit::poseidon2::{self, hash_fact};
-use pyana_circuit::stark::{self, proof_from_bytes, proof_to_bytes};
-use pyana_circuit::{
+use dregg_circuit::body_membership::BodyFactMerkleProof;
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::multi_step_air::{self, ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::poseidon2::{self, hash_fact};
+use dregg_circuit::stark::{self, proof_from_bytes, proof_to_bytes};
+use dregg_circuit::{
     BabyBear, BodyMembershipProof, MultiStepWitness, NoteSpendingAir, NoteSpendingWitness,
     collect_body_fact_hashes, prove_authorization_stark, prove_authorization_with_membership,
     verify_authorization_stark, verify_authorization_with_membership,
 };
-use pyana_commit::poseidon2_tree::{Poseidon2MerkleTree, commitment_to_field};
-use pyana_dsl_runtime::note_spending::{prove_note_spend, verify_note_spend};
-use pyana_sdk::cipherclerk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{
+use dregg_commit::poseidon2_tree::{Poseidon2MerkleTree, commitment_to_field};
+use dregg_dsl_runtime::note_spending::{prove_note_spend, verify_note_spend};
+use dregg_sdk::cipherclerk::{AgentCipherclerk, AuthorizationPresentation, VerificationMode};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{
     ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn, DelegationMode, Effect,
     ProofCondition, TrustedRoot, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
     compute_conditional_deposit, resolve_condition,
@@ -46,7 +46,7 @@ use pyana_turn::{
 // =============================================================================
 
 fn test_key(name: &str) -> [u8; 32] {
-    *blake3::hash(format!("pyana-full-pipeline-test:{name}").as_bytes()).as_bytes()
+    *blake3::hash(format!("dregg-full-pipeline-test:{name}").as_bytes()).as_bytes()
 }
 
 /// Compute the synthetic Poseidon2 federation root for an issuer key.
@@ -87,7 +87,7 @@ fn bb_to_bytes(bb: BabyBear) -> [u8; 32] {
 fn test_full_private_authorization_pipeline() {
     // --- Step 1: Mint root token ---
     let issuer_key = test_key("issuer-pipeline");
-    let root_token = MacaroonToken::mint(issuer_key, b"pipeline-kid", "compute.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"pipeline-kid", "compute.dregg.dev");
 
     // --- Step 2: Attenuate twice ---
     // First attenuation: restrict to service + add expiry
@@ -132,7 +132,7 @@ fn test_full_private_authorization_pipeline() {
     );
 
     // Set root token + add attenuations
-    let fresh_root = MacaroonToken::mint(issuer_key, b"pipeline-kid", "compute.pyana.dev");
+    let fresh_root = MacaroonToken::mint(issuer_key, b"pipeline-kid", "compute.dregg.dev");
     builder.set_root_token(fresh_root);
     assert!(
         builder.add_attenuation(&att1),
@@ -440,7 +440,7 @@ fn test_full_note_lifecycle() {
     let randomness_bb = bytes_to_babybear(&note.randomness);
 
     // Convert the 256-bit spending key to 8 BabyBear limbs (248 bits of security)
-    let spending_key_limbs = pyana_circuit::note_spending_air::key_to_field_elements(&spending_key);
+    let spending_key_limbs = dregg_circuit::note_spending_air::key_to_field_elements(&spending_key);
 
     // Compute the circuit-level commitment (this is what the Merkle tree stores)
     let circuit_commitment = poseidon2::hash_many(&[
@@ -574,7 +574,7 @@ fn test_full_note_lifecycle() {
         "double-spend should be rejected"
     );
     match double_spend_result {
-        Err(pyana_cell::NoteError::DoubleSpend { nullifier }) => {
+        Err(dregg_cell::NoteError::DoubleSpend { nullifier }) => {
             assert_eq!(nullifier, nullifier1);
         }
         _ => panic!("expected DoubleSpend error"),
@@ -1049,7 +1049,7 @@ fn test_full_delegation_and_revocation() {
         let has_delegate_edge = receipt
             .derivation_records
             .iter()
-            .any(|record| record.edge.derivation_type == pyana_cell::DerivationType::Delegate);
+            .any(|record| record.edge.derivation_type == dregg_cell::DerivationType::Delegate);
         assert!(
             has_delegate_edge,
             "spawn receipt should contain a Delegate derivation record"
@@ -1059,7 +1059,7 @@ fn test_full_delegation_and_revocation() {
         let delegate_record = receipt
             .derivation_records
             .iter()
-            .find(|r| r.edge.derivation_type == pyana_cell::DerivationType::Delegate)
+            .find(|r| r.edge.derivation_type == dregg_cell::DerivationType::Delegate)
             .unwrap();
         assert_eq!(
             delegate_record.edge.source_cell, parent_id,

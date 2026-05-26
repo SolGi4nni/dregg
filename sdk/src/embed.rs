@@ -1,7 +1,7 @@
-//! # pyana-embed: No-I/O integration layer
+//! # dregg-embed: No-I/O integration layer
 //!
-//! This module provides a zero-I/O facade over pyana's core capabilities,
-//! suitable for embedding in any existing service without dragging in pyana's
+//! This module provides a zero-I/O facade over dregg's core capabilities,
+//! suitable for embedding in any existing service without dragging in dregg's
 //! networking, consensus, or storage infrastructure.
 //!
 //! The pattern follows the "sans-io" approach: all methods are synchronous,
@@ -20,8 +20,8 @@
 //! ## Axum HTTP handler (verify proof from a header)
 //!
 //! ```ignore
-//! async fn verify_handler(headers: HeaderMap, State(engine): State<Arc<PyanaEngine>>) -> StatusCode {
-//!     let proof_b64 = headers.get("x-pyana-proof").unwrap();
+//! async fn verify_handler(headers: HeaderMap, State(engine): State<Arc<DreggEngine>>) -> StatusCode {
+//!     let proof_b64 = headers.get("x-dregg-proof").unwrap();
 //!     let proof_bytes = base64::decode(proof_b64).unwrap();
 //!     let root = engine.federation_root();
 //!     if engine.verify_presentation(&proof_bytes, &root) {
@@ -35,7 +35,7 @@
 //! ## gRPC interceptor (attenuate token per-request)
 //!
 //! ```ignore
-//! fn intercept(engine: &PyanaEngine, parent_token: &[u8], caveats: &[Caveat]) -> Vec<u8> {
+//! fn intercept(engine: &DreggEngine, parent_token: &[u8], caveats: &[Caveat]) -> Vec<u8> {
 //!     engine.attenuate(parent_token, caveats).unwrap()
 //! }
 //! ```
@@ -43,23 +43,23 @@
 //! ## CLI tool (generate proof, output bytes)
 //!
 //! ```ignore
-//! let engine = PyanaEngine::new(EngineConfig::for_testing());
+//! let engine = DreggEngine::new(EngineConfig::for_testing());
 //! let token = engine.mint_token(b"my-root-key-32-bytes-exactly!!!!", "my-service").unwrap();
 //! let proof = engine.prove_presentation(&token, "read", "my-service").unwrap();
 //! std::fs::write("proof.bin", &proof).unwrap();
 //! ```
 
-use pyana_bridge::present::{self, BridgePresentationBuilder, WirePresentationProof};
-use pyana_cell::Ledger;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_turn::turn::TurnResult;
-use pyana_turn::{Turn, TurnReceipt};
-use pyana_wire::server::ProofVerifier;
+use dregg_bridge::present::{self, BridgePresentationBuilder, WirePresentationProof};
+use dregg_cell::Ledger;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_turn::turn::TurnResult;
+use dregg_turn::{Turn, TurnReceipt};
+use dregg_wire::server::ProofVerifier;
 
 use crate::error::SdkError;
 
 // Re-export the executor so embedders can configure costs without extra imports.
-pub use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+pub use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
 // =============================================================================
 // Error types
@@ -161,7 +161,7 @@ impl EngineConfig {
     /// # Example
     ///
     /// ```
-    /// use pyana_sdk::embed::EngineConfig;
+    /// use dregg_sdk::embed::EngineConfig;
     /// use std::time::SystemTime;
     ///
     /// let now = SystemTime::now()
@@ -199,17 +199,17 @@ impl EngineConfig {
 }
 
 // =============================================================================
-// PyanaEngine — the no-IO core
+// DreggEngine — the no-IO core
 // =============================================================================
 
-/// The no-I/O pyana engine.
+/// The no-I/O dregg engine.
 ///
 /// Wraps the turn executor and ledger in a single struct with a bytes-oriented
 /// API. Does **no** networking, filesystem access, or async operations.
 ///
 /// Thread safety: NOT `Sync` by default (contains `Ledger` which is a BTreeMap).
 /// Wrap in `Mutex` or `RwLock` if sharing across threads.
-pub struct PyanaEngine {
+pub struct DreggEngine {
     ledger: Ledger,
     executor: TurnExecutor,
     /// The current federation root (caller updates this from their own sync).
@@ -218,7 +218,7 @@ pub struct PyanaEngine {
     max_proof_age_secs: i64,
 }
 
-impl PyanaEngine {
+impl DreggEngine {
     /// Create a new engine with the given configuration and an empty ledger.
     pub fn new(config: EngineConfig) -> Self {
         let mut executor = TurnExecutor::new(config.costs);
@@ -321,7 +321,7 @@ impl PyanaEngine {
         // Derive the proof key from root_key using the same KDF as the cipherclerk.
         // Federation tree leaves are hash(derived_proof_key), so both engine and
         // cipherclerk proofs must target the same leaf.
-        let proof_key = blake3::derive_key("pyana-proof-key-v1", root_key);
+        let proof_key = blake3::derive_key("dregg-proof-key-v1", root_key);
 
         let mut builder = BridgePresentationBuilder::new(proof_key, self.federation_root);
         builder.set_root_token(token);
@@ -542,7 +542,7 @@ impl PyanaEngine {
     ///
     /// The trailing 32-byte hash ensures that tampered snapshots are detected on load.
     pub fn state_snapshot(&self) -> Result<Vec<u8>, EmbedError> {
-        let cells: Vec<&pyana_cell::Cell> = self.ledger.iter().map(|(_, cell)| cell).collect();
+        let cells: Vec<&dregg_cell::Cell> = self.ledger.iter().map(|(_, cell)| cell).collect();
         let serialized =
             postcard::to_stdvec(&cells).map_err(|e| EmbedError::StateSerde(e.to_string()))?;
         let hash = blake3::hash(&serialized);
@@ -573,7 +573,7 @@ impl PyanaEngine {
             return Err(EmbedError::IntegrityCheckFailed);
         }
 
-        let cells: Vec<pyana_cell::Cell> =
+        let cells: Vec<dregg_cell::Cell> =
             postcard::from_bytes(data).map_err(|e| EmbedError::StateSerde(e.to_string()))?;
         let mut ledger = Ledger::new();
         for cell in cells {
@@ -595,10 +595,10 @@ impl PyanaEngine {
     // that bypass every turn-execution invariant the executor enforces. This
     // is "one-time-checked-then-discarded" in spirit: the executor verifies
     // each turn but the ledger it operates on is unconditionally writable by
-    // any external caller holding `&mut PyanaEngine`. Recommended fix: gate
+    // any external caller holding `&mut DreggEngine`. Recommended fix: gate
     // `ledger_mut` behind a feature flag, or remove and replace with a
     // narrower set of authenticated mutation methods (e.g., load_snapshot
-    // already exists). Severity P2 because callers with `&mut PyanaEngine`
+    // already exists). Severity P2 because callers with `&mut DreggEngine`
     // already have full process trust; documenting so the reviewer can decide.
     /// Get a mutable reference to the ledger (for direct manipulation).
     pub fn ledger_mut(&mut self) -> &mut Ledger {
@@ -681,12 +681,12 @@ impl PyanaEngine {
 
 /// No-I/O wire protocol codec.
 ///
-/// Provides encode/decode for the pyana wire protocol without any transport.
+/// Provides encode/decode for the dregg wire protocol without any transport.
 /// The caller handles reading bytes from and writing bytes to their own I/O layer.
 pub struct WireCodec;
 
 // Re-export the message type so embedders don't need the wire crate directly.
-pub use pyana_wire::message::WireMessage;
+pub use dregg_wire::message::WireMessage;
 
 impl WireCodec {
     /// Decode a wire protocol message from a raw payload (without length prefix).
@@ -694,14 +694,14 @@ impl WireCodec {
     /// The caller is responsible for framing (reading the 4-byte LE length prefix
     /// and providing exactly that many bytes here).
     pub fn decode(payload: &[u8]) -> Result<WireMessage, String> {
-        pyana_wire::codec::decode(payload).map_err(|e| e.to_string())
+        dregg_wire::codec::decode(payload).map_err(|e| e.to_string())
     }
 
     /// Encode a wire protocol message to bytes (with length prefix).
     ///
     /// Returns a complete frame ready to write to any byte stream.
     pub fn encode(msg: &WireMessage) -> Result<Vec<u8>, String> {
-        pyana_wire::codec::encode(msg).map_err(|e| e.to_string())
+        dregg_wire::codec::encode(msg).map_err(|e| e.to_string())
     }
 
     /// The framing header size (4 bytes, little-endian u32 payload length).
@@ -725,17 +725,17 @@ impl WireCodec {
     /// - Others -> None
     ///
     /// The caller sends the returned messages back over their transport.
-    pub fn process_message(engine: &PyanaEngine, msg: WireMessage) -> Vec<WireMessage> {
+    pub fn process_message(engine: &DreggEngine, msg: WireMessage) -> Vec<WireMessage> {
         match msg {
             WireMessage::Hello {
                 protocol_version, ..
             } => {
-                if protocol_version != pyana_wire::message::PROTOCOL_VERSION {
+                if protocol_version != dregg_wire::message::PROTOCOL_VERSION {
                     return vec![WireMessage::Error {
-                        code: pyana_wire::message::error_codes::UNSUPPORTED_VERSION,
+                        code: dregg_wire::message::error_codes::UNSUPPORTED_VERSION,
                         message: format!(
                             "unsupported protocol version {protocol_version}, expected {}",
-                            pyana_wire::message::PROTOCOL_VERSION
+                            dregg_wire::message::PROTOCOL_VERSION
                         ),
                     }];
                 }
@@ -761,7 +761,7 @@ impl WireCodec {
                 }
 
                 // Verify the STARK proof using the wire server's verifier.
-                let accepted = pyana_wire::server::StarkVerifier
+                let accepted = dregg_wire::server::StarkVerifier
                     .verify(&proof, &request.action, &request.resource)
                     .unwrap_or(false);
 
@@ -802,14 +802,14 @@ mod tests {
 
     #[test]
     fn engine_default_creation() {
-        let engine = PyanaEngine::new(EngineConfig::for_testing());
+        let engine = DreggEngine::new(EngineConfig::for_testing());
         assert_eq!(engine.federation_root(), [0u8; 32]);
         assert!(engine.ledger().is_empty());
     }
 
     #[test]
     fn mint_and_attenuate_roundtrip() {
-        let engine = PyanaEngine::new(EngineConfig::for_testing());
+        let engine = DreggEngine::new(EngineConfig::for_testing());
 
         let root_key = b"test-root-key-32-bytes-exactly!!";
         let encoded = engine.mint_token(root_key, "my-service").unwrap();
@@ -830,16 +830,16 @@ mod tests {
 
     #[test]
     fn state_snapshot_roundtrip() {
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
         // Insert a cell into the ledger for a non-trivial state.
-        let cell = pyana_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
+        let cell = dregg_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
         engine.ledger_mut().insert_cell(cell).unwrap();
 
         let snapshot = engine.state_snapshot().unwrap();
         assert!(!snapshot.is_empty());
 
         // Create a fresh engine and load the snapshot.
-        let mut engine2 = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine2 = DreggEngine::new(EngineConfig::for_testing());
         engine2.load_state(&snapshot).unwrap();
         assert!(!engine2.ledger().is_empty());
     }
@@ -859,11 +859,11 @@ mod tests {
 
     #[test]
     fn process_hello_message() {
-        let engine = PyanaEngine::new(EngineConfig::for_testing());
+        let engine = DreggEngine::new(EngineConfig::for_testing());
         let hello = WireMessage::Hello {
             node_id: [0xaa; 32],
             node_name: "test-client".into(),
-            protocol_version: pyana_wire::message::PROTOCOL_VERSION,
+            protocol_version: dregg_wire::message::PROTOCOL_VERSION,
             capabilities: vec![],
         };
         let responses = WireCodec::process_message(&engine, hello);
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn process_ping_message() {
-        let engine = PyanaEngine::new(EngineConfig::for_testing());
+        let engine = DreggEngine::new(EngineConfig::for_testing());
         let ping = WireMessage::Ping {
             seq: 7,
             timestamp: 100,
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn federation_root_management() {
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
         assert_eq!(engine.federation_root(), [0u8; 32]);
 
         let new_root = [0x42u8; 32];
@@ -901,7 +901,7 @@ mod tests {
 
     #[test]
     fn verify_rejects_garbage() {
-        let engine = PyanaEngine::new(EngineConfig::for_testing());
+        let engine = DreggEngine::new(EngineConfig::for_testing());
         // Garbage bytes should fail to decode or not verify.
         let result = engine.verify_presentation_bytes(&[0u8; 100], "read", "api/v1/users");
         // Either returns Err (decode failure) or Ok(false) (verification failure).
@@ -910,8 +910,8 @@ mod tests {
 
     #[test]
     fn load_state_rejects_tampered_snapshot() {
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
-        let cell = pyana_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
+        let cell = dregg_cell::Cell::with_balance([1u8; 32], [0u8; 32], 1000);
         engine.ledger_mut().insert_cell(cell).unwrap();
 
         let mut snapshot = engine.state_snapshot().unwrap();
@@ -921,7 +921,7 @@ mod tests {
         snapshot[0] ^= 0xFF;
 
         // Loading the tampered snapshot must fail with IntegrityCheckFailed.
-        let mut engine2 = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine2 = DreggEngine::new(EngineConfig::for_testing());
         let result = engine2.load_state(&snapshot);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn load_state_rejects_truncated_snapshot() {
         // A snapshot shorter than 32 bytes cannot contain a valid hash.
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
         let result = engine.load_state(&[0u8; 16]);
         assert!(result.is_err());
     }
@@ -943,7 +943,7 @@ mod tests {
     fn load_state_rejects_hash_only_snapshot() {
         // A snapshot of exactly 32 bytes (just the hash, no data) should either
         // fail integrity or fail deserialization of the empty data portion.
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
         let empty_data = &[];
         let hash = blake3::hash(empty_data);
         let snapshot: Vec<u8> = hash.as_bytes().to_vec();

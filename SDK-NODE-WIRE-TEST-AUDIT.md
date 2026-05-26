@@ -74,7 +74,7 @@ Consolidates the `mock_receipt` helper that was duplicated in `cipherclerk.rs::t
 
 ### `node/tests/integration_http_submit_encrypted.rs`
 4 tests exercising the encrypted-turn path (mirrors `POST /turns/submit-encrypted`):
-1. **`encrypted_turn_with_node_derived_sealer_commits`** — sealer derived via `derive_symmetric_key("pyana-turn-unsealer-v1")`; receipt has `was_encrypted=true`.
+1. **`encrypted_turn_with_node_derived_sealer_commits`** — sealer derived via `derive_symmetric_key("dregg-turn-unsealer-v1")`; receipt has `was_encrypted=true`.
 2. **`encrypted_turn_with_forged_sealer_is_rejected`** — wrong X25519 key → `apply_encrypted_turn` returns error.
 3. **`malformed_postcard_body_deserialize_fails_gracefully`** — garbage bytes → `postcard::from_bytes` error (covers the 400-path in the handler).
 4. **`was_encrypted_flag_is_bound_into_receipt_hash`** — flipping `was_encrypted` changes `receipt_hash()`; executor cannot strip the flag silently.

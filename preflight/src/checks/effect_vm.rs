@@ -1,11 +1,11 @@
 //! Effect VM checks: multi-effect trace generation, all 14 effect types, custom dispatch,
 //! boundary constraints, and adversarial cases.
 
-use pyana_circuit::effect_vm::{
+use dregg_circuit::effect_vm::{
     CellState, EFFECT_VM_WIDTH, Effect, NUM_EFFECTS, compute_effects_hash, encode_net_delta,
     extract_net_delta, generate_effect_vm_trace, sel,
 };
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 use crate::report::{CheckResult, run_check};
 

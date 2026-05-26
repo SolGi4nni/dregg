@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-block-dag> inspector.
+ * Playwright ad-hoc test for <dregg-block-dag> inspector.
  *
  * Run with:
  *   node tests/studio/block-dag.mjs
@@ -8,15 +8,15 @@
  *   npx eleventy --serve --port=4818  (or make serve)
  *
  * What this test does:
- *  1. Navigates to /studio.html (wasm + in-memory runtime + <pyana-app#app>)
+ *  1. Navigates to /studio.html (wasm + in-memory runtime + <dregg-app#app>)
  *  2. Waits for wasm init and runtime-ready
  *  3. Creates a federation with 4 nodes
  *  4. Proposes 3 blocks via runtime.proposeBlock(0, [...])
  *  5. Injects block-dag.js module
- *  6. Mounts <pyana-block-dag uri="pyana://federation/0">
+ *  6. Mounts <dregg-block-dag uri="dregg://federation/0">
  *  7. Verifies the DAG SVG renders with block rects + edges
  *  8. Verifies the block count in the header text
- *  9. Verifies clicking a block rect fires pyana:navigate
+ *  9. Verifies clicking a block rect fires dregg:navigate
  * 10. Verifies compact mode renders summary text + thumbnail SVG
  */
 
@@ -38,16 +38,16 @@ async function run() {
   console.log('[test] Navigating to /studio.html …');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyanaUi bootstrap (Preact + signals + htm)
-  await page.waitForFunction(() => !!window.pyanaUi, { timeout: 20000 });
-  console.log('[test] pyanaUi ready.');
+  // Wait for dreggUi bootstrap (Preact + signals + htm)
+  await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
+  console.log('[test] dreggUi ready.');
 
   // Wait for the in-memory runtime to be attached
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
   }, { timeout: 20000 });
-  console.log('[test] runtime attached to <pyana-app#app>.');
+  console.log('[test] runtime attached to <dregg-app#app>.');
 
   // ─── Step 1: create federation + propose blocks ──────────────────────────
   const setupResult = await page.evaluate(() => {
@@ -90,13 +90,13 @@ async function run() {
     url: `${BASE}/_includes/studio/inspectors/block-dag.js`,
     type: 'module',
   });
-  await page.waitForFunction(() => !!customElements.get('pyana-block-dag'), { timeout: 8000 });
-  console.log('[test] <pyana-block-dag> custom element registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-block-dag'), { timeout: 8000 });
+  console.log('[test] <dregg-block-dag> custom element registered.');
 
-  // ─── Step 3: mount element inside <pyana-app#app> ────────────────────────
+  // ─── Step 3: mount element inside <dregg-app#app> ────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-block-dag');
-    el.setAttribute('uri', 'pyana://federation/0');
+    const el = document.createElement('dregg-block-dag');
+    el.setAttribute('uri', 'dregg://federation/0');
     el.setAttribute('id', 'test-dag');
     document.getElementById('app').appendChild(el);
   });
@@ -106,7 +106,7 @@ async function run() {
     const el = document.getElementById('test-dag');
     return el && el.children.length > 0;
   }, { timeout: 10000 });
-  console.log('[test] <pyana-block-dag> rendered.');
+  console.log('[test] <dregg-block-dag> rendered.');
 
   // ─── Test 1: SVG is present ───────────────────────────────────────────────
   const hasSvg = await page.evaluate(() => {
@@ -154,15 +154,15 @@ async function run() {
   if (!hasBlockCount) throw new Error(`TEST FAILED [4]: header text unexpected: "${headerText}"`);
   console.log('[test 4] PASS: header contains block info.');
 
-  // ─── Test 5: click block → pyana:navigate event ───────────────────────────
+  // ─── Test 5: click block → dregg:navigate event ───────────────────────────
   const navigateUri = await page.evaluate(async () => {
     return new Promise(resolve => {
       const app = document.getElementById('app');
       function handler(ev) {
-        app.removeEventListener('pyana:navigate', handler);
+        app.removeEventListener('dregg:navigate', handler);
         resolve(ev.detail?.uri || '');
       }
-      app.addEventListener('pyana:navigate', handler);
+      app.addEventListener('dregg:navigate', handler);
 
       const block = document.querySelector('#test-dag .bdag-block');
       if (block) block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -171,17 +171,17 @@ async function run() {
   });
   console.log(`[test 5] navigate URI: "${navigateUri}"`);
   if (!navigateUri || navigateUri === 'no-block-found') {
-    throw new Error('TEST FAILED [5]: pyana:navigate not fired or no block to click');
+    throw new Error('TEST FAILED [5]: dregg:navigate not fired or no block to click');
   }
-  if (!navigateUri.startsWith('pyana://block/')) {
+  if (!navigateUri.startsWith('dregg://block/')) {
     throw new Error(`TEST FAILED [5]: unexpected navigate URI: "${navigateUri}"`);
   }
-  console.log('[test 5] PASS: pyana:navigate fires with correct block URI.');
+  console.log('[test 5] PASS: dregg:navigate fires with correct block URI.');
 
   // ─── Test 6: compact mode ─────────────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-block-dag');
-    el.setAttribute('uri', 'pyana://federation/0');
+    const el = document.createElement('dregg-block-dag');
+    el.setAttribute('uri', 'dregg://federation/0');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-dag-compact');
     document.getElementById('app').appendChild(el);
@@ -213,8 +213,8 @@ async function run() {
 
   // ─── Test 7: bad URI shows error ──────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-block-dag');
-    el.setAttribute('uri', 'pyana://cell/notAfederationURI');
+    const el = document.createElement('dregg-block-dag');
+    el.setAttribute('uri', 'dregg://cell/notAfederationURI');
     el.setAttribute('id', 'test-dag-bad');
     document.getElementById('app').appendChild(el);
   });

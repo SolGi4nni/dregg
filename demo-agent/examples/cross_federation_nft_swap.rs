@@ -12,16 +12,16 @@
 //! - STARK-based RemoteProof for cross-federation finality
 //!
 //! The key insight: unlike HTLCs which only support "reveal a preimage" conditions,
-//! pyana's ConditionalTurn supports ANY provable statement as a condition — including
+//! dregg's ConditionalTurn supports ANY provable statement as a condition — including
 //! "a specific turn was executed in another federation."
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example cross_federation_nft_swap
+//! Run with: cargo run --release -p dregg-demo-agent --example cross_federation_nft_swap
 
 use std::collections::HashSet;
 use std::time::Instant;
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
@@ -361,7 +361,7 @@ fn main() {
     println!();
 
     // Try to resolve at height 160 (past timeout)
-    let fake_receipt = pyana_turn::TurnReceipt {
+    let fake_receipt = dregg_turn::TurnReceipt {
         turn_hash: [0xFF; 32], // wrong hash
         forest_hash: [0; 32],
         pre_state_hash: [0; 32],
@@ -385,7 +385,7 @@ fn main() {
 
     // Use resolve_condition to demonstrate the timeout logic
     let mut nullifiers_gamma = HashSet::new();
-    let expired_result = pyana_turn::resolve_condition(
+    let expired_result = dregg_turn::resolve_condition(
         &charlie_conditional.condition,
         &ConditionProof::Receipt(fake_receipt),
         160, // past timeout!
@@ -424,7 +424,7 @@ fn main() {
     println!();
 
     // Try with wrong receipt (within timeout)
-    let wrong_receipt = pyana_turn::TurnReceipt {
+    let wrong_receipt = dregg_turn::TurnReceipt {
         turn_hash: [0xBA; 32], // wrong hash — doesn't match condition
         forest_hash: [0; 32],
         pre_state_hash: [0; 32],
@@ -460,7 +460,7 @@ fn main() {
     };
 
     let mut nullifiers_gamma2 = HashSet::new();
-    let rejected_result = pyana_turn::resolve_condition(
+    let rejected_result = dregg_turn::resolve_condition(
         &charlie_conditional2.condition,
         &ConditionProof::Receipt(wrong_receipt),
         110, // within timeout
@@ -520,7 +520,7 @@ fn main() {
     let trusted_roots = vec![(fed_beta_root, 100u64)]; // root attested at height 100
     let mut stark_nullifiers = HashSet::new();
 
-    let stark_result = pyana_turn::resolve_condition(
+    let stark_result = dregg_turn::resolve_condition(
         &remote_condition,
         &stark_proof,
         110, // current height
@@ -545,7 +545,7 @@ fn main() {
 
     // Demonstrate that an untrusted root is always rejected
     let mut untrusted_nullifiers = HashSet::new();
-    let untrusted_result = pyana_turn::resolve_condition(
+    let untrusted_result = dregg_turn::resolve_condition(
         &remote_condition,
         &stark_proof,
         110,
@@ -575,7 +575,7 @@ fn main() {
     println!("    - Problem: free option problem (one party can wait and decide)");
     println!("    - Problem: hash function must be the same on both chains");
     println!();
-    println!("  Pyana's ConditionalTurn:");
+    println!("  Dregg's ConditionalTurn:");
     println!("    - Condition: ANY provable statement (receipt, STARK, preimage, ...)");
     println!("    - Receipt-based: \"this specific turn was executed\" (verifiable fact)");
     println!("    - STARK-based: \"this AIR computation produced output X\" (any computation)");

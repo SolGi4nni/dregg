@@ -41,7 +41,7 @@ test.describe('Capability URI generation', () => {
     expect(resultDisplay).toBe('block');
 
     const uriText = await popup.locator('#shareResultUri').textContent();
-    // Should contain either a pyana:// URI or an error message.
+    // Should contain either a dregg:// URI or an error message.
     expect(uriText).toBeDefined();
     expect(uriText!.length).toBeGreaterThan(0);
   });

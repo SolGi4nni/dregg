@@ -192,7 +192,7 @@ Theoretically ideal but computationally impractical. The overhead of FHE (even m
 
 ### Verdict
 
-Pragmatic for a production system that needs privacy NOW, but the hardware trust assumption is philosophically at odds with pyana's "proof-carrying state" design. Good as an intermediate step while ZK circuits mature. Could be combined with Approach A: TEE for execution, ZK for ordering.
+Pragmatic for a production system that needs privacy NOW, but the hardware trust assumption is philosophically at odds with dregg's "proof-carrying state" design. Good as an intermediate step while ZK circuits mature. Could be combined with Approach A: TEE for execution, ZK for ordering.
 
 ---
 

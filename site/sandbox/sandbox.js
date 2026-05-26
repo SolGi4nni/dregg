@@ -1,4 +1,4 @@
-// pyana sandbox — execution engine
+// dregg sandbox — execution engine
 // Loads WASM, wraps it in a safe eval context, manages console output.
 
 import { scenarios } from './scenarios.js';
@@ -39,7 +39,7 @@ async function loadWasm() {
   wasmStatus.className = 'status-badge loading';
 
   try {
-    const { default: init, ...exports } = await import('../pkg/pyana_wasm.js');
+    const { default: init, ...exports } = await import('../pkg/dregg_wasm.js');
     await init();
     wasm = exports;
     wasmReady = true;
@@ -54,10 +54,10 @@ async function loadWasm() {
 }
 
 // ============================================================================
-// Pyana API Wrapper
+// Dregg API Wrapper
 // ============================================================================
 
-function createPyanaApi() {
+function createDreggApi() {
   return {
     generateRootKey: () => wasm.generate_root_key(),
     mintToken: (keyBytes, location) => wasm.mint_token(keyBytes, location),
@@ -154,14 +154,14 @@ async function executeCode() {
   const startTime = performance.now();
 
   // Execute user code in a sandboxed Web Worker (no DOM/document/fetch access).
-  // The pyana WASM API calls are proxied via postMessage.
+  // The dregg WASM API calls are proxied via postMessage.
   const workerSource = `
     self.onmessage = async (e) => {
       const { code, api } = e.data;
-      // Build a pyana proxy that delegates to the main thread
-      const pyana = {};
+      // Build a dregg proxy that delegates to the main thread
+      const dregg = {};
       for (const key of Object.keys(api)) {
-        pyana[key] = (...args) => {
+        dregg[key] = (...args) => {
           // Synchronous call results are passed in via api data
           return api[key](...args);
         };
@@ -176,12 +176,12 @@ async function executeCode() {
       };
 
       try {
-        const fn = new Function('pyana', 'console', 'performance', \`
+        const fn = new Function('dregg', 'console', 'performance', \`
           return (async () => {
             \${code}
           })();
         \`);
-        await fn(pyana, console, performance);
+        await fn(dregg, console, performance);
         self.postMessage({ type: 'done' });
       } catch (err) {
         self.postMessage({ type: 'error', message: err.message || String(err), stack: err.stack || '' });
@@ -189,7 +189,7 @@ async function executeCode() {
     };
   `;
 
-  // Since the Worker cannot call WASM directly, we pre-serialize the pyana API
+  // Since the Worker cannot call WASM directly, we pre-serialize the dregg API
   // as callable functions by running in an iframe sandbox instead.
   // Use a sandboxed iframe with allow-scripts only (no allow-same-origin).
   let sandboxFrame = document.getElementById('sandbox-frame');
@@ -200,7 +200,7 @@ async function executeCode() {
   sandboxFrame.sandbox = 'allow-scripts';
   sandboxFrame.style.display = 'none';
 
-  const pyana = createPyanaApi();
+  const dregg = createDreggApi();
   const sandboxConsole = createSandboxConsole();
 
   // Build a self-contained HTML document for the iframe.
@@ -220,13 +220,13 @@ async function executeCode() {
         warn: (...args) => parent.postMessage({ type: 'log', level: 'warn', args: args.map(String) }, '*'),
         info: (...args) => parent.postMessage({ type: 'log', level: 'info', args: args.map(String) }, '*'),
       };
-      // pyana API calls are proxied via postMessage request/response
-      const pyana = new Proxy({}, {
+      // dregg API calls are proxied via postMessage request/response
+      const dregg = new Proxy({}, {
         get(target, prop) {
           return (...args) => {
             // Send a synchronous-style request to parent and block...
             // Since we cannot do sync messaging from a sandboxed iframe,
-            // we pre-evaluate all pyana calls on the parent side.
+            // we pre-evaluate all dregg calls on the parent side.
             // Instead, the parent passes the API results via a callback approach.
             parent.postMessage({ type: 'apiCall', method: prop, args: JSON.parse(JSON.stringify(args)) }, '*');
             return new Promise((resolve) => {
@@ -243,8 +243,8 @@ async function executeCode() {
         }
       });
       try {
-        const fn = new Function('pyana', 'console', 'performance', \`return (async () => { \${code} })();\`);
-        await fn(pyana, console, performance);
+        const fn = new Function('dregg', 'console', 'performance', \`return (async () => { \${code} })();\`);
+        await fn(dregg, console, performance);
         parent.postMessage({ type: 'done' }, '*');
       } catch (err) {
         parent.postMessage({ type: 'error', message: err.message || String(err), stack: err.stack || '' }, '*');
@@ -275,9 +275,9 @@ async function executeCode() {
             sandboxConsole[msg.level || 'log'](...(msg.args || []));
             break;
           case 'apiCall':
-            // Proxy the pyana API call
+            // Proxy the dregg API call
             try {
-              const result = pyana[msg.method](...(msg.args || []));
+              const result = dregg[msg.method](...(msg.args || []));
               const resolved = result instanceof Promise ? result : Promise.resolve(result);
               resolved.then(r => {
                 sandboxFrame.contentWindow.postMessage({ type: 'apiResult', callId: msg.method, result: r }, '*');

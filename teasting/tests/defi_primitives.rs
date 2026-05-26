@@ -7,25 +7,25 @@
 //! 3. Value commitments: commit values, prove conservation homomorphically
 //! 4. Cross-state derivation: derive authorization from facts in two state roots
 
-use pyana_circuit::cross_state_derivation::{
+use dregg_circuit::cross_state_derivation::{
     CombiningRule, SourceInput, prove_cross_state_derivation, verify_cross_state_derivation,
 };
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::hash_fact;
 
 use curve25519_dalek::scalar::Scalar;
-use pyana_cell::value_commitment::{
+use dregg_cell::value_commitment::{
     ConservationError, ValueCommitment, prove_conservation, verify_conservation,
 };
 
-use pyana_intent::commit_reveal_fulfillment::{
+use dregg_intent::commit_reveal_fulfillment::{
     CommitRevealFulfiller, CommitRevealFulfillmentError, FulfillmentRegistry,
 };
-use pyana_intent::fulfillment::FulfillOptions;
-use pyana_intent::matcher::{HeldCapability, Sensitivity};
-use pyana_intent::partial_fill::{CumulativeFillTracker, PartialFillError, execute_partial_fill};
-use pyana_intent::{
+use dregg_intent::fulfillment::FulfillOptions;
+use dregg_intent::matcher::{HeldCapability, Sensitivity};
+use dregg_intent::partial_fill::{CumulativeFillTracker, PartialFillError, execute_partial_fill};
+use dregg_intent::{
     ActionPattern, CommitmentId, FillConstraints, Intent, IntentKind, Match, MatchSpec,
     VerificationMode,
 };

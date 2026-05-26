@@ -173,7 +173,7 @@ pub fn committed_threshold_circuit_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-committed-threshold-dsl-v1".to_string(),
+        name: "dregg-committed-threshold-dsl-v1".to_string(),
         trace_width: COMMITTED_THRESHOLD_AIR_WIDTH,
         max_degree: 2,
         columns,

@@ -1,5 +1,5 @@
 /**
- * Typed HTTP client helpers for communicating with the Pyana node.
+ * Typed HTTP client helpers for communicating with the Dregg node.
  */
 
 import type { NodeConfig, NodeRequestResult } from "./types";

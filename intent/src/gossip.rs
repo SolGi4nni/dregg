@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 use crate::fulfillment::Fulfillment;
 use crate::matcher::{HeldCapability, MatchResult, match_intent};
@@ -633,7 +633,7 @@ impl IntentPool {
         let mut nonce = [0u8; 32];
         crate::getrandom(&mut nonce);
 
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-commit-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-commit-v1");
         hasher.update(&intent_id);
         hasher.update(&fulfillment.fulfiller.0);
         for action in &fulfillment.granted_actions {
@@ -674,7 +674,7 @@ impl IntentPool {
             });
         }
 
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-commit-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-commit-v1");
         hasher.update(&commitment.intent_id);
         hasher.update(&reveal.fulfillment.fulfiller.0);
         for action in &reveal.fulfillment.granted_actions {
@@ -711,7 +711,7 @@ impl IntentPool {
 
     /// Compute the hash of a FulfillmentCommitment (used as its key).
     fn hash_commitment(commitment: &FulfillmentCommitment) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-commitment-key-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-commitment-key-v1");
         hasher.update(&commitment.intent_id);
         hasher.update(&commitment.satisfier_commitment);
         hasher.update(&commitment.timestamp.to_le_bytes());
@@ -848,10 +848,10 @@ mod tests {
     use super::*;
     use crate::matcher::Sensitivity;
     use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec, StakeProof};
-    use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
+    use dregg_commit::{Poseidon2MerkleTree, commitment_to_field};
 
     fn build_test_tree() -> (BabyBear, StakeProof) {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let mut tree = Poseidon2MerkleTree::with_depth(4);
         for i in 0..5u8 {
             let mut c = [0u8; 32];
@@ -1224,7 +1224,7 @@ mod tests {
             predicate_requirements: vec![],
             strict_resource_matching: false,
         };
-        let fake_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+        let fake_commitment = dregg_cell::NoteCommitment([0xFF; 32]);
         let (_root, mut real_proof) = build_test_tree();
         real_proof.commitment = fake_commitment;
         let intent = Intent::new(
@@ -1414,21 +1414,21 @@ mod tests {
         }
 
         // A different commitment should still work (build a different stake proof)
-        let different_commitment = pyana_cell::NoteCommitment([0xAB; 32]);
-        let mut tree = pyana_commit::Poseidon2MerkleTree::with_depth(4);
+        let different_commitment = dregg_cell::NoteCommitment([0xAB; 32]);
+        let mut tree = dregg_commit::Poseidon2MerkleTree::with_depth(4);
         for i in 0..5u8 {
             let mut c = [0u8; 32];
             c[0] = i;
             c[1] = 0xAA;
-            tree.append(pyana_commit::commitment_to_field(&c));
+            tree.append(dregg_commit::commitment_to_field(&c));
         }
-        let leaf = pyana_commit::commitment_to_field(&different_commitment.0);
+        let leaf = dregg_commit::commitment_to_field(&different_commitment.0);
         let pos = tree.append(leaf);
         for i in 10..15u8 {
             let mut c = [0u8; 32];
             c[0] = i;
             c[1] = 0xBB;
-            tree.append(pyana_commit::commitment_to_field(&c));
+            tree.append(dregg_commit::commitment_to_field(&c));
         }
         let root = tree.root();
         let merkle_proof = tree.prove_membership(pos).unwrap();

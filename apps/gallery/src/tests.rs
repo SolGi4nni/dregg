@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use pyana_app_framework::{CellId, EngineConfig, PyanaEngine};
+    use dregg_app_framework::{CellId, EngineConfig, DreggEngine};
 
     use crate::artwork::ArtworkRegistry;
     use crate::auction::AuctionEngine;
@@ -14,8 +14,8 @@ mod tests {
     use crate::{compute_bid_commitment, id_to_hex, verify_bid_reveal};
 
     /// Helper: create a test engine.
-    fn test_engine() -> PyanaEngine {
-        PyanaEngine::new(EngineConfig::new(1000))
+    fn test_engine() -> DreggEngine {
+        DreggEngine::new(EngineConfig::new(1000))
     }
 
     /// Helper: create a deterministic CellId from a byte.
@@ -365,7 +365,7 @@ mod tests {
         winner: &CellId,
         amount: u64,
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-settlement-receipt-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-settlement-receipt-v1");
         hasher.update(artwork_id);
         hasher.update(artist.as_bytes());
         hasher.update(winner.as_bytes());

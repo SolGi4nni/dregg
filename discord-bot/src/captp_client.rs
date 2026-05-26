@@ -1,12 +1,12 @@
 //! CapTP client: the bot's own identity and capability session management.
 //!
-//! The bot IS a pyana participant — it has its own keypair, holds live references,
-//! and can enliven/export/revoke sturdy refs via its configured pyana node.
+//! The bot IS a dregg participant — it has its own keypair, holds live references,
+//! and can enliven/export/revoke sturdy refs via its configured dregg node.
 
 use std::collections::HashMap;
 
-use pyana_captp::FederationId as GroupId;
-use pyana_captp::uri::PyanaUri;
+use dregg_captp::FederationId as GroupId;
+use dregg_captp::uri::DreggUri;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -14,7 +14,7 @@ use tracing::{debug, info};
 #[derive(Debug, Clone)]
 pub struct HeldCapability {
     /// The URI of this capability (sturdy ref form).
-    pub uri: PyanaUri,
+    pub uri: DreggUri,
     /// Human-readable label (optional).
     pub label: Option<String>,
     /// Who shared this with us (Discord user ID, if applicable).
@@ -30,8 +30,8 @@ pub struct HeldCapability {
 pub struct ExportedCapability {
     /// The cell ID we exported.
     pub cell_id: String,
-    /// The pyana URI the recipient can use.
-    pub uri: PyanaUri,
+    /// The dregg URI the recipient can use.
+    pub uri: DreggUri,
     /// Who we shared it with (Discord user ID).
     pub shared_with: Option<u64>,
     /// When we exported it.
@@ -47,7 +47,7 @@ pub struct CapTPClient {
     pub federation_id: GroupId,
     /// The bot's cell ID (hex).
     pub bot_cell_id: String,
-    /// The configured pyana node URL.
+    /// The configured dregg node URL.
     pub node_url: String,
     /// Held capabilities (keyed by cell ID).
     held: RwLock<HashMap<String, HeldCapability>>,
@@ -70,8 +70,8 @@ impl CapTPClient {
         }
     }
 
-    /// Export a cell as a sturdy ref, returning the pyana URI.
-    pub async fn export_cap(&self, cell_id: &str) -> Result<PyanaUri, CapTPError> {
+    /// Export a cell as a sturdy ref, returning the dregg URI.
+    pub async fn export_cap(&self, cell_id: &str) -> Result<DreggUri, CapTPError> {
         // Request the node to create a swiss entry and return the URI.
         let url = format!("{}/captp/export", self.node_url);
         let resp = self
@@ -100,7 +100,7 @@ impl CapTPClient {
             .map_err(|e| CapTPError::DeserializationFailed(e.to_string()))?;
 
         let uri =
-            PyanaUri::parse(&result.uri).map_err(|e| CapTPError::InvalidUri(e.to_string()))?;
+            DreggUri::parse(&result.uri).map_err(|e| CapTPError::InvalidUri(e.to_string()))?;
 
         // Track the export.
         let export = ExportedCapability {
@@ -119,9 +119,9 @@ impl CapTPClient {
         Ok(uri)
     }
 
-    /// Enliven a pyana URI — the bot accepts and holds the live reference.
+    /// Enliven a dregg URI — the bot accepts and holds the live reference.
     pub async fn accept_cap(&self, uri_str: &str) -> Result<HeldCapability, CapTPError> {
-        let uri = PyanaUri::parse(uri_str).map_err(|e| CapTPError::InvalidUri(e.to_string()))?;
+        let uri = DreggUri::parse(uri_str).map_err(|e| CapTPError::InvalidUri(e.to_string()))?;
 
         // Request the node to enliven the URI.
         let url = format!("{}/captp/enliven", self.node_url);
@@ -268,11 +268,11 @@ struct HandoffResponse {
 /// Errors from CapTP client operations.
 #[derive(Debug, Clone)]
 pub enum CapTPError {
-    /// Could not reach the configured pyana node.
+    /// Could not reach the configured dregg node.
     NodeUnreachable(String),
     /// The node returned an error.
     NodeError { status: u16, message: String },
-    /// Failed to parse a pyana URI.
+    /// Failed to parse a dregg URI.
     InvalidUri(String),
     /// Deserialization of node response failed.
     DeserializationFailed(String),
@@ -287,7 +287,7 @@ impl std::fmt::Display for CapTPError {
             CapTPError::NodeError { status, message } => {
                 write!(f, "node error (HTTP {status}): {message}")
             }
-            CapTPError::InvalidUri(e) => write!(f, "invalid pyana URI: {e}"),
+            CapTPError::InvalidUri(e) => write!(f, "invalid dregg URI: {e}"),
             CapTPError::DeserializationFailed(e) => write!(f, "deserialization failed: {e}"),
             CapTPError::NotFound(id) => write!(f, "capability not found: {id}"),
         }

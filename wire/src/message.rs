@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use pyana_types::{
+pub use dregg_types::{
     AttestedRoot as TypesAttestedRoot, PublicKey, RevocationEvent as TypesRevocationEvent,
     Signature, ThresholdQC,
 };
@@ -64,7 +64,7 @@ impl AuthorizationRequest {
     /// Uses length-prefixed encoding to avoid ambiguity when field values contain
     /// arbitrary bytes (a null-byte separator would be collision-prone).
     pub fn digest(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wire authorization-request v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-wire authorization-request v1");
         // Length-prefixed encoding: each variable-length field is preceded by its
         // byte length as a u32 LE value. This eliminates collision ambiguity
         // regardless of field contents (e.g., fields containing null bytes).
@@ -101,7 +101,7 @@ impl AuthorizationRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiptBody {
     /// The receipt is available; carries the serialized
-    /// `pyana_turn::witnessed_receipt::WitnessedReceipt` (postcard).
+    /// `dregg_turn::witnessed_receipt::WitnessedReceipt` (postcard).
     Present { receipt_bytes: Vec<u8> },
     /// The receipt is not served locally; the variant explains *why*.
     Unavailable(ReceiptUnavailable),
@@ -115,8 +115,8 @@ pub enum ReceiptBody {
 /// these structured kinds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiptUnavailable {
-    /// The operator's [`pyana_node::config::RetentionPolicy`] pruned
-    /// this receipt; the named [`pyana_cell::lifecycle::ArchivalAttestation`]
+    /// The operator's [`dregg_node::config::RetentionPolicy`] pruned
+    /// this receipt; the named [`dregg_cell::lifecycle::ArchivalAttestation`]
     /// (via its `checkpoint_hash`) covers the height-range that
     /// includes the requested receipt.
     ///
@@ -124,7 +124,7 @@ pub enum ReceiptUnavailable {
     /// using `attestation_checkpoint_hash` and validate it locally.
     CoveredByAttestedRoot {
         /// The archival attestation's
-        /// [`pyana_cell::lifecycle::ArchivalAttestation::checkpoint_hash`].
+        /// [`dregg_cell::lifecycle::ArchivalAttestation::checkpoint_hash`].
         attestation_checkpoint_hash: [u8; 32],
         /// The inclusive low-end of the archived range.
         archive_start_height: u64,
@@ -293,7 +293,7 @@ pub enum WireMessage {
     ///
     /// The receipt chain is the canonical persistence layer
     /// (`turn/src/turn.rs` doc header). An operator's
-    /// [`pyana_node::config::RetentionPolicy`] may have pruned the
+    /// [`dregg_node::config::RetentionPolicy`] may have pruned the
     /// hot copy locally; the response will still be *structured* —
     /// either the receipt bytes, or [`ReceiptUnavailable`] naming the
     /// attestation that covers the pruned range, or a clean
@@ -308,7 +308,7 @@ pub enum WireMessage {
     /// Response to a [`WireMessage::RequestReceipt`].
     ///
     /// **This is not a 404.** When the operator has pruned the receipt
-    /// per their [`pyana_node::config::RetentionPolicy`], the response
+    /// per their [`dregg_node::config::RetentionPolicy`], the response
     /// is [`ReceiptUnavailable::CoveredByAttestedRoot`], which names the
     /// attested root / archival attestation that covers the requested
     /// range. The verifier can then go fetch the archive blob from a
@@ -318,7 +318,7 @@ pub enum WireMessage {
     /// `height`, or the cell does not exist), the response is
     /// [`ReceiptUnavailable::NeverExisted`] — a categorically different
     /// shape. Conflating "I had it and I dropped it" with "it never
-    /// happened" is the bug pyana refuses to commit.
+    /// happened" is the bug dregg refuses to commit.
     ReceiptResponse {
         /// Echo of the requested cell.
         cell_id: [u8; 32],
@@ -386,12 +386,12 @@ pub enum WireMessage {
         reason: Option<String>,
     },
 
-    /// Present a `pyana://` URI to enliven a sturdy reference.
+    /// Present a `dregg://` URI to enliven a sturdy reference.
     ///
     /// The peer validates the swiss number and (if valid) responds with an
     /// `EnlivenResponse` containing the granted cell reference.
     EnlivenSturdyRef {
-        /// The full serialized PyanaUri (federation_id + cell_id + swiss).
+        /// The full serialized DreggUri (federation_id + cell_id + swiss).
         uri_bytes: Vec<u8>,
         /// The current federation height known to the requester.
         requester_height: u64,
@@ -492,7 +492,7 @@ pub enum WireMessage {
         /// The introducer's public key (for signature verification).
         introducer_pk: [u8; 32],
         /// Seam 3 keystone: recipient's signature over the canonical CapTP-delivery
-        /// signing message (see `pyana_turn::action::Authorization::captp_delivered_signing_message`).
+        /// signing message (see `dregg_turn::action::Authorization::captp_delivered_signing_message`).
         /// Binds this PresentHandoff to a specific Turn (cert.nonce ↔ target_cell ↔
         /// ValidateHandoff effect). The target federation puts this signature into the
         /// constructed Turn's `Authorization::CapTpDelivered`, closing the receipt-mirror loop.
@@ -534,7 +534,7 @@ pub enum WireMessage {
     PeerAuthResponse {
         /// The participant's Ed25519 public key (must be in the constitution).
         participant_key: [u8; 32],
-        /// Signature over blake3("pyana-wire peer-auth v1" || nonce || server_node_id).
+        /// Signature over blake3("dregg-wire peer-auth v1" || nonce || server_node_id).
         signature: Signature,
         /// The constitution version the peer believes is current.
         claimed_constitution_version: u64,
@@ -961,7 +961,7 @@ mod tests {
     // Adversarial tests: persistence-as-policy responses must be structurally
     // distinguishable and verifiable. The houyhnhnm comparison (§5.1) names
     // this property; conflating "I pruned it" with "it never happened" is the
-    // bug pyana refuses to commit.
+    // bug dregg refuses to commit.
     // -------------------------------------------------------------------------
 
     #[test]

@@ -14,10 +14,10 @@
 
 use std::collections::HashSet;
 
-use pyana_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
-use pyana_cell::id::CellId;
-use pyana_cell::note::Nullifier;
-use pyana_cell::nullifier_set::NullifierSet;
+use dregg_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
+use dregg_cell::id::CellId;
+use dregg_cell::note::Nullifier;
+use dregg_cell::nullifier_set::NullifierSet;
 
 /// Create a named CellId from a seed string (deterministic, for demo purposes).
 fn named_cell(name: &str) -> CellId {

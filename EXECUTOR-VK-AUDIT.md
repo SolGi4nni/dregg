@@ -12,9 +12,9 @@
 
 ### 1.1 GPT-5.5 categorical lens
 
-The GPT-5.5 framing recasts pyana as a category whose:
+The GPT-5.5 framing recasts dregg as a category whose:
 
-| Categorical concept     | pyana counterpart                         |
+| Categorical concept     | dregg counterpart                         |
 | ---                     | ---                                       |
 | Object                  | `Cell` (lifecycle-bearing resource)       |
 | Morphism                | `Action` (authorized transition)          |
@@ -31,7 +31,7 @@ attested-root inclusion check should agree on the meaning of acceptance.
 
 ### 1.2 Houyhnhnm lens
 
-| Houyhnhnm tenet                                | pyana counterpart                                   |
+| Houyhnhnm tenet                                | dregg counterpart                                   |
 | ---                                            | ---                                                 |
 | Code+data are one history                      | `CellProgram` is content-addressed in state         |
 | Persistence is system-wide                     | Ledger journal / receipt chain                       |
@@ -252,7 +252,7 @@ is verified through the standard pipeline before any effects apply. OK.
    variant tag, hashed to 32)
 4. `proving_system_id.canonical_bytes()` (length-prefixed) — yes
 
-The encoding is sound: BLAKE3 keyed under `"pyana-vk-v2"`, length
+The encoding is sound: BLAKE3 keyed under `"dregg-vk-v2"`, length
 prefixes on variable-length fields, fixed-width fingerprints. The
 test suite (vk_v2.rs:240-376) covers determinism, per-field
 sensitivity, variant-tag distinction, and v1/v2 domain disjointness.
@@ -287,7 +287,7 @@ each other.
 
 `executor.rs:9678-9682` (CreateCellFromFactory):
 ```rust
-new_cell.verification_key = Some(pyana_cell::VerificationKey::from_parts(
+new_cell.verification_key = Some(dregg_cell::VerificationKey::from_parts(
     *vk_hash,
     vk_hash.to_vec(), // Minimal VK data — the hash IS the identifier
 ));
@@ -377,7 +377,7 @@ commitment.rs:144-153), so observers know "the VK changed," but not
 
 ### 3.5 AIR fingerprint: fingerprint or label?
 
-`pyana_circuit::air_descriptor::fingerprint` — let me verify this is
+`dregg_circuit::air_descriptor::fingerprint` — let me verify this is
 constraint-bound, not just a name.
 
 (From `circuit/src/air_descriptor.rs` referenced at vk_v2.rs:13; not

@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>Consensus: Blocklace + Cordial Miners — Pyana</title>
+<title>Consensus: Blocklace + Cordial Miners — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Consensus: Blocklace + Cordial Miners</h1>
 
     <p>
-      Pyana federations use the Blocklace protocol with Cordial Miners for total
+      <code>dregg</code> federations use the Blocklace protocol with Cordial Miners for total
       ordering. This replaces the previous Morpheus DAG-BFT. The Blocklace is a
       CRDT DAG where equivocation is structurally detectable, and Cordial Miners
       provides 3-round BFT finality.
@@ -25,7 +25,7 @@
     <h2 id="three-tier">Three-Tier Execution Model</h2>
 
     <p>
-      Not all operations require consensus. Pyana provides three execution tiers
+      Not all operations require consensus. <code>dregg</code> provides three execution tiers
       with increasing coordination cost:
     </p>
 
@@ -77,10 +77,10 @@
           The DAG provides partial ordering without any consensus protocol.</li>
     </ul>
 
-    <pyana-vizzer data-vizzer="dag-graph"
+    <dregg-vizzer data-vizzer="dag-graph"
       data-dataset='{"nodes":[{"id":"a0","height":0,"creator":0},{"id":"b0","height":0,"creator":1},{"id":"c0","height":0,"creator":2},{"id":"a1","height":1,"creator":0},{"id":"b1","height":1,"creator":1},{"id":"c1","height":1,"creator":2,"isFinal":true}],"edges":[{"from":"a1","to":"a0"},{"from":"a1","to":"b0"},{"from":"b1","to":"a0"},{"from":"b1","to":"b0"},{"from":"b1","to":"c0"},{"from":"c1","to":"a0"},{"from":"c1","to":"b0"},{"from":"c1","to":"c0"}]}'>
       <div class="vizzer-fallback">Blocklace DAG — 3 creators, 2 rounds, one finalized tip.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/dag-graph.js"></script>
     <p class="viz-caption">A three-node federation after two rounds. Each round-1 block references
       all known round-0 tips (its causal past). The highlighted ring marks the round-1 tip selected

@@ -160,8 +160,8 @@ impl NullifierSet {
     /// in the sorted nullifier list.
     ///
     /// The Merkle tree is built over the sorted list of nullifier hashes as leaves.
-    /// Each leaf is: BLAKE3("pyana-nullifier-leaf v1", nullifier).
-    /// Internal nodes are: BLAKE3("pyana-nullifier-node v1", left || right).
+    /// Each leaf is: BLAKE3("dregg-nullifier-leaf v1", nullifier).
+    /// Internal nodes are: BLAKE3("dregg-nullifier-node v1", left || right).
     fn prove_membership_from_sorted(
         &self,
         sorted: &[Nullifier],
@@ -178,14 +178,14 @@ impl NullifierSet {
 
     /// Hash a leaf node.
     fn leaf_hash(data: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-leaf v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-nullifier-leaf v1");
         hasher.update(data);
         *hasher.finalize().as_bytes()
     }
 
     /// Hash two children into a parent node.
     fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-node v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-nullifier-node v1");
         hasher.update(left);
         hasher.update(right);
         *hasher.finalize().as_bytes()

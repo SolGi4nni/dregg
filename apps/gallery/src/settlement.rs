@@ -13,11 +13,11 @@
 //!
 //! Losing bidders get refunded via `ConditionalTurn` with timeout-based auto-refund.
 
-use pyana_app_framework::{CellId, PyanaEngine};
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::forest::{CallForest, CallTree};
-use pyana_turn::turn::Turn;
+use dregg_app_framework::{CellId, DreggEngine};
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::forest::{CallForest, CallTree};
+use dregg_turn::turn::Turn;
 
 use crate::ArtworkId;
 
@@ -69,7 +69,7 @@ impl AtomicSettlement {
     /// 2. Delegate artist's ownership capability → winner
     ///
     /// Returns the receipt hash on success.
-    pub fn execute(&self, engine: &mut PyanaEngine) -> Result<[u8; 32], SettlementError> {
+    pub fn execute(&self, engine: &mut DreggEngine) -> Result<[u8; 32], SettlementError> {
         // P2.D: balance_change is now derived from emitted effects by the
         // typestate ActionBuilder, not declared by the caller. The prior
         // code declared `Some(-winning_bid)` on the payment fragment and
@@ -146,7 +146,7 @@ impl AtomicSettlement {
     ///
     /// Uses a refund turn to release the escrowed funds back to the bidder.
     pub fn refund_loser(
-        engine: &mut PyanaEngine,
+        engine: &mut DreggEngine,
         escrow_id: [u8; 32],
     ) -> Result<(), SettlementError> {
         let agent = CellId::from_bytes(escrow_id);
@@ -202,7 +202,7 @@ fn compute_settlement_receipt(
     winner: &CellId,
     amount: u64,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-settlement-receipt-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-settlement-receipt-v1");
     hasher.update(artwork_id);
     hasher.update(artist.as_bytes());
     hasher.update(winner.as_bytes());

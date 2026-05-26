@@ -1,5 +1,5 @@
 /**
- * <pyana-conditional-turn uri="pyana://conditional-turn/<id>">
+ * <dregg-conditional-turn uri="dregg://conditional-turn/<id>">
  *
  * Pending conditional turns + ProofCondition view.
  * Uses get_pending_conditionals (real vec) + submit_conditional.
@@ -11,7 +11,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaConditionalTurn extends InspectorBase {
+class DreggConditionalTurn extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -47,12 +47,12 @@ class PyanaConditionalTurn extends InspectorBase {
         cond = list.find(c => c.id === parsed.id) || { id: parsed.id, timeout_height: 0, submitted_height: 0, condition_kind: 'Unknown' };
       }
       if (!cond && mode === 'compact') {
-        return html`<span class="pyana-inspector pyana-inspector--compact">conditional-turn</span>`;
+        return html`<span class="dregg-inspector dregg-inspector--compact">conditional-turn</span>`;
       }
       if (!cond) {
         return html`
-          <div class="pyana-inspector pyana-inspector--condturn">
-            <header><span class="pyana-inspector__kind">conditional-turn</span></header>
+          <div class="dregg-inspector dregg-inspector--condturn">
+            <header><span class="dregg-inspector__kind">conditional-turn</span></header>
             <div style="font-size:0.8rem;color:var(--fg-dim);">No pending conditionals (or list stub). Submit via demo or data=.</div>
             ${caps.mutate && wasm ? html`<button data-act="submit-demo" style="margin-top:6px;font-size:0.75rem;">Submit demo conditional (HashPreimage)</button>` : null}
           </div>`;
@@ -60,18 +60,18 @@ class PyanaConditionalTurn extends InspectorBase {
 
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code>${shortHex(cond.id)}</code> · ${cond.condition_kind} · timeout@${cond.timeout_height}
           </span>`;
       }
 
       return html`
-        <div class="pyana-inspector pyana-inspector--condturn">
+        <div class="dregg-inspector dregg-inspector--condturn">
           <header>
-            <span class="pyana-inspector__kind">conditional-turn</span>
-            <code class="pyana-inspector__id" title=${cond.id}>${shortHex(cond.id, 20)}</code>
+            <span class="dregg-inspector__kind">conditional-turn</span>
+            <code class="dregg-inspector__id" title=${cond.id}>${shortHex(cond.id, 20)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>id</dt><dd><code>${cond.id}</code></dd>
             <dt>condition</dt><dd>${cond.condition_kind}</dd>
             <dt>submitted at</dt><dd>height ${String(cond.submitted_height)}</dd>
@@ -95,11 +95,11 @@ class PyanaConditionalTurn extends InspectorBase {
           const condJson = JSON.stringify({ kind: 'HashPreimage', hash: '00'.repeat(32) });
           const actionsJson = JSON.stringify([]);
           const res = wasm.submit_conditional(handle, 0, actionsJson, 0, condJson, 10);
-          console.log('[pyana-conditional-turn] submitted demo', res);
+          console.log('[dregg-conditional-turn] submitted demo', res);
           if (this._runtime?.version) this._runtime.version.value++;
-        } catch (err) { console.warn('[pyana-conditional-turn] submit failed (demo may need effects)', err); }
+        } catch (err) { console.warn('[dregg-conditional-turn] submit failed (demo may need effects)', err); }
       }
     });
   }
 }
-if (!customElements.get('pyana-conditional-turn')) customElements.define('pyana-conditional-turn', PyanaConditionalTurn);
+if (!customElements.get('dregg-conditional-turn')) customElements.define('dregg-conditional-turn', DreggConditionalTurn);

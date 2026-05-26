@@ -6,7 +6,7 @@
 //! the executor projects each declared `StateConstraint` into a
 //! fixed-size PI section (`SLOT_CAVEAT_MANIFEST`), and the verifier
 //! re-evaluates the manifest against `state_before` / `state_after`
-//! via [`pyana_circuit::effect_vm::verify_slot_caveat_manifest`].
+//! via [`dregg_circuit::effect_vm::verify_slot_caveat_manifest`].
 //!
 //! Tests here are **PI-layer** adversarial tests: they assert that
 //! tampering with the manifest entries — flipping a type_tag, changing
@@ -32,11 +32,11 @@
 //! gadgets (`SenderAuthorized`, `AllowedTransitions`) declare
 //! `#[ignore]`'d sketches until the AIR state expands.
 
-use pyana_circuit::effect_vm::pi;
-use pyana_circuit::effect_vm::{
+use dregg_circuit::effect_vm::pi;
+use dregg_circuit::effect_vm::{
     SlotCaveatEntry, extract_slot_caveat_manifest, verify_slot_caveat_manifest,
 };
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 fn pi_with_manifest(entries: &[SlotCaveatEntry]) -> Vec<BabyBear> {
     let mut public_inputs = vec![BabyBear::ZERO; pi::BASE_COUNT];

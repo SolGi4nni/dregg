@@ -1,16 +1,16 @@
-//! End-to-end wire format integration test for the pyana presentation protocol.
+//! End-to-end wire format integration test for the dregg presentation protocol.
 //!
 //! This test exercises the EXACT production path:
-//!   cclerk.authorize() -> serialize -> PyanaEngine::verify
+//!   cclerk.authorize() -> serialize -> DreggEngine::verify
 //!
 //! It exists to catch the P0 wire format mismatch where the cclerk outputs raw
 //! STARK bytes but the engine expects postcard-encoded `WirePresentationProof`.
 //! If this test passes, the headline product demo works.
 //! If it fails, we have a wire protocol mismatch.
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::merkle_air::MerkleAir;
-use pyana_circuit::poseidon2;
+use dregg_circuit::BabyBear;
+use dregg_circuit::merkle_air::MerkleAir;
+use dregg_circuit::poseidon2;
 
 // =============================================================================
 // Helpers (mirror the cipherclerk's internal derivation logic)
@@ -53,7 +53,7 @@ fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
     hasher.update(key);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % pyana_circuit::field::BABYBEAR_P
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % dregg_circuit::field::BABYBEAR_P
 }
 
 fn bb_to_bytes(bb: BabyBear) -> [u8; 32] {
@@ -66,7 +66,7 @@ fn bb_to_bytes(bb: BabyBear) -> [u8; 32] {
 // The Test
 // =============================================================================
 
-/// End-to-end test: cclerk.authorize() -> serialize -> PyanaEngine::verify
+/// End-to-end test: cclerk.authorize() -> serialize -> DreggEngine::verify
 ///
 /// This test exercises the EXACT path a production deployment uses:
 /// cclerk outputs bytes, engine verifies bytes, action binding checked,
@@ -103,7 +103,7 @@ fn wire_format_e2e_happy_path_and_adversarial() {
         .expect("cclerk.authorize() should succeed for a valid root token");
 
     let proof_bytes = match &presentation {
-        pyana_sdk::AuthorizationPresentation::Private { proof, conclusion } => {
+        dregg_sdk::AuthorizationPresentation::Private { proof, conclusion } => {
             assert!(
                 *conclusion,
                 "conclusion should be true for a valid authorization"
@@ -121,9 +121,9 @@ fn wire_format_e2e_happy_path_and_adversarial() {
         "proof_bytes from cclerk.authorize() must not be empty"
     );
 
-    // --- Step 5: Create PyanaEngine with matching federation root ---
+    // --- Step 5: Create DreggEngine with matching federation root ---
     // The cclerk uses derive_proof_key(root_key) for federation membership, not root_key directly.
-    let proof_key = blake3::derive_key("pyana-proof-key-v1", &root_key);
+    let proof_key = blake3::derive_key("dregg-proof-key-v1", &root_key);
     let federation_root_bb = compute_federation_root_bb(&proof_key);
     let federation_root_bytes = bb_to_bytes(federation_root_bb);
 
@@ -132,7 +132,7 @@ fn wire_format_e2e_happy_path_and_adversarial() {
         max_proof_age_secs: 300,
         ..EngineConfig::new(now_ts)
     };
-    let mut engine = PyanaEngine::new(config);
+    let mut engine = DreggEngine::new(config);
     engine.set_federation_root(federation_root_bytes);
 
     // --- Step 6: Verify via the canonical engine path ---
@@ -148,7 +148,7 @@ fn wire_format_e2e_happy_path_and_adversarial() {
             // Decode and call verify_proof_complete directly for detailed diagnostics.
             let wire_proof: WirePresentationProof =
                 postcard::from_bytes(&proof_bytes).expect("already decoded above");
-            let detail = pyana_bridge::verify_proof_complete(
+            let detail = dregg_bridge::verify_proof_complete(
                 &wire_proof,
                 "read",
                 "storage",
@@ -241,7 +241,7 @@ fn wire_format_e2e_happy_path_and_adversarial() {
         max_proof_age_secs: 300,  // 5 minute window
         ..EngineConfig::new(now_ts + 3600)
     };
-    let mut future_engine = PyanaEngine::new(future_config);
+    let mut future_engine = DreggEngine::new(future_config);
     future_engine.set_federation_root(federation_root_bytes);
 
     let stale_result = future_engine.verify_presentation_bytes(&proof_bytes, "read", "storage");
@@ -316,7 +316,7 @@ fn wire_format_roundtrip_postcard_decodable() {
         .expect("authorize should succeed");
 
     let proof_bytes = match &presentation {
-        pyana_sdk::AuthorizationPresentation::Private { proof, .. } => proof.clone(),
+        dregg_sdk::AuthorizationPresentation::Private { proof, .. } => proof.clone(),
         _ => panic!("expected Private variant"),
     };
 
@@ -338,7 +338,7 @@ fn wire_format_roundtrip_postcard_decodable() {
             );
             assert!(
                 real.issuer_membership_stark_proof.public_inputs.len()
-                    >= 2 + pyana_circuit::ACTION_BINDING_WIDTH,
+                    >= 2 + dregg_circuit::ACTION_BINDING_WIDTH,
                 "STARK proof should have enough public inputs for root + action binding, got {}",
                 real.issuer_membership_stark_proof.public_inputs.len()
             );

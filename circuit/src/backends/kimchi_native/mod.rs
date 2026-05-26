@@ -31,7 +31,7 @@
 //!
 //! Last audit: 2026-05-23 (AUDIT-circuit.md P0-2).
 //!
-//! Native Kimchi circuit backend for pyana derivation proofs.
+//! Native Kimchi circuit backend for dregg derivation proofs.
 pub mod derivation;
 pub mod dsl_backend;
 pub mod fold;

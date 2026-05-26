@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
-use pyana_captp::FederationId as GroupId;
-use pyana_types::CellId;
-use pyana_wire::dfa_router::{RouteTarget, cell_target, target_as_cell};
+use dregg_captp::FederationId as GroupId;
+use dregg_types::CellId;
+use dregg_wire::dfa_router::{RouteTarget, cell_target, target_as_cell};
 
 use crate::router_sim::SimRouter;
 
@@ -235,7 +235,7 @@ mod tests {
             path: path.to_string(),
             cell_id: test_cell(cell_byte),
             federation_id: test_federation(),
-            sturdy_ref: format!("pyana://test/{name}"),
+            sturdy_ref: format!("dregg://test/{name}"),
             name: name.to_string(),
             tags: tags.iter().map(|s| s.to_string()).collect(),
             version: 1,
@@ -250,7 +250,7 @@ mod tests {
         mesh.mount(entry).unwrap();
 
         let resolved = mesh.resolve("/cells/stablecoin/transfer");
-        assert_eq!(resolved, Some("pyana://test/stablecoin"));
+        assert_eq!(resolved, Some("dregg://test/stablecoin"));
     }
 
     #[test]
@@ -342,11 +342,11 @@ mod tests {
 
         assert_eq!(
             mesh.resolve("/cells/alpha/transfer"),
-            Some("pyana://test/alpha")
+            Some("dregg://test/alpha")
         );
         assert_eq!(
             mesh.resolve("/cells/beta/balance"),
-            Some("pyana://test/beta")
+            Some("dregg://test/beta")
         );
         assert_eq!(mesh.resolve("/cells/gamma/x"), None);
     }

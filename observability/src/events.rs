@@ -1,9 +1,9 @@
 //! Typed trace events. Every variant is tagged with a stable `kind` string
 //! when serialized.
 
-use pyana_cell::{AuthRequired, CellId};
-use pyana_circuit::field::BabyBear;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, CellId};
+use dregg_circuit::field::BabyBear;
+use dregg_turn::{
     action::{Authorization, BearerCapProof, DelegationProofData},
     bilateral_schedule::{
         BilateralCounts, BilateralRoots, GrantEntry, IntroduceEntry, TransferEntry,
@@ -337,7 +337,7 @@ impl AuthorizationPayload {
             },
             Authorization::Unchecked => AuthorizationPayload::Unchecked,
             Authorization::Custom { predicate } => {
-                use pyana_cell::predicate::WitnessedPredicateKind as K;
+                use dregg_cell::predicate::WitnessedPredicateKind as K;
                 let (predicate_kind, vk_hash) = match predicate.kind {
                     K::Dfa => ("dfa".to_string(), String::new()),
                     K::Temporal => ("temporal".to_string(), String::new()),
@@ -505,11 +505,11 @@ pub struct SovereignWitnessPayload {
 }
 
 impl SovereignWitnessPayload {
-    /// Build the payload from a verified [`pyana_turn::SovereignCellWitness`].
+    /// Build the payload from a verified [`dregg_turn::SovereignCellWitness`].
     ///
     /// The caller has already verified the signature + sequence + commitment
     /// binding; this projection is the post-verification trace shape.
-    pub fn from_witness(witness: &pyana_turn::SovereignCellWitness) -> Self {
+    pub fn from_witness(witness: &dregg_turn::SovereignCellWitness) -> Self {
         Self {
             cell_id: hex32(witness.cell_id.as_bytes()),
             sequence: witness.sequence,
@@ -526,7 +526,7 @@ impl SovereignWitnessPayload {
 // State-constraint (slot caveat) payload
 // ---------------------------------------------------------------------------
 
-/// Structured rendering of a [`pyana_cell::program::StateConstraint`]
+/// Structured rendering of a [`dregg_cell::program::StateConstraint`]
 /// evaluation outcome.
 ///
 /// # Boundary discipline
@@ -559,7 +559,7 @@ pub struct StateConstraintPayload {
 impl StateConstraintPayload {
     /// Build the payload from a constraint and the program-evaluation result.
     pub fn from_evaluation(
-        constraint: &pyana_cell::program::StateConstraint,
+        constraint: &dregg_cell::program::StateConstraint,
         accepted: bool,
         reason: Option<String>,
     ) -> Self {
@@ -579,9 +579,9 @@ impl StateConstraintPayload {
 /// slot is `None` only for constraints that don't bind to a slot
 /// (`SenderAuthorized`, `RateLimit`, `TemporalGate`).
 fn constraint_dissect(
-    constraint: &pyana_cell::program::StateConstraint,
+    constraint: &dregg_cell::program::StateConstraint,
 ) -> (&'static str, Option<u8>, Vec<u8>) {
-    use pyana_cell::program::StateConstraint as SC;
+    use dregg_cell::program::StateConstraint as SC;
     match constraint {
         SC::FieldEquals { index, .. } => ("field_equals", Some(*index), vec![]),
         SC::FieldGte { index, .. } => ("field_gte", Some(*index), vec![]),
@@ -647,10 +647,10 @@ fn constraint_dissect(
         // commitment is fixed in the program). Mirrors `SenderAuthorized`
         // semantics in reverse.
         SC::Renounced { set } => match set {
-            pyana_cell::program::RenouncedSet::PublicRoot { set_root_index } => {
+            dregg_cell::program::RenouncedSet::PublicRoot { set_root_index } => {
                 ("renounced", Some(*set_root_index), vec![])
             }
-            pyana_cell::program::RenouncedSet::BlindedSet { .. } => ("renounced", None, vec![]),
+            dregg_cell::program::RenouncedSet::BlindedSet { .. } => ("renounced", None, vec![]),
         },
     }
 }

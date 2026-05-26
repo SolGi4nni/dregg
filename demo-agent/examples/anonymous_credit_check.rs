@@ -5,7 +5,7 @@
 //! Alice proves she qualifies WITHOUT revealing her score, and WITHOUT the bank
 //! revealing its threshold to auditors.
 //!
-//! This demonstrates pyana's committed-threshold AIR: a STARK proof that
+//! This demonstrates dregg's committed-threshold AIR: a STARK proof that
 //! simultaneously proves:
 //!   1. Alice's value >= the bank's threshold (range proof via bit decomposition)
 //!   2. The threshold is correctly committed (Poseidon2 binding)
@@ -19,11 +19,11 @@
 //!   They learn: "some committed value satisfies some committed threshold."
 //!   They cannot determine either the score or the threshold.
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example anonymous_credit_check
+//! Run with: cargo run --release -p dregg-demo-agent --example anonymous_credit_check
 
 use std::time::Instant;
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear,
     committed_threshold::{
         CommittedThresholdWitness, compute_threshold_commitment, generate_blinding,
@@ -162,7 +162,7 @@ fn main() {
         proof_bytes.len() as f64 / 1024.0
     );
     println!("    Time: {:.2}ms", proof_time.as_secs_f64() * 1000.0);
-    println!("    AIR: pyana-committed-threshold-v1");
+    println!("    AIR: dregg-committed-threshold-v1");
     println!(
         "    Trace width: 37 columns (value + threshold + blinding + diff + 30 bits + 3 commitments)"
     );

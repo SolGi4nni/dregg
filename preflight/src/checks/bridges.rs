@@ -1,6 +1,6 @@
 //! Bridge checks: Mina state advance submission + verification, EVM interface (if available).
 
-use pyana_bridge::mina::{
+use dregg_bridge::mina::{
     MinaBridgeState, StateAdvance, submit_state_advance, verify_mina_inclusion,
 };
 
@@ -15,7 +15,7 @@ pub fn run() -> Vec<CheckResult> {
 
 fn check_mina_state_advance() -> Result<(), String> {
     // Create a bridge state with genesis root.
-    let genesis_root = *blake3::hash(b"pyana-genesis-state").as_bytes();
+    let genesis_root = *blake3::hash(b"dregg-genesis-state").as_bytes();
     let mut state = MinaBridgeState::new(genesis_root);
 
     // Verify initial state.
@@ -27,7 +27,7 @@ fn check_mina_state_advance() -> Result<(), String> {
     }
 
     // Create a state advance.
-    let new_root = *blake3::hash(b"pyana-state-at-height-1").as_bytes();
+    let new_root = *blake3::hash(b"dregg-state-at-height-1").as_bytes();
     let advance = StateAdvance {
         old_root: genesis_root,
         new_root,

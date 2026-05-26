@@ -50,7 +50,7 @@
 //! - Post-quantum safe (no computational assumptions).
 //! - Database size is hidden via power-of-2 padding.
 
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
 use crate::gossip::IntentPool;
@@ -696,9 +696,9 @@ pub fn compute_blinding_contribution(
 /// Uses a monotonic nonce to derive unique commitment IDs from the same secret,
 /// ensuring that multiple intents from the same cclerk are not linkable.
 ///
-/// The derivation is: `BLAKE3-derive-key("pyana-intent-commitment-{nonce}", secret)`.
+/// The derivation is: `BLAKE3-derive-key("dregg-intent-commitment-{nonce}", secret)`.
 pub fn derive_unlinkable_commitment(secret: &[u8], nonce: u64) -> CommitmentId {
-    CommitmentId::derive(secret, &format!("pyana-intent-commitment-{nonce}"))
+    CommitmentId::derive(secret, &format!("dregg-intent-commitment-{nonce}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -986,7 +986,7 @@ impl EncryptedDatabase {
             .map(|(row_idx, row)| {
                 // Derive per-row key from session secret + row index.
                 let row_key = blake3::derive_key(
-                    "pyana-pir-download-all-row-key",
+                    "dregg-pir-download-all-row-key",
                     &[session_secret.as_slice(), &row_idx.to_le_bytes(), &nonce].concat(),
                 );
 
@@ -1027,7 +1027,7 @@ impl EncryptedDatabase {
         let encrypted_row = self.encrypted_rows.get(row_idx)?;
 
         let row_key = blake3::derive_key(
-            "pyana-pir-download-all-row-key",
+            "dregg-pir-download-all-row-key",
             &[
                 session_secret.as_slice(),
                 &row_idx.to_le_bytes(),

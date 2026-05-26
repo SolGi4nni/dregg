@@ -11,8 +11,8 @@
 //! Note: tests use `prove_fast()` (constraint-checked, no real STARK) so
 //! this file is NO-CARGO-compatible — no STARK proving happens.
 
-use pyana_bridge::present::BridgePresentationBuilder;
-use pyana_token::{Attenuation, AuthRequest, MacaroonToken};
+use dregg_bridge::present::BridgePresentationBuilder;
+use dregg_token::{Attenuation, AuthRequest, MacaroonToken};
 
 // ============================================================================
 // Helpers
@@ -48,19 +48,19 @@ fn fed_root() -> [u8; 32] {
 /// path built by BridgePresentationBuilder (the same helper used in
 /// bridge/src/tests.rs). Required so `prove_fast()` can complete without a
 /// real federation tree.
-fn matching_root_bb(key: &[u8; 32]) -> pyana_circuit::BabyBear {
-    use pyana_circuit::BabyBear;
-    use pyana_circuit::merkle_air::compute_parent_poseidon2;
+fn matching_root_bb(key: &[u8; 32]) -> dregg_circuit::BabyBear {
+    use dregg_circuit::BabyBear;
+    use dregg_circuit::merkle_air::compute_parent_poseidon2;
 
-    let issuer_hash = pyana_bridge::present::bytes_to_babybear(key);
+    let issuer_hash = dregg_bridge::present::bytes_to_babybear(key);
     let depth = 8;
     let mut current = issuer_hash;
     for i in 0..depth {
         let position = (i % 4) as u8;
         let siblings = [
-            BabyBear::new(pyana_bridge::present::hash_index(i, 0, key)),
-            BabyBear::new(pyana_bridge::present::hash_index(i, 1, key)),
-            BabyBear::new(pyana_bridge::present::hash_index(i, 2, key)),
+            BabyBear::new(dregg_bridge::present::hash_index(i, 0, key)),
+            BabyBear::new(dregg_bridge::present::hash_index(i, 1, key)),
+            BabyBear::new(dregg_bridge::present::hash_index(i, 2, key)),
         ];
         current = compute_parent_poseidon2(current, position, &siblings);
     }
@@ -78,7 +78,7 @@ fn builder_for_key(key: [u8; 32]) -> BridgePresentationBuilder {
 #[test]
 fn valid_credential_accepted() {
     let key = issuer_key();
-    let token = MacaroonToken::mint(key, b"kid-valid", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-valid", "dregg.dev");
 
     let mut builder = builder_for_key(key);
     builder.set_root_token(token);
@@ -153,7 +153,7 @@ fn wrong_issuer_key_rejected_by_membership_check() {
 #[test]
 fn expired_credential_denied() {
     let key = issuer_key();
-    let token = MacaroonToken::mint(key, b"kid-exp", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-exp", "dregg.dev");
 
     let mut builder = builder_for_key(key);
     builder.set_root_token(token);
@@ -187,7 +187,7 @@ fn expired_credential_denied() {
 #[test]
 fn credential_wrong_app_denied() {
     let key = issuer_key();
-    let token = MacaroonToken::mint(key, b"kid-app", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-app", "dregg.dev");
 
     let mut builder = builder_for_key(key);
     builder.set_root_token(token);
@@ -221,7 +221,7 @@ fn credential_wrong_app_denied() {
 #[test]
 fn wire_proof_strips_private_trace() {
     let key = issuer_key();
-    let token = MacaroonToken::mint(key, b"kid-wire", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-wire", "dregg.dev");
 
     let mut builder = builder_for_key(key);
     builder.set_root_token(token);
@@ -248,8 +248,8 @@ fn wire_proof_strips_private_trace() {
     assert!(
         matches!(
             wire.verification,
-            pyana_circuit::PresentationVerification::Valid
-                | pyana_circuit::PresentationVerification::LocalOnly
+            dregg_circuit::PresentationVerification::Valid
+                | dregg_circuit::PresentationVerification::LocalOnly
         ),
         "wire proof must retain the constraint verification result"
     );
@@ -267,7 +267,7 @@ fn wire_proof_strips_private_trace() {
 #[test]
 fn credential_wrong_user_denied() {
     let key = issuer_key();
-    let token = MacaroonToken::mint(key, b"kid-user", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-user", "dregg.dev");
 
     let mut builder = builder_for_key(key);
     builder.set_root_token(token);
@@ -300,7 +300,7 @@ fn debug_matching_root() {
     let key = issuer_key();
     let computed = matching_root_bb(&key);
     let builder = builder_for_key(key);
-    let issuer_hash = pyana_bridge::present::bytes_to_babybear(&key);
+    let issuer_hash = dregg_bridge::present::bytes_to_babybear(&key);
 
     // Try to build issuer membership directly
     let result = builder.build_issuer_membership_poseidon2(issuer_hash);
@@ -318,11 +318,11 @@ fn debug_matching_root() {
     for i in 0..8 {
         let position = (i % 4) as u8;
         let siblings = [
-            pyana_circuit::BabyBear::new(pyana_bridge::present::hash_index(i, 0, &key)),
-            pyana_circuit::BabyBear::new(pyana_bridge::present::hash_index(i, 1, &key)),
-            pyana_circuit::BabyBear::new(pyana_bridge::present::hash_index(i, 2, &key)),
+            dregg_circuit::BabyBear::new(dregg_bridge::present::hash_index(i, 0, &key)),
+            dregg_circuit::BabyBear::new(dregg_bridge::present::hash_index(i, 1, &key)),
+            dregg_circuit::BabyBear::new(dregg_bridge::present::hash_index(i, 2, &key)),
         ];
-        current = pyana_circuit::merkle_air::compute_parent_poseidon2(current, position, &siblings);
+        current = dregg_circuit::merkle_air::compute_parent_poseidon2(current, position, &siblings);
     }
     println!("manual recomputed root bb = {}", current.0);
 }

@@ -240,13 +240,13 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                 // Apply same checks as the HTTP path: validation,
                                 // content-addressed ID verification, and pool size limit.
                                 if let Ok(typed_intent) =
-                                    serde_json::from_value::<pyana_intent::Intent>(intent.clone())
+                                    serde_json::from_value::<dregg_intent::Intent>(intent.clone())
                                 {
-                                    if pyana_intent::validation::validate_intent(&typed_intent)
+                                    if dregg_intent::validation::validate_intent(&typed_intent)
                                         .is_ok()
                                     {
                                         // Verify content-addressed ID (prevents ID spoofing).
-                                        let recomputed = pyana_intent::Intent::new(
+                                        let recomputed = dregg_intent::Intent::new(
                                             typed_intent.kind,
                                             typed_intent.matcher.clone(),
                                             typed_intent.creator,
@@ -367,7 +367,7 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                                                 .expect("argon2 hash")
                                                 .to_string();
                                             let bearer_seed = blake3::derive_key(
-                                                "pyana-node-bearer-v1",
+                                                "dregg-node-bearer-v1",
                                                 format!("{}{}", passphrase, salt.as_str())
                                                     .as_bytes(),
                                             );
@@ -458,7 +458,7 @@ fn node_event_to_server_message(event: &NodeEvent) -> ServerMessage {
 
 /// Handle an authorize request received over WebSocket.
 async fn handle_authorize(state: &NodeState, request: AuthorizeWsRequest) -> ServerMessage {
-    use pyana_sdk::AuthRequest;
+    use dregg_sdk::AuthRequest;
 
     let s = state.read().await;
     let token = match s.cclerk.find_token_by_id(&request.token_id) {

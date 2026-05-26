@@ -1,10 +1,10 @@
-# Cryptographic Accumulators for Pyana
+# Cryptographic Accumulators for `dregg`
 
 ## Status: Design Exploration
 
 ## Problem Statement
 
-Pyana currently proves set membership and non-membership using 4-ary Poseidon2 Merkle trees (depth 16, BabyBear field). While sound, this approach has three scaling limitations:
+`dregg` currently proves set membership and non-membership using 4-ary Poseidon2 Merkle trees (depth 16, BabyBear field). While sound, this approach has three scaling limitations:
 
 1. **Proof size is O(log N)**: A membership proof contains 16 levels of 3 sibling hashes each (48 field elements). For non-membership, we need TWO such paths (left and right neighbor), plus adjacency metadata -- totaling ~100 field elements per non-membership proof.
 
@@ -34,7 +34,7 @@ Acc = g^(e_1 * e_2 * ... * e_n) mod N
 - Verification: `w^e * Acc^d == g mod N` where w = g^a
 - Size: O(1)
 
-**Applicability to pyana**:
+**Applicability to dregg**:
 - Excellent for revocation non-membership (O(1) witnesses, O(1) updates)
 - Each capability maps to a prime via deterministic hashing (hash-to-prime)
 - Updates: when e_new joins the set, `Acc_new = Acc_old^e_new`. Existing witnesses unaffected for membership; non-membership witnesses need update.
@@ -64,7 +64,7 @@ Acc = [f(tau)]_1 = commit_g1(f)
 - Verification: `e(Acc, [1]_2) == e(w, [tau - e]_2) * e([1]_1, [1]_2)^f(e)`
 - Size: O(1) -- one G1 point + one scalar
 
-**Applicability to pyana**:
+**Applicability to dregg**:
 - We already have KZG infrastructure in `hints/src/kzg.rs` with BLS12-381
 - We already have the Ethereum trusted setup loaded via `eth_setup()`
 - The `GlobalData` structure contains `powers_of_g` and `powers_of_h` up to degree 64
@@ -163,7 +163,7 @@ Actually, for non-membership witnesses under update (adding h_new to S):
 2. alpha = Poseidon2(sequential_hash_of_all_insertions) -- append-only log commitment
 3. alpha = Poseidon2(epoch_counter || federation_signature) -- epoch-based with federation attestation
 
-Option 3 is cleanest for pyana: the federation already produces attested roots each epoch. alpha is derived from the attested state, and all witnesses are epoch-bound.
+Option 3 is cleanest for dregg: the federation already produces attested roots each epoch. alpha is derived from the attested state, and all witnesses are epoch-bound.
 
 **Verdict**: Most promising for in-STARK non-membership. Requires BabyBear^4 extension field arithmetic (already available in our STARK backend). Dramatically reduces constraint count vs. sorted-Merkle.
 
@@ -302,7 +302,7 @@ Epoch E+1 (h_{n+1} revoked):
 **Optimization -- fixed alpha with epoch commitments**:
 
 Instead of changing alpha each epoch, fix alpha once during system setup:
-- `alpha = Poseidon2("pyana-revocation-accumulator-v1")`
+- `alpha = Poseidon2("dregg-revocation-accumulator-v1")`
 - `Acc_E = product(alpha - h_i)` for the current revocation set
 - Federation signs `(epoch, Acc_E)` with BLS threshold
 

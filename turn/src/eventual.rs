@@ -14,7 +14,7 @@
 //! This is **not** async promise pipelining in the E-language sense. All execution
 //! is synchronous and local. For true E-style eventual-send, use the intent system.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::turn::Turn;
@@ -480,13 +480,13 @@ mod tests {
     use super::*;
     use crate::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
     use crate::forest::CallForest;
-    use pyana_cell::permissions::AuthRequired;
-    use pyana_cell::{CapabilityRef, CellId, Ledger, Permissions, Preconditions};
+    use dregg_cell::permissions::AuthRequired;
+    use dregg_cell::{CapabilityRef, CellId, Ledger, Permissions, Preconditions};
 
     /// Create a cell with open permissions (no auth required for anything).
-    fn make_open_cell(pk: [u8; 32], balance: u64) -> pyana_cell::Cell {
+    fn make_open_cell(pk: [u8; 32], balance: u64) -> dregg_cell::Cell {
         let token_id = [0u8; 32];
-        let mut cell = pyana_cell::Cell::with_balance(pk, token_id, balance);
+        let mut cell = dregg_cell::Cell::with_balance(pk, token_id, balance);
         cell.permissions = Permissions {
             send: AuthRequired::None,
             receive: AuthRequired::None,
@@ -1063,7 +1063,7 @@ mod tests {
         );
 
         // The new cell should exist in the ledger.
-        let new_cell_id = pyana_cell::CellId::derive_raw(&new_pk, &new_token);
+        let new_cell_id = dregg_cell::CellId::derive_raw(&new_pk, &new_token);
         assert!(
             ledger.get(&new_cell_id).is_some(),
             "new cell should exist in ledger"

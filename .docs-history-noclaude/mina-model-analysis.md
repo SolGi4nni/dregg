@@ -1,4 +1,4 @@
-# Mina zkApp Transaction Model vs. Pyana Cell/Turn Model
+# Mina zkApp Transaction Model vs. `dregg` Cell/Turn Model
 
 Deep analysis from source code reading of both systems.
 
@@ -183,7 +183,7 @@ Preconditions can assert `proved_state = true`, ensuring the state they depend o
 
 ---
 
-## 2. Pyana's Current Model
+## 2. `dregg`'s Current Model
 
 ### 2.1 Cell (analogous to zkApp Account)
 
@@ -230,7 +230,7 @@ Action {
 
 ### 2.4 Effects (NOT in Mina's model)
 
-Pyana makes effects **explicit** on each action:
+`dregg` makes effects **explicit** on each action:
 - SetField { cell, index, value }
 - Transfer { from, to, amount }
 - GrantCapability { from, to, cap }
@@ -243,7 +243,7 @@ In Mina, "effects" are implicit from the body fields: `balance_change`, `update.
 
 ### 2.5 Capability System (NOT in Mina)
 
-Pyana's unique contribution: each cell has a **c-list** (capability list). A capability is:
+`dregg`'s unique contribution: each cell has a **c-list** (capability list). A capability is:
 ```rust
 CapabilityRef { target: CellId, slot: u32, permissions: AuthRequired, breadstuff: Option<[u8;32]> }
 ```
@@ -274,7 +274,7 @@ Atomicity: journal-based rollback. If ANY action fails, the entire turn is rolle
 
 ---
 
-## 3. What Pyana Is Missing
+## 3. What `dregg` Is Missing
 
 ### 3.1 The Two-Pass Ledger (Critical)
 
@@ -282,7 +282,7 @@ Mina separates fee payer processing from the rest:
 - **First pass**: fee payer always commits (fee is always taken)
 - **Second pass**: all other updates are tentative; if any fail, the second pass ledger is not committed
 
-Pyana's model is all-or-nothing: if the turn fails, the fee is refunded. This means:
+`dregg`'s model is all-or-nothing: if the turn fails, the fee is refunded. This means:
 - Validators cannot be compensated for processing invalid turns
 - DoS potential: submit expensive-to-validate turns that always fail
 - **Recommendation**: Add a two-phase execution model where the agent's fee + nonce are always committed regardless of turn success
@@ -298,7 +298,7 @@ Mina tracks a **running excess** across all account updates:
 
 This is the mechanism for fund flow between accounts in a single transaction WITHOUT needing explicit "transfer" effects. Account A withdraws 100, Account B deposits 100, excess nets to zero.
 
-Pyana uses explicit `Transfer { from, to, amount }` effects instead, which is more intuitive but:
+`dregg` uses explicit `Transfer { from, to, amount }` effects instead, which is more intuitive but:
 - Loses the composability of balance_change (multiple unrelated circuits can independently declare their balance changes)
 - Makes it harder for a proof circuit to abstractly "withdraw" without specifying the destination
 - **Recommendation**: Consider adding a `balance_change: i64` field on Action (like Mina) alongside or instead of explicit Transfer effects. Use excess tracking to enforce conservation within a turn.
@@ -310,7 +310,7 @@ Mina's `proved_state` flag is a powerful integrity mechanism:
 - Subsequent preconditions can assert `proved_state = true`
 - This guarantees the state was produced by the zkApp's own logic, not manually set by a deployer
 
-Pyana has no equivalent. Any authorized party can set state fields arbitrarily.
+`dregg` has no equivalent. Any authorized party can set state fields arbitrarily.
 
 **Recommendation**: Add a `proved_state: bool` field to CellState, with the same semantics.
 
@@ -321,7 +321,7 @@ Mina has THREE replay protection mechanisms:
 2. `use_full_commitment` (depends on fee payer's nonce -- protects non-nonce-incrementing updates)
 3. Non-signature updates don't need replay protection (proofs are stateless; replay just means re-execution)
 
-Pyana only has mechanism (1) at the Turn level. Individual actions within a turn have no independent replay protection.
+`dregg` only has mechanism (1) at the Turn level. Individual actions within a turn have no independent replay protection.
 
 **Recommendation**: Consider per-action commitment binding (action signs over its position in the forest + the forest hash).
 
@@ -331,7 +331,7 @@ Mina can assert `is_new = true/false` in preconditions, allowing initialization 
 - A zkApp can require `is_new = true` to gate deployment-time setup
 - Combined with `proved_state`, this ensures first-run logic executed correctly
 
-Pyana's preconditions don't include an `is_new` check.
+`dregg`'s preconditions don't include an `is_new` check.
 
 ### 3.6 `use_full_commitment` Semantics
 
@@ -339,7 +339,7 @@ In Mina, when `use_full_commitment = false`, the signature covers only the hash 
 
 When `use_full_commitment = true`, the signature covers everything (fee payer + memo + all updates). This provides full transaction binding.
 
-Pyana doesn't have this distinction -- the signing message is always the action hash (target + method + args + effects + delegation).
+`dregg` doesn't have this distinction -- the signing message is always the action hash (target + method + args + effects + delegation).
 
 **Recommendation**: Add a `full_commitment: bool` flag so that some actions can be signed independently of the broader turn (enabling composable multi-party turns).
 
@@ -350,7 +350,7 @@ Mina maintains 5 action_state slots per account, acting as a rolling FIFO of act
 - When the slot changes, `s1 -> s2 -> s3 -> s4 -> s5` shift
 - This allows preconditions to reference recent action history
 
-Pyana's `actions` concept doesn't exist in the cell model.
+`dregg`'s `actions` concept doesn't exist in the cell model.
 
 **Recommendation**: Add an action_state mechanism for zkApps that need to verify historical sequencing.
 
@@ -360,29 +360,29 @@ Mina has a full vesting schedule system:
 - `initial_minimum_balance`, `cliff_time`, `cliff_amount`, `vesting_period`, `vesting_increment`
 - Checked on every balance-reducing operation
 
-Pyana has no timing/vesting support.
+`dregg` has no timing/vesting support.
 
 ### 3.9 Permission for Verification Key Has Transaction Version
 
 Mina's `set_verification_key` permission is a tuple `(Auth_required, Txn_version)`. If the stored txn_version is older than current, the permission falls back to Signature (even if it was Proof/Impossible). This is a migration mechanism.
 
-Pyana doesn't version its permissions.
+`dregg` doesn't version its permissions.
 
 ### 3.10 Permissions Updated LAST
 
 Mina explicitly applies permission changes as the **last** mutation in an account update. This ensures all other operations in the same update are gated by the OLD permissions.
 
-Pyana's executor applies effects in declaration order, which means an action could theoretically set_permissions THEN use the new permissions for subsequent effects in the same action. This is a semantic bug risk.
+`dregg`'s executor applies effects in declaration order, which means an action could theoretically set_permissions THEN use the new permissions for subsequent effects in the same action. This is a semantic bug risk.
 
 ---
 
-## 4. What Pyana Does Better / Differently
+## 4. What `dregg` Does Better / Differently
 
 ### 4.1 Capability System (Object-Capability Model)
 
 Mina's security model is purely **identity-based**: you authorize as yourself (signature/proof on YOUR account), and the permission system gates what you can do to YOUR OWN account. Cross-account interaction is limited to balance_change flowing through the excess.
 
-Pyana adds **capability-based security**: cells hold explicit c-lists of capabilities to other cells. This enables:
+`dregg` adds **capability-based security**: cells hold explicit c-lists of capabilities to other cells. This enables:
 - **Delegation**: grant a sub-capability to a child agent
 - **Attenuation**: granted capabilities are always equal-or-narrower (never amplification)
 - **Revocation**: capabilities can be revoked without changing the target cell
@@ -400,7 +400,7 @@ Mina has no equivalent.
 
 ### 4.3 Explicit Method Invocation
 
-Pyana's actions have `method: Symbol` -- a hashed method name. This makes the call forest semantically meaningful: you're not just "updating account state" but "invoking a named method."
+`dregg`'s actions have `method: Symbol` -- a hashed method name. This makes the call forest semantically meaningful: you're not just "updating account state" but "invoking a named method."
 
 Mina's model is purely declarative: "here's what should change." The zkApp circuit enforces constraints, but there's no named-method concept on-chain.
 
@@ -411,7 +411,7 @@ This is better for:
 
 ### 4.4 Explicit Effects vs. Implicit State Diff
 
-Pyana makes effects explicit: each action declares exactly what it will do. This is better for:
+`dregg` makes effects explicit: each action declares exactly what it will do. This is better for:
 - Transparency: users can see exactly what will change before signing
 - Metering: costs can be computed precisely from the effect list
 - Validation: effects can be checked independently of execution
@@ -422,15 +422,15 @@ But worse for:
 
 ### 4.5 Journal-Based Rollback
 
-Pyana uses a journal (append-only log of old values) for rollback. This is more memory-efficient than Mina's approach of maintaining separate ledger copies.
+`dregg` uses a journal (append-only log of old values) for rollback. This is more memory-efficient than Mina's approach of maintaining separate ledger copies.
 
 However, Mina's two-pass model is semantically superior because fees are always collected.
 
 ### 4.6 Computron Metering
 
-Pyana has explicit per-operation cost accounting (computrons). Mina uses a coarser cost model based on segment types (proof/signed_single/signed_pair) with a transaction-level cost limit.
+`dregg` has explicit per-operation cost accounting (computrons). Mina uses a coarser cost model based on segment types (proof/signed_single/signed_pair) with a transaction-level cost limit.
 
-Pyana's approach is better for:
+`dregg`'s approach is better for:
 - Fine-grained resource control
 - Preventing compute-heavy attacks
 - Fair pricing
@@ -442,7 +442,7 @@ In Mina, you can only modify YOUR OWN account (the one matching the account upda
 - Token owner gating children
 - Reading other accounts' state via preconditions
 
-In Pyana, an action on cell A can produce effects on cell B (e.g., `SetField { cell: B, ... }`) IF A holds a capability to B. This enables richer inter-agent interaction patterns.
+In `dregg`, an action on cell A can produce effects on cell B (e.g., `SetField { cell: B, ... }`) IF A holds a capability to B. This enables richer inter-agent interaction patterns.
 
 ---
 
@@ -497,9 +497,9 @@ Add a `use_full_commitment: bool` to Action:
 
 Enables multi-party turn composition.
 
-### 5.6 Consider Token Ownership via Capabilities (Keep Pyana's Approach)
+### 5.6 Consider Token Ownership via Capabilities (Keep `dregg`'s Approach)
 
-Mina's token ownership model (derive token_id from owner account_id, require owner in call stack) maps naturally onto pyana's capability system:
+Mina's token ownership model (derive token_id from owner account_id, require owner in call stack) maps naturally onto dregg's capability system:
 - A token owner cell grants capabilities to token-holder cells
 - The `DelegationMode` already provides the inheritance mechanism
 - This is MORE GENERAL than Mina's model because:
@@ -529,23 +529,23 @@ pub struct CellStatePrecondition {
 
 ## 6. Summary Table
 
-| Feature | Mina | Pyana | Assessment |
+| Feature | Mina | `dregg` | Assessment |
 |---------|------|-------|------------|
 | Tree structure | Call forest (cons-hash) | Call forest (Merkle) | Equivalent |
-| Traversal | Stack machine | DFS | Pyana simpler, both correct |
-| Auth modes | Signature, Proof, None | Sig, Proof, Breadstuff, None | Pyana richer |
-| Cross-cell | Via excess/token gating | Via capabilities | Pyana much richer |
+| Traversal | Stack machine | DFS | `dregg` simpler, both correct |
+| Auth modes | Signature, Proof, None | Sig, Proof, Breadstuff, None | `dregg` richer |
+| Cross-cell | Via excess/token gating | Via capabilities | `dregg` much richer |
 | Balance flow | Signed balance_change + excess | Explicit Transfer effect | Mina more composable |
-| Fee handling | Two-pass (fee always taken) | All-or-nothing | **Mina superior -- fix pyana** |
-| State integrity | proved_state | Missing | **Add to pyana** |
+| Fee handling | Two-pass (fee always taken) | All-or-nothing | **Mina superior -- fix dregg** |
+| State integrity | proved_state | Missing | **Add to dregg** |
 | Permissions | 13 actions, checked per-update | 8 actions, checked per-effect | Mina more granular |
-| Perm ordering | Permissions updated LAST | No ordering guarantee | **Fix in pyana** |
-| Replay protection | 3 mechanisms | 1 (turn nonce) | **Strengthen pyana** |
-| Method dispatch | Implicit (body fields) | Explicit (method symbol) | Pyana better UX |
+| Perm ordering | Permissions updated LAST | No ordering guarantee | **Fix in dregg** |
+| Replay protection | 3 mechanisms | 1 (turn nonce) | **Strengthen dregg** |
+| Method dispatch | Implicit (body fields) | Explicit (method symbol) | `dregg` better UX |
 | Effects | Implicit (body diff) | Explicit (effect list) | Trade-off |
-| Metering | Coarse (segment type) | Fine (per-op computrons) | Pyana better |
-| Composability | use_full_commitment | Single signing mode | **Add to pyana** |
-| Token system | Derived token_id + owner gating | token_id + capabilities | Pyana more general |
+| Metering | Coarse (segment type) | Fine (per-op computrons) | `dregg` better |
+| Composability | use_full_commitment | Single signing mode | **Add to dregg** |
+| Token system | Derived token_id + owner gating | token_id + capabilities | `dregg` more general |
 | Delegation | may_use_token (3 modes) | DelegationMode (3 modes) | Equivalent semantics |
-| Vesting/timing | Full schedule | None | Pyana missing (low priority) |
-| Action history | 5-slot rolling action_state | None | Pyana missing (low priority) |
+| Vesting/timing | Full schedule | None | `dregg` missing (low priority) |
+| Action history | 5-slot rolling action_state | None | `dregg` missing (low priority) |

@@ -50,7 +50,7 @@ impl Proposal {
 
 /// Derive a stable proposal id from a slug.
 pub fn derive_proposal_id(slug: &str) -> ProposalId {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-proposal-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-proposal-id-v1");
     hasher.update(slug.as_bytes());
     *hasher.finalize().as_bytes()
 }

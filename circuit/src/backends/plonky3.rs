@@ -93,7 +93,7 @@ pub struct Plonky3Proof {
     pub circuit_type: Plonky3CircuitType,
     /// Serialized proof bytes.
     ///
-    /// For membership proofs (with `plonky3` feature): serialized `PyanaProof`.
+    /// For membership proofs (with `plonky3` feature): serialized `DreggProof`.
     /// For other circuits: serialized `StarkProof` from the custom STARK.
     pub proof_bytes: Vec<u8>,
     /// Public inputs as 32-byte field elements.
@@ -300,7 +300,7 @@ impl ProofBackend for Plonky3Backend {
 
         #[cfg(feature = "plonky3")]
         {
-            let p3_proof: plonky3_prover::PyanaProof = deserialize_p3_proof(&proof.proof_bytes)?;
+            let p3_proof: plonky3_prover::DreggProof = deserialize_p3_proof(&proof.proof_bytes)?;
 
             let public_inputs: Vec<BabyBear> = proof
                 .public_inputs
@@ -1334,8 +1334,8 @@ impl super::FullProofBackend for Plonky3Backend {}
 // ============================================================================
 
 #[cfg(feature = "plonky3")]
-fn serialize_p3_proof(proof: &plonky3_prover::PyanaProof) -> Result<Vec<u8>, String> {
-    // PyanaProof = p3_uni_stark::Proof<PyanaStarkConfig>, which derives Serialize
+fn serialize_p3_proof(proof: &plonky3_prover::DreggProof) -> Result<Vec<u8>, String> {
+    // DreggProof = p3_uni_stark::Proof<DreggStarkConfig>, which derives Serialize
     // when all constituent types implement it (BabyBear, extension field, Merkle
     // proofs all do). Use rmp-serde for compact binary encoding.
     //
@@ -1360,7 +1360,7 @@ fn serialize_p3_proof(proof: &plonky3_prover::PyanaProof) -> Result<Vec<u8>, Str
 }
 
 #[cfg(feature = "plonky3")]
-fn deserialize_p3_proof(bytes: &[u8]) -> Result<plonky3_prover::PyanaProof, String> {
+fn deserialize_p3_proof(bytes: &[u8]) -> Result<plonky3_prover::DreggProof, String> {
     if bytes.len() < 4 || &bytes[..4] != b"P3PF" {
         return Err("Invalid Plonky3 proof format marker".into());
     }

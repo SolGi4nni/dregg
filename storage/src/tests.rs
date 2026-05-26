@@ -1,4 +1,4 @@
-//! Tests for pyana-storage.
+//! Tests for dregg-storage.
 
 use std::fs;
 use std::path::PathBuf;
@@ -839,7 +839,7 @@ fn quota_depletion_prevents_enqueue() {
 // ============================================================================
 
 fn hardening_wal_path(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("pyana_hardening_tests");
+    let dir = std::env::temp_dir().join("dregg_hardening_tests");
     fs::create_dir_all(&dir).unwrap();
     dir.join(format!("{}.wal", name))
 }

@@ -30,7 +30,7 @@ changes the calculus. An **optimistic bridge** with **cryptographic dispute reso
 gives us:
 - Liveness equivalent to Level 1 (federation relays state)
 - Safety equivalent to Level 2 (any challenger can force re-verification)
-- No BLS12-381 wrapper needed (disputes happen on pyana, not Midnight)
+- No BLS12-381 wrapper needed (disputes happen on dregg, not Midnight)
 
 ---
 
@@ -39,9 +39,9 @@ gives us:
 ### Core Idea
 
 The bridge operates optimistically:
-1. **Relay** posts a pyana state claim to Midnight (federation attestation + bond)
-2. **Challenge window** (configurable, e.g., 6 hours of pyana blocks)
-3. **Anyone** can challenge by submitting a re-verification proof on pyana
+1. **Relay** posts a dregg state claim to Midnight (federation attestation + bond)
+2. **Challenge window** (configurable, e.g., 6 hours of dregg blocks)
+3. **Anyone** can challenge by submitting a re-verification proof on dregg
 4. If challenged and relay is wrong: relay's bond is slashed
 5. If unchallenged: Midnight contract accepts the state transition
 
@@ -71,14 +71,14 @@ requires *any single* honest watcher. This is the "1-of-N" security model.
 ### Architecture
 
 ```
-pyana cell  <--CapTP-->  Bridge Gateway  <--Substrate RPC-->  Midnight contract
+dregg cell  <--CapTP-->  Bridge Gateway  <--Substrate RPC-->  Midnight contract
      |                        |
      |  ExportSturdyRef       |  Store-and-Forward queue
      |  (proven in STARK)     |  (for Midnight latency)
      |                        |
      v                        v
   Effect VM proof          FederationAttestation +
-  (pyana-side)             DisputeSubmission
+  (dregg-side)             DisputeSubmission
 ```
 
 ### Why CapTP (not custom messages)
@@ -87,7 +87,7 @@ pyana cell  <--CapTP-->  Bridge Gateway  <--Substrate RPC-->  Midnight contract
    then bridge the result to Midnight" as a single logical operation. No round-trip
    wait between proving and bridging.
 
-2. **Store-and-forward**: Midnight has ~20s block times vs pyana's sub-second.
+2. **Store-and-forward**: Midnight has ~20s block times vs dregg's sub-second.
    CapTP's `MessageRelay` queues bridge messages during Midnight's latency.
    The gateway holds messages until Midnight confirms inclusion.
 
@@ -105,13 +105,13 @@ pyana cell  <--CapTP-->  Bridge Gateway  <--Substrate RPC-->  Midnight contract
 ServiceEntry {
     name: "midnight-mainnet-bridge",
     kind: ServiceKind::Custom("bridge".into()),
-    sturdy_ref: "pyana://federation/bridge-gateway/midnight",
+    sturdy_ref: "dregg://federation/bridge-gateway/midnight",
     tags: vec!["bridge", "midnight", "value-transfer", "proof-carrying"],
     ...
 }
 ```
 
-Discovery: `pyana namespace discover --tag bridge --tag midnight`
+Discovery: `dregg namespace discover --tag bridge --tag midnight`
 
 A client obtains a sturdy ref to the bridge gateway, enlivens it (provable via
 EnlivenRef STARK), and then uses the live reference to submit bridge operations.
@@ -120,7 +120,7 @@ The bridge gateway:
 2. Queues the operation in the store-and-forward buffer
 3. Batches operations for Midnight submission (gas efficiency)
 4. Posts to Midnight with federation attestation + relay bond
-5. Monitors the dispute window on pyana side
+5. Monitors the dispute window on dregg side
 6. Returns result to caller via CapTP promise resolution
 
 ---
@@ -197,7 +197,7 @@ ConstraintExpr::Lookup { table_id, query_columns } =>
     //    This is what Plonk does natively (permutation argument)
 ```
 
-**Verdict**: Lookups are useful on the pyana side NOW but don't directly translate
+**Verdict**: Lookups are useful on the dregg side NOW but don't directly translate
 to ZKIR v3. Level 3 shared programs would need to handle lookups differently per target.
 This doesn't block anything -- it's a gen_midnight.rs enhancement for later.
 
@@ -256,7 +256,7 @@ This is a cross-chain routing proof that BOTH chains can verify.
 
 ```
 Timeline:
-  t=0     Relay submits claim + bond to pyana dispute framework
+  t=0     Relay submits claim + bond to dregg dispute framework
   t=0     Simultaneously: federation attestation sent to Midnight
   t=0..T  Dispute window (T = dispute_window_blocks)
   t=T     If unchallenged: Finalized. Midnight contract executes.
@@ -267,7 +267,7 @@ Timeline:
 
   Midnight side:
   t=0     Receives attestation + claim
-  t=T+1   Checks pyana finality (dispute resolved or window passed)
+  t=T+1   Checks dregg finality (dispute resolved or window passed)
   t=T+1   Executes the bridged operation
 ```
 
@@ -276,20 +276,20 @@ Timeline:
 | Component | Module | Status |
 |-----------|--------|--------|
 | Dispute lifecycle | `app-framework/src/dispute.rs` | Complete (Disputable trait) |
-| STARK-provable disputes | `pyana-dsl-tests/src/dispute_dsl.rs` | Circuit constraints proven |
+| STARK-provable disputes | `dregg-dsl-tests/src/dispute_dsl.rs` | Circuit constraints proven |
 | Federation attestation | `bridge/src/midnight.rs` | Complete (25 tests) |
 | Nonce/replay protection | `bridge/src/midnight.rs` NonceTracker | Complete |
 | Observer | `bridge/src/midnight_observer.rs` | Mock infrastructure (7 tests) |
-| Store-and-forward | `pyana-captp` store_forward module | Complete |
-| Proof composition | `pyana-dsl-runtime` composition | Complete |
+| Store-and-forward | `dregg-captp` store_forward module | Complete |
+| Proof composition | `dregg-dsl-runtime` composition | Complete |
 
 ### What We Need to Build
 
 1. **BridgeDisputable impl** (~200 lines): Implement `Disputable` for bridge claims.
-   The claim is "pyana state X implies Midnight action Y." The evidence is a STARK
+   The claim is "dregg state X implies Midnight action Y." The evidence is a STARK
    proof that X does NOT imply Y (counterexample).
 
-2. **Relay service** (~500 lines): A service that monitors pyana state, produces
+2. **Relay service** (~500 lines): A service that monitors dregg state, produces
    attestations, posts bonds, and submits to Midnight. Mount at
    `/bridges/midnight/mainnet` in the governed namespace.
 
@@ -298,7 +298,7 @@ Timeline:
    (permissionless challenging via bonding).
 
 4. **Midnight contract update** (~100 lines Compact): Add a `waitForDispute` guard
-   that checks "pyana federation reports no active dispute for this claim." This is
+   that checks "dregg federation reports no active dispute for this claim." This is
    the attestation-level check on Midnight's side.
 
 ### Dispute Evidence Types
@@ -309,7 +309,7 @@ impl Disputable for BridgeClaim {
     type Evidence = BridgeDisputeEvidence;
 
     fn validate_claim(&self, claim: &Self::Claim) -> bool {
-        // Check: claim references a real pyana state transition
+        // Check: claim references a real dregg state transition
         // Check: the claimed Midnight action follows from that state
         true  // Optimistic: assume valid unless challenged
     }
@@ -322,10 +322,10 @@ impl Disputable for BridgeClaim {
         // Evidence is a STARK proof showing the claim is invalid.
         // Verify the STARK proof. If it verifies: challenger wins.
         // Types of invalidity:
-        //   - State root mismatch (claimed state doesn't match pyana)
+        //   - State root mismatch (claimed state doesn't match dregg)
         //   - Logic error (state X does NOT imply action Y)
         //   - Replay (same state used twice)
-        match verify_bridge_dispute_proof(&evidence.proof, &claim.pyana_state_root) {
+        match verify_bridge_dispute_proof(&evidence.proof, &claim.dregg_state_root) {
             Ok(true) => DisputeResolution::ChallengerWins,
             _ => DisputeResolution::ClaimantWins,
         }
@@ -350,7 +350,7 @@ Tasks:
 - [ ] Watchtower service (separate cell that monitors and challenges)
 - [ ] Integration test: full optimistic bridge lifecycle
 
-Deliverable: A bridge where any pyana participant can challenge fraudulent relays
+Deliverable: A bridge where any dregg participant can challenge fraudulent relays
 using STARK proofs. The relay posts a bond. Honest behavior is incentivized.
 
 ### Phase 2: Proof-Carrying Claims (4-6 weeks)
@@ -359,7 +359,7 @@ using STARK proofs. The relay posts a bond. Honest behavior is incentivized.
 
 The relay submits:
 - Federation attestation (for Midnight contract acceptance)
-- Pyana STARK proof (for dispute resolution)
+- `dregg` STARK proof (for dispute resolution)
 - Composed proof (Effect VM + capability chain + state transition)
 
 Now challenges don't need to re-execute -- they just verify the attached proof.
@@ -385,7 +385,7 @@ Tasks:
 - [ ] Extend `gen_midnight.rs` to handle `ConstraintExpr::Lookup` (polynomial encoding)
 - [ ] Compile a capability-check predicate to ZKIR v3
 - [ ] Deploy compiled ZKIR to Midnight testnet
-- [ ] End-to-end: capability proof on pyana = valid contract call on Midnight
+- [ ] End-to-end: capability proof on dregg = valid contract call on Midnight
 - [ ] Shared Poseidon2 commitment binds both proofs
 
 ### Phase 4: Full Composable Cross-Chain (12+ weeks)
@@ -394,9 +394,9 @@ Tasks:
 
 Tasks:
 - [ ] BLS12-381 compression service (gnark or future SP1 support)
-- [ ] Pyana STARK verifiable directly on Midnight (in-circuit)
-- [ ] Bidirectional: Midnight state proofs verifiable on pyana
-- [ ] Cross-chain capability exercise: prove on pyana, spend on Midnight
+- [ ] `dregg` STARK verifiable directly on Midnight (in-circuit)
+- [ ] Bidirectional: Midnight state proofs verifiable on dregg
+- [ ] Cross-chain capability exercise: prove on dregg, spend on Midnight
 
 ---
 
@@ -415,14 +415,14 @@ apps/midnight-bridge/src/main.rs     -- Binary that runs the gateway service
 
 The relay service:
 1. Holds a CapTP session to federation peers (uses existing infrastructure)
-2. Monitors pyana block production for bridge-bound operations
+2. Monitors dregg block production for bridge-bound operations
 3. Produces `FederationAttestation` (existing code in `bridge/src/midnight.rs`)
 4. Submits attestation + bond via `Disputable::submit_claim`
 5. After dispute window: signals Midnight contract to execute
 
 The watchtower:
 1. Monitors dispute submissions (subscribes to bridge claims)
-2. For each claim: verifies the underlying pyana state transition
+2. For each claim: verifies the underlying dregg state transition
 3. If invalid: generates a counter-proof (STARK proof of invalidity)
 4. Submits challenge + counter-proof + bond
 5. Collects slashed bonds when challenges succeed
@@ -450,7 +450,7 @@ The watchtower:
 ## Architecture Diagram
 
 ```
-                          PYANA SIDE
+                          DREGG SIDE
 +------------------------------------------------------------------+
 |                                                                    |
 |  User Cell                     Bridge Gateway Cell                 |

@@ -1,7 +1,7 @@
 //! Cross-federation `CrossFedReceiptBundle` verification (Silver Vision §6).
 //!
-//! `pyana-verifier verify-cross-fed-bundle` ingests a JSON-encoded
-//! [`pyana_federation::CrossFedReceiptBundle`] plus two committee descriptors
+//! `dregg-verifier verify-cross-fed-bundle` ingests a JSON-encoded
+//! [`dregg_federation::CrossFedReceiptBundle`] plus two committee descriptors
 //! (one per federation) and runs the 8-step check from
 //! `SILVER-VISION-E2E-VERIFICATION.md` §1 Step 6:
 //!
@@ -25,15 +25,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use pyana_federation::CrossFedReceiptBundle;
-use pyana_types::PublicKey;
+use dregg_federation::CrossFedReceiptBundle;
+use dregg_types::PublicKey;
 
 use crate::{AUTO_DETECT_VK_HASH, ReplayChainOutput, exit_code, verify_effect_vm_proof};
 
 /// A federation committee descriptor as it appears on disk (the file the
 /// `register-federation` CLI writes / `setup_federations.sh` cross-copies).
 ///
-/// Field shape mirrors what `pyana-node genesis` already produces (we
+/// Field shape mirrors what `dregg-node genesis` already produces (we
 /// re-decode it here so the verifier doesn't need to call into the node).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitteeDescriptor {
@@ -347,11 +347,11 @@ pub fn verify_cross_fed_bundle(
     verdict
 }
 
-/// Translate a `pyana_turn::WitnessedReceipt` into a `ReplayEntry` for
+/// Translate a `dregg_turn::WitnessedReceipt` into a `ReplayEntry` for
 /// the in-crate replay_chain machinery. The two shapes are nearly
 /// identical; we transcode `WitnessAvailability::Inline` and preserve
 /// the trace rows verbatim.
-fn witnessed_to_replay(wr: &pyana_turn::WitnessedReceipt) -> crate::ReplayEntry {
+fn witnessed_to_replay(wr: &dregg_turn::WitnessedReceipt) -> crate::ReplayEntry {
     let bundle = wr
         .witness_bundle
         .as_ref()
@@ -433,14 +433,14 @@ mod tests {
     }
 
     fn sample_bundle() -> CrossFedReceiptBundle {
-        use pyana_captp::FederationId;
-        use pyana_cell::AuthRequired;
-        use pyana_turn::WitnessedReceipt;
-        use pyana_turn::turn::TurnReceipt;
-        use pyana_types::{AttestedRoot, CellId, generate_keypair};
+        use dregg_captp::FederationId;
+        use dregg_cell::AuthRequired;
+        use dregg_turn::WitnessedReceipt;
+        use dregg_turn::turn::TurnReceipt;
+        use dregg_types::{AttestedRoot, CellId, generate_keypair};
 
         let (sk, _pk) = generate_keypair();
-        let cert = pyana_captp::handoff::HandoffCertificate::create(
+        let cert = dregg_captp::handoff::HandoffCertificate::create(
             &sk,
             FederationId([0xAA; 32]),
             FederationId([0xBB; 32]),

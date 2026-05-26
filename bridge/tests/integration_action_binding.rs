@@ -6,7 +6,7 @@
 //! end-to-end.  The STARK proof for `BridgeActionAir` is small (synthetic
 //! AIR constraint check) so these tests are fast without real STARK machinery.
 
-use pyana_bridge::{ActionBindingError, create_action_binding, verify_action_binding};
+use dregg_bridge::{ActionBindingError, create_action_binding, verify_action_binding};
 
 fn nullifier(seed: u8) -> [u8; 32] {
     let mut n = [0u8; 32];

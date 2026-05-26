@@ -1,6 +1,6 @@
 //! Multi-party atomic proofs: sovereign-only and mixed sovereign/hosted turns.
 
-use pyana_cell::{CellId, Ledger};
+use dregg_cell::{CellId, Ledger};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -229,7 +229,7 @@ impl TurnExecutor {
     /// receipts from two distinct atomic turns never collide.
     fn atomic_sovereign_turn_hash(turn: &AtomicSovereignTurn) -> [u8; 32] {
         let mut h = blake3::Hasher::new();
-        h.update(b"pyana-atomic-sovereign-turn-v1");
+        h.update(b"dregg-atomic-sovereign-turn-v1");
         h.update(turn.agent.as_bytes());
         h.update(&turn.nonce.to_le_bytes());
         h.update(&turn.fee.to_le_bytes());
@@ -249,7 +249,7 @@ impl TurnExecutor {
     /// Deterministic identity hash of a `MixedAtomicTurn` (sovereign + hosted).
     fn mixed_atomic_turn_hash(turn: &MixedAtomicTurn) -> [u8; 32] {
         let mut h = blake3::Hasher::new();
-        h.update(b"pyana-mixed-atomic-turn-v1");
+        h.update(b"dregg-mixed-atomic-turn-v1");
         h.update(turn.agent.as_bytes());
         h.update(&turn.nonce.to_le_bytes());
         h.update(&turn.fee.to_le_bytes());
@@ -312,7 +312,7 @@ impl TurnExecutor {
         balance_delta: i64,
     ) -> [u8; 32] {
         let mut h = blake3::Hasher::new();
-        h.update(b"pyana-atomic-entry-effects-v1");
+        h.update(b"dregg-atomic-entry-effects-v1");
         h.update(cell_id.as_bytes());
         h.update(old);
         h.update(new);
@@ -400,8 +400,8 @@ impl TurnExecutor {
         atomic_turn: &AtomicSovereignTurn,
         ledger: &mut Ledger,
     ) -> Result<(Vec<[u8; 32]>, Vec<TurnReceipt>), AtomicTurnError> {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark;
 
         // 0. Basic validation.
         if atomic_turn.proofs.is_empty() {
@@ -496,7 +496,7 @@ impl TurnExecutor {
             let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
             let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
 
-            use pyana_circuit::effect_vm::pi;
+            use dregg_circuit::effect_vm::pi;
             let min_pi_count = pi::BASE_COUNT;
             if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
@@ -580,7 +580,7 @@ impl TurnExecutor {
                     });
                 }
             } else {
-                let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+                let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
                 stark::verify(&air, &proof, &public_inputs).map_err(|e| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -591,7 +591,7 @@ impl TurnExecutor {
 
             // Extract proven balance delta from PI.
             let proven_delta =
-                pyana_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
+                dregg_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: "failed to extract balance_delta from proof PI".to_string(),
@@ -688,8 +688,8 @@ impl TurnExecutor {
         // Closes AIR-SOUNDNESS-AUDIT.md #69 for the mixed-atomic path: emit
         // one TurnReceipt per cell touched (sovereign + hosted), chain it to
         // that cell's prior receipt, and record the new chain head.
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark;
 
         if mixed_turn.sovereign_entries.is_empty() && mixed_turn.hosted_actions.is_empty() {
             return Err(AtomicTurnError::EmptyProofs);
@@ -771,7 +771,7 @@ impl TurnExecutor {
             let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
             let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
 
-            use pyana_circuit::effect_vm::pi;
+            use dregg_circuit::effect_vm::pi;
             let min_pi_count = pi::BASE_COUNT;
             if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
@@ -849,7 +849,7 @@ impl TurnExecutor {
                     });
                 }
             } else {
-                let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+                let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
                 stark::verify(&air, &proof, &public_inputs).map_err(|e| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -859,7 +859,7 @@ impl TurnExecutor {
             }
 
             let proven_delta =
-                pyana_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
+                dregg_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: "failed to extract balance_delta from proof PI".to_string(),
@@ -1136,8 +1136,8 @@ mod hardening_tests {
     use crate::forest::{CallForest, CallTree};
     use crate::turn::Turn;
     use crate::{ComputronCosts, TurnError, TurnResult};
-    use pyana_cell::permissions::{AuthRequired, Permissions};
-    use pyana_cell::{Cell, Preconditions};
+    use dregg_cell::permissions::{AuthRequired, Permissions};
+    use dregg_cell::{Cell, Preconditions};
 
     fn permissive() -> Permissions {
         Permissions {
@@ -1512,7 +1512,7 @@ mod hardening_tests {
 
         // Victim's state MUST be unchanged.
         let v = ledger.get(&victim_id).unwrap();
-        assert_eq!(v.state.fields[0], pyana_cell::state::FIELD_ZERO);
+        assert_eq!(v.state.fields[0], dregg_cell::state::FIELD_ZERO);
     }
 
     /// C1 / P1-7: a later hosted-action failure MUST roll back earlier hosted
@@ -1690,7 +1690,7 @@ mod hardening_tests {
         ledger.insert_cell(agent).unwrap();
 
         // Deterministic key seed for the test.
-        let seed: [u8; 32] = *b"pyana-test-executor-sk-r4-fix!!!";
+        let seed: [u8; 32] = *b"dregg-test-executor-sk-r4-fix!!!";
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         let pk_bytes = sk.verifying_key().to_bytes();
 
@@ -1922,7 +1922,7 @@ mod hardening_tests {
         // was rejected closed, no mutation applied.
         assert_eq!(
             ledger.get(&agent_id).unwrap().state.fields[0],
-            pyana_cell::state::FIELD_ZERO
+            dregg_cell::state::FIELD_ZERO
         );
     }
 
@@ -2267,7 +2267,7 @@ mod hardening_tests {
         ledger.insert_cell(cell_b).unwrap();
         ledger.insert_cell(cell_c).unwrap();
 
-        let seed: [u8; 32] = *b"pyana-test-atomic-receipt-sk-#69";
+        let seed: [u8; 32] = *b"dregg-test-atomic-receipt-sk-#69";
         let executor = TurnExecutor::new(ComputronCosts::zero()).with_executor_signing_key(seed);
 
         let mixed = MixedAtomicTurn {

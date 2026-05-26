@@ -5,17 +5,17 @@
 ### What Exists
 
 **Docker (`docker/`)**
-- `Dockerfile` — single-stage build of `pyana-node` only (nightly-2026-01-01, debian:bookworm-slim runtime)
+- `Dockerfile` — single-stage build of `dregg-node` only (nightly-2026-01-01, debian:bookworm-slim runtime)
 - `docker-compose.yml` — 3-node federation (node-0/1/2) + nginx explorer on :3000
 - `start-devnet.sh` — generates genesis, builds image, docker-compose up
 - No ARM64 support (no multi-arch build, no `--platform` directives)
 - No app services (gallery, bounty-board, compute-exchange) in compose
 
 **AWS Deploy (`deploy/aws/`)**
-- Full setup for a single Graviton gateway node at `devnet.pyana.fg-goose.online`
+- Full setup for a single Graviton gateway node at `devnet.dregg.fg-goose.online`
 - `setup.sh` — installs Rust, Caddy, builds from source on-instance, creates systemd unit
 - `update.sh` — git pull, cargo build, systemd restart
-- `pyana-gateway.service` — runs pyana-node with `--federation-size 4 --node-index 0 --prove-transitions --enable-pruning --enable-faucet`
+- `dregg-gateway.service` — runs dregg-node with `--federation-size 4 --node-index 0 --prove-transitions --enable-pruning --enable-faucet`
 - `caddy/Caddyfile` — reverse proxy for API, WS, federation, static site (explorer, playground)
 - No Docker on the Graviton instance (builds from source directly)
 - No gallery/bounty-board/compute-exchange deployment
@@ -37,7 +37,7 @@
 - Works but no gallery, no frontend, no hot-reload
 
 ### What Works
-- Single gateway node on Graviton (devnet.pyana.fg-goose.online) is operational
+- Single gateway node on Graviton (devnet.dregg.fg-goose.online) is operational
 - GitHub Actions federation nodes peer with gateway correctly
 - Federation state stored on orphan branch `federation-state` correctly
 - CI pipeline (check/test/clippy/fmt/audit) is complete
@@ -61,7 +61,7 @@
                             |
               +-------------+-------------+
               |                           |
-     devnet.pyana.fg-goose.online         GitHub Pages
+     devnet.dregg.fg-goose.online         GitHub Pages
        (Graviton t4g.medium)         (static)
               |
      +--------+--------+
@@ -70,7 +70,7 @@
               |
      +--------+------------------------------------------+
      |        |            |             |               |
-  pyana-node  gallery   bounty-board  compute-exch   [future apps]
+  dregg-node  gallery   bounty-board  compute-exch   [future apps]
   :8420       :8430     :8440         :8450
   (federation (Axum)    (Axum)        (Axum)
    consensus,
@@ -88,7 +88,7 @@
 - Caddy handles TLS + routing (already works)
 - New routes: `/gallery/*` -> :8430, `/bounty/*` -> :8440, `/compute/*` -> :8450
 - QUIC :9420 unchanged (federation gossip)
-- Each app service connects to local pyana-node at 127.0.0.1:8420
+- Each app service connects to local dregg-node at 127.0.0.1:8420
 
 **Service Management:**
 - Docker Compose on the Graviton instance (replaces bare cargo build)
@@ -104,7 +104,7 @@
 
 | Component | Resource Need |
 |-----------|-------------|
-| pyana-node (consensus + proofs) | ~1.5 GB RAM, 2 vCPU |
+| dregg-node (consensus + proofs) | ~1.5 GB RAM, 2 vCPU |
 | gallery | ~128 MB RAM |
 | bounty-board | ~128 MB RAM |
 | compute-exchange | ~128 MB RAM |
@@ -123,7 +123,7 @@ New multi-service `docker-compose.prod.yml`:
 ```yaml
 services:
   node:
-    image: ghcr.io/emberian/pyana-node:latest
+    image: ghcr.io/emberian/dregg-node:latest
     command: run --data-dir /data --port 8420 --gossip-port 9420
       --morpheus --node-index 0 --federation-size 4
       --prove-transitions --enable-pruning --enable-faucet
@@ -135,10 +135,10 @@ services:
     restart: unless-stopped
     environment:
       - RUST_LOG=info
-      - PYANA_GATEWAY=true
+      - DREGG_GATEWAY=true
 
   gallery:
-    image: ghcr.io/emberian/pyana-gallery:latest
+    image: ghcr.io/emberian/dregg-gallery:latest
     command: --node-url http://node:8420 --listen 0.0.0.0:8430
     ports:
       - "127.0.0.1:8430:8430"
@@ -146,7 +146,7 @@ services:
     restart: unless-stopped
 
   bounty-board:
-    image: ghcr.io/emberian/pyana-bounty-board:latest
+    image: ghcr.io/emberian/dregg-bounty-board:latest
     command: --node-url http://node:8420 --listen 0.0.0.0:8440
     ports:
       - "127.0.0.1:8440:8440"
@@ -154,7 +154,7 @@ services:
     restart: unless-stopped
 
   compute-exchange:
-    image: ghcr.io/emberian/pyana-compute-exchange:latest
+    image: ghcr.io/emberian/dregg-compute-exchange:latest
     command: --node-url http://node:8420 --listen 0.0.0.0:8450
     ports:
       - "127.0.0.1:8450:8450"
@@ -178,7 +178,7 @@ Keep existing rules, add nothing new (apps bind to 127.0.0.1, only Caddy is publ
 
 ### Secrets Management
 
-- Node key: stored at `/opt/pyana-data/node.key` (already exists, persist across deploys)
+- Node key: stored at `/opt/dregg-data/node.key` (already exists, persist across deploys)
 - No AWS Secrets Manager needed for single-node — key stays on disk, volume-mounted
 - GitHub Actions deployment: use OIDC role assumption (`aws-actions/configure-aws-credentials`) with `commonquant-ember` profile
 - Deploy key for GHCR pull: instance IAM role or `docker login ghcr.io` with PAT stored in `/root/.docker/config.json`
@@ -254,10 +254,10 @@ jobs:
     strategy:
       matrix:
         target:
-          - { package: pyana-node, image: pyana-node }
-          - { package: pyana-gallery, image: pyana-gallery }
-          - { package: pyana-bounty-board, image: pyana-bounty-board }
-          - { package: compute-exchange, image: pyana-compute-exchange }
+          - { package: dregg-node, image: dregg-node }
+          - { package: dregg-gallery, image: dregg-gallery }
+          - { package: dregg-bounty-board, image: dregg-bounty-board }
+          - { package: compute-exchange, image: dregg-compute-exchange }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -284,13 +284,13 @@ jobs:
 
 ```dockerfile
 FROM rust:latest AS builder
-ARG PACKAGE=pyana-node
+ARG PACKAGE=dregg-node
 ARG TARGETPLATFORM
 RUN rustup toolchain install nightly-2026-01-01 && rustup default nightly-2026-01-01
 WORKDIR /build
 COPY . .
 RUN cargo build --release -p ${PACKAGE}
-RUN cp target/release/$(echo ${PACKAGE} | tr '-' '_' | sed 's/pyana_//') /usr/local/bin/app || \
+RUN cp target/release/$(echo ${PACKAGE} | tr '-' '_' | sed 's/dregg_//') /usr/local/bin/app || \
     cp target/release/${PACKAGE} /usr/local/bin/app || \
     find target/release -maxdepth 1 -type f -executable -name "*${PACKAGE}*" -exec cp {} /usr/local/bin/app \;
 
@@ -300,7 +300,7 @@ COPY --from=builder /usr/local/bin/app /usr/local/bin/app
 ENTRYPOINT ["app"]
 ```
 
-Note: The binary name resolution needs testing — workspace crates produce binaries matching the package name with hyphens. The node binary is `pyana-node`, gallery is `pyana-gallery`, etc. A simpler approach:
+Note: The binary name resolution needs testing — workspace crates produce binaries matching the package name with hyphens. The node binary is `dregg-node`, gallery is `dregg-gallery`, etc. A simpler approach:
 
 ```dockerfile
 RUN cargo build --release -p ${PACKAGE} && \
@@ -329,14 +329,14 @@ jobs:
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-arn: arn:aws:iam::ACCOUNT_ID:role/pyana-deploy
+          role-to-arn: arn:aws:iam::ACCOUNT_ID:role/dregg-deploy
           aws-region: us-east-1
       - name: Deploy via SSM
         run: |
           aws ssm send-command \
             --instance-ids "${{ secrets.GATEWAY_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["cd /opt/pyana && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"]' \
+            --parameters 'commands=["cd /opt/dregg && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"]' \
             --output text
 ```
 
@@ -385,7 +385,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.multi
       args:
-        PACKAGE: pyana-gallery
+        PACKAGE: dregg-gallery
     command: --node-url http://node-0:8420 --listen 0.0.0.0:8430
     ports:
       - "8430:8430"
@@ -400,7 +400,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.multi
       args:
-        PACKAGE: pyana-bounty-board
+        PACKAGE: dregg-bounty-board
     command: --node-url http://node-0:8420 --listen 0.0.0.0:8440
     ports:
       - "8440:8440"
@@ -458,7 +458,7 @@ networks:
 For Rust development, Docker rebuilds are slow. Better approach:
 
 1. **Nodes**: run directly via `scripts/test-devnet-cluster.sh` (already works)
-2. **Apps**: `cargo watch -x 'run -p pyana-gallery -- --node-url http://127.0.0.1:8420 --listen 127.0.0.1:8430'`
+2. **Apps**: `cargo watch -x 'run -p dregg-gallery -- --node-url http://127.0.0.1:8420 --listen 127.0.0.1:8430'`
 3. **Frontend**: any static file server with watch (e.g., `python -m http.server` in `apps/gallery/frontend/`)
 4. **Full stack (Docker)**: use for integration testing only, not daily dev
 
@@ -469,7 +469,7 @@ devnet:
     scripts/test-devnet-cluster.sh
 
 dev-gallery:
-    cargo watch -x 'run -p pyana-gallery -- --node-url http://127.0.0.1:8420 --listen 127.0.0.1:8430'
+    cargo watch -x 'run -p dregg-gallery -- --node-url http://127.0.0.1:8420 --listen 127.0.0.1:8430'
 ```
 
 ### Integration Test Suite
@@ -503,9 +503,9 @@ Or create `tests/src/devnet_integration.rs` that programmatically spawns nodes a
 
 6. **Install Docker on Graviton instance** — `curl -fsSL https://get.docker.com | sh` (or install docker via apt).
 
-7. **Create `/opt/pyana/docker-compose.prod.yml`** — production compose file referencing GHCR images. Mount existing `/opt/pyana-data` into the node container.
+7. **Create `/opt/dregg/docker-compose.prod.yml`** — production compose file referencing GHCR images. Mount existing `/opt/dregg-data` into the node container.
 
-8. **Migrate gateway from systemd to Docker Compose** — stop `pyana-gateway.service`, start Docker Compose. Caddy stays as systemd (or move it into compose too).
+8. **Migrate gateway from systemd to Docker Compose** — stop `dregg-gateway.service`, start Docker Compose. Caddy stays as systemd (or move it into compose too).
 
 9. **Update Caddyfile** — add routes for gallery, bounty-board, compute-exchange.
 
@@ -525,7 +525,7 @@ Or create `tests/src/devnet_integration.rs` that programmatically spawns nodes a
 
 15. **Add structured logging** — ensure RUST_LOG includes JSON format for CloudWatch ingestion. Or add Vector/Fluent Bit sidecar.
 
-16. **Alerting** — CloudWatch alarm on instance health, or simple uptime check via UptimeRobot/Healthchecks.io on `https://devnet.pyana.fg-goose.online/status`.
+16. **Alerting** — CloudWatch alarm on instance health, or simple uptime check via UptimeRobot/Healthchecks.io on `https://devnet.dregg.fg-goose.online/status`.
 
 ---
 
@@ -535,7 +535,7 @@ The current Dockerfile needs:
 
 | Issue | Fix |
 |-------|-----|
-| Only builds `pyana-node` | Parameterize with `ARG PACKAGE` |
+| Only builds `dregg-node` | Parameterize with `ARG PACKAGE` |
 | No ARM64 awareness | Use `docker buildx` with QEMU or native ARM runners |
 | No `.dockerignore` | Add one to exclude `target/`, `.git/`, `site/` from build context |
 | `rust:latest` is unpinned | Pin to `rust:1.85` or match `rust-toolchain.toml` |

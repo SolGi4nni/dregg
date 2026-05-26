@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-turn-debugger> inspector.
+ * Playwright ad-hoc test for <dregg-turn-debugger> inspector.
  *
  * Run with:
  *   node tests/studio/turn-debugger.mjs
@@ -8,11 +8,11 @@
  *   npx serve dist -l 8080
  *
  * What this test does:
- *  1. Navigates to /studio.html (has wasm + in-memory runtime + pyana-app#app)
+ *  1. Navigates to /studio.html (has wasm + in-memory runtime + dregg-app#app)
  *  2. Waits for wasm init and runtime-ready
  *  3. Creates an agent, executes a turn to generate a turn_hash
  *  4. Injects turn-debugger.js (not in inspectors.js barrel)
- *  5. Mounts <pyana-turn-debugger uri="pyana://turn/<hash>">
+ *  5. Mounts <dregg-turn-debugger uri="dregg://turn/<hash>">
  *  6. Verifies trace rows render (ptd__row elements)
  *  7. Clicks a row and verifies the expansion panel appears
  *  8. Tests compact mode
@@ -38,16 +38,16 @@ async function run() {
   console.log('[test] Navigating to /studio.html ...');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyana:ready (Preact + signals loaded)
-  await page.waitForFunction(() => !!window.pyana, { timeout: 20000 });
-  console.log('[test] pyana:ready fired.');
+  // Wait for dregg:ready (Preact + signals loaded)
+  await page.waitForFunction(() => !!window.dregg, { timeout: 20000 });
+  console.log('[test] dregg:ready fired.');
 
   // Wait for the wasm runtime to be attached to the app element
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
   }, { timeout: 20000 });
-  console.log('[test] runtime attached to <pyana-app#app>.');
+  console.log('[test] runtime attached to <dregg-app#app>.');
 
   // ─── Step 1: create agents and execute a turn via JS API ─────────────────
   // We call the runtime API directly (not via button clicks) so the test is
@@ -86,13 +86,13 @@ async function run() {
   // ─── Step 2: inject turn-debugger.js module ───────────────────────────────
   await page.addScriptTag({ url: `${BASE}/_includes/studio/inspectors/turn-debugger.js`, type: 'module' });
   // Give the module a moment to register the custom element
-  await page.waitForFunction(() => !!customElements.get('pyana-turn-debugger'), { timeout: 5000 });
-  console.log('[test] <pyana-turn-debugger> custom element registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-turn-debugger'), { timeout: 5000 });
+  console.log('[test] <dregg-turn-debugger> custom element registered.');
 
-  // ─── Step 3: mount element inside <pyana-app#app> ─────────────────────────
+  // ─── Step 3: mount element inside <dregg-app#app> ─────────────────────────
   await page.evaluate((hash) => {
-    const el = document.createElement('pyana-turn-debugger');
-    el.setAttribute('uri', `pyana://turn/${hash}`);
+    const el = document.createElement('dregg-turn-debugger');
+    el.setAttribute('uri', `dregg://turn/${hash}`);
     el.setAttribute('id', 'test-debugger');
     document.getElementById('app').appendChild(el);
   }, turnHash);
@@ -102,7 +102,7 @@ async function run() {
     const el = document.getElementById('test-debugger');
     return el && el.children.length > 0;
   }, { timeout: 8000 });
-  console.log('[test] <pyana-turn-debugger> rendered.');
+  console.log('[test] <dregg-turn-debugger> rendered.');
 
   // ─── Test 1: trace rows render ─────────────────────────────────────────────
   const rowCount = await page.evaluate(() => {
@@ -122,7 +122,7 @@ async function run() {
     // We still check that the component rendered without error.
     const hasInspectorClass = await page.evaluate(() => {
       const el = document.getElementById('test-debugger');
-      return el ? !!el.querySelector('.pyana-inspector') : false;
+      return el ? !!el.querySelector('.dregg-inspector') : false;
     });
     if (!hasInspectorClass) {
       throw new Error('TEST FAILED: inspector wrapper not rendered at all');
@@ -178,8 +178,8 @@ async function run() {
 
   // ─── Test 4: compact mode ─────────────────────────────────────────────────
   await page.evaluate((hash) => {
-    const el = document.createElement('pyana-turn-debugger');
-    el.setAttribute('uri', `pyana://turn/${hash}`);
+    const el = document.createElement('dregg-turn-debugger');
+    el.setAttribute('uri', `dregg://turn/${hash}`);
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-debugger-compact');
     document.getElementById('app').appendChild(el);
@@ -203,8 +203,8 @@ async function run() {
 
   // ─── Test 5: bad URI shows error ──────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-turn-debugger');
-    el.setAttribute('uri', 'pyana://cell/notAturnURI');
+    const el = document.createElement('dregg-turn-debugger');
+    el.setAttribute('uri', 'dregg://cell/notAturnURI');
     el.setAttribute('id', 'test-debugger-bad');
     document.getElementById('app').appendChild(el);
   });

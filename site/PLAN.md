@@ -1,4 +1,4 @@
-# Pyana Site Overhaul — Architect Plan
+# `dregg` Site Overhaul — Architect Plan
 
 **Owner:** site overhaul architect.
 **Audience:** the three Builder agents (Playground, Explorer, Learn-pages) and the
@@ -38,13 +38,13 @@ delegation v2) in the playground and explorer.
    from any connected app; a "Delegations" view that walks the authority chain
    of any capability; a "Names" view backed by the nameservice client.
 4. **Learn pages are visually re-leveled** — same tokens, real diagrams (SVG
-   inline, not images), embedded `<pyana-vizzer data-vizzer="…">` cards where
+   inline, not images), embedded `<dregg-vizzer data-vizzer="…">` cards where
    text alone is not enough. The content stays; only the chrome and the
    inline figures change.
-5. **A single `pyana` JS namespace** (loaded via CDN ESM, ~15-25KB gz) gives
+5. **A single `dregg` JS namespace** (loaded via CDN ESM, ~15-25KB gz) gives
    builders a tiny reactive layer (signals + functional components), a code
    highlighter wrapper, a copy-to-clipboard helper, a toast, and a
-   `pyana.register('vizzer-name', factory)` registry. No npm install on the
+   `dregg.register('vizzer-name', factory)` registry. No npm install on the
    host machine.
 6. **Accessibility floor**: WCAG AA contrast everywhere; visible focus rings
    in moss/lantern; full keyboard navigation in all tabs and detail panels;
@@ -165,11 +165,11 @@ Every page that wants the runtime adds **one line** to its `<head>`:
 `runtime-bootstrap.js` puts a single namespace on `window`:
 
 ```
-window.pyana = {
+window.dregg = {
   h, render, Fragment, html,      // Preact + htm
   signal, computed, effect, batch,// signals
   register(name, factory),         // visualizer registry
-  mount(rootEl),                   // upgrade <pyana-vizzer> elements
+  mount(rootEl),                   // upgrade <dregg-vizzer> elements
   highlight(code, lang),           // shiki-light wrapper (server-rendered when build-time)
   copy(text),                      // copy-to-clipboard + toast
   toast(msg, kind),
@@ -259,26 +259,26 @@ Shadow scale (subtle on dark, use sparingly): `--sh1`, `--sh2`, `--sh3`.
 ### 4.2 Components — naming + 1-line contract
 
 These are the reusable building blocks the builders MUST use. Each is exposed
-either as a Preact component on `window.pyana` (camelCase) or a CSS class
-(`.pyana-...`).
+either as a Preact component on `window.dregg` (camelCase) or a CSS class
+(`.dregg-...`).
 
 | Component              | Contract                                                              |
 |------------------------|-----------------------------------------------------------------------|
-| `Pyana.Card`           | Padded raised surface with optional title bar + footer actions.       |
-| `Pyana.Tabs`           | Keyboard-navigable tab strip; `aria-selected`, arrow-key nav.         |
-| `Pyana.Stepper`        | Linear `1 → 2 → 3` flow with prev/next + completion state.            |
-| `Pyana.Code`           | Wraps shiki output; copy button; optional line highlighting.          |
-| `Pyana.HexDisplay`     | Truncated 32-byte hex with full-on-hover + click-to-copy.             |
-| `Pyana.HashBadge`      | Inline 7-char prefix + colored swatch derived from hash.              |
-| `Pyana.Vizzer`         | The host element `<pyana-vizzer data-vizzer="name" data-…>`.          |
-| `Pyana.Toast`          | Bottom-right transient notification (info/success/warn/error).        |
-| `Pyana.KV`             | Two-column key/value list, monospace values.                          |
-| `Pyana.Empty`          | Standard empty state with icon + message + optional action.           |
-| `Pyana.Spinner`        | Three sizes; reduces to a static dot under reduced-motion.            |
-| `Pyana.LogStream`      | Auto-scrolling append-only log with timestamps + filter.              |
-| `Pyana.Diff`           | Side-by-side before/after for state changes.                          |
-| `Pyana.Slider`         | Labeled range input with value readout + steps.                       |
-| `Pyana.Pill`           | Status pill (ok/warn/err/pending), used everywhere status is shown.   |
+| `Dregg.Card`           | Padded raised surface with optional title bar + footer actions.       |
+| `Dregg.Tabs`           | Keyboard-navigable tab strip; `aria-selected`, arrow-key nav.         |
+| `Dregg.Stepper`        | Linear `1 → 2 → 3` flow with prev/next + completion state.            |
+| `Dregg.Code`           | Wraps shiki output; copy button; optional line highlighting.          |
+| `Dregg.HexDisplay`     | Truncated 32-byte hex with full-on-hover + click-to-copy.             |
+| `Dregg.HashBadge`      | Inline 7-char prefix + colored swatch derived from hash.              |
+| `Dregg.Vizzer`         | The host element `<dregg-vizzer data-vizzer="name" data-…>`.          |
+| `Dregg.Toast`          | Bottom-right transient notification (info/success/warn/error).        |
+| `Dregg.KV`             | Two-column key/value list, monospace values.                          |
+| `Dregg.Empty`          | Standard empty state with icon + message + optional action.           |
+| `Dregg.Spinner`        | Three sizes; reduces to a static dot under reduced-motion.            |
+| `Dregg.LogStream`      | Auto-scrolling append-only log with timestamps + filter.              |
+| `Dregg.Diff`           | Side-by-side before/after for state changes.                          |
+| `Dregg.Slider`         | Labeled range input with value readout + steps.                       |
+| `Dregg.Pill`           | Status pill (ok/warn/err/pending), used everywhere status is shown.   |
 
 ### 4.3 Accessibility floor (concrete WCAG checks)
 - All interactive elements have a **2px outline + 1px offset** focus ring
@@ -315,8 +315,8 @@ A good visualizer in this codebase:
    up), and the state diff between steps is visible.
 5. **Has a static fallback** — under reduced-motion or no-JS, it renders a
    final snapshot with prose explaining what the live version would show.
-6. **Registers itself**: `pyana.register('vizzer-name', (host, dataset) => {...})`,
-   so any HTML page can drop `<pyana-vizzer data-vizzer="blinded-queue">` to
+6. **Registers itself**: `dregg.register('vizzer-name', (host, dataset) => {...})`,
+   so any HTML page can drop `<dregg-vizzer data-vizzer="blinded-queue">` to
    instantiate one.
 
 ### The 8-12 visualizers we will ship
@@ -329,7 +329,7 @@ A good visualizer in this codebase:
 | `inbox-lifecycle`             | `app-framework/inbox_endpoint`: deposit anti-spam, push, drain, gc; message TTL.                 |
 | `batch-executor`              | `app-framework/batch_executor`: client queue → collect_batch → execute_batch → proof.            |
 | `delegation-envelope-v2`      | `DelegationAuthority` signed payload tree + caveat chain + revocation snapshot.                  |
-| `captp-sturdy-ref`            | sturdy `pyana://` URI lifecycle, 3-party handoff cert, swiss number rotation.                    |
+| `captp-sturdy-ref`            | sturdy `dregg://` URI lifecycle, 3-party handoff cert, swiss number rotation.                    |
 | `nameservice-registration`    | `apps/nameservice` register → resolve → reverse → rental; DFA route after resolve.               |
 | `effect-vm-trace`             | Effect VM trace columns (24 effects, 371 AIR columns) — restyle of existing.                     |
 | `merkle-membership`           | Existing merkle vizzer, restyled + linked into blinded-queue/notes/explorer.                     |
@@ -337,7 +337,7 @@ A good visualizer in this codebase:
 | `dfa-routing`                 | DFA over message tags; restyle of existing route visualizer with the new tokens.                  |
 
 Each vizzer is a single JS module in `site/playground/visualizers/<name>.js`
-that calls `pyana.register('<name>', factory)`. They are reused by Learn
+that calls `dregg.register('<name>', factory)`. They are reused by Learn
 pages and (where relevant) by Explorer views.
 
 ---
@@ -358,9 +358,9 @@ Three builders run **in parallel** after this plan lands. Each owns a
      `ring-trades.js`, `inboxes.js`, `batch-executor.js`, `nameservice.js`,
      `delegation-v2.js`.
   3. Implement the new visualizers listed in §5 in
-     `visualizers/<name>.js`, each registering via `pyana.register`.
+     `visualizers/<name>.js`, each registering via `dregg.register`.
   4. Keep all existing sections working. Their internals can stay; only
-     re-skin them to use the new tokens + `Pyana.Card` / `Pyana.Tabs`.
+     re-skin them to use the new tokens + `Dregg.Card` / `Dregg.Tabs`.
 - **Forbidden**:
   - Don't modify `build.js`.
   - Don't introduce a framework other than the runtime-bootstrap namespace.
@@ -370,7 +370,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
   - "Add a `blinded-queues` tab; mount the `blinded-queue` vizzer; on commit
     button, BLAKE3 hash the order text + random secret in the browser,
     insert into the on-page commitment tree, animate the leaf joining."
-  - "Re-skin the `tokens` section: replace `.pg-card` with `.pyana-card`
+  - "Re-skin the `tokens` section: replace `.pg-card` with `.dregg-card`
     classnames; verify all hover/focus states still work."
 
 ### Builder B — Explorer (`site/explorer/**`)
@@ -383,7 +383,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
      `views/names.js`, `views/delegations.js`.
   3. Extend `api.js` with thin clients for `/blinded/<svc>`, `/queue/<svc>`,
      `/inbox/<svc>`, `/names/resolve`, `/delegations/<id>`.
-  4. Reuse the playground visualizers — call `pyana.register`-ed factories
+  4. Reuse the playground visualizers — call `dregg.register`-ed factories
      from explorer views where appropriate (do NOT fork them).
 - **Forbidden**:
   - Don't fork visualizers; if one is missing, file an issue and stub.
@@ -401,7 +401,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
 - **Outcomes**:
   1. Audit every page for the new tokens; remove any hard-coded colors that
      conflict with `design-tokens.css`.
-  2. Replace flat-text figures with `<pyana-vizzer data-vizzer="…">` cards
+  2. Replace flat-text figures with `<dregg-vizzer data-vizzer="…">` cards
      in the architecture + developers sections.
   3. Add a per-page "On this page" mini-TOC for any page over ~600 words
      (use a small standardized component, no new framework).
@@ -427,7 +427,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
   shape until the corresponding *new* vizzer ships and is wired in.
 - **Old visualizers** (`playground/visualizers/dag-graph.js`,
   `merkle-tree.js`, `state-diff.js`) stay where they are. They get adapted
-  to the `pyana.register` registry as part of Builder A's work.
+  to the `dregg.register` registry as part of Builder A's work.
 - **Explorer views are additive.** The existing nav stays; new entries are
   appended. No view is deleted in this overhaul.
 - **Risk areas**:
@@ -439,7 +439,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
      and surface a graceful banner ("Interactive features unavailable —
      refresh or check network"). Optionally pin to a Cloudflare R2 mirror in
      a follow-up.
-  3. **`<pyana-vizzer>` is unknown to the HTML spec.** Treat as a *plain
+  3. **`<dregg-vizzer>` is unknown to the HTML spec.** Treat as a *plain
      element with a class*, not a real custom element — `runtime-bootstrap.js`
      uses `document.querySelectorAll('[data-vizzer]')` and mounts Preact
      inside. This sidesteps shadow DOM and works under no-JS (the element
@@ -462,7 +462,7 @@ Three builders run **in parallel** after this plan lands. Each owns a
    keep the site dark-only for now?
 2. **Real cryptography in the playground** — for `blinded-queue` we need
    BLAKE3 in the browser. Two options: (a) load a tiny BLAKE3 WASM blob from
-   the existing pyana wasm package, or (b) load a third-party BLAKE3 ESM
+   the existing dregg wasm package, or (b) load a third-party BLAKE3 ESM
    module. The architect's pick is (a); confirm.
 3. **Live data in the explorer** — the new `queues` view assumes apps expose
    `/blinded/<svc>` etc. publicly. Some apps gate this behind admin auth.

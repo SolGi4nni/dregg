@@ -5,9 +5,9 @@
 //! one-shot `verify_aggregated_bundle_json` entrypoint for the CLI subcommand.
 //!
 //! See `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md` and
-//! `pyana_turn::aggregate_bilateral_prover` for the prover counterpart.
+//! `dregg_turn::aggregate_bilateral_prover` for the prover counterpart.
 
-use pyana_turn::aggregate_bilateral_prover::{AggregatedBundle, verify_aggregated_bundle};
+use dregg_turn::aggregate_bilateral_prover::{AggregatedBundle, verify_aggregated_bundle};
 use serde::{Deserialize, Serialize};
 
 /// Verdict from the `aggregated-bundle` verifier subcommand.
@@ -51,7 +51,7 @@ pub fn verify_aggregated_bundle_json(json: &str) -> AggregatedBundleVerdict {
 
 /// Verify a deserialized [`AggregatedBundle`]. Pure function over the bundle.
 pub fn verify_aggregated_bundle_struct(bundle: &AggregatedBundle) -> AggregatedBundleVerdict {
-    let sched = pyana_turn::bilateral_schedule::ExpectedBilateral::from_turn(&bundle.turn);
+    let sched = dregg_turn::bilateral_schedule::ExpectedBilateral::from_turn(&bundle.turn);
     let federation_ids = bundle.federation_ids.iter().map(hex::encode).collect();
     match verify_aggregated_bundle(bundle) {
         Ok(()) => AggregatedBundleVerdict {
@@ -80,16 +80,16 @@ pub fn verify_aggregated_bundle_struct(bundle: &AggregatedBundle) -> AggregatedB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_turn::aggregate_bilateral_prover::prove_aggregated_bundle;
-    use pyana_turn::{ActionBuilder, TurnBuilder, WitnessedReceipt};
-    use pyana_types::CellId;
+    use dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle;
+    use dregg_turn::{ActionBuilder, TurnBuilder, WitnessedReceipt};
+    use dregg_types::CellId;
 
     fn cid(b: u8) -> CellId {
         CellId::from_bytes([b; 32])
     }
 
-    fn dummy_receipt(agent: CellId) -> pyana_turn::TurnReceipt {
-        pyana_turn::TurnReceipt {
+    fn dummy_receipt(agent: CellId) -> dregg_turn::TurnReceipt {
+        dregg_turn::TurnReceipt {
             turn_hash: [0u8; 32],
             forest_hash: [0u8; 32],
             pre_state_hash: [0u8; 32],
@@ -112,7 +112,7 @@ mod tests {
         }
     }
 
-    fn fabricate_wr(turn: &pyana_turn::Turn, cell_id: &CellId) -> WitnessedReceipt {
+    fn fabricate_wr(turn: &dregg_turn::Turn, cell_id: &CellId) -> WitnessedReceipt {
         crate::bilateral_pair::fabricate_witnessed_receipt(turn, cell_id, dummy_receipt(turn.agent))
     }
 

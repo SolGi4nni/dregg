@@ -7,13 +7,13 @@
 //! 4. Settlement: winner's funds transferred, losers refunded
 //! 5. Progressive disclosure: bids are Committed until reveal phase
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::program::{CellProgram, StateConstraint, field_from_u64};
-use pyana_cell::state::{CellState, FieldVisibility};
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::program::{CellProgram, StateConstraint, field_from_u64};
+use dregg_cell::state::{CellState, FieldVisibility};
 
 fn main() {
-    println!("=== Pyana Sealed-Bid Auction Demo ===\n");
+    println!("=== Dregg Sealed-Bid Auction Demo ===\n");
 
     // --- Setup: Participants ---
     let seller_key = blake3::derive_key("seller-key-v1", b"seller-secret");

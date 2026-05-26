@@ -1,4 +1,4 @@
-//! Integration tests for the pyana-trace crate.
+//! Integration tests for the dregg-trace crate.
 
 use crate::eval::Evaluator;
 use crate::policy::{minimal_policy, rule_ids, time_bounded_policy};

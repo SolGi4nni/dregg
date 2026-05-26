@@ -47,7 +47,7 @@ function initSettings() {
     api.setNodeUrl(urlInput.value.trim() || 'http://localhost:8420');
     const autoRefresh = autoRefreshToggle.checked;
     updateState({ autoRefresh });
-    localStorage.setItem('pyana_auto_refresh', autoRefresh);
+    localStorage.setItem('dregg_auto_refresh', autoRefresh);
     modal.hidden = true;
     refresh();
     if (autoRefresh) startAutoRefresh();

@@ -17,10 +17,10 @@
 //! `executor/execute.rs` now uses, and verifying that the receipt
 //! fields are non-zero for a non-trivial turn.
 
-use pyana_cell::{AuthRequired, Cell, CellId, Permissions};
-use pyana_turn::action::Effect as EffectImpl;
-use pyana_turn::forest::CallTree;
-use pyana_turn::{Action, Authorization, CallForest, DelegationMode, Effect};
+use dregg_cell::{AuthRequired, Cell, CellId, Permissions};
+use dregg_turn::action::Effect as EffectImpl;
+use dregg_turn::forest::CallTree;
+use dregg_turn::{Action, Authorization, CallForest, DelegationMode, Effect};
 
 fn open_permissions() -> Permissions {
     Permissions {
@@ -54,7 +54,7 @@ fn forest_with_two_actions(target: CellId) -> CallForest {
         preconditions: Default::default(),
         effects: vec![Effect::EmitEvent {
             cell: target,
-            event: pyana_turn::action::Event {
+            event: dregg_turn::action::Event {
                 topic: [1u8; 32],
                 data: vec![[1u8; 32]],
             },
@@ -72,7 +72,7 @@ fn forest_with_two_actions(target: CellId) -> CallForest {
         preconditions: Default::default(),
         effects: vec![Effect::EmitEvent {
             cell: target,
-            event: pyana_turn::action::Event {
+            event: dregg_turn::action::Event {
                 topic: [2u8; 32],
                 data: vec![[2u8; 32]],
             },

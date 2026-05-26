@@ -1,4 +1,4 @@
-# PREDICATE-INVENTORY — every predicate in pyana, and a unification
+# PREDICATE-INVENTORY — every predicate in dregg, and a unification
 
 **Date:** 2026-05-24. **Status:** study/design. Read-only on code; one new
 `.md`. **Companion docs:** `SLOT-CAVEATS-DESIGN.md`,
@@ -10,7 +10,7 @@
 `AUDIT-sovereign-witness-teeth.md`, `WITNESSED-RECEIPT-CHAIN-DESIGN.md`,
 `STAGE-7-GAMMA-2-PI-DESIGN.md`.
 
-The designer's question: pyana grew a **lot** of predicate-shaped things,
+The designer's question: dregg grew a **lot** of predicate-shaped things,
 in many subsystems, with overlapping but not identical shapes. Slot
 caveats (21 variants); per-action `Preconditions`; capability caveats
 inherited from biscuit/macaroon ancestry; faceted-cap constraints; DFA
@@ -91,7 +91,7 @@ not a paintbrush. §3.6 names the kinds that resist unification and why.
 
 ## §1. The full predicate inventory
 
-Every predicate-shaped thing in pyana, with site, role, witness/STARK,
+Every predicate-shaped thing in dregg, with site, role, witness/STARK,
 replay semantics, and BOUNDARIES.md vocabulary.
 
 Legend:
@@ -192,7 +192,7 @@ production paths (per `CELL-CRATE-REVIEW.md`). Lives but doesn't bite.
 Site: `macaroon/src/caveat.rs`, `macaroon/src/action.rs`,
 `macaroon/src/resource.rs`, `macaroon/src/caveat_3p.rs`.
 
-Macaroons are pyana's biscuit-lineage component: tokens whose chained
+Macaroons are dregg's biscuit-lineage component: tokens whose chained
 caveats predicate over an `Access` struct.
 
 | Predicate | Site | Over | STARK | W? | Replay | Boundary |
@@ -300,15 +300,15 @@ or DSL classifier, both already in the inventory.)
 
 ### §1.9. DSL backend predicate shapes
 
-Site: `pyana-dsl/src/{gen_air,gen_kimchi,gen_plonky3}.rs`.
+Site: `dregg-dsl/src/{gen_air,gen_kimchi,gen_plonky3}.rs`.
 
-The `#[pyana_caveat]` attribute compiles a Rust function body of
+The `#[dregg_caveat]` attribute compiles a Rust function body of
 `require!(…)` calls into an IR (`ConstraintIr`) and then per-backend
 artifacts:
 
 | `RequirementKind` | Site | What it predicates | Backend |
 |---|---|---|---|
-| `LessEqual / GreaterEqual / Equal / NotEqual` | `pyana-dsl/ir.rs:144` | scalar compare | AIR, Kimchi, Plonky3 |
+| `LessEqual / GreaterEqual / Equal / NotEqual` | `dregg-dsl/ir.rs:144` | scalar compare | AIR, Kimchi, Plonky3 |
 | `Membership { set, element }` | ir.rs:154 | in-memory set membership | AIR |
 | `BitRange { value, bits }` | ir.rs:156 | `v < 2^N` via bit-decomp | AIR |
 | `MerkleAtPosition { root, leaf, pos, sibs, depth }` | ir.rs:163 | Poseidon2 Merkle inclusion | AIR + Kimchi |
@@ -455,7 +455,7 @@ them has:
 4. A **verifier** — a function `(commitment, input, proof) → {accept,
    reject}`.
 
-This is precisely the shape Pyana already has for the macaroon
+This is precisely the shape `dregg` already has for the macaroon
 caveat trait (§1.4) — except that macaroon caveats are
 *polymorphic-over-Access* and these are
 *polymorphic-over-(commitment,input,proof)*.
@@ -958,18 +958,18 @@ Three candidates:
 - **`turn::`.** All the surfaces that *use* WP (preconditions,
   caveats, action witnesses) live in `turn`. But the
   `StateConstraint::Witnessed` variant is in `cell::program`.
-- **`pyana-cell::predicate`** (a new module within `pyana-cell`,
+- **`dregg-cell::predicate`** (a new module within `dregg-cell`,
   no new crate). Companion to `cell::program::StateConstraint`,
   `cell::preconditions::Preconditions`, and (future)
   `cell::capability::CapabilityCaveat`. All three sites import from
   the same place; the registry is module-local.
-- **New `pyana-predicate` crate.** Heaviest option. Forces
-  dependency direction `cell, turn, intent → pyana-predicate`, which
+- **New `dregg-predicate` crate.** Heaviest option. Forces
+  dependency direction `cell, turn, intent → dregg-predicate`, which
   is a clean DAG but adds a workspace member for a single-purpose
   abstraction.
 
 **Recommendation:** `cell/src/predicate.rs` (new module inside
-`pyana-cell`). The `WitnessedPredicate` type and the
+`dregg-cell`). The `WitnessedPredicate` type and the
 `WitnessedPredicateRegistry` live there; `StateConstraint::Witnessed`,
 `Preconditions::witnessed`, and `CapabilityCaveat::Witnessed` all
 reference the same type. No new crate; no new edition mixing.
@@ -1513,15 +1513,15 @@ Code:
   wraps `CapInbox`.
 - `storage/src/inbox.rs` — `CapInbox`, `InboxError`,
   `InboxMessage`.
-- `pyana-dsl/src/ir.rs:9-194` — `ConstraintIr`, `Statement`,
+- `dregg-dsl/src/ir.rs:9-194` — `ConstraintIr`, `Statement`,
   `Requirement{Kind}`, `Mutation`, `MatchArm`. `RequirementKind` is
   the atomic-predicate-primitive enum (`LessEqual`, `GreaterEqual`,
   `Equal`, `NotEqual`, `Membership`, `BitRange`,
   `MerkleAtPosition`, `Poseidon2Hash`).
-- `pyana-dsl/src/{gen_air,gen_kimchi,gen_plonky3}.rs` — backend
+- `dregg-dsl/src/{gen_air,gen_kimchi,gen_plonky3}.rs` — backend
   emitters.
-- `pyana-dsl/src/parse.rs:13-46` — `parse_caveat`, parser for
-  `#[pyana_caveat]` functions.
+- `dregg-dsl/src/parse.rs:13-46` — `parse_caveat`, parser for
+  `#[dregg_caveat]` functions.
 - `types/src/lib.rs:281-309` — `AttestedRoot` definition.
 - `federation/src/threshold.rs:37` — `FederationCommittee`.
 - `federation/src/receipt.rs:122` — `FederationReceipt::verify`.

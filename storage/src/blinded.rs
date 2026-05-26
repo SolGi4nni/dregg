@@ -1,6 +1,6 @@
 //! Blinded queue: stores commitments, tracks nullifiers, enables private consumption.
 //!
-//! # DEPRECATED — migrate to `pyana_storage_templates::blinded_queue`
+//! # DEPRECATED — migrate to `dregg_storage_templates::blinded_queue`
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §3.4 this module's
 //! [`BlindedQueue`] / [`ConsumptionProof`] /
@@ -8,7 +8,7 @@
 //! [`FairDistribution`] surface is the legacy operator-side
 //! private-consumption primitive. The canonical replacement is the
 //! cell-program template
-//! [`pyana_storage_templates::blinded_queue`], whose
+//! [`dregg_storage_templates::blinded_queue`], whose
 //! `blinded_queue_factory_descriptor()` exports a `FactoryDescriptor`
 //! whose `CellProgram::Cases` declares the
 //! `WitnessedPredicate::Custom { vk_hash =
@@ -53,9 +53,9 @@
 
 use std::collections::HashSet;
 
-use pyana_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark::proof_from_bytes;
+use dregg_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::stark::proof_from_bytes;
 
 use crate::commitment::{
     BlindedItemCommitment, BlindedItemSetRoot, BlindedNullifierCommitment, Commitment4, MerkleRoot,
@@ -71,7 +71,7 @@ use crate::queue::QueueError;
 /// Guarantees: each element consumed at most once (nullifier uniqueness).
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_storage_templates::blinded_queue::blinded_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.4. The cell-program template carries a `WitnessedPredicate::Custom { vk_hash = BLINDED_QUEUE_SPEND_AIR_VK }` consumed by the executor on every `consume` turn; the AIR itself remains here and is registered into `WitnessedPredicateRegistry`."
+    note = "Use `dregg_storage_templates::blinded_queue::blinded_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.4. The cell-program template carries a `WitnessedPredicate::Custom { vk_hash = BLINDED_QUEUE_SPEND_AIR_VK }` consumed by the executor on every `consume` turn; the AIR itself remains here and is registered into `WitnessedPredicateRegistry`."
 )]
 pub struct BlindedQueue {
     /// Commitments (dual-form: BLAKE3 + Poseidon2)
@@ -218,7 +218,7 @@ impl BlindedQueue {
     /// revealing which commitment is being consumed.
     ///
     /// The STARK proof is verified via
-    /// `pyana_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination`
+    /// `dregg_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination`
     /// using the DSL note-spending AIR — the same AIR that backs production
     /// `Effect::NoteSpend`. The verifier pins:
     /// - `pi[0] = nullifier` (Poseidon2 form, single felt)
@@ -334,7 +334,7 @@ impl BlindedQueue {
             return;
         }
         let blake3_leaves: Vec<[u8; 32]> = self.commitments.iter().map(|c| c.blake3).collect();
-        let poseidon2_leaves: Vec<[pyana_circuit::field::BabyBear; 4]> =
+        let poseidon2_leaves: Vec<[dregg_circuit::field::BabyBear; 4]> =
             self.commitments.iter().map(|c| c.poseidon2).collect();
         self.commitment_root = MerkleRoot::from_leaves(&blake3_leaves, &poseidon2_leaves);
     }
@@ -458,7 +458,7 @@ impl FairDistribution {
 pub mod crypto {
     use super::{BlindedItemCommitment, BlindedNullifierCommitment, Commitment4};
     use crate::commitment::encode_bytes_to_felts;
-    use pyana_circuit::field::BabyBear;
+    use dregg_circuit::field::BabyBear;
 
     /// Create a dual-form commitment over `(item_data, randomness)`.
     ///
@@ -566,7 +566,7 @@ pub(crate) fn generate_merkle_proof(
             let parent_blake3 = *hasher.finalize().as_bytes();
 
             // Parent Poseidon2 (matches commitment::poseidon2_binary_root).
-            use pyana_circuit::poseidon2::hash_4_to_1;
+            use dregg_circuit::poseidon2::hash_4_to_1;
             let left = pair[0].poseidon2;
             let right = pair[1].poseidon2;
             let a = hash_4_to_1(&[left[0], left[1], left[2], left[3]]);
@@ -957,7 +957,7 @@ mod tests {
         let (mut queue, _commitments, _secrets) = setup_queue_with_items(3);
 
         let null_blake3 = [0xFFu8; 32];
-        let null_poseidon2 = [pyana_circuit::field::BabyBear::new(99); 4];
+        let null_poseidon2 = [dregg_circuit::field::BabyBear::new(99); 4];
         let proof = PrivateConsumptionProof {
             nullifier: BlindedNullifierCommitment::from_parts(null_blake3, null_poseidon2),
             tree_root: queue.commitment_root_dual(),
@@ -977,7 +977,7 @@ mod tests {
     fn private_consumption_wrong_tree_root() {
         let (mut queue, _commitments, _secrets) = setup_queue_with_items(3);
 
-        let null_poseidon2 = [pyana_circuit::field::BabyBear::new(7); 4];
+        let null_poseidon2 = [dregg_circuit::field::BabyBear::new(7); 4];
         let proof = PrivateConsumptionProof {
             nullifier: BlindedNullifierCommitment::from_parts([0xFF; 32], null_poseidon2),
             // wrong root (the empty sentinel, but the queue's actual root
@@ -995,7 +995,7 @@ mod tests {
     fn private_consumption_empty_proof_rejected() {
         let (mut queue, _commitments, _secrets) = setup_queue_with_items(3);
 
-        let null_poseidon2 = [pyana_circuit::field::BabyBear::new(7); 4];
+        let null_poseidon2 = [dregg_circuit::field::BabyBear::new(7); 4];
         let proof = PrivateConsumptionProof {
             nullifier: BlindedNullifierCommitment::from_parts([0xFF; 32], null_poseidon2),
             tree_root: queue.commitment_root_dual(),

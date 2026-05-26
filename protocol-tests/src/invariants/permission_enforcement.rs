@@ -29,13 +29,9 @@
 
 use crate::Invariant;
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use proptest::prelude::*;
-use pyana_cell::{AuthKind, AuthRequired, Cell, Permissions};
-use pyana_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
-    TurnResult, turn::Turn,
-};
+use dregg_cell::{AuthRequired, Permissions};
 
 pub struct PermissionEnforcement;
 
@@ -109,7 +105,7 @@ proptest! {
         agent.permissions = permissions_with_set_state(req.clone());
         let agent_id = agent.id();
 
-        let mut ledger = pyana_cell::Ledger::new();
+        let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(agent).unwrap();
 
         // Build the action (SetField on self), with placeholder

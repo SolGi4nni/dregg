@@ -3,29 +3,29 @@
 //! Measures proving time, verification time, and proof size across all AIR circuits
 //! and composed proof pipelines.
 //!
-//! Run with: `cargo bench -p pyana-circuit --bench proof_benchmarks`
+//! Run with: `cargo bench -p dregg-circuit --bench proof_benchmarks`
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::ivc::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::ivc::{
     FoldDelta, create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
 };
-use pyana_circuit::multi_step_air::{
+use dregg_circuit::multi_step_air::{
     MultiStepStarkAir, MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
     verify_authorization_stark,
 };
-use pyana_circuit::note_spending_air::{
+use dregg_circuit::note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, create_test_witness as create_note_witness,
     prove_note_spend, test_spending_key, verify_note_spend,
 };
-use pyana_circuit::poseidon2::{Poseidon2State, WIDTH, hash_4_to_1, hash_many};
-use pyana_circuit::poseidon2_air::{
+use dregg_circuit::poseidon2::{Poseidon2State, WIDTH, hash_4_to_1, hash_many};
+use dregg_circuit::poseidon2_air::{
     MerklePoseidon2StarkAir, Poseidon2Air, generate_merkle_poseidon2_trace,
 };
-use pyana_circuit::stark::{
+use dregg_circuit::stark::{
     self, MerkleStarkAir, StarkProof, generate_merkle_trace, proof_to_bytes,
 };
-use pyana_dsl_runtime::revocation::{
+use dregg_dsl_runtime::revocation::{
     DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
     verify_non_revocation_dsl,
 };
@@ -224,12 +224,12 @@ fn make_derivation_step(
     step_idx: u32,
     state_root: BabyBear,
     is_final: bool,
-) -> pyana_circuit::derivation_air::DerivationWitness {
-    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use pyana_circuit::poseidon2::hash_fact;
+) -> dregg_circuit::derivation_air::DerivationWitness {
+    use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+    use dregg_circuit::poseidon2::hash_fact;
 
     let pred = if is_final {
-        BabyBear::new(pyana_circuit::multi_step_air::ALLOW_PREDICATE)
+        BabyBear::new(dregg_circuit::multi_step_air::ALLOW_PREDICATE)
     } else {
         BabyBear::new(step_idx * 100 + 1)
     };
@@ -469,7 +469,7 @@ fn bench_non_revocation(c: &mut Criterion) {
 // -----------------------------------------------------------------------------
 
 fn bench_body_membership_proof(c: &mut Criterion) {
-    use pyana_circuit::body_membership::{
+    use dregg_circuit::body_membership::{
         BodyFactMerkleProof, collect_body_fact_hashes, prove_authorization_with_membership,
         verify_authorization_with_membership,
     };
@@ -546,7 +546,7 @@ fn bench_body_membership_proof(c: &mut Criterion) {
 // -----------------------------------------------------------------------------
 
 fn bench_chunked_authorization(c: &mut Criterion) {
-    use pyana_circuit::chunked_derivation::{
+    use dregg_circuit::chunked_derivation::{
         prove_chunked_authorization, verify_chunked_authorization,
     };
 
@@ -701,8 +701,8 @@ fn bench_full_authorization_pipeline(c: &mut Criterion) {
 
 #[cfg(feature = "plonky3")]
 fn bench_plonky3_backend(c: &mut Criterion) {
-    use pyana_circuit::plonky3_prover::{prove_membership_plonky3, prove_plonky3, verify_plonky3};
-    use pyana_circuit::poseidon2_air::{
+    use dregg_circuit::plonky3_prover::{prove_membership_plonky3, prove_plonky3, verify_plonky3};
+    use dregg_circuit::poseidon2_air::{
         create_poseidon2_test_witness, generate_merkle_poseidon2_trace,
     };
 
@@ -737,7 +737,7 @@ fn bench_plonky3_backend(c: &mut Criterion) {
 
         // Compare: custom STARK vs Plonky3 for same statement
         let custom_proof = {
-            let air = pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
+            let air = dregg_circuit::poseidon2_air::MerklePoseidon2StarkAir;
             stark::prove(&air, &trace, &public_inputs)
         };
         let custom_size = proof_to_bytes(&custom_proof).len();

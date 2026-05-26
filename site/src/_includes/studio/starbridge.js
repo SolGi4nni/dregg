@@ -5,19 +5,19 @@
  * and raw-JSON pane on the /starbridge page. Driven entirely off the same
  * Runtime substrate exposed to the rest of the Studio (see STUDIO.md § 3).
  *
- * URL state: ?at=pyana://...&runtime=<id> — restored on load, updated via
+ * URL state: ?at=dregg://...&runtime=<id> — restored on load, updated via
  * history.replaceState on user navigation (no back-button spam).
  */
 
 import { parseRef, isRef } from './uri.js';
 
 // ----------------------------------------------------------------------------
-// Bootstrap: wait for window.pyanaUi (Preact + signals + htm) to load.
+// Bootstrap: wait for window.dreggUi (Preact + signals + htm) to load.
 // ----------------------------------------------------------------------------
-function whenPyana() {
+function whenDregg() {
   return new Promise(resolve => {
-    if (window.pyanaUi) return resolve(window.pyanaUi);
-    window.addEventListener('pyanaUi:ready', e => resolve(e.detail), { once: true });
+    if (window.dreggUi) return resolve(window.dreggUi);
+    window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
   });
 }
 
@@ -100,7 +100,7 @@ function writeUrlState({ at, runtime }) {
   }
 
   // --------------------------------------------------------------------------
-  // Inspector pane: mount a `<pyana-${kind}>` for the current URI, or show a
+  // Inspector pane: mount a `<dregg-${kind}>` for the current URI, or show a
   // helpful empty/missing-kind message.
   // --------------------------------------------------------------------------
   function renderInspectorPane(uri) {
@@ -108,7 +108,7 @@ function writeUrlState({ at, runtime }) {
     if (!uri) {
       const empty = document.createElement('div');
       empty.className = 'sb__inspector-empty';
-      empty.textContent = 'paste a pyana:// URI above and hit Go';
+      empty.textContent = 'paste a dregg:// URI above and hit Go';
       inspector.appendChild(empty);
       return;
     }
@@ -121,7 +121,7 @@ function writeUrlState({ at, runtime }) {
       inspector.appendChild(err);
       return;
     }
-    const tagName = `pyana-${parsed.kind}`;
+    const tagName = `dregg-${parsed.kind}`;
     if (!customElements.get(tagName)) {
       const err = document.createElement('div');
       err.className = 'sb__inspector-empty';
@@ -157,7 +157,7 @@ function writeUrlState({ at, runtime }) {
       for (const c of cells) {
         const id = c.cell_id || c.id || (typeof c === 'string' ? c : null);
         if (!id) continue;
-        const uri = `pyana://cell/${id}`;
+        const uri = `dregg://cell/${id}`;
         const li = document.createElement('li');
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -224,7 +224,7 @@ function writeUrlState({ at, runtime }) {
     }
     if (uri) {
       for (const btn of treeListEl.querySelectorAll('.sb__list-item')) {
-        if (btn.title === uri.replace(/^pyana:\/\/[a-z-]+\//, '')) {
+        if (btn.title === uri.replace(/^dregg:\/\/[a-z-]+\//, '')) {
           btn.setAttribute('aria-current', 'true');
         }
       }
@@ -296,7 +296,7 @@ function writeUrlState({ at, runtime }) {
       const opts = { wasm, signals: api };
       if (id === 'remote') {
         // Best-effort: try to read a configured base URL; otherwise empty.
-        opts.baseUrl = (window.localStorage && localStorage.getItem('pyana.remote.baseUrl')) || '';
+        opts.baseUrl = (window.localStorage && localStorage.getItem('dregg.remote.baseUrl')) || '';
       }
       runtime = await entry.factory(opts);
       currentRuntimeId = id;
@@ -317,10 +317,10 @@ function writeUrlState({ at, runtime }) {
   // --------------------------------------------------------------------------
   try {
     setStatus('loading runtime…', 'boot');
-    api = await whenPyana();
+    api = await whenDregg();
 
     setStatus('loading wasm…', 'boot');
-    wasm = await import('/pkg/pyana_wasm.js');
+    wasm = await import('/pkg/dregg_wasm.js');
     await wasm.default();
 
     setStatus('loading inspectors…', 'boot');
@@ -365,7 +365,7 @@ function writeUrlState({ at, runtime }) {
         return;
       }
       if (!isRef(v)) {
-        setStatus('not a valid pyana:// URI', 'err');
+        setStatus('not a valid dregg:// URI', 'err');
         return;
       }
       setStatus(`ready · ${runtime.source ? runtime.source.label : currentRuntimeId}`, 'ready');
@@ -387,7 +387,7 @@ function writeUrlState({ at, runtime }) {
       e.addEventListener('click', () => {
         try { fn(); } catch (err) {
           console.warn(`[starbridge] ${id} failed:`, err);
-          window.pyanaUi?.toast?.(`${id}: ${err.message || err}`, 'err');
+          window.dreggUi?.toast?.(`${id}: ${err.message || err}`, 'err');
         }
       });
     };
@@ -404,10 +404,10 @@ function writeUrlState({ at, runtime }) {
       swapRuntime,
     };
 
-    // Wire the new Apps tab / <pyana-app-list> (STARBRIDGE-PLAN §4.8).
+    // Wire the new Apps tab / <dregg-app-list> (STARBRIDGE-PLAN §4.8).
     // The list reads manifests; "Demo in inspector" for nameservice mounts
     // the first end-to-end starbridge-app inspectors (which reuse platform
-    // <pyana-cell> + <pyana-capability> and the typed turn-builders).
+    // <dregg-cell> + <dregg-capability> and the typed turn-builders).
     const appListEl = document.getElementById('sb-app-list');
     if (appListEl) {
       appListEl.addEventListener('app-demo', (e) => {
@@ -418,11 +418,11 @@ function writeUrlState({ at, runtime }) {
           demoWrap.style.cssText = 'padding:0.5rem;';
           demoWrap.innerHTML = `
             <h4 style="margin:0 0 0.5rem;font-size:0.95rem">Nameservice — first e2e starbridge-app demo (§4.8)</h4>
-            <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#555">Registry + detail using new shared inspectors (reusing &lt;pyana-cell&gt; etc.) + typed turn-builders from shared/.</p>
-            <pyana-name-registry uri="pyana://cell/registry-default" page-size="6"></pyana-name-registry>
+            <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#555">Registry + detail using new shared inspectors (reusing &lt;dregg-cell&gt; etc.) + typed turn-builders from shared/.</p>
+            <dregg-name-registry uri="dregg://cell/registry-default" page-size="6"></dregg-name-registry>
             <details style="margin-top:0.6rem;font-size:0.8rem">
               <summary>Per-name detail (reuses platform inspectors)</summary>
-              <pyana-name uri="pyana://cell/registry-default" name="demo.pyana"></pyana-name>
+              <dregg-name uri="dregg://cell/registry-default" name="demo.dregg"></dregg-name>
             </details>
             <div style="margin-top:0.5rem;font-size:0.75rem;color:#666">
               Open full interactive page: <a href="/starbridge-apps/nameservice/pages/index.html" target="_blank">/starbridge-apps/nameservice/pages/index.html</a>
@@ -436,8 +436,8 @@ function writeUrlState({ at, runtime }) {
           demoWrap.style.cssText = 'padding:0.5rem;';
           demoWrap.innerHTML = `
             <h4 style="margin:0 0 0.5rem;font-size:0.95rem">Identity — high-quality additional starbridge-app demo (§4.8 FOLLOWUP-05)</h4>
-            <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#555">Credential lifecycle using platform vocabulary + app-specific <code>&lt;pyana-credential&gt;</code> inspectors (loaded via shared/ path fix) + typed turn-builders. Reuses &lt;pyana-cell&gt; etc. No new Effects.</p>
-            <pyana-credential uri="pyana://cell/identity-issuer" style="max-width:480px"></pyana-credential>
+            <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#555">Credential lifecycle using platform vocabulary + app-specific <code>&lt;dregg-credential&gt;</code> inspectors (loaded via shared/ path fix) + typed turn-builders. Reuses &lt;dregg-cell&gt; etc. No new Effects.</p>
+            <dregg-credential uri="dregg://cell/identity-issuer" style="max-width:480px"></dregg-credential>
             <div style="margin-top:0.5rem;font-size:0.75rem;color:#666">
               Full interactive: <a href="/starbridge-apps/identity/pages/index.html" target="_blank">/starbridge-apps/identity/pages/index.html</a> (issue/present/verify flows with real proofs).
             </div>

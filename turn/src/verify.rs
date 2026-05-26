@@ -12,7 +12,7 @@
 //! - Genesis validity: the first receipt has `previous_receipt_hash = None`
 
 use ed25519_dalek;
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 
 use crate::turn::TurnReceipt;
 

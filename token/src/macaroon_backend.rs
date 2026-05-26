@@ -1,10 +1,10 @@
 //! Macaroon token backend.
 //!
-//! Wraps the `pyana_macaroon` crate to implement [`AuthToken`].
+//! Wraps the `dregg_macaroon` crate to implement [`AuthToken`].
 //! Macaroons use HMAC-SHA256 symmetric key chaining — fast (~0.5μs verify)
 //! but requires the root secret key for verification.
 
-use pyana_macaroon::Macaroon;
+use dregg_macaroon::Macaroon;
 use zeroize::Zeroizing;
 
 use crate::error::TokenError;
@@ -13,7 +13,7 @@ use crate::traits::{Attenuation, AuthRequest, AuthToken, TokenClearance};
 
 /// A Macaroon-backed authorization token.
 ///
-/// Wraps `pyana_macaroon::Macaroon` with the root key needed for verification.
+/// Wraps `dregg_macaroon::Macaroon` with the root key needed for verification.
 pub struct MacaroonToken {
     /// The inner macaroon token.
     inner: Macaroon,
@@ -144,7 +144,7 @@ impl AuthToken for MacaroonToken {
             ));
         }
 
-        let wire_caveats = crate::pyana_caveats::attenuation_to_wire_caveats(restrictions);
+        let wire_caveats = crate::dregg_caveats::attenuation_to_wire_caveats(restrictions);
         if wire_caveats.is_empty() {
             return Err(TokenError::Malformed(
                 "no restrictions specified for attenuation".into(),
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_mint_attenuate_verify() {
         let key = test_root_key();
-        let token = MacaroonToken::mint(key, b"test-kid", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"test-kid", "dregg.dev");
 
         // Root token verifies with default request
         let clearance = token.verify(&AuthRequest::default()).unwrap();
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip() {
         let key = test_root_key();
-        let token = MacaroonToken::mint(key, b"test-kid", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"test-kid", "dregg.dev");
         let encoded = token.to_encoded().unwrap();
         assert!(encoded.starts_with("em2_"));
 

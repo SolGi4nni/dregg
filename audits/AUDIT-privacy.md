@@ -1,6 +1,6 @@
-# AUDIT-privacy.md — What pyana claims about privacy, and what it delivers
+# AUDIT-privacy.md — What dregg claims about privacy, and what it delivers
 
-**Scope.** A read-only walk through the privacy-shaped subsystems of pyana:
+**Scope.** A read-only walk through the privacy-shaped subsystems of dregg:
 blinded endpoints, sealed-X primitives, the new `Commitment<T>` framework,
 sovereign cells with field visibility, the privacy-voting app, the Midnight
 bridge / `gen_midnight` DSL backend, encrypted turns and the trustless intent
@@ -12,7 +12,7 @@ matrix plus open questions.
 
 ---
 
-## 1. The claims, in pyana's own voice
+## 1. The claims, in dregg's own voice
 
 ### 1.1 The top-level pitches
 
@@ -29,7 +29,7 @@ claims, lifted verbatim:
 - Trust-model claim 9: *"forward secrecy"* — implemented in `cell/src/seal.rs`
   via fresh ephemeral X25519 keypairs per seal call (`seal()` at line 169).
 
-`PYANA_DESIGN.md` line 44: *"Agents broadcast needs as intents (public).
+`DREGG_DESIGN.md` line 44: *"Agents broadcast needs as intents (public).
 Wallets evaluate privately using local Datalog (never leaves the device).
 Fulfillment is a STARK proof that leaks nothing about the satisfier."* The
 **parenthetical "(public)" is the actual privacy boundary** — and it's where
@@ -135,7 +135,7 @@ responsibility, per `DESIGN-commitment-framework.md` §2.1.
 
 ## 3. Sealing — what it is, what it isn't
 
-There are **two different "seal" mechanisms** in pyana, and the names
+There are **two different "seal" mechanisms** in dregg, and the names
 collide enough to be confusing.
 
 ### 3.1 Sealer/unsealer pairs (`cell/src/seal.rs`)
@@ -299,7 +299,7 @@ executor mutates them by index in tight loops."* That is the executor saying
 `apps/privacy-voting/src/ballot.rs:11-17`: a vote commitment is
 
 ```text
-commit = blake3-derive("pyana-ballot-v1" || proposal_id || option_index_le || randomness)
+commit = blake3-derive("dregg-ballot-v1" || proposal_id || option_index_le || randomness)
 ```
 
 with `randomness: [u8; 32]`. The lib.rs docstring (lines 18-23) is clear:
@@ -316,7 +316,7 @@ What this delivers:
 | Tallier                  | ballot choice (yes; commit phase)                                    | NO — the tally is computed from cleartext reveals                         |
 | Federation               | ballot choice (yes during commit)                                    | NO during reveal                                                          |
 | Other voters             | ballot choice (yes during commit)                                    | NO during reveal — reveals are public per `tally.rs:14-17`                |
-| Network observers (TLS)  | the commit POST body (TLS, not pyana-specific)                       | the reveal POST body                                                      |
+| Network observers (TLS)  | the commit POST body (TLS, not dregg-specific)                       | the reveal POST body                                                      |
 
 **The privacy is therefore "commit-phase only, then fully public on reveal."**
 That's the standard commit-reveal voting pattern (cf. Chaumian voting). It's
@@ -352,10 +352,10 @@ private election. The docstring is honest; the README is loose.
 an **observation bridge**. The pattern is the same one Midnight uses with
 Cardano (per `docs/midnight-comparison.md`):
 
-1. *Pyana → Midnight*: burn a note on pyana; federation produces threshold
+1. *`dregg` → Midnight*: burn a note on dregg; federation produces threshold
    attestation; Midnight contract verifies and mints.
-2. *Midnight → Pyana*: lock tokens on Midnight; pyana observer sees
-   finalised block; federation mints note on pyana.
+2. *Midnight → `dregg`*: lock tokens on Midnight; dregg observer sees
+   finalised block; federation mints note on dregg.
 
 Two privacy questions arise:
 
@@ -371,27 +371,27 @@ fully specified in the rust module — it's whatever the caller passes to
 depends entirely on what the caller chooses to attest.
 
 **(b) Does `gen_midnight` (DSL backend) use Midnight's shielded execution?**
-`pyana-dsl/src/gen_midnight.rs:1-29` produces a ZKIR v3 JSON program
+`dregg-dsl/src/gen_midnight.rs:1-29` produces a ZKIR v3 JSON program
 (`Scalar<BLS12-381>` inputs, instruction list). The generator targets
 Midnight's *Compact/ZKIR* runtime, which is the engine Midnight uses for its
-own private smart contracts. So in principle a pyana DSL constraint can be
+own private smart contracts. So in principle a dregg DSL constraint can be
 compiled into a Midnight private circuit. But:
 
 - The compiled output is just an `IrSource` JSON; it is submitted to
   Midnight's proof server / chain via Midnight's own client, not via the
   bridge module above.
-- The pyana → Midnight bridge does not currently route value through
+- The dregg → Midnight bridge does not currently route value through
   shielded Zswap pools — `bridge/src/midnight.rs` describes a token-lock
-  contract and a `unlockFromPyana` function with a nullifier, which is a
+  contract and a `unlockFromDregg` function with a nullifier, which is a
   standard non-shielded bridge.
 
-So the situation is: **pyana can EMIT ZKIR programs that run on Midnight's
-shielded execution layer (`gen_midnight.rs`), but the pyana ↔ Midnight
+So the situation is: **dregg can EMIT ZKIR programs that run on Midnight's
+shielded execution layer (`gen_midnight.rs`), but the dregg ↔ Midnight
 *value* bridge (`midnight.rs` + `midnight_observer.rs`) is a vanilla
 attestation bridge with no Zswap involvement.** The privacy benefit of
 Midnight is therefore available to *apps that target Midnight as a backend*,
 not to *value flowing through the bridge*. `docs/midnight-comparison.md`
-line 37-39 is honest about this: *"a pyana cell locks a note → federation
+line 37-39 is honest about this: *"a dregg cell locks a note → federation
 attests → Midnight contract mints shielded coin (or vice versa)"* — and
 "shielded coin" is up to the contract on Midnight, not the bridge.
 
@@ -404,7 +404,7 @@ a trust boundary. The claimed properties are TLS confidentiality +
 authentication + replay protection. The implementation
 (`wire/src/server.rs:1083-1090`) prints
 
-> *"WARNING: pyana-wire server '{...}' running WITHOUT TLS. All traffic is
+> *"WARNING: dregg-wire server '{...}' running WITHOUT TLS. All traffic is
 > plaintext. Set tls_cert_path and tls_key_path ..."*
 
 if TLS is not configured. This is good. TLS does provide content
@@ -493,7 +493,7 @@ The marketplace-privacy story is a layered set of components:
 | Layer                     | Status                                                                                                                       |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Network                   | None. `docs/design-network-privacy.md` is a plan; gossip is plaintext.                                                       |
-| Intent content            | SSE keyword tokens (`intent/src/sse.rs`) — `BLAKE3_derive_key("pyana-sse-token-v1", keyword \|\| epoch_le_bytes)`            |
+| Intent content            | SSE keyword tokens (`intent/src/sse.rs`) — `BLAKE3_derive_key("dregg-sse-token-v1", keyword \|\| epoch_le_bytes)`            |
 | Intent body               | x25519 sealed box (designed; partially implemented in `intent/src/sse.rs`)                                                   |
 | Threshold-encrypted intents | Stubbed in `intent/src/trustless.rs` — cryptosystem not yet selected                                                       |
 | Matching                  | Cipherclerk-local Datalog evaluation                                                                                              |
@@ -508,7 +508,7 @@ preserving in isolation, and the *composition* leaks.
 
 ## 10. Side channels we admit
 
-These are things pyana does NOT hide, in order of severity for a real
+These are things dregg does NOT hide, in order of severity for a real
 deployment. I'm collating from `docs/intent-privacy-assessment.md`,
 `docs/unlinkability-analysis.md`, and a code scan.
 
@@ -604,12 +604,12 @@ Places where code or docs claim more than the implementation delivers:
 
 5. **README "Privacy Model" table (lines 94-103) conflates three things.**
    The "Trusted | Selective Disclosure | Fully Private" axis is about
-   *credential presentation proof verifier learnings*, NOT about pyana's
+   *credential presentation proof verifier learnings*, NOT about dregg's
    overall privacy mode. The 80 KB "Fully Private" proof hides the
    delegation chain and the issued credential, but the surrounding turn,
    the gossip-broadcast intent, the cleartext executor state, and the
    wire IP all still leak. A new reader could reasonably believe "I can
-   run pyana in fully private mode" and be wrong about ~80% of the
+   run dregg in fully private mode" and be wrong about ~80% of the
    metadata surface.
 
 6. **The "Privacy-preserving marketplace" README claim is contradicted by
@@ -688,7 +688,7 @@ explicitly absent. `N/A` = not claimed.
 | Wire-level confidentiality                         | Yes (if TLS)   | `wire/src/server.rs:1083` warns if TLS off                                          |
 | CapTP envelope-level encryption                    | No             | Envelope is postcard cleartext over TLS                                            |
 | Midnight bridge: uses Zswap shielded pools         | No             | Vanilla attestation bridge; no Zswap involvement                                   |
-| Midnight DSL backend uses Midnight private VM      | Yes            | `pyana-dsl/src/gen_midnight.rs` → ZKIR v3 (`Compact`)                              |
+| Midnight DSL backend uses Midnight private VM      | Yes            | `dregg-dsl/src/gen_midnight.rs` → ZKIR v3 (`Compact`)                              |
 | Cross-federation source-federation hiding          | No             | `PortableProof.source_root` reveals which federation (executor.rs:132-137)        |
 | Pseudonymous-but-stable cell IDs                   | Yes (pseudonymous), No (unlinkable) | `CellId = BLAKE3(pubkey \|\| token_id)`; stable across turns          |
 | Forward secrecy claim in trust model #9            | Per-message only | Sender-ephemeral; receiver-static                                                |
@@ -702,7 +702,7 @@ explicitly absent. `N/A` = not claimed.
 ## 13. Open questions for the designer
 
 1. **Is the README's "Privacy Model" table (Trusted / Selective Disclosure
-   / Fully Private) intended to describe the whole pyana stack, or only
+   / Fully Private) intended to describe the whole dregg stack, or only
    the credential-presentation proof system?** The doc reads as the former;
    the code only delivers the latter. Reframing the table to scope
    "verifier learnings during credential presentation, conditional on
@@ -762,7 +762,7 @@ explicitly absent. `N/A` = not claimed.
 11. **Network-layer privacy is the largest unmitigated leak.** The
     Dandelion++ + padding + Tor plan is well-scoped in
     `docs/design-network-privacy.md`. Is it on a real roadmap, or is the
-    deployment story "users should run pyana behind their own Tor/VPN"?
+    deployment story "users should run dregg behind their own Tor/VPN"?
     The README's bullet "All modes work offline" is not the same answer
     as "the protocol provides metadata hiding."
 
@@ -776,7 +776,7 @@ explicitly absent. `N/A` = not claimed.
 
 ## 14. Bottom line
 
-Pyana has *real* privacy primitives — BLAKE3/Poseidon2 dual commitments
+`dregg` has *real* privacy primitives — BLAKE3/Poseidon2 dual commitments
 with proper hiding randomness in notes and blinded queue items, a
 correctly-constructed X25519 sealed box for capability transfer,
 multi-show-unlinkable STARK presentation proofs over a blinded Merkle leaf,

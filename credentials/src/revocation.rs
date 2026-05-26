@@ -10,7 +10,7 @@
 //! - This crate models revocation as a flat `HashSet<credential_id>`
 //!   maintained in-process. A production deployment binds the set to a
 //!   federation-attested Merkle root and produces a real non-membership
-//!   STARK proof (per G39 in `PYANA-FLAWS-FROM-APPS.md`).
+//!   STARK proof (per G39 in `DREGG-FLAWS-FROM-APPS.md`).
 //! - The non-revocation STARK should additionally bind `pi::REVOCATION_HASH`
 //!   to the credential's id (G39 fix). The wrapper here exposes the slot
 //!   so a future patch can substitute a real proof without changing
@@ -81,7 +81,7 @@ impl RevocationRegistry {
         let mut sorted: Vec<[u8; 32]> = inner.revoked.iter().copied().collect();
         sorted.sort();
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-credentials-revocation-root-v1");
+        hasher.update(b"dregg-credentials-revocation-root-v1");
         for id in &sorted {
             hasher.update(id);
         }

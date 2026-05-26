@@ -19,7 +19,7 @@ analysis* is the test we're applying here — name the objects and
 morphisms, look for missing duals and adjoints, see whether the holes
 in the diagram correspond to anything an app would actually want.
 
-This is a method that has worked for pyana before: the
+This is a method that has worked for dregg before: the
 `PREDICATE-INVENTORY` unification surfaced `WitnessedPredicate`
 precisely by noticing that fifteen apparently-different predicate
 shapes had the same `(commitment, input, proof, verifier)` Yoneda
@@ -28,7 +28,7 @@ holes that pure use-case enumeration didn't.
 
 The opinionated TL;DR — written first so it can be read alone:
 
-> Six axes of pyana's substrate have **broken or partial dualities**.
+> Six axes of dregg's substrate have **broken or partial dualities**.
 > Three of them — *negation in `StateConstraint`*, *implication in
 > `StateConstraint`*, and *unilateral binding (single-cell self-attestation
 > as a structural sibling of γ.2 bilateral)* — point at real app needs
@@ -67,7 +67,7 @@ thinking.
 
 ---
 
-## §1. The categories — naming pyana's objects and morphisms
+## §1. The categories — naming dregg's objects and morphisms
 
 Categorical analysis pays its rent in two places: it forces explicit
 names for what we've been pointing at, and it surfaces structural holes
@@ -75,7 +75,7 @@ names for what we've been pointing at, and it surfaces structural holes
 to miss. This section establishes the names.
 
 We will work informally with several interlocking categories.
-"Informally" is load-bearing: pyana is not a category in the strict
+"Informally" is load-bearing: dregg is not a category in the strict
 sense (we don't get associativity *up to definitional equality* in
 most places; effects are partial; the substrate is computational), but
 each of these collections *has enough structure to do diagram chasing*,
@@ -100,7 +100,7 @@ sequence-then-fold*: `e_2 ∘ e_1` is applying `e_1` then `e_2`,
 provided both are admissible from the relevant intermediate state.
 
 **Products.** *Partially.* The categorical product of two cell-states
-`s_A × s_B` would be a state-pair acting as a single object. Pyana
+`s_A × s_B` would be a state-pair acting as a single object. `dregg`
 does have a notion — the *touched-set of a turn* is the simultaneous
 state of several cells under a single Turn-event — but this is a
 collection of objects under a shared morphism, not a product object in
@@ -148,7 +148,7 @@ to: B }` (which refines `Transfer { from: A }`). This makes Effect a
 **Products.** *Yes — effect intersection.* The product of two effects
 is the most general effect that refines both (when one exists). Two
 unrelated effect-instances have no product; refinement-related ones
-do. Pyana doesn't surface this construction at any seam, but it lives
+do. `dregg` doesn't surface this construction at any seam, but it lives
 implicitly in `MatchSpec` and intent matching (which compute "the
 most specific MatchSpec that satisfies both A and B").
 
@@ -195,7 +195,7 @@ list).
 *Absent today.* This is the first interesting hole; see §3.1.
 
 **Subtle:** Predicate is a *Heyting algebra* if we have implication
-(`P ⇒ Q`) and negation (`¬P`). Pyana has neither — conjunction (Vec)
+(`P ⇒ Q`) and negation (`¬P`). `dregg` has neither — conjunction (Vec)
 and disjunction (`AnyOf`) only. This is a real gap that §3 will
 explore.
 
@@ -224,7 +224,7 @@ shadow of this relation.
 "intersection" (admit the transition iff both programs admit) is a
 *meet-semilattice*. Under "union" (admit iff either admits) it's a
 join-semilattice. Both operations are commutative and idempotent.
-This is a fairly rich algebraic structure pyana doesn't currently
+This is a fairly rich algebraic structure dregg doesn't currently
 exploit at the program-composition surface — you can't naturally take
 two `CellProgram`s and *merge* them; the cell has exactly one.
 
@@ -257,7 +257,7 @@ sealed for archival, say). Today encoded by deleting the cell or
 revoking all its capabilities; no first-class shape.
 
 **Subtle dual:** if `Authorization` says "this agent CAN do this
-thing," its dual says "this agent CANNOT do this thing." Pyana
+thing," its dual says "this agent CANNOT do this thing." `dregg`
 doesn't have a *proof-of-incapacity* shape. See §3.2.
 
 ### §1.6. **Witness** — the category of witnesses (proof artifacts)
@@ -368,7 +368,7 @@ The next four sections take each cluster.
 
 ---
 
-## §2. Existing dualities — what pyana already has
+## §2. Existing dualities — what dregg already has
 
 Before naming missing dualities, name the present ones. This catalogs
 the dualities that *do* work, so §3's "missing" claims are calibrated
@@ -403,7 +403,7 @@ halves of a digital-signature primitive.
 category. The unit is `pk = derive_public(sk)`; the counit is
 `verify(sign(m, sk), pk, m) = true`.
 
-**Strength.** Strong; pyana has Ed25519, BLS, and is wiring
+**Strength.** Strong; dregg has Ed25519, BLS, and is wiring
 postquantum signature shapes.
 
 **Health.** ✓.
@@ -521,7 +521,7 @@ nothing), cleartext-inside is the top (knows everything).
 **Strength.** Strong as a poset; explicitly documented.
 
 **Health.** ✓ as a structure; △ as an enforced invariant (the audit
-notes that pyana's *use* of this lattice is inconsistent; some
+notes that dregg's *use* of this lattice is inconsistent; some
 predicates leak across boundaries by surprise).
 
 ### §2.9. Summary of existing dualities
@@ -568,7 +568,7 @@ admits a *largest predicate `P → Q`* such that `P ∧ (P → Q) → Q`.
 This is the *exponential object* — the categorical name for "function
 between predicates."
 
-**Why it matters in pyana.** Three concrete app surfaces want this:
+**Why it matters in dregg.** Three concrete app surfaces want this:
 
 1. **Conditional escrow.** "Release iff (deadline passed) ⇒
    (counterparty did NOT publish proof of fulfillment)." Today
@@ -639,7 +639,7 @@ property. Two main shapes:
   "I renounce all caps under selector `s` at time `t`," carry the
   signature forward.
 
-**Why it matters in pyana.** Three potential app surfaces:
+**Why it matters in dregg.** Three potential app surfaces:
 
 1. **Recusal in governance.** "I attest I do not hold a conflicting
    interest cap before voting on this proposal." Today: cleartext
@@ -689,7 +689,7 @@ state advances (nonce bumps; an `attempted_actions` log slot
 appends; an `action_outcome` slot records "REFUSED:reason_hash"),
 but no value, capability, or property changes.
 
-**Why it matters in pyana.** Two surfaces:
+**Why it matters in dregg.** Two surfaces:
 
 1. **Auditable rejection in HFT-style flows.** "I received an order;
    I declined to fill; here is the proof that I declined and the
@@ -727,7 +727,7 @@ exhibit the witness that satisfies it — exists as code in
 every prover (`circuit::*` provers), but there is no *trait* surface
 for "given a `WitnessedPredicateKind`, construct a witness."
 
-**Why it matters in pyana.** Most of the prover-side code is hand-
+**Why it matters in dregg.** Most of the prover-side code is hand-
 rolled per kind: `BridgePredicateProof::new`,
 `PortableNoteProof::from_witness`, `BlindedMerkleStarkAir::prove`,
 etc. Each has its own witness type, error type, parameter shape. A
@@ -783,7 +783,7 @@ predicate (`TemporalPredicateAir`) — but lifted to a γ.2-shaped public
 input layout so the verifier loop treats it uniformly with the
 bilateral case.
 
-**Why it matters in pyana.** The temporal predicate exists
+**Why it matters in dregg.** The temporal predicate exists
 (`circuit::temporal_predicate_dsl`); its public inputs include
 `threshold`, `num_steps`, and `(initial, final)` state roots. But its
 *PI layout is custom* to the temporal AIR. A unilateral binding would
@@ -846,7 +846,7 @@ natural correspondence `Hom(F(c), d) ≅ Hom(c, G(d))`. Adjunctions
 encode "this thing is *free*" / "this thing is *forgetful*" pairs
 across systems.
 
-Pyana has several near-adjunctions, partially realized.
+`dregg` has several near-adjunctions, partially realized.
 
 ### §4.1. Predicate ⊣ Witness — free / forgetful
 
@@ -863,7 +863,7 @@ should hold: given a predicate `P` and a witness `W`, the morphisms
 "this free witness for P factors through W" correspond to morphisms
 "P is implied by what W proves."
 
-**Status in pyana.** Half-realized.
+**Status in dregg.** Half-realized.
 `WitnessedPredicateVerifier` is `W`. There is no named `F`
 (prover-side trait). §3.4's `WitnessProducer` proposal *is* this
 free functor.
@@ -889,7 +889,7 @@ commitment as a cell-state-commitment).
 federation-level morphism from `c`-as-fed to `F` corresponds to a
 cell-level morphism from `c` to `F`-as-cell.
 
-**Status in pyana.** Six of nine axes strongly homomorphic per
+**Status in dregg.** Six of nine axes strongly homomorphic per
 `FEDERATION-AS-CELL.md §1`. The functors are real but not type-
 system-explicit. The asymmetric axis (`peer_exchange` for cells with
 no federation analog) is *exactly* the place the adjunction's
@@ -925,13 +925,13 @@ the canonical `transfer_id` / `grant_id` / `intro_id`).
 "this per-cell view comes from this bilateral effect" corresponds
 to "this bilateral effect projects to this per-cell view."
 
-**Status in pyana.** Realized in γ.2 Phase 1. The `transfer_id`
-derivation `H("pyana-transfer-id-v1", from, to, amount, nonce)` is
+**Status in dregg.** Realized in γ.2 Phase 1. The `transfer_id`
+derivation `H("dregg-transfer-id-v1", from, to, amount, nonce)` is
 *literally* the universal arrow for the equalizer formed by
 `L_from` and `L_to`. The cross-cell match loop in the verifier is
 *precisely* checking the adjunction's coherence.
 
-**Win.** This is the cleanest categorical structure pyana has, and
+**Win.** This is the cleanest categorical structure dregg has, and
 it's already realized. The naming clarifies *why* γ.2 works: it
 makes the equalizer / adjunction explicit.
 
@@ -954,7 +954,7 @@ sends a state to "the canonical receipt chain that produced it"
 "this canonical chain leads to this received chain" iff "this
 state is reachable from this chain's tip-state."
 
-**Status in pyana.** Half-realized — the *forgetful* is trivial
+**Status in dregg.** Half-realized — the *forgetful* is trivial
 (`chain.tip().state`); the *free* is `WitnessedReceipt`-scope-2
 replay (`turn::witnessed_receipt`), which constructs the canonical
 chain from a state-tip. The chain-IVC direction
@@ -997,7 +997,7 @@ shapes, names them, and asks which are present and which are missing.
 `C`), the pullback `A ×_C B` is the *largest object* that fits into a
 commuting square mapping back to both `A` and `B` and forward to `C`.
 
-**Pyana realization.** This is *exactly what γ.2 already computes
+**`dregg` realization.** This is *exactly what γ.2 already computes
 algebraically.* When two cells transition such that both transitions
 must be consistent over a shared resource (e.g., the canonical
 `transfer_id`), the resulting bilateral binding is the pullback of
@@ -1029,7 +1029,7 @@ construction.
 commuting square mapping forward from both `A` and `B` and back from
 `C`.
 
-**Pyana question.** Is there a pushout-shaped construction for
+**`dregg` question.** Is there a pushout-shaped construction for
 cross-cell coordination?
 
 **Candidate scenarios where this would apply:**
@@ -1054,13 +1054,13 @@ cross-cell coordination?
    per-federation; a pushout-shape would let two source federations
    co-attest a destination event.
 
-**Status in pyana.** *Absent at the algebra layer.* The closest in-tree
+**Status in dregg.** *Absent at the algebra layer.* The closest in-tree
 construction is `intent::trustless::SealedTurn` (matchmaker fuses
 counterparty intents), but it operates at the intent layer, not the
 cross-cell-binding layer.
 
 **Categorical reading.** Pushouts are *colimits of spans*. They are
-the "smallest combined" construction; the dual of pullbacks. If pyana
+the "smallest combined" construction; the dual of pullbacks. If dregg
 has pullbacks (γ.2) and no pushouts, **the category is incomplete
 for colimits**. The categorical pressure is to *add* a pushout-shaped
 primitive. But the prior `CROSS-CELL-COORDINATION.md` analysis
@@ -1090,7 +1090,7 @@ Naming win, not new-primitive win. *Documentation, not code.*
 **Form.** Given two parallel morphisms `f, g: A → B`, the equalizer
 is the *largest sub-object* of `A` on which `f` and `g` agree.
 
-**Pyana realization.**
+**`dregg` realization.**
 
 1. **γ.2 bilateral binding as equalizer.** §1.8 already named this:
    given two projections of a bilateral effect ("from sender's
@@ -1110,7 +1110,7 @@ is the *largest sub-object* of `A` on which `f` and `g` agree.
    MatchSpec` realizes this.
 
 **Equalizer's missing dual — coequalizer.** *Coequalizer is the
-quotient where `f` and `g`'s outputs are identified.* In pyana terms:
+quotient where `f` and `g`'s outputs are identified.* In dregg terms:
 given two divergent state-paths, the coequalizer is the "agreed-upon
 identification" that makes them equivalent.
 
@@ -1157,7 +1157,7 @@ analyzed.
 
 ### §5.5. Summary of limits / colimits
 
-| Construction | Status in pyana | App-driven? |
+| Construction | Status in dregg | App-driven? |
 |---|---|---|
 | Pullback (intersection of effects over shared resource) | ✓ realized (γ.2) | yes |
 | Pushout (combination of effects sharing origin) | implicit (`call_forest`) | naming win only |
@@ -1193,7 +1193,7 @@ verifier's accumulator walk consumes this structure.
 
 **Form.** The *initial F-algebra* is the smallest set `Y` with a
 map `F(Y) → Y` such that any other F-algebra factors through it.
-For pyana's γ.2 functor, the initial algebra is *the set of
+For dregg's γ.2 functor, the initial algebra is *the set of
 turn-accumulator trees* — finite trees whose nodes are γ.2 bindings
 of arity 0, 1, 2, or 3.
 
@@ -1242,7 +1242,7 @@ initial-algebra construction does for an endofunctor: it gives the
 *type-level* fixed point of `F` (the smallest type closed under
 `F`'s action).
 
-The pyana realization: the verifier's recursive walk over a turn's
+The dregg realization: the verifier's recursive walk over a turn's
 accumulator structure is a catamorphism; the *signature* of that
 catamorphism is `F(accumulator_state) → accumulator_state`, and the
 initial F-algebra is the type that universally encodes all such
@@ -1265,11 +1265,11 @@ Neither is new work; both are *clarifying naming*.
 
 ---
 
-## §7. Monads — what structures pyana?
+## §7. Monads — what structures dregg?
 
 Monads are the categorical name for sequencing-with-effects: a monad
 `M` packages a type `X` into `M(X)` such that you can sequence
-computations on `M(X)`. Several patterns in pyana are monadic; this
+computations on `M(X)`. Several patterns in dregg are monadic; this
 section names them.
 
 ### §7.1. The capability monad — actions with possible authorization failure
@@ -1281,7 +1281,7 @@ a = Cap.Authorized(a)`; `bind (Cap.Auth(a)) f = f(a) | Cap.Denied`.
 **Categorical name.** The *Maybe / Option monad*, with `Some` =
 "authorization succeeded" and `None` = "authorization failed."
 
-**Pyana realization.** `Result<Action, AuthorizationError>` is the
+**`dregg` realization.** `Result<Action, AuthorizationError>` is the
 naive form. The richer form — where the failure carries a *witness
 of why* — is the *Either monad* with the left side being a structured
 error type.
@@ -1307,9 +1307,9 @@ CellState`, returning the action's effect-application.
 
 **Categorical name.** The State monad `S → (X, S)`.
 
-**Pyana realization.** `cell::program::TransitionCase::body` plus the
+**`dregg` realization.** `cell::program::TransitionCase::body` plus the
 executor's effect-application loop *is* the state monad's bind. The
-DSL's `#[pyana_caveat]` lowering is the *category-theoretic do-notation*
+DSL's `#[dregg_caveat]` lowering is the *category-theoretic do-notation*
 for the state monad.
 
 **Missing operation.** Monadic *transformers* — combining state with
@@ -1327,7 +1327,7 @@ chain.
 **Categorical name.** Writer monad `(X, W)` where `W` is a monoid
 (the receipt chain).
 
-**Pyana realization.** `turn::executor`'s receipt construction.
+**`dregg` realization.** `turn::executor`'s receipt construction.
 
 **Missing operation.** The writer monad's `tell` operation — "append
 this to the log" — corresponds to *receipt-emission*. The natural
@@ -1345,12 +1345,12 @@ preimage, ...)`. This is the *Reader monad* with environment =
 
 **Categorical name.** Reader monad `R → X`.
 
-**Pyana realization.** `storage::programmable::ValidationContext` (or
+**`dregg` realization.** `storage::programmable::ValidationContext` (or
 its lifted equivalent). The evaluator threads this through every
 predicate evaluation.
 
 **Missing operation.** The reader monad's `local` operation —
-"evaluate this sub-expression in a modified environment." Pyana
+"evaluate this sub-expression in a modified environment." `dregg`
 doesn't have this; the context is global per turn. Conditional reads
 (`ConditionalTurn`) come close but operate on whole turns, not
 per-predicate-scope.
@@ -1363,18 +1363,18 @@ pipelined sends fire continuations.
 
 **Categorical name.** Continuation monad `(X → R) → R`.
 
-**Pyana realization.** `captp::pipeline` and the promise resolution
+**`dregg` realization.** `captp::pipeline` and the promise resolution
 machinery.
 
 **Missing operation.** The continuation monad's `callCC` ("call with
-current continuation") — pyana doesn't have a structural way to
+current continuation") — dregg doesn't have a structural way to
 *reify* the current continuation as a first-class object. This would
 be useful for *cancellation* / *failure recovery* flows in pipelined
 sends. Today: hand-rolled per app.
 
 ### §7.6. The combined effect VM
 
-The pyana effect VM (`circuit::effect_vm`) is *operationally*:
+The dregg effect VM (`circuit::effect_vm`) is *operationally*:
 - state monad (cell state)
 - + writer monad (receipt)
 - + reader monad (validation context)
@@ -1460,7 +1460,7 @@ associative, idempotent, with identity = `True` for meet, `False` for
 join). This is a *semilattice*, which is a degenerate but well-defined
 monoidal structure.
 
-**Pyana realization.** Implicit; not exposed.
+**`dregg` realization.** Implicit; not exposed.
 
 **Implication.** If we expose program composition, two cells could
 have *jointly-programmed* state-transitions: a transition is
@@ -1703,7 +1703,7 @@ prior doc's "the algebra is complete, only ergonomics leak" was
 > COORDINATION.md §7.2` then sit on a *structurally closed* substrate
 > rather than an *approximately closed* one.
 
-The method also reveals that pyana's substrate is **further along
+The method also reveals that dregg's substrate is **further along
 than the use-case method suggested**: most of the rich categorical
 constructions (pullbacks, equalizers, adjunctions, initial algebras)
 are *already realized*. The missing pieces are surgically small. This

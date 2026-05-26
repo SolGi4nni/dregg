@@ -34,7 +34,7 @@ Key properties:
 ## Usage
 
 ```rust
-use pyana_macaroon::{Macaroon, Action, encode_token, decode_token};
+use dregg_macaroon::{Macaroon, Action, encode_token, decode_token};
 
 // Create a root macaroon
 let root_key: [u8; 32] = /* your root secret */;
@@ -56,7 +56,7 @@ let decoded: Macaroon = decode_token(&encoded)?;
 Actions are single-character flags, not words:
 
 ```rust
-use pyana_macaroon::Action;
+use dregg_macaroon::Action;
 
 let read = Action::parse("r");        // READ
 let read_write = Action::parse("rw"); // READ | WRITE
@@ -75,7 +75,7 @@ let mac = mac.add_third_party(
 )?;
 
 // Third party mints a discharge macaroon
-let discharge = pyana_macaroon::create_discharge(
+let discharge = dregg_macaroon::create_discharge(
     &shared_key,
     b"caveat-identifier",
     "https://discharge.example.com",
@@ -92,7 +92,7 @@ The prefix enables format auto-detection in the `token` crate.
 
 ## Architecture
 
-This crate is the lowest layer in the Pyana auth stack. It provides raw macaroon
+This crate is the lowest layer in the `dregg` auth stack. It provides raw macaroon
 primitives that the `token` crate wraps behind the `AuthToken` trait, which the
 auth service then exposes via Cap'n Proto RPC.
 

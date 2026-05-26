@@ -7,10 +7,10 @@
 //! 4. Channel closes with final balances settled via receipt chain
 //! 5. Uses `coord/src/budget.rs` bounded counters (StingrayCounter struct)
 
-use pyana_cell::CellId;
-use pyana_coord::budget::StingrayCounter;
-use pyana_turn::turn::TurnReceipt;
-use pyana_turn::verify::verify_receipt_chain;
+use dregg_cell::CellId;
+use dregg_coord::budget::StingrayCounter;
+use dregg_turn::turn::TurnReceipt;
+use dregg_turn::verify::verify_receipt_chain;
 
 /// A payment from Alice to Bob within the channel.
 /// Each payment attenuates Alice's remaining budget slice.
@@ -51,7 +51,7 @@ impl ChannelState {
 
 /// Compute a debit digest for a payment.
 fn payment_digest(seq: u64, amount: u64, sender: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-channel-payment-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-channel-payment-v1");
     hasher.update(&seq.to_le_bytes());
     hasher.update(&amount.to_le_bytes());
     hasher.update(sender);
@@ -72,7 +72,7 @@ fn make_channel_receipt(
     };
 
     // Post-state commits to the current channel balances.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-channel-state-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-channel-state-v1");
     hasher.update(&channel_state.alice_balance().to_le_bytes());
     hasher.update(&channel_state.bob_balance().to_le_bytes());
     hasher.update(&channel_state.total_sent.to_le_bytes());
@@ -104,7 +104,7 @@ fn make_channel_receipt(
 }
 
 fn main() {
-    println!("=== Pyana Payment Channel Demo (Bounded-Counter Budget) ===\n");
+    println!("=== Dregg Payment Channel Demo (Bounded-Counter Budget) ===\n");
 
     // --- Setup ---
     let alice_pubkey = blake3::derive_key("alice-channel-pubkey-v1", b"alice-channel-secret");

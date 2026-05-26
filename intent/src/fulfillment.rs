@@ -20,18 +20,18 @@
 
 use crate::matcher::HeldCapability;
 use crate::{CommitmentId, Intent, Match, PredicateRequirement, VerificationMode};
-use pyana_cell::CellId;
-use pyana_cell::Ledger;
-use pyana_circuit::BabyBear;
-use pyana_circuit::compute_action_binding_narrow;
-use pyana_circuit::multi_step_air::{
+use dregg_cell::CellId;
+use dregg_cell::Ledger;
+use dregg_circuit::BabyBear;
+use dregg_circuit::compute_action_binding_narrow;
+use dregg_circuit::multi_step_air::{
     MultiStepWitness, pi, prove_authorization_stark, verify_authorization_stark,
 };
-use pyana_circuit::stark;
-use pyana_circuit::{PredicateProof, PredicateType, verify_predicate};
-use pyana_token::{Attenuation, AuthToken, MacaroonToken};
-use pyana_turn::conditional::{ConditionalTurn, ProofCondition, compute_conditional_deposit};
-use pyana_turn::{
+use dregg_circuit::stark;
+use dregg_circuit::{PredicateProof, PredicateType, verify_predicate};
+use dregg_token::{Attenuation, AuthToken, MacaroonToken};
+use dregg_turn::conditional::{ConditionalTurn, ProofCondition, compute_conditional_deposit};
+use dregg_turn::{
     Action, Authorization, CallForest, DelegationMode, Effect, Turn, TurnExecutor, TurnReceipt,
     TurnResult,
 };
@@ -262,7 +262,7 @@ pub fn verify_fulfillment_with_key(
 
             // Deserialize the raw macaroon bytes
             let mac =
-                pyana_token::pyana_macaroon::Macaroon::deserialize(token_data).map_err(|e| {
+                dregg_token::dregg_macaroon::Macaroon::deserialize(token_data).map_err(|e| {
                     FulfillmentError::ProofVerificationFailed(format!(
                         "failed to deserialize macaroon token: {}",
                         e
@@ -555,7 +555,7 @@ fn produce_attenuated_token(
     })?;
 
     // Mint a macaroon from the root key (the cclerk holds the key for its own tokens)
-    let mac = MacaroonToken::mint(root_key, source_token.token_id.as_bytes(), "pyana.intent");
+    let mac = MacaroonToken::mint(root_key, source_token.token_id.as_bytes(), "dregg.intent");
 
     // Build the attenuation restrictions
     let attenuation = Attenuation {
@@ -771,7 +771,7 @@ pub fn create_fulfillment_turn(
     // Derive a deterministic preimage from the fulfillment (intent_id + fulfiller + state_root_block).
     // This ensures the conditional can be resolved exactly once per verified fulfillment.
     let preimage = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-payment-v1");
         hasher.update(&intent.id);
         hasher.update(&fulfillment.base.fulfiller.0);
         hasher.update(&fulfillment.state_root_block.to_le_bytes());
@@ -796,7 +796,7 @@ pub fn create_fulfillment_turn(
     // conditional gating semantics.
     let action = Action {
         target: payer_cell,
-        method: pyana_turn::action::symbol("fulfillment_payment"),
+        method: dregg_turn::action::symbol("fulfillment_payment"),
         args: Vec::new(),
         authorization: Authorization::Breadstuff(hash),
         preconditions: Default::default(),
@@ -941,7 +941,7 @@ pub fn execute_fulfillment_flow_with_key(
 
     // Step 4: Resolve immediately -- we know the preimage since we derived it.
     let _preimage = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-payment-v1");
         hasher.update(&intent.id);
         hasher.update(&fulfillment.base.fulfiller.0);
         hasher.update(&fulfillment.state_root_block.to_le_bytes());
@@ -1036,7 +1036,7 @@ pub fn execute_fulfillment_flow_with_commitment(
 #[derive(Clone, Debug)]
 pub struct CommittedFulfillmentInput {
     /// The nullifier for this note.
-    pub nullifier: pyana_cell::Nullifier,
+    pub nullifier: dregg_cell::Nullifier,
     /// The Merkle root at the time of proof generation.
     pub merkle_root: [u8; 32],
     /// The plaintext value (known to the spender only).
@@ -1100,9 +1100,9 @@ pub fn execute_committed_fulfillment_flow(
     root_key: Option<&[u8; 32]>,
 ) -> Result<TurnReceipt, FulfillmentError> {
     use curve25519_dalek::scalar::Scalar;
-    use pyana_cell::note::NoteCommitment;
-    use pyana_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation_with_range};
-    use pyana_turn::action::{CommitmentMode, DelegationMode, symbol};
+    use dregg_cell::note::NoteCommitment;
+    use dregg_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation_with_range};
+    use dregg_turn::action::{CommitmentMode, DelegationMode, symbol};
 
     // Step 1: Verify the fulfillment (same verification as cleartext path).
     let state_root = fulfillment.state_root;
@@ -1171,7 +1171,7 @@ pub fn execute_committed_fulfillment_flow(
 
         // Compute note commitment.
         let note_commitment = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-committed-note v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-committed-note v1");
             hasher.update(&out.recipient);
             hasher.update(&vc.to_bytes().0);
             hasher.update(&out.asset_type.to_le_bytes());
@@ -1323,9 +1323,9 @@ pub fn execute_committed_fulfillment_flow(
 mod tests {
     use super::*;
     use crate::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec, VerificationMode};
-    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-    use pyana_circuit::poseidon2::hash_fact;
+    use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+    use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+    use dregg_circuit::poseidon2::hash_fact;
 
     fn source_token() -> HeldCapability {
         HeldCapability {
@@ -1960,8 +1960,8 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_with_valid_predicate_proofs() {
-        use pyana_circuit::poseidon2::hash_fact;
-        use pyana_circuit::{
+        use dregg_circuit::poseidon2::hash_fact;
+        use dregg_circuit::{
             PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
         };
 
@@ -2052,8 +2052,8 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_rejects_stale_state_root() {
-        use pyana_circuit::poseidon2::hash_fact;
-        use pyana_circuit::{
+        use dregg_circuit::poseidon2::hash_fact;
+        use dregg_circuit::{
             PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
         };
 
@@ -2143,8 +2143,8 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_rejects_wrong_threshold() {
-        use pyana_circuit::poseidon2::hash_fact;
-        use pyana_circuit::{
+        use dregg_circuit::poseidon2::hash_fact;
+        use dregg_circuit::{
             PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
         };
 
@@ -2302,8 +2302,8 @@ mod tests {
 
     #[test]
     fn test_verify_fulfillment_multiple_predicates_all_must_pass() {
-        use pyana_circuit::poseidon2::hash_fact;
-        use pyana_circuit::{
+        use dregg_circuit::poseidon2::hash_fact;
+        use dregg_circuit::{
             PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
         };
 
@@ -2469,7 +2469,7 @@ mod tests {
             ProofCondition::HashPreimage { hash } => {
                 // Recompute the preimage and verify.
                 let preimage = {
-                    let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+                    let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-payment-v1");
                     hasher.update(&intent.id);
                     hasher.update(&fulfillment.base.fulfiller.0);
                     hasher.update(&fulfillment.state_root_block.to_le_bytes());
@@ -2485,7 +2485,7 @@ mod tests {
         let effects = &conditional.turn.call_forest.roots[0].action.effects;
         assert_eq!(effects.len(), 1);
         match &effects[0] {
-            pyana_turn::Effect::Transfer { from, to, amount } => {
+            dregg_turn::Effect::Transfer { from, to, amount } => {
                 assert_eq!(*from, payer);
                 assert_eq!(*to, recipient);
                 assert_eq!(*amount, 500);
@@ -2496,7 +2496,7 @@ mod tests {
 
     #[test]
     fn test_execute_fulfillment_flow_success() {
-        use pyana_cell::{AuthRequired, Cell, Ledger, Permissions};
+        use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 
         let spec = MatchSpec {
             actions: vec![ActionPattern {
@@ -2577,7 +2577,7 @@ mod tests {
         ledger.insert_cell(payer_c).unwrap();
         ledger.insert_cell(recipient_c).unwrap();
 
-        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+        let executor = TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
         let result = execute_fulfillment_flow_with_key(
             &intent,
@@ -2653,7 +2653,7 @@ mod tests {
         let recipient_cell = CellId([0xBB; 32]);
 
         let mut ledger = Ledger::new();
-        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+        let executor = TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
         let result = execute_fulfillment_flow_with_key(
             &intent,
@@ -2678,7 +2678,7 @@ mod tests {
 
     #[test]
     fn test_execute_fulfillment_flow_failed_verification_no_payment() {
-        use pyana_cell::Ledger;
+        use dregg_cell::Ledger;
 
         // Intent with a predicate requirement that won't be satisfied.
         let spec = MatchSpec {
@@ -2736,7 +2736,7 @@ mod tests {
         let recipient_cell = CellId([0xBB; 32]);
 
         let mut ledger = Ledger::new();
-        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+        let executor = TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
         let result = execute_fulfillment_flow_with_key(
             &intent,

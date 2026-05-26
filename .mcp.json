@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "pyana": {
+    "dregg": {
       "command": "cargo",
-      "args": ["run", "--release", "-p", "pyana-node", "--", "mcp", "--data-dir", ".pyana-data"],
+      "args": ["run", "--release", "-p", "dregg-node", "--", "mcp", "--data-dir", ".dregg-data"],
       "env": {
-        "RUST_LOG": "pyana_node=info"
+        "RUST_LOG": "dregg_node=info"
       }
     }
   }

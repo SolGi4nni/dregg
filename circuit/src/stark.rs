@@ -416,7 +416,7 @@ struct Transcript {
 impl Transcript {
     fn new(domain_sep: &[u8]) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-stark-v1:");
+        hasher.update(b"dregg-stark-v1:");
         hasher.update(domain_sep);
         Self { hasher, counter: 0 }
     }
@@ -472,7 +472,7 @@ impl Transcript {
 // ============================================================================
 
 /// Domain separator for PoW hashing to prevent cross-protocol collisions.
-const POW_DOMAIN: &[u8] = b"pyana-stark-pow:";
+const POW_DOMAIN: &[u8] = b"dregg-stark-pow:";
 
 /// Check whether a hash has at least `bits` leading zero bits.
 fn has_leading_zeros(hash: &[u8; 32], bits: u32) -> bool {
@@ -735,7 +735,7 @@ impl StarkAir for MerkleStarkAir {
         4
     }
     fn air_name(&self) -> &'static str {
-        "pyana-merkle-v1"
+        "dregg-merkle-v1"
     }
     fn eval_constraints(
         &self,
@@ -2452,7 +2452,7 @@ mod tests {
                 4
             }
             fn air_name(&self) -> &'static str {
-                "pyana-poseidon2-v1"
+                "dregg-poseidon2-v1"
             }
             fn has_chain_continuity(&self) -> bool {
                 true
@@ -2606,7 +2606,7 @@ mod tests {
         let proof = prove_with_context(&air, &trace, &pi, Some(&ctx));
         let bytes = proof_to_bytes(&proof);
         let proof2 = proof_from_bytes(&bytes).unwrap();
-        assert_eq!(proof2.air_name, "pyana-merkle-v1");
+        assert_eq!(proof2.air_name, "dregg-merkle-v1");
         assert_eq!(proof2.nonce, Some([0xAB; 32]));
         assert!(verify_with_context(&air, &proof2, &pi, Some(&ctx)).is_ok());
     }
@@ -3125,7 +3125,7 @@ mod tests {
                 2
             }
             fn air_name(&self) -> &'static str {
-                "pyana-minimal-test-v1"
+                "dregg-minimal-test-v1"
             }
             fn has_chain_continuity(&self) -> bool {
                 false
@@ -3200,7 +3200,7 @@ mod tests {
         // Two transcripts with the same field values but different PI counts
         // must produce different challenges. This tests the PI count binding.
         let mut t1 = Transcript::new(b"merkle-stark");
-        t1.absorb_bytes(b"pyana-merkle-v1");
+        t1.absorb_bytes(b"dregg-merkle-v1");
         t1.absorb_hash(&[0u8; 32]);
         t1.absorb_bytes(&2u32.to_le_bytes()); // count = 2
         t1.absorb_field(BabyBear::new(100));
@@ -3208,7 +3208,7 @@ mod tests {
         let c1 = t1.squeeze_field();
 
         let mut t2 = Transcript::new(b"merkle-stark");
-        t2.absorb_bytes(b"pyana-merkle-v1");
+        t2.absorb_bytes(b"dregg-merkle-v1");
         t2.absorb_hash(&[0u8; 32]);
         t2.absorb_bytes(&3u32.to_le_bytes()); // count = 3
         t2.absorb_field(BabyBear::new(100));
@@ -3234,7 +3234,7 @@ mod tests {
                 2
             }
             fn air_name(&self) -> &'static str {
-                "pyana-minimal-test-v1"
+                "dregg-minimal-test-v1"
             }
             fn has_chain_continuity(&self) -> bool {
                 false
@@ -3435,7 +3435,7 @@ mod tests {
         bytes.extend_from_slice(&6u32.to_le_bytes()); // num_cols = 6
         bytes.extend_from_slice(&0u32.to_le_bytes()); // query_proofs count = 0
         // air_name
-        let name = b"pyana-merkle-v1";
+        let name = b"dregg-merkle-v1";
         bytes.extend_from_slice(&(name.len() as u32).to_le_bytes());
         bytes.extend_from_slice(name);
         // nonce = None

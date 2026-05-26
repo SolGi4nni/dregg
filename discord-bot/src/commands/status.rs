@@ -52,7 +52,7 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
                 _ => "\u{274c}",
             };
 
-            let embed = embeds::pyana_embed("Federation Status")
+            let embed = embeds::dregg_embed("Federation Status")
                 .field(
                     "Status",
                     format!("{status_icon} {}", health.status.to_uppercase()),
@@ -110,7 +110,7 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(result) => {
             let valid_icon = if result.valid { "\u{2705}" } else { "\u{274c}" };
 
-            let mut embed = embeds::pyana_embed("Proof Verification").field(
+            let mut embed = embeds::dregg_embed("Proof Verification").field(
                 "Valid",
                 format!("{valid_icon} {}", result.valid),
                 true,
@@ -156,7 +156,7 @@ pub async fn handle_metrics(ctx: &Context, command: &CommandInteraction, state: 
         Ok(metrics) => {
             let uptime_str = format_uptime(metrics.uptime_secs);
 
-            let embed = embeds::pyana_embed("Devnet Metrics")
+            let embed = embeds::dregg_embed("Devnet Metrics")
                 .field("TPS", format!("{:.2}", metrics.tps), true)
                 .field("Block Height", metrics.block_height.to_string(), true)
                 .field("Pending Turns", metrics.pending_turns.to_string(), true)

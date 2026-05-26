@@ -1,33 +1,33 @@
 [package]
-name = "pyana-teasting"
+name = "dregg-teasting"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
-description = "Integration test simulation suite for pyana — end-to-end flows across federation boundaries"
+description = "Integration test simulation suite for dregg — end-to-end flows across federation boundaries"
 
 [dependencies]
-pyana-types = { path = "../types" }
-pyana-cell = { path = "../cell" }
-pyana-turn = { path = "../turn" }
-pyana-circuit = { path = "../circuit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-federation = { path = "../federation" }
-pyana-sdk = { path = "../sdk" }
-pyana-bridge = { path = "../bridge", features = ["test-utils"] }
-pyana-verifier = { path = "../verifier" }
-pyana-wire = { path = "../wire" }
-pyana-blocklace = { path = "../blocklace" }
-# pyana-node is a binary crate (no lib target); use its deps directly instead.
-# pyana-node = { path = "../node" }
-pyana-commit = { path = "../commit" }
-pyana-net = { path = "../net" }
-pyana-intent = { path = "../intent" }
-pyana-coord = { path = "../coord" }
-pyana-captp = { path = "../captp" }
-pyana-token = { path = "../token" }
-pyana-persist = { path = "../persist" }
-pyana-storage = { path = "../storage" }
-pyana-macaroon = { workspace = true, features = ["crypto"] }
+dregg-types = { path = "../types" }
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-circuit = { path = "../circuit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-federation = { path = "../federation" }
+dregg-sdk = { path = "../sdk" }
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
+dregg-verifier = { path = "../verifier" }
+dregg-wire = { path = "../wire" }
+dregg-blocklace = { path = "../blocklace" }
+# dregg-node is a binary crate (no lib target); use its deps directly instead.
+# dregg-node = { path = "../node" }
+dregg-commit = { path = "../commit" }
+dregg-net = { path = "../net" }
+dregg-intent = { path = "../intent" }
+dregg-coord = { path = "../coord" }
+dregg-captp = { path = "../captp" }
+dregg-token = { path = "../token" }
+dregg-persist = { path = "../persist" }
+dregg-storage = { path = "../storage" }
+dregg-macaroon = { workspace = true, features = ["crypto"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

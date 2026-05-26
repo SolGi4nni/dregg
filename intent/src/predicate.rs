@@ -4,7 +4,7 @@
 //! algebras (DFA acceptance, temporal-predicate-DSL, Merkle-membership,
 //! blinded-set non-revocation, bridge `Gte/Lte/...` predicates, Pedersen
 //! equality, and `Custom { vk_hash }`) are unified under
-//! [`pyana_cell::predicate::WitnessedPredicate`]. The intent crate uses
+//! [`dregg_cell::predicate::WitnessedPredicate`]. The intent crate uses
 //! that vocabulary in three places:
 //!
 //! 1. **Match requirements** — an intent's `MatchSpec` can carry a
@@ -25,9 +25,9 @@
 //!
 //! ## Registry plumbing
 //!
-//! The registry itself lives in `pyana_cell::predicate::WitnessedPredicateRegistry`.
-//! Production wiring registers real verifiers (`pyana_circuit::dsl::circuit`'s
-//! DFA verifier, `pyana_circuit::temporal_predicate_air`'s temporal
+//! The registry itself lives in `dregg_cell::predicate::WitnessedPredicateRegistry`.
+//! Production wiring registers real verifiers (`dregg_circuit::dsl::circuit`'s
+//! DFA verifier, `dregg_circuit::temporal_predicate_air`'s temporal
 //! verifier, etc.). Tests can use `WitnessedPredicateRegistry::with_stubs()`
 //! which accepts any non-empty proof.
 //!
@@ -40,7 +40,7 @@
 //! UTF-8 bytes", for `Temporal` it's "the receipt-window bytes", etc.
 //!
 //! ```rust,ignore
-//! use pyana_intent::predicate::{IntentPredicateVerifier, ResourceDfa};
+//! use dregg_intent::predicate::{IntentPredicateVerifier, ResourceDfa};
 //! let verifier = IntentPredicateVerifier::with_stub_registry();
 //! let dfa = ResourceDfa::new(route_root, dfa_proof_bytes);
 //! assert!(verifier.matches_resource(&dfa, "documents/private/x").is_ok());
@@ -48,7 +48,7 @@
 
 use std::sync::Arc;
 
-pub use pyana_cell::predicate::{
+pub use dregg_cell::predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateRegistry, WitnessedPredicateVerifier,
 };

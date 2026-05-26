@@ -1,6 +1,6 @@
 // starbridge-apps/identity/pages/turn-builders.js
 //
-// JS shim wrapping `window.pyana.signTurn(turnSpec)` (the extension
+// JS shim wrapping `window.dregg.signTurn(turnSpec)` (the extension
 // cclerk API — see extension/src/page.ts) with credential-domain
 // conveniences that mirror the Rust turn-builders in src/lib.rs.
 //
@@ -53,8 +53,8 @@ function bool32(b) {
 }
 
 async function blake3Bytes(s) {
-  if (window.pyana?.blake3) return window.pyana.blake3(s);
-  // Fallback hash via SubtleCrypto if pyana's blake3 isn't wired.
+  if (window.dregg?.blake3) return window.dregg.blake3(s);
+  // Fallback hash via SubtleCrypto if dregg's blake3 isn't wired.
   const buf = new TextEncoder().encode(s);
   const hash = await crypto.subtle.digest('SHA-256', buf);
   return Array.from(new Uint8Array(hash));
@@ -63,11 +63,11 @@ async function blake3Bytes(s) {
 // ─── builders ────────────────────────────────────────────────────────────
 
 async function issue_credential(issuerCellHex, schemaName, subjectHex, claims) {
-  // Step 1: invoke pyana-credentials' issue() through wasm to mint the
+  // Step 1: invoke dregg-credentials' issue() through wasm to mint the
   // signed credential. The wasm binding is responsible for hashing the
   // schema, calling MacaroonToken::mint, applying the attenuation, and
   // returning a `Credential` JSON.
-  const credential = await window.pyana.credentials.issue({
+  const credential = await window.dregg.credentials.issue({
     schemaName,
     subject: subjectHex,
     claims,
@@ -75,16 +75,16 @@ async function issue_credential(issuerCellHex, schemaName, subjectHex, claims) {
   // Step 2: read the issuer cell's current ISSUANCE_COUNTER_SLOT to
   // compute new_counter = old + 1 (MonotonicSequence will reject any
   // other delta at execution time).
-  const oldCounter = await window.pyana.cell.readField(issuerCellHex, ISSUANCE_COUNTER_SLOT);
+  const oldCounter = await window.dregg.cell.readField(issuerCellHex, ISSUANCE_COUNTER_SLOT);
   const newCounter = (BigInt(oldCounter ?? 0) + 1n).toString();
   // Step 3: read the current revocation root (we re-write it unchanged
   // — Monotonic accepts new == old).
-  const revRoot = await window.pyana.cell.readField(issuerCellHex, REVOCATION_ROOT_SLOT)
+  const revRoot = await window.dregg.cell.readField(issuerCellHex, REVOCATION_ROOT_SLOT)
     ?? new Array(32).fill(0);
 
   // Step 4: emit the issue turn — three effects, matching
   // `build_issue_credential_action`.
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: issuerCellHex,
     method: 'issue_credential',
     effects: [
@@ -98,7 +98,7 @@ async function issue_credential(issuerCellHex, schemaName, subjectHex, claims) {
 }
 
 async function revoke_credential(issuerCellHex, credentialIdHex, newRootHex) {
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: issuerCellHex,
     method: 'revoke_credential',
     effects: [
@@ -111,9 +111,9 @@ async function revoke_credential(issuerCellHex, credentialIdHex, newRootHex) {
 
 async function present_credential({ credentialUri, disclose, predicates, anonymous }) {
   // The bulk of present is off-ledger: produce a Presentation via wasm
-  // (which routes through pyana-credentials::present /
-  // pyana-credentials::present_anonymous).
-  const presentation = await window.pyana.credentials[anonymous ? 'presentAnonymous' : 'present']({
+  // (which routes through dregg-credentials::present /
+  // dregg-credentials::present_anonymous).
+  const presentation = await window.dregg.credentials[anonymous ? 'presentAnonymous' : 'present']({
     credentialUri,
     disclose,
     predicates,
@@ -127,14 +127,14 @@ async function present_credential({ credentialUri, disclose, predicates, anonymo
 }
 
 async function verify_presentation({ verifierUri, presentationJson, schema, disclose, predicate }) {
-  // Step 1: run verification through wasm (calls pyana_credentials::verify).
+  // Step 1: run verification through wasm (calls dregg_credentials::verify).
   const presentation = JSON.parse(presentationJson);
   const opts = {
     expected_schema: schema || null,
     expected_disclosure: disclose ?? [],
     expected_predicates: parsePredicateSpec(predicate),
   };
-  const verifyResult = await window.pyana.credentials.verify({
+  const verifyResult = await window.dregg.credentials.verify({
     presentation,
     options: opts,
   });
@@ -143,7 +143,7 @@ async function verify_presentation({ verifierUri, presentationJson, schema, disc
   const topic = verifyResult.accept ? TOPIC_ACCEPTED : TOPIC_REJECTED;
   const commitment = presentation.proof?.revealed_facts_commitment_hash
                     ?? new Array(32).fill(0);
-  await window.pyana.signTurn({
+  await window.dregg.signTurn({
     target: verifierUri,
     method: 'verify_presentation',
     effects: [
@@ -176,10 +176,10 @@ const BUILDERS = {
 };
 
 if (typeof window !== 'undefined') {
-  window.pyana ??= {};
-  window.pyana.builders ??= {};
-  window.pyana.builders.identity = {
-    ...(window.pyana.builders.identity ?? {}),
+  window.dregg ??= {};
+  window.dregg.builders ??= {};
+  window.dregg.builders.identity = {
+    ...(window.dregg.builders.identity ?? {}),
     ...BUILDERS,
   };
 }

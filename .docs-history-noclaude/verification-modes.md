@@ -1,6 +1,6 @@
 # Verification Modes
 
-Pyana uses a progressive disclosure model for authorization verification. The same
+`dregg` uses a progressive disclosure model for authorization verification. The same
 token chain and Datalog semantics underpin all three modes; what changes is how much
 the verifier learns and what cryptographic assurance backs the result.
 
@@ -30,7 +30,7 @@ and can run Datalog locally.
 ### API
 
 ```rust
-use pyana_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
+use dregg_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
 
 let presentation = cclerk.authorize(&token, &request, VerificationMode::Trusted)?;
 
@@ -87,7 +87,7 @@ internal delegation structure, or user identity).
 ### API
 
 ```rust
-use pyana_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation, FactIndex};
+use dregg_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation, FactIndex};
 
 // Reveal facts at indices 0 and 2 from the evaluated fact set
 let presentation = cclerk.authorize(
@@ -151,7 +151,7 @@ scenarios where the verifier should learn absolutely nothing beyond "yes" or "no
 ### API
 
 ```rust
-use pyana_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
+use dregg_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
 
 let presentation = cclerk.authorize(&token, &request, VerificationMode::FullyPrivate)?;
 
@@ -218,7 +218,7 @@ Do you hold the root key?
 
 | Mode | Entry point | Circuit |
 |------|-------------|---------|
-| Trusted | `pyana_token::datalog_verify::verify_token_datalog()` | None |
+| Trusted | `dregg_token::datalog_verify::verify_token_datalog()` | None |
 | Selective | `BridgePresentationBuilder::prove()` with partial public inputs | `MultiStepDerivationAir` |
 | Private | `BridgePresentationBuilder::prove()` with conclusion-only public inputs | `MultiStepDerivationAir` |
 

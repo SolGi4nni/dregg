@@ -4,7 +4,7 @@
 Consumes `TurnReceipt` artifacts produced by either:
 
   (a) The Rust `cross-app-helper` binary (EmbeddedExecutor path), or
-  (b) `cross_app_mcp.py` (pyana-node MCP subprocess path — NEW).
+  (b) `cross_app_mcp.py` (dregg-node MCP subprocess path — NEW).
 
 Running verifications:
 
@@ -26,12 +26,12 @@ Running verifications:
 
   4. **Event-data agreement.**
 
-  5. **`pyana-verifier` invocation.**
+  5. **`dregg-verifier` invocation.**
      MCP path (receipts carry `effect_vm_proof_hex`): verify each proof
-     individually via `pyana-verifier` stdin mode and assert ALL return
+     individually via `dregg-verifier` stdin mode and assert ALL return
      `"verified": true`. This upgrades the previous "no Rejected"
      assertion to "all Verified".
-     EmbeddedExecutor path (no proofs): run `pyana-verifier replay-chain`
+     EmbeddedExecutor path (no proofs): run `dregg-verifier replay-chain`
      with empty proof bytes and assert no `Rejected` entries.
 
   6. **Tamper test (must_not_pass).**
@@ -121,7 +121,7 @@ def is_mcp_path(receipts: list[dict]) -> bool:
     """Return True if the receipts were produced by the MCP subprocess path.
 
     Heuristic: any receipt with a non-empty `effect_vm_proof_hex` field
-    was produced by `pyana-node mcp` (EmbeddedExecutor never generates
+    was produced by `dregg-node mcp` (EmbeddedExecutor never generates
     STARK proofs). A single positive in the chain is sufficient.
     """
     return any(bool(r.get("effect_vm_proof_hex")) for r in receipts if r)
@@ -281,7 +281,7 @@ def cross_app_links_ok(state_dir: Path) -> dict[str, bool]:
 
 
 def verify_single_proof(verifier_bin: str, receipt: dict) -> dict:
-    """Verify one STARK proof via `pyana-verifier` stdin mode.
+    """Verify one STARK proof via `dregg-verifier` stdin mode.
 
     Sends {"proof_hex": "...", "public_inputs": [...], "vk_hash": "auto"}
     to the verifier's JSON stdin interface.  Returns the parsed JSON verdict.
@@ -303,7 +303,7 @@ def verify_single_proof(verifier_bin: str, receipt: dict) -> dict:
 
 
 def call_replay_chain(verifier_bin: str, state_dir: Path, receipts: list[dict]) -> dict:
-    """Run `pyana-verifier replay-chain` over an Unwitnessable chain.
+    """Run `dregg-verifier replay-chain` over an Unwitnessable chain.
 
     Used for the EmbeddedExecutor path (no STARK proofs).  Entries
     without a witness bundle and without verifiable proof bytes yield
@@ -390,7 +390,7 @@ def main() -> int:
     parser.add_argument(
         "--verifier-bin",
         default="",
-        help="Path to pyana-verifier; if empty, replay-chain check is skipped",
+        help="Path to dregg-verifier; if empty, replay-chain check is skipped",
     )
     args = parser.parse_args()
     state_dir = Path(args.state_dir)

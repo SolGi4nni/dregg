@@ -4,11 +4,11 @@
 //! ergonomic methods for the common test scenarios: minting, attenuating, delegating,
 //! proving, and presenting tokens.
 
-use pyana_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
-use pyana_sdk::{
+use dregg_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
+use dregg_sdk::{
     AgentCipherclerk, Attenuation, AuthRequest, DelegatedToken, DelegationAuthority, HeldToken,
 };
-use pyana_types::PublicKey;
+use dregg_types::PublicKey;
 
 /// A simulated agent participating in integration tests.
 pub struct SimAgent {
@@ -49,7 +49,7 @@ impl SimAgent {
         &mut self,
         token: &HeldToken,
         restrictions: &Attenuation,
-    ) -> Result<HeldToken, pyana_sdk::SdkError> {
+    ) -> Result<HeldToken, dregg_sdk::SdkError> {
         self.cclerk.attenuate(token, restrictions)
     }
 
@@ -59,7 +59,7 @@ impl SimAgent {
         token: &HeldToken,
         to: &SimAgent,
         restrictions: &Attenuation,
-    ) -> Result<DelegatedToken, pyana_sdk::SdkError> {
+    ) -> Result<DelegatedToken, dregg_sdk::SdkError> {
         self.cclerk.delegate(token, &to.public_key(), restrictions)
     }
 
@@ -72,7 +72,7 @@ impl SimAgent {
     pub fn receive_delegation(
         &mut self,
         delegated: DelegatedToken,
-    ) -> Result<(), pyana_sdk::SdkError> {
+    ) -> Result<(), dregg_sdk::SdkError> {
         let expected = delegated.delegator_public_key;
         self.cclerk
             .receive_signed_delegation(delegated, &DelegationAuthority::TrustedKey(expected))
@@ -88,7 +88,7 @@ impl SimAgent {
         &self,
         token: &HeldToken,
         request: &AuthRequest,
-    ) -> Result<BridgePresentationProof, pyana_sdk::SdkError> {
+    ) -> Result<BridgePresentationProof, dregg_sdk::SdkError> {
         self.cclerk.prove_authorization(token, request)
     }
 
@@ -98,7 +98,7 @@ impl SimAgent {
         root_token: &HeldToken,
         attenuations: &[Attenuation],
         request: &AuthRequest,
-    ) -> Result<BridgePresentationProof, pyana_sdk::SdkError> {
+    ) -> Result<BridgePresentationProof, dregg_sdk::SdkError> {
         self.cclerk
             .prove_with_chain(root_token, attenuations, request)
     }
@@ -110,7 +110,7 @@ impl SimAgent {
         attribute: &str,
         attribute_value: u32,
         predicate: Predicate,
-    ) -> Result<BridgePredicateProof, pyana_sdk::SdkError> {
+    ) -> Result<BridgePredicateProof, dregg_sdk::SdkError> {
         self.cclerk
             .prove_predicate(token, attribute, attribute_value, predicate)
     }

@@ -14,12 +14,11 @@
 //! - Removing or swapping any non-endpoint receipt must break verification.
 
 use crate::Invariant;
-use crate::generators::cell::{LedgerSpec, build_open_ledger};
 use crate::generators::turn::build_no_op_turn;
 
 use proptest::prelude::*;
-use pyana_turn::{
-    ComputronCosts, TurnExecutor, TurnReceipt, TurnResult, verify::verify_receipt_chain,
+use dregg_turn::{
+    TurnExecutor, TurnReceipt, TurnResult,
 };
 
 pub struct ReceiptChain;
@@ -32,8 +31,8 @@ impl Invariant for ReceiptChain {
 /// Build a chain of `n` committed no-op turns for `agent`.
 fn build_chain(
     executor: &TurnExecutor,
-    ledger: &mut pyana_cell::Ledger,
-    agent: pyana_cell::CellId,
+    ledger: &mut dregg_cell::Ledger,
+    agent: dregg_cell::CellId,
     n: usize,
 ) -> Vec<TurnReceipt> {
     let mut chain = Vec::with_capacity(n);

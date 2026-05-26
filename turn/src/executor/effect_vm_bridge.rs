@@ -1,11 +1,11 @@
-//! Bridge from turn-level `Effect` to circuit-level `pyana_circuit::effect_vm::Effect`.
+//! Bridge from turn-level `Effect` to circuit-level `dregg_circuit::effect_vm::Effect`.
 //!
 //! This module owns the (intentionally lossy) projection of a `Turn` into the
 //! sequence of VM effects that the Effect VM AIR consumes for STARK proving.
 
 use std::collections::HashMap;
 
-use pyana_cell::{CellId, Ledger};
+use dregg_cell::{CellId, Ledger};
 
 use crate::action::Effect;
 use crate::executor::ObligationRecord;
@@ -17,16 +17,16 @@ pub(super) fn convert_turn_effects_to_vm(
     turn: &Turn,
     ledger: &Ledger,
     obligations: &HashMap<[u8; 32], ObligationRecord>,
-) -> Vec<pyana_circuit::effect_vm::Effect> {
+) -> Vec<dregg_circuit::effect_vm::Effect> {
     fn collect_effects(
         tree: &CallTree,
         cell_id: &CellId,
         ledger: &Ledger,
         obligations: &HashMap<[u8; 32], ObligationRecord>,
-        vm_effects: &mut Vec<pyana_circuit::effect_vm::Effect>,
+        vm_effects: &mut Vec<dregg_circuit::effect_vm::Effect>,
     ) {
-        use pyana_circuit::effect_vm::Effect as VmEffect;
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::effect_vm::Effect as VmEffect;
+        use dregg_circuit::field::BabyBear;
 
         // REVIEW[effect-vm-coord]: Both helpers truncate 32-byte values to
         // 4 bytes (P1-2 in AUDIT-turn-executor.md). Many distinct effects
@@ -41,12 +41,12 @@ pub(super) fn convert_turn_effects_to_vm(
         // tandem -- a single coordinated landing.
         fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
-            BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            BabyBear::new(val_u32 % dregg_circuit::field::BABYBEAR_P)
         }
 
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
-            BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            BabyBear::new(val_u32 % dregg_circuit::field::BABYBEAR_P)
         }
 
         for effect in &tree.action.effects {
@@ -253,7 +253,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         })
                         .unwrap_or_else(|| hash_to_bb(cell_id.as_bytes()));
                     let combined_new_root =
-                        pyana_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
+                        dregg_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
                     vm_effects.push(VmEffect::AtomicQueueTx {
                         op_count,
                         tx_hash,
@@ -279,7 +279,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         .get(source)
                         .map(|c| hash_to_bb(&c.state.fields[6]))
                         .unwrap_or_else(|| hash_to_bb(pipeline_id));
-                    let source_new = pyana_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
+                    let source_new = dregg_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
                     // For the sink, use the real sink queue's current state as the
                     // old root, then derive the new root by mixing in the message.
                     let sink_root = if let Some(sink) = sinks.first() {
@@ -287,7 +287,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     } else {
                         BabyBear::ZERO
                     };
-                    let sink_new = pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
+                    let sink_new = dregg_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
                     vm_effects.push(VmEffect::PipelineStep {
                         pipeline_id: pipeline_bb,
                         source_old_root: source_root,
@@ -420,7 +420,7 @@ pub(super) fn convert_turn_effects_to_vm(
                             let h = blake3::hash(&bytes);
                             hash_to_bb(h.as_bytes())
                         }
-                        None => pyana_circuit::field::BabyBear::ZERO,
+                        None => dregg_circuit::field::BabyBear::ZERO,
                     };
                     vm_effects.push(VmEffect::SetVerificationKey { vk_hash });
                 }
@@ -494,7 +494,7 @@ pub(super) fn convert_turn_effects_to_vm(
                             let v =
                                 u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
                             // Reduce mod p so we always land in canonical BabyBear.
-                            out[i] = BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                            out[i] = BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
                         }
                         out
                     }
@@ -552,7 +552,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     hasher.update(&portable_proof.destination_federation);
                     hasher.update(&portable_proof.asset_type.to_le_bytes());
                     let mint_hash_bytes = hasher.finalize();
-                    let value_lo = pyana_circuit::field::BabyBear::new(
+                    let value_lo = dregg_circuit::field::BabyBear::new(
                         (portable_proof.value & ((1u64 << 30) - 1)) as u32,
                     );
                     vm_effects.push(VmEffect::BridgeMint {
@@ -579,7 +579,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     hasher.update(&asset_type.to_le_bytes());
                     let lock_hash_bytes = hasher.finalize();
                     let value_lo =
-                        pyana_circuit::field::BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
+                        dregg_circuit::field::BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
                     vm_effects.push(VmEffect::BridgeLock {
                         value_lo,
                         lock_hash: hash_to_bb(lock_hash_bytes.as_bytes()),
@@ -621,17 +621,17 @@ pub(super) fn convert_turn_effects_to_vm(
                     hasher.update(recipient.as_bytes());
                     hasher.update(target.as_bytes());
                     let perm_byte: u8 = match permissions {
-                        pyana_cell::AuthRequired::None => 0,
-                        pyana_cell::AuthRequired::Signature => 1,
-                        pyana_cell::AuthRequired::Proof => 2,
-                        pyana_cell::AuthRequired::Either => 3,
-                        pyana_cell::AuthRequired::Impossible => 4,
-                        pyana_cell::AuthRequired::Custom { .. } => 5,
+                        dregg_cell::AuthRequired::None => 0,
+                        dregg_cell::AuthRequired::Signature => 1,
+                        dregg_cell::AuthRequired::Proof => 2,
+                        dregg_cell::AuthRequired::Either => 3,
+                        dregg_cell::AuthRequired::Impossible => 4,
+                        dregg_cell::AuthRequired::Custom { .. } => 5,
                     };
                     hasher.update(&[perm_byte]);
                     // For Custom, also hash the vk_hash so distinct
                     // Custom modes route to distinct intro hashes.
-                    if let pyana_cell::AuthRequired::Custom { vk_hash } = permissions {
+                    if let dregg_cell::AuthRequired::Custom { vk_hash } = permissions {
                         hasher.update(vk_hash);
                     }
                     let intro_hash_bytes = hasher.finalize();
@@ -668,7 +668,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     let escrow_hash_bytes = hasher.finalize();
                     // Truncate amount to u32 for the field element.
                     let amount_lo =
-                        pyana_circuit::field::BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
+                        dregg_circuit::field::BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
                     vm_effects.push(VmEffect::CreateEscrow {
                         amount_lo,
                         escrow_hash: hash_to_bb(escrow_hash_bytes.as_bytes()),
@@ -833,12 +833,12 @@ pub(super) fn convert_turn_effects_to_vm(
                     // element to preserve injectivity across distinct
                     // `Custom` predicates.
                     let permissions_bb = match permissions {
-                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
                             // Fold the discriminant byte + vk_hash via
                             // blake3 to a single felt. Two distinct
                             // Custom predicates yield distinct values.
@@ -884,12 +884,12 @@ pub(super) fn convert_turn_effects_to_vm(
                     let presenter_bb = hash_to_bb(bearer.as_bytes());
                     let expected_cell_id_bb = hash_to_bb(expected_cell_id.as_bytes());
                     let permissions_bb = match expected_permissions {
-                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
                             let mut h = blake3::Hasher::new();
                             h.update(&[5u8]);
                             h.update(vk_hash);
@@ -992,7 +992,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     slot: _,
                     amount,
                 } if target == cell_id => {
-                    use pyana_circuit::field::BabyBear;
+                    use dregg_circuit::field::BabyBear;
                     let target_hash = hash_to_bb(target.as_bytes());
                     // Low 30 bits drive the AIR balance debit; the full
                     // u64 is bound through `compute_effects_hash`.
@@ -1031,7 +1031,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     let slot_bytes = slot.to_le_bytes();
                     let cap_slot_hash = hash_to_bb(blake3::hash(&slot_bytes).as_bytes());
                     let mut h = blake3::Hasher::new();
-                    h.update(b"PYANA_ATTN_NARROWER/v1");
+                    h.update(b"DREGG_ATTN_NARROWER/v1");
                     let perm_bytes =
                         postcard::to_allocvec(narrower_permissions).unwrap_or_default();
                     h.update(&perm_bytes);
@@ -1080,7 +1080,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     prefix_end_height,
                     checkpoint,
                 } if checkpoint.cell_id == *cell_id => {
-                    use pyana_circuit::field::BabyBear;
+                    use dregg_circuit::field::BabyBear;
                     let target_hash = hash_to_bb(checkpoint.cell_id.as_bytes());
                     // Low-30-bit truncation of the end height for the AIR
                     // balance-arithmetic shape; consistent with how other
@@ -1100,7 +1100,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     refusal_reason,
                     proof_witness_index: _,
                 } if cell == cell_id => {
-                    use pyana_circuit::field::BabyBear;
+                    use dregg_circuit::field::BabyBear;
                     let target_hash = hash_to_bb(cell.as_bytes());
                     // Encode `reason_hash` = discriminant ^ trunc(commitment)
                     // so the proof binds to a specific (cell, reason, commitment)
@@ -1118,7 +1118,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         offered_action_commitment[3],
                     ]);
                     let reason_hash = BabyBear::new(
-                        (discriminant ^ commitment_trunc) % pyana_circuit::field::BABYBEAR_P,
+                        (discriminant ^ commitment_trunc) % dregg_circuit::field::BABYBEAR_P,
                     );
                     vm_effects.push(VmEffect::Refusal {
                         target: target_hash,
@@ -1151,7 +1151,7 @@ pub(super) fn convert_turn_effects_to_vm(
 
     // Must have at least one effect for the VM.
     if vm_effects.is_empty() {
-        vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
+        vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
     }
     vm_effects
 }
@@ -1167,8 +1167,8 @@ pub(super) fn convert_turn_effects_to_vm(
 mod tests {
     use std::collections::HashMap;
 
-    use pyana_cell::{Cell, CellId, Ledger};
-    use pyana_circuit::effect_vm::Effect as VmEffect;
+    use dregg_cell::{Cell, CellId, Ledger};
+    use dregg_circuit::effect_vm::Effect as VmEffect;
 
     use crate::action::Effect;
     use crate::builder::{ActionBuilder, TurnBuilder};
@@ -1387,7 +1387,7 @@ mod tests {
     // last-in).  Before this fix the projection always read fields[4] = msg3.
     #[test]
     fn test_queue_dequeue_fifo_head_not_tail_three_messages() {
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::field::BabyBear;
         let actor_cell = make_cell_with_seed(1, 0);
         let cell_id = actor_cell.id();
         let queue_id = make_cell_with_seed(9, 0).id();
@@ -1422,11 +1422,11 @@ mod tests {
                 // Compute what hash_to_bb produces for msg1 vs msg3.
                 let msg1_bb = BabyBear::new(
                     u32::from_le_bytes([msg1[0], msg1[1], msg1[2], msg1[3]])
-                        % pyana_circuit::field::BABYBEAR_P,
+                        % dregg_circuit::field::BABYBEAR_P,
                 );
                 let msg3_bb = BabyBear::new(
                     u32::from_le_bytes([msg3[0], msg3[1], msg3[2], msg3[3]])
-                        % pyana_circuit::field::BABYBEAR_P,
+                        % dregg_circuit::field::BABYBEAR_P,
                 );
                 assert_eq!(
                     *expected_message_hash, msg1_bb,

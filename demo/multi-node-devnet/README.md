@@ -51,8 +51,8 @@ demo/multi-node-devnet/
 | F2         | node-3  | `127.0.0.1:7823`    | 7923        | `state/F2/node-3`                       |
 
 Each federation's `federation_id` is derived from
-`BLAKE3("pyana-fed-id-v1" || sorted_committee_pubkeys || epoch=0)` via
-`pyana_federation::derive_federation_id_with_epoch` — see
+`BLAKE3("dregg-fed-id-v1" || sorted_committee_pubkeys || epoch=0)` via
+`dregg_federation::derive_federation_id_with_epoch` — see
 `node/src/genesis.rs:133` and audit finding F1 in
 `AUDIT-federation.md`. Because the committee keys are freshly
 generated on every `reset_devnet.sh`, the next boot produces *new*
@@ -63,18 +63,18 @@ Within each federation, nodes gossip-peer the other two (federation_peers
 = comma-separated `127.0.0.1:gossip_port` of siblings). Across
 federations, peering is bilateral by file copy at startup: each
 federation's genesis descriptor is registered with every node in the
-peer federation via `pyana-node register-federation`.
+peer federation via `dregg-node register-federation`.
 
 ## Prerequisites
 
-The orchestration shell scripts depend on the `pyana-node` binary being
-built and findable at `$REPO_ROOT/target/debug/pyana-node` (overridable
+The orchestration shell scripts depend on the `dregg-node` binary being
+built and findable at `$REPO_ROOT/target/debug/dregg-node` (overridable
 via the `NODE_BIN` environment variable). **This lane does not invoke
 `cargo`.** Build the binary out-of-band:
 
 ```sh
 # from repo root, in a separate shell:
-cargo build -p pyana-node -p pyana-verifier
+cargo build -p dregg-node -p dregg-verifier
 ```
 
 Or rely on the build step inside `demo/two-ai-handoff/run.sh`, which
@@ -162,7 +162,7 @@ F1 produces an AttestedRoot signed by its committee; F2 does the same.
 Each federation's descriptor is on disk in every peer-federation node's
 `known_federations/<other_fed_id>.json`. A tampered descriptor (extra
 validator appended, declared federation_id unchanged) is rejected by
-`pyana-node register-federation` because the recomputed
+`dregg-node register-federation` because the recomputed
 H(sorted_pubkeys || epoch) mismatches the declared id (audit F1).
 
 Mirrors `SILVER-VISION-E2E-VERIFICATION.md` §4.
@@ -170,7 +170,7 @@ Mirrors `SILVER-VISION-E2E-VERIFICATION.md` §4.
 #### `bilateral_transfer.sh`
 
 γ.2 bilateral binding: `transfer_id =
-BLAKE2b("pyana-gamma2-transfer-id-v1" || alice_cell || bob_cell ||
+BLAKE2b("dregg-gamma2-transfer-id-v1" || alice_cell || bob_cell ||
 amount || nonce || federation_id_F2)`. The scenario asserts the id is
 deterministic, distinguishes target federation (same inputs bound to F1
 yield a different id), the credit/debit direction bits XOR to 1, and an
@@ -210,15 +210,15 @@ Mirrors `FEDERATION-AS-CELL.md` + `STORAGE-AS-CELL-PROGRAMS.md`.
 
 ## Troubleshooting
 
-### "node binary not found at …/target/debug/pyana-node"
+### "node binary not found at …/target/debug/dregg-node"
 
 Build it out-of-band. From the repo root:
 
 ```sh
-cargo build -p pyana-node -p pyana-verifier
+cargo build -p dregg-node -p dregg-verifier
 ```
 
-Or set `NODE_BIN=/abs/path/to/your/pyana-node` before invoking
+Or set `NODE_BIN=/abs/path/to/your/dregg-node` before invoking
 `start_devnet.sh`.
 
 ### "FX node-Y never came up on :NNNN"
@@ -226,7 +226,7 @@ Or set `NODE_BIN=/abs/path/to/your/pyana-node` before invoking
 Look at `state/logs/F<X>-node-<Y>.log`. Common causes:
 
 - **Port already in use.** Another devnet (or a stray
-  `pyana-node run` from a previous session) holds the port. Run
+  `dregg-node run` from a previous session) holds the port. Run
   `./stop_devnet.sh && lsof -i :7811-7823,7911-7923` to find the
   squatter.
 - **genesis.json not loadable.** Check the log for "failed to parse
@@ -265,7 +265,7 @@ The repository's policy (per
 `feedback-avoid-npm-direct.md`) is that Docker is for *isolation*, not
 for *build*. Containerising the devnet at runtime is reasonable when
 the goal is supply-chain isolation, but for the multi-node devnet the
-processes are vanilla `pyana-node run` invocations on loopback —
+processes are vanilla `dregg-node run` invocations on loopback —
 adding a docker-compose stack would only buy:
 
 - Process isolation (each node in its own container)
@@ -285,7 +285,7 @@ each federation gets a network namespace; gossip ports use container
 hostnames (`F1-node-1:9420`) so the federation_peers CLI flag is
 docker-friendly; volume-mount `state/<fed>/<node>` per container; one
 service per node. Six services total. The image stage builds
-`pyana-node` once and copies the binary into every service.
+`dregg-node` once and copies the binary into every service.
 
 ## Scope discipline
 

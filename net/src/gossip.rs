@@ -1,4 +1,4 @@
-//! GossipNetwork: Plumtree-inspired lazy-push gossip for pyana.
+//! GossipNetwork: Plumtree-inspired lazy-push gossip for dregg.
 //!
 //! Implements a hybrid eager/lazy push protocol over QUIC unidirectional streams:
 //!
@@ -34,7 +34,7 @@ use rand::seq::IndexedRandom;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, trace, warn};
 
-use pyana_types::{PublicKey, Signature as Ed25519Signature, SigningKey};
+use dregg_types::{PublicKey, Signature as Ed25519Signature, SigningKey};
 
 use crate::message::PeerMessage;
 use crate::node::{NodeId, fmt_node_id};
@@ -627,7 +627,7 @@ impl SignedEnvelope {
         let mut message = Vec::with_capacity(32 + body.len());
         message.extend_from_slice(sender);
         message.extend_from_slice(body);
-        let sig = pyana_types::sign(signing_key, &message);
+        let sig = dregg_types::sign(signing_key, &message);
         sig.0
     }
 }
@@ -961,7 +961,7 @@ impl GossipNetwork {
 
         let conn = self
             .endpoint
-            .connect_with(client_config, addr, "pyana.local")
+            .connect_with(client_config, addr, "dregg.local")
             .map_err(|e| GossipError::Join(e.to_string()))?
             .await
             .map_err(|e| GossipError::Join(e.to_string()))?;
@@ -1921,9 +1921,9 @@ mod tests {
 
     #[test]
     fn topic_id_deterministic() {
-        let id1 = topic_id_from_name("pyana/turns/cell-abc");
-        let id2 = topic_id_from_name("pyana/turns/cell-abc");
-        let id3 = topic_id_from_name("pyana/turns/cell-xyz");
+        let id1 = topic_id_from_name("dregg/turns/cell-abc");
+        let id2 = topic_id_from_name("dregg/turns/cell-abc");
+        let id3 = topic_id_from_name("dregg/turns/cell-xyz");
 
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
@@ -2066,7 +2066,7 @@ mod tests {
 
     #[test]
     fn signed_envelope_roundtrip() {
-        let (signing_key, public_key) = pyana_types::generate_keypair();
+        let (signing_key, public_key) = dregg_types::generate_keypair();
         let sender = [0xcd; 32];
         let envelope = GossipEnvelope::IHave {
             topic_id: [0x11; 32],
@@ -2077,7 +2077,7 @@ mod tests {
         assert!(signed.verify(&public_key));
 
         // Wrong key should fail verification
-        let (_, wrong_public_key) = pyana_types::generate_keypair();
+        let (_, wrong_public_key) = dregg_types::generate_keypair();
         assert!(!signed.verify(&wrong_public_key));
 
         let decoded = signed.decode_inner().unwrap();
@@ -2092,7 +2092,7 @@ mod tests {
 
     #[test]
     fn signed_envelope_tamper_detection() {
-        let (signing_key, public_key) = pyana_types::generate_keypair();
+        let (signing_key, public_key) = dregg_types::generate_keypair();
         let sender = [0xcd; 32];
         let envelope = GossipEnvelope::Prune {
             topic_id: [0x33; 32],
@@ -2511,7 +2511,7 @@ mod tests {
         use tokio::sync::mpsc;
 
         let topic_id = topic_id_from_name("fluff-test");
-        let (signing_key, _public_key) = pyana_types::generate_keypair();
+        let (signing_key, _public_key) = dregg_types::generate_keypair();
         let node_id = [0xab; 32];
 
         let mut state = GossipState {

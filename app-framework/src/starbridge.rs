@@ -5,15 +5,15 @@
 //! starbridge-app needs:
 //!
 //! 1. An [`AppCipherclerk`] — narrow signing handle (six methods, no key
-//!    export). Apps build signed [`pyana_turn::action::Action`]s through
+//!    export). Apps build signed [`dregg_turn::action::Action`]s through
 //!    it.
 //! 2. An [`EmbeddedExecutor`] — turn-submission handle. Apps submit
-//!    signed [`pyana_turn::Turn`]s through it and receive real
-//!    [`pyana_turn::TurnReceipt`]s. Closes the "action authored and
+//!    signed [`dregg_turn::Turn`]s through it and receive real
+//!    [`dregg_turn::TurnReceipt`]s. Closes the "action authored and
 //!    dropped on the floor" pattern from `APPS-USERSPACE-GAPS.md`
 //!    §Gap 4.
 //! 3. A [`FactoryRegistry`] — the in-process registry that the
-//!    in-browser PyanaRuntime / extension cipherclerk's
+//!    in-browser DreggRuntime / extension cipherclerk's
 //!    `createFromFactory(factory_vk, ...)` resolves against.
 //!    Starbridge-apps call [`StarbridgeAppContext::register_factory`]
 //!    at startup; the host (this context) holds the descriptors so
@@ -22,11 +22,11 @@
 //!    webcomponents register against. Each entry is a
 //!    [`InspectorDescriptor`] (kind tag + JSON-shaped descriptor) the
 //!    site's `_includes/studio/inspectors.js` can mount under
-//!    `<pyana-${kind} uri="..."/>`.
+//!    `<dregg-${kind} uri="..."/>`.
 //!
 //! The optional [`StarbridgeAppContext::known_federations`] handle
 //! threads through `KnownFederations` (the Mega-Federation registry
-//! from `pyana_federation`) for apps that need to verify cross-fed
+//! from `dregg_federation`) for apps that need to verify cross-fed
 //! receipts or look up peer-federation public keys. It is held as an
 //! `Arc` so multiple apps share the same registry view.
 //!
@@ -67,7 +67,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use pyana_cell::FactoryDescriptor;
+use dregg_cell::FactoryDescriptor;
 
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
 
@@ -77,9 +77,9 @@ use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
 
 /// In-process registry mapping `factory_vk` -> [`FactoryDescriptor`].
 ///
-/// Used by the host to resolve `window.pyana.createFromFactory(factory_vk, ..)`
+/// Used by the host to resolve `window.dregg.createFromFactory(factory_vk, ..)`
 /// lookups: each starbridge-app pushes its descriptors at startup,
-/// then the in-browser PyanaRuntime / extension cipherclerk can fetch them
+/// then the in-browser DreggRuntime / extension cipherclerk can fetch them
 /// by hash to verify a cell's constructor-transparency contract.
 ///
 /// Cheap to clone (internally `Arc<RwLock<BTreeMap<..>>>`).
@@ -164,7 +164,7 @@ impl std::fmt::Debug for FactoryRegistry {
 /// Each entry binds a **kind tag** (e.g., `"name"`, `"auction"`,
 /// `"proposal"`) to a JSON-shaped descriptor that the site's
 /// `_includes/studio/inspectors.js` mounts as a webcomponent under
-/// `<pyana-{kind} uri="..."/>`.
+/// `<dregg-{kind} uri="..."/>`.
 ///
 /// The descriptor itself is intentionally `serde_json::Value` — the
 /// app-framework does not constrain the shape; it is whatever the
@@ -173,9 +173,9 @@ impl std::fmt::Debug for FactoryRegistry {
 ///
 /// ```json
 /// {
-///   "component": "pyana-name",
+///   "component": "dregg-name",
 ///   "module": "/starbridge-apps/nameservice/inspectors.js",
-///   "uri_prefix": "pyana://cell/",
+///   "uri_prefix": "dregg://cell/",
 ///   "summary_fields": ["name", "owner", "expiry"]
 /// }
 /// ```
@@ -183,7 +183,7 @@ impl std::fmt::Debug for FactoryRegistry {
 /// but evolution of that contract lives in the site, not here.
 #[derive(Clone, Debug)]
 pub struct InspectorDescriptor {
-    /// The kind tag — the suffix in `<pyana-{kind} uri="..."/>`.
+    /// The kind tag — the suffix in `<dregg-{kind} uri="..."/>`.
     pub kind: String,
     /// JSON-shaped descriptor; structure is owned by the Studio's
     /// `inspectors.js`.
@@ -306,11 +306,11 @@ pub struct StarbridgeAppContext {
     /// Optional `KnownFederations` reference (the Mega-Federation
     /// registry). Held as `Arc<dyn Any + Send + Sync>` to avoid
     /// coupling app-framework to a specific federation API while
-    /// still allowing apps that *do* depend on `pyana_federation` to
+    /// still allowing apps that *do* depend on `dregg_federation` to
     /// downcast and use it.
     ///
     /// In practice today this is always
-    /// `Arc<pyana_federation::KnownFederations>` (when set), but the
+    /// `Arc<dregg_federation::KnownFederations>` (when set), but the
     /// `Any` boxing keeps the framework's surface stable across
     /// federation-crate revisions.
     known_federations: Option<Arc<dyn std::any::Any + Send + Sync>>,
@@ -333,10 +333,10 @@ impl StarbridgeAppContext {
 
     /// Attach a `KnownFederations` reference (the Mega-Federation
     /// registry). Use this on the host that has the federation crate
-    /// in its dep tree (typically `pyana-node`):
+    /// in its dep tree (typically `dregg-node`):
     ///
     /// ```ignore
-    /// use pyana_federation::KnownFederations;
+    /// use dregg_federation::KnownFederations;
     /// let known = Arc::new(KnownFederations::new());
     /// ctx.with_known_federations(known);
     /// ```
@@ -394,9 +394,9 @@ impl StarbridgeAppContext {
     /// ctx.register_inspector(InspectorDescriptor {
     ///     kind: "name".into(),
     ///     descriptor: serde_json::json!({
-    ///         "component": "pyana-name",
+    ///         "component": "dregg-name",
     ///         "module": "/starbridge-apps/nameservice/inspectors.js",
-    ///         "uri_prefix": "pyana://cell/",
+    ///         "uri_prefix": "dregg://cell/",
     ///     }),
     /// });
     /// ```
@@ -449,7 +449,7 @@ impl std::fmt::Debug for StarbridgeAppContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_sdk::AgentCipherclerk;
+    use dregg_sdk::AgentCipherclerk;
 
     fn fixture() -> (AppCipherclerk, EmbeddedExecutor) {
         let sdk = AgentCipherclerk::new();
@@ -459,7 +459,7 @@ mod tests {
     }
 
     fn fixture_descriptor(vk: [u8; 32]) -> FactoryDescriptor {
-        use pyana_cell::{
+        use dregg_cell::{
             AuthRequired, CapTarget, CapTemplate, CellMode, ChildVkStrategy, FactoryDescriptor,
         };
         FactoryDescriptor {
@@ -527,11 +527,11 @@ mod tests {
         let ctx = StarbridgeAppContext::new(w, e);
         ctx.register_inspector(InspectorDescriptor {
             kind: "name".into(),
-            descriptor: serde_json::json!({"component": "pyana-name"}),
+            descriptor: serde_json::json!({"component": "dregg-name"}),
         });
         let got = ctx.inspector_registry().get("name").unwrap();
         assert_eq!(got.kind, "name");
-        assert_eq!(got.descriptor["component"], "pyana-name");
+        assert_eq!(got.descriptor["component"], "dregg-name");
     }
 
     #[test]
@@ -540,7 +540,7 @@ mod tests {
         let ctx = StarbridgeAppContext::new(w, e);
         ctx.register_inspector_with(
             "auction",
-            || serde_json::json!({"component": "pyana-auction", "phases": ["commit", "reveal"]}),
+            || serde_json::json!({"component": "dregg-auction", "phases": ["commit", "reveal"]}),
         );
         let got = ctx.inspector_registry().get("auction").unwrap();
         assert_eq!(got.descriptor["phases"][0], "commit");
@@ -565,15 +565,15 @@ mod tests {
         let registry = InspectorRegistry::new();
         registry.register(InspectorDescriptor {
             kind: "name".into(),
-            descriptor: serde_json::json!({"component": "pyana-name"}),
+            descriptor: serde_json::json!({"component": "dregg-name"}),
         });
         registry.register(InspectorDescriptor {
             kind: "auction".into(),
-            descriptor: serde_json::json!({"component": "pyana-auction"}),
+            descriptor: serde_json::json!({"component": "dregg-auction"}),
         });
         let j = registry.to_json();
-        assert_eq!(j["name"]["component"], "pyana-name");
-        assert_eq!(j["auction"]["component"], "pyana-auction");
+        assert_eq!(j["name"]["component"], "dregg-name");
+        assert_eq!(j["auction"]["component"], "dregg-auction");
     }
 
     #[test]

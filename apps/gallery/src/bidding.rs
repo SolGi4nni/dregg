@@ -11,7 +11,7 @@
 //!
 //! This ensures no bidder can react to others' bid amounts during the auction.
 
-use pyana_app_framework::CellId;
+use dregg_app_framework::CellId;
 
 use crate::{BidCommitment, RevealedBid, verify_bid_reveal};
 

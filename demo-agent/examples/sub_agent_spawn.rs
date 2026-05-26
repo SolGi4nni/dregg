@@ -10,16 +10,16 @@
 //! This models a real-world pattern: an orchestrator agent spawns task-specific
 //! workers, each with the minimum authority needed for their job.
 
-use pyana_bridge::BridgePresentationBuilder;
-use pyana_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
-use pyana_cell::cell::Cell;
-use pyana_cell::{AuthRequired, CellId, Ledger, Permissions};
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::verify::verify_receipt_chain;
-use pyana_turn::{
+use dregg_bridge::BridgePresentationBuilder;
+use dregg_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
+use dregg_cell::cell::Cell;
+use dregg_cell::{AuthRequired, CellId, Ledger, Permissions};
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::verify::verify_receipt_chain;
+use dregg_turn::{
     ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
 };
 
@@ -75,7 +75,7 @@ struct SubAgent {
 }
 
 fn main() {
-    println!("=== Pyana Sub-Agent Spawn Demo ===");
+    println!("=== Dregg Sub-Agent Spawn Demo ===");
     println!("    Attenuated Capability Delegation to Child Agents");
     println!();
 
@@ -86,7 +86,7 @@ fn main() {
 
     let issuer_key = *blake3::hash(b"platform:issuer:master-key-2026").as_bytes();
     let parent_key = *blake3::hash(b"parent-orchestrator:identity").as_bytes();
-    let token_domain = *blake3::hash(b"pyana-sub-agent-demo:token-domain").as_bytes();
+    let token_domain = *blake3::hash(b"dregg-sub-agent-demo:token-domain").as_bytes();
 
     // Compute federation root
     let federation_root_bb = compute_poseidon2_federation_root(&issuer_key);

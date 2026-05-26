@@ -1,5 +1,5 @@
 // =============================================================================
-// Pyana Bridge — Deployment and Interaction Script
+// Dregg Bridge — Deployment and Interaction Script
 // =============================================================================
 //
 // Based on patterns from:
@@ -11,7 +11,7 @@
 //
 // Usage:
 //   npx tsx deploy.ts deploy        — Deploy fresh bridge contract
-//   npx tsx deploy.ts lock <amount> <pyanaAddr>  — Lock NIGHT for pyana
+//   npx tsx deploy.ts lock <amount> <dreggAddr>  — Lock NIGHT for dregg
 //   npx tsx deploy.ts unlock <attestation.json>  — Unlock with attestation
 //   npx tsx deploy.ts status        — Query bridge state
 //   npx tsx deploy.ts rotate <newKeyCommitment>  — Rotate federation key
@@ -79,7 +79,7 @@ const BRIDGE_CONFIG = {
   // Daily limit: 100,000 NIGHT
   dailyLimit: 100_000_000_000n,
   // Domain separator for this bridge instance
-  domainSeparator: Buffer.from('pyana:midnight:bridge:v1\0\0\0\0\0\0\0\0', 'utf8'),
+  domainSeparator: Buffer.from('dregg:midnight:bridge:v1\0\0\0\0\0\0\0\0', 'utf8'),
 };
 
 // =============================================================================
@@ -87,7 +87,7 @@ const BRIDGE_CONFIG = {
 // =============================================================================
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, 'managed', 'pyana-bridge');
+const zkConfigPath = path.resolve(__dirname, 'managed', 'dregg-bridge');
 const deploymentPath = path.resolve(__dirname, 'deployment.json');
 
 // =============================================================================
@@ -108,7 +108,7 @@ interface BridgeLedger {
   lockNonce: bigint;
   lastLockEvent: {
     amount: bigint;
-    pyanaRecipient: Uint8Array;
+    dreggRecipient: Uint8Array;
     nonce: bigint;
     timestamp: bigint;
   };
@@ -127,15 +127,15 @@ interface BridgePrivateState {
 
 type BridgeContract = {
   impureCircuits: {
-    lockForPyana: (ctx: any, amount: bigint, pyanaRecipient: Uint8Array) => any;
-    unlockFromPyana: (
+    lockForDregg: (ctx: any, amount: bigint, dreggRecipient: Uint8Array) => any;
+    unlockFromDregg: (
       ctx: any,
       amount: bigint,
       midnightRecipient: any,
       nonce: bigint,
       epoch: bigint,
       attestationProof: Uint8Array,
-      pyanaBlockHash: Uint8Array,
+      dreggBlockHash: Uint8Array,
     ) => any;
     rotateFederationKey: (ctx: any, newKeyCommitment: Uint8Array, newEpoch: bigint) => any;
     updateBridgeLimits: (ctx: any, min: bigint, max: bigint, daily: bigint) => any;
@@ -156,12 +156,12 @@ async function loadContract() {
   const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
   if (!fs.existsSync(contractPath)) {
     throw new Error(
-      `Contract not compiled! Run: compact compile pyana_bridge.compact managed/pyana-bridge\n` +
+      `Contract not compiled! Run: compact compile dregg_bridge.compact managed/dregg-bridge\n` +
         `Expected: ${contractPath}`,
     );
   }
-  const PyanaContract = await import(pathToFileURL(contractPath).href);
-  return PyanaContract;
+  const DreggContract = await import(pathToFileURL(contractPath).href);
+  return DreggContract;
 }
 
 // =============================================================================
@@ -298,7 +298,7 @@ async function createProviders(cclerkCtx: Awaited<ReturnType<typeof createCipher
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'pyana-bridge-state',
+      privateStateStoreName: 'dregg-bridge-state',
       cclerkProvider,
     }),
     publicDataProvider: indexerPublicDataProvider(CONFIG.indexer, CONFIG.indexerWS),
@@ -342,7 +342,7 @@ function createWitnesses(privateState: BridgePrivateState) {
 
 async function deployBridge(seed: string, governanceKey: Uint8Array, federationCommitment: Uint8Array) {
   console.log('Loading compiled contract...');
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
   const privateState: BridgePrivateState = {
     governanceSecretKey: governanceKey,
@@ -351,7 +351,7 @@ async function deployBridge(seed: string, governanceKey: Uint8Array, federationC
 
   const witnesses = createWitnesses(privateState);
 
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -407,12 +407,12 @@ async function deployBridge(seed: string, governanceKey: Uint8Array, federationC
 }
 
 // =============================================================================
-// Lock NIGHT for Pyana
+// Lock NIGHT for Dregg
 // =============================================================================
 
-async function lockForPyana(seed: string, amount: bigint, pyanaRecipient: Uint8Array) {
+async function lockForDregg(seed: string, amount: bigint, dreggRecipient: Uint8Array) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
   const privateState: BridgePrivateState = {
     governanceSecretKey: new Uint8Array(32), // Not needed for lock
@@ -420,7 +420,7 @@ async function lockForPyana(seed: string, amount: bigint, pyanaRecipient: Uint8A
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -442,8 +442,8 @@ async function lockForPyana(seed: string, amount: bigint, pyanaRecipient: Uint8A
     privateState,
   });
 
-  console.log(`Locking ${amount} NIGHT for pyana recipient: ${toHex(pyanaRecipient)}`);
-  const result = await contract.callTx.lockForPyana(amount, pyanaRecipient);
+  console.log(`Locking ${amount} NIGHT for dregg recipient: ${toHex(dreggRecipient)}`);
+  const result = await contract.callTx.lockForDregg(amount, dreggRecipient);
 
   console.log('Lock transaction submitted successfully');
   console.log(`Transaction: ${result}`);
@@ -452,7 +452,7 @@ async function lockForPyana(seed: string, amount: bigint, pyanaRecipient: Uint8A
 }
 
 // =============================================================================
-// Unlock from Pyana
+// Unlock from Dregg
 // =============================================================================
 
 interface AttestationFile {
@@ -461,14 +461,14 @@ interface AttestationFile {
   nonce: string; // bigint as string
   epoch: string; // bigint as string
   attestationProof: string; // hex
-  pyanaBlockHash: string; // hex
+  dreggBlockHash: string; // hex
   recipientType: 'user' | 'contract'; // determines Either variant
 }
 
-async function unlockFromPyana(seed: string, attestationPath: string) {
+async function unlockFromDregg(seed: string, attestationPath: string) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
   const attestation: AttestationFile = JSON.parse(fs.readFileSync(attestationPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
   const privateState: BridgePrivateState = {
     governanceSecretKey: new Uint8Array(32),
@@ -476,7 +476,7 @@ async function unlockFromPyana(seed: string, attestationPath: string) {
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -507,13 +507,13 @@ async function unlockFromPyana(seed: string, attestationPath: string) {
 
   console.log(`Unlocking ${attestation.amount} NIGHT to ${attestation.midnightRecipient}`);
 
-  const result = await contract.callTx.unlockFromPyana(
+  const result = await contract.callTx.unlockFromDregg(
     BigInt(attestation.amount),
     midnightRecipient,
     BigInt(attestation.nonce),
     BigInt(attestation.epoch),
     Buffer.from(attestation.attestationProof, 'hex'),
-    Buffer.from(attestation.pyanaBlockHash, 'hex'),
+    Buffer.from(attestation.dreggBlockHash, 'hex'),
   );
 
   console.log('Unlock transaction submitted successfully');
@@ -528,7 +528,7 @@ async function unlockFromPyana(seed: string, attestationPath: string) {
 
 async function queryBridgeStatus(seed: string) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
   const privateState: BridgePrivateState = {
     governanceSecretKey: new Uint8Array(32),
@@ -536,7 +536,7 @@ async function queryBridgeStatus(seed: string) {
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -563,7 +563,7 @@ async function queryBridgeStatus(seed: string) {
 
   const bridgeStates = ['ACTIVE', 'PAUSED', 'EMERGENCY_SHUTDOWN'];
 
-  console.log('\n=== Pyana Bridge Status ===');
+  console.log('\n=== Dregg Bridge Status ===');
   console.log(`Contract:         ${deployment.contractAddress}`);
   console.log(`Network:          ${deployment.network}`);
   console.log(`State:            ${bridgeStates[state.bridgeState] ?? 'UNKNOWN'}`);
@@ -578,7 +578,7 @@ async function queryBridgeStatus(seed: string) {
   if (state.lastLockEvent.amount > 0n) {
     console.log('Last Lock Event:');
     console.log(`  Amount:    ${state.lastLockEvent.amount}`);
-    console.log(`  Recipient: ${toHex(state.lastLockEvent.pyanaRecipient)}`);
+    console.log(`  Recipient: ${toHex(state.lastLockEvent.dreggRecipient)}`);
     console.log(`  Nonce:     ${state.lastLockEvent.nonce}`);
   }
 
@@ -597,15 +597,15 @@ async function queryBridgeStatus(seed: string) {
 
 async function rotateFederationKey(seed: string, newKeyCommitment: Uint8Array) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
   // Governance key must be provided in private state
   const governanceKey = Buffer.from(
-    process.env.PYANA_GOVERNANCE_KEY ?? '',
+    process.env.DREGG_GOVERNANCE_KEY ?? '',
     'hex',
   );
   if (governanceKey.length !== 32) {
-    throw new Error('Set PYANA_GOVERNANCE_KEY env var (64 hex chars)');
+    throw new Error('Set DREGG_GOVERNANCE_KEY env var (64 hex chars)');
   }
 
   const privateState: BridgePrivateState = {
@@ -614,7 +614,7 @@ async function rotateFederationKey(seed: string, newKeyCommitment: Uint8Array) {
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -648,11 +648,11 @@ async function rotateFederationKey(seed: string, newKeyCommitment: Uint8Array) {
 
 async function pauseBridge(seed: string) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
-  const governanceKey = Buffer.from(process.env.PYANA_GOVERNANCE_KEY ?? '', 'hex');
+  const governanceKey = Buffer.from(process.env.DREGG_GOVERNANCE_KEY ?? '', 'hex');
   if (governanceKey.length !== 32) {
-    throw new Error('Set PYANA_GOVERNANCE_KEY env var (64 hex chars)');
+    throw new Error('Set DREGG_GOVERNANCE_KEY env var (64 hex chars)');
   }
 
   const privateState: BridgePrivateState = {
@@ -661,7 +661,7 @@ async function pauseBridge(seed: string) {
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -690,11 +690,11 @@ async function pauseBridge(seed: string) {
 
 async function resumeBridge(seed: string) {
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, 'utf-8'));
-  const PyanaContract = await loadContract();
+  const DreggContract = await loadContract();
 
-  const governanceKey = Buffer.from(process.env.PYANA_GOVERNANCE_KEY ?? '', 'hex');
+  const governanceKey = Buffer.from(process.env.DREGG_GOVERNANCE_KEY ?? '', 'hex');
   if (governanceKey.length !== 32) {
-    throw new Error('Set PYANA_GOVERNANCE_KEY env var (64 hex chars)');
+    throw new Error('Set DREGG_GOVERNANCE_KEY env var (64 hex chars)');
   }
 
   const privateState: BridgePrivateState = {
@@ -703,7 +703,7 @@ async function resumeBridge(seed: string) {
   };
 
   const witnesses = createWitnesses(privateState);
-  const compiledContract = CompiledContract.make('pyana-bridge', PyanaContract.Contract).pipe(
+  const compiledContract = CompiledContract.make('dregg-bridge', DreggContract.Contract).pipe(
     CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -739,25 +739,25 @@ async function main() {
   const command = args[0];
 
   // Cipherclerk seed from env (required for all operations)
-  const seed = process.env.PYANA_CCLERK_SEED;
+  const seed = process.env.DREGG_CCLERK_SEED;
   if (!seed) {
-    console.error('Error: Set PYANA_CCLERK_SEED env var (64 hex chars)');
+    console.error('Error: Set DREGG_CCLERK_SEED env var (64 hex chars)');
     process.exit(1);
   }
 
   switch (command) {
     case 'deploy': {
-      const governanceKey = Buffer.from(process.env.PYANA_GOVERNANCE_KEY ?? '', 'hex');
+      const governanceKey = Buffer.from(process.env.DREGG_GOVERNANCE_KEY ?? '', 'hex');
       const federationCommitment = Buffer.from(
-        process.env.PYANA_FEDERATION_COMMITMENT ?? '',
+        process.env.DREGG_FEDERATION_COMMITMENT ?? '',
         'hex',
       );
       if (governanceKey.length !== 32) {
-        console.error('Set PYANA_GOVERNANCE_KEY env var (64 hex chars)');
+        console.error('Set DREGG_GOVERNANCE_KEY env var (64 hex chars)');
         process.exit(1);
       }
       if (federationCommitment.length !== 32) {
-        console.error('Set PYANA_FEDERATION_COMMITMENT env var (64 hex chars)');
+        console.error('Set DREGG_FEDERATION_COMMITMENT env var (64 hex chars)');
         process.exit(1);
       }
       await deployBridge(seed, governanceKey, federationCommitment);
@@ -766,12 +766,12 @@ async function main() {
 
     case 'lock': {
       const amount = BigInt(args[1] ?? '0');
-      const pyanaAddr = Buffer.from(args[2] ?? '', 'hex');
-      if (amount === 0n || pyanaAddr.length !== 32) {
-        console.error('Usage: deploy.ts lock <amount_stars> <pyana_recipient_hex>');
+      const dreggAddr = Buffer.from(args[2] ?? '', 'hex');
+      if (amount === 0n || dreggAddr.length !== 32) {
+        console.error('Usage: deploy.ts lock <amount_stars> <dregg_recipient_hex>');
         process.exit(1);
       }
-      await lockForPyana(seed, amount, pyanaAddr);
+      await lockForDregg(seed, amount, dreggAddr);
       break;
     }
 
@@ -781,7 +781,7 @@ async function main() {
         console.error('Usage: deploy.ts unlock <attestation.json>');
         process.exit(1);
       }
-      await unlockFromPyana(seed, attestationFile);
+      await unlockFromDregg(seed, attestationFile);
       break;
     }
 
@@ -812,14 +812,14 @@ async function main() {
 
     default: {
       console.log(`
-Pyana Bridge CLI
+Dregg Bridge CLI
 
 Usage:
   npx tsx deploy.ts <command> [args]
 
 Commands:
   deploy                          Deploy fresh bridge contract
-  lock <amount> <pyana_addr>      Lock NIGHT tokens for pyana transfer
+  lock <amount> <dregg_addr>      Lock NIGHT tokens for dregg transfer
   unlock <attestation.json>       Unlock NIGHT with federation attestation
   status                          Query bridge state
   rotate <new_commitment>         Rotate federation key (governance)
@@ -827,9 +827,9 @@ Commands:
   resume                          Resume bridge operations (governance)
 
 Environment Variables:
-  PYANA_CCLERK_SEED              64-char hex cipherclerk seed (required)
-  PYANA_GOVERNANCE_KEY           32-byte governance secret key (hex, for gov ops)
-  PYANA_FEDERATION_COMMITMENT    32-byte federation key commitment (hex, for deploy)
+  DREGG_CCLERK_SEED              64-char hex cipherclerk seed (required)
+  DREGG_GOVERNANCE_KEY           32-byte governance secret key (hex, for gov ops)
+  DREGG_FEDERATION_COMMITMENT    32-byte federation key commitment (hex, for deploy)
       `);
       process.exit(1);
     }

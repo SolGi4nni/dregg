@@ -54,8 +54,8 @@ run. They exist only as source — either promote to active or delete.
 
 ### Harness quality (`teasting/src/`)
 
-`harness.rs` — Real: backed by `pyana_blocklace::finality::Blocklace` + real
-`pyana_federation::Federation` + real `TurnExecutor`. Not mock.
+`harness.rs` — Real: backed by `dregg_blocklace::finality::Blocklace` + real
+`dregg_federation::Federation` + real `TurnExecutor`. Not mock.
 
 `assertions.rs` — Real domain-specific invariant checkers: conservation,
 nonce monotonicity, GC consistency, nullifier uniqueness, directory version
@@ -148,7 +148,7 @@ taxonomy:
 
 ### What it does NOT check
 
-- It does not call `pyana-verifier` or any proof verifier.
+- It does not call `dregg-verifier` or any proof verifier.
 - It does not inspect proof bytes in `witness_blobs[0]` at all — only that
   the field exists and has kind `"ProofBytes"`.
 - It does not verify that the executor ran, that receipts are signed, or that
@@ -167,15 +167,15 @@ verifier.** The name "verify" is misleading. See section 7 for the design doc.
 
 ### What IS real
 
-- **Step 1:** Calls `cargo build` for `pyana-node`, `pyana-verifier`,
+- **Step 1:** Calls `cargo build` for `dregg-node`, `dregg-verifier`,
   `silver-helper`. Real binaries.
-- **Steps 2–3:** `bob.py` and `alice.py` invoke `pyana-node` (real binary)
+- **Steps 2–3:** `bob.py` and `alice.py` invoke `dregg-node` (real binary)
   to create cells, issue grants, drop bearer-cap URIs.
 - **Step 4:** `silver-helper make-handoff`, `make-captp-delivered`,
   `make-sovereign-witness`, `slot-caveat-demo`, `make-bilateral-bundle` —
   all call the real `silver-helper` binary, which assembles real Ed25519
   signatures and canonical artifacts.
-- **Step 8 / charlie.py:** Charlie shells to `pyana-verifier` for
+- **Step 8 / charlie.py:** Charlie shells to `dregg-verifier` for
   grant/exercise STARK proof verification, replay-chain verification, and
   `bilateral-pair` verification. These invoke real STARK verifier logic.
 - **Tamper/negative tests:** silver-helper's `verify-captp-delivered-tampered`
@@ -184,12 +184,12 @@ verifier.** The name "verify" is misleading. See section 7 for the design doc.
 ### What is NOT real (gap acknowledged in comments)
 
 - **Step 7 (line 250):** The comment says "GAP: today's MCP tool
-  `pyana_exercise_bearer_cap` uses `Authorization::Bearer`, not
+  `dregg_exercise_bearer_cap` uses `Authorization::Bearer`, not
   `CapTpDelivered`." The CapTpDelivered artifact is built by silver-helper
   for charlie to verify *separately*; Bob's actual exercise still uses the
   Bearer legacy path.
 - **recursive-witness step (4c):** The `make-recursive-witness` artifact is
-  verified via `pyana-verifier scope-recursive` but the chain.json it produces
+  verified via `dregg-verifier scope-recursive` but the chain.json it produces
   may use a minimal/mock Effect VM proof depending on whether the recursive
   prover landed.
 
@@ -214,7 +214,7 @@ All five scenarios share the same structure:
 **`bilateral_transfer.sh`**
 
 - **Lines 56–97 (F2):** `transfer_id` is derived using Python `hashlib.blake2b`
-  — *not* `pyana_cell`'s canonical BLAKE3 `transfer_id` from `cell/src/witness.rs`.
+  — *not* `dregg_cell`'s canonical BLAKE3 `transfer_id` from `cell/src/witness.rs`.
   The expected.json documents this as a gap ("stand-in, not the canonical derivation").
   But the test passes unconditionally because the Python derivation always
   succeeds given valid hex. `transfer_id_derived_32_byte_hex` just checks
@@ -320,7 +320,7 @@ Not a test (no assertions framework) — it panics on failure.
 
 This is the **original federated authorization demo** that predates the current
 architecture. It uses in-crate shadow types for `Authority`, `Federation`,
-`Token`, `Verifier` — it does not import the production `pyana_*` crates in
+`Token`, `Verifier` — it does not import the production `dregg_*` crates in
 the same way the newer code does. It demonstrates concept correctness but does
 not exercise production code paths. Status: **legacy reference material**.
 
@@ -341,7 +341,7 @@ expected.json must_pass list unconditionally. File: `demo/multi-node-devnet/scen
 ### #2: `cross_fed_handoff.sh` — scaffold URI treated as real handoff
 
 Alice's handoff URI is a JSON heredoc written by bash (lines 119–133). It has
-the comment `"note": "Scaffold artifact: real cert + Ed25519 sig require pyana_create_cross_fed_bearer_cap"`.
+the comment `"note": "Scaffold artifact: real cert + Ed25519 sig require dregg_create_cross_fed_bearer_cap"`.
 Yet `alice_uri_produced_on_F1` and `uri_delivered_to_F2_inbox` appear in
 `expected.json` must_pass. These always pass as long as bash can write a file.
 File: `demo/multi-node-devnet/scenarios/cross_fed_handoff.sh:119-141`,

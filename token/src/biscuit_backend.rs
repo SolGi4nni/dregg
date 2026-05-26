@@ -10,7 +10,7 @@ use biscuit_auth::builder::{AuthorizerBuilder, BlockBuilder};
 
 use crate::error::TokenError;
 use crate::format::TokenFormat;
-use crate::pyana;
+use crate::dregg;
 use crate::traits::{Attenuation, AuthRequest, AuthToken, TokenClearance};
 
 /// Extract a string value from a Biscuit Datalog term.
@@ -24,7 +24,7 @@ fn term_to_string(term: &biscuit_auth::builder::Term) -> Option<String> {
 
 /// A Biscuit-backed authorization token.
 ///
-/// Wraps `biscuit_auth::Biscuit` with the Pyana-specific Datalog schema.
+/// Wraps `biscuit_auth::Biscuit` with the Dregg-specific Datalog schema.
 pub struct BiscuitToken {
     /// The inner biscuit token.
     inner: Biscuit,
@@ -65,8 +65,8 @@ impl BiscuitToken {
         })
     }
 
-    /// Mint a new Biscuit token for the Pyana runtime with structured parameters.
-    pub fn mint_pyana(
+    /// Mint a new Biscuit token for the Dregg runtime with structured parameters.
+    pub fn mint_dregg(
         root_keypair: &biscuit_auth::KeyPair,
         apps: &[(String, String)],
         services: &[(String, String)],
@@ -75,7 +75,7 @@ impl BiscuitToken {
         oauth_scopes: &[String],
         user_id: Option<&str>,
     ) -> Result<Self, TokenError> {
-        let code = pyana::authority_datalog(
+        let code = dregg::authority_datalog(
             apps,
             services,
             features,
@@ -119,12 +119,12 @@ impl BiscuitToken {
         &self.inner
     }
 
-    /// Build an authorizer with the Pyana standard policies.
+    /// Build an authorizer with the Dregg standard policies.
     pub fn build_authorizer(
         &self,
         request: &AuthRequest,
     ) -> Result<biscuit_auth::Authorizer, TokenError> {
-        let authorizer_code = pyana::authorizer_datalog(request)?;
+        let authorizer_code = dregg::authorizer_datalog(request)?;
         AuthorizerBuilder::new()
             .code(authorizer_code)
             .map_err(|e| TokenError::Datalog(e.to_string()))?
@@ -228,7 +228,7 @@ impl AuthToken for BiscuitToken {
     }
 
     fn attenuate(&self, restrictions: &Attenuation) -> Result<Box<dyn AuthToken>, TokenError> {
-        let code = pyana::attenuation_datalog(restrictions)?;
+        let code = dregg::attenuation_datalog(restrictions)?;
         if code.is_empty() {
             return Err(TokenError::Malformed(
                 "no restrictions specified for attenuation".into(),
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn test_mint_and_verify() {
         let kp = test_keypair();
-        let token = BiscuitToken::mint_pyana(
+        let token = BiscuitToken::mint_dregg(
             &kp,
             &[("test-app".into(), "rwcd".into())],
             &[("http".into(), "rw".into())],
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_attenuate_restricts() {
         let kp = test_keypair();
-        let token = BiscuitToken::mint_pyana(
+        let token = BiscuitToken::mint_dregg(
             &kp,
             &[("my-app".into(), "rwcd".into())],
             &[],

@@ -16,12 +16,12 @@ Publish, consume, and the two grant operations are
 `Effect` variant; there is no operator-side enforcement loop.
 
 This crate is **storage-as-cell-programs in action.** Compare against
-the operator-side `pyana_storage::programmable::ProgrammableQueue` it
+the operator-side `dregg_storage::programmable::ProgrammableQueue` it
 succeeds:
 
 | Surface | `storage::programmable::ProgrammableQueue` | `starbridge-subscription` |
 |---|---|---|
-| **Where invariants live** | `storage::programmable::QueueProgram::evaluate_constraint` — an operator-process Rust evaluator | `pyana_cell::CellProgram::evaluate_with_meta` — the same per-turn evaluator the executor runs over every cell |
+| **Where invariants live** | `storage::programmable::QueueProgram::evaluate_constraint` — an operator-process Rust evaluator | `dregg_cell::CellProgram::evaluate_with_meta` — the same per-turn evaluator the executor runs over every cell |
 | **Who enforces** | A storage-side closed-enum (`QueueConstraint::*`) | The executor's slot-caveat vocabulary (`StateConstraint::*`) |
 | **What produces a receipt** | Nothing — appends are operator commitments | Every turn produces a `TurnReceipt` and (for sovereign cells) a `WitnessedReceipt` |
 | **How "only authorized senders may publish" is enforced** | A `QueueConstraint::SenderAuthorized` check inside the storage-process | A `StateConstraint::SenderAuthorized { set: PublicRoot { set_root_index: 3 } }` in the cell-program; executor rejects on every turn |
@@ -58,7 +58,7 @@ The reference design in `STORAGE-AS-CELL-PROGRAMS.md` §3.1 sketches
 per-message `WriteOnce` slots as the *idealized* shape. Cells have
 only 8 slots total, which can't host an unbounded message ring. The
 real data path is the same one `MerkleQueue::root` uses today in
-`pyana_storage`: a Poseidon2/BLAKE3 root commitment in slot 6, with
+`dregg_storage`: a Poseidon2/BLAKE3 root commitment in slot 6, with
 the per-message `(seq, payload_hash)` tuples stored out-of-band in a
 content-addressed store keyed by the root.
 
@@ -172,13 +172,13 @@ Run:
 cargo test -p starbridge-subscription
 ```
 
-## Composition with `pyana-directory`
+## Composition with `dregg-directory`
 
 A subscription cell can be looked up by name. The intended pattern is
 the same one nameservice exposes today: publish the subscription's
-`CellId` as the resolution target of a name in `pyana-directory`,
-e.g. `pyana://name/feeds.alice.weekly-update`. Consumers resolve the
-name (one round-trip), then mount `<pyana-subscription-feed
+`CellId` as the resolution target of a name in `dregg-directory`,
+e.g. `dregg://name/feeds.alice.weekly-update`. Consumers resolve the
+name (one round-trip), then mount `<dregg-subscription-feed
 uri="...">` against the resolved cell.
 
 We sketch but don't wire the integration here — the directory mount
@@ -194,8 +194,8 @@ starbridge_subscription::register(&ctx);
 // host serves both factory descriptors + inspector descriptors
 ```
 
-The site's Studio surface can then mount `<pyana-name>` and
-`<pyana-subscription>` against the same context, and the directory
+The site's Studio surface can then mount `<dregg-name>` and
+`<dregg-subscription>` against the same context, and the directory
 inspector links into subscription inspectors by URI.
 
 ## Dependency on the caveat-correctness lane
@@ -252,15 +252,15 @@ app-framework. Net ~−500 LOC across the migration.**
 
 ## Pages
 
-The `pages/index.html` mounts a `<pyana-app>` with the three
+The `pages/index.html` mounts a `<dregg-app>` with the three
 inspector kinds this crate registers:
 
-- `<pyana-subscription uri="...">` — display a subscription's state
+- `<dregg-subscription uri="...">` — display a subscription's state
   (head, tail, capacity, latest payload, plus the membership roots).
-- `<pyana-subscription-publish-form>` — publisher's compose-and-send
+- `<dregg-subscription-publish-form>` — publisher's compose-and-send
   UI; uses the `publish` turn-builder via the extension cipherclerk's
   `signTurn` bridge.
-- `<pyana-subscription-feed>` — consumer's live feed; subscribes to
+- `<dregg-subscription-feed>` — consumer's live feed; subscribes to
   `subscription-published` events from a target cell and (on consume)
   emits a `consume` turn.
 
@@ -268,18 +268,18 @@ The JS-side surface lives under `starbridge-apps/shared/` per the
 nameservice precedent.
 
 `pages/turn-builders.js` exposes the JS counterparts of the Rust
-turn-builders, registered under `window.pyana.builders.subscription`:
+turn-builders, registered under `window.dregg.builders.subscription`:
 
 ```js
-await window.pyana.builders.subscription.publish(subscriptionUri, "hello world");
-await window.pyana.builders.subscription.consume(subscriptionUri);
-await window.pyana.builders.subscription.grant_publisher(subscriptionUri, newPubkeyBytes);
-await window.pyana.builders.subscription.grant_consumer(subscriptionUri, newPubkeyBytes);
+await window.dregg.builders.subscription.publish(subscriptionUri, "hello world");
+await window.dregg.builders.subscription.consume(subscriptionUri);
+await window.dregg.builders.subscription.grant_publisher(subscriptionUri, newPubkeyBytes);
+await window.dregg.builders.subscription.grant_consumer(subscriptionUri, newPubkeyBytes);
 ```
 
 Each helper reads the cell to compute the next sequence number / root,
 assembles the `turnSpec` (same shape the Rust `build_*_action` helpers
-produce), and dispatches through `window.pyana.signTurn(..)`. Policy
+produce), and dispatches through `window.dregg.signTurn(..)`. Policy
 stays in Rust — the JS shim only encodes shape.
 
 [1]: src/lib.rs#L235

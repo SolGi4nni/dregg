@@ -37,7 +37,7 @@ test.describe('Extension installation', () => {
 test.describe('Popup cipherclerk tab', () => {
   test('popup opens and shows cipherclerk heading', async ({ popup }) => {
     const heading = popup.locator('h1');
-    await expect(heading).toHaveText('Pyana Cipherclerk');
+    await expect(heading).toHaveText('Dregg Cipherclerk');
   });
 
   test('status indicator is visible', async ({ popup }) => {

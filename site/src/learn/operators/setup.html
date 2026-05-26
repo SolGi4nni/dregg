@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Node Setup — Pyana</title>
+<title>Node Setup — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,8 +16,8 @@
 <h1>Node Setup</h1>
 
     <p>
-      This guide covers building, initializing, and running a pyana-node from
-      source. A pyana-node is the backend daemon that hosts an AgentCipherclerk,
+      This guide covers building, initializing, and running a dregg-node from
+      source. A dregg-node is the backend daemon that hosts an AgentCipherclerk,
       participates in federation consensus, and serves the HTTP API.
     </p>
 
@@ -29,21 +29,21 @@
       <li>A C compiler (for ed25519-dalek, blake3)</li>
     </ul>
 
-    <pre><code class="language-rust">git clone https://github.com/emberian/pyana
-cd pyana
-cargo build -p pyana-node --release</code></pre>
+    <pre><code class="language-rust">git clone https://github.com/emberian/dregg
+cd dregg
+cargo build -p dregg-node --release</code></pre>
 
     <p>
-      The binary is at <code>target/release/pyana-node</code>.
+      The binary is at <code>target/release/dregg-node</code>.
     </p>
 
     <h2 id="init">Initializing the Data Directory</h2>
 
-    <pre><code>pyana-node init --data-dir ~/.pyana</code></pre>
+    <pre><code>dregg-node init --data-dir ~/.dregg</code></pre>
 
     <p>This creates the data directory and generates an Ed25519 node keypair:</p>
     <ul>
-      <li><code>~/.pyana/node.key</code> -- 32-byte secret key (protect this file)</li>
+      <li><code>~/.dregg/node.key</code> -- 32-byte secret key (protect this file)</li>
     </ul>
 
     <p>
@@ -55,15 +55,15 @@ cargo build -p pyana-node --release</code></pre>
       <p>
         The <code>node.key</code> file is your node's identity. In production,
         use an OS keychain or HSM rather than a plaintext file. Set restrictive
-        permissions: <code>chmod 600 ~/.pyana/node.key</code>.
+        permissions: <code>chmod 600 ~/.dregg/node.key</code>.
       </p>
     </div>
 
     <h2 id="run">Running the Node</h2>
 
-    <pre><code>pyana-node run \
+    <pre><code>dregg-node run \
   --port 8420 \
-  --data-dir ~/.pyana \
+  --data-dir ~/.dregg \
   --federation-peers "peer1.example.com:8420,peer2.example.com:8420"</code></pre>
 
     <h3>CLI Reference</h3>
@@ -74,7 +74,7 @@ cargo build -p pyana-node --release</code></pre>
       </thead>
       <tbody>
         <tr><td><code>--port</code></td><td>8420</td><td>HTTP API listen port</td></tr>
-        <tr><td><code>--data-dir</code></td><td>~/.pyana</td><td>Persistent state directory</td></tr>
+        <tr><td><code>--data-dir</code></td><td>~/.dregg</td><td>Persistent state directory</td></tr>
         <tr><td><code>--federation-peers</code></td><td>(none)</td><td>Comma-separated peer addresses (host:port)</td></tr>
         <tr><td><code>--node-index</code></td><td>0</td><td>This node's index in federation (0-based)</td></tr>
         <tr><td><code>--enable-pruning</code></td><td>false</td><td>Prune old Blocklace blocks below latest checkpoint</td></tr>
@@ -91,7 +91,7 @@ cargo build -p pyana-node --release</code></pre>
     </p>
 
     <pre><code># Generate 4-node devnet config
-pyana-node genesis \
+dregg-node genesis \
   --validators 4 \
   --epoch-length 1000 \
   --checkpoint-interval 100 \
@@ -111,7 +111,7 @@ docker-compose up</code></pre>
     <h2 id="status">Checking Node Status</h2>
 
     <pre><code># Check if the node is running
-pyana-node status --port 8420
+dregg-node status --port 8420
 
 # Or hit the API directly
 curl http://127.0.0.1:8420/status</code></pre>
@@ -123,10 +123,10 @@ curl http://127.0.0.1:8420/status</code></pre>
       This reads JSON-RPC from stdin and writes responses to stdout:
     </p>
 
-    <pre><code>pyana-node mcp --data-dir ~/.pyana --federation-peers "peer1:8420"</code></pre>
+    <pre><code>dregg-node mcp --data-dir ~/.dregg --federation-peers "peer1:8420"</code></pre>
 
     <p>
-      AI assistants (Claude, GPT, etc.) can then use pyana tools: authorize, submit
+      AI assistants (Claude, GPT, etc.) can then use dregg tools: authorize, submit
       turns, manage capabilities, and post intents.
     </p>
 

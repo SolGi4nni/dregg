@@ -151,7 +151,7 @@ pub enum TransitionGuard {
 /// A single witness payload bound by index inside a [`WitnessBundle`].
 ///
 /// Per Cav-Codex Block 3: identifies a kind-tag plus an opaque byte
-/// payload. Concrete shapes live in `pyana_turn::action::WitnessKind /
+/// payload. Concrete shapes live in `dregg_turn::action::WitnessKind /
 /// WitnessBlob`; this cell-side mirror exists so the program evaluator
 /// can dispatch witnesses without depending on the turn crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,7 +269,7 @@ impl TransitionGuard {
     /// invariants get checked), which is exactly the
     /// `unknown_method_default_denied` shape the
     /// `starbridge-subscription` / `starbridge-governed-namespace` /
-    /// `pyana-storage-templates::cap_inbox` tests assert against.
+    /// `dregg-storage-templates::cap_inbox` tests assert against.
     pub fn is_method_dispatching(&self) -> bool {
         match self {
             TransitionGuard::Always => false,
@@ -318,13 +318,13 @@ pub enum AuthorizedSet {
     /// known identity-issuer cell against a pinned schema commitment.
     ///
     /// The witness side carries a `ProofBytes` blob whose contents are a
-    /// `pyana_credentials::Presentation` (or its proof bytes) that the
+    /// `dregg_credentials::Presentation` (or its proof bytes) that the
     /// registered `WitnessedPredicateKind::BlindedSet` verifier accepts:
     /// the verifier reads the issuer cell's `REVOCATION_ROOT_SLOT` and
     /// `SCHEMA_COMMITMENT_SLOT` out-of-band, confirms the schema commitment
     /// matches `credential_schema_id`, and validates non-revocation
     /// against the issuer's published revocation root. The on-cell
-    /// `commitment` baked here is `blake3("pyana-credential-set-v1" ||
+    /// `commitment` baked here is `blake3("dregg-credential-set-v1" ||
     /// issuer_cell || credential_schema_id)` — a stable identifier
     /// derived from the (issuer, schema) pair so two distinct issuer
     /// cells (or two distinct schemas) produce distinct commitments
@@ -353,7 +353,7 @@ impl AuthorizedSet {
     /// `WitnessedPredicateKind::BlindedSet` verifier registered in the
     /// executor's `WitnessedPredicateRegistry`.
     ///
-    /// `blake3_derive_key("pyana-credential-set-v1") || issuer_cell ||
+    /// `blake3_derive_key("dregg-credential-set-v1") || issuer_cell ||
     /// credential_schema_id`. Stable across builds; replay-safe across
     /// distinct (issuer, schema) pairs.
     ///
@@ -366,7 +366,7 @@ impl AuthorizedSet {
         issuer_cell: &[u8; 32],
         credential_schema_id: &[u8; 32],
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-credential-set-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-credential-set-v1");
         hasher.update(issuer_cell);
         hasher.update(credential_schema_id);
         *hasher.finalize().as_bytes()
@@ -811,7 +811,7 @@ pub enum StateConstraint {
 
     // ─── Escape hatch ───
     /// DSL-authored predicate. The executor evaluates by hash lookup in
-    /// the pyana-dsl runtime expression table. Per eval §5.4 the variant
+    /// the dregg-dsl runtime expression table. Per eval §5.4 the variant
     /// carries a declared `reads` set (what slots/ctx fields the
     /// predicate touches) and a structured `descriptor`.
     Custom {
@@ -1062,7 +1062,7 @@ impl CellProgram {
                 // `unknown_method_default_denied` tests in
                 // `starbridge-subscription`,
                 // `starbridge-governed-namespace`, and
-                // `pyana-storage-templates::cap_inbox_tests`.
+                // `dregg-storage-templates::cap_inbox_tests`.
                 let mut any_matched = false;
                 let mut any_dispatch_case = false;
                 let mut any_dispatch_matched = false;

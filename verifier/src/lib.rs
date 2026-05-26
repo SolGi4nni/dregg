@@ -1,18 +1,18 @@
-//! `pyana-verifier`: Standalone Effect VM proof verifier.
+//! `dregg-verifier`: Standalone Effect VM proof verifier.
 //!
 //! # Design intent
 //!
-//! This crate imports `pyana-circuit` + `pyana-types` (the v1 minimum), plus
-//! `pyana-turn` + `pyana-federation` + `pyana-captp` so the
+//! This crate imports `dregg-circuit` + `dregg-types` (the v1 minimum), plus
+//! `dregg-turn` + `dregg-federation` + `dregg-captp` so the
 //! `verify-cross-fed-bundle` subcommand can deserialize and verify a
-//! [`pyana_federation::CrossFedReceiptBundle`] end-to-end. It MUST NOT
-//! import from `pyana-node`, `pyana-wire`, or any crate that carries
+//! [`dregg_federation::CrossFedReceiptBundle`] end-to-end. It MUST NOT
+//! import from `dregg-node`, `dregg-wire`, or any crate that carries
 //! ledger / executor / program-registry state.
 //!
 //! The invariant: a verifier process can run in a completely separate OS process
 //! with no shared memory, no shared mutable state, and no callbacks into a
 //! prover. It reads bytes from disk (or stdin), runs cryptographic verification,
-//! and exits. `pyana-federation` is depended on with
+//! and exits. `dregg-federation` is depended on with
 //! `default-features = false` so no tokio runtime is pulled — the verifier
 //! stays single-threaded and synchronous. This is the "Charlie" role
 //! described in `06-the-real-demo.md`.
@@ -20,11 +20,11 @@
 //! # Verification key registry (v1)
 //!
 //! For v1 there is exactly one verification key: the Effect VM AIR
-//! (`"pyana-effect-vm-v1"`), identified by its 32-byte SHA-256 of the AIR name.
+//! (`"dregg-effect-vm-v1"`), identified by its 32-byte SHA-256 of the AIR name.
 //! Future versions will support additional cell programs by VK hash lookup.
 
-use pyana_circuit::stark::StarkAir;
-use pyana_circuit::{EffectVmAir, field::BabyBear, stark};
+use dregg_circuit::stark::StarkAir;
+use dregg_circuit::{EffectVmAir, field::BabyBear, stark};
 use serde::{Deserialize, Serialize};
 
 pub mod aggregated_bundle;
@@ -80,13 +80,13 @@ pub mod exit_code {
 // ---------------------------------------------------------------------------
 
 /// The Effect VM AIR name baked into all v1 proofs.
-pub const EFFECT_VM_AIR_NAME: &str = "pyana-effect-vm-v1";
+pub const EFFECT_VM_AIR_NAME: &str = "dregg-effect-vm-v1";
 
 /// 32-byte SHA-256 of the AIR name bytes used as the VK hash for the default
 /// Effect VM circuit. Callers pass this via `--vk-hash` to select the
 /// built-in verifier.
 ///
-/// Computed as: SHA-256(b"pyana-effect-vm-v1")
+/// Computed as: SHA-256(b"dregg-effect-vm-v1")
 pub const EFFECT_VM_VK_HASH_HEX: &str =
     "8b80e1cf7b0a04e74e7d7bfb9c7a11e37c1d0bb1a5edae8e3b92c9e9b6d5f42a";
 
@@ -283,7 +283,7 @@ impl JsonRequest {
 // Replay-chain (WitnessedReceipt v1) — see WITNESSED-RECEIPT-CHAIN-DESIGN.md
 // ---------------------------------------------------------------------------
 //
-// The verifier crate intentionally does NOT import `pyana-turn`
+// The verifier crate intentionally does NOT import `dregg-turn`
 // (which is where `WitnessedReceipt` lives). To preserve that isolation
 // while still parsing the on-disk WR JSON, we declare a verifier-local
 // mirror struct that is serde-compatible with the producer's
@@ -292,16 +292,16 @@ impl JsonRequest {
 // preserved as raw JSON so the replayer can still pretty-print a verdict
 // per receipt index.
 
-/// Mirror of `pyana_turn::WitnessAvailability`. Only `Inline` is supported
+/// Mirror of `dregg_turn::WitnessAvailability`. Only `Inline` is supported
 /// in v1; future variants will reject with "unwitnessable" in the verdict.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ReplayWitnessAvailability {
     Inline,
 }
 
-/// Mirror of `pyana_turn::RecursiveProofVariant`. When present in a
+/// Mirror of `dregg_turn::RecursiveProofVariant`. When present in a
 /// [`ReplayWitnessBundle`], a verifier may dispatch through
-/// [`pyana_circuit::recursive_witness_bundle::verify_recursive_proof_variant`]
+/// [`dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`]
 /// instead of re-running the AIR over the inline trace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReplayRecursiveProofVariant {
@@ -310,7 +310,7 @@ pub struct ReplayRecursiveProofVariant {
     pub recursive_vk_hash: [u8; 32],
 }
 
-/// Mirror of `pyana_turn::WitnessBundle`.
+/// Mirror of `dregg_turn::WitnessBundle`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayWitnessBundle {
     pub trace_rows: Vec<Vec<u32>>,
@@ -331,14 +331,14 @@ impl ReplayWitnessBundle {
     }
 }
 
-/// Mirror of `pyana_turn::WitnessedReceipt`. The inner `receipt` deserializes
-/// directly to `pyana_turn::TurnReceipt` (we already depend on `pyana-turn`),
+/// Mirror of `dregg_turn::WitnessedReceipt`. The inner `receipt` deserializes
+/// directly to `dregg_turn::TurnReceipt` (we already depend on `dregg-turn`),
 /// so the replayer can cross-check the proof's PI against the receipt's
 /// authoritative `turn_hash` and `previous_receipt_hash`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayEntry {
     /// The full TurnReceipt this proof attests to.
-    pub receipt: pyana_turn::TurnReceipt,
+    pub receipt: dregg_turn::TurnReceipt,
     pub proof_bytes: Vec<u8>,
     pub public_inputs: Vec<u32>,
     #[serde(default)]
@@ -478,8 +478,8 @@ pub fn check_receipt_pi_binding(
     wr: &ReplayEntry,
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> Option<String> {
-    use pyana_circuit::effect_vm::pi;
-    use pyana_commit::typed::canonical_32_to_felts_4;
+    use dregg_circuit::effect_vm::pi;
+    use dregg_commit::typed::canonical_32_to_felts_4;
 
     // Chain-walk invariant (T8): receipt[N].previous_receipt_hash must
     // match receipt[N-1].receipt_hash().
@@ -700,7 +700,7 @@ fn replay_one_with_prev(
 // re-does the prover's algebraic work locally.
 //
 // With the now-working `plonky3-recursion` path (see
-// `pyana_circuit::plonky3_recursion_impl`), a producer can instead ship
+// `dregg_circuit::plonky3_recursion_impl`), a producer can instead ship
 // a *recursive proof* attesting that the inner trace was valid. The
 // verifier then just runs `verify_recursive_layer` on the recursive
 // proof; no row-by-row replay needed. This trades a one-time recursive
@@ -713,8 +713,8 @@ fn replay_one_with_prev(
 // `verify_recursive_replay` instead.
 //
 // The on-disk format for the recursive proof is whatever the producer
-// emits via `pyana_circuit::plonky3_verifier_air::RecursiveIvcStep::recursive_layer_bytes`
-// (postcard-encoded `BatchStarkProof<PyanaRecursionConfig>`). The
+// emits via `dregg_circuit::plonky3_verifier_air::RecursiveIvcStep::recursive_layer_bytes`
+// (postcard-encoded `BatchStarkProof<DreggRecursionConfig>`). The
 // verifier deserialises and runs `verify_recursive_layer` on it.
 
 /// Verdict for the recursive-mode scope-2 replay.
@@ -742,8 +742,8 @@ pub enum RecursiveReplayVerdict {
 ///    [`replay_one`] (so a malformed scope-1 chain is rejected even when
 ///    the recursive proof would otherwise verify).
 /// 2. Decode `recursive_layer_bytes` (postcard-encoded
-///    `BatchStarkProof<PyanaRecursionConfig>`) and verify via
-///    [`pyana_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes`].
+///    `BatchStarkProof<DreggRecursionConfig>`) and verify via
+///    [`dregg_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes`].
 ///
 /// Returns `Verified` only when *both* checks pass. The trust-and-replay
 /// path (`replay_one_with_prev`) remains the default; this function is
@@ -753,7 +753,7 @@ pub fn verify_recursive_replay(
     recursive_layer_bytes: &[u8],
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> RecursiveReplayVerdict {
-    use pyana_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes;
+    use dregg_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes;
 
     // Step 1: scope-1 STARK verification.
     let (proof_verdict, code) =
@@ -788,7 +788,7 @@ pub fn verify_recursive_replay(
 /// 2. Pull `recursive_proof` out of the entry's witness bundle. If
 ///    absent → `InnerProofRejected` ("no recursive proof attached").
 /// 3. Dispatch through
-///    [`pyana_circuit::recursive_witness_bundle::verify_recursive_proof_variant`],
+///    [`dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`],
 ///    cross-binding the variant's public inputs against the receipt's
 ///    `public_inputs` (so a swapped recursive proof from a different
 ///    receipt is caught).
@@ -798,7 +798,7 @@ pub fn verify_recursive_replay_from_bundle(
     wr: &ReplayEntry,
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> RecursiveReplayVerdict {
-    use pyana_circuit::recursive_witness_bundle::{
+    use dregg_circuit::recursive_witness_bundle::{
         RecursiveVariantVerdict, verify_recursive_proof_variant,
     };
 
@@ -935,8 +935,8 @@ mod tests {
         assert!(out.first_failure.is_none());
     }
 
-    fn sample_receipt() -> pyana_turn::TurnReceipt {
-        pyana_turn::TurnReceipt {
+    fn sample_receipt() -> dregg_turn::TurnReceipt {
+        dregg_turn::TurnReceipt {
             turn_hash: [0u8; 32],
             forest_hash: [0u8; 32],
             pre_state_hash: [0u8; 32],
@@ -946,7 +946,7 @@ mod tests {
             computrons_used: 0,
             action_count: 0,
             previous_receipt_hash: None,
-            agent: pyana_types::CellId::from_bytes([0u8; 32]),
+            agent: dregg_types::CellId::from_bytes([0u8; 32]),
             federation_id: [0u8; 32],
             routing_directives: Vec::new(),
             introduction_exports: Vec::new(),
@@ -1063,9 +1063,9 @@ mod tests {
     /// (without real proof bytes) the STARK step fails first. The
     /// `check_receipt_pi_binding` function is called directly so we can
     /// isolate PI completeness from algebraic soundness.
-    fn entry_with_pi_from_receipt(receipt: pyana_turn::TurnReceipt) -> ReplayEntry {
-        use pyana_circuit::effect_vm::pi;
-        use pyana_commit::typed::canonical_32_to_felts_4;
+    fn entry_with_pi_from_receipt(receipt: dregg_turn::TurnReceipt) -> ReplayEntry {
+        use dregg_circuit::effect_vm::pi;
+        use dregg_commit::typed::canonical_32_to_felts_4;
         let mut pi_vec = vec![0u32; pi::BASE_COUNT];
         let th = canonical_32_to_felts_4(&receipt.turn_hash);
         for i in 0..pi::TURN_HASH_LEN {
@@ -1099,7 +1099,7 @@ mod tests {
 
     #[test]
     fn pi_binding_rejects_tampered_turn_hash() {
-        use pyana_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
         let mut entry = entry_with_pi_from_receipt(r);
@@ -1118,7 +1118,7 @@ mod tests {
 
     #[test]
     fn pi_binding_rejects_tampered_previous_receipt_hash() {
-        use pyana_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
         r.previous_receipt_hash = Some([0x33u8; 32]);
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn pi_binding_rejects_tampered_is_agent_cell() {
-        use pyana_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
         let mut entry = entry_with_pi_from_receipt(r);

@@ -12,7 +12,7 @@
 //!    effects but no authorization yet.
 //! 3. [`SealedTurn`] — every action has acquired an [`Authorization`];
 //!    the cclerk has signed/proved as needed.
-//! 4. [`pyana_turn::Turn`] — the runtime executable consumed by the
+//! 4. [`dregg_turn::Turn`] — the runtime executable consumed by the
 //!    `TurnExecutor`.
 //!
 //! Per P2.G the trustless intent engine (`crate::trustless`) now emits
@@ -21,10 +21,10 @@
 //! have been deleted. `TrustlessIntentEngine::finalize` returns a
 //! `SettlementOutput` whose inner `SealedTurn` is ready for the executor.
 
-use pyana_cell::CellId;
-use pyana_turn::CallForest;
-use pyana_turn::action::{Action, Authorization, Effect};
-use pyana_turn::turn::Turn;
+use dregg_cell::CellId;
+use dregg_turn::CallForest;
+use dregg_turn::action::{Action, Authorization, Effect};
+use dregg_turn::turn::Turn;
 
 use crate::solver::RingTrade;
 use crate::solver::Settlement as RingSettlement;
@@ -144,7 +144,7 @@ impl SealedTurn {
 }
 
 // ─── Layer 4: Turn ────────────────────────────────────────────────────────────
-// (re-exported `pyana_turn::Turn`)
+// (re-exported `dregg_turn::Turn`)
 
 // ─── Context & lowering function ──────────────────────────────────────────────
 
@@ -296,17 +296,17 @@ pub fn seal_plan_uniform(
         "seal_plan_uniform: refusing Unchecked authorization"
     );
 
-    let mut builder = pyana_turn::builder::TurnBuilder::new(agent, nonce);
+    let mut builder = dregg_turn::builder::TurnBuilder::new(agent, nonce);
     for pa in plan.actions {
         let action = Action {
             target: pa.target,
-            method: pyana_turn::action::symbol(&pa.method),
+            method: dregg_turn::action::symbol(&pa.method),
             args: Vec::new(),
             authorization: authorization.clone(),
             preconditions: Default::default(),
             effects: pa.effects,
-            may_delegate: pyana_turn::action::DelegationMode::None,
-            commitment_mode: pyana_turn::action::CommitmentMode::Full,
+            may_delegate: dregg_turn::action::DelegationMode::None,
+            commitment_mode: dregg_turn::action::CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };
@@ -352,7 +352,7 @@ pub fn seal_plan_per_leg<F>(plan: EffectPlan, agent: CellId, nonce: u64, sealer:
 where
     F: Fn(&PendingAction) -> Authorization,
 {
-    let mut builder = pyana_turn::builder::TurnBuilder::new(agent, nonce);
+    let mut builder = dregg_turn::builder::TurnBuilder::new(agent, nonce);
     for pa in &plan.actions {
         let auth = sealer(pa);
         debug_assert!(
@@ -362,13 +362,13 @@ where
         );
         let action = Action {
             target: pa.target,
-            method: pyana_turn::action::symbol(&pa.method),
+            method: dregg_turn::action::symbol(&pa.method),
             args: Vec::new(),
             authorization: auth,
             preconditions: Default::default(),
             effects: pa.effects.clone(),
-            may_delegate: pyana_turn::action::DelegationMode::None,
-            commitment_mode: pyana_turn::action::CommitmentMode::Full,
+            may_delegate: dregg_turn::action::DelegationMode::None,
+            commitment_mode: dregg_turn::action::CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };

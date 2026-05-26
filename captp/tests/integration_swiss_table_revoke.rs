@@ -7,12 +7,12 @@
 //! - Revoked cap not found by peek-then-revoke (double-revoke semantics)
 //! - Expired cap rejected even before revoke
 
-use pyana_captp::{
+use dregg_captp::{
     FederationId, HandoffCertificate, HandoffError, HandoffPresentation, SwissTable,
     validate_handoff,
 };
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, generate_keypair};
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, generate_keypair};
 
 fn cell(b: u8) -> CellId {
     CellId([b; 32])
@@ -46,7 +46,7 @@ fn issue_use_revoke_use_fails() {
     let err = table
         .enliven(&swiss, 101)
         .expect_err("must fail after revoke");
-    assert_eq!(err, pyana_captp::EnlivenError::NotFound);
+    assert_eq!(err, dregg_captp::EnlivenError::NotFound);
 
     // Double-revoke returns false (idempotent)
     assert!(!table.revoke(&swiss));
@@ -121,7 +121,7 @@ fn max_uses_boundary() {
     let err = table
         .enliven(&swiss, 102)
         .expect_err("must fail at exhaustion");
-    assert_eq!(err, pyana_captp::EnlivenError::ExhaustedUses);
+    assert_eq!(err, dregg_captp::EnlivenError::ExhaustedUses);
 
     // Entry is still in the table (not automatically removed); explicit revoke removes it.
     assert!(table.contains(&swiss));
@@ -147,7 +147,7 @@ fn expired_cap_rejected_then_revoke_cleans_up() {
 
     // At height 201: expired.
     let err = table.enliven(&swiss, 201).expect_err("must be expired");
-    assert_eq!(err, pyana_captp::EnlivenError::Expired);
+    assert_eq!(err, dregg_captp::EnlivenError::Expired);
 
     // Entry is still present (expiry doesn't auto-remove).
     assert!(table.contains(&swiss));
@@ -167,7 +167,7 @@ fn attenuated_cap_revoke_clears_mask() {
     let mut table = SwissTable::new();
     let c = cell(0x33);
 
-    let mask: pyana_cell::EffectMask = 0b0000_0110;
+    let mask: dregg_cell::EffectMask = 0b0000_0110;
     let swiss = table.export_with_options(c, AuthRequired::None, 10, None, Some(mask), None);
 
     let e = table.enliven(&swiss, 10).unwrap();
@@ -178,12 +178,12 @@ fn attenuated_cap_revoke_clears_mask() {
 }
 
 // =============================================================================
-// URI round-trip: exported cap survives pyana:// serialization
+// URI round-trip: exported cap survives dregg:// serialization
 // =============================================================================
 
 #[test]
 fn exported_cap_uri_round_trip_then_revoke() {
-    use pyana_captp::PyanaUri;
+    use dregg_captp::DreggUri;
 
     let mut table = SwissTable::new();
     let c = cell(0x55);
@@ -194,7 +194,7 @@ fn exported_cap_uri_round_trip_then_revoke() {
 
     // Round-trip through string.
     let uri_str = uri.to_uri_string();
-    let parsed: PyanaUri = PyanaUri::parse(&uri_str).unwrap();
+    let parsed: DreggUri = DreggUri::parse(&uri_str).unwrap();
     assert_eq!(parsed.swiss, swiss);
 
     // Enliven using the parsed swiss number.

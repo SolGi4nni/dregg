@@ -12,19 +12,19 @@
 //! - `circuit/src/ivc.rs` (IvcBuilder, IvcProof, verify_ivc, FoldDelta)
 //! - `commit/` for Merkle commitment of each state
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::fold_air::{FoldWitness, RemovedFact, build_shared_tree};
-use pyana_circuit::ivc::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::fold_air::{FoldWitness, RemovedFact, build_shared_tree};
+use dregg_circuit::ivc::{
     FoldDelta, IvcBuilder, IvcVerification, verify_ivc, verify_ivc_with_roots,
 };
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_commit::{Fact, FoldDeltaBuilder, TokenState, verify_fold_chain};
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_commit::{Fact, FoldDeltaBuilder, TokenState, verify_fold_chain};
 
 fn main() {
-    println!("=== Pyana IVC Attenuation Chain Demo ===\n");
+    println!("=== Dregg IVC Attenuation Chain Demo ===\n");
 
     // =========================================================================
-    // PART 1: Commitment-layer attenuation (pyana-commit)
+    // PART 1: Commitment-layer attenuation (dregg-commit)
     // Shows the logical model: token states with Merkle-committed fact sets.
     // =========================================================================
     println!("--- Part 1: Commitment-layer delegation chain ---\n");
@@ -120,7 +120,7 @@ fn main() {
     println!();
 
     // =========================================================================
-    // PART 2: IVC circuit-layer proof (pyana-circuit)
+    // PART 2: IVC circuit-layer proof (dregg-circuit)
     // Shows the ZK proof system: constant-size proof regardless of chain length.
     // =========================================================================
     println!("--- Part 2: IVC circuit-layer proof ---\n");
@@ -220,7 +220,7 @@ fn main() {
             new_root,
             removed_facts,
             num_added_checks: 1, // Each step adds a restriction check
-            added_checks_commitment: pyana_circuit::fold_air::compute_test_checks_commitment(1),
+            added_checks_commitment: dregg_circuit::fold_air::compute_test_checks_commitment(1),
         };
 
         let delta = FoldDelta::new(fold_witness);
@@ -307,8 +307,8 @@ fn main() {
     let mut sizes = Vec::new();
 
     for &n in &chain_lengths {
-        let (test_root, test_deltas) = pyana_circuit::ivc::create_test_chain(n as usize);
-        if let Some(proof) = pyana_circuit::ivc::prove_ivc(test_root, test_deltas) {
+        let (test_root, test_deltas) = dregg_circuit::ivc::create_test_chain(n as usize);
+        if let Some(proof) = dregg_circuit::ivc::prove_ivc(test_root, test_deltas) {
             let size = proof.proof_size_bytes();
             sizes.push((n, size));
             println!(

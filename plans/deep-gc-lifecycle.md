@@ -33,8 +33,8 @@ NoteCreate  Storage use  No turns   Tombstone   Re-hosts cell
 ```rust
 // turn/src/executor.rs, line ~5028
 // CreateCell effect allocates a new cell in the federation ledger
-pyana_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
-pyana_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
+dregg_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
+dregg_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
 ```
 
 At birth, a hosted cell:

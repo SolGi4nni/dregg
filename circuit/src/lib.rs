@@ -1,4 +1,4 @@
-//! `pyana-circuit`: Zero-knowledge proof circuits for pyana authorization token chains.
+//! `dregg-circuit`: Zero-knowledge proof circuits for dregg authorization token chains.
 //!
 //! # Trust Model
 //!
@@ -19,7 +19,7 @@
 //! witness. Bugs here break the entire trust model -- a soundness bug allows forged
 //! authorization tokens.
 //!
-//! This crate implements the circuit layer for the pyana ZK token system,
+//! This crate implements the circuit layer for the dregg ZK token system,
 //! proving: "I hold a valid attenuated token chain whose final state authorizes
 //! action X" without revealing the chain or capabilities.
 //!
@@ -172,7 +172,7 @@ pub mod plonky3_verifier_air;
 #[cfg(feature = "recursion")]
 pub mod plonky3_recursion_impl;
 
-/// Recursive (Golden Vision) compression bridge for `pyana_turn::WitnessedReceipt`
+/// Recursive (Golden Vision) compression bridge for `dregg_turn::WitnessedReceipt`
 /// scope-2 replay. See the module docs for the Silver→Golden mapping and
 /// the VK v2 layered encoding of the recursive VK hash.
 #[cfg(feature = "recursion")]

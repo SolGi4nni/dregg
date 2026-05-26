@@ -7,10 +7,10 @@
 //!
 //! Per `HOUYHNHNM-COMPARISON.md`'s "wait, this changes things" insight
 //! (closing section): **the `WitnessedReceipt` chain rooted at each
-//! turn IS pyana's persistence layer.** It is *not* an auxiliary
+//! turn IS dregg's persistence layer.** It is *not* an auxiliary
 //! observability log. State is recoverable by replaying receipts; the
 //! ledger snapshot at any tip is *derived* from the receipt stream;
-//! `pyana_persist`'s on-disk structures are caches over this canonical
+//! `dregg_persist`'s on-disk structures are caches over this canonical
 //! source.
 //!
 //! Concretely:
@@ -22,8 +22,8 @@
 //! - A verifier replaying the chain re-derives the cell's state. The
 //!   on-disk snapshot is a memoization, not the source of truth.
 //! - When an operator prunes the hot tail (per
-//!   [`pyana_node::config::RetentionPolicy`]), they substitute an
-//!   [`pyana_cell::lifecycle::ArchivalAttestation`] for the pruned
+//!   [`dregg_node::config::RetentionPolicy`]), they substitute an
+//!   [`dregg_cell::lifecycle::ArchivalAttestation`] for the pruned
 //!   prefix — the persistence stream is *still complete*, just
 //!   summarized at the cut point.
 //!
@@ -33,14 +33,14 @@
 //!
 //! See `NEW-WORLD.md` ("Persistence: receipts are the stream") and
 //! `BOUNDARIES.md` for the persistence-as-policy boundary; see
-//! `pyana_node::config::RetentionPolicy` and
-//! `pyana_wire::message::WireMessage::RequestReceipt` for the wire and
+//! `dregg_node::config::RetentionPolicy` and
+//! `dregg_wire::message::WireMessage::RequestReceipt` for the wire and
 //! operator-side shapes that fall out of this reframe.
 
 use std::collections::HashMap;
 
-use pyana_cell::state::FieldElement;
-use pyana_cell::{Cell, CellId, DerivationRecord, LedgerDelta};
+use dregg_cell::state::FieldElement;
+use dregg_cell::{Cell, CellId, DerivationRecord, LedgerDelta};
 use serde::{Deserialize, Serialize};
 
 use crate::action::Symbol;
@@ -71,7 +71,7 @@ mod sw_sig_serde {
 /// for the executor to (1) reconstruct the cell so per-cell execution can
 /// proceed and (2) authenticate the transition as coming from the cell's
 /// owning key. The shape mirrors
-/// [`pyana_cell::peer_exchange::PeerStateTransition`] one-shot: the cell key
+/// [`dregg_cell::peer_exchange::PeerStateTransition`] one-shot: the cell key
 /// signs over `(cell_id, old_commitment, new_commitment, effects_hash,
 /// timestamp, sequence)` and an optional STARK proof carries the same
 /// transition through `EffectVmAir`.
@@ -127,7 +127,7 @@ pub struct SovereignCellWitness {
 
 impl SovereignCellWitness {
     /// Canonical signing message layout:
-    ///   "pyana-sovereign-witness-v1:" ||
+    ///   "dregg-sovereign-witness-v1:" ||
     ///   cell_id || old_commitment || new_commitment || effects_hash ||
     ///   timestamp (8 LE) || sequence (8 LE)
     pub fn signing_message(
@@ -138,7 +138,7 @@ impl SovereignCellWitness {
         timestamp: i64,
         sequence: u64,
     ) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"pyana-sovereign-witness-v1:";
+        const DOMAIN: &[u8] = b"dregg-sovereign-witness-v1:";
         let mut msg = Vec::with_capacity(DOMAIN.len() + 32 + 32 + 32 + 32 + 8 + 8);
         msg.extend_from_slice(DOMAIN);
         msg.extend_from_slice(cell_id.as_bytes());
@@ -180,10 +180,10 @@ pub struct CustomProgramProof {
 
 impl CustomProgramProof {
     /// Convert raw public inputs to BabyBear elements for verification.
-    pub fn public_inputs_babybear(&self) -> Vec<pyana_circuit::field::BabyBear> {
+    pub fn public_inputs_babybear(&self) -> Vec<dregg_circuit::field::BabyBear> {
         self.public_inputs
             .iter()
-            .map(|&v| pyana_circuit::field::BabyBear::new(v))
+            .map(|&v| dregg_circuit::field::BabyBear::new(v))
             .collect()
     }
 }
@@ -250,7 +250,7 @@ pub struct Turn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_program_proofs: Option<Vec<CustomProgramProof>>,
     /// Sidecar full-fidelity binding proofs, one per Effect that has a
-    /// schema in `pyana_circuit::effect_action_air`. The verifier
+    /// schema in `dregg_circuit::effect_action_air`. The verifier
     /// (`verify_proof_carrying_turn_bundle`) walks this list, looks up
     /// each schema by `schema_id`, reconstructs the expected PI from
     /// the executor's view of the effect's typed parameters, and
@@ -304,7 +304,7 @@ impl Turn {
         let forest_hash = self.call_forest.compute_hash();
         let mut hasher = blake3::Hasher::new();
         // Domain separation: prevents type confusion with other hash preimages.
-        hasher.update(b"pyana-turn-v3:");
+        hasher.update(b"dregg-turn-v3:");
         hasher.update(self.agent.as_bytes());
         hasher.update(&self.nonce.to_le_bytes());
         hasher.update(&forest_hash);
@@ -616,7 +616,7 @@ impl TurnReceipt {
     pub fn receipt_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         // Version-bumped to v2 when federation_id binding was added.
-        hasher.update(b"pyana-receipt-v2");
+        hasher.update(b"dregg-receipt-v2");
         hasher.update(&self.turn_hash);
         hasher.update(&self.forest_hash);
         hasher.update(&self.pre_state_hash);

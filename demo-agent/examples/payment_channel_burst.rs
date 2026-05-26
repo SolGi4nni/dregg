@@ -13,14 +13,14 @@
 //! - Epoch-boundary rebalancing with SpendingCertificates
 //! - The performance story: 100 payments in < 1ms vs hundreds of ms on-chain
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example payment_channel_burst
+//! Run with: cargo run --release -p dregg-demo-agent --example payment_channel_burst
 
 use std::time::Instant;
 
-use pyana_cell::CellId;
-use pyana_coord::budget::StingrayCounter;
-use pyana_turn::turn::TurnReceipt;
-use pyana_turn::verify::verify_receipt_chain;
+use dregg_cell::CellId;
+use dregg_coord::budget::StingrayCounter;
+use dregg_turn::turn::TurnReceipt;
+use dregg_turn::verify::verify_receipt_chain;
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
@@ -35,7 +35,7 @@ fn short_hex(bytes: &[u8]) -> String {
 
 /// Compute a unique debit digest for a payment.
 fn payment_digest(seq: u64, amount: u64, sender: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-payment-channel-burst-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-payment-channel-burst-v1");
     hasher.update(&seq.to_le_bytes());
     hasher.update(&amount.to_le_bytes());
     hasher.update(sender);
@@ -55,7 +55,7 @@ fn make_channel_receipt(
         None => [0u8; 32],
     };
 
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-channel-state-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-channel-state-v1");
     hasher.update(&total_sent.to_le_bytes());
     hasher.update(&bob_balance.to_le_bytes());
     hasher.update(&seq.to_le_bytes());

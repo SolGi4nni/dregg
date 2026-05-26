@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pyana Site Build Script
+ * Dregg Site Build Script
  * Minimal. No frameworks. Just processing.
  */
 
@@ -14,9 +14,9 @@ const DIST = path.join(__dirname, 'dist');
 
 // Site root prefix for absolute paths in built HTML/CSS.
 //
-// GitHub Pages serves this project at https://emberian.github.io/pyana/, so
-// templates that write `href="/foo"` must become `href="/pyana/foo"` before
-// upload. CI sets BASE_PATH=/pyana; local dev leaves it empty so `npm run
+// GitHub Pages serves this project at https://emberian.github.io/dregg/, so
+// templates that write `href="/foo"` must become `href="/dregg/foo"` before
+// upload. CI sets BASE_PATH=/dregg; local dev leaves it empty so `npm run
 // serve` works at http://localhost:3000/ unchanged. A leading slash is
 // enforced; a trailing slash is stripped.
 let BASE_PATH = process.env.BASE_PATH || '';
@@ -55,7 +55,7 @@ const COPY_DIRS = [
 ];
 
 // Files copied from root-level site assets.
-// `assets/pyana.pdf` is NOT listed: it is built by CI from paper/pyana.typ
+// `assets/dregg.pdf` is NOT listed: it is built by CI from paper/dregg.typ
 // (see COPY_BUILT_FILES below) and is gitignored. Local builds without typst
 // will simply not have a PDF in dist/ — that's fine for dev.
 const COPY_FILES = [
@@ -64,7 +64,7 @@ const COPY_FILES = [
 
 // CI-built files that may need relocation
 const COPY_BUILT_FILES = [
-  { from: 'paper/pyana.pdf', to: 'assets/pyana.pdf' },
+  { from: 'paper/dregg.pdf', to: 'assets/dregg.pdf' },
 ];
 
 let highlighter = null;
@@ -142,10 +142,10 @@ function processLayouts(content, currentFile) {
   layout = processIncludes(layout, path.relative(SRC, p));
 
   // Extract a per-page <title> from the page body so the layout can hoist it
-  // into <head>. Pages declare it as `<title>Foo — Pyana</title>` anywhere
+  // into <head>. Pages declare it as `<title>Foo — Dregg</title>` anywhere
   // inside the layout slot; the build strips it out and substitutes it into
-  // `{{ title }}` in the layout. Pages without a title fall back to "Pyana".
-  let pageTitle = 'Pyana';
+  // `{{ title }}` in the layout. Pages without a title fall back to "Dregg".
+  let pageTitle = 'Dregg';
   let innerWithoutTitle = inner;
   const titleMatch = inner.match(/<title>([\s\S]*?)<\/title>/);
   if (titleMatch) {
@@ -216,7 +216,7 @@ function buildCss() {
 }
 
 function build() {
-  console.log('Building Pyana site...\n');
+  console.log('Building Dregg site...\n');
 
   // Clean dist
   if (fs.existsSync(DIST)) {
@@ -323,25 +323,25 @@ function build() {
     copyDir(studioSrc, studioDst);
   }
 
-  // @pyana/sdk (built from sdk-ts/) — for §4.6 wiring into runtime-in-memory
-  // and starbridge-apps. Served under /pkg/@pyana/sdk/ so browser ESM imports
-  // from studio pages and spikes can `import { PyanaRuntime } from '/pkg/@pyana/sdk/index.mjs'`.
+  // @dregg/sdk (built from sdk-ts/) — for §4.6 wiring into runtime-in-memory
+  // and starbridge-apps. Served under /pkg/@dregg/sdk/ so browser ESM imports
+  // from studio pages and spikes can `import { DreggRuntime } from '/pkg/@dregg/sdk/index.mjs'`.
   // The dist is CJS+ESM bundle; we copy the ESM entry + CJS for completeness.
   const sdkSrcDir = path.join(__dirname, '..', 'sdk-ts', 'dist');
   if (fs.existsSync(sdkSrcDir)) {
-    const sdkDstDir = path.join(DIST, 'pkg', '@pyana', 'sdk');
+    const sdkDstDir = path.join(DIST, 'pkg', '@dregg', 'sdk');
     ensureDir(sdkDstDir);
     const mjsSrc = path.join(sdkSrcDir, 'index.mjs');
     const jsSrc = path.join(sdkSrcDir, 'index.js');
     if (fs.existsSync(mjsSrc)) {
       fs.copyFileSync(mjsSrc, path.join(sdkDstDir, 'index.mjs'));
-      console.log('  Copy: pkg/@pyana/sdk/index.mjs (from sdk-ts/dist for SDK wiring)');
+      console.log('  Copy: pkg/@dregg/sdk/index.mjs (from sdk-ts/dist for SDK wiring)');
     }
     if (fs.existsSync(jsSrc)) {
       fs.copyFileSync(jsSrc, path.join(sdkDstDir, 'index.js'));
     }
   } else {
-    console.log('  Skip: @pyana/sdk (no dist/ yet; run `cd sdk-ts && npm run build`)');
+    console.log('  Skip: @dregg/sdk (no dist/ yet; run `cd sdk-ts && npm run build`)');
   }
 
   console.log('\nDone.');

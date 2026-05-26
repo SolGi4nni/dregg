@@ -1,10 +1,10 @@
 # Cell-to-Cell Messaging and Reactive Program Execution
 
-Design exploration for adding inter-cell messaging and on-chain reactivity to pyana.
+Design exploration for adding inter-cell messaging and on-chain reactivity to dregg.
 
 ## Status Quo
 
-Pyana currently implements an **off-chain-first** execution model:
+`dregg` currently implements an **off-chain-first** execution model:
 
 1. **Programs live outside the federation.** AI agents, cloud services, and solvers observe
    state, compute decisions, and submit pre-computed turns (call forests) to the federation.
@@ -106,7 +106,7 @@ Effect::ChannelSend {
 
 The receive-end cell has a program that processes messages when they arrive.
 
-**Pros:** Capability-mediated (fits pyana's model). No broadcast/fan-out problems. Clear
+**Pros:** Capability-mediated (fits dregg's model). No broadcast/fan-out problems. Clear
 authorization: you need the send-end cap to send. Pairs well with seal/unseal for
 partition-tolerant transfer.
 
@@ -155,7 +155,7 @@ the actual computation off-chain, but the proof guarantees correctness.
 **This is email, not phone calls.** Asynchronous, durable, bounded, and the recipient
 controls when to process. But with cryptographic enforcement that processing is correct.
 
-## Recommendation for Pyana
+## Recommendation for `dregg`
 
 **Option E (Minimal Queuing with Reactive Programs)** is the right model. Here's why:
 
@@ -385,7 +385,7 @@ Reentrancy is the single worst design mistake in smart contract platforms. Cell 
 B's handler, B calls A's handler, A's state is mid-modification. The entire history of
 Solidity vulnerabilities (DAO hack, Parity multisig, etc.) flows from this decision.
 
-Pyana's turn model is fundamentally message-passing between isolated objects. PRESERVE
+`dregg`'s turn model is fundamentally message-passing between isolated objects. PRESERVE
 THIS. All inter-cell communication must be asynchronous (different turns, even if the
 latency is one block).
 
@@ -398,7 +398,7 @@ point-to-point, mediated by capabilities.
 ### Do NOT make the federation a general-purpose computer
 
 The federation is an ORDERING and VERIFICATION service, not an execution engine. Keep
-computation off-chain. Proofs on-chain. This is pyana's fundamental architectural
+computation off-chain. Proofs on-chain. This is dregg's fundamental architectural
 advantage over Ethereum: the federation's resource usage is bounded by proof verification
 costs, not by arbitrary program execution.
 
@@ -417,7 +417,7 @@ read field[0..7] of the target cell.
 
 ## Summary
 
-The right model for pyana is **asynchronous message queuing with proven-correct reactive
+The right model for dregg is **asynchronous message queuing with proven-correct reactive
 processing**:
 
 1. Messages are enqueued by senders (capability-gated, bond-backed, deadline-bounded)
@@ -426,7 +426,7 @@ processing**:
 4. The federation verifies the proof and applies the resulting effects
 5. Pending turns waiting on the processing are cascadingly resolved
 
-This preserves pyana's off-chain-first philosophy, avoids reentrancy, composes with all
+This preserves dregg's off-chain-first philosophy, avoids reentrancy, composes with all
 existing primitives (pipelines, conditions, obligations, events), and provides a natural
 upgrade path from "simple queuing" to "fully proven reactivity" to "federation-assisted
 auto-processing" for simple patterns.

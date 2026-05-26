@@ -36,7 +36,7 @@ targets recursive STARK verification inside another STARK on BabyBear with FRI.
 - The accumulator/deferred-opening trick is specific to IPA, not FRI
 - The *pattern* (step/wrap PCD) transfers, but the *mechanism* does not
 
-## Recommendation for pyana
+## Recommendation for dregg
 
 1. **Prototype with Plonky3-recursion** — our proofs are already Plonky3-compatible
    (BabyBear field, FRI PCS). This is the cleanest path to constant-size proofs.

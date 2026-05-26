@@ -1,9 +1,9 @@
 #!/bin/bash
-# pyana gateway node — initial setup for AWS Graviton (Ubuntu/AL2023)
+# dregg gateway node — initial setup for AWS Graviton (Ubuntu/AL2023)
 # Run once on a fresh instance.
 set -euo pipefail
 
-echo "=== pyana gateway node setup ==="
+echo "=== dregg gateway node setup ==="
 
 # Install Rust
 if ! command -v rustup &>/dev/null; then
@@ -37,38 +37,38 @@ if ! command -v caddy &>/dev/null; then
 fi
 
 # Clone and build
-if [ ! -d /opt/pyana ]; then
-  sudo mkdir -p /opt/pyana
-  sudo chown "$(whoami)" /opt/pyana
-  git clone git@github.com:emberian/pyana.git /opt/pyana
+if [ ! -d /opt/dregg ]; then
+  sudo mkdir -p /opt/dregg
+  sudo chown "$(whoami)" /opt/dregg
+  git clone git@github.com:emberian/dregg.git /opt/dregg
 fi
 
-cd /opt/pyana
+cd /opt/dregg
 git pull origin main
-cargo build --release -p pyana-node
+cargo build --release -p dregg-node
 
-# Create pyana user (runs the node process)
-if ! id pyana &>/dev/null; then
-  sudo useradd --system --no-create-home --shell /usr/sbin/nologin pyana
+# Create dregg user (runs the node process)
+if ! id dregg &>/dev/null; then
+  sudo useradd --system --no-create-home --shell /usr/sbin/nologin dregg
 fi
 
 # Create data directory
-sudo mkdir -p /opt/pyana-data
-sudo chown pyana:pyana /opt/pyana-data
+sudo mkdir -p /opt/dregg-data
+sudo chown dregg:dregg /opt/dregg-data
 
 # Generate node identity (first run only)
-if [ ! -f /opt/pyana-data/node.key ]; then
+if [ ! -f /opt/dregg-data/node.key ]; then
   echo "Generating node identity..."
-  /opt/pyana/target/release/pyana-node init --data-dir /opt/pyana-data
-  sudo chown -R pyana:pyana /opt/pyana-data
+  /opt/dregg/target/release/dregg-node init --data-dir /opt/dregg-data
+  sudo chown -R dregg:dregg /opt/dregg-data
 fi
 
 # Deploy genesis state (first run only)
-if [ ! -f /opt/pyana-data/genesis.json ]; then
+if [ ! -f /opt/dregg-data/genesis.json ]; then
   echo "Deploying genesis state..."
-  if [ -f /opt/pyana/deploy/genesis/genesis.json ]; then
-    sudo cp /opt/pyana/deploy/genesis/genesis.json /opt/pyana-data/genesis.json
-    sudo chown pyana:pyana /opt/pyana-data/genesis.json
+  if [ -f /opt/dregg/deploy/genesis/genesis.json ]; then
+    sudo cp /opt/dregg/deploy/genesis/genesis.json /opt/dregg-data/genesis.json
+    sudo chown dregg:dregg /opt/dregg-data/genesis.json
     echo "  Genesis state installed from deploy/genesis/genesis.json"
   else
     echo "  WARNING: No genesis.json found. Run deploy/genesis/generate.sh first."
@@ -77,23 +77,23 @@ if [ ! -f /opt/pyana-data/genesis.json ]; then
 fi
 
 # Install systemd service
-sudo cp /opt/pyana/deploy/aws/pyana-gateway.service /etc/systemd/system/
+sudo cp /opt/dregg/deploy/aws/dregg-gateway.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable pyana-gateway
-sudo systemctl start pyana-gateway
+sudo systemctl enable dregg-gateway
+sudo systemctl start dregg-gateway
 
 # Install Caddy config
 sudo mkdir -p /etc/caddy
-sudo cp /opt/pyana/deploy/aws/caddy/Caddyfile /etc/caddy/Caddyfile
+sudo cp /opt/dregg/deploy/aws/caddy/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl enable caddy
 sudo systemctl restart caddy
 
 # Deploy static site assets
-sudo mkdir -p /opt/pyana/site/explorer /opt/pyana/site/playground
-sudo cp -r /opt/pyana/site/explorer/* /opt/pyana/site/explorer/ 2>/dev/null || true
-sudo cp -r /opt/pyana/site/playground/* /opt/pyana/site/playground/ 2>/dev/null || true
+sudo mkdir -p /opt/dregg/site/explorer /opt/dregg/site/playground
+sudo cp -r /opt/dregg/site/explorer/* /opt/dregg/site/explorer/ 2>/dev/null || true
+sudo cp -r /opt/dregg/site/playground/* /opt/dregg/site/playground/ 2>/dev/null || true
 
 echo "=== Setup complete ==="
 echo "Gateway node running on port 8420"
 echo "Caddy reverse proxy handling HTTPS on port 443"
-echo "Check status: sudo systemctl status pyana-gateway"
+echo "Check status: sudo systemctl status dregg-gateway"

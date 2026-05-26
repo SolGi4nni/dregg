@@ -3,8 +3,8 @@
 //! Tests that once a token is revoked via consensus, all nodes reject presentations
 //! of that token and can produce non-membership proofs.
 
-use pyana_teasting::federation::{drive_to_finalization, quick_federation};
-use pyana_teasting::harness::SimulationHarness;
+use dregg_teasting::federation::{drive_to_finalization, quick_federation};
+use dregg_teasting::harness::SimulationHarness;
 
 /// Basic revocation: submit, finalize, verify all nodes show revoked.
 #[test]

@@ -1,11 +1,11 @@
-# Pyana Studio — Runtime Substrate Plan
+# `dregg` Studio — Runtime Substrate Plan
 
 **Status:** design draft. Successor / addendum to `site/PLAN.md`. Where the
 two conflict, this document wins for the runtime layer; `PLAN.md` continues
 to govern the design system, visualizer rubric, and accessibility floor.
 
 This document does **not** redesign the visual identity, the page chrome, or
-the inline `<pyana-vizzer>` widgets. Those are stable and good. It adds the
+the inline `<dregg-vizzer>` widgets. Those are stable and good. It adds the
 layer above them: a **runtime substrate** that turns Playground, Explorer,
 and a new third surface (**Starbridge**) into three viewports onto the same
 distributed-runtime IDE.
@@ -33,7 +33,7 @@ cell program that is not inspectable through the Studio's platform vocabulary
 is a gap in the meta-program, not a gap in the UI. (HOUYHNHNM-COMPARISON.md
 § 3.4, Ch.8.)
 
-- **Playground** — runs a `pyana::PyanaRuntime` in the browser. You drive a
+- **Playground** — runs a `dregg::DreggRuntime` in the browser. You drive a
   simulated testnet: create cells, post intents, execute turns, advance
   blockheight. State is yours; you can fork, undo, export.
 - **Explorer** — read-only viewport onto a live federation node (over WS /
@@ -43,8 +43,8 @@ is a gap in the meta-program, not a gap in the UI. (HOUYHNHNM-COMPARISON.md
   breakpoint / fault-injection controls on the simulator runtime. Same
   components again; the runtime context just exposes more capabilities.
 
-The user types `pyana://cell/abc123` into Starbridge and gets the same
-`<pyana-cell>` view they'd see in Playground or Explorer — backed by whichever
+The user types `dregg://cell/abc123` into Starbridge and gets the same
+`<dregg-cell>` view they'd see in Playground or Explorer — backed by whichever
 runtime is currently active.
 
 ---
@@ -106,11 +106,11 @@ interface Runtime {
 
 **Three implementations:**
 
-- `InMemoryRuntime` — wraps the `PyanaRuntime` exposed by `wasm/src/runtime.rs`,
-  which itself is a thin orchestrator over the **real** `pyana_sdk::AgentCipherclerk`,
-  `pyana_cell::Ledger`, and `pyana_turn::TurnExecutor`. All cryptographic
+- `InMemoryRuntime` — wraps the `DreggRuntime` exposed by `wasm/src/runtime.rs`,
+  which itself is a thin orchestrator over the **real** `dregg_sdk::AgentCipherclerk`,
+  `dregg_cell::Ledger`, and `dregg_turn::TurnExecutor`. All cryptographic
   paths (signing, key derivation, receipt chaining) are the canonical
-  pyana-sdk implementations — not parallel reimplementations. The Studio
+  dregg-sdk implementations — not parallel reimplementations. The Studio
   in-browser path exercises the same code native callers do; finding bugs
   here finds bugs in the real system.
 - `RemoteRuntime` — speaks the federation node's HTTP/WS API. Read-only by
@@ -120,17 +120,17 @@ interface Runtime {
   or from a live-node export.
 
 **No in-JS simulation.** The Studio does not include parallel implementations
-of pyana behavior in JavaScript. If a feature isn't exposed by the wasm
+of dregg behavior in JavaScript. If a feature isn't exposed by the wasm
 crate, the inspector shows a placeholder until the wasm path lands — we'd
 rather have a visible gap than a fictional demonstration. This is what
 makes the Studio useful as a forcing function for wasm-side improvements.
 
-**Federation** is now wired. `pyana-federation` gained a `runtime` feature
+**Federation** is now wired. `dregg-federation` gained a `runtime` feature
 that gates its tokio + crossbeam-channel transport (the wasm-incompatible
 bits), and the wasm crate depends on it with `default-features = false`.
-The in-browser runtime constructs real `pyana_federation::Federation`
+The in-browser runtime constructs real `dregg_federation::Federation`
 instances; every block hash, quorum certificate, proposer signature, and
-merkle root surfaced in `<pyana-federation>` / `<pyana-block>` comes from
+merkle root surfaced in `<dregg-federation>` / `<dregg-block>` comes from
 the canonical types. Behavior differences vs. the deleted `SimFederation`
 are real — e.g. `propose_block` requires `n - floor(n/3)` online votes to
 finalize and rejects empty event lists. The native async TCP transport
@@ -173,28 +173,28 @@ Every protocol object has a stable URI. Inspectors take a `uri` attribute
 happens via the active `Runtime` context.
 
 ```
-pyana://cell/<hex32>                  cell by id
-pyana://turn/<hex32>                  turn by hash
-pyana://receipt/<hex32>               receipt by hash
-pyana://capability/<cell_id>/<slot>   capability by stable cell anchor + slot (root or attenuated; cell_id is hash-derived per bindings.rs CDTView). Legacy agent_idx form is sim-internal only. (STARBRIDGE-PLAN §8 Q2 final + /tmp/q2-capability-uri-stability-prototype.mjs)
-pyana://intent/<hex32>                intent by id
-pyana://block/<height-or-hex>         blocklace vertex
-pyana://proof/<hex32>                 STARK proof by content-hash
-pyana://federation/<name>             federation by stable handle
+dregg://cell/<hex32>                  cell by id
+dregg://turn/<hex32>                  turn by hash
+dregg://receipt/<hex32>               receipt by hash
+dregg://capability/<cell_id>/<slot>   capability by stable cell anchor + slot (root or attenuated; cell_id is hash-derived per bindings.rs CDTView). Legacy agent_idx form is sim-internal only. (STARBRIDGE-PLAN §8 Q2 final + /tmp/q2-capability-uri-stability-prototype.mjs)
+dregg://intent/<hex32>                intent by id
+dregg://block/<height-or-hex>         blocklace vertex
+dregg://proof/<hex32>                 STARK proof by content-hash
+dregg://federation/<name>             federation by stable handle
 ```
 
 Two extras that make the IDE feel real:
 
 ```
-pyana://cell/<id>@<height>            cell state at a specific block height
-pyana://cell/<id>/cap/<service>       sub-object query: caps on this cell
+dregg://cell/<id>@<height>            cell state at a specific block height
+dregg://cell/<id>/cap/<service>       sub-object query: caps on this cell
 ```
 
 Resolution: a URI is resolved against the current `Runtime`. If the runtime
 can't see the object (e.g. you pasted a sim URI into the explorer), the
 inspector shows a "not found in this runtime — switch?" prompt.
 
-URIs are addressable in the URL bar: `/starbridge/?at=pyana://turn/abc...`
+URIs are addressable in the URL bar: `/starbridge/?at=dregg://turn/abc...`
 deep-links to a specific object. Sharable.
 
 ---
@@ -202,50 +202,50 @@ deep-links to a specific object. Sharable.
 ## 5. Inspector components
 
 Built as Preact functional components registered via the existing
-`window.pyana.register` registry. **One inspector per protocol-object type**;
+`window.dregg.register` registry. **One inspector per protocol-object type**;
 each composes its sub-objects by URI.
 
 ```html
 <!-- the consuming page -->
-<pyana-app runtime="sim">
-  <pyana-cell uri="pyana://cell/abc123"></pyana-cell>
-</pyana-app>
+<dregg-app runtime="sim">
+  <dregg-cell uri="dregg://cell/abc123"></dregg-cell>
+</dregg-app>
 ```
 
 ```js
 // site/src/_includes/inspectors/cell.js
 import { defineInspector } from '/_includes/inspector-base.js';
 
-defineInspector('pyana-cell', ({ ref, runtime, mode }) => {
+defineInspector('dregg-cell', ({ ref, runtime, mode }) => {
   const cell = runtime.getCell(parseRef(ref).id);  // Signal<CellState | null>
   return html`
-    <pyana-card title=${`cell ${ref}`}>
+    <dregg-card title=${`cell ${ref}`}>
       ${() => cell.value
         ? html`
-            <pyana-kv data=${cellSummary(cell.value)} />
-            <pyana-tabs>
-              <pyana-tab label="Capabilities">
+            <dregg-kv data=${cellSummary(cell.value)} />
+            <dregg-tabs>
+              <dregg-tab label="Capabilities">
                 ${cell.value.capabilities.map(cap => html`
-                  <pyana-capability ref=${`pyana://capability/${cap.id}`} mode="compact" />
+                  <dregg-capability ref=${`dregg://capability/${cap.id}`} mode="compact" />
                 `)}
-              </pyana-tab>
-              <pyana-tab label="State"><pyana-state-tree value=${cell.value.state} /></pyana-tab>
-              <pyana-tab label="History"><pyana-turn-list filter=${{ touched: ref }} /></pyana-tab>
-              <pyana-tab label="Raw"><pyana-json value=${cell.value} /></pyana-tab>
-            </pyana-tabs>
+              </dregg-tab>
+              <dregg-tab label="State"><dregg-state-tree value=${cell.value.state} /></dregg-tab>
+              <dregg-tab label="History"><dregg-turn-list filter=${{ touched: ref }} /></dregg-tab>
+              <dregg-tab label="Raw"><dregg-json value=${cell.value} /></dregg-tab>
+            </dregg-tabs>
           `
-        : html`<pyana-empty message="cell not found in this runtime" />`
+        : html`<dregg-empty message="cell not found in this runtime" />`
       }
-    </pyana-card>`;
+    </dregg-card>`;
 });
 ```
 
 **Inspector contract:**
 
-1. Receives `uri` (the pyana:// string), `runtime` (DOM-context), `mode`
+1. Receives `uri` (the dregg:// string), `runtime` (DOM-context), `mode`
    (`compact`, `default`, `inspector`, `raw`). Same inspector renders four ways.
 2. All data fetched through `runtime.get*()` — never directly from wasm.
-3. All embedded sub-objects use the same `<pyana-X uri="...">` pattern. No
+3. All embedded sub-objects use the same `<dregg-X uri="...">` pattern. No
    special "embedded vs. standalone" code paths.
 4. Capability-gates UI on `runtime.caps`. **Read-only runtimes show no mutation
    affordances at all — not greyed-out, not present.** The activity has no
@@ -264,22 +264,22 @@ the Studio's inspector registry and must be reused by all starbridge-apps:
 
 | Element | What it inspects |
 |---|---|
-| `<pyana-cell>` | Cell state, capabilities, program, history |
-| `<pyana-capability>` | Capability token — facet, bearer, slot |
-| `<pyana-proof>` | STARK proof with trust-tier badge (Placeholder/Silver/Golden) |
-| `<pyana-credential>` | Credential envelope + caveat chain |
-| `<pyana-slot>` | Named slot on a cell, with caveat constraints |
-| `<pyana-caveat>` | Individual caveat in a caveat chain |
-| `<pyana-turn>` | Turn + action list + authorization |
-| `<pyana-receipt>` | WitnessedReceipt + embedded proof view |
-| `<pyana-authorization>` | Authorization variant (all 7 kinds) |
-| `<pyana-federation>` | Federation state + committee |
-| `<pyana-block>` | Blocklace vertex + QC threshold |
+| `<dregg-cell>` | Cell state, capabilities, program, history |
+| `<dregg-capability>` | Capability token — facet, bearer, slot |
+| `<dregg-proof>` | STARK proof with trust-tier badge (Placeholder/Silver/Golden) |
+| `<dregg-credential>` | Credential envelope + caveat chain |
+| `<dregg-slot>` | Named slot on a cell, with caveat constraints |
+| `<dregg-caveat>` | Individual caveat in a caveat chain |
+| `<dregg-turn>` | Turn + action list + authorization |
+| `<dregg-receipt>` | WitnessedReceipt + embedded proof view |
+| `<dregg-authorization>` | Authorization variant (all 7 kinds) |
+| `<dregg-federation>` | Federation state + committee |
+| `<dregg-block>` | Blocklace vertex + QC threshold |
 
 A starbridge-app that reimplements any of these inspectors is the **silo
 anti-pattern** (HOUYHNHNM-COMPARISON.md § 7.3; STARBRIDGE-PLAN.md § 1).
 Apps register *additional* inspectors for app-specific protocol objects (e.g.
-`<pyana-name>`, `<pyana-name-registry>` for the nameservice app) via the
+`<dregg-name>`, `<dregg-name-registry>` for the nameservice app) via the
 manifest-based registry (STARBRIDGE-PLAN.md § 8 Q3 **final: JSON authoritative per nameservice/manifest.json shape**; validated by /tmp/q3-app-manifest-proto-output.txt). Manifest "inspectors"[] list also enables Q5 reservation (host rejects dups at load). They do not fork or
 shadow existing platform-level elements. The platform vocabulary is the
 meta-program's shared clipboard; forking it creates a new silo. (FOLLOWUP-04)
@@ -288,16 +288,16 @@ meta-program's shared clipboard; forking it creates a new silo. (FOLLOWUP-04)
 
 | Inspector              | Required runtime cap | Default mode |
 |------------------------|----------------------|--------------|
-| `<pyana-cell>`         | read                 | default      |
-| `<pyana-turn>`         | read                 | default      |
-| `<pyana-receipt>`      | read                 | default      |
-| `<pyana-capability>`   | read                 | compact      |
-| `<pyana-intent>`       | read                 | default      |
-| `<pyana-proof>`        | read                 | compact      |
-| `<pyana-block>`        | read                 | compact      |
-| `<pyana-federation>`   | read                 | default      |
-| `<pyana-turn-builder>` | mutate               | inspector    |
-| `<pyana-debugger>`     | debug                | inspector    |
+| `<dregg-cell>`         | read                 | default      |
+| `<dregg-turn>`         | read                 | default      |
+| `<dregg-receipt>`      | read                 | default      |
+| `<dregg-capability>`   | read                 | compact      |
+| `<dregg-intent>`       | read                 | default      |
+| `<dregg-proof>`        | read                 | compact      |
+| `<dregg-block>`        | read                 | compact      |
+| `<dregg-federation>`   | read                 | default      |
+| `<dregg-turn-builder>` | mutate               | inspector    |
+| `<dregg-debugger>`     | debug                | inspector    |
 
 ---
 
@@ -310,9 +310,9 @@ CDN. Studio adds two conventions on top.
    `Signal<CellState | null>`. Inspectors that read it auto-rerender when the
    underlying state changes. Runtime impls are responsible for invalidating
    the signal on mutation/subscription events.
-2. **Runtime context via custom element.** `<pyana-app runtime="sim">` puts a
+2. **Runtime context via custom element.** `<dregg-app runtime="sim">` puts a
    `Runtime` on the DOM context. Inspectors look it up via
-   `host.closest('pyana-app').runtime`. No prop-drilling.
+   `host.closest('dregg-app').runtime`. No prop-drilling.
 
 No new dependency. ~100 lines of glue on top of the existing
 `runtime-bootstrap.js`.
@@ -327,7 +327,7 @@ node's head and let you scrub back through cached history.
 
 All `runtime.get*()` reads are implicitly *at the cursor's height*. Moving
 the cursor invalidates all cached signals and triggers re-render. This is
-how `pyana://cell/<id>@<height>` URIs work — the inspector pins the cursor
+how `dregg://cell/<id>@<height>` URIs work — the inspector pins the cursor
 locally instead of reading the global one.
 
 UI: a horizontal scrubber at the bottom of Starbridge, showing block heights
@@ -338,7 +338,7 @@ jump. Hold shift-arrow to step one block at a time.
 
 ## 8. In-browser node + export / import
 
-The `wasm/src/runtime.rs` `PyanaRuntime` is *already* a complete in-browser
+The `wasm/src/runtime.rs` `DreggRuntime` is *already* a complete in-browser
 distributed-runtime simulation (ledger, executor, nullifier set, intents,
 federations, conditional turns). What we need to add:
 
@@ -347,31 +347,31 @@ federations, conditional turns). What we need to add:
 2. **Snapshot format**: `runtime.serializeHistory() → Uint8Array`. Contains
    genesis block, full ordered turn log, intent log, federation events. Per
    the existing `wasm/src/runtime.rs` types, postcard-serializable.
-3. **`pyana-node` ingest path**: a CLI subcommand
-   `pyana-node import-snapshot <bytes>` that replays the log into a real
+3. **`dregg-node` ingest path**: a CLI subcommand
+   `dregg-node import-snapshot <bytes>` that replays the log into a real
    on-disk ledger. *This piece lives in `node/`, not `site/`.* The site
    produces the bytes; the node consumes them.
 4. **Live → snapshot path** (eventually): the federation node exposes a
    `GET /snapshot?from=<h>&to=<h>` endpoint that returns the same format.
    `RecordedRuntime` ingests it for offline forensics.
 
-Round-trip property: a snapshot taken from sim, ingested into `pyana-node`,
+Round-trip property: a snapshot taken from sim, ingested into `dregg-node`,
 re-exported from the node, should hash-match (modulo timestamps).
 
 **The snapshot/export feature is not a convenience.** It is the mechanism by
 which the Studio IDE session enters the `WitnessedReceipt` persistence stream.
 (HOUYHNHNM-COMPARISON.md § 3.1, Ch.3; STARBRIDGE-PLAN.md § 5.9.) Houyhnhnm
 computing treats the *transition log* — not the byte heap — as the canonical
-source of truth. Pyana agrees: `WitnessedReceipt` is pyana's persistence layer.
+source of truth. `dregg` agrees: `WitnessedReceipt` is dregg's persistence layer.
 Studio session state that is NOT in the receipt stream is a
 **protocol-correctness gap**, not a UI feature gap. A session where the user
 drove turns through the sim runtime but never committed those turns to the
 `WitnessedReceipt` chain has lost history that the protocol requires to be
-present. The export format must therefore be **canonical-pyana-replayable**:
+present. The export format must therefore be **canonical-dregg-replayable**:
 `Vec<Turn>` with a bootstrap header (agent identities, genesis parameters),
-readable by `pyana-node import-snapshot`. An export that can only be consumed
+readable by `dregg-node import-snapshot`. An export that can only be consumed
 by the Studio's own `RecordedRuntime` is insufficient; the receipts must be
-portable across any pyana verifier.
+portable across any dregg verifier.
 
 ---
 
@@ -381,12 +381,12 @@ The existing 29 playground sections work. They are not blocking the vision.
 Migrate incrementally; do not big-bang.
 
 **Phase 0** (this PR or the next, ~1 day): the vertical spike.
-- Land `Runtime` interface + `InMemoryRuntime` driving a few `PyanaRuntime`
+- Land `Runtime` interface + `InMemoryRuntime` driving a few `DreggRuntime`
   calls (create_cell, execute_turn, get_all_cells).
-- Land URI parsing + `<pyana-app>` context provider.
-- Build `<pyana-cell>` inspector end-to-end.
+- Land URI parsing + `<dregg-app>` context provider.
+- Build `<dregg-cell>` inspector end-to-end.
 - Add a "Studio preview" route on the playground that hosts a single
-  `<pyana-app><pyana-cell ref="..."></pyana-cell></pyana-app>`. The old
+  `<dregg-app><dregg-cell ref="..."></dregg-cell></dregg-app>`. The old
   sections stay; they don't see this.
 
 **Phase 1** (~1 week): the prototype Studio inside the playground.
@@ -420,7 +420,7 @@ as educational standalone widgets in `/playground/learn/`.
    capability chain it can verify against its own state? Probably the latter,
    but we need a UX for "your turn was rejected — here's why."
 
-3. **Runtime swap mid-session.** If I'm viewing `pyana://cell/X` on the sim
+3. **Runtime swap mid-session.** If I'm viewing `dregg://cell/X` on the sim
    and switch to the remote runtime, do we (a) try to resolve X on the remote
    and show "not found", (b) pop a prompt, (c) clear the workspace? Defaulting
    to (b) for now.
@@ -431,13 +431,13 @@ as educational standalone widgets in `/playground/learn/`.
 
 5. **Schema evolution.** As the protocol changes, old snapshots break. Same
    problem as on-disk ledger; defer to the same versioning strategy
-   (`pyana_types::Version`).
+   (`dregg_types::Version`).
 
-6. *(resolved)* **`window.pyana` collision.** Q1 is resolved: the Studio
-   bootstrap is being renamed to `window.pyanaUi`. The extension keeps
-   `window.pyana` as the user-facing dapp API (`Object.defineProperty` with
-   `writable: false`). All Studio JS that reads `window.pyana` for its own
-   bootstrap is updated to `window.pyanaUi`; the `pyana:ready` event name is
+6. *(resolved)* **`window.dregg` collision.** Q1 is resolved: the Studio
+   bootstrap is being renamed to `window.dreggUi`. The extension keeps
+   `window.dregg` as the user-facing dapp API (`Object.defineProperty` with
+   `writable: false`). All Studio JS that reads `window.dregg` for its own
+   bootstrap is updated to `window.dreggUi`; the `dregg:ready` event name is
    unchanged. Acted on in STARBRIDGE-PLAN.md Task #29. (STARBRIDGE-PLAN.md §
    4.2; § 8 Q1.)
 
@@ -458,9 +458,9 @@ and sees the canonical wedge state:
 - **Last attested root** — the most recent `AttestedRoot v3` with
   `finality_round`, `federation_id`, `blocklace_block_id`.
 - **Missing votes** — which committee members have not signed the current
-  proposal; rendered via `<pyana-federation>` committee view.
+  proposal; rendered via `<dregg-federation>` committee view.
 - **Signed-but-unincluded blocks** — blocklace vertices with QC signatures but
-  not yet finalized; rendered via `<pyana-block-dag>` DAG view.
+  not yet finalized; rendered via `<dregg-block-dag>` DAG view.
 - **Recovery options** — what the operator can do: wait for more votes, trigger
   a view-change, import a snapshot from a peer, or declare a byzantine member.
 
@@ -473,7 +473,7 @@ state and renders it.
 
 Implementation: Monitor mode reads from `RemoteRuntime` (live node) or from
 `RecordedRuntime` (snapshot of a wedged session). It uses only platform-level
-inspectors (`<pyana-block>`, `<pyana-federation>`, `<pyana-receipt>`,
-`<pyana-proof>`). It is a layout variant of Starbridge — same components,
+inspectors (`<dregg-block>`, `<dregg-federation>`, `<dregg-receipt>`,
+`<dregg-proof>`). It is a layout variant of Starbridge — same components,
 different workspace configuration pre-loaded with the wedge-diagnosis
 inspector set. (HOUYHNHNM-COMPARISON.md § 3.4, Ch.3.)

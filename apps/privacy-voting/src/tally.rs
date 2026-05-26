@@ -4,7 +4,7 @@
 //! triple is appended to a positional sequence. The sequence has a clear root:
 //!
 //! ```text
-//! reveal_leaf_i = blake3-derive("pyana-tally-leaf-v1"
+//! reveal_leaf_i = blake3-derive("dregg-tally-leaf-v1"
 //!                               || commitment_i
 //!                               || option_index_i_le
 //!                               || randomness_i)
@@ -49,7 +49,7 @@ pub struct RevealedBallot {
 impl RevealedBallot {
     /// Compute this entry's tally leaf hash.
     pub fn leaf_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-tally-leaf-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-tally-leaf-v1");
         hasher.update(&self.commitment);
         hasher.update(&self.option_index.to_le_bytes());
         hasher.update(&self.randomness);
@@ -90,10 +90,10 @@ impl RevealLog {
     ///
     /// Uses a duplicate-last-leaf pattern to handle odd levels (same as the
     /// blinded queue's internal helper). For an empty log, the root is
-    /// `blake3-derive("pyana-tally-empty-v1")`.
+    /// `blake3-derive("dregg-tally-empty-v1")`.
     pub fn merkle_root(&self) -> [u8; 32] {
         if self.entries.is_empty() {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-tally-empty-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-tally-empty-v1");
             hasher.update(b"empty");
             return *hasher.finalize().as_bytes();
         }
@@ -110,7 +110,7 @@ impl RevealLog {
                 } else {
                     layer[i]
                 };
-                let mut hasher = blake3::Hasher::new_derive_key("pyana-tally-node-v1");
+                let mut hasher = blake3::Hasher::new_derive_key("dregg-tally-node-v1");
                 hasher.update(&left);
                 hasher.update(&right);
                 next.push(*hasher.finalize().as_bytes());

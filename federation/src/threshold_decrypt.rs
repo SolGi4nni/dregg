@@ -98,7 +98,7 @@ pub struct ThresholdCiphertext {
 impl ThresholdCiphertext {
     /// Compute the ciphertext ID (BLAKE3 hash of the full ciphertext struct).
     pub fn ciphertext_id(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-threshold-ciphertext-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-threshold-ciphertext-id-v1");
         hasher.update(&self.epoch_id);
         hasher.update(&self.nonce);
         hasher.update(&self.ciphertext);
@@ -267,7 +267,7 @@ fn shamir_reconstruct_byte(shares: &[(u8, u8)]) -> u8 {
 /// corrupted or malicious shares before interpolation.
 fn compute_share_mac(master_key: &[u8; 32], share: &[u8; 32], index: u8) -> [u8; 32] {
     let mut h = blake3::Hasher::new_keyed(master_key);
-    h.update(b"pyana-share-mac-v1");
+    h.update(b"dregg-share-mac-v1");
     h.update(share);
     h.update(&[index]);
     *h.finalize().as_bytes()
@@ -372,7 +372,7 @@ pub fn threshold_encrypt(
 
     // Derive the actual ChaCha20 key from the encryption key + epoch for domain separation.
     let derived_key = {
-        let mut h = Hasher::new_derive_key("pyana-threshold-encrypt-v1");
+        let mut h = Hasher::new_derive_key("dregg-threshold-encrypt-v1");
         h.update(&key.encryption_key);
         h.update(&key.epoch_id);
         *h.finalize().as_bytes()
@@ -494,7 +494,7 @@ pub fn combine_shares(
 
     // Derive the ChaCha20 key from reconstructed key.
     let derived_key = {
-        let mut h = blake3::Hasher::new_derive_key("pyana-threshold-encrypt-v1");
+        let mut h = blake3::Hasher::new_derive_key("dregg-threshold-encrypt-v1");
         h.update(&reconstructed_key);
         h.update(&ciphertext.epoch_id);
         *h.finalize().as_bytes()
@@ -551,7 +551,7 @@ fn generate_keystream(key: &[u8; 32], nonce: &[u8; 12], len: usize) -> Vec<u8> {
 /// Compute a BLAKE3-MAC authentication tag.
 fn compute_tag(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_keyed(key);
-    h.update(b"pyana-threshold-tag-v1");
+    h.update(b"dregg-threshold-tag-v1");
     h.update(nonce);
     h.update(&(ciphertext.len() as u64).to_le_bytes());
     h.update(ciphertext);

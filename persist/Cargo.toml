@@ -1,15 +1,15 @@
 [package]
-name = "pyana-persist"
+name = "dregg-persist"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Persistent storage backend for pyana token chains, federation state, and audit logs"
+description = "Persistent storage backend for dregg token chains, federation state, and audit logs"
 
 [features]
 default = ["audit-bridge"]
-audit-bridge = ["pyana-audit"]
+audit-bridge = ["dregg-audit"]
 
 [dependencies]
 redb = "2"
@@ -20,19 +20,19 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 getrandom = { workspace = true }
 chacha20poly1305 = { workspace = true }
 subtle = "2"
-pyana-types = { path = "../types" }
-pyana-commit = { path = "../commit" }
-pyana-cell = { path = "../cell" }
-pyana-circuit = { path = "../circuit" }
-pyana-blocklace = { path = "../blocklace" }
-pyana-federation = { path = "../federation" }
-pyana-audit = { path = "../audit", optional = true }
+dregg-types = { path = "../types" }
+dregg-commit = { path = "../commit" }
+dregg-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit" }
+dregg-blocklace = { path = "../blocklace" }
+dregg-federation = { path = "../federation" }
+dregg-audit = { path = "../audit", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 
 [lib]
-name = "pyana_persist"
+name = "dregg_persist"
 crate-type = ["rlib"]
 
 [lints]

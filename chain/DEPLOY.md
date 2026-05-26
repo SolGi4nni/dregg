@@ -1,6 +1,6 @@
 # EVM Bridge Deployment (Base Sepolia)
 
-Deploys PyanaVault and PyanaCredentialGate to Base Sepolia testnet.
+Deploys DreggVault and DreggCredentialGate to Base Sepolia testnet.
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ using Succinct's factory or use `SP1MockVerifier` for testing.
 cd chain/program
 cargo prove vkey
 # Output: Program Verification Key: 0x00abcdef...
-# Use this as PYANA_PROGRAM_VKEY in .env
+# Use this as DREGG_PROGRAM_VKEY in .env
 ```
 
 ## Build
@@ -71,21 +71,21 @@ forge script script/Deploy.s.sol \
 ```
 
 The script will:
-1. Deploy `PyanaVault` (shielded deposit/withdraw, incremental Merkle tree)
-2. Deploy `PyanaCredentialGate` (credential-gated minting/voting, VK governance)
+1. Deploy `DreggVault` (shielded deposit/withdraw, incremental Merkle tree)
+2. Deploy `DreggCredentialGate` (credential-gated minting/voting, VK governance)
 3. Log both deployed addresses
 
 ## Post-Deployment
 
 1. **Verify on BaseScan** (if `--verify` didn't work):
    ```bash
-   forge verify-contract <VAULT_ADDRESS> PyanaVault \
+   forge verify-contract <VAULT_ADDRESS> DreggVault \
      --chain base-sepolia \
-     --constructor-args $(cast abi-encode "constructor(address,bytes32)" $SP1_VERIFIER_ADDRESS $PYANA_PROGRAM_VKEY)
+     --constructor-args $(cast abi-encode "constructor(address,bytes32)" $SP1_VERIFIER_ADDRESS $DREGG_PROGRAM_VKEY)
 
-   forge verify-contract <GATE_ADDRESS> PyanaCredentialGate \
+   forge verify-contract <GATE_ADDRESS> DreggCredentialGate \
      --chain base-sepolia \
-     --constructor-args $(cast abi-encode "constructor(address,bytes32,address)" $SP1_VERIFIER_ADDRESS $PYANA_PROGRAM_VKEY <DEPLOYER_ADDRESS>)
+     --constructor-args $(cast abi-encode "constructor(address,bytes32,address)" $SP1_VERIFIER_ADDRESS $DREGG_PROGRAM_VKEY <DEPLOYER_ADDRESS>)
    ```
 
 2. **Set trusted federation roots** on the credential gate:
@@ -95,9 +95,9 @@ The script will:
      --private-key $DEPLOYER_PRIVATE_KEY
    ```
 
-3. **Configure the pyana node** with the deployed vault address:
+3. **Configure the dregg node** with the deployed vault address:
    ```toml
-   # In pyana node config
+   # In dregg node config
    [bridge]
    rpc_url = "https://sepolia.base.org"
    vault_address = "<VAULT_ADDRESS>"
@@ -106,14 +106,14 @@ The script will:
 ## Architecture
 
 ```
-User deposits ETH/ERC-20 to PyanaVault on Base
+User deposits ETH/ERC-20 to DreggVault on Base
   -> Deposit event emitted with noteCommitment
-  -> pyana bridge relay observes event
-  -> Corresponding note created in pyana's private ledger
+  -> dregg bridge relay observes event
+  -> Corresponding note created in dregg's private ledger
 
-User wants to withdraw from pyana to Base:
-  -> pyana generates SP1 proof (wraps STARK proof of note validity)
-  -> User submits proof to PyanaVault.withdraw()
+User wants to withdraw from dregg to Base:
+  -> dregg generates SP1 proof (wraps STARK proof of note validity)
+  -> User submits proof to DreggVault.withdraw()
   -> SP1 Verifier Gateway verifies Groth16 proof on-chain
   -> Vault releases funds to recipient
   -> Nullifier recorded (prevents double-spend)

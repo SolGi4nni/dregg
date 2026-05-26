@@ -15,7 +15,7 @@ export type ServiceKind =
 export interface DirectoryEntry {
   /** Human-readable name of this entry. */
   name: string;
-  /** Sturdy reference URI (pyana://) for the entry. */
+  /** Sturdy reference URI (dregg://) for the entry. */
   sturdyRef: string;
   /** The kind of service this entry represents. */
   kind: ServiceKind;

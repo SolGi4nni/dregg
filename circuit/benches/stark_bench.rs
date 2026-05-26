@@ -1,8 +1,8 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::ivc::{IvcBuilder, create_test_chain, prove_ivc, verify_ivc};
-use pyana_circuit::poseidon2::{Poseidon2State, hash_4_to_1, hash_many};
-use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::ivc::{IvcBuilder, create_test_chain, prove_ivc, verify_ivc};
+use dregg_circuit::poseidon2::{Poseidon2State, hash_4_to_1, hash_many};
+use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
 // =============================================================================
 // STARK proof generation benchmarks

@@ -224,16 +224,16 @@ Notes on the shape:
 
 | Today | Disposition | Where it goes |
 | --- | --- | --- |
-| `pyana_federation::node::Federation` (Morpheus simulator) | **DIES.** | Deleted with the Morpheus crate split (`AUDIT-federation.md` F9). The name `Federation` is freed for re-use. |
-| `pyana_federation::threshold::FederationCommittee` | **SURVIVES, embedded.** | Becomes an optional field of the new `Federation`. Public API surface narrows: callers no longer construct it directly except in genesis / epoch transitions. |
-| `pyana_federation::FederationMode { Full, Solo }` | **DIES.** | Replaced by `Federation::is_solo()` which is `members.len() == 1`. `effective_quorum_threshold(mode, n)` is replaced by the `threshold` field. `NullifierLog` and the rejoin protocol stay (they are solo-mode operational concerns), but they consume `&Federation` instead of `FederationMode`. |
+| `dregg_federation::node::Federation` (Morpheus simulator) | **DIES.** | Deleted with the Morpheus crate split (`AUDIT-federation.md` F9). The name `Federation` is freed for re-use. |
+| `dregg_federation::threshold::FederationCommittee` | **SURVIVES, embedded.** | Becomes an optional field of the new `Federation`. Public API surface narrows: callers no longer construct it directly except in genesis / epoch transitions. |
+| `dregg_federation::FederationMode { Full, Solo }` | **DIES.** | Replaced by `Federation::is_solo()` which is `members.len() == 1`. `effective_quorum_threshold(mode, n)` is replaced by the `threshold` field. `NullifierLog` and the rejoin protocol stay (they are solo-mode operational concerns), but they consume `&Federation` instead of `FederationMode`. |
 | `federation_id: [u8; 32]` | **SURVIVES, becomes derived.** | Stays as the wire-level identifier and HashMap key (CapTP routing, blocklace addressing). But the canonical source of truth is `Federation::id() -> FederationId`, which is `H(members \|\| epoch)`. Direct construction of a `FederationId` from arbitrary bytes survives only on the deserialization path (a receipt arrives carrying one, we look it up in `KnownFederations`). |
 | `local_federation_id: [u8; 32]` on `TurnExecutor` | **DIES.** | Replaced by `executor.federation: Arc<Federation>`. The executor takes a federation handle at construction; signing messages bind `federation.id()`. |
 | `FederationReceipt::verify(committee, known_keys, threshold, expected_epoch)` | **SURVIVES with a wrapper.** | The raw four-parameter form stays for serde / wire-layer use, but a method `Federation::verify_receipt(&self, &FederationReceipt) -> bool` is the canonical caller-facing API. |
 | `node::state::known_federation_keys: Vec<PublicKey>` | **DIES.** | Replaced by `node::state::federation: Arc<Federation>` (own federation) and `node::state::known_federations: KnownFederations` (others). The current pair of fields conflates "the keys I use for *my* federation's verification" with "the keys I happen to know about for any federation"; the unified shape separates them. |
 | `wire::server::CapTpState::known_federations: Vec<FederationId>` | **SURVIVES, gains shape.** | Becomes `KnownFederations` (§8): id → committee mapping, not just a list of ids. The current `Vec<FederationId>` is sufficient for routing but cannot verify any cross-fed receipt without out-of-band committee lookup. |
-| `pyana_federation::epoch::EpochConfig` | **MERGES INTO `Federation`.** | The `members`, `threshold`, `current_epoch` fields are exactly the unified type. The `EpochTransition` machinery survives as `Federation::apply_epoch_transition(&mut self, ...)`. `EpochHistory` survives as a sidecar (it is a verifiability concern, not a runtime-state concern). |
-| `pyana_federation::checkpoint::Checkpoint` | **SURVIVES, gains binding.** | Today `Checkpoint::federation_members` is a snapshotted roster with no binding to a federation id. Becomes `Checkpoint::federation_id + epoch`, with members re-derivable by looking up `KnownFederations[id]`. Saves bytes; tightens binding. |
+| `dregg_federation::epoch::EpochConfig` | **MERGES INTO `Federation`.** | The `members`, `threshold`, `current_epoch` fields are exactly the unified type. The `EpochTransition` machinery survives as `Federation::apply_epoch_transition(&mut self, ...)`. `EpochHistory` survives as a sidecar (it is a verifiability concern, not a runtime-state concern). |
+| `dregg_federation::checkpoint::Checkpoint` | **SURVIVES, gains binding.** | Today `Checkpoint::federation_members` is a snapshotted roster with no binding to a federation id. Becomes `Checkpoint::federation_id + epoch`, with members re-derivable by looking up `KnownFederations[id]`. Saves bytes; tightens binding. |
 
 Net code change: roughly **+400 LOC** for the new `Federation` type and
 its constructors, **−1500 LOC** for the Morpheus dead code (already
@@ -503,7 +503,7 @@ committee-passing it does today (lines 31–34 of that test).
 
 ### Step 8: the F2 signing-message tightening (~20 LOC)
 
-- `AttestedRoot::signing_message` is bumped to `pyana-attested-root-v3`
+- `AttestedRoot::signing_message` is bumped to `dregg-attested-root-v3`
   and includes `federation_id` in the preimage. Last wire-format change
   in the migration.
 
@@ -635,7 +635,7 @@ unattended cross-federation CapTP, and the right answer probably
 depends on the deployment model (cooperatives of named federations vs
 permissionless mesh).
 
-### Q6. What about the `pyana-blocklace::GovernedReferenceGroup` overlap?
+### Q6. What about the `dregg-blocklace::GovernedReferenceGroup` overlap?
 
 The blocklace crate has its own notion of "who is allowed to write to
 this blocklace" (`GovernedReferenceGroup`,
@@ -749,7 +749,7 @@ pub trait KnownFedsStore: Send + Sync {
 ### Sync
 
 - **Not auto-synced in v1.** Operator registers each federation manually
-  (CLI: `pyana node add-federation <federation.json>`).
+  (CLI: `dregg node add-federation <federation.json>`).
 - **v2 candidate:** federations gossip their own committee public keys
   signed by the current committee, so a new node coming up can pull
   its operator-confirmed peers' committees from any of them. This is

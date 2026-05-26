@@ -15,7 +15,7 @@
 [`demo/two-ai-handoff/`](demo/two-ai-handoff/).
 
 The Silver Vision (see `~/.claude/.../memory/project-silver-and-golden-visions.md`)
-is the *integration-complete* pre-algebraic state of pyana: every loop
+is the *integration-complete* pre-algebraic state of dregg: every loop
 closed, every primitive called by something. Today's demo
 (`demo/two-ai-handoff/`) exercises a same-federation bearer-cap path
 with a standalone STARK verifier. The unmet bar is **cross-federation**:
@@ -37,17 +37,17 @@ WitnessedReceipt chain export, one independent verifier verdict.**
 
 | Identity | Federation | Cell | Node |
 |---|---|---|---|
-| Alice (introducer) | F1 | `alice_cell` on F1 | Node A (`pyana-node` instance #1) |
+| Alice (introducer) | F1 | `alice_cell` on F1 | Node A (`dregg-node` instance #1) |
 | F1's committee | F1 | — | Node A holds threshold-share-0 (single-node committee for demo simplicity, threshold=1) |
-| Bob (recipient) | F2 | `bob_cell` on F2 | Node B (`pyana-node` instance #2) |
+| Bob (recipient) | F2 | `bob_cell` on F2 | Node B (`dregg-node` instance #2) |
 | F2's committee | F2 | — | Node B holds threshold-share-0 |
-| Charlie (verifier) | — | — | standalone `pyana-verifier` binary, no node, no shared state |
+| Charlie (verifier) | — | — | standalone `dregg-verifier` binary, no node, no shared state |
 
 Demo physical layout: three processes (Node A, Node B, Charlie), all
 local; OS pipes / files for out-of-band; QUIC/TCP for CapTP wire
 between Node A and Node B.
 
-- `federation_id_F1 = BLAKE3("pyana-fed-id-v1" || sorted_pubkeys || epoch=0)` (from `node/src/genesis.rs:133`, lane D output).
+- `federation_id_F1 = BLAKE3("dregg-fed-id-v1" || sorted_pubkeys || epoch=0)` (from `node/src/genesis.rs:133`, lane D output).
 - `federation_id_F2` derived the same way over F2's committee.
 - Alice's `alice_cell` is created on F1 by the genesis path; her cipherclerk's
   `signing_key` (Ed25519) is `pk_A`.
@@ -71,7 +71,7 @@ Square brackets `[#]` cross-reference the lane that enables the step
 
 0.0 — Operator starts Node A with `genesis-F1.json` (committee pk-A,
 threshold=1). Node A computes
-`federation_id_F1 = BLAKE3("pyana-fed-id-v1" || pk_A || 0)` and emits
+`federation_id_F1 = BLAKE3("dregg-fed-id-v1" || pk_A || 0)` and emits
 `AttestedRoot_F1@h=0` over its empty ledger. [lane **D**]
 
 0.1 — Operator starts Node B with `genesis-F2.json` (committee pk-B,
@@ -119,8 +119,8 @@ operator) constructs a `Turn`:
   `node/src/mcp.rs::generate_effect_vm_proof`).
 
 1.1 — Alice serializes the `HandoffCertificate` plus the F2-bound
-`PyanaUri { federation_id: F2, cell_id: bob_cell, swiss: <swiss_at_F1> }`
-to a `pyana-handoff:` compact string. (Today's
+`DreggUri { federation_id: F2, cell_id: bob_cell, swiss: <swiss_at_F1> }`
+to a `dregg-handoff:` compact string. (Today's
 `tool_create_bearer_cap` builds a signature but not a URI — closing
 gap is the lane-A + SDK work flagged in
 `demo/two-ai-handoff/README.md` Blocker 2.) Writes it to
@@ -142,7 +142,7 @@ prior wire connection.)
 turn_t1)`. After tau ordering (`blocklace/src/ordering.rs:410-482`), it
 finalizes. Node A's executor commits the in-memory ledger. The
 blocklace emits `BlocklaceTurnReceipt { block_id_b1, turn_data_t1,
-... }` to subscribers (`blocklace/src/pyana_bridge.rs:175-201`).
+... }` to subscribers (`blocklace/src/dregg_bridge.rs:175-201`).
 
 1.3 — F1's "federation receipt lift" produces a
 `FederationReceiptBody { turn_hash: t1, block_height: 1, block_hash:
@@ -168,12 +168,12 @@ No code change required.
 
 3.0 — Bob's cclerk (running in Node B) reads
 `state/bob-inbox/handoff.uri`, parses the compact form into
-`(HandoffCertificate, PyanaUri{federation_id: F2, ...})`. **The
+`(HandoffCertificate, DreggUri{federation_id: F2, ...})`. **The
 URI's federation_id is F2** — Bob's local federation. The swiss
 number's home, however, is on Node A. Bob's cclerk:
 
   a. Builds a `HandoffPresentation` (`captp/src/handoff.rs:295-336`) by
-     signing the `presentation_message` (`pyana-handoff-present-v1` ||
+     signing the `presentation_message` (`dregg-handoff-present-v1` ||
      cert.nonce || target_cell || target_federation) with `pk_B`.
   b. Opens (or reuses) a CapTP wire session to Node A (the introducer).
      Hardening layer (`wire/src/hardening.rs`) charges a token-bucket
@@ -324,7 +324,7 @@ the entire path without trusting either node's executor.
 
 ### Step 6 — Charlie verifies
 
-6.0 — `pyana-verifier` (standalone binary,
+6.0 — `dregg-verifier` (standalone binary,
 `demo/two-ai-handoff/charlie.py` shells to it) takes the bundle on
 stdin. It does, in order:
 
@@ -334,7 +334,7 @@ stdin. It does, in order:
   ii. Verify F2's signature on the `HandoffPresentation` (recipient
       sig over presentation_message).
   iii. Verify the EffectVm STARK proof against the public inputs
-       (scope-1, current `pyana-verifier` does this).
+       (scope-1, current `dregg-verifier` does this).
   iv. Replay scope-2: take `WitnessBundle.pre_state` and
       `WitnessBundle.effects`, call
       `generate_effect_vm_trace_ext(pre_state, effects, context)`,
@@ -382,7 +382,7 @@ preserve.
   net-new code item not covered by any in-flight lane.** Estimated:
   ~30 LOC in `sdk/src/captp_client.rs`.
 - **Bearer-cap URI compact form** (`demo/two-ai-handoff/README.md` Blocker 2).
-  `pyana_create_bearer_cap` currently emits a signature, not a URI. We
+  `dregg_create_bearer_cap` currently emits a signature, not a URI. We
   need `SwissTable::export` integration on the MCP path. Lane A
   arguably covers this; if not, it's another ~50 LOC.
 - **`FederationId → PublicKey` registry on the wire**
@@ -543,7 +543,7 @@ demo/silver-vision-e2e/
 ├── expected.json             # post-conditions
 ├── alice.py                  # drives Node A via MCP
 ├── bob.py                    # drives Node B via MCP
-├── charlie.py                # drives pyana-verifier
+├── charlie.py                # drives dregg-verifier
 ├── setup_federations.sh      # genesis + committee cross-registration
 ├── state/                    # scratch (cleaned by run.sh)
 │   ├── F1/                   # Node A data dir + genesis.json
@@ -602,7 +602,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # step 0a: build
-cargo build -p pyana-node -p pyana-verifier | tee state/logs/build.log
+cargo build -p dregg-node -p dregg-verifier | tee state/logs/build.log
 
 # step 0b: clean + genesis + cross-register
 rm -rf state/F1 state/F2 state/known state/bob-inbox state/*.json
@@ -735,13 +735,13 @@ two-AI demo:
 
 - `alice.py` adds `--target-federation` and `--bob-pk` from F2's
   descriptor (instead of using its own federation_id). Calls a new
-  MCP tool `pyana_create_cross_fed_bearer_cap`.
+  MCP tool `dregg_create_cross_fed_bearer_cap`.
 - `bob.py` adds `--introducer-endpoint` (where to send `PresentHandoff`)
   and consumes the cert into `Authorization::CapTpDelivered` instead
   of `Bearer`. Also pulls `AttestedRoot_F1` from Node A and
   `FederationReceipt` from Node B.
 - `charlie.py` accepts a `CrossFedReceiptBundle` JSON and shells to
-  `pyana-verifier verify-cross-fed-bundle --bundle path --known-F1 path
+  `dregg-verifier verify-cross-fed-bundle --bundle path --known-F1 path
   --known-F2 path`. The verifier needs a new subcommand that does the
   8-step check from §1 Step 6.
 
@@ -769,10 +769,10 @@ Delta from `demo/two-ai-handoff/` (today) to `demo/silver-vision-e2e/`
 
 ### 5.1 Already covered by in-flight lanes
 
-- **Two-node infra**: `pyana-node` already runs as a daemon; today's
-  two-AI demo runs two `pyana-node mcp` processes for prover/verifier
-  but only *one* `pyana-node run` for the ledger. The silver demo
-  needs two `pyana-node run`s with peering. Lane B's wire delivery
+- **Two-node infra**: `dregg-node` already runs as a daemon; today's
+  two-AI demo runs two `dregg-node mcp` processes for prover/verifier
+  but only *one* `dregg-node run` for the ledger. The silver demo
+  needs two `dregg-node run`s with peering. Lane B's wire delivery
   enables this; `--peer` CLI flag may need adding (~10 LOC).
 
 - **`Authorization::CapTpDelivered`** lands as part of lane A. The
@@ -817,9 +817,9 @@ The delta below is the **honest extra work** beyond the four lanes.
    expires_at, max_uses)`. ~30 LOC. (`AUDIT-distributed-semantics.md`
    open question 2.)
 
-2. **MCP tool: `pyana_create_cross_fed_bearer_cap`** —
+2. **MCP tool: `dregg_create_cross_fed_bearer_cap`** —
    `node/src/mcp.rs`. Wraps the SDK builder. Emits a
-   `pyana-handoff:` URI containing the cert + URI tuple. Closes
+   `dregg-handoff:` URI containing the cert + URI tuple. Closes
    `demo/two-ai-handoff/README.md` Blocker 2 in its cross-fed form.
    ~80 LOC.
 
@@ -834,16 +834,16 @@ The delta below is the **honest extra work** beyond the four lanes.
    `witnessed_receipt.rs`). Carries the chain + both `AttestedRoot`s
    + the cert + optional `FederationReceipt`. ~80 LOC.
 
-5. **`pyana-verifier verify-cross-fed-bundle` subcommand** —
+5. **`dregg-verifier verify-cross-fed-bundle` subcommand** —
    `verifier/src/bin/main.rs`. Reads bundle JSON, performs the
    8-step verification from §1 Step 6, prints a JSON verdict. ~150
    LOC.
 
-6. **`pyana-node register-federation` CLI** — one-shot subcommand
+6. **`dregg-node register-federation` CLI** — one-shot subcommand
    to ingest a peer's federation descriptor and write to
    `known_federations.json`. ~40 LOC in `node/src/main.rs`.
 
-7. **`pyana-node run --peer <addr>` CLI** — already exists in some
+7. **`dregg-node run --peer <addr>` CLI** — already exists in some
    form; verify it triggers a CapTP wire connection. If not, ~10
    LOC.
 
@@ -866,7 +866,7 @@ demo scripts.**
   certs.
 - Sovereign-cell variant (Silver+Sovereign): Alice's cell is sovereign
   and her grant turn carries an `execution_proof`.
-- IVC-compressed history: post-export, run `pyana_compress_history`
+- IVC-compressed history: post-export, run `dregg_compress_history`
   on Bob's chain and have Charlie verify the compressed proof
   alongside the per-receipt proofs.
 
@@ -944,10 +944,10 @@ trust path (Charlie can early-exit on a verified
 `FederationReceipt` if he chooses to trust F2's committee) and
 `WitnessedReceipt` as the expensive replay path (Charlie can
 recompute the trace from scratch if he doesn't). The
-`pyana-verifier` subcommand offers both modes via a `--mode
+`dregg-verifier` subcommand offers both modes via a `--mode
 trust|replay` flag.
 
-### 6.5 — What does `pyana-verifier` actually do with `AttestedRoot.merkle_root`?
+### 6.5 — What does `dregg-verifier` actually do with `AttestedRoot.merkle_root`?
 
 `AttestedRoot` carries `merkle_root` (the revocation-tree root,
 primarily). For the Silver demo, the verifier *displays* the root but
@@ -997,7 +997,7 @@ The two together pin the effects down. Document; don't fix.
 
 ### 6.9 — When does the demo run? Local-only?
 
-Production-shaped: two `pyana-node run` instances bind different
+Production-shaped: two `dregg-node run` instances bind different
 loopback ports. No QUIC NAT traversal needed; no TLS certificates
 (devnet flag). The "out-of-band" channel is a file in shared
 `state/`. Realistic enough; mirrors the two-AI demo's posture.
@@ -1019,12 +1019,12 @@ After all lanes land, the residue is:
 | Item | Effort | Owner-ish |
 |---|---|---|
 | SDK cross-fed handoff builder (§5.2.1) | ~30 LOC | SDK |
-| MCP `pyana_create_cross_fed_bearer_cap` tool (§5.2.2) | ~80 LOC | Node |
+| MCP `dregg_create_cross_fed_bearer_cap` tool (§5.2.2) | ~80 LOC | Node |
 | Wire `validate_handoff` registry lookup (§5.2.3) | ~20 LOC | Wire |
 | `CrossFedReceiptBundle` type + serde (§5.2.4) | ~80 LOC | Turn |
-| `pyana-verifier verify-cross-fed-bundle` (§5.2.5) | ~150 LOC | Verifier |
-| `pyana-node register-federation` CLI (§5.2.6) | ~40 LOC | Node |
-| `pyana-node run --peer` polish (§5.2.7) | ~10 LOC | Node |
+| `dregg-verifier verify-cross-fed-bundle` (§5.2.5) | ~150 LOC | Verifier |
+| `dregg-node register-federation` CLI (§5.2.6) | ~40 LOC | Node |
+| `dregg-node run --peer` polish (§5.2.7) | ~10 LOC | Node |
 | Demo scripts (§5.2.8) | ~600 LOC Python/bash | Demo |
 | README + expected.json (§4) | ~150 LOC | Demo |
 
@@ -1084,7 +1084,7 @@ shepherding.
   + cert + `FederationReceipt` into a JSON object; the Rust type comes
   later. Saves ~80 LOC of Rust + serde + tests, adds ~30 LOC of
   Python.
-- **Skip `pyana-verifier verify-cross-fed-bundle`** — do the cross-
+- **Skip `dregg-verifier verify-cross-fed-bundle`** — do the cross-
   fed verification in `charlie.py` via Python crypto. Loses the
   "separate binary, separate crate deps" property the two-AI demo
   has. Not recommended.
@@ -1130,7 +1130,7 @@ integration surprises are guaranteed.
 
 The Silver Vision demo is **integration-complete**. After it runs:
 
-- We can claim: "pyana is a cross-federation distributed-objects
+- We can claim: "dregg is a cross-federation distributed-objects
   system with bearer caps that survive wire transit, executor-signed
   receipts, BLS-threshold federation attestations, and a standalone
   scope-2 verifier."

@@ -6,7 +6,7 @@
 //! 3. If the deadline passes without proof: reward returns to issuer.
 //! 4. On approval: the conditional turn resolves, transferring reward atomically.
 //!
-//! Payment flows are handled through the `EscrowManager` from `pyana-app-framework`,
+//! Payment flows are handled through the `EscrowManager` from `dregg-app-framework`,
 //! which submits turns to the executor rather than producing self-attested receipts.
 //!
 //! Every helper here requires the caller to supply a `Box<dyn Authorizer>` so
@@ -15,9 +15,9 @@
 //! as a structural authentication gap (P0 #1). See
 //! [`make_default_authorizer`] for the convenience constructor this app uses.
 
-use pyana_app_framework::authorizer::{Authorizer, SignedAuthorizer};
-use pyana_app_framework::escrow::{EscrowError, EscrowManager};
-use pyana_app_framework::{CellId, EscrowCondition, PyanaEngine};
+use dregg_app_framework::authorizer::{Authorizer, SignedAuthorizer};
+use dregg_app_framework::escrow::{EscrowError, EscrowManager};
+use dregg_app_framework::{CellId, EscrowCondition, DreggEngine};
 
 /// Error type for payment operations.
 #[derive(Debug, Clone)]
@@ -68,24 +68,24 @@ pub struct Escrow {
 
 /// Build the default `Authorizer` for the bounty-board service.
 ///
-/// Reads `PYANA_BOUNTY_ESCROW_KEY` (32 hex bytes) and constructs a
+/// Reads `DREGG_BOUNTY_ESCROW_KEY` (32 hex bytes) and constructs a
 /// [`SignedAuthorizer`] from it. If the env var is unset, a deterministic
 /// dev-only key is used and a warning is logged. Production deployments MUST
-/// set `PYANA_BOUNTY_ESCROW_KEY`.
+/// set `DREGG_BOUNTY_ESCROW_KEY`.
 pub fn make_default_authorizer() -> Box<dyn Authorizer> {
-    let secret = match std::env::var("PYANA_BOUNTY_ESCROW_KEY") {
+    let secret = match std::env::var("DREGG_BOUNTY_ESCROW_KEY") {
         Ok(hex) => match parse_hex_32(&hex) {
             Some(bytes) => bytes,
             None => {
                 eprintln!(
-                    "WARNING: PYANA_BOUNTY_ESCROW_KEY is not valid 32-byte hex; using dev key"
+                    "WARNING: DREGG_BOUNTY_ESCROW_KEY is not valid 32-byte hex; using dev key"
                 );
                 dev_key_bytes()
             }
         },
         Err(_) => {
             eprintln!(
-                "WARNING: PYANA_BOUNTY_ESCROW_KEY not set; using deterministic dev key. \
+                "WARNING: DREGG_BOUNTY_ESCROW_KEY not set; using deterministic dev key. \
                  DO NOT use this in production."
             );
             dev_key_bytes()
@@ -95,7 +95,7 @@ pub fn make_default_authorizer() -> Box<dyn Authorizer> {
 }
 
 fn dev_key_bytes() -> [u8; 32] {
-    *blake3::hash(b"pyana-bounty-board-dev-escrow-key-v1").as_bytes()
+    *blake3::hash(b"dregg-bounty-board-dev-escrow-key-v1").as_bytes()
 }
 
 fn parse_hex_32(s: &str) -> Option<[u8; 32]> {
@@ -117,7 +117,7 @@ fn parse_hex_32(s: &str) -> Option<[u8; 32]> {
 ///
 /// # Arguments
 ///
-/// * `engine` - The pyana engine to submit turns through.
+/// * `engine` - The dregg engine to submit turns through.
 /// * `authorizer` - Authorizer used to sign the escrow-create turn.
 /// * `issuer_cell` - The issuer's cell that funds the escrow.
 /// * `worker_cell` - The worker's cell to receive the reward on release.
@@ -129,7 +129,7 @@ fn parse_hex_32(s: &str) -> Option<[u8; 32]> {
 ///
 /// An `Escrow` containing the escrow ID and metadata.
 pub fn create_escrow(
-    engine: &mut PyanaEngine,
+    engine: &mut DreggEngine,
     authorizer: Box<dyn Authorizer>,
     issuer_cell: CellId,
     worker_cell: CellId,
@@ -165,7 +165,7 @@ pub fn create_escrow(
 ///
 /// # Arguments
 ///
-/// * `engine` - The pyana engine to submit the release turn through.
+/// * `engine` - The dregg engine to submit the release turn through.
 /// * `authorizer` - Authorizer used to sign the release turn.
 /// * `escrow` - The escrow to release.
 /// * `completion_proof` - The proof that satisfies the escrow's condition.
@@ -174,7 +174,7 @@ pub fn create_escrow(
 ///
 /// The escrow ID confirming the release, or an error.
 pub fn release_reward(
-    engine: &mut PyanaEngine,
+    engine: &mut DreggEngine,
     authorizer: Box<dyn Authorizer>,
     escrow: &Escrow,
     completion_proof: &[u8],
@@ -194,7 +194,7 @@ pub fn release_reward(
 ///
 /// # Arguments
 ///
-/// * `engine` - The pyana engine to submit the refund turn through.
+/// * `engine` - The dregg engine to submit the refund turn through.
 /// * `authorizer` - Authorizer used to sign the refund turn.
 /// * `escrow` - The escrow to refund.
 /// * `current_height` - The current block height (must be past timeout).
@@ -203,7 +203,7 @@ pub fn release_reward(
 ///
 /// The escrow ID confirming the refund, or an error.
 pub fn refund_escrow(
-    engine: &mut PyanaEngine,
+    engine: &mut DreggEngine,
     authorizer: Box<dyn Authorizer>,
     escrow: &Escrow,
     current_height: u64,

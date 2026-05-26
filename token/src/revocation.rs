@@ -291,7 +291,7 @@ mod sig_bytes {
 impl AttestedRevocationRoot {
     /// Compute the message that was (or should be) signed.
     pub fn signing_message(merkle_root: &[u8; 32], count: u64, timestamp: i64) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-token attested-revocation-root v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-token attested-revocation-root v1");
         hasher.update(merkle_root);
         hasher.update(&count.to_le_bytes());
         hasher.update(&timestamp.to_le_bytes());
@@ -389,14 +389,14 @@ impl SortedRevocationTree {
 
     /// Hash a leaf value for the Merkle tree.
     fn leaf_hash(data: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-revocation-leaf v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-revocation-leaf v1");
         hasher.update(data);
         *hasher.finalize().as_bytes()
     }
 
     /// Hash two children into a parent node.
     fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-revocation-node v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-revocation-node v1");
         hasher.update(left);
         hasher.update(right);
         *hasher.finalize().as_bytes()
@@ -528,7 +528,7 @@ impl SortedRevocationTree {
 
 /// Hash a token ID to its canonical leaf representation for the revocation tree.
 fn token_id_leaf_hash(token_id: &str) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-token revocation-id v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-token revocation-id v1");
     hasher.update(token_id.as_bytes());
     *hasher.finalize().as_bytes()
 }

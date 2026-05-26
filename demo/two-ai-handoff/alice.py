@@ -9,7 +9,7 @@ Output JSON (printed on stdout as the last line) shape:
   "alice_pk": "<hex>",
   "alice_cell": "<hex>",
   "grant_turn_hash": "<hex>",
-  "handoff_uri": "pyana-handoff:...",
+  "handoff_uri": "dregg-handoff:...",
   "bearer_cap": { "delegation_chain": "...", "expires_at": N, "permissions": "..." }
 }
 """
@@ -47,7 +47,7 @@ def main() -> int:
         # initial_balance covers the per-turn fee (action_base + per-effect
         # costs). 1_000_000 is generous enough to cover grant + bearer-cap +
         # compress without micro-managing fees.
-        agent = cli.tool("pyana_create_agent", {"name": "alice", "initial_balance": 1_000_000})
+        agent = cli.tool("dregg_create_agent", {"name": "alice", "initial_balance": 1_000_000})
         alice_pk = agent["public_key"]
         # The cell ID is content-addressed: BLAKE3(pk || token_id) — distinct
         # from the pk. Read it from the create_agent response rather than
@@ -61,7 +61,7 @@ def main() -> int:
         # (not the pk). Pass bob_cell (the derived cell ID) so the cap lands
         # in Bob's c-list rather than a non-existent pk-shaped cell.
         grant = cli.tool(
-            "pyana_grant_capability",
+            "dregg_grant_capability",
             {
                 "to_agent": args.bob_cell,
                 "target_cell": alice_cell,
@@ -74,8 +74,8 @@ def main() -> int:
         grant_turn_hash = grant["turn_hash"]
         print(f"[alice] step 3: granted, turn_hash={grant_turn_hash[:16]}…", file=sys.stderr)
 
-        # Capture the Effect VM proof emitted by pyana_grant_capability and write
-        # it as a standalone artifact so charlie.py can hand it to pyana-verifier.
+        # Capture the Effect VM proof emitted by dregg_grant_capability and write
+        # it as a standalone artifact so charlie.py can hand it to dregg-verifier.
         grant_proof_hex = grant.get("effect_vm_proof_hex")
         grant_proof_pi = grant.get("effect_vm_public_inputs") or []
         grant_trace_rows = grant.get("effect_vm_trace_rows") or []
@@ -87,7 +87,7 @@ def main() -> int:
                 "trace_rows": grant_trace_rows,
                 "witness_hash_hex": grant_witness_hash,
                 "vk_hash": "auto",
-                "source": "pyana_grant_capability",
+                "source": "dregg_grant_capability",
             }, indent=2))
             print(f"[alice] wrote grant proof artifact "
                   f"({len(grant_proof_hex) // 2} proof bytes, "
@@ -102,7 +102,7 @@ def main() -> int:
         # doesn't race the chain.
         expires_at = 10_000_000
         bearer = cli.tool(
-            "pyana_create_bearer_cap",
+            "dregg_create_bearer_cap",
             {
                 "target_cell": alice_cell,
                 "permissions": "signature",
@@ -114,8 +114,8 @@ def main() -> int:
             print(f"[alice] step 5 FAILED: {bearer}", file=sys.stderr)
             return 5
         # BLOCKER-2: the MCP tool returns a delegation_chain signature, not a
-        # `pyana-handoff:` URI. Until blocker-2 is fixed, we encode the
-        # bearer-cap payload as a JSON blob with a `pyana+bearer:` prefix so
+        # `dregg-handoff:` URI. Until blocker-2 is fixed, we encode the
+        # bearer-cap payload as a JSON blob with a `dregg+bearer:` prefix so
         # bob.py can route it. When blocker-2 lands, replace this with the
         # real compact handoff string from the tool response.
         handoff_payload = {
@@ -127,7 +127,7 @@ def main() -> int:
             "delegation_chain": bearer["delegation_chain"],
             "introducer_pk": alice_pk,
         }
-        handoff_uri = "pyana+bearer:" + json.dumps(handoff_payload, separators=(",", ":"))
+        handoff_uri = "dregg+bearer:" + json.dumps(handoff_payload, separators=(",", ":"))
         uri_path.write_text(handoff_uri)
         print(f"[alice] step 5: wrote handoff URI to {uri_path}", file=sys.stderr)
 
@@ -136,7 +136,7 @@ def main() -> int:
         compress_result: dict | None = None
         try:
             compress_result = cli.tool(
-                "pyana_compress_history",
+                "dregg_compress_history",
                 {"cell_id": alice_cell, "initial_root": 0},
             )
             compress_ok = compress_result.get("verification") == "valid"
@@ -146,7 +146,7 @@ def main() -> int:
         # Snapshot Alice's receipt chain so the demo can verify her grant
         # turn is recorded and the chain is exportable (per expected.json
         # receipt_chain.exportable).
-        alice_chain = cli.tool("pyana_get_receipt_chain", {"limit": 50})
+        alice_chain = cli.tool("dregg_get_receipt_chain", {"limit": 50})
 
         # Final result on stdout (the LAST line — run.sh parses this).
         result = {

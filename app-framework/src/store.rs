@@ -19,7 +19,7 @@ pub type Bytes32 = [u8; 32];
 /// # Example
 ///
 /// ```ignore
-/// use pyana_app_framework::store::ContentStore;
+/// use dregg_app_framework::store::ContentStore;
 ///
 /// #[derive(Clone, serde::Serialize, serde::Deserialize)]
 /// struct Order { amount: u64 }

@@ -4,9 +4,9 @@
 
 ## Summary
 
-The extension's high-level architecture is reasonable: a nonce-bound page<->content event channel, an origin-gated method allowlist, a per-method origin permission system with expiry, and an encrypted-state model using PBKDF2-SHA256 (600k iterations) + AES-256-GCM. The page-side surface is largely correct: events are checked with `isTrusted`, `_origin` is overwritten with the trusted `window.location.origin` after spreading attacker `detail` (so origin spoofing from a page is blocked), and `window.pyana` is frozen with a non-configurable property.
+The extension's high-level architecture is reasonable: a nonce-bound page<->content event channel, an origin-gated method allowlist, a per-method origin permission system with expiry, and an encrypted-state model using PBKDF2-SHA256 (600k iterations) + AES-256-GCM. The page-side surface is largely correct: events are checked with `isTrusted`, `_origin` is overwritten with the trusted `window.location.origin` after spreading attacker `detail` (so origin spoofing from a page is blocked), and `window.dregg` is frozen with a non-configurable property.
 
-However, the user-approval popups (provision, intent-confirm, disclosure-picker, origin-permission) all use a pattern of `chrome.windows.create()` + a global `chrome.runtime.onMessage.addListener` that **does not validate the sender** of the decision message. Because `chrome.runtime.onMessage` dispatches to *every* registered listener, a malicious page's content script can forge any decision message (`pyana:provisionDecision`, `pyana:intentConfirmation`, `pyana:disclosureDecision`, `pyana:originPermissionDecision`) while a real popup is open — silently auto-approving the user's review and granting blanket capabilities. This is a clean approval-drift exploit equivalent to cclerk compromise on any visited site.
+However, the user-approval popups (provision, intent-confirm, disclosure-picker, origin-permission) all use a pattern of `chrome.windows.create()` + a global `chrome.runtime.onMessage.addListener` that **does not validate the sender** of the decision message. Because `chrome.runtime.onMessage` dispatches to *every* registered listener, a malicious page's content script can forge any decision message (`dregg:provisionDecision`, `dregg:intentConfirmation`, `dregg:disclosureDecision`, `dregg:originPermissionDecision`) while a real popup is open — silently auto-approving the user's review and granting blanket capabilities. This is a clean approval-drift exploit equivalent to cclerk compromise on any visited site.
 
 Additional serious findings: passphrase-less first-run cipherclerks are encrypted under an internal key stored in `chrome.storage.session` (i.e. effectively unencrypted at rest until the user sets a passphrase, with `needsPassphraseSetup` never enforced); user PII (token facts including email/userId/org) is passed in popup URLs (visible to extension-API observers and chrome:// internals); WASM has a JS fallback BIP-39 path; legacy `.js` files in the repo root are still referenced by `build.sh` packaging and `popup.html` style; CSP is reasonable but the manifest content_scripts use `<all_urls>` and WAR is also `<all_urls>` so any web page can frame extension HTML.
 
@@ -21,10 +21,10 @@ Additional serious findings: passphrase-less first-run cipherclerks are encrypte
 
 **Attack.** Each of these functions opens a popup window then calls `chrome.runtime.onMessage.addListener(listener)` where `listener` only checks `message.type` and never inspects `sender`. `chrome.runtime.onMessage` delivers to *all* listeners regardless of what the main router at line 2086 returns. A malicious content script on any page in the user's session can race the user by calling
 ```
-chrome.runtime.sendMessage({ type: "pyana:provisionDecision", accepted: true, tokenData })
-chrome.runtime.sendMessage({ type: "pyana:disclosureDecision", authorized: true, level: "full" })
-chrome.runtime.sendMessage({ type: "pyana:originPermissionDecision", granted: true })
-chrome.runtime.sendMessage({ type: "pyana:intentConfirmation", confirmed: true })
+chrome.runtime.sendMessage({ type: "dregg:provisionDecision", accepted: true, tokenData })
+chrome.runtime.sendMessage({ type: "dregg:disclosureDecision", authorized: true, level: "full" })
+chrome.runtime.sendMessage({ type: "dregg:originPermissionDecision", granted: true })
+chrome.runtime.sendMessage({ type: "dregg:intentConfirmation", confirmed: true })
 ```
 while a popup is open. The inner listener accepts the forged message and resolves the promise as if the user clicked Approve. This is exploitable any time another page (even a benign one) triggers a confirmation: the attacker site can simply spam the four message types continuously, and the next time *any* popup opens, it auto-approves.
 
@@ -40,7 +40,7 @@ The check at line 2092 (`isContentScript(sender) && !PAGE_ALLOWED_METHODS.has(ms
 
 **Attack.** Token facts include `email`, `userId`, `org`, `organization` (see `extractTokenFacts` at lines 927-958). These end up in `chrome-extension://<id>/disclosure-picker.html?facts=...`. Such URLs are visible to other extensions with the `tabs` permission, appear in chrome's session history & devtools, and are written to the popup's `document.referrer`/`window.name`. They are also not cleared from memory after the popup closes.
 
-**Fix.** Pass an opaque request-id in the URL and have the popup fetch the details via `chrome.runtime.sendMessage({ type: "pyana:getPendingDecision", id })`. Keep PII out of URLs.
+**Fix.** Pass an opaque request-id in the URL and have the popup fetch the details via `chrome.runtime.sendMessage({ type: "dregg:getPendingDecision", id })`. Keep PII out of URLs.
 
 ## P1 — High
 
@@ -68,7 +68,7 @@ If `nodePublicKey` is null (the `/status` fetch failed), `auth_response` skips s
 ### P1-4. Settings page accepts arbitrary node URLs without confirmation
 **File:** `settings-script.js:34-73`; `src/background.ts:1973-1977`
 
-`setNodeConfig` is restricted to `isExtensionPopup`, but `settings.html` is opened via `chrome.tabs.create` and is itself an extension page so the check passes. A user who navigates to a phishing site that exploits a separate vuln (or who is socially-engineered into pasting a URL) can silently redirect *all* turn submissions, balance queries, sturdy-ref exchanges, etc. through an attacker-controlled node — which then sees plaintext capability secrets (see `shareCapability` returning `pyana://<node>/<cell>/<secret>` at `background.ts:1310`).
+`setNodeConfig` is restricted to `isExtensionPopup`, but `settings.html` is opened via `chrome.tabs.create` and is itself an extension page so the check passes. A user who navigates to a phishing site that exploits a separate vuln (or who is socially-engineered into pasting a URL) can silently redirect *all* turn submissions, balance queries, sturdy-ref exchanges, etc. through an attacker-controlled node — which then sees plaintext capability secrets (see `shareCapability` returning `dregg://<node>/<cell>/<secret>` at `background.ts:1310`).
 
 **Fix.** When the node URL changes, force a confirmation modal that shows the old vs new host, and revoke all live refs / clear receipt chain. Consider pinning the node pubkey alongside the URL so the WS handshake fails on switch.
 
@@ -139,7 +139,7 @@ Page.js is injected into every page. WAR is also `<all_urls>` so any web page ca
 | `permissions` | `storage`, `activeTab`, `contextMenus` | Minimal. |
 | `host_permissions` | (none) | Good — no `<all_urls>` host permission. |
 | `content_scripts.matches` | `<all_urls>` | Page.js injected everywhere. Defensible for a cclerk. |
-| `web_accessible_resources.resources` | `dist/page.js`, `bip39_english.txt`, `pyana_wasm.js`, `pyana_wasm_bg.wasm` | `bip39_english.txt` exposed unnecessarily; can be fetched only by background. |
+| `web_accessible_resources.resources` | `dist/page.js`, `bip39_english.txt`, `dregg_wasm.js`, `dregg_wasm_bg.wasm` | `bip39_english.txt` exposed unnecessarily; can be fetched only by background. |
 | `web_accessible_resources.matches` | `<all_urls>` | Means any page can frame extension HTML (only HTML files are framable via direct nav, not WAR list, but extension pages are still openable). |
 | `content_security_policy.extension_pages` | `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` | No `unsafe-inline`. Good. Missing `frame-ancestors`. |
 
@@ -147,7 +147,7 @@ Page.js is injected into every page. WAR is also `<all_urls>` so any web page ca
 
 | Route | Method | What is validated |
 |---|---|---|
-| page -> content (postMessage / CustomEvent) | `pyana:request:<NONCE>` | `event.isTrusted`, nonce in event name |
+| page -> content (postMessage / CustomEvent) | `dregg:request:<NONCE>` | `event.isTrusted`, nonce in event name |
 | content -> background (`chrome.runtime.sendMessage`) | `_origin` set by content script, overrides page-supplied | `_origin` overwritten via spread |
 | background main router | `PAGE_ALLOWED_METHODS`, `POPUP_ONLY_METHODS`, `isContentScript()`, `isExtensionPopup()` | OK for main dispatch |
 | background inner listeners (`provisionDecision`, `intentConfirmation`, `disclosureDecision`, `originPermissionDecision`) | **Only message.type checked** | **No sender validation — P0** |
@@ -163,13 +163,13 @@ Page.js is injected into every page. WAR is also `<all_urls>` so any web page ca
 | `disclosure-picker` | origin, action, resource, fact picker | mode + disclosedFacts + predicateFacts | Yes. Decision forge-able. URL leaks PII (P0-2). |
 | `origin-permission` | origin + method | adds `{methods: [method], expires: +24h}` | Yes. Decision forge-able. |
 | `share-capability` (context-menu) | URI + QR placeholder | URI displayed for copy; no further action | Read-only — OK. |
-| `signTurn` (page-initiated) | **No popup** — directly signs and submits if origin allowed | turn payload signed with `cclerk.secretKey` | **Asymmetry: signTurn requires only origin permission, no per-turn UI confirmation.** A site with one-time `pyana:signTurn` grant can sign arbitrary turns silently for 24h. |
+| `signTurn` (page-initiated) | **No popup** — directly signs and submits if origin allowed | turn payload signed with `cclerk.secretKey` | **Asymmetry: signTurn requires only origin permission, no per-turn UI confirmation.** A site with one-time `dregg:signTurn` grant can sign arbitrary turns silently for 24h. |
 
 ## Open questions
 
 1. Is `extension/legacy/` actively loaded anywhere, or is it just historical? Confirm `build.sh` should not be packaging it (it currently does because it loads root-level `.js` files which are duplicates of legacy).
-2. Should `pyana:signTurn` require per-call user confirmation? Currently it only requires the origin to be allowlisted — that's the highest-impact cclerk operation with zero per-action UI.
+2. Should `dregg:signTurn` require per-call user confirmation? Currently it only requires the origin to be allowlisted — that's the highest-impact cclerk operation with zero per-action UI.
 3. Is the `chrome.storage.session._internalKey` design intentional (i.e. is the threat model "a thief who reads disk but not running memory")? If so, document it; if not, fix P1-1.
 4. What is the production node pubkey distribution strategy? Today the extension fetches `/status` to learn it — TOFU. A pinned key would close P1-3.
-5. The `pyana://<node>/<cell>/<secret>` URI exposes a bearer secret in cleartext. Is this intended? If so, how is it transported between users (clipboard / URL / QR)?
+5. The `dregg://<node>/<cell>/<secret>` URI exposes a bearer secret in cleartext. Is this intended? If so, how is it transported between users (clipboard / URL / QR)?
 6. Should the popups (provision/confirm-intent/disclosure/origin-permission) be migrated to use `chrome.runtime.connect` with port-based messaging instead of broadcast `sendMessage`? That alone resolves P0-1 because ports are 1:1.

@@ -1,5 +1,5 @@
 [package]
-name = "pyana-captp"
+name = "dregg-captp"
 version.workspace = true
 edition.workspace = true
 
@@ -9,8 +9,8 @@ serde = { version = "1", features = ["derive"] }
 getrandom = { workspace = true }
 bs58 = "0.5"
 postcard = { version = "1", features = ["use-std"] }
-pyana-types = { path = "../types" }
-pyana-cell = { path = "../cell" }
+dregg-types = { path = "../types" }
+dregg-cell = { path = "../cell" }
 
 [dev-dependencies]
 serde_json = "1"

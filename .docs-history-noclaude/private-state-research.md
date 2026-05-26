@@ -1,6 +1,6 @@
-# Private Programmable State Models: Research for Pyana
+# Private Programmable State Models: Research for `dregg`
 
-This document compares private state models across leading ZK systems to inform pyana's
+This document compares private state models across leading ZK systems to inform dregg's
 design direction toward private DEX, auctions, and smart contracts with progressive disclosure.
 
 ---
@@ -149,9 +149,9 @@ is the entire note tree.
 - Accounts: Simple programming model, easy shared state, but weak privacy even with commitments,
   sequential bottleneck on popular accounts, and public interaction graph.
 
-**Can pyana's cells achieve meaningful privacy?** Partially. The `FieldVisibility::Committed`
+**Can dregg's cells achieve meaningful privacy?** Partially. The `FieldVisibility::Committed`
 and `SelectivelyDisclosable` modes hide WHAT is in a cell. But they cannot hide WHO is
-interacting with a cell or WHEN interactions happen. For authorization (pyana's primary use case),
+interacting with a cell or WHEN interactions happen. For authorization (dregg's primary use case),
 this may be sufficient — the verifier sees a proof but not which cell generated it. For financial
 applications (DEX, auctions), the account model leaks interaction patterns that reveal trading
 behavior. Meaningful financial privacy REQUIRES either: (1) a note/nullifier layer on top of
@@ -169,13 +169,13 @@ computed by the note's owner (holder of the spending key). Properties:
 4. **Publicly revealed**: When you spend, you publish the nullifier. The network checks it's not
    in the nullifier set.
 
-**Does pyana NEED nullifiers?** It depends on what you're doing:
-- **For authorization tokens (current use case)**: No. Pyana's revocation non-membership proofs
+**Does dregg NEED nullifiers?** It depends on what you're doing:
+- **For authorization tokens (current use case)**: No. `dregg`'s revocation non-membership proofs
   serve a similar role — they prove "this token has NOT been revoked" which prevents replay. The
   difference: revocation is authority-initiated (the issuer revokes), whereas nullifiers are
   owner-initiated (the holder spends). For capability tokens that are presented (not transferred),
   revocation-based invalidation is actually more appropriate.
-- **For transferable value (DEX, auctions)**: YES. If pyana introduces transferable assets
+- **For transferable value (DEX, auctions)**: YES. If dregg introduces transferable assets
   (tokens, order fills), you need a mechanism where the HOLDER invalidates the old state when
   transferring. Revocation won't work because the issuer shouldn't need to be involved in every
   transfer. Nullifiers solve exactly this: holder-initiated, deterministic invalidation without
@@ -195,7 +195,7 @@ The relationship:
 - Both proofs together = "this note exists AND has not been spent."
 
 Aztec's indexed Merkle tree innovation (linked list of sorted values, depth 32 instead of 254)
-makes non-membership proofs 8x cheaper in circuits. Pyana's current 4-ary Merkle tree with
+makes non-membership proofs 8x cheaper in circuits. `dregg`'s current 4-ary Merkle tree with
 sorted leaves and adjacency-based non-membership proofs is conceptually similar but uses a
 different encoding.
 
@@ -218,19 +218,19 @@ different encoding.
 4. User claims output privately via SwapClaim (only needs viewing key).
 5. Privacy: individual trades hide in the batch. Planned: seal amounts via flow encryption.
 
-**Key insight for pyana**: Both approaches separate "intent declaration" from "settlement."
+**Key insight for dregg**: Both approaches separate "intent declaration" from "settlement."
 Aztec makes the intent private and settlement public. Penumbra makes the intent semi-public
 (amounts visible now, sealed later) and settlement private. Both work, but Penumbra's approach
 is simpler (no programmable contracts needed) while Aztec's is more general.
 
-### 3.5 What Pyana Already Has That Maps to These Concepts
+### 3.5 What `dregg` Already Has That Maps to These Concepts
 
-| Pyana Concept | Maps To | Notes |
+| `dregg` Concept | Maps To | Notes |
 |---------------|---------|-------|
 | Merkle commitments (4-ary tree) | Note commitments / state commitment tree | Same idea: commit to private data, prove membership |
 | Non-membership proofs (sorted adjacency) | Nullifier non-membership checks | Similar mechanism, different purpose (revocation vs spending) |
 | `FieldVisibility::Committed` | Shielded state fields | Hides value behind commitment; can prove predicates |
-| `FieldVisibility::SelectivelyDisclosable` | Selective disclosure (beyond what most systems offer) | Pyana actually has finer-grained disclosure than Aztec/Penumbra |
+| `FieldVisibility::SelectivelyDisclosable` | Selective disclosure (beyond what most systems offer) | `dregg` actually has finer-grained disclosure than Aztec/Penumbra |
 | Fold chain (attenuation) | Note consumption chain | Each fold "narrows" — creates new state from old. Conceptually similar to spend-and-recreate |
 | Revocation non-membership | Nullifier check (but issuer-driven) | Proves token NOT revoked. Similar proof structure, different trust model |
 | Cell state (8 fields + nonce) | Mina zkApp account | Directly adapted from Mina. Same limitations for privacy |
@@ -252,19 +252,19 @@ is simpler (no programmable contracts needed) while Aztec's is more general.
 3. **Value commitments (homomorphic)**: Penumbra and Orchard use Pedersen commitments where
    you can verify `commit(a) + commit(b) = commit(a+b)` without revealing a or b. This is
    essential for proving conservation (total value in = total value out) in private transactions.
-   Pyana's BLAKE3 commitments are binding but not homomorphic.
+   `dregg`'s BLAKE3 commitments are binding but not homomorphic.
 
 4. **Encrypted note transmission**: When you create a note for someone else, you need to
-   encrypt it to their key so they can discover and spend it. Pyana has X25519 sealed secrets
+   encrypt it to their key so they can discover and spend it. `dregg` has X25519 sealed secrets
    but hasn't integrated this with the state model.
 
 5. **Batch execution / clearing mechanism**: For a DEX, you need either Penumbra-style batching
-   or Aztec-style partial notes. Neither exists in pyana yet.
+   or Aztec-style partial notes. Neither exists in dregg yet.
 
-6. **Asset/token type system**: Pyana's cells have `token_id` but this identifies the capability
+6. **Asset/token type system**: `dregg`'s cells have `token_id` but this identifies the capability
    domain, not a fungible asset. A DEX needs typed fungible assets with privacy.
 
-### 3.6 What Would a Pyana-Native Private DEX Require?
+### 3.6 What Would a `dregg`-Native Private DEX Require?
 
 Given existing primitives (cells, turns, Datalog auth, STARK proofs, Merkle commitments, fold
 chains), here's the minimum addition set:
@@ -300,7 +300,7 @@ chains), here's the minimum addition set:
 
 ## 4. Recommendation: Hybrid Model
 
-**Neither pure UTXO+nullifiers NOR pure enhanced-account is right for pyana.**
+**Neither pure UTXO+nullifiers NOR pure enhanced-account is right for dregg.**
 
 The recommendation is a **dual-layer hybrid**:
 
@@ -312,7 +312,7 @@ Keep the existing cell model for what it's good at:
 - Public/committed parameters that don't need anonymity
 - Programs that define valid state transitions
 
-This is where pyana is already strong and differentiated.
+This is where dregg is already strong and differentiated.
 
 ### Layer 2: Notes (UTXO model) — for private value and trading
 
@@ -331,7 +331,7 @@ This gives you:
 
 ### Why hybrid?
 
-1. **Authorization doesn't need notes.** Pyana's primary value is ZK presentation of
+1. **Authorization doesn't need notes.** `dregg`'s primary value is ZK presentation of
    capabilities. That's a proof-about-committed-state problem, not a value-transfer problem.
    Cells with committed fields are perfect for this.
 
@@ -342,8 +342,8 @@ This gives you:
    Orders and fills are notes (private ownership, private amounts). The cell program authorizes
    which note transformations are valid.
 
-4. **Pyana's STARK advantage compounds.** Notes + nullifiers are more expensive in PLONK
-   (Aztec, Orchard) than in STARKs. Pyana's BabyBear STARK with Poseidon2 makes Merkle proofs
+4. **`dregg`'s STARK advantage compounds.** Notes + nullifiers are more expensive in PLONK
+   (Aztec, Orchard) than in STARKs. `dregg`'s BabyBear STARK with Poseidon2 makes Merkle proofs
    cheap. A 4-ary indexed tree at depth 16 with Poseidon2 is very STARK-friendly.
 
 ---
@@ -352,7 +352,7 @@ This gives you:
 
 ### Phase 1: Note Primitives (required foundation)
 
-1. **`pyana-note` crate**: Define `Note`, `NullifierKey`, `NullifierDerivation`. A note is
+1. **`dregg-note` crate**: Define `Note`, `NullifierKey`, `NullifierDerivation`. A note is
    `{ owner_pk_hash, asset_id, value, blinding, rho }`. Nullifier is
    `Poseidon2(nk, commitment(note))`.
 
@@ -415,10 +415,10 @@ This gives you:
 
 ### Tension: PQ-safety vs homomorphic commitments
 
-The biggest architectural tension: Pyana's PQ guarantee (hash-based STARKs) conflicts with
+The biggest architectural tension: `dregg`'s PQ guarantee (hash-based STARKs) conflicts with
 Pedersen commitments (which require elliptic curves and are NOT PQ-secure). Options:
 
-1. **Accept curves inside trust boundary** (like pyana already does with BLS12-381): Use
+1. **Accept curves inside trust boundary** (like dregg already does with BLS12-381): Use
    Pedersen commitments for value conservation but only within the federation. External
    verification uses STARK proofs that verify the Pedersen math in-circuit.
 2. **Lattice-based commitments**: PQ-safe homomorphic commitments exist (based on Module-LWE)
@@ -438,7 +438,7 @@ balances typically requires homomorphic tricks.
 
 ## 7. Summary
 
-Pyana is well-positioned for private programmable state because its existing primitives
+`dregg` is well-positioned for private programmable state because its existing primitives
 (Merkle trees, non-membership proofs, STARK circuits, fold chains, committed fields) map
 cleanly to the concepts that private systems need. The main gaps are:
 
@@ -447,8 +447,8 @@ cleanly to the concepts that private systems need. The main gaps are:
 3. **A batch clearing mechanism** for fair DEX execution
 
 The STARK-native approach (option 3 above) elegantly sidesteps the PQ-vs-homomorphism tension
-that plagues curve-based systems, and pyana's existing 4-ary Merkle infrastructure provides a
+that plagues curve-based systems, and dregg's existing 4-ary Merkle infrastructure provides a
 solid foundation for both note commitment trees and nullifier trees.
 
-The hybrid cell+note architecture preserves pyana's strengths (authorization, coordination,
+The hybrid cell+note architecture preserves dregg's strengths (authorization, coordination,
 progressive disclosure) while adding the anonymity properties that financial applications demand.

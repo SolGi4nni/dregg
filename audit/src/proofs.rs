@@ -77,7 +77,7 @@ impl CountProof {
         }
 
         // Verify index commitment.
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-audit index-commit v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-audit index-commit v1");
         for &idx in &indices_for_commit {
             hasher.update(&idx.to_le_bytes());
         }

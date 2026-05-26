@@ -10,7 +10,7 @@
 
 mod common;
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{
         EffectVmContext,
@@ -32,7 +32,7 @@ use pyana_circuit::{
 /// breaks for a variant, this test catches it.
 #[test]
 fn all_schema_variants_prove_and_verify() {
-    use pyana_circuit::effect_vm::columns::sel;
+    use dregg_circuit::effect_vm::columns::sel;
 
     let balance = 100_000u64;
 
@@ -579,7 +579,7 @@ fn storage_queue_lifecycle_prove_and_verify() {
     assert_eq!(delta, -200);
 
     // Verify queue root progression.
-    use pyana_circuit::poseidon2::hash_2_to_1;
+    use dregg_circuit::poseidon2::hash_2_to_1;
     let empty_hash = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
     let root_after_msg1 = hash_2_to_1(empty_hash, msg1);
     let root_after_msg2 = hash_2_to_1(root_after_msg1, msg2);
@@ -682,7 +682,7 @@ fn effects_hash_reordering_produces_different_pi_rejected_cross_verify() {
 /// `approved_handoffs_root`, followed by rejection when the PI root is wrong.
 #[test]
 fn validate_handoff_honest_verifies_wrong_root_rejected() {
-    use pyana_circuit::poseidon2::hash_2_to_1;
+    use dregg_circuit::poseidon2::hash_2_to_1;
 
     let state = CellState::new(5_000, 0);
     let cert_hash = BabyBear::new(0xCE87);

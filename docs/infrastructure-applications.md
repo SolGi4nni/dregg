@@ -1,14 +1,14 @@
-# Infrastructure Applications of Pyana Capabilities
+# Infrastructure Applications of `dregg` Capabilities
 
 ## What Exists Today
 
-Pyana's core provides: capability sets (c-lists with slot-based lookup), attenuation-only delegation (`is_narrower_or_equal` enforcement), expiry heights on capability refs, breadstuff token-hash authentication, preconditions (nonce, balance, block height, time range), ZK proof authorization, and macaroon-style caveats (org, service, feature, validity window, machine binding, budget, revocation). The executor enforces all of this atomically with journal rollback.
+`dregg`'s core provides: capability sets (c-lists with slot-based lookup), attenuation-only delegation (`is_narrower_or_equal` enforcement), expiry heights on capability refs, breadstuff token-hash authentication, preconditions (nonce, balance, block height, time range), ZK proof authorization, and macaroon-style caveats (org, service, feature, validity window, machine binding, budget, revocation). The executor enforces all of this atomically with journal rollback.
 
 The key primitives for infrastructure use:
 - `CapabilityRef` with `target`, `permissions`, `breadstuff`, `expires_at`
 - `CapabilitySet::attenuate()` -- monotone narrowing, never amplification
 - `AuthRequired::{None, Signature, Proof, Either, Impossible}` per-action permission model
-- Pyana caveats: `FromMachine`, `Service`, `Command`, `ValidityWindow`, `FeatureGlob`, `Budget`
+- `dregg` caveats: `FromMachine`, `Service`, `Command`, `ValidityWindow`, `FeatureGlob`, `Budget`
 - Preconditions: time ranges, block height bounds, state assertions
 - Revocation channels for capability invalidation without full re-issuance
 
@@ -20,13 +20,13 @@ The key primitives for infrastructure use:
 
 **Privacy property:** The registry sees "valid token, grants read access to registry.internal" but not that the container also has access to secrets/project-x. Each service sees only the dimension relevant to it.
 
-**What needs building:** A container runtime hook that mints a cell and breadstuff token at container start, injects it as an env var or mounted secret, and revokes on container exit. An OCI hook (~200 LOC) that calls the pyana SDK.
+**What needs building:** A container runtime hook that mints a cell and breadstuff token at container start, injects it as an env var or mounted secret, and revokes on container exit. An OCI hook (~200 LOC) that calls the dregg SDK.
 
 ## 2. Filesystem ACLs with Attenuation
 
 **Model:** Map filesystem paths to `FeatureGlob` caveats. A parent process holds `FeatureGlob(include: ["/data/project-x/**"])`. It attenuates to a child: `FeatureGlob(include: ["/data/project-x/results/**"])`. The child further delegates to a tool: `FeatureGlob(include: ["/data/project-x/results/*.csv"], exclude: ["/data/project-x/results/*.key"])`.
 
-**Integration:** A FUSE layer or eBPF-based LSM hook intercepts open/read/write syscalls. The process presents its pyana token. The hook decodes caveats, checks the requested path against glob patterns. Since caveats are append-only (monotone narrowing), a child can only make the glob MORE restrictive -- it cannot widen `/results/**` back to `/data/**`.
+**Integration:** A FUSE layer or eBPF-based LSM hook intercepts open/read/write syscalls. The process presents its dregg token. The hook decodes caveats, checks the requested path against glob patterns. Since caveats are append-only (monotone narrowing), a child can only make the glob MORE restrictive -- it cannot widen `/results/**` back to `/data/**`.
 
 **What exists:** The `FeatureGlob` caveat with include/exclude and globset matching is fully implemented. The `verify_caveats` function handles subset enforcement.
 
@@ -48,7 +48,7 @@ The key primitives for infrastructure use:
 
 **Unlinkability:** With ZK mode, Service A proves it holds a valid capability chain to `payments-api:charge` without revealing which service it is. The mesh sees "authorized caller for payments-api:charge" but cannot link requests across time or correlate with other service calls.
 
-**Integration point:** Envoy/gRPC interceptor that extracts the pyana token from metadata, calls `verify_caveats`, and returns allow/deny. The `FromMachine` caveat can optionally pin to a specific pod for defense-in-depth without breaking unlinkability at the service level.
+**Integration point:** Envoy/gRPC interceptor that extracts the dregg token from metadata, calls `verify_caveats`, and returns allow/deny. The `FromMachine` caveat can optionally pin to a specific pod for defense-in-depth without breaking unlinkability at the service level.
 
 **What needs building:** A sidecar library (envoy WASM filter or gRPC interceptor) wrapping the token crate's verification. The token verification is already a pure function -- packaging it for sidecar use is integration work, not protocol work.
 
@@ -58,9 +58,9 @@ The key primitives for infrastructure use:
 
 **What's gained:** Attenuation without cluster-admin intervention (a team lead narrows their token for a CI bot). Time-bounded access without CronJobs deleting RoleBindings. Budget enforcement (rate limiting baked into the token). Offline verification -- a kubectl plugin can check its own token validity without hitting the API server.
 
-**Integration story:** A webhook admission controller or API server authenticator that accepts pyana tokens as bearer credentials. Maps caveat verification results to Kubernetes allow/deny decisions. The `Budget` caveat handles rate limiting that currently requires separate tooling (OPA/Gatekeeper).
+**Integration story:** A webhook admission controller or API server authenticator that accepts dregg tokens as bearer credentials. Maps caveat verification results to Kubernetes allow/deny decisions. The `Budget` caveat handles rate limiting that currently requires separate tooling (OPA/Gatekeeper).
 
-**What needs building:** An admission webhook (~500 LOC) that maps K8s resource/verb/namespace to pyana's service/action/feature-glob model. Token issuance tied to existing IdP via the `OAuthProvider` caveat.
+**What needs building:** An admission webhook (~500 LOC) that maps K8s resource/verb/namespace to dregg's service/action/feature-glob model. Token issuance tied to existing IdP via the `OAuthProvider` caveat.
 
 ## 6. The Semi-Trustless Cloud Vision
 
@@ -78,6 +78,6 @@ The key primitives for infrastructure use:
 - Lightweight attested root distribution (currently assumes federation membership; a cloud would need a subscriber/observer mode).
 - Proof generation latency for interactive use. Current STARK proofs are batch-oriented. Interactive authorization needs sub-100ms proof generation or precomputed proof caches.
 
-**A pyana-native container runtime** would: (1) mint a cell per container at creation, (2) inject attenuated capability tokens scoped to declared resource needs, (3) run a verifier sidecar that gates all inter-container and external communication on token validity, (4) propagate revocation via attested root subscription rather than centralized policy push, (5) produce audit logs as turn receipts with Merkle-chained integrity.
+**A dregg-native container runtime** would: (1) mint a cell per container at creation, (2) inject attenuated capability tokens scoped to declared resource needs, (3) run a verifier sidecar that gates all inter-container and external communication on token validity, (4) propagate revocation via attested root subscription rather than centralized policy push, (5) produce audit logs as turn receipts with Merkle-chained integrity.
 
-The key insight: pyana's "private authorization, public execution" model maps directly to cloud infrastructure where the cloud provider (executor) processes requests but should not learn authorization topology. The provider sees "valid proof, apply this state transition" -- never "user X delegated to service Y which sub-delegated to container Z."
+The key insight: dregg's "private authorization, public execution" model maps directly to cloud infrastructure where the cloud provider (executor) processes requests but should not learn authorization topology. The provider sees "valid proof, apply this state transition" -- never "user X delegated to service Y which sub-delegated to container Z."

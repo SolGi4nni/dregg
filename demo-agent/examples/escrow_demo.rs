@@ -11,11 +11,11 @@
 //! 5. Successful withdrawal after unlock
 //! 6. Conservation verified throughout
 
-use pyana_cell::program::{CellProgram, StateConstraint, field_from_u64};
-use pyana_cell::state::CellState;
+use dregg_cell::program::{CellProgram, StateConstraint, field_from_u64};
+use dregg_cell::state::CellState;
 
 fn main() {
-    println!("=== Pyana Time-Locked Escrow Demo ===\n");
+    println!("=== Dregg Time-Locked Escrow Demo ===\n");
 
     // --- Setup ---
     // Escrow parameters:

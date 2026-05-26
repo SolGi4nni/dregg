@@ -1,6 +1,6 @@
 # cross-app-e2e — Composition demo for the four starbridge-apps
 
-This demo proves that pyana's substrate **composes**: the four anchor
+This demo proves that dregg's substrate **composes**: the four anchor
 starbridge-apps (`identity`, `nameservice`, `governed-namespace`,
 `subscription`) interoperate at the cell-program /
 `WitnessedPredicate` / `AuthorizedSet::CredentialSet` level, with each
@@ -39,10 +39,10 @@ Four agents drive a single end-to-end narrative through the four apps:
      `identity_attested_tier_constraint`,
      `WitnessedPredicateKind::BlindedSet`.
 
-3. **Bob mounts his cell at `pyana://bob.dev`** via a governed-namespace
+3. **Bob mounts his cell at `dregg://bob.dev`** via a governed-namespace
    `register_service` turn. The mount carries the nameservice's
-   canonical resolve target (`blake3("pyana://cell/bob-cell-id")`) so
-   downstream `pyana_dfa::Router` walks against the live route table
+   canonical resolve target (`blake3("dregg://cell/bob-cell-id")`) so
+   downstream `dregg_dfa::Router` walks against the live route table
    resolve to Bob's actual cell.
    - Primitives: `register_nameservice_route_action`, the namespace's
      `register_service` case freezing every governance slot.

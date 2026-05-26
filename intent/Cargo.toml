@@ -1,5 +1,5 @@
 [package]
-name = "pyana-intent"
+name = "dregg-intent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,14 +14,14 @@ blake3 = "1"
 curve25519-dalek = { version = "4", features = ["alloc"] }
 getrandom = { workspace = true }
 postcard = { version = "1", features = ["alloc"] }
-pyana-cell = { path = "../cell" }
-pyana-circuit = { path = "../circuit" }
-pyana-commit = { path = "../commit" }
-pyana-dfa = { path = "../dfa" }
-pyana-federation = { path = "../federation", default-features = false }  # pure threshold_decrypt; no tokio
-pyana-trace = { path = "../trace" }
-pyana-turn = { path = "../turn" }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
+dregg-dfa = { path = "../dfa" }
+dregg-federation = { path = "../federation", default-features = false }  # pure threshold_decrypt; no tokio
+dregg-trace = { path = "../trace" }
+dregg-turn = { path = "../turn" }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 globset = { workspace = true }

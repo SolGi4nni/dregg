@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Security Hardening — Pyana</title>
+<title>Security Hardening — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,13 +16,13 @@
 <h1>Security Hardening</h1>
 
     <p>
-      Production pyana-node deployments should follow these hardening guidelines.
+      Production dregg-node deployments should follow these hardening guidelines.
     </p>
 
     <h2 id="key-management">Key Management</h2>
     <ul>
       <li>Set <code>chmod 600</code> on <code>node.key</code></li>
-      <li>Run pyana-node as a dedicated service user (not root)</li>
+      <li>Run dregg-node as a dedicated service user (not root)</li>
       <li>In production, integrate with OS keychain or HSM for key storage</li>
     </ul>
 

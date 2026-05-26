@@ -187,12 +187,12 @@ fn check_completions() -> Check {
     // Check common completion file locations.
     let home = dirs::home_dir().unwrap_or_default();
     let locations = [
-        home.join(".zsh/completions/_pyana"),
-        home.join(".local/share/bash-completion/completions/pyana"),
-        home.join(".config/fish/completions/pyana.fish"),
+        home.join(".zsh/completions/_dregg"),
+        home.join(".local/share/bash-completion/completions/dregg"),
+        home.join(".config/fish/completions/dregg.fish"),
         // Also check if they might be system-wide.
-        std::path::PathBuf::from("/usr/local/share/zsh/site-functions/_pyana"),
-        std::path::PathBuf::from("/opt/homebrew/share/zsh/site-functions/_pyana"),
+        std::path::PathBuf::from("/usr/local/share/zsh/site-functions/_dregg"),
+        std::path::PathBuf::from("/opt/homebrew/share/zsh/site-functions/_dregg"),
     ];
 
     let found = locations.iter().any(|p| p.exists());
@@ -207,7 +207,7 @@ fn check_completions() -> Check {
         Check {
             name: "completions".to_string(),
             passed: false,
-            detail: "Shell completions not found (run: pyana completions <shell> > ...)"
+            detail: "Shell completions not found (run: dregg completions <shell> > ...)"
                 .to_string(),
         }
     }

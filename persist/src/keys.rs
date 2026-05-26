@@ -231,7 +231,7 @@ fn decrypt_key(blob: &[u8], master_key: &[u8; 32]) -> Result<[u8; 32]> {
 /// The context string provides domain separation ensuring the derived key
 /// cannot be confused with keys derived for other purposes from the same master.
 fn derive_aead_key(master_key: &[u8; 32]) -> [u8; 32] {
-    blake3::derive_key("pyana-store key-encryption v2", master_key)
+    blake3::derive_key("dregg-store key-encryption v2", master_key)
 }
 
 /// Constant-time comparison using the `subtle` crate.

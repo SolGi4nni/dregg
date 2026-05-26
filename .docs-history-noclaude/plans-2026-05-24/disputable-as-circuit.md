@@ -196,7 +196,7 @@ ConstraintExpr::Binary { col: 10 }  // no_challenger is boolean
 
 ### Full CircuitDescriptor (Rust)
 
-See `pyana-dsl-tests/src/dispute_dsl.rs` for the complete implementation.
+See `dregg-dsl-tests/src/dispute_dsl.rs` for the complete implementation.
 
 The key insight: rather than trying to encode "if old_state == X" as a
 degree-4+ polynomial selector, we use SEPARATE ROWS for each transition type,
@@ -309,7 +309,7 @@ ArbiterStrategy::CircuitConstrained {
 
 High-value disputes require circuit proofs. Low-value disputes use the existing
 executor-trusted path. This is the same "belt and suspenders" philosophy used
-throughout pyana: trust but verify where it matters.
+throughout dregg: trust but verify where it matters.
 
 ## 7. Implementation Phases
 

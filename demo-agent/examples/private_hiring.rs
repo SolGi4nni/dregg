@@ -35,23 +35,23 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use pyana_circuit::compound_predicate_air::{
+use dregg_circuit::compound_predicate_air::{
     BooleanFormula, CompoundPredicateProof, prove_compound_predicate, verify_compound_predicate,
 };
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, poseidon2,
     prove_predicate, verify_predicate,
 };
-use pyana_intent::fulfillment::{
+use dregg_intent::fulfillment::{
     self, FulfillOptions, Fulfillment, FulfillmentWithPredicates,
     verify_fulfillment_with_predicates,
 };
-use pyana_intent::matcher::{HeldCapability, Sensitivity};
-use pyana_intent::{
+use dregg_intent::matcher::{HeldCapability, Sensitivity};
+use dregg_intent::{
     ActionPattern, CommitmentId, Intent, IntentKind, Match, MatchSpec, PredicateRequirement,
     VerificationMode,
 };
-use pyana_sdk::AgentCipherclerk;
+use dregg_sdk::AgentCipherclerk;
 
 // =============================================================================
 // Helpers

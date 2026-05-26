@@ -14,7 +14,7 @@ The node has a clear architecture, defensive scaffolding (rate limiting, body si
 
 The node is a single-process Axum daemon hosting (a) an `AgentCipherclerk` (the operator's identity & signing key), (b) a `Ledger` of cells, (c) a `PersistentStore` (redb), (d) a blocklace consensus engine, (e) an HTTP API (~50 routes), (f) a WebSocket gossip channel, (g) an MCP stdio JSON-RPC server (37 tools), and optionally (h) a relay operator service on a separate port. All of the above share **one cclerk, one signing key, one ledger** in a `tokio::sync::RwLock<NodeStateInner>`.
 
-The trust model is implicitly *operator-only*: localhost is treated as the operator. CORS restricts browsers to localhost; `--bind 127.0.0.1` is the default. But several endpoints bypass that assumption: (1) the WebSocket loopback check is correct *only* in pre-passphrase setup mode but the equivalent HTTP path is not gated; (2) `auto_approve_joins = true` is unconditionally on in blocklace consensus, allowing any peer who can deliver a gossip block to join the federation; (3) the relay subcommand binds `0.0.0.0` and accepts authority claims by hex string with no signature; (4) several "protected" endpoints (`post_create_from_factory`, `post_make_sovereign`, `post_peer_exchange`, every `pyana_*` MCP tool) take cell-id-shaped arguments and act on them on behalf of the cclerk without ownership verification beyond "are you authenticated to this node."
+The trust model is implicitly *operator-only*: localhost is treated as the operator. CORS restricts browsers to localhost; `--bind 127.0.0.1` is the default. But several endpoints bypass that assumption: (1) the WebSocket loopback check is correct *only* in pre-passphrase setup mode but the equivalent HTTP path is not gated; (2) `auto_approve_joins = true` is unconditionally on in blocklace consensus, allowing any peer who can deliver a gossip block to join the federation; (3) the relay subcommand binds `0.0.0.0` and accepts authority claims by hex string with no signature; (4) several "protected" endpoints (`post_create_from_factory`, `post_make_sovereign`, `post_peer_exchange`, every `dregg_*` MCP tool) take cell-id-shaped arguments and act on them on behalf of the cclerk without ownership verification beyond "are you authenticated to this node."
 
 The node's *cryptographic* code is largely fine: turn signatures are verified before execution in `execute_finalized_turn` (line 1172), ed25519 signatures gate `register_cell` / `deregister_cell` / `update_commitment`, vote signatures are pre-verified before coordinator dispatch (line 2310-2321), conditional-proof nullifiers are persisted at use time, the discharge gateway persists its `issued_set` immediately. Where the node fails is in *authorization* (who is allowed to ask for what), not authentication of cryptographic artifacts.
 
@@ -40,7 +40,7 @@ The node's *cryptographic* code is largely fine: turn signatures are verified be
 
 **F-P1-5. `tool_create_agent` discards the freshly-generated cclerk.** `mcp.rs:790-813` — generates a new `AgentCipherclerk::new()`, prints its public key, and the cclerk is dropped immediately. There is no persistence, no association with the user/name, and the returned `public_key` is meaningless. This is a *correctness* bug rather than a security bug, but an LLM acting on the response would believe it has minted an agent it can later reference. Fix: persist the cclerk in a sub-agent table, or remove the tool.
 
-**F-P1-6. `tool_seal_data` derives X25519 secret from sealing cipherclerk's symmetric key via a `recipient_pubkey` interpreted as X25519, but the sender uses an ephemeral key — mismatched protocol.** `mcp.rs:1664-1693`. The sender generates a fresh X25519 secret and DHs with `recipient_pubkey` *interpreted as X25519*. The recipient (`tool_unseal_data:1734`) derives X25519 secret from `cclerk.derive_symmetric_key("pyana-mcp-seal-x25519-v1")` — a key derived from the cipherclerk's identity. So the sender must use the recipient's *X25519 public key derived the same way* to make this work, but `tool_seal_data`'s `recipient` parameter is documented as "hex-encoded public key of the intended recipient" with no specification of *which* key. If a caller passes the recipient's Ed25519 public key (the natural thing to do), sealing and unsealing will never agree. Fix: document explicitly that `recipient` must be the recipient's `derive_symmetric_key("pyana-mcp-seal-x25519-v1")` *public* counterpart, or — better — implement Ed25519-to-X25519 conversion at both ends.
+**F-P1-6. `tool_seal_data` derives X25519 secret from sealing cipherclerk's symmetric key via a `recipient_pubkey` interpreted as X25519, but the sender uses an ephemeral key — mismatched protocol.** `mcp.rs:1664-1693`. The sender generates a fresh X25519 secret and DHs with `recipient_pubkey` *interpreted as X25519*. The recipient (`tool_unseal_data:1734`) derives X25519 secret from `cclerk.derive_symmetric_key("dregg-mcp-seal-x25519-v1")` — a key derived from the cipherclerk's identity. So the sender must use the recipient's *X25519 public key derived the same way* to make this work, but `tool_seal_data`'s `recipient` parameter is documented as "hex-encoded public key of the intended recipient" with no specification of *which* key. If a caller passes the recipient's Ed25519 public key (the natural thing to do), sealing and unsealing will never agree. Fix: document explicitly that `recipient` must be the recipient's `derive_symmetric_key("dregg-mcp-seal-x25519-v1")` *public* counterpart, or — better — implement Ed25519-to-X25519 conversion at both ends.
 
 **F-P1-7. `post_bearer_auth` uses `known_federation_keys.first()` as federation ID.** `api.rs:3316-3321`. Picks the first key out of a `HashSet`-derived `Vec` ordering, which is unstable. The federation ID used for delegation signature verification can vary across runs. Fix: federation ID should be a separate config item (`silo_id` or `federation_id`).
 
@@ -70,7 +70,7 @@ The node's *cryptographic* code is largely fine: turn signatures are verified be
 
 **F-P2-9. `routing_table::mark_verified` (line 117-127) ignores its `authorizing_turn` parameter** and marks *all* entries for the cell as verified. Comment acknowledges this. Real possibility of marking a malicious route as verified. Fix: store `authorizing_turn` in `RouteEntry` and verify by it.
 
-**F-P2-10. The MCP tool `pyana_prove_sovereign_turn` uses `initial_state = CellState::new(1000, 0)` hardcoded** (`mcp.rs:2525`) as the prover's initial state. The proof is therefore a proof about a state that doesn't exist on-ledger. A naïve consumer of the response would believe a real cell transition was proven.
+**F-P2-10. The MCP tool `dregg_prove_sovereign_turn` uses `initial_state = CellState::new(1000, 0)` hardcoded** (`mcp.rs:2525`) as the prover's initial state. The proof is therefore a proof about a state that doesn't exist on-ledger. A naïve consumer of the response would believe a real cell transition was proven.
 
 **F-P2-11. `tool_compress_history` builds `new_roots` as `initial_root_u32.wrapping_add((i+1) as u32)`** (`mcp.rs:2019`). The compressed proof is over fictitious roots, not the actual cell history. Same naming-vs-behavior concern.
 
@@ -82,7 +82,7 @@ The node's *cryptographic* code is largely fine: turn signatures are verified be
 
 **F-P2-15. `tool_propose_membership` does not actually submit the proposal** (`mcp.rs:3044-3104`) — builds a `MembershipProposal` and computes a hash, but never feeds it to the constitution manager or creates a `Payload::MembershipVote` block.
 
-**F-P2-16. `MAX_BODY_SIZE = 1 MB` (api.rs:784)** is global. The `post_deploy_program` endpoint accepts a hex-encoded `CircuitDescriptor` — at 1 MB that's a 512 KB binary descriptor. Postcard deserialize of a malformed `CircuitDescriptor` could be slow. The `pyana_dsl_runtime::CellProgram::new(descriptor, version)` and `program_registry.deploy(program)` are not audited here.
+**F-P2-16. `MAX_BODY_SIZE = 1 MB` (api.rs:784)** is global. The `post_deploy_program` endpoint accepts a hex-encoded `CircuitDescriptor` — at 1 MB that's a 512 KB binary descriptor. Postcard deserialize of a malformed `CircuitDescriptor` could be slow. The `dregg_dsl_runtime::CellProgram::new(descriptor, version)` and `program_registry.deploy(program)` are not audited here.
 
 ### P3 — notes
 
@@ -142,41 +142,41 @@ Trust classes: **public** = no auth; **operator** = require_auth bearer (== pass
 
 ### MCP tools (`mcp.rs::tool_definitions`)
 
-All MCP tools require `s.unlocked` and run over `stdio` of the `pyana-node mcp` subcommand. **The MCP transport itself is unauthenticated** — anyone with shell access to the user's stdin/stdout can drive every tool. This is the standard MCP model (the calling LLM is the operator), but it means an MCP-tool-callable cclerk on a shared machine is fully compromised.
+All MCP tools require `s.unlocked` and run over `stdio` of the `dregg-node mcp` subcommand. **The MCP transport itself is unauthenticated** — anyone with shell access to the user's stdin/stdout can drive every tool. This is the standard MCP model (the calling LLM is the operator), but it means an MCP-tool-callable cclerk on a shared machine is fully compromised.
 
 | Tool | Action | Notes |
 |---|---|---|
-| `pyana_get_status` | read | ok |
-| `pyana_create_agent` | mints+drops cclerk | **F-P1-5** |
-| `pyana_authorize` | local verify | ok |
-| `pyana_submit_turn` | signs+executes | ok (derives agent from cclerk pk) |
-| `pyana_grant_capability` | signs+executes | uses cipherclerk's own cell as `from` |
-| `pyana_revoke_capability` | signs+executes | ok |
-| `pyana_post_intent` | mints intent | random commitment_id, no stake |
-| `pyana_fulfill_intent` | settles payment | rejects intents with predicate reqs |
-| `pyana_delegate` | mints DelegatedToken | ok |
-| `pyana_check_capabilities` | read | ok |
-| `pyana_read_cell` | read | always returns balance=null (placeholder) |
-| `pyana_get_receipt_chain` | read | ok |
-| `pyana_seal_data` / `pyana_unseal_data` | XChaCha20-Poly1305 | **F-P1-6**, **F-P1-9** |
-| `pyana_bridge_note` | signs+executes BridgeLock | empty spending_proof |
-| `pyana_make_sovereign` | ledger write | initial commitment = BLAKE3(cell_id) — placeholder |
-| `pyana_peer_exchange` | informational | no actual on-ledger effect |
-| `pyana_compress_history` | proof gen | **F-P2-11** uses synthetic roots |
-| `pyana_create_bearer_cap` / `pyana_exercise_bearer_cap` | signed delegation | **F-P1-8** hardcoded perm |
-| `pyana_deploy_factory` | informational | **F-P2-14** does not persist |
-| `pyana_create_from_factory` | ledger write | no ownership check |
-| `pyana_verify_provenance` | read | ok |
-| `pyana_prove_sovereign_turn` / `pyana_verify_sovereign_proof` | STARK | **F-P2-10** synthetic initial state |
-| `pyana_create_stealth_address` | mints address | XOR-based, documented as simplified |
-| `pyana_private_transfer` | signs+executes NoteCreate | BLAKE3 "Pedersen" (documented) |
-| `pyana_encrypt_intent` | SSE-encrypted intent | ok |
-| `pyana_prove_predicate` | proof gen | ok |
-| `pyana_compose_proofs` | informational | hashes inputs only |
-| `pyana_get_blocklace_status`, `pyana_get_constitution` | read | ok |
-| `pyana_propose_membership` | informational | **F-P2-15** does not submit |
-| `pyana_check_resource_budget` / `pyana_debit_shared_resource` | budget ops | ok |
-| `pyana_list_auctions` / `pyana_place_bid` | reads intent pool / mints intent | ok |
+| `dregg_get_status` | read | ok |
+| `dregg_create_agent` | mints+drops cclerk | **F-P1-5** |
+| `dregg_authorize` | local verify | ok |
+| `dregg_submit_turn` | signs+executes | ok (derives agent from cclerk pk) |
+| `dregg_grant_capability` | signs+executes | uses cipherclerk's own cell as `from` |
+| `dregg_revoke_capability` | signs+executes | ok |
+| `dregg_post_intent` | mints intent | random commitment_id, no stake |
+| `dregg_fulfill_intent` | settles payment | rejects intents with predicate reqs |
+| `dregg_delegate` | mints DelegatedToken | ok |
+| `dregg_check_capabilities` | read | ok |
+| `dregg_read_cell` | read | always returns balance=null (placeholder) |
+| `dregg_get_receipt_chain` | read | ok |
+| `dregg_seal_data` / `dregg_unseal_data` | XChaCha20-Poly1305 | **F-P1-6**, **F-P1-9** |
+| `dregg_bridge_note` | signs+executes BridgeLock | empty spending_proof |
+| `dregg_make_sovereign` | ledger write | initial commitment = BLAKE3(cell_id) — placeholder |
+| `dregg_peer_exchange` | informational | no actual on-ledger effect |
+| `dregg_compress_history` | proof gen | **F-P2-11** uses synthetic roots |
+| `dregg_create_bearer_cap` / `dregg_exercise_bearer_cap` | signed delegation | **F-P1-8** hardcoded perm |
+| `dregg_deploy_factory` | informational | **F-P2-14** does not persist |
+| `dregg_create_from_factory` | ledger write | no ownership check |
+| `dregg_verify_provenance` | read | ok |
+| `dregg_prove_sovereign_turn` / `dregg_verify_sovereign_proof` | STARK | **F-P2-10** synthetic initial state |
+| `dregg_create_stealth_address` | mints address | XOR-based, documented as simplified |
+| `dregg_private_transfer` | signs+executes NoteCreate | BLAKE3 "Pedersen" (documented) |
+| `dregg_encrypt_intent` | SSE-encrypted intent | ok |
+| `dregg_prove_predicate` | proof gen | ok |
+| `dregg_compose_proofs` | informational | hashes inputs only |
+| `dregg_get_blocklace_status`, `dregg_get_constitution` | read | ok |
+| `dregg_propose_membership` | informational | **F-P2-15** does not submit |
+| `dregg_check_resource_budget` / `dregg_debit_shared_resource` | budget ops | ok |
+| `dregg_list_auctions` / `dregg_place_bid` | reads intent pool / mints intent | ok |
 
 ### Relay routes (`relay_service.rs::relay_router`, binds `0.0.0.0`)
 
@@ -196,7 +196,7 @@ All MCP tools require `s.unlocked` and run over `stdio` of the `pyana-node mcp` 
 
 1. **Authority bound to operator process, not to per-resource keys.** The HTTP API treats "you have the bearer token" as "you are the cclerk." This conflates two trust levels: operator-level (start/stop, set passphrase, configure peers) vs. per-cell-owner (mint, attenuate, transfer this specific cell). For multi-tenant or app-framework integration this design is dangerous; for single-operator devnet it is acceptable. **F-CRIT-1**, **F-P1-2**, **F-P1-3** are all instances.
 
-2. **Aspirational MCP tools.** `pyana_deploy_factory`, `pyana_propose_membership`, `pyana_create_agent`, `pyana_peer_exchange` all return success responses for operations that have no on-ledger effect. An LLM acting on these believes it has changed state that it has not. (Parallel to AUDIT-sdk-rest.md's bool-returning verifiers, but worse — these *return success*.)
+2. **Aspirational MCP tools.** `dregg_deploy_factory`, `dregg_propose_membership`, `dregg_create_agent`, `dregg_peer_exchange` all return success responses for operations that have no on-ledger effect. An LLM acting on these believes it has changed state that it has not. (Parallel to AUDIT-sdk-rest.md's bool-returning verifiers, but worse — these *return success*.)
 
 3. **Hardcoded devnet defaults shipping as production-ready.** `auto_approve_joins: true`, the `0.0.0.0` bind option, the unauthenticated relay drain — each is annotated with a `TODO`/`in production this would be...` comment but not gated by `cfg(any(test, feature = "devnet"))` or runtime check. The `.devnet` marker exists; nothing checks it after `main.rs:341` (which only emits a warning).
 
@@ -220,7 +220,7 @@ All MCP tools require `s.unlocked` and run over `stdio` of the `pyana-node mcp` 
 
 4. **Relay service**: is the relay subcommand intended to be deployed by third parties (operator-as-a-service), or is it for the same operator who runs the node? If third-party, **F-P1-1** is critical (P0). If same-operator, the relay should bind to localhost by default.
 
-5. **MCP transport**: is `pyana-node mcp` intended to be driven only by the local operator's LLM client, or could it be wrapped in a remote MCP gateway? If remote, the MCP needs Bearer auth on the JSON-RPC envelope.
+5. **MCP transport**: is `dregg-node mcp` intended to be driven only by the local operator's LLM client, or could it be wrapped in a remote MCP gateway? If remote, the MCP needs Bearer auth on the JSON-RPC envelope.
 
 6. **Atomic proposal participant keys**: who provides the per-participant Ed25519 pubkeys at proposal time? Currently the request only carries the *cell IDs*. Suggest adding `participant_pubkeys: Vec<String>` to `AtomicProposalRequest`.
 

@@ -1929,7 +1929,7 @@ fn test_kimchi_presentation_wrong_blinding_factor_rejected() {
 // FEATURE-GATE the kimchi_native backend until proper copy constraints land,
 // not to add adversarial tests that exploit it as proof of concept.
 //
-// **Run manually** with `cargo test -p pyana-circuit kimchi_native_p0_2 --
+// **Run manually** with `cargo test -p dregg-circuit kimchi_native_p0_2 --
 // --ignored` after wiring is complete to confirm the unsoundness is closed.
 // ============================================================================
 

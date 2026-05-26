@@ -1,37 +1,37 @@
-//! Practical use-case benchmarks for pyana.
+//! Practical use-case benchmarks for dregg.
 //!
 //! These measure the real-world operations that users actually perform:
 //! token operations, proof generation, proof verification, recursive composition,
 //! federation operations, and the full end-to-end flow.
 //!
-//! Run with: `cargo bench -p pyana-circuit --bench practical_benchmarks`
+//! Run with: `cargo bench -p dregg-circuit --bench practical_benchmarks`
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
-use pyana_bridge::present::{
+use dregg_bridge::present::{
     BridgePresentationBuilder, bytes_to_babybear, hash_index, verify_presentation_bb,
     verify_presentation_complete,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::ivc::{create_test_chain, prove_ivc_stark, verify_ivc_stark};
-use pyana_circuit::multi_step_air::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::ivc::{create_test_chain, prove_ivc_stark, verify_ivc_stark};
+use dregg_circuit::multi_step_air::{
     ALLOW_PREDICATE, MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
     verify_authorization_stark,
 };
-use pyana_circuit::poseidon2;
-use pyana_circuit::stark::{proof_from_bytes, proof_to_bytes};
-use pyana_dsl_runtime::revocation::{
+use dregg_circuit::poseidon2;
+use dregg_circuit::stark::{proof_from_bytes, proof_to_bytes};
+use dregg_dsl_runtime::revocation::{
     DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
     verify_non_revocation_dsl,
 };
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
 fn test_key(name: &str) -> [u8; 32] {
-    *blake3::hash(format!("pyana-practical-bench:{name}").as_bytes()).as_bytes()
+    *blake3::hash(format!("dregg-practical-bench:{name}").as_bytes()).as_bytes()
 }
 
 /// Compute federation root matching the synthetic Poseidon2 Merkle path for a key.
@@ -70,7 +70,7 @@ fn make_builder(
     let (fed_root_bb, fed_root_bytes) = compute_federation_root(key);
     let mut builder =
         BridgePresentationBuilder::new_with_root_bb(*key, fed_root_bytes, fed_root_bb);
-    let token = MacaroonToken::mint(*key, b"bench-kid", "pyana.dev");
+    let token = MacaroonToken::mint(*key, b"bench-kid", "dregg.dev");
     builder.set_root_token(token);
 
     for i in 0..num_attenuations {
@@ -102,12 +102,12 @@ fn bench_token_operations(c: &mut Criterion) {
     let key = test_key("mint");
     group.bench_function("mint_token", |b| {
         b.iter(|| {
-            black_box(MacaroonToken::mint(key, b"kid-bench", "pyana.dev"));
+            black_box(MacaroonToken::mint(key, b"kid-bench", "dregg.dev"));
         });
     });
 
     // --- attenuate ---
-    let token = MacaroonToken::mint(key, b"kid-bench", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-bench", "dregg.dev");
     let attenuation = Attenuation {
         apps: vec![("my-app".into(), "rw".into())],
         not_after: Some(2000000000),
@@ -134,7 +134,7 @@ fn bench_token_operations(c: &mut Criterion) {
 
     // Verify with deeper caveat chains
     for &depth in &[5, 10, 20] {
-        let root = MacaroonToken::mint(key, b"kid-chain", "pyana.dev");
+        let root = MacaroonToken::mint(key, b"kid-chain", "dregg.dev");
         let mut tok: Box<dyn AuthToken> = Box::new(root);
         for i in 0..depth {
             let att = Attenuation {
@@ -187,7 +187,7 @@ fn bench_proof_generation(c: &mut Criterion) {
         b.iter(|| {
             let (mut builder, request) = make_builder(&key, 1);
             let marker =
-                pyana_bridge::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
+                dregg_bridge::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
             black_box(
                 builder
                     .prove_local_constraint_check_only(&marker, &request)
@@ -215,7 +215,7 @@ fn bench_proof_generation(c: &mut Criterion) {
             |b, &n| {
                 b.iter(|| {
                     let (mut builder, request) = make_builder(&key, n);
-                    let marker = pyana_bridge::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
+                    let marker = dregg_bridge::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
                     black_box(
                         builder
                             .prove_local_constraint_check_only(&marker, &request)
@@ -289,7 +289,7 @@ fn bench_proof_verification(c: &mut Criterion) {
     group.bench_function("deserialize_wire_proof", |b| {
         b.iter(|| {
             black_box(
-                rmp_serde::from_slice::<pyana_bridge::WirePresentationProof>(&wire_bytes).unwrap(),
+                rmp_serde::from_slice::<dregg_bridge::WirePresentationProof>(&wire_bytes).unwrap(),
             );
         });
     });
@@ -329,7 +329,7 @@ fn bench_proof_verification(c: &mut Criterion) {
 
 #[cfg(feature = "mina")]
 fn bench_recursive_composition(c: &mut Criterion) {
-    use pyana_circuit::backends::mina::{
+    use dregg_circuit::backends::mina::{
         PicklesRecursiveProof, PicklesStateTransition, prove_recursive_step, verify_recursive_proof,
     };
 
@@ -445,16 +445,16 @@ fn bench_ivc_stark(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_federation_ops(c: &mut Criterion) {
-    use pyana_circuit::poseidon2::hash_many;
+    use dregg_circuit::poseidon2::hash_many;
 
     let mut group = c.benchmark_group("5_federation_ops");
     group.sample_size(10);
 
     // --- Turn execution: simple transfer ---
     {
-        use pyana_cell::{AuthRequired, Cell, Ledger, Permissions};
-        use pyana_turn::builder::ActionBuilder;
-        use pyana_turn::{ComputronCosts, TurnBuilder, TurnExecutor};
+        use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
+        use dregg_turn::builder::ActionBuilder;
+        use dregg_turn::{ComputronCosts, TurnBuilder, TurnExecutor};
 
         let costs = ComputronCosts::zero();
         let executor = TurnExecutor::new(costs);
@@ -570,7 +570,7 @@ fn bench_federation_ops(c: &mut Criterion) {
 
     // --- Revocation registry: revoke + prove non-membership ---
     {
-        use pyana_token::RevocationRegistry;
+        use dregg_token::RevocationRegistry;
 
         let mut registry = RevocationRegistry::new();
         // Pre-populate with 100 revoked tokens
@@ -611,7 +611,7 @@ fn bench_full_flow(c: &mut Criterion) {
     group.bench_function("mint_attenuate_prove_serialize_verify", |b| {
         b.iter(|| {
             // 1. Mint
-            let token = MacaroonToken::mint(key, b"e2e-kid", "pyana.dev");
+            let token = MacaroonToken::mint(key, b"e2e-kid", "dregg.dev");
 
             // 2. Attenuate
             let att = Attenuation {
@@ -624,7 +624,7 @@ fn bench_full_flow(c: &mut Criterion) {
             // 3. Build presentation and prove (real STARK)
             let mut builder =
                 BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
-            builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "pyana.dev"));
+            builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "dregg.dev"));
             builder.add_attenuation(&att);
 
             let request = AuthRequest {
@@ -639,7 +639,7 @@ fn bench_full_flow(c: &mut Criterion) {
             let bytes = rmp_serde::to_vec(&wire).unwrap();
 
             // 5. Deserialize
-            let _wire2: pyana_bridge::WirePresentationProof =
+            let _wire2: dregg_bridge::WirePresentationProof =
                 rmp_serde::from_slice(&bytes).unwrap();
 
             // 6. Verify (using the original proof object which has federation_root)
@@ -653,12 +653,12 @@ fn bench_full_flow(c: &mut Criterion) {
     // Phase 1: Mint
     group.bench_function("phase1_mint", |b| {
         b.iter(|| {
-            black_box(MacaroonToken::mint(key, b"e2e-kid", "pyana.dev"));
+            black_box(MacaroonToken::mint(key, b"e2e-kid", "dregg.dev"));
         });
     });
 
     // Phase 2: Attenuate
-    let token = MacaroonToken::mint(key, b"e2e-kid", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"e2e-kid", "dregg.dev");
     let att = Attenuation {
         apps: vec![("my-app".into(), "rw".into())],
         not_after: Some(2000000000),
@@ -675,7 +675,7 @@ fn bench_full_flow(c: &mut Criterion) {
         b.iter(|| {
             let mut builder =
                 BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
-            builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "pyana.dev"));
+            builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "dregg.dev"));
             builder.add_attenuation(&att);
             let request = AuthRequest {
                 app_id: Some("my-app".into()),
@@ -688,7 +688,7 @@ fn bench_full_flow(c: &mut Criterion) {
 
     // Generate proof for serialize/verify phases
     let mut builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
-    builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "pyana.dev"));
+    builder.set_root_token(MacaroonToken::mint(key, b"e2e-kid", "dregg.dev"));
     builder.add_attenuation(&att);
     let request = AuthRequest {
         app_id: Some("my-app".into()),
@@ -716,7 +716,7 @@ fn bench_full_flow(c: &mut Criterion) {
     group.bench_function("phase5_deserialize", |b| {
         b.iter(|| {
             black_box(
-                rmp_serde::from_slice::<pyana_bridge::WirePresentationProof>(&wire_bytes).unwrap(),
+                rmp_serde::from_slice::<dregg_bridge::WirePresentationProof>(&wire_bytes).unwrap(),
             );
         });
     });
@@ -739,9 +739,9 @@ fn make_derivation_step(
     step_idx: u32,
     state_root: BabyBear,
     is_final: bool,
-) -> pyana_circuit::derivation_air::DerivationWitness {
-    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use pyana_circuit::poseidon2::hash_fact;
+) -> dregg_circuit::derivation_air::DerivationWitness {
+    use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+    use dregg_circuit::poseidon2::hash_fact;
 
     let pred = if is_final {
         BabyBear::new(ALLOW_PREDICATE)

@@ -1,5 +1,5 @@
 /**
- * pyana explorer — modular app shell.
+ * dregg explorer — modular app shell.
  *
  * Provides: event bus (pub/sub), router, module loader, shared state.
  * Each view/visualizer exports: init(container), update(data), destroy()
@@ -48,7 +48,7 @@ export const bus = new EventBus();
 
 export const state = {
   connected: false,
-  autoRefresh: localStorage.getItem('pyana_auto_refresh') !== 'false',
+  autoRefresh: localStorage.getItem('dregg_auto_refresh') !== 'false',
   currentPage: 'overview',
   status: null,
   blocks: null,

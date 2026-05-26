@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
 
-use pyana_blocklace::finality::{Block, BlockId, Blocklace, CheckpointData};
+use dregg_blocklace::finality::{Block, BlockId, Blocklace, CheckpointData};
 
 use crate::tables;
 use crate::{PersistentStore, Result, StoreError};

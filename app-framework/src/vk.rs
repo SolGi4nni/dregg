@@ -1,12 +1,12 @@
 //! VK v2 wrappers — layered canonical VK hashes for app authors.
 //!
 //! Per `VK-AS-RE-EXECUTION-RECIPE.md` §v2, a `child_program_vk` (and
-//! any other `[u8; 32]` VK identifier in pyana) commits to four
+//! any other `[u8; 32]` VK identifier in dregg) commits to four
 //! components:
 //!
 //! 1. **Program bytes** — `postcard(CellProgram)`.
 //! 2. **AIR fingerprint** — for cell programs, the fingerprint of
-//!    [`pyana_circuit::effect_vm::AIR_DESCRIPTOR`].
+//!    [`dregg_circuit::effect_vm::AIR_DESCRIPTOR`].
 //! 3. **Verifier fingerprint** — for cell programs, a stable identifier
 //!    of the in-tree Effect VM verifier. The app-framework pins this
 //!    to a fixed sentinel until per-AIR source-hash plumbing lands.
@@ -16,7 +16,7 @@
 //! [`canonical_program_vk`] hides the four-tuple behind the same one-
 //! argument shape `canonical_program_vk(program)` that starbridge-apps
 //! already use. The cell-crate's program-bytes-only encoder
-//! ([`pyana_cell::canonical_program_vk`]) is re-exported here as
+//! ([`dregg_cell::canonical_program_vk`]) is re-exported here as
 //! [`canonical_program_bytes_hash`] for callers that want the bottom-
 //! layer hash directly.
 //!
@@ -25,7 +25,7 @@
 //! The Effect VM verifier is hand-written Rust in
 //! `circuit::effect_vm`. Until we wire git-blob-hash discovery into
 //! the build, the fingerprint is a fixed sentinel keyed by the AIR
-//! identifier: `BLAKE3_keyed("pyana-effect-vm-verifier-v1", b"effect_vm_air_v1")`.
+//! identifier: `BLAKE3_keyed("dregg-effect-vm-verifier-v1", b"effect_vm_air_v1")`.
 //! Any change to the verifier's externally visible behavior should
 //! advance the keyed-derive domain to `-v2` so the fingerprint
 //! changes; app authors who pin VK constants pick up the new hash
@@ -39,11 +39,11 @@
 //! cascades into every v2 VK hash — by design, since the new prover
 //! may produce different proofs.
 
-use pyana_cell::{
+use dregg_cell::{
     CellProgram, ProvingSystemId, VerifierFingerprint, VkComponents, canonical_vk_v2,
 };
-use pyana_circuit::air_descriptor::fingerprint as air_fingerprint_of;
-use pyana_circuit::effect_vm::AIR_DESCRIPTOR as EFFECT_VM_AIR_DESCRIPTOR;
+use dregg_circuit::air_descriptor::fingerprint as air_fingerprint_of;
+use dregg_circuit::effect_vm::AIR_DESCRIPTOR as EFFECT_VM_AIR_DESCRIPTOR;
 
 /// Plonky3 git revision pinned in the workspace `Cargo.toml`.
 ///
@@ -51,7 +51,7 @@ use pyana_circuit::effect_vm::AIR_DESCRIPTOR as EFFECT_VM_AIR_DESCRIPTOR;
 /// so any plonky3 bump produces fresh vk_hashes.
 pub const PLONKY3_PINNED_REV: &str = "82cfad73";
 
-/// The proving system every pyana cell-program VK commits to (v2).
+/// The proving system every dregg cell-program VK commits to (v2).
 pub const DEFAULT_PROVING_SYSTEM: ProvingSystemId = ProvingSystemId::Plonky3BabyBearFri {
     p3_rev: PLONKY3_PINNED_REV,
 };
@@ -59,9 +59,9 @@ pub const DEFAULT_PROVING_SYSTEM: ProvingSystemId = ProvingSystemId::Plonky3Baby
 /// Compute the Effect VM AIR's fingerprint.
 ///
 /// Returns the BLAKE3-keyed hash of
-/// `pyana_circuit::effect_vm::AIR_DESCRIPTOR` under the domain
-/// `"pyana-air-fingerprint-v1"`. Stable across runs of the same
-/// pyana commit; changes if and only if the Effect VM AIR's shape
+/// `dregg_circuit::effect_vm::AIR_DESCRIPTOR` under the domain
+/// `"dregg-air-fingerprint-v1"`. Stable across runs of the same
+/// dregg commit; changes if and only if the Effect VM AIR's shape
 /// (column count, PI layout, constraint counts, max degree) changes.
 pub fn effect_vm_air_fingerprint() -> [u8; 32] {
     air_fingerprint_of(&EFFECT_VM_AIR_DESCRIPTOR)
@@ -71,12 +71,12 @@ pub fn effect_vm_air_fingerprint() -> [u8; 32] {
 ///
 /// Until git-blob-hash discovery is wired in, the fingerprint is a
 /// deterministic sentinel: BLAKE3-keyed under
-/// `"pyana-effect-vm-verifier-v1"` over the AIR identifier bytes.
+/// `"dregg-effect-vm-verifier-v1"` over the AIR identifier bytes.
 /// This is a [`VerifierFingerprint::SourceHash`] in flavor — the
 /// verifier source is in-tree at `circuit/src/effect_vm.rs` and the
 /// sentinel commits to "this version of the Effect VM verifier."
 pub fn effect_vm_verifier_fingerprint() -> VerifierFingerprint {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-effect-vm-verifier-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-effect-vm-verifier-v1");
     hasher.update(EFFECT_VM_AIR_DESCRIPTOR.air_id.as_bytes());
     VerifierFingerprint::SourceHash(*hasher.finalize().as_bytes())
 }
@@ -100,7 +100,7 @@ pub fn effect_vm_verifier_fingerprint() -> VerifierFingerprint {
 /// new hash in the app's README; consumers who pin to the old hash
 /// must update.
 pub fn canonical_program_vk(program: &CellProgram) -> [u8; 32] {
-    let program_bytes = pyana_cell::factory::canonical_program_bytes(program);
+    let program_bytes = dregg_cell::factory::canonical_program_bytes(program);
     canonical_vk_v2(&VkComponents {
         program_bytes: &program_bytes,
         air_fingerprint: effect_vm_air_fingerprint(),
@@ -111,11 +111,11 @@ pub fn canonical_program_vk(program: &CellProgram) -> [u8; 32] {
 
 /// Compute the program-bytes-only hash for a [`CellProgram`]. This is
 /// the bottom layer of v2 — what the cell crate's
-/// [`pyana_cell::canonical_program_vk`] returns. Exposed here for
+/// [`dregg_cell::canonical_program_vk`] returns. Exposed here for
 /// callers that want both the v1 and v2 forms (e.g., to print both in
 /// an app's inspector output during migration).
 pub fn canonical_program_bytes_hash(program: &CellProgram) -> [u8; 32] {
-    pyana_cell::canonical_program_vk(program)
+    dregg_cell::canonical_program_vk(program)
 }
 
 /// Compute the canonical v2 vk_hash for a custom predicate.
@@ -133,20 +133,20 @@ pub fn canonical_predicate_vk(predicate_bytes: &[u8]) -> [u8; 32] {
     })
 }
 
-/// Validate that a [`pyana_cell::FactoryDescriptor`]'s `child_program_vk`
+/// Validate that a [`dregg_cell::FactoryDescriptor`]'s `child_program_vk`
 /// is the v2 canonical hash of the supplied program under the
 /// Effect VM AIR + verifier + Plonky3 proving system.
 ///
 /// Thin wrapper around
-/// [`pyana_cell::FactoryDescriptor::validate_child_vk_canonical_v2`]
+/// [`dregg_cell::FactoryDescriptor::validate_child_vk_canonical_v2`]
 /// that fills in the four components for the common cell-program
 /// case. Apps that want to validate against a different AIR /
 /// verifier / proving-system should call the cell-crate method
 /// directly.
 pub fn validate_child_vk_canonical(
-    descriptor: &pyana_cell::FactoryDescriptor,
+    descriptor: &dregg_cell::FactoryDescriptor,
     program: &CellProgram,
-) -> Result<(), pyana_cell::FactoryError> {
+) -> Result<(), dregg_cell::FactoryError> {
     descriptor.validate_child_vk_canonical_v2(
         program,
         effect_vm_air_fingerprint(),
@@ -158,7 +158,7 @@ pub fn validate_child_vk_canonical(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_cell::CellProgram;
+    use dregg_cell::CellProgram;
 
     #[test]
     fn canonical_program_vk_v2_changes_with_program() {

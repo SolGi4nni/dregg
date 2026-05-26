@@ -2,12 +2,12 @@
 
 `starbridge-nameservice` is the **first proper starbridge-app** and the
 exemplar future apps build from. It implements a federation name
-directory entirely from pyana-native primitives — `FactoryDescriptor`,
+directory entirely from dregg-native primitives — `FactoryDescriptor`,
 `StateConstraint`, `Effect::SetField` / `Effect::EmitEvent`,
 `Authorization::Signature` produced by `AppCipherclerk::make_action`. No
 `Effect::RegisterName`, no `Authorization::Unchecked`, no `[0u8; 64]`
 placeholder signatures, no reaching past the framework into
-`pyana_turn::builder::*`.
+`dregg_turn::builder::*`.
 
 It is the **paint-by-numbers exemplar** every other starbridge-app
 follows. The pattern is:
@@ -31,7 +31,7 @@ follows. The pattern is:
 4. **Define web components** (`pages/inspectors.js`) that render the
    per-cell state machine, plus a JS shim
    (`pages/turn-builders.js`) that mirrors the Rust builders and
-   dispatches through `window.pyana.signTurn`.
+   dispatches through `window.dregg.signTurn`.
 5. **Mount via `register(ctx)`** on a shared
    `StarbridgeAppContext`: register the factory + inspector
    descriptors so the host's `createFromFactory` and Studio
@@ -65,7 +65,7 @@ an attacker cannot shorten a rental they've already sold by writing a
 smaller expiry value.
 
 `WriteOnce` on `REVOKED_SLOT` makes revocation one-way. The tombstone
-is `blake3(b"pyana-nameservice-revoked:" || name_bytes)` so a replay
+is `blake3(b"dregg-nameservice-revoked:" || name_bytes)` so a replay
 attacker cannot move tombstones between cells to spoof revocations.
 
 `RESOLVE_TARGET_SLOT` carries no slot caveat: the owner may freely
@@ -141,7 +141,7 @@ Convenience helpers exposed for off-chain indexers / cross-app code:
 ```rust
 name_hash(name)             -> FieldElement   // blake3(name_bytes)
 expiry_field(height)        -> FieldElement   // BE-padded u64
-revoked_tombstone(name)     -> FieldElement   // blake3("pyana-nameservice-revoked:" || name)
+revoked_tombstone(name)     -> FieldElement   // blake3("dregg-nameservice-revoked:" || name)
 resolve_target(uri)         -> FieldElement   // blake3(uri_bytes)
 ```
 
@@ -152,9 +152,9 @@ and three Studio inspector descriptors:
 
 | Inspector kind | JS component | Purpose |
 |---|---|---|
-| `name`               | `<pyana-name>`               | per-cell state view |
-| `name-registry`      | `<pyana-name-registry>`      | parent-list browse / search / paginate |
-| `name-register-form` | `<pyana-name-register-form>` | mutation surface (register / renew / transfer / revoke / set-target) |
+| `name`               | `<dregg-name>`               | per-cell state view |
+| `name-registry`      | `<dregg-name-registry>`      | parent-list browse / search / paginate |
+| `name-register-form` | `<dregg-name-register-form>` | mutation surface (register / renew / transfer / revoke / set-target) |
 
 The `name` inspector descriptor carries the `slot_layout` JSON so the
 Studio can index into a name cell's state without hardcoding slot
@@ -166,7 +166,7 @@ indices.
 
 `pages/inspectors.js` defines the three custom elements above. Each is
 a vanilla shadow-DOM element (no Preact/htm/signals dependency yet — the
-Studio's `<pyana-app>` context wires them via the standard
+Studio's `<dregg-app>` context wires them via the standard
 `customElements` registry that all Studio inspectors share). Each
 component dispatches a `CustomEvent` so host pages can wire their own
 analytics, persistence, or navigation without forking these.
@@ -175,7 +175,7 @@ analytics, persistence, or navigation without forking these.
 builders. It exposes:
 
 ```js
-window.pyana.builders.nameservice = {
+window.dregg.builders.nameservice = {
   register_name(registryUri, { name, owner, expiry }),
   renew_name(registryUri,    { name, expiry }),
   transfer_name(registryUri, { name, old_owner, new_owner }),
@@ -184,13 +184,13 @@ window.pyana.builders.nameservice = {
 };
 ```
 
-Every builder calls `window.pyana.signTurn(turnSpec)` — the extension
+Every builder calls `window.dregg.signTurn(turnSpec)` — the extension
 cclerk API (`extension/src/page.ts`). The page never holds raw private
 keys.
 
 `pages/index.html` is the site fragment, mounted under
 `/starbridge-apps/nameservice/`. It loads the in-browser wasm node
-(`/pkg/pyana_wasm.js`), the shared Studio chrome
+(`/pkg/dregg_wasm.js`), the shared Studio chrome
 (`/_includes/studio/runtimes.js`), the shared inspector registry
 (`/starbridge-apps/shared/inspectors/index.js` — which itself
 lazy-imports this app's inspectors), and finally this app's inspectors
@@ -210,7 +210,7 @@ regenerated to match.
 
 ---
 
-## Composition with `pyana-directory`
+## Composition with `dregg-directory`
 
 The toplevel `directory/` crate provides the **canonical name-directory
 primitive**: a `Directory` trait with `register / lookup / revoke /
@@ -223,7 +223,7 @@ cell is a `DirectoryEntry` whose:
 
 | `DirectoryEntry` field | nameservice mapping |
 |---|---|
-| `handle: ResourceHandle`   | `pyana://cell/<NAME_CELL_ID>` (resolves via `RESOLVE_TARGET_SLOT`) |
+| `handle: ResourceHandle`   | `dregg://cell/<NAME_CELL_ID>` (resolves via `RESOLVE_TARGET_SLOT`) |
 | `version: Version`         | the cell's nonce |
 | `kind: EntryKind`          | `EntryKind::Capability` for owner-cap names; `EntryKind::SubDirectory` if the cell points at another directory |
 | `tags: Vec<String>`        | not currently surfaced; a future `TAGS_SLOT` could carry a content-addressed tag commitment |
@@ -247,7 +247,7 @@ A future integration sketch:
 
 ```rust
 // indexer side
-use pyana_directory::{InMemoryDirectory, DirectoryEntry, EntryKind};
+use dregg_directory::{InMemoryDirectory, DirectoryEntry, EntryKind};
 use starbridge_nameservice::{NAME_HASH_SLOT, EXPIRY_SLOT, REVOKED_SLOT};
 
 fn project_event_into_directory(event: &Event, dir: &mut InMemoryDirectory) {
@@ -273,7 +273,7 @@ the *lookup convenience*; the cell program + slot caveats supply the
 ## Wiring (typical `main.rs`)
 
 ```rust
-use pyana_app_framework::{
+use dregg_app_framework::{
     AgentCipherclerk, AppServer, AppConfig, AppCipherclerk, EmbeddedExecutor,
     StarbridgeAppContext,
 };
@@ -306,8 +306,8 @@ async fn main() {
 After this call:
 
 - `ctx.factory_registry().get(&NAME_FACTORY_VK)` returns the factory
-  descriptor. The in-browser `PyanaRuntime` resolves
-  `window.pyana.createFromFactory(NAME_FACTORY_VK, owner_pk, 0)`
+  descriptor. The in-browser `DreggRuntime` resolves
+  `window.dregg.createFromFactory(NAME_FACTORY_VK, owner_pk, 0)`
   against the host's descriptor service backed by this registry.
 - `ctx.inspector_registry().get("name")` returns the inspector
   descriptor pointing the Studio at
@@ -361,7 +361,7 @@ cargo test  -p starbridge-nameservice
 - `../../APPS-USERSPACE-GAPS.md` — the gap catalogue this crate closes
   (Gap 1: name-hash uniqueness; Gap 4: dropped-on-floor actions).
 - `../../APPS-AS-USERSPACE-AUDIT.md` §1.3 — the audit reading that
-  motivated rebuilding nameservice as pyana-native.
+  motivated rebuilding nameservice as dregg-native.
 - `../../directory/src/directory.rs` — the canonical name-directory
   primitive this app specializes.
 - `../identity/` — sibling starbridge-app; the issuer factory follows

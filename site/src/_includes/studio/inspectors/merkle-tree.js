@@ -1,5 +1,5 @@
 /**
- * <pyana-merkle-tree> — 4-ary BLAKE3 Merkle tree visualizer.
+ * <dregg-merkle-tree> — 4-ary BLAKE3 Merkle tree visualizer.
  *
  * The beating heart of MerkleMembership / SenderAuthorized / BlindedSet
  * predicates. Renders an SVG tree with hover-to-see-hash, membership path
@@ -19,9 +19,9 @@
  * Pattern note (FOLLOWUP-09): Extends HTMLElement (lazy findRuntime for standalone use in
  * playground/learn/ + data= support for predicate inspectors); see _base.js:21 + cell style
  * (inspectors.js:23) for full InspectorBase + effect + signals + reuse. Delegates all crypto
- * to wasm (no JS reimpl of merkle/poseidon). Real merkle in pyana-dsl + circuit (merkle_dsl.rs,
+ * to wasm (no JS reimpl of merkle/poseidon). Real merkle in dregg-dsl + circuit (merkle_dsl.rs,
  * poseidon2 etc); used for receipts/ARs per plan §4.5. Sample leaves from devnet manifests or
- * SSE activity events can be wired via <pyana-activity> + predicate views.
+ * SSE activity events can be wired via <dregg-activity> + predicate views.
  */
 
 import { InspectorBase, shortHex } from './_base.js';
@@ -294,7 +294,7 @@ function proofSummaryHTML(leaves, proofResult, proveMode, focusLeaf, error) {
 // Custom element
 // ---------------------------------------------------------------------------
 
-class PyanaMerkleTree extends HTMLElement {
+class DreggMerkleTree extends HTMLElement {
   static get observedAttributes() { return ['leaves', 'data', 'mode']; }
 
   constructor() {
@@ -308,7 +308,7 @@ class PyanaMerkleTree extends HTMLElement {
     try {
       this._runtime = await findRuntime(this);
     } catch {
-      // No <pyana-app> ancestor — render in degraded mode (no wasm calls)
+      // No <dregg-app> ancestor — render in degraded mode (no wasm calls)
       this._runtime = null;
     }
     this._render();
@@ -360,7 +360,7 @@ class PyanaMerkleTree extends HTMLElement {
     this.innerHTML = '';
 
     if (leaves.length === 0) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--empty">pyana-merkle-tree: no leaves</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--empty">dregg-merkle-tree: no leaves</div>`;
       return;
     }
 
@@ -373,7 +373,7 @@ class PyanaMerkleTree extends HTMLElement {
           rootSnippet = ` · root <code title="${escAttr(r.root_hex)}">${shortHex(r.root_hex)}</code>`;
         } catch { /* degraded */ }
       }
-      this.innerHTML = `<span class="pyana-inspector pyana-inspector--compact pyana-inspector--merkle">
+      this.innerHTML = `<span class="dregg-inspector dregg-inspector--compact dregg-inspector--merkle">
         <code>${leaves.length} leaf${leaves.length === 1 ? '' : 'ves'}</code>${rootSnippet}
       </span>`;
       return;
@@ -381,7 +381,7 @@ class PyanaMerkleTree extends HTMLElement {
 
     // Full mode
     if (!this._runtime?._wasm) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--empty">pyana-merkle-tree: wasm not available (no runtime)</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--empty">dregg-merkle-tree: wasm not available (no runtime)</div>`;
       return;
     }
 
@@ -398,7 +398,7 @@ class PyanaMerkleTree extends HTMLElement {
     }
 
     if (rootErr) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">merkle root failed: ${escText(rootErr)}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">merkle root failed: ${escText(rootErr)}</div>`;
       return;
     }
 
@@ -436,7 +436,7 @@ class PyanaMerkleTree extends HTMLElement {
       : Math.ceil(Math.log(leaves.length) / Math.log(4));
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'pyana-inspector pyana-inspector--merkle-tree';
+    wrapper.className = 'dregg-inspector dregg-inspector--merkle-tree';
     wrapper.innerHTML = `
       <div class="mk-header">
         <span class="mk-header__badge">merkle</span>
@@ -491,7 +491,7 @@ class PyanaMerkleTree extends HTMLElement {
 // ---------------------------------------------------------------------------
 
 const STYLES = `
-.pyana-inspector--merkle-tree {
+.dregg-inspector--merkle-tree {
   font-family: ui-monospace, monospace;
   font-size: 0.875rem;
   background: var(--bg-raised, #0d1410);
@@ -575,7 +575,7 @@ const STYLES = `
 .mk-legend__item--member::before { background: #3a5a3a; border: 1px solid #5b8a5a; }
 .mk-legend__item--absent::before { background: #5a3a18; border: 1px solid #c07830; }
 
-.pyana-inspector--merkle { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised, #0d1410); border-radius: 4px; }
+.dregg-inspector--merkle { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised, #0d1410); border-radius: 4px; }
 `;
 
 let _stylesInjected = false;
@@ -583,7 +583,7 @@ function injectStyles() {
   if (_stylesInjected) return;
   _stylesInjected = true;
   const style = document.createElement('style');
-  style.id = 'pyana-merkle-tree-styles';
+  style.id = 'dregg-merkle-tree-styles';
   style.textContent = STYLES;
   document.head.appendChild(style);
 }
@@ -592,6 +592,6 @@ if (typeof window !== 'undefined') {
   injectStyles();
 }
 
-if (!customElements.get('pyana-merkle-tree')) {
-  customElements.define('pyana-merkle-tree', PyanaMerkleTree);
+if (!customElements.get('dregg-merkle-tree')) {
+  customElements.define('dregg-merkle-tree', DreggMerkleTree);
 }

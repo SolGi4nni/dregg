@@ -1,12 +1,12 @@
 # Programmable Private Predicates
 
-The unifying abstraction over all predicate types in pyana.
+The unifying abstraction over all predicate types in dregg.
 
 ---
 
 ## 1. The Unifying Abstraction
 
-Every proof in pyana is an instance of one primitive:
+Every proof in dregg is an instance of one primitive:
 
 ```
 prove_program(program, private_input) -> proof
@@ -60,7 +60,7 @@ pub trait PrivatePredicate {
 ## 2. The Predicate Language
 
 The natural language for programmable predicates is **Datalog extended with built-in
-predicates**. This leverages the existing `pyana_trace` evaluator and `MultiStepDerivationAir`.
+predicates**. This leverages the existing `dregg_trace` evaluator and `MultiStepDerivationAir`.
 
 ### 2.1 Core Syntax
 
@@ -394,7 +394,7 @@ revealing the exact program. The existing `TemporalPredicateRequirement` in
 
 ### 6.1 Programs Define What Capabilities Mean
 
-In pyana, a capability is an attenuated token chain ending in specific facts. Today,
+In dregg, a capability is an attenuated token chain ending in specific facts. Today,
 capability MEANING is implicit — the verifier interprets fact values. With programmable
 predicates, meaning becomes explicit:
 
@@ -617,7 +617,7 @@ Content-addressed program registry:
 
 ### 9.1 Ethereum Smart Contracts
 
-| Dimension | Ethereum | Pyana Programmable Predicates |
+| Dimension | Ethereum | `dregg` Programmable Predicates |
 |---|---|---|
 | Execution | Public (everyone re-executes) | Private (only prover executes) |
 | State | Public (on-chain) | Private (in prover's cclerk) |
@@ -628,11 +628,11 @@ Content-addressed program registry:
 | Upgradability | Proxy patterns, migration | Content-addressed (immutable programs) |
 
 **Key difference**: Ethereum programs operate on PUBLIC state and produce PUBLIC results.
-Pyana programs operate on PRIVATE state and produce PRIVATE results backed by PUBLIC proofs.
+`dregg` programs operate on PRIVATE state and produce PRIVATE results backed by PUBLIC proofs.
 
 ### 9.2 Zcash Circuits (Sapling/Orchard)
 
-| Dimension | Zcash | Pyana Programmable Predicates |
+| Dimension | Zcash | `dregg` Programmable Predicates |
 |---|---|---|
 | Circuit language | R1CS / Halo2 (fixed circuit) | Datalog (programmable) |
 | What's proven | "I know a valid spend" (fixed statement) | Arbitrary predicate programs |
@@ -641,13 +641,13 @@ Pyana programs operate on PRIVATE state and produce PRIVATE results backed by PU
 | Recursion | Halo2 accumulation | IVC + future Plonky3 recursion |
 | Proof size | ~1 KB (Halo2) | ~24 KB (FRI-based STARK) |
 
-**Key difference**: Zcash proves a FIXED statement ("this is a valid spend"). Pyana proves
+**Key difference**: Zcash proves a FIXED statement ("this is a valid spend"). `dregg` proves
 ARBITRARY statements ("I satisfy whatever program you specify"). Zcash is a specific
-application; pyana is a programmable substrate.
+application; dregg is a programmable substrate.
 
 ### 9.3 Mina zkApps
 
-| Dimension | Mina | Pyana Programmable Predicates |
+| Dimension | Mina | `dregg` Programmable Predicates |
 |---|---|---|
 | Proof system | Kimchi (Plonk variant) | STARK (FRI-based) |
 | Programming model | o1js (TypeScript DSL) | Datalog with built-ins |
@@ -658,13 +658,13 @@ application; pyana is a programmable substrate.
 | Verification | On-chain (constant cost) | Off-chain (verifier checks proof) |
 
 **Key difference**: Mina zkApps still have on-chain state. The program's logic is
-public (deployed as a verification key). In pyana, both the state AND the program can
-be private (committed model). Mina's programming model is imperative (TypeScript); pyana's
+public (deployed as a verification key). In dregg, both the state AND the program can
+be private (committed model). Mina's programming model is imperative (TypeScript); dregg's
 is declarative (Datalog), enabling static analysis and containment checking.
 
 ### 9.4 Cairo Programs (Starknet)
 
-| Dimension | Cairo/Starknet | Pyana Programmable Predicates |
+| Dimension | Cairo/Starknet | `dregg` Programmable Predicates |
 |---|---|---|
 | Language | Cairo (Rust-like imperative) | Datalog (declarative) |
 | Execution model | Blockchain VM (public execution) | Prover-local (private execution) |
@@ -675,9 +675,9 @@ is declarative (Datalog), enabling static analysis and containment checking.
 | Verification cost | O(log n) on-chain | O(log n) anywhere |
 
 **Key difference**: Cairo is a general-purpose STARK-proven language for public
-computation. Pyana predicates are specifically designed for PRIVATE authorization — the
+computation. `dregg` predicates are specifically designed for PRIVATE authorization — the
 program's purpose is always "does this private state satisfy this condition?" Cairo
-could express the same thing, but pyana's Datalog restriction gives termination
+could express the same thing, but dregg's Datalog restriction gives termination
 guarantees and enables the capability type system (subtyping via Datalog containment).
 
 ### 9.5 Summary Table
@@ -688,10 +688,10 @@ guarantees and enables the capability type system (subtyping via Datalog contain
 | Zcash | No | Yes | No | No | Yes |
 | Mina | Partial | Partial | Yes | No | No* |
 | Cairo/Starknet | Yes | No | Yes | Yes | No* |
-| **Pyana** | **No** | **Yes** | **Yes** | **Yes** | **Yes** |
+| **`dregg`** | **No** | **Yes** | **Yes** | **Yes** | **Yes** |
 
 (*) Turing-complete languages don't guarantee termination; they use gas/step limits as
-a practical bound. Pyana's Datalog restriction gives a STRUCTURAL termination guarantee.
+a practical bound. `dregg`'s Datalog restriction gives a STRUCTURAL termination guarantee.
 
 ---
 

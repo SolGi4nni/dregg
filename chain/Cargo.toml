@@ -5,13 +5,13 @@
 exclude = ["program"]
 
 [package]
-name = "pyana-chain"
+name = "dregg-chain"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
-authors = ["Pyana Contributors"]
+authors = ["Dregg Contributors"]
 license = "AGPL-3.0-or-later"
-description = "EVM on-chain verification of pyana STARK proofs via SP1 wrapping (STARK -> Groth16)"
+description = "EVM on-chain verification of dregg STARK proofs via SP1 wrapping (STARK -> Groth16)"
 
 [dependencies]
 # SP1 SDK for proof generation (host side)
@@ -23,8 +23,8 @@ sp1-sdk = { version = "6", default-features = false, optional = true }
 # EVM interaction (contract calls for on-chain verification)
 alloy = { version = "1", features = ["providers", "contract", "signer-local", "reqwest"], optional = true }
 
-# Pyana types for proof serialization
-pyana-types = { path = "../types" }
+# Dregg types for proof serialization
+dregg-types = { path = "../types" }
 
 # Shared with the circuit crate (STARK proof format)
 serde = { version = "1", features = ["derive"] }

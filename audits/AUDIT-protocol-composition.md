@@ -2,7 +2,7 @@
 
 Written 2026-05-24 against HEAD plus the working-tree additions
 (`wire/src/hardening.rs`, `intent/src/trustless.rs`). Scope: the *seams*
-between pyana's protocol layers — not the layers themselves. Other
+between dregg's protocol layers — not the layers themselves. Other
 audits cover each crate; this one audits whether, when control crosses
 a layer boundary, the contract is clear and the data carries what the
 next layer needs.
@@ -20,50 +20,50 @@ Layer stack (top down):
 apps/* (nameservice, privacy-voting, escrow, orderbook,
         prediction-market, gallery, ...)
    │
-   ├── pyana-sdk (AgentCipherclerk, CapTpClient)
+   ├── dregg-sdk (AgentCipherclerk, CapTpClient)
    │       │
-   │       ├── pyana-turn (Turn, Effect, TurnExecutor, ActionBuilder,
+   │       ├── dregg-turn (Turn, Effect, TurnExecutor, ActionBuilder,
    │       │              TurnReceipt, WitnessedReceipt, EventualRef)
    │       │       │
-   │       │       ├── pyana-cell (Cell, CellProgram, CapabilityRef)
+   │       │       ├── dregg-cell (Cell, CellProgram, CapabilityRef)
    │       │       │
-   │       │       ├── pyana-captp (sturdy refs, handoff certs,
+   │       │       ├── dregg-captp (sturdy refs, handoff certs,
    │       │       │                 PipelineRegistry)
    │       │       │
-   │       │       └── pyana-circuit (Effect VM AIR, STARK prover,
+   │       │       └── dregg-circuit (Effect VM AIR, STARK prover,
    │       │                          Kimchi backend)
    │       │
-   │       └── pyana-federation (BLS threshold sigs, AttestedRoot,
+   │       └── dregg-federation (BLS threshold sigs, AttestedRoot,
    │                              FederationReceipt)
    │
-   └── pyana-blocklace (BFT consensus over `Payload::Turn(Vec<u8>)`)
+   └── dregg-blocklace (BFT consensus over `Payload::Turn(Vec<u8>)`)
 
-pyana-wire (CapTP wire over QUIC/TLS, with new `hardening.rs`)
+dregg-wire (CapTP wire over QUIC/TLS, with new `hardening.rs`)
 ```
 
 ---
 
 ## Seam 1 — App → SDK
 
-**What the seam should be:** apps call into `pyana-sdk` for the
+**What the seam should be:** apps call into `dregg-sdk` for the
 identity / sign / build-turn / submit / receive-receipt flow. Apps
-should not need to know about `pyana_turn::action::Effect` literals or
+should not need to know about `dregg_turn::action::Effect` literals or
 `ActionBuilder` typestate at all; they should think in terms of
 "capabilities + intents."
 
 **What it actually is:** apps reach *past* the SDK directly into
-`pyana_turn` and `pyana_cell`. Surveyed all six in-scope apps; counted
-the import lines that bypass `pyana_sdk` and call lower layers
+`dregg_turn` and `dregg_cell`. Surveyed all six in-scope apps; counted
+the import lines that bypass `dregg_sdk` and call lower layers
 directly. The pattern is consistent.
 
 ### Concrete sites
 
 - `apps/nameservice/src/effects.rs:25-28` —
   ```rust
-  use pyana_cell::state::FieldElement;
-  use pyana_cell::CellId;
-  use pyana_turn::action::Action;
-  use pyana_turn::builder::ActionBuilder;
+  use dregg_cell::state::FieldElement;
+  use dregg_cell::CellId;
+  use dregg_turn::action::Action;
+  use dregg_turn::builder::ActionBuilder;
   ```
   `build_register_action` calls `ActionBuilder::new(...).signed_by([0u8; 64]).effect_emit_event(...).effect_set_field(...).build()`
   (`apps/nameservice/src/effects.rs:58-66`). The `signed_by` argument is
@@ -80,9 +80,9 @@ directly. The pattern is consistent.
 
 - `apps/orderbook/src/escrow.rs:19-21` —
   ```rust
-  use pyana_turn::action::Effect;
-  use pyana_turn::escrow::EscrowCondition;
-  use pyana_types::CellId;
+  use dregg_turn::action::Effect;
+  use dregg_turn::escrow::EscrowCondition;
+  use dregg_types::CellId;
   ```
   `build_order_escrow_effect` (line 120) constructs an
   `Effect::CreateEscrow {...}` struct literal with six explicit fields.
@@ -90,13 +90,13 @@ directly. The pattern is consistent.
   Similarly `build_cancel_refund_effect` (line 153) literally constructs
   `Effect::RefundEscrow { escrow_id }`.
 
-- `apps/orderbook/src/settlement.rs:10-12` — direct `pyana_turn::action::{CommitmentMode, Effect}`
+- `apps/orderbook/src/settlement.rs:10-12` — direct `dregg_turn::action::{CommitmentMode, Effect}`
   imports for the same reason.
 
 - `apps/gallery/src/settlement.rs:17-20` — the heaviest example. Pulls
   `Action, Authorization, CommitmentMode, DelegationMode, Effect,
   symbol`, `ActionBuilder`, `CallForest, CallTree`, `Turn` *all
-  directly from pyana_turn*. The gallery essentially re-implements the
+  directly from dregg_turn*. The gallery essentially re-implements the
   turn-construction pipeline inside its settlement module rather than
   routing through `AgentCipherclerk::make_turn`. Line 163 builds a
   `Turn { ... }` struct literal carrying `Effect::RefundEscrow`.
@@ -107,11 +107,11 @@ Every app is assuming **"if I construct an `Action` with a Signature
 authorization and the right Effects, some out-of-band code will pick
 it up, route it through TurnExecutor, and chain the receipt."** In
 five of the six apps the "out-of-band code" is `apps/*/src/server.rs`
-plus `pyana-app-framework`; the framework crate has accreted the
+plus `dregg-app-framework`; the framework crate has accreted the
 "authoring layer" the SDK aspired to be (`SDK-REVIEW.md` §App-side
 pain points). The SDK is currently routed through only for
 **client-of-an-app** flows (e.g. `apps/privacy-voting/src/eligibility.rs`
-uses `pyana_sdk::cipherclerk::AgentCipherclerk` to attenuate a token — a
+uses `dregg_sdk::cipherclerk::AgentCipherclerk` to attenuate a token — a
 client-side operation).
 
 ### Where it breaks
@@ -172,12 +172,12 @@ turns manually.
 `sdk/src/cipherclerk.rs:2475-2506`:
 
 ```rust
-pub fn make_turn(&self, action: pyana_turn::action::Action) -> Turn {
+pub fn make_turn(&self, action: dregg_turn::action::Action) -> Turn {
     self.make_turn_for("default", action)
 }
 
-pub fn make_turn_for(&self, domain: &str, action: pyana_turn::action::Action) -> Turn {
-    use pyana_turn::forest::{CallForest, CallTree};
+pub fn make_turn_for(&self, domain: &str, action: dregg_turn::action::Action) -> Turn {
+    use dregg_turn::forest::{CallForest, CallTree};
     let tree = CallTree { action, children: vec![], hash: [0u8; 32] };
     Turn {
         agent: self.cell_id(domain),
@@ -337,7 +337,7 @@ not the executor itself. The wire layer's message handlers in
   symmetric: `LiveRef::send` accepts an action and discards it.
 
 - **GOOD — separation of concerns.** The wire crate depends on
-  `pyana-captp` and `pyana-turn` but not vice versa
+  `dregg-captp` and `dregg-turn` but not vice versa
   (`wire/Cargo.toml:48`, `captp/Cargo.toml:11-13`). The CapTP crate
   has no wire knowledge. This means CapTP semantics can be tested
   in-memory and the wire is a transport overlay.
@@ -414,7 +414,7 @@ real value. The fix is `bytes32_to_babybear` (8 BabyBears per
 
 **Site:** `node/src/mcp.rs:181-215` —
 `fn generate_effect_vm_proof(initial_balance: u64, initial_nonce: u64,
-vm_effects: &[pyana_circuit::effect_vm::Effect]) -> (String,
+vm_effects: &[dregg_circuit::effect_vm::Effect]) -> (String,
 Vec<u64>, Vec<Vec<u32>>, String)`.
 
 (Read only per scope. Do not modify.)
@@ -422,14 +422,14 @@ Vec<u64>, Vec<Vec<u32>>, String)`.
 ### What it does (verbatim from the source)
 
 ```rust
-let initial_state = pyana_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
-let (trace, public_inputs) = pyana_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
-let air = pyana_circuit::effect_vm::EffectVmAir::new(trace.len());
-let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
-let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
+let initial_state = dregg_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
+let (trace, public_inputs) = dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
+let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
+let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
+let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
 let proof_hex = hex_encode(&proof_bytes);
 ...
-let bundle = pyana_turn::WitnessBundle::inline_from_trace(&trace);
+let bundle = dregg_turn::WitnessBundle::inline_from_trace(&trace);
 let trace_rows = bundle.trace_rows.clone();
 let witness_hash_hex = hex_encode(&bundle.witness_hash());
 (proof_hex, public_inputs_u64, trace_rows, witness_hash_hex)
@@ -439,7 +439,7 @@ let witness_hash_hex = hex_encode(&bundle.witness_hash());
 
 - **Scope-(1) verifiability.** Given `(proof_hex, public_inputs,
   WitnessHash)`, a standalone verifier
-  (`pyana::verifier::verify_effect_vm_proof`) can verify the STARK
+  (`dregg::verifier::verify_effect_vm_proof`) can verify the STARK
   proof against the AIR's constraint system at trace size
   `next_power_of_two(max(2, vm_effects.len()))`. The verifier needs no
   access to the trace itself.
@@ -607,7 +607,7 @@ the federation receipt type.
   `Payload::Turn(Vec<u8>)` is opaque — a serialized `Turn`, or could
   equally be anything else; the blocklace does not deserialize it.
 
-- `blocklace/src/pyana_bridge.rs:165-167` —
+- `blocklace/src/dregg_bridge.rs:165-167` —
   ```rust
   pub fn submit_turn(&self, blocklace: &mut Blocklace, turn_data: Vec<u8>) -> BlockId {
       let block = blocklace.add_block(Payload::Turn(turn_data));
@@ -616,15 +616,15 @@ the federation receipt type.
   ```
   Submission wraps opaque bytes into a `Payload::Turn` block.
 
-- `blocklace/src/pyana_bridge.rs:175-201` —
+- `blocklace/src/dregg_bridge.rs:175-201` —
   `process_finalized` walks newly-ordered blocks, inspects
   `block.payload`, and emits `BlocklaceTurnReceipt { block_id,
   submitter, seq, turn_data, tier, finality_height }` for each
   `Payload::Turn`.
 
-- `blocklace/src/pyana_bridge.rs:115-132` — `BlocklaceTurnReceipt`
+- `blocklace/src/dregg_bridge.rs:115-132` — `BlocklaceTurnReceipt`
   carries `tier: ExecutionTier` (Sovereign / Optimistic / Ordered)
-  and the **raw turn_data**. The pyana executor side picks this up
+  and the **raw turn_data**. The dregg executor side picks this up
   and re-runs.
 
 - `blocklace/src/cross_reference.rs:70-82` — a richer
@@ -652,7 +652,7 @@ the federation receipt type.
   but the second-to-last hop is missing because seam 6 is empty.
 
 - **GAP — classify_turn examines only the first byte.**
-  `blocklace/src/pyana_bridge.rs:38-51`: `match turn_bytes[0] { 0x01
+  `blocklace/src/dregg_bridge.rs:38-51`: `match turn_bytes[0] { 0x01
   => Sovereign, 0x02 => Optimistic, _ => Ordered }`. This is the
   documented "simplified classification" (line 43); a real
   classifier would deserialize the Turn. Today the classification is
@@ -690,20 +690,20 @@ operation in a `WireMessage` variant and enforces wire-level
 guards: TLS, replay nonces, session-epoch validation, rate
 limits, message-size limits, heartbeat liveness, backpressure.
 
-**What it actually is:** `pyana-captp` has no wire dependency.
-`pyana-wire` depends on `pyana-captp` and `pyana-turn`. The
+**What it actually is:** `dregg-captp` has no wire dependency.
+`dregg-wire` depends on `dregg-captp` and `dregg-turn`. The
 `hardening` module (working-tree-new file) layers the
 production-hardening guards on top of the existing `auth.rs`
 rate-limiter.
 
 ### Sites
 
-- `captp/Cargo.toml:6-13` — pyana-captp deps are blake3, serde,
-  postcard, bs58, getrandom, pyana-types, pyana-cell. **No
-  pyana-wire.** CapTP is wire-agnostic.
+- `captp/Cargo.toml:6-13` — dregg-captp deps are blake3, serde,
+  postcard, bs58, getrandom, dregg-types, dregg-cell. **No
+  dregg-wire.** CapTP is wire-agnostic.
 
-- `wire/Cargo.toml:39-48` — wire depends on `pyana_captp`,
-  `pyana_cell`, `pyana_turn`, `pyana_types`. Correct direction.
+- `wire/Cargo.toml:39-48` — wire depends on `dregg_captp`,
+  `dregg_cell`, `dregg_turn`, `dregg_types`. Correct direction.
 
 - `wire/src/hardening.rs:108-121` — `message_cost(msg)` assigns
   tokens to expensive operations:
@@ -945,8 +945,8 @@ In order of grep-frequency and TODO-tracked-ness:
 4. **`Effect::PostBet { proposal_id, side, amount }` /
    `Effect::ResolveOracle { proposal_id, outcome }`** —
    prediction-market today threads its semantics through
-   `pyana_storage::blinded::BlindedQueue` and
-   `pyana_app_framework::ring_trade`. Effects could surface the
+   `dregg_storage::blinded::BlindedQueue` and
+   `dregg_app_framework::ring_trade`. Effects could surface the
    bet-commitment and oracle-resolution as first-class.
 
 5. **`Effect::MintArtwork { artwork_id, owner, metadata_hash }` /
@@ -1028,8 +1028,8 @@ Weaknesses:
   (`LiveRef::send`) and the wire side
   (`wire/src/server.rs:2458-2507`) accept-and-discard. The seam
   exists at the type level; the wire delivers nothing.
-- **Apps reach past the SDK.** Six apps, 122 raw `use pyana_*`
-  import lines, zero `use pyana_sdk::cipherclerk::AgentCipherclerk` in
+- **Apps reach past the SDK.** Six apps, 122 raw `use dregg_*`
+  import lines, zero `use dregg_sdk::cipherclerk::AgentCipherclerk` in
   the effect-construction paths. The SDK has the helpers
   (`sign_action`, `make_action`, `make_turn`) but the apps can't
   use them because they don't hold a cclerk at the right layer
@@ -1106,7 +1106,7 @@ to land the fix."
 
 9. **Seam 7 — `classify_turn` deserializes the Turn.** Replace
    the first-byte heuristic in
-   `blocklace/src/pyana_bridge.rs:38-51` with a real Turn
+   `blocklace/src/dregg_bridge.rs:38-51` with a real Turn
    deserialization to actually distinguish Sovereign / Optimistic /
    Ordered. Estimated: small, but requires defining what makes a
    Turn "Sovereign" in unambiguous bytes (probably presence of

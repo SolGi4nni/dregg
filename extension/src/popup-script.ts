@@ -1,5 +1,5 @@
 /**
- * Popup script for the Pyana cipherclerk extension UI.
+ * Popup script for the Dregg cipherclerk extension UI.
  * Communicates with the background service worker via chrome.runtime.sendMessage.
  */
 
@@ -56,7 +56,7 @@ function escapeHtml(str: string): string {
 // ---------------------------------------------------------------------------
 
 async function refresh(): Promise<void> {
-  const state = await sendMessage<CipherclerkState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("dregg:getState");
   if (!state) return;
 
   if (state.locked) {
@@ -99,8 +99,8 @@ interface LogEntryDisplay {
 }
 
 async function loadLog(): Promise<void> {
-  const stored = await chrome.storage.local.get("pyana_cipherclerk");
-  const cc = stored["pyana_cipherclerk"] as { log?: LogEntryDisplay[] } | undefined;
+  const stored = await chrome.storage.local.get("dregg_cipherclerk");
+  const cc = stored["dregg_cipherclerk"] as { log?: LogEntryDisplay[] } | undefined;
   if (!cc || !cc.log || cc.log.length === 0) {
     logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
     return;
@@ -118,12 +118,12 @@ async function loadLog(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 lockBtn.addEventListener("click", async () => {
-  const state = await sendMessage<CipherclerkState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("dregg:getState");
   if (!state) return;
 
   if (state.locked) {
     const passphrase = passphraseInput.value;
-    const result = await sendMessage<{ success: boolean }>("pyana:unlock", { passphrase });
+    const result = await sendMessage<{ success: boolean }>("dregg:unlock", { passphrase });
     if (result && !result.success) {
       passphraseInput.style.borderColor = "#f87171";
       passphraseInput.value = "";
@@ -134,7 +134,7 @@ lockBtn.addEventListener("click", async () => {
     passphraseInput.style.borderColor = "";
     passphraseInput.placeholder = "Enter passphrase to unlock";
   } else {
-    await sendMessage("pyana:lock");
+    await sendMessage("dregg:lock");
   }
   await refresh();
 });
@@ -157,7 +157,7 @@ setPassphraseBtn.addEventListener("click", async () => {
     confirmPassphraseInput.placeholder = "Passphrases do not match";
     return;
   }
-  await sendMessage("pyana:setPassphrase", { passphrase: newPass });
+  await sendMessage("dregg:setPassphrase", { passphrase: newPass });
   newPassphraseInput.value = "";
   confirmPassphraseInput.value = "";
   newPassphraseInput.style.borderColor = "";
@@ -182,7 +182,7 @@ managePermsBtn.addEventListener("click", async () => {
 });
 
 async function loadPermissions(): Promise<void> {
-  const perms = await sendMessage<OriginPermissionDisplay[]>("pyana:getOriginPermissions");
+  const perms = await sendMessage<OriginPermissionDisplay[]>("dregg:getOriginPermissions");
   if (!perms || perms.length === 0) {
     permissionsContainer.innerHTML = '<div class="empty">No origins approved</div>';
     return;
@@ -201,7 +201,7 @@ async function loadPermissions(): Promise<void> {
 
   permissionsContainer.querySelectorAll(".revoke-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
-      await sendMessage("pyana:revokeOriginPermission", { origin: (btn as HTMLElement).dataset.origin });
+      await sendMessage("dregg:revokeOriginPermission", { origin: (btn as HTMLElement).dataset.origin });
       await loadPermissions();
     });
   });
@@ -212,12 +212,12 @@ async function loadPermissions(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 backupBtn.addEventListener("click", async () => {
-  const state = await sendMessage<CipherclerkState>("pyana:getState");
+  const state = await sendMessage<CipherclerkState>("dregg:getState");
   if (state && state.locked) {
     alert("Unlock your cipherclerk first to view the recovery phrase.");
     return;
   }
-  const mnemonic = await sendMessage<string>("pyana:getMnemonic");
+  const mnemonic = await sendMessage<string>("dregg:getMnemonic");
   if (!mnemonic) {
     alert("No recovery phrase available for this cipherclerk.");
     return;
@@ -269,7 +269,7 @@ intentsBtn.addEventListener("click", async () => {
 });
 
 async function loadFulfillableIntents(): Promise<void> {
-  const intents = await sendMessage<FulfillableIntent[]>("pyana:getFulfillableIntents");
+  const intents = await sendMessage<FulfillableIntent[]>("dregg:getFulfillableIntents");
   if (!intents || intents.length === 0) {
     intentsContainer.innerHTML = '<div class="empty">No fulfillable intents available</div>';
     return;
@@ -293,7 +293,7 @@ async function loadFulfillableIntents(): Promise<void> {
       const button = btn as HTMLButtonElement;
       button.disabled = true;
       button.textContent = "...";
-      const result = await sendMessage<{ fulfilled?: boolean }>("pyana:fulfillIntent", {
+      const result = await sendMessage<{ fulfilled?: boolean }>("dregg:fulfillIntent", {
         intentId: button.dataset.intentId,
         tokenId: button.dataset.tokenId,
       });
@@ -358,7 +358,7 @@ interface LiveRefDisplay {
 }
 
 async function loadLiveRefs(): Promise<void> {
-  const refs = await sendMessage<LiveRefDisplay[]>("pyana:getLiveRefs");
+  const refs = await sendMessage<LiveRefDisplay[]>("dregg:getLiveRefs");
   if (!refs || refs.length === 0) {
     liveRefsContainer.innerHTML = '<div class="empty">No live references held</div>';
     return;
@@ -376,7 +376,7 @@ async function loadLiveRefs(): Promise<void> {
 
   liveRefsContainer.querySelectorAll(".drop-ref-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
-      await sendMessage("pyana:dropLiveRef", { refId: (btn as HTMLElement).dataset.refId });
+      await sendMessage("dregg:dropLiveRef", { refId: (btn as HTMLElement).dataset.refId });
       await loadLiveRefs();
     });
   });
@@ -387,7 +387,7 @@ acceptCapBtn.addEventListener("click", async () => {
   if (!uri) return;
   acceptCapBtn.textContent = "...";
   (acceptCapBtn as HTMLButtonElement).disabled = true;
-  const result = await sendMessage<{ error?: string }>("pyana:acceptCapability", { uri });
+  const result = await sendMessage<{ error?: string }>("dregg:acceptCapability", { uri });
   if (result && !result.error) {
     acceptUriInput.value = "";
     acceptCapBtn.textContent = "Accepted!";
@@ -415,7 +415,7 @@ shareCapBtn.addEventListener("click", async () => {
   shareCellInput.style.borderColor = "";
   shareCapBtn.textContent = "...";
   (shareCapBtn as HTMLButtonElement).disabled = true;
-  const result = await sendMessage<{ uri?: string; error?: string }>("pyana:shareCapability", { cellId });
+  const result = await sendMessage<{ uri?: string; error?: string }>("dregg:shareCapability", { cellId });
   shareCapBtn.textContent = "Share as URI";
   (shareCapBtn as HTMLButtonElement).disabled = false;
   if (result && result.uri) {
@@ -445,7 +445,7 @@ const discoverBtn = document.getElementById("discoverBtn")!;
 const discoveryResults = document.getElementById("discoveryResults")!;
 
 async function loadDirectory(): Promise<void> {
-  const result = await sendMessage<{ entries?: Array<{ name?: string; path?: string; kind?: string; version?: number }> }>("pyana:resolvePath", { path: "/" });
+  const result = await sendMessage<{ entries?: Array<{ name?: string; path?: string; kind?: string; version?: number }> }>("dregg:resolvePath", { path: "/" });
   if (result && result.entries) {
     const entries = result.entries || [];
     if (entries.length === 0) {
@@ -468,7 +468,7 @@ discoverBtn.addEventListener("click", async () => {
   const tags = tagsStr ? tagsStr.split(",").map(t => t.trim()).filter(Boolean) : [];
   discoverBtn.textContent = "...";
   (discoverBtn as HTMLButtonElement).disabled = true;
-  const result = await sendMessage<{ results?: Array<{ path?: string; name?: string; kind?: string }> }>("pyana:discoverServices", { tags });
+  const result = await sendMessage<{ results?: Array<{ path?: string; name?: string; kind?: string }> }>("dregg:discoverServices", { tags });
   discoverBtn.textContent = "Search";
   (discoverBtn as HTMLButtonElement).disabled = false;
 
@@ -511,7 +511,7 @@ interface StorageQuotaDisplay {
 }
 
 async function loadStorageQuota(): Promise<void> {
-  const result = await sendMessage<StorageQuotaDisplay>("pyana:storageQuota", {});
+  const result = await sendMessage<StorageQuotaDisplay>("dregg:storageQuota", {});
   if (result && !result.error) {
     quotaBytesStored.textContent = formatBytes(result.bytesStored || 0);
     quotaBytesLimit.textContent = formatBytes(result.bytesLimit || 0);

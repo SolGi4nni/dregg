@@ -1,5 +1,5 @@
 [package]
-name = "pyana-net"
+name = "dregg-net"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-pyana-types = { workspace = true }
+dregg-types = { workspace = true }
 quinn = { version = "0.11", features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = { version = "0.14", features = ["ring"] }
@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.9"
 
 [[bin]]
-name = "pyana-p2p-demo"
+name = "dregg-p2p-demo"
 path = "src/bin/demo.rs"
 
 [lints]

@@ -1,4 +1,4 @@
-// pyana playground — main orchestrator
+// dregg playground — main orchestrator
 // Loads WASM, manages shared state, handles navigation, coordinates sections.
 
 import { initOverview } from './sections/overview.js';
@@ -170,7 +170,7 @@ let wasm = null;
 async function loadWasm() {
   const statusEl = document.getElementById('wasm-status');
   try {
-    const { default: init, ...exports } = await import('../pkg/pyana_wasm.js');
+    const { default: init, ...exports } = await import('../pkg/dregg_wasm.js');
     await init();
     wasm = exports;
     statusEl.textContent = 'wasm ready';
@@ -179,7 +179,7 @@ async function loadWasm() {
   } catch (e) {
     statusEl.textContent = 'wasm error';
     statusEl.classList.add('error');
-    console.error('[pyana] WASM load failed:', e);
+    console.error('[dregg] WASM load failed:', e);
     return null;
   }
 }
@@ -218,7 +218,7 @@ async function fetchFederation() {
  */
 export async function connectToLiveNetwork() {
   // Fetch discovery to get gateway address
-  let gatewayWs = 'wss://devnet.pyana.fg-goose.online/ws';
+  let gatewayWs = 'wss://devnet.dregg.fg-goose.online/ws';
   try {
     const resp = await fetch('../discovery.json');
     if (resp.ok) {
@@ -242,7 +242,7 @@ export async function connectToLiveNetwork() {
     ws.onopen = () => {
       state.liveConnection = ws;
       state.liveMode = true;
-      console.log('[pyana] Connected to live network:', gatewayWs);
+      console.log('[dregg] Connected to live network:', gatewayWs);
       notifyStateChange();
       resolve(ws);
     };
@@ -250,12 +250,12 @@ export async function connectToLiveNetwork() {
     ws.onclose = () => {
       state.liveConnection = null;
       state.liveMode = false;
-      console.log('[pyana] Disconnected from live network');
+      console.log('[dregg] Disconnected from live network');
       notifyStateChange();
     };
 
     ws.onerror = (err) => {
-      console.error('[pyana] WebSocket error:', err);
+      console.error('[dregg] WebSocket error:', err);
       state.liveMode = false;
       notifyStateChange();
       reject(err);
@@ -266,7 +266,7 @@ export async function connectToLiveNetwork() {
         const msg = JSON.parse(event.data);
         handleLiveMessage(msg);
       } catch (e) {
-        console.warn('[pyana] Failed to parse live message:', e);
+        console.warn('[dregg] Failed to parse live message:', e);
       }
     };
   });
@@ -298,7 +298,7 @@ function handleLiveMessage(msg) {
       state.receipts.push(msg.receipt);
       break;
     default:
-      console.log('[pyana] Unknown live message type:', msg.type);
+      console.log('[dregg] Unknown live message type:', msg.type);
   }
   notifyStateChange();
 }

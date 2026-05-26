@@ -1,4 +1,4 @@
-# Pyana Name Service Design
+# `dregg` Name Service Design
 
 ## Overview
 
@@ -6,7 +6,7 @@ The name service sits at the intersection of three existing subsystems:
 
 - **Governed namespace** (`apps/governed-namespace/`) — DFA-routed directories with constitutional governance, CAS-versioned mounts, authorization levels
 - **Capability directories** (`rbg/src/directory.rs`) — capability-secure `DirectoryCell` with hierarchical subdirectories, `MetaDirectory` yellow pages, and gossip-scoped intent pools
-- **CapTP** (`captp/`) — `pyana://` sturdy refs, swiss number tables, and the enliven/revoke lifecycle
+- **CapTP** (`captp/`) — `dregg://` sturdy refs, swiss number tables, and the enliven/revoke lifecycle
 
 The name service is **not** a new standalone system. It is a composition layer that unifies these pieces into a coherent naming protocol, with petnames providing the user-facing layer.
 
@@ -73,7 +73,7 @@ pub enum NameEntry {
     /// Source: user assigns manually or from UI suggestion.
     Petname {
         label: String,
-        target: PyanaUri,
+        target: DreggUri,
         /// When you assigned this petname.
         assigned_at: u64,
         /// Optional notes (e.g., "alice from the hackathon").
@@ -85,9 +85,9 @@ pub enum NameEntry {
     /// Source: fetched from contact's profile cell on connection.
     EdgeName {
         label: String,
-        target: PyanaUri,
+        target: DreggUri,
         /// The contact who claims this name.
-        source: PyanaUri,
+        source: DreggUri,
         /// When this was last fetched from the contact's profile.
         last_refreshed: u64,
     },
@@ -97,9 +97,9 @@ pub enum NameEntry {
     /// Source: fetched from federation NameDirectory on lookup.
     ProposedName {
         label: String,
-        target: PyanaUri,
+        target: DreggUri,
         /// Which federation directory this came from.
-        directory: PyanaUri,
+        directory: DreggUri,
         /// Governance vote weight at registration time.
         vote_weight: u64,
         /// Expiry epoch (from directory entry's expires_at).
@@ -128,7 +128,7 @@ If there is a conflict (your petname for X points to CellA, but the community na
 #[derive(Clone, Debug)]
 pub struct ResolvedName {
     /// The sturdy ref this name resolved to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// How this resolution was achieved.
     pub provenance: NameProvenance,
     /// Confidence: 1.0 for petnames, 0.8 for edge, varies for proposed.
@@ -140,11 +140,11 @@ pub enum NameProvenance {
     /// Resolved from local petname DB.
     LocalPetname,
     /// Resolved from a contact's self-claimed edge name.
-    EdgeName { source: PyanaUri },
+    EdgeName { source: DreggUri },
     /// Resolved from a governed federation directory.
-    FederationDirectory { directory: PyanaUri, vote_weight: u64 },
+    FederationDirectory { directory: DreggUri, vote_weight: u64 },
     /// Resolved from a cross-federation meta-directory lookup.
-    CrossFederation { home_federation: PyanaUri, target_federation: PyanaUri },
+    CrossFederation { home_federation: DreggUri, target_federation: DreggUri },
     /// No resolution needed — raw URI passed through.
     Direct,
 }
@@ -191,26 +191,26 @@ impl AgentCipherclerk {
 
 ```
 <name>                            → local resolution (cclerk petname DB)
-<name>.<federation>.pyana         → hierarchical (federation directory lookup)
-<name>.<sub>.<federation>.pyana   → nested hierarchy (sub-directory traversal)
-pyana://<fed>/<cell>/<swiss>      → direct addressing (no resolution)
+<name>.<federation>.dregg         → hierarchical (federation directory lookup)
+<name>.<sub>.<federation>.dregg   → nested hierarchy (sub-directory traversal)
+dregg://<fed>/<cell>/<swiss>      → direct addressing (no resolution)
 ```
 
 ### 3.2 Hierarchical Resolution
 
 ```rust
-/// Resolve a hierarchical name like "alice.federation-a.pyana".
+/// Resolve a hierarchical name like "alice.federation-a.dregg".
 ///
 /// Algorithm:
-/// 1. Split on '.' from RIGHT: ["pyana", "federation-a", "alice"]
-/// 2. Strip TLD ("pyana")
+/// 1. Split on '.' from RIGHT: ["dregg", "federation-a", "alice"]
+/// 2. Strip TLD ("dregg")
 /// 3. Resolve federation name from the meta-directory (root)
 /// 4. Traverse sub-directories left-to-right for remaining segments
 async fn resolve_hierarchical(&self, name: &str) -> Result<ResolvedName, NameError> {
     let segments: Vec<&str> = name.rsplitn(3, '.').collect();
-    // segments for "alice.federation-a.pyana" = ["pyana", "federation-a", "alice"]
+    // segments for "alice.federation-a.dregg" = ["dregg", "federation-a", "alice"]
 
-    if segments.first() != Some(&"pyana") {
+    if segments.first() != Some(&"dregg") {
         return Err(NameError::UnknownTld(segments[0].to_string()));
     }
 
@@ -246,13 +246,13 @@ async fn resolve_hierarchical(&self, name: &str) -> Result<ResolvedName, NameErr
 
 /// Traverse nested sub-directories for multi-segment names.
 ///
-/// For "services.alice.community.pyana":
+/// For "services.alice.community.dregg":
 ///   - "community" resolved from meta-directory → community directory
 ///   - "alice" resolved from community directory → alice's sub-directory
 ///   - "services" resolved from alice's sub-directory → final target
 async fn traverse_directory(
     &self,
-    root_dir: PyanaUri,
+    root_dir: DreggUri,
     path: &str,
 ) -> Result<ResolvedName, NameError> {
     let segments: Vec<&str> = path.split('.').collect();
@@ -444,7 +444,7 @@ let name_swiss = swiss_table.export(
     None,  // unlimited uses
 );
 
-let name_capability_uri = PyanaUri {
+let name_capability_uri = DreggUri {
     federation_id,
     cell_id: name_cell_id,
     swiss: name_swiss,
@@ -563,7 +563,7 @@ pub struct NameClaim {
     /// The name being disputed.
     pub name: String,
     /// The claimant's preferred target for this name.
-    pub proposed_target: PyanaUri,
+    pub proposed_target: DreggUri,
     /// Evidence of prior use or legitimate claim.
     pub evidence: NameClaimEvidence,
 }
@@ -609,7 +609,7 @@ impl Disputable for NameDirectory {
 
 ## 6. Reverse Resolution
 
-Given a `PyanaUri` or `CellId`, find what names point to it.
+Given a `DreggUri` or `CellId`, find what names point to it.
 
 ### 6.1 Reverse Index
 
@@ -627,7 +627,7 @@ pub struct ReverseEntry {
     /// The name that points to this cell.
     pub name: String,
     /// Which directory this name lives in.
-    pub directory: PyanaUri,
+    pub directory: DreggUri,
     /// Name category (petname/edge/proposed).
     pub category: NameCategory,
     /// Version of the name entry.
@@ -654,7 +654,7 @@ impl ReverseNameIndex {
     }
 
     /// Update index when a name is removed.
-    pub fn on_unmount(&mut self, cell_id: [u8; 32], name: &str, directory: &PyanaUri) {
+    pub fn on_unmount(&mut self, cell_id: [u8; 32], name: &str, directory: &DreggUri) {
         if let Some(entries) = self.index.get_mut(&cell_id) {
             entries.retain(|e| !(e.name == name && &e.directory == directory));
         }
@@ -669,7 +669,7 @@ impl AgentCipherclerk {
     /// Reverse lookup: what names point to this cell?
     ///
     /// Checks local petnames first, then queries federation directory.
-    pub async fn whois(&self, target: &PyanaUri) -> Result<Vec<ResolvedName>, NameError> {
+    pub async fn whois(&self, target: &DreggUri) -> Result<Vec<ResolvedName>, NameError> {
         let mut results = Vec::new();
 
         // 1. Check local petnames.
@@ -708,7 +708,7 @@ impl AgentCipherclerk {
     ///
     /// This is YOUR name for this thing. It never leaves your device.
     /// Overwrites any existing petname with the same label.
-    pub fn set_petname(&mut self, label: &str, target: PyanaUri) -> Result<(), NameError> {
+    pub fn set_petname(&mut self, label: &str, target: DreggUri) -> Result<(), NameError> {
         validate_name_segment(label)?;
         self.petname_db.insert(label, NameEntry::Petname {
             label: label.to_string(),
@@ -765,7 +765,7 @@ impl AgentCipherclerk {
     pub async fn register_name(
         &mut self,
         name: &str,
-        target: &PyanaUri,
+        target: &DreggUri,
         rental_epochs: u64,
     ) -> Result<NameRegistrationReceipt, NameError> {
         validate_name_segment(name)?;
@@ -804,7 +804,7 @@ impl AgentCipherclerk {
         &mut self,
         parent_name: &str,
         child_label: &str,
-        target: &PyanaUri,
+        target: &DreggUri,
     ) -> Result<NameRegistrationReceipt, NameError>;
 
     /// Renew an existing name registration (extend its rental period).
@@ -819,7 +819,7 @@ impl AgentCipherclerk {
     pub async fn transfer_name(
         &mut self,
         name: &str,
-        recipient: &PyanaUri,
+        recipient: &DreggUri,
     ) -> Result<(), NameError>;
 
     // =========================================================================
@@ -829,7 +829,7 @@ impl AgentCipherclerk {
     /// Given a sturdy ref, find all names pointing to it.
     ///
     /// Checks local petnames first, then federation directory's reverse index.
-    pub async fn whois(&self, target: &PyanaUri) -> Result<Vec<WhoisResult>, NameError>;
+    pub async fn whois(&self, target: &DreggUri) -> Result<Vec<WhoisResult>, NameError>;
 
     // =========================================================================
     // Edge Name Management
@@ -854,9 +854,9 @@ pub struct NameRegistrationReceipt {
     /// The registered name.
     pub name: String,
     /// The sturdy ref it points to.
-    pub target: PyanaUri,
+    pub target: DreggUri,
     /// The management capability URI (used to update/transfer/delegate).
-    pub management_cap: PyanaUri,
+    pub management_cap: DreggUri,
     /// Cost charged in computrons.
     pub cost_computrons: u64,
     /// Epoch at which this registration expires.
@@ -873,7 +873,7 @@ pub struct WhoisResult {
     /// Which category this name belongs to.
     pub provenance: NameProvenance,
     /// The directory the name lives in (if not a local petname).
-    pub directory: Option<PyanaUri>,
+    pub directory: Option<DreggUri>,
     /// Registration epoch.
     pub registered_at: u64,
     /// Expiry epoch (None = permanent petname).
@@ -897,7 +897,7 @@ pub enum NameError {
     Unauthorized(String),
     /// Cannot traverse — intermediate segment is not a directory.
     NotADirectory { segment: String },
-    /// Unknown TLD (not ".pyana").
+    /// Unknown TLD (not ".dregg").
     UnknownTld(String),
     /// Malformed hierarchical name.
     MalformedHierarchy,
@@ -908,7 +908,7 @@ pub enum NameError {
     /// Network error during remote resolution.
     NetworkError(String),
     /// Federation directory is unreachable.
-    DirectoryUnreachable(PyanaUri),
+    DirectoryUnreachable(DreggUri),
 }
 ```
 
@@ -927,7 +927,7 @@ Each federation registers its name directory in a shared meta-directory:
 /// in a shared meta-directory (or in each other's meta-directories via
 /// mutual introduction).
 ///
-/// Resolution of "bob.federation-b.pyana" from federation A:
+/// Resolution of "bob.federation-b.dregg" from federation A:
 ///
 /// 1. A's cclerk queries A's meta-directory for "federation-b"
 /// 2. Meta-directory returns SturdyRef to B's name directory
@@ -951,7 +951,7 @@ pub struct FederationRegistry {
     /// The underlying meta-directory.
     meta: MetaDirectory,
     /// Bootstrap entries (well-known federations).
-    bootstrap: Vec<(String, PyanaUri)>,
+    bootstrap: Vec<(String, DreggUri)>,
 }
 
 impl FederationRegistry {
@@ -996,11 +996,11 @@ impl FederationRegistry {
 /// CapTP session. The resolver handles this transparently.
 ///
 /// Example: federation-a's directory has:
-///   "bob" → pyana://<federation-b-id>/<bob-cell-id>/<swiss>
+///   "bob" → dregg://<federation-b-id>/<bob-cell-id>/<swiss>
 ///
-/// Resolving "bob.federation-a.pyana":
+/// Resolving "bob.federation-a.dregg":
 ///   1. Query federation-a's directory for "bob"
-///   2. Get back a PyanaUri with federation_id = federation-b
+///   2. Get back a DreggUri with federation_id = federation-b
 ///   3. Enliven requires connecting to federation-b (cross-fed CapTP)
 ///   4. Present swiss number to federation-b's node
 ///   5. Receive live reference to bob's cell
@@ -1071,7 +1071,7 @@ pub enum Effect {
         /// The name to register.
         name: String,
         /// What the name should point to.
-        target: PyanaUri,
+        target: DreggUri,
         /// How many epochs to prepay rent.
         rental_epochs: u64,
         /// QuotaId to charge rent from.
@@ -1106,7 +1106,7 @@ pub enum Effect {
 | Name storage | `Registry::mount()` (CAS, versioned) | `apps/governed-namespace/src/registry.rs` |
 | Access control | DFA router + `AuthLevel` | `apps/governed-namespace/src/namespace.rs` |
 | Hierarchical directories | `DirectoryCell` + `MetaDirectory` | `rbg/src/directory.rs` |
-| Capability references | `PyanaUri` + `SwissTable` | `captp/src/uri.rs`, `captp/src/sturdy.rs` |
+| Capability references | `DreggUri` + `SwissTable` | `captp/src/uri.rs`, `captp/src/sturdy.rs` |
 | Rent/cost model | `MeteringPolicy` + `QuotaCell` | `storage/src/metering.rs`, `storage/src/quota.rs` |
 | Governance | `GovernanceEngine` (voting) | `apps/governed-namespace/src/governance.rs` |
 | Dispute resolution | `Disputable` trait | `app-framework/src/dispute.rs` |
@@ -1151,16 +1151,16 @@ pub enum Effect {
 5. Federation executor mounts "/names/alice" in governed-namespace Registry
 6. Federation grants DelegationAuthority::SubPrefix { prefix: "/names/alice/" }
 7. Cipherclerk stores management capability URI locally
-8. Alice can now be found as "alice.my-federation.pyana"
+8. Alice can now be found as "alice.my-federation.dregg"
 ```
 
-### 11.2 Bob Resolves "alice.my-federation.pyana"
+### 11.2 Bob Resolves "alice.my-federation.dregg"
 
 ```
-1. Bob's cclerk checks petname DB for "alice.my-federation.pyana" — miss
+1. Bob's cclerk checks petname DB for "alice.my-federation.dregg" — miss
 2. Bob's cclerk checks edge name cache — miss
 3. Name contains dots → hierarchical resolution
-4. Split: ["pyana", "my-federation", "alice"]
+4. Split: ["dregg", "my-federation", "alice"]
 5. Query meta-directory for "my-federation" → get SturdyRef to my-federation's name dir
 6. Enliven name dir (CapTP session, may already exist)
 7. Query name dir for "alice" → get alice's SturdyRef
@@ -1176,7 +1176,7 @@ pub enum Effect {
 3. Cipherclerk submits Effect::RegisterName for "alice/oracle" (sub-delegation path)
 4. Federation verifies DelegationAuthority on parent — authorized without vote
 5. Mounts "/names/alice/oracle" in Registry
-6. Resolvable as "oracle.alice.my-federation.pyana"
+6. Resolvable as "oracle.alice.my-federation.dregg"
 ```
 
 ### 11.4 Name Dispute

@@ -384,7 +384,7 @@ impl StarkAir for AccumulatorNonRevocationAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-accumulator-non-revocation-v1"
+        "dregg-accumulator-non-revocation-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -609,7 +609,7 @@ pub fn compute_accumulator(revocation_set: &[BabyBear], alpha: ExtElem) -> ExtEl
 /// Uses Poseidon2 hash of a domain separator concatenated with set metadata.
 /// In production, this would include the epoch number and federation attestation.
 pub fn derive_alpha(revocation_set: &[BabyBear]) -> ExtElem {
-    // Domain separator: "pyana-accumulator-v1" hashed, plus set size.
+    // Domain separator: "dregg-accumulator-v1" hashed, plus set size.
     let domain_sep = hash_many(&[
         BabyBear::new(0x7079616E), // "pyan"
         BabyBear::new(0x612D6163), // "a-ac"

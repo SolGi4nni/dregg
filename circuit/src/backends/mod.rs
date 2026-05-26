@@ -1,4 +1,4 @@
-//! Alternative proof backends for pyana circuits.
+//! Alternative proof backends for dregg circuits.
 //!
 //! While the primary STARK backend (`crate::stark`) uses BabyBear + FRI,
 //! these backends provide alternative proof systems with different tradeoffs:
@@ -48,7 +48,7 @@ pub mod mina;
 #[cfg(feature = "mina")]
 pub mod stark_in_pickles;
 
-/// Native Kimchi circuit backend: implements pyana's core proof statements
+/// Native Kimchi circuit backend: implements dregg's core proof statements
 /// (derivation, non-membership) as native Kimchi circuits over Fp.
 ///
 /// Uses Mina-native Poseidon hashing (different commitments from the BabyBear
@@ -622,7 +622,7 @@ pub trait CrossStateBackend: ProofBackend + DerivationBackend {
 /// The complete proof surface required for Pickles recursion over the full
 /// authorization pipeline.
 ///
-/// A backend implementing `FullProofBackend` supports the entire pyana proof
+/// A backend implementing `FullProofBackend` supports the entire dregg proof
 /// lifecycle: membership, fold, derivation, predicates, non-revocation, IVC
 /// composition, presentation, and cross-state derivation.
 ///

@@ -32,7 +32,7 @@ defineVisualizer('nameservice-registration', ({ dataset, api }) => {
   const { html } = api;
   const n = parseInt(dataset.count || '2', 10);
   const names = Array.from({ length: n }, (_, i) => ({
-    name: `name-${i + 1}.pyana`,
+    name: `name-${i + 1}.dregg`,
     serviceId: 'service-id-placeholder-' + i,
   }));
   return renderNameserviceSvg(html, names);

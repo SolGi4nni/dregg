@@ -34,7 +34,7 @@ Options:
 
 ### Comparison to Traditional Bounty Systems
 
-| Feature | GitHub Bounties | Gitcoin | Pyana Bounty Board |
+| Feature | GitHub Bounties | Gitcoin | `dregg` Bounty Board |
 |---------|----------------|---------|-------------------|
 | Worker identity | Public (GitHub profile) | Public (cclerk address) | Private (blinded commitment) |
 | Payment | Manual transfer | On-chain, public | Private notes |

@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>Cryptographic Foundations — Pyana</title>
+<title>Cryptographic Foundations — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Cryptographic Foundations</h1>
 
     <p>
-      Pyana's proof system is built on the Effect VM and the constraint DSL. The Effect VM
+      <code>dregg</code>'s proof system is built on the Effect VM and the constraint DSL. The Effect VM
       proves arbitrary turns in a single STARK (24 effects per turn, Custom dispatch for
       application-defined logic). The constraint DSL compiles <code>CircuitDescriptor</code>
       definitions to multiple proof systems from a single source. The base STARK path uses
@@ -53,10 +53,10 @@
       <li><code>hash_many(inputs)</code> -- Variable-width sponge hash</li>
     </ul>
 
-    <pyana-vizzer data-vizzer="merkle-tree"
+    <dregg-vizzer data-vizzer="merkle-tree"
       data-dataset='{"leaves":["alice","bob","carol","dave","eve","faythe","grace","heidi"],"depth":3,"proofPath":["l-2","n-2-1","n-1-0","n-0-0"]}'>
       <div class="vizzer-fallback">Merkle tree — depth 3, 8 leaves, with a highlighted authentication path.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/merkle-tree.js"></script>
     <p class="viz-caption">Eight Poseidon2-hashed leaves climb to a single root. The amber path is the
       authentication proof for the third leaf — log2(8) = 3 sibling hashes plus the leaf itself.</p>
@@ -229,12 +229,12 @@
     <h3>EVM Bridge (SP1 Groth16)</h3>
 
     <p>
-      The <code>pyana-chain</code> crate wraps pyana STARK proofs in SP1's zkVM to produce
+      The <code>dregg-chain</code> crate wraps dregg STARK proofs in SP1's zkVM to produce
       Groth16 proofs verifiable on Base Sepolia at ~200k gas:
     </p>
 
     <ol>
-      <li>Pyana STARK proof (large, not EVM-friendly) is the input</li>
+      <li><code>dregg</code> STARK proof (large, not EVM-friendly) is the input</li>
       <li>SP1 guest program verifies the STARK inside a RISC-V zkVM execution</li>
       <li>SP1 produces a compact Groth16 proof</li>
       <li>Groth16 proof is verified by SP1 Verifier Gateway contract on Base</li>
@@ -255,21 +255,21 @@
     </p>
 
     <ul>
-      <li><strong>Level 1 (implemented):</strong> Attestation bridge. Pyana state roots are
+      <li><strong>Level 1 (implemented):</strong> Attestation bridge. <code>dregg</code> state roots are
           attested on Midnight as observation-based data. Midnight validators can verify
-          that a Pyana state existed at a given height.</li>
+          that a <code>dregg</code> state existed at a given height.</li>
       <li><strong>Level 2 (designed):</strong> Proof-carrying bridge. The DSL's ZKIR v3 backend
-          compiles Pyana circuits into Midnight-compatible programs, enabling a Midnight
-          validator to verify Pyana proofs natively via the FRI verifier in ZKIR.</li>
+          compiles <code>dregg</code> circuits into Midnight-compatible programs, enabling a Midnight
+          validator to verify <code>dregg</code> proofs natively via the FRI verifier in ZKIR.</li>
     </ul>
 
     <h3>Mina Bridge</h3>
 
     <p>
-      Native Pickles recursion via the STARK-in-Pickles pipeline. A Pyana STARK proof
+      Native Pickles recursion via the STARK-in-Pickles pipeline. A <code>dregg</code> STARK proof
       is verified inside a Kimchi circuit, producing a Pickles recursive proof compatible
       with Mina's verification infrastructure. Enables Mina zkApps to natively verify
-      Pyana state transitions.
+      <code>dregg</code> state transitions.
     </p>
 
     <p>

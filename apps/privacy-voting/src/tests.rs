@@ -15,10 +15,10 @@ use axum::http::{Method, Request, StatusCode};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use pyana_app_framework::auth::AdminToken;
-use pyana_sdk::cipherclerk::{AgentCipherclerk, DelegatedToken};
-use pyana_token::Attenuation;
-use pyana_types::{PublicKey, Signature};
+use dregg_app_framework::auth::AdminToken;
+use dregg_sdk::cipherclerk::{AgentCipherclerk, DelegatedToken};
+use dregg_token::Attenuation;
+use dregg_types::{PublicKey, Signature};
 
 use crate::ballot::{self, BallotReveal};
 use crate::eligibility::EligibilityAuthority;
@@ -161,7 +161,7 @@ async fn submit_ballot_with_valid_credential_accepted() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     let cred = issue_eligibility_credential(&mut issuer, voter.public_key());
     let r = [7u8; 32];
@@ -172,7 +172,7 @@ async fn submit_ballot_with_valid_credential_accepted() {
         "/ballots/submit",
         json!({
             "proposal_id": pid_hex,
-            "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment),
+            "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment),
             "credential": cred,
         }),
         false,
@@ -207,7 +207,7 @@ async fn submit_ballot_without_credential_rejected() {
     let voter = AgentCipherclerk::new();
     let cred = issue_eligibility_credential(&mut rogue_issuer, voter.public_key());
 
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
     let r = [1u8; 32];
     let commitment = ballot::commit(&pid_bytes, 0, &r);
     let (status, body) = post_json(
@@ -215,7 +215,7 @@ async fn submit_ballot_without_credential_rejected() {
         "/ballots/submit",
         json!({
             "proposal_id": pid_hex,
-            "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment),
+            "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment),
             "credential": cred,
         }),
         false,
@@ -246,7 +246,7 @@ async fn submit_ballot_with_forged_signature_rejected() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     let mut cred = issue_eligibility_credential(&mut issuer, voter.public_key());
     // Tamper: random signature.
@@ -259,7 +259,7 @@ async fn submit_ballot_with_forged_signature_rejected() {
         "/ballots/submit",
         json!({
             "proposal_id": pid_hex,
-            "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment),
+            "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment),
             "credential": cred,
         }),
         false,
@@ -287,7 +287,7 @@ async fn double_submission_by_same_voter_rejected() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     let cred = issue_eligibility_credential(&mut issuer, voter.public_key());
     let r1 = [1u8; 32];
@@ -298,7 +298,7 @@ async fn double_submission_by_same_voter_rejected() {
     let (s, _) = post_json(
         &app,
         "/ballots/submit",
-        json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&c1), "credential": cred.clone()}),
+        json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&c1), "credential": cred.clone()}),
         false,
     )
     .await;
@@ -307,7 +307,7 @@ async fn double_submission_by_same_voter_rejected() {
     let (s2, _) = post_json(
         &app,
         "/ballots/submit",
-        json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&c2), "credential": cred}),
+        json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&c2), "credential": cred}),
         false,
     )
     .await;
@@ -332,7 +332,7 @@ async fn five_ballots_yield_correct_tally() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     // Five distinct voters, votes: yes, no, yes, yes, no.
     let votes = [0u32, 1, 0, 0, 1];
@@ -345,7 +345,7 @@ async fn five_ballots_yield_correct_tally() {
         let (s, _b) = post_json(
             &app,
             "/ballots/submit",
-            json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
+            json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
             false,
         )
         .await;
@@ -367,7 +367,7 @@ async fn five_ballots_yield_correct_tally() {
     for (commitment, opt, r) in &reveals {
         let body = json!({
             "proposal_id": pid_hex,
-            "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(commitment),
+            "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(commitment),
             "reveal": {"option_index": opt, "randomness": r.to_vec()},
         });
         let (s, b) = post_json(&app, "/ballots/reveal", body, false).await;
@@ -396,7 +396,7 @@ async fn five_ballots_yield_correct_tally() {
     let local_root = local_log.merkle_root();
     let server_root = t["reveal_root"].as_str().unwrap();
     assert_eq!(
-        pyana_app_framework::hex::bytes32_to_hex(&local_root),
+        dregg_app_framework::hex::bytes32_to_hex(&local_root),
         server_root
     );
 }
@@ -418,7 +418,7 @@ async fn reveal_with_wrong_vote_rejected() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     let cred = issue_eligibility_credential(&mut issuer, voter.public_key());
     let r = [9u8; 32];
@@ -426,7 +426,7 @@ async fn reveal_with_wrong_vote_rejected() {
     let (s, _) = post_json(
         &app,
         "/ballots/submit",
-        json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
+        json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
         false,
     )
     .await;
@@ -444,7 +444,7 @@ async fn reveal_with_wrong_vote_rejected() {
     // Try to claim we voted option 1 with the same randomness — must fail.
     let body = json!({
         "proposal_id": pid_hex,
-        "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment),
+        "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment),
         "reveal": {"option_index": 1u32, "randomness": r.to_vec()},
     });
     let (status, _) = post_json(&app, "/ballots/reveal", body, false).await;
@@ -473,7 +473,7 @@ async fn queue_entries_carry_no_identity_bytes() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     let mut voter_pks: Vec<PublicKey> = Vec::new();
     for i in 0..4u8 {
@@ -486,7 +486,7 @@ async fn queue_entries_carry_no_identity_bytes() {
         let (s, _) = post_json(
             &app,
             "/ballots/submit",
-            json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
+            json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
             false,
         )
         .await;
@@ -535,7 +535,7 @@ async fn wrong_phase_rejects_submit_and_reveal() {
     )
     .await;
     let pid_hex = p["id"].as_str().unwrap().to_string();
-    let pid_bytes = pyana_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
+    let pid_bytes = dregg_app_framework::hex::hex_to_bytes32(&pid_hex).unwrap();
 
     // Advance to Reveal — now submit must fail.
     let (s, _) = post_json(
@@ -553,7 +553,7 @@ async fn wrong_phase_rejects_submit_and_reveal() {
     let (status, _) = post_json(
         &app,
         "/ballots/submit",
-        json!({"proposal_id": pid_hex, "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
+        json!({"proposal_id": pid_hex, "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment), "credential": cred}),
         false,
     )
     .await;
@@ -570,7 +570,7 @@ async fn wrong_phase_rejects_submit_and_reveal() {
     assert_eq!(s, StatusCode::OK);
     let body = json!({
         "proposal_id": pid_hex,
-        "commitment_hex": pyana_app_framework::hex::bytes32_to_hex(&commitment),
+        "commitment_hex": dregg_app_framework::hex::bytes32_to_hex(&commitment),
         "reveal": {"option_index": 0u32, "randomness": r.to_vec()},
     });
     let (status, _) = post_json(&app, "/ballots/reveal", body, false).await;

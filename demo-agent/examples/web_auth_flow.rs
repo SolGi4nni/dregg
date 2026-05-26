@@ -10,12 +10,12 @@
 
 use std::time::Instant;
 
-use pyana_bridge::present::{bytes_to_babybear, hash_index};
-use pyana_bridge::{BridgePresentationBuilder, BridgePresentationProof};
-use pyana_circuit::BabyBear;
+use dregg_bridge::present::{bytes_to_babybear, hash_index};
+use dregg_bridge::{BridgePresentationBuilder, BridgePresentationProof};
+use dregg_circuit::BabyBear;
 
-use pyana_circuit::stark;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_circuit::stark;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ fn short_hex(bytes: &[u8]) -> String {
 }
 
 fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::compute_parent_poseidon2;
+    use dregg_circuit::merkle_air::compute_parent_poseidon2;
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -73,7 +73,7 @@ fn party(name: &str, msg: &str) {
 fn main() {
     println!();
     println!("  {}", "=".repeat(60));
-    println!("  PYANA WEB AUTH FLOW SIMULATION");
+    println!("  DREGG WEB AUTH FLOW SIMULATION");
     println!("  Browser Extension Cipherclerk <-> Page <-> Server");
     println!("  {}", "=".repeat(60));
 
@@ -85,7 +85,7 @@ fn main() {
     // =========================================================================
 
     // The issuer (identity provider / federation member) has a root key.
-    let issuer_key: [u8; 32] = *blake3::hash(b"pyana-web-demo-issuer-key").as_bytes();
+    let issuer_key: [u8; 32] = *blake3::hash(b"dregg-web-demo-issuer-key").as_bytes();
 
     // The federation root (attested by the federation, known to servers).
     let federation_root_bb = compute_federation_root_bb(&issuer_key);
@@ -108,8 +108,8 @@ fn main() {
     section(1, total_steps, "PAGE: Requests authorization");
     let step1_start = Instant::now();
 
-    // This is what the page sends to the extension via window.pyana.authorize()
-    // The "resource" concept maps to service + action in pyana's model.
+    // This is what the page sends to the extension via window.dregg.authorize()
+    // The "resource" concept maps to service + action in dregg's model.
     let page_request = AuthRequest {
         service: Some("api".into()),
         app_id: Some("web-client".into()),
@@ -118,7 +118,7 @@ fn main() {
         ..Default::default()
     };
 
-    party("PAGE", "Calls: window.pyana.authorize({");
+    party("PAGE", "Calls: window.dregg.authorize({");
     party("PAGE", "  action: 'read',");
     party("PAGE", "  resource: '/api/data'");
     party("PAGE", "})");

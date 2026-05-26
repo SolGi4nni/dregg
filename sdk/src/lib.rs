@@ -1,4 +1,4 @@
-//! # pyana-sdk
+//! # dregg-sdk
 //!
 //! # Trust Model
 //!
@@ -26,7 +26,7 @@
 //! - Federation state (verified via attested roots + STARK proofs)
 //! - Other agents (interactions mediated by capabilities)
 //!
-//! The unified agent SDK for the pyana federation protocol.
+//! The unified agent SDK for the dregg federation protocol.
 //!
 //! This crate provides a single ergonomic entry point for agents that need to:
 //! - Hold and manage authorization tokens (macaroon-backed)
@@ -56,14 +56,14 @@
 //! Principal. The name borrows from Greg Egan's *Polis* (and its descendants),
 //! where a citizen's "cipherclerk" is the autonomous component that manages
 //! their cryptographic identity and capability handles. "Cipherclerk" was a poor
-//! fit — cipherclerks connote value storage, but a pyana cipherclerk's authority
+//! fit — cipherclerks connote value storage, but a dregg cipherclerk's authority
 //! is mostly *capabilities*, not balances.
 //!
 //! # Quick Start
 //!
 //! ```no_run
-//! use pyana_sdk::{AgentCipherclerk, AgentRuntime};
-//! use pyana_token::Attenuation;
+//! use dregg_sdk::{AgentCipherclerk, AgentRuntime};
+//! use dregg_token::Attenuation;
 //!
 //! // Create a cipherclerk with a fresh identity
 //! let mut cclerk = AgentCipherclerk::new();
@@ -78,7 +78,7 @@
 //! }).unwrap();
 //! ```
 
-// Modules that pull tokio / pyana-wire / pyana-captp are gated so the crate
+// Modules that pull tokio / dregg-wire / dregg-captp are gated so the crate
 // stays buildable on wasm32 (set `default-features = false`). Anything in
 // the always-on group below is wasm-friendly.
 #[cfg(feature = "captp")]
@@ -106,9 +106,9 @@ pub mod wordlist;
 /// Legacy module name for the cipherclerk surface.
 ///
 /// During the rename window this re-exports `cipherclerk` plus an
-/// `AgentCipherclerk` alias so downstream `use pyana_sdk::cipherclerk::...`
+/// `AgentCipherclerk` alias so downstream `use dregg_sdk::cipherclerk::...`
 /// paths keep compiling. New code should reach for
-/// `pyana_sdk::cipherclerk`.
+/// `dregg_sdk::cipherclerk`.
 #[doc(hidden)]
 pub mod cclerk {
     pub use crate::cipherclerk::AgentCipherclerk;
@@ -143,37 +143,37 @@ pub use cipherclerk::AgentCipherclerk as AgentCClerk;
 
 // Re-export commonly needed types from dependencies so users don't need
 // to add them separately.
-pub use pyana_cell::{CellId, Ledger};
-pub use pyana_circuit::{BabyBear, IvcProof, verify_ivc};
-pub use pyana_token::{Attenuation, AuthRequest, AuthToken};
-pub use pyana_turn::{Effect, QueueTxOp, Turn, TurnBuilder, TurnReceipt};
-pub use pyana_turn::{
+pub use dregg_cell::{CellId, Ledger};
+pub use dregg_circuit::{BabyBear, IvcProof, verify_ivc};
+pub use dregg_token::{Attenuation, AuthRequest, AuthToken};
+pub use dregg_turn::{Effect, QueueTxOp, Turn, TurnBuilder, TurnReceipt};
+pub use dregg_turn::{
     VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
 };
-pub use pyana_types::{PublicKey, Signature};
+pub use dregg_types::{PublicKey, Signature};
 
 // Re-export verifier types from the bridge layer for standalone proof verification.
 #[allow(deprecated)]
-pub use pyana_bridge::present::{BridgePresentationProof, verify_presentation};
-pub use pyana_bridge::verifier::StarkProofVerifier;
-pub use pyana_circuit::PresentationVerification;
+pub use dregg_bridge::present::{BridgePresentationProof, verify_presentation};
+pub use dregg_bridge::verifier::StarkProofVerifier;
+pub use dregg_circuit::PresentationVerification;
 
 // Re-export mnemonic generation at crate root for convenience.
 pub use mnemonic::generate_mnemonic;
 
 // Re-export privacy primitives for stealth addresses, value commitments, and encrypted intents.
-pub use pyana_cell::stealth::{
+pub use dregg_cell::stealth::{
     StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress,
 };
-pub use pyana_cell::value_commitment::{
+pub use dregg_cell::value_commitment::{
     BulletproofRangeProof, ConservationProof, FullConservationProof, ValueCommitment,
     ValueCommitmentBytes,
 };
-pub use pyana_intent::sse::EncryptedIntent;
+pub use dregg_intent::sse::EncryptedIntent;
 
 // Re-export the no-IO embed layer for service integration.
 #[cfg(feature = "network")]
-pub use embed::{EmbedError, EngineConfig, PyanaEngine, WireCodec};
+pub use embed::{EmbedError, EngineConfig, DreggEngine, WireCodec};
 
 // Re-export privacy API types at crate root for convenience.
 pub use privacy::{
@@ -202,7 +202,7 @@ pub use verify::{
 };
 
 // Re-export proof tier types for downstream use.
-pub use pyana_circuit::{CryptographicProof, ProofTier, VerifiedProof};
+pub use dregg_circuit::{CryptographicProof, ProofTier, VerifiedProof};
 
 // Re-export name resolution types for the petname system.
 #[cfg(feature = "captp")]
@@ -219,10 +219,10 @@ pub use names::{
 #[cfg(feature = "captp")]
 pub use captp_client::{CapTpClient, CapTpConfig, EventualRef, LiveRef};
 #[cfg(feature = "captp")]
-pub use pyana_captp::handoff::HandoffCertificate;
+pub use dregg_captp::handoff::HandoffCertificate;
 #[cfg(feature = "captp")]
-pub use pyana_captp::pipeline::PipelinedAction;
+pub use dregg_captp::pipeline::PipelinedAction;
 #[cfg(feature = "captp")]
-pub use pyana_captp::uri::PyanaUri;
+pub use dregg_captp::uri::DreggUri;
 #[cfg(feature = "captp")]
-pub use pyana_captp::{FederationId, GroupId};
+pub use dregg_captp::{FederationId, GroupId};

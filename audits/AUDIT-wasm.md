@@ -1,4 +1,4 @@
-# AUDIT — `wasm/` (pyana-wasm WebAssembly bindings)
+# AUDIT — `wasm/` (dregg-wasm WebAssembly bindings)
 
 ## Verdict: NEEDS-WORK
 
@@ -8,9 +8,9 @@ No `unsafe` blocks were found. No `.view()` zero-copy slice usage (so no TOCTOU)
 
 ## Summary
 
-`pyana-wasm` exports ~73 `#[wasm_bindgen]` `pub fn` items across three files. The crate is reachable from any page that loads `chrome.runtime.getURL('pyana_wasm_bg.wasm')` (the extension manifest lists `pyana_wasm.js` and `pyana_wasm_bg.wasm` in `web_accessible_resources` matched to `<all_urls>`). The WASM instance loaded by a page runs in that page's sandbox, so it cannot read the extension's storage or keys — but it can still be invoked to do expensive STARK proof work, and any bindings that *return secrets from JS-provided inputs* (e.g. `derive_stealth_keys`, `derive_keypair_from_mnemonic`) leak those secrets to whichever JS context called them.
+`dregg-wasm` exports ~73 `#[wasm_bindgen]` `pub fn` items across three files. The crate is reachable from any page that loads `chrome.runtime.getURL('dregg_wasm_bg.wasm')` (the extension manifest lists `dregg_wasm.js` and `dregg_wasm_bg.wasm` in `web_accessible_resources` matched to `<all_urls>`). The WASM instance loaded by a page runs in that page's sandbox, so it cannot read the extension's storage or keys — but it can still be invoked to do expensive STARK proof work, and any bindings that *return secrets from JS-provided inputs* (e.g. `derive_stealth_keys`, `derive_keypair_from_mnemonic`) leak those secrets to whichever JS context called them.
 
-The crate mixes three trust classes without separation: (a) pure stateless calculators safe for any caller (e.g. `blake3_hash`, `verify_*`), (b) secret-derivation bindings that should be background-worker-only (`derive_stealth_keys`, `derive_keypair_from_mnemonic`), and (c) a global `thread_local!` PyanaRuntime registry whose handles are u64 indices into a shared `Vec` — anyone with the WASM instance can pass arbitrary handles to access another component's runtime, including reading and modifying it. There is no isolation between callers within one WASM instance.
+The crate mixes three trust classes without separation: (a) pure stateless calculators safe for any caller (e.g. `blake3_hash`, `verify_*`), (b) secret-derivation bindings that should be background-worker-only (`derive_stealth_keys`, `derive_keypair_from_mnemonic`), and (c) a global `thread_local!` DreggRuntime registry whose handles are u64 indices into a shared `Vec` — anyone with the WASM instance can pass arbitrary handles to access another component's runtime, including reading and modifying it. There is no isolation between callers within one WASM instance.
 
 ## Binding inventory (abbreviated)
 
@@ -60,7 +60,7 @@ The crate mixes three trust classes without separation: (a) pure stateless calcu
 ### P0 — `seal_intent_body` "broadcast mode" makes the ciphertext recoverable from plaintext (`privacy.rs:444–449`)
 When no `recipient_pubkey` is provided, the code derives the recipient key as:
 ```rust
-let hash = blake3::derive_key("pyana-broadcast-seal-key", plaintext_json.as_bytes());
+let hash = blake3::derive_key("dregg-broadcast-seal-key", plaintext_json.as_bytes());
 ```
 The recipient secret is a **deterministic function of the plaintext**. Anyone who can guess (or replay) the plaintext can re-derive the key and decrypt; identical plaintexts produce identical ciphertexts (no semantic security; trivial confirmation/correlation attacks). The "broadcast mode" name suggests this was meant for an SSE-keyed ephemeral channel; what's implemented is a no-op encryption.
 **Fix:** require an explicit recipient pubkey, or generate a fresh random key per call and emit it as part of the SealedBox / out-of-band drop.
@@ -71,17 +71,17 @@ The doc-comment says "first 32 bytes = public key, last 32 bytes = secret key". 
 result.extend_from_slice(&derived);         // 32B secret seed
 result.extend_from_slice(&[0u8; 32]);       // zeros as "public key placeholder"
 ```
-So the layout is `[secret | zeros]` — opposite of the doc. The current extension calls `wasm.derive_keypair_from_mnemonic(mnemonic, passphrase, 'pyana/0')` (3 args; Rust takes 2 — silent drop) and reads `result.public_key` / `result.secret_key` (the function returns a `Vec<u8>`, not a struct). The extension code path in `background.js:436-440` will throw or get `undefined`, falling through to the "WASM required" error. Net effect today: mnemonic-based identity derivation does not work. After the obvious fix-attempt to "return an object", whichever 32-byte half the extension picks may be all-zeros (which would silently produce a real-looking but completely insecure all-zero identity).
+So the layout is `[secret | zeros]` — opposite of the doc. The current extension calls `wasm.derive_keypair_from_mnemonic(mnemonic, passphrase, 'dregg/0')` (3 args; Rust takes 2 — silent drop) and reads `result.public_key` / `result.secret_key` (the function returns a `Vec<u8>`, not a struct). The extension code path in `background.js:436-440` will throw or get `undefined`, falling through to the "WASM required" error. Net effect today: mnemonic-based identity derivation does not work. After the obvious fix-attempt to "return an object", whichever 32-byte half the extension picks may be all-zeros (which would silently produce a real-looking but completely insecure all-zero identity).
 **Fix:** return a typed struct via `serde_wasm_bindgen` with explicit `public_key` / `secret_key` fields, and actually compute the Ed25519 pubkey (add `ed25519-dalek` to wasm deps — it builds for WASM).
 
 ### P0 — `wasm/pkg/` is 2+ days stale and missing the entire `privacy.rs` module (build artifact freshness)
-- `wasm/pkg/pyana_wasm_bg.wasm` mtime: May 21 04:38
+- `wasm/pkg/dregg_wasm_bg.wasm` mtime: May 21 04:38
 - `wasm/src/lib.rs` mtime: May 23 08:02
 - `wasm/src/privacy.rs` mtime: May 23 08:58 (newest)
-- `wasm/pkg/pyana_wasm.d.ts` declares 43 exports; the source has 73 `pub fn` items
+- `wasm/pkg/dregg_wasm.d.ts` declares 43 exports; the source has 73 `pub fn` items
 - `pkg/.gitignore` is `*` — the pkg is **untracked**, so there is no reproducible record of what shipped, and no commit-pinned SHA-256.
 
-The extension's `background.js` references functions (`derive_stealth_keys`, `seal_intent_body`, `check_stealth_ownership`, `create_value_commitment`, `generate_range_proof`, `build_committed_turn`, `derive_stealth_one_time_address`, `generate_sse_tokens`) that are **not present** in the shipped `pyana_wasm.d.ts`. All those code paths will hit the `if (!wasm.X)` guards and fall through to error or to legacy JS implementations — i.e. the stealth and committed-transfer features are silently disabled in extension builds against this pkg. Conversely, the extension also calls `wasm.generate_mnemonic` and `wasm.validate_mnemonic`, which are **not present in the source either**, indicating drift in both directions.
+The extension's `background.js` references functions (`derive_stealth_keys`, `seal_intent_body`, `check_stealth_ownership`, `create_value_commitment`, `generate_range_proof`, `build_committed_turn`, `derive_stealth_one_time_address`, `generate_sse_tokens`) that are **not present** in the shipped `dregg_wasm.d.ts`. All those code paths will hit the `if (!wasm.X)` guards and fall through to error or to legacy JS implementations — i.e. the stealth and committed-transfer features are silently disabled in extension builds against this pkg. Conversely, the extension also calls `wasm.generate_mnemonic` and `wasm.validate_mnemonic`, which are **not present in the source either**, indicating drift in both directions.
 **Fix:** add a CI step that rebuilds `pkg/` whenever `src/` changes and either commits the result with a checksum file or rejects the PR. Stop `.gitignore`'ing `pkg/`, or move it to a build-output directory that's clearly never the deployed artifact.
 
 ### P1 — `compute_intent_id` panics on bad `stake_commitment` length (`lib.rs:979–984`)
@@ -97,13 +97,13 @@ The `.map_err(JsError::new).unwrap()` panics if the bytes aren't 32 long, becaus
 
 ### P1 — Global runtime registry has no caller isolation (`bindings.rs:22–52`)
 ```rust
-thread_local! { static RUNTIMES: RefCell<Vec<Option<PyanaRuntime>>> = … }
+thread_local! { static RUNTIMES: RefCell<Vec<Option<DreggRuntime>>> = … }
 ```
 `create_runtime` returns a `usize` index; `with_runtime(handle, …)` trusts any handle the JS caller hands in. In a WASM instance shared between several components (e.g. extension background-worker + a visualizer + a test harness in the same page), one caller can pass another caller's handle and read or mutate its world. With `web_accessible_resources` allowing any page to instantiate the WASM, a malicious page that knows the extension uses handle `0` can call into that runtime. (Today this is mitigated by separate instances per page, but it is an architectural footgun.)
-**Fix:** require a per-runtime opaque token, return it as a `#[wasm_bindgen]`-exposed struct (move-only handle) instead of a primitive index, and use a `HashMap<TokenId, PyanaRuntime>` where `TokenId` is a 128-bit random.
+**Fix:** require a per-runtime opaque token, return it as a `#[wasm_bindgen]`-exposed struct (move-only handle) instead of a primitive index, and use a `HashMap<TokenId, DreggRuntime>` where `TokenId` is a 128-bit random.
 
 ### P1 — Deterministic agent privkeys with no warning at the binding (`runtime.rs:131–145`)
-`create_agent` derives the agent's private key as `blake3_derive("pyana-wasm-agent-key", name || index)`. Knowing the agent name and index lets anyone reproduce the privkey. The source comments say "NOT secure for production", but the binding is exposed unchanged in `bindings.rs:208`. Production code or a misconfigured demo could mistakenly use this for real authorization.
+`create_agent` derives the agent's private key as `blake3_derive("dregg-wasm-agent-key", name || index)`. Knowing the agent name and index lets anyone reproduce the privkey. The source comments say "NOT secure for production", but the binding is exposed unchanged in `bindings.rs:208`. Production code or a misconfigured demo could mistakenly use this for real authorization.
 **Fix:** rename the binding to `create_demo_agent` and require a feature flag (`features = ["demo-runtime"]`) for `bindings.rs`. The extension does not appear to call `create_agent`, but nothing prevents page-world JS from doing so.
 
 ### P1 — `verify_conservation_proof` is a stub but returns `valid: true` (`privacy.rs:292–319`)
@@ -160,7 +160,7 @@ On serialization failure the returned `proof_size_bytes` becomes `0` and `proof_
 
 Critical drift (see P0 #3).
 - src/ HEAD-of-tree has 73 `pub fn` items (29 bindings.rs + 24 lib.rs + 20 privacy.rs).
-- pkg/pyana_wasm.d.ts has **43** exported functions, missing the entire stealth/encrypted-intent/bearer/factory/sovereign/proof-composition/facet API.
+- pkg/dregg_wasm.d.ts has **43** exported functions, missing the entire stealth/encrypted-intent/bearer/factory/sovereign/proof-composition/facet API.
 - pkg/ is gitignored; the deployed extension's CI/build script is presumably responsible for regeneration but there is no obvious enforcement.
 - Several functions called by `extension/background.js` (`generate_mnemonic`, `validate_mnemonic`) exist neither in `wasm/pkg/` nor in `wasm/src/` — drift in both directions.
 - `site/demo/pkg/` is even older (May 20) than `wasm/pkg/`.
@@ -171,5 +171,5 @@ Critical drift (see P0 #3).
 2. Is the broadcast mode of `seal_intent_body` intended to be encryption (then P0 #1 is a bug) or just a structured envelope with no confidentiality?
 3. Should the WASM be in `web_accessible_resources` at all? If only the background worker needs it, drop the resource so pages can't pull it.
 4. The extension's `background.js` calls `derive_keypair_from_mnemonic` with 3 args and reads `.public_key` / `.secret_key`; the Rust signature is 2 args returning a flat `Vec<u8>`. Which one is canonical?
-5. Is `PyanaRuntime` (bindings.rs) meant to be background-only or page-exposed for demos? If demo-only, please feature-gate.
+5. Is `DreggRuntime` (bindings.rs) meant to be background-only or page-exposed for demos? If demo-only, please feature-gate.
 6. Add `zeroize` and `ed25519-dalek` (WASM-compatible feature set) to `wasm/Cargo.toml`?

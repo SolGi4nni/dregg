@@ -1,17 +1,17 @@
-//! Shared admin bearer token authentication for pyana apps.
+//! Shared admin bearer token authentication for dregg apps.
 //!
-//! Reads `PYANA_ADMIN_TOKEN` from the environment at startup. Any route guarded
+//! Reads `DREGG_ADMIN_TOKEN` from the environment at startup. Any route guarded
 //! by the [`AdminAuth`] extractor requires an `Authorization: Bearer <token>` header
 //! matching this value.
 //!
-//! If `PYANA_ADMIN_TOKEN` is not set, the behavior depends on the [`AdminMode`]:
+//! If `DREGG_ADMIN_TOKEN` is not set, the behavior depends on the [`AdminMode`]:
 //! - [`AdminMode::Disabled`]: admin endpoints return 503 (production default)
 //! - [`AdminMode::Open`]: admin endpoints are unprotected (devnet/testing)
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::auth::{AdminAuth, AdminToken};
+//! use dregg_app_framework::auth::{AdminAuth, AdminToken};
 //!
 //! async fn protected_handler(_auth: AdminAuth) -> &'static str {
 //!     "admin access granted"
@@ -29,7 +29,7 @@ use std::sync::Arc;
 // AdminToken
 // =============================================================================
 
-/// The admin token configuration, read from `PYANA_ADMIN_TOKEN` at startup.
+/// The admin token configuration, read from `DREGG_ADMIN_TOKEN` at startup.
 ///
 /// Stored in your app state and referenced by the [`AdminAuth`] extractor.
 #[derive(Clone, Debug)]
@@ -38,7 +38,7 @@ pub struct AdminToken {
     mode: AdminMode,
 }
 
-/// What to do when `PYANA_ADMIN_TOKEN` is not configured.
+/// What to do when `DREGG_ADMIN_TOKEN` is not configured.
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum AdminMode {
     /// Admin endpoints return 503 when no token is configured (safe default).
@@ -48,17 +48,17 @@ pub enum AdminMode {
 }
 
 impl AdminToken {
-    /// Read the admin token from `PYANA_ADMIN_TOKEN` environment variable.
+    /// Read the admin token from `DREGG_ADMIN_TOKEN` environment variable.
     ///
     /// Uses [`AdminMode::Disabled`] as the default when the variable is unset.
     pub fn from_env() -> Self {
         Self::from_env_with_mode(AdminMode::Disabled)
     }
 
-    /// Read the admin token from `PYANA_ADMIN_TOKEN` with a specified fallback mode.
+    /// Read the admin token from `DREGG_ADMIN_TOKEN` with a specified fallback mode.
     pub fn from_env_with_mode(mode: AdminMode) -> Self {
         Self {
-            inner: std::env::var("PYANA_ADMIN_TOKEN").ok().map(|s| Arc::new(s)),
+            inner: std::env::var("DREGG_ADMIN_TOKEN").ok().map(|s| Arc::new(s)),
             mode,
         }
     }
@@ -120,7 +120,7 @@ impl AdminToken {
 /// via the [`HasAdminToken`] trait.
 ///
 /// Returns:
-/// - 503 if `PYANA_ADMIN_TOKEN` is not configured and mode is Disabled
+/// - 503 if `DREGG_ADMIN_TOKEN` is not configured and mode is Disabled
 /// - 401 if the `Authorization` header is missing or invalid
 pub struct AdminAuth;
 
@@ -140,7 +140,7 @@ impl IntoResponse for AdminAuthRejection {
         let (status, msg) = match self {
             Self::NotConfigured => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "admin endpoints disabled: PYANA_ADMIN_TOKEN not configured",
+                "admin endpoints disabled: DREGG_ADMIN_TOKEN not configured",
             ),
             Self::MissingHeader => (StatusCode::UNAUTHORIZED, "missing Authorization header"),
             Self::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid admin token"),

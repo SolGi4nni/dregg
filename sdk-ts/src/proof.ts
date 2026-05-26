@@ -1,7 +1,7 @@
 /**
  * STARK proof generation and verification.
  *
- * Wraps the pyana-wasm STARK prover/verifier for Merkle membership claims,
+ * Wraps the dregg-wasm STARK prover/verifier for Merkle membership claims,
  * predicate proofs, committed threshold proofs, garbled circuit comparisons,
  * anonymous membership proofs, and Schnorr signatures.
  */
@@ -27,7 +27,7 @@ import type {
  *
  * @example
  * ```ts
- * import { ProofEngine } from "@pyana/sdk";
+ * import { ProofEngine } from "@dregg/sdk";
  *
  * const engine = new ProofEngine(wasm);
  *
@@ -47,9 +47,9 @@ import type {
  * ```
  */
 export class ProofEngine {
-  private wasm: typeof import("pyana-wasm");
+  private wasm: typeof import("dregg-wasm");
 
-  constructor(wasm: typeof import("pyana-wasm")) {
+  constructor(wasm: typeof import("dregg-wasm")) {
     this.wasm = wasm;
   }
 

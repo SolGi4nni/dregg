@@ -49,12 +49,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{error, info, warn};
 
-use pyana_app_framework::dispute::{
+use dregg_app_framework::dispute::{
     self as dispute_framework, ComputeMetrics, DeliveryClaim, DisputeConfig, DisputeEvidence,
     OptimisticSettlement, SettlementState as OptimisticState,
 };
-use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
-use pyana_app_framework::{CellId, FillConstraints};
+use dregg_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
+use dregg_app_framework::{CellId, FillConstraints};
 
 use crate::auction::compute_order_commitment;
 use crate::orderbook::{
@@ -194,20 +194,20 @@ struct CreateDisputeRequest {
 #[command(name = "compute-exchange")]
 struct Args {
     /// Federation root hash (64 hex chars). If not provided, fetches from the node.
-    #[arg(long, env = "PYANA_FEDERATION_ROOT")]
+    #[arg(long, env = "DREGG_FEDERATION_ROOT")]
     federation_root: Option<String>,
 
-    /// URL of a running pyana-node to fetch the federation root from.
+    /// URL of a running dregg-node to fetch the federation root from.
     /// The app will query /status and /federation/roots on startup.
-    #[arg(long, default_value = "http://127.0.0.1:8420", env = "PYANA_NODE_URL")]
+    #[arg(long, default_value = "http://127.0.0.1:8420", env = "DREGG_NODE_URL")]
     node_url: String,
 
     /// Listen address.
-    #[arg(long, default_value = "127.0.0.1:3040", env = "PYANA_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:3040", env = "DREGG_LISTEN")]
     listen: SocketAddr,
 
     /// Directory for persisting state across restarts. If not set, state is ephemeral.
-    #[arg(long, env = "PYANA_STATE_DIR")]
+    #[arg(long, env = "DREGG_STATE_DIR")]
     state_dir: Option<std::path::PathBuf>,
 }
 
@@ -341,7 +341,7 @@ async fn main() {
                     error!(
                         "cannot reach node at {}: {e}\n\
                          A federation root is required for verification. Either:\n\
-                         - Start a devnet node (pyana-node) at the default address, or\n\
+                         - Start a devnet node (dregg-node) at the default address, or\n\
                          - Pass --node-url pointing to a running node, or\n\
                          - Pass --federation-root explicitly.",
                         args.node_url
@@ -1129,7 +1129,7 @@ fn compute_exchange_dispute_config() -> DisputeConfig {
     DisputeConfig {
         dispute_window_blocks: 100, // ~20 minutes at 12s blocks
         challenger_stake_pct: 10,
-        arbiter_strategy: pyana_app_framework::dispute::ArbiterStrategy::Tiered {
+        arbiter_strategy: dregg_app_framework::dispute::ArbiterStrategy::Tiered {
             cryptographic_deadline_blocks: 200,
             federation_quorum: 3,
             federation_deadline_blocks: 500,
@@ -1647,7 +1647,7 @@ async fn health_check() -> impl IntoResponse {
 /// Verify admin bearer token from the `Authorization` header.
 /// Returns `Err(Response)` with 401 if the token is missing or invalid.
 fn check_admin_auth(headers: &HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let expected_token = std::env::var("PYANA_ADMIN_TOKEN").unwrap_or_default();
+    let expected_token = std::env::var("DREGG_ADMIN_TOKEN").unwrap_or_default();
     if expected_token.is_empty() {
         // No token configured — admin endpoints are unprotected (dev mode).
         return Ok(());

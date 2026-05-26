@@ -16,8 +16,8 @@
 //! - The accept-flag encoding in the `presentation-verified` event.
 //! - Revocation root monotonicity enforcement through the executor.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
-use pyana_cell::{CellProgram, StateConstraint};
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use dregg_cell::{CellProgram, StateConstraint};
 use starbridge_identity::{
     AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest, PresentationOptions,
     REVOCATION_ROOT_SLOT, RevocationRegistry, VerificationOptions, build_issue_credential_action,
@@ -156,7 +156,7 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
         ));
     let presentation = present(
         &credential,
-        &pyana_token::AuthRequest {
+        &dregg_token::AuthRequest {
             action: Some("read".into()),
             app_id: Some("integration-test".into()),
             user_id: Some(
@@ -318,7 +318,7 @@ fn executor_verify_revoked_presentation_emits_reject_event() {
     // Holder presents (doesn't yet know it's revoked).
     let presentation = present(
         &credential,
-        &pyana_token::AuthRequest {
+        &dregg_token::AuthRequest {
             action: Some("read".into()),
             app_id: Some("integration-test".into()),
             user_id: Some(
@@ -377,7 +377,7 @@ fn executor_anonymous_presentation_action_emits_zero_holder_commitment() {
 
     let presentation = present_anonymous(
         &credential,
-        &pyana_token::AuthRequest {
+        &dregg_token::AuthRequest {
             action: Some("read".into()),
             app_id: Some("integration-test".into()),
             user_id: Some(

@@ -40,7 +40,7 @@ use crate::body_membership::MembershipEntry;
 use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_4_to_1;
-use crate::stark::{self, StarkProof};
+use crate::stark::StarkProof;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

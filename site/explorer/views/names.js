@@ -2,8 +2,8 @@
  * Names view — nameservice browser.
  *
  * Anonymous: list/search/sort by prefix, tag, expiry.
- * Click a row → resolve to pyana:// URI + status pill.
- * Embeds <pyana-vizzer data-vizzer="nameservice-registration"> in the detail
+ * Click a row → resolve to dregg:// URI + status pill.
+ * Embeds <dregg-vizzer data-vizzer="nameservice-registration"> in the detail
  * panel; the module is loaded by explorer/index.html and self-registers.
  */
 
@@ -67,7 +67,7 @@ function render() {
     return a.name.localeCompare(b.name);
   });
   if (!rows.length) {
-    root.innerHTML = '<div class="pyana-empty">No names match the current filter.</div>';
+    root.innerHTML = '<div class="dregg-empty">No names match the current filter.</div>';
     return;
   }
   root.innerHTML = `
@@ -82,10 +82,10 @@ function render() {
             return `
               <tr class="ex-table__row" data-row="${i}">
                 <td class="mono">${escapeHtml(n.name)}</td>
-                <td><span class="pyana-pill" data-state="${pillFor(st)}">${st}</span></td>
+                <td><span class="dregg-pill" data-state="${pillFor(st)}">${st}</span></td>
                 <td class="mono">${api.shortHash(n.owner)}</td>
                 <td>${n.expires_at ? api.relativeTime(n.expires_at) : '--'}</td>
-                <td>${(n.tags || []).map(t => `<span class="pyana-pill" data-state="muted">${escapeHtml(t)}</span>`).join(' ')}</td>
+                <td>${(n.tags || []).map(t => `<span class="dregg-pill" data-state="muted">${escapeHtml(t)}</span>`).join(' ')}</td>
                 <td><button class="btn btn-secondary btn-sm" data-action="resolve" data-row="${i}">Resolve</button></td>
               </tr>
             `;
@@ -115,9 +115,9 @@ async function openDetail(row) {
 
   body.innerHTML = `
     <h3>${escapeHtml(row.name)}</h3>
-    <dl class="pyana-kv">
+    <dl class="dregg-kv">
       <dt>URI</dt><dd class="mono">${escapeHtml(resolved.uri || '--')}</dd>
-      <dt>Status</dt><dd><span class="pyana-pill" data-state="${pillFor(st)}">${escapeHtml(st)}</span></dd>
+      <dt>Status</dt><dd><span class="dregg-pill" data-state="${pillFor(st)}">${escapeHtml(st)}</span></dd>
       <dt>Owner</dt><dd class="mono">${escapeHtml(resolved.owner || '--')}</dd>
       <dt>Registered</dt><dd>${resolved.registered_at ? api.formatTime(resolved.registered_at) : '--'}</dd>
       <dt>Expires</dt><dd>${resolved.expires_at ? api.formatTime(resolved.expires_at) : '--'}</dd>
@@ -125,16 +125,16 @@ async function openDetail(row) {
     </dl>
 
     <h4>Registration lifecycle</h4>
-    <pyana-vizzer data-vizzer="nameservice-registration"
+    <dregg-vizzer data-vizzer="nameservice-registration"
                   data-name="${escapeAttr(row.name)}"
                   data-status="${escapeAttr(st)}">
       <div class="vizzer-fallback">
         register → resolve → renew → expire timeline for "${escapeHtml(row.name)}".
       </div>
-    </pyana-vizzer>
+    </dregg-vizzer>
   `;
-  if (window.pyana?.mount) {
-    try { window.pyana.mount(body); } catch (e) { console.warn('[names] mount failed', e); }
+  if (window.dregg?.mount) {
+    try { window.dregg.mount(body); } catch (e) { console.warn('[names] mount failed', e); }
   }
 }
 
@@ -170,11 +170,11 @@ function debounce(fn, ms) {
 function mockNames() {
   const now = Math.floor(Date.now() / 1000);
   return [
-    { name: 'alice.pyana',      owner: 'aa11bb22cc33dd44ee55ff6677889900', uri: 'pyana://alice', registered_at: now - 86400 * 30, expires_at: now + 86400 * 30,  tags: ['user'] },
-    { name: 'gallery.app',      owner: 'bbcc11223344556677889900aabbccdd', uri: 'pyana://gallery', registered_at: now - 86400 * 90, expires_at: now + 86400 * 100, tags: ['app', 'production'] },
-    { name: 'devnet.federation',owner: '11223344556677889900aabbccddeeff', uri: 'pyana://federation/devnet', registered_at: now - 86400 * 365, expires_at: now + 86400 * 365, tags: ['federation'] },
-    { name: 'old.example',      owner: '99887766554433221100ffeeddccbbaa', uri: 'pyana://example/old',       registered_at: now - 86400 * 400, expires_at: now - 86400 * 5,   tags: ['user'] },
-    { name: 'dispute.test',     owner: 'ddeeff001122334455667788aabbccdd', uri: 'pyana://test/dispute',      registered_at: now - 86400 * 10,  expires_at: now + 86400 * 100, tags: ['user'], disputed: true },
-    { name: 'renewal.example',  owner: 'cafe1234deadbeef0011223344556677', uri: 'pyana://example/renewal',   registered_at: now - 86400 * 60,  expires_at: now + 86400 * 3,   tags: ['user'] },
+    { name: 'alice.dregg',      owner: 'aa11bb22cc33dd44ee55ff6677889900', uri: 'dregg://alice', registered_at: now - 86400 * 30, expires_at: now + 86400 * 30,  tags: ['user'] },
+    { name: 'gallery.app',      owner: 'bbcc11223344556677889900aabbccdd', uri: 'dregg://gallery', registered_at: now - 86400 * 90, expires_at: now + 86400 * 100, tags: ['app', 'production'] },
+    { name: 'devnet.federation',owner: '11223344556677889900aabbccddeeff', uri: 'dregg://federation/devnet', registered_at: now - 86400 * 365, expires_at: now + 86400 * 365, tags: ['federation'] },
+    { name: 'old.example',      owner: '99887766554433221100ffeeddccbbaa', uri: 'dregg://example/old',       registered_at: now - 86400 * 400, expires_at: now - 86400 * 5,   tags: ['user'] },
+    { name: 'dispute.test',     owner: 'ddeeff001122334455667788aabbccdd', uri: 'dregg://test/dispute',      registered_at: now - 86400 * 10,  expires_at: now + 86400 * 100, tags: ['user'], disputed: true },
+    { name: 'renewal.example',  owner: 'cafe1234deadbeef0011223344556677', uri: 'dregg://example/renewal',   registered_at: now - 86400 * 60,  expires_at: now + 86400 * 3,   tags: ['user'] },
   ];
 }

@@ -1,6 +1,6 @@
-//! Pyana End-to-End Demo: Token -> ZK Proof -> Turn Execution
+//! Dregg End-to-End Demo: Token -> ZK Proof -> Turn Execution
 //!
-//! Demonstrates the full integration between the two halves of the pyana system:
+//! Demonstrates the full integration between the two halves of the dregg system:
 //!
 //! **System A (execution):** cell -> turn -> coord (Mina-style call forests with capabilities)
 //! **System B (presentation):** macaroon -> token -> commit -> trace -> circuit -> bridge (ZK token proof pipeline)
@@ -16,14 +16,14 @@
 //! 8. The executor verifies the STARK proof and executes the turn
 //! 9. Results are printed showing the full flow worked
 
-use pyana_bridge::StarkProofVerifier;
-use pyana_bridge::present::{bytes_to_babybear, hash_index};
-use pyana_cell::{AuthRequired, CellId, Ledger, Permissions, VerificationKey, cell::Cell};
-use pyana_circuit::BabyBear;
-use pyana_circuit::merkle_air::MerkleAir;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_bridge::StarkProofVerifier;
+use dregg_bridge::present::{bytes_to_babybear, hash_index};
+use dregg_cell::{AuthRequired, CellId, Ledger, Permissions, VerificationKey, cell::Cell};
+use dregg_circuit::BabyBear;
+use dregg_circuit::merkle_air::MerkleAir;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -43,18 +43,18 @@ fn short_id(id: &CellId) -> String {
 }
 
 fn agent_key(name: &str) -> [u8; 32] {
-    *blake3::hash(format!("pyana-e2e-demo:{name}").as_bytes()).as_bytes()
+    *blake3::hash(format!("dregg-e2e-demo:{name}").as_bytes()).as_bytes()
 }
 
 fn demo_token_id() -> [u8; 32] {
-    *blake3::hash(b"pyana-e2e-demo:token-domain").as_bytes()
+    *blake3::hash(b"dregg-e2e-demo:token-domain").as_bytes()
 }
 
 /// Compute the BabyBear federation root that the synthetic Poseidon2 Merkle path
 /// produces for a given issuer key. This matches what `BridgePresentationBuilder::build_issuer_membership_poseidon2`
 /// computes internally.
 fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::compute_parent_poseidon2;
+    use dregg_circuit::merkle_air::compute_parent_poseidon2;
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -85,7 +85,7 @@ fn item(msg: &str) {
 fn main() {
     println!();
     println!("  {}", "=".repeat(60));
-    println!("  PYANA END-TO-END DEMO");
+    println!("  DREGG END-TO-END DEMO");
     println!("  Token -> ZK Proof -> Turn Execution");
     println!("  {}", "=".repeat(60));
 
@@ -102,7 +102,7 @@ fn main() {
 
     // Compute the federation root for the STARK path (algebraic binding).
     // This uses MerkleStarkAir: parent = current + sib0 + sib1 + sib2 + position
-    use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+    use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
     let leaf_hash_bb = bytes_to_babybear(&issuer_key);
     let stark_siblings: Vec<[u32; 3]> = (0..4u32)
@@ -143,9 +143,9 @@ fn main() {
 
     section(2, total_steps, "Minting root macaroon token");
 
-    let root_token = MacaroonToken::mint(issuer_key, b"demo-kid-001", "pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"demo-kid-001", "dregg.dev");
     item("Root token minted (unrestricted, full access)");
-    item(&format!("  Location: pyana.dev"));
+    item(&format!("  Location: dregg.dev"));
     item(&format!("  Key ID: demo-kid-001"));
 
     // ─── Step 3: Attenuate the token ────────────────────────────────────────

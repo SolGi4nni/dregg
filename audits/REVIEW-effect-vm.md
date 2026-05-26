@@ -1,4 +1,4 @@
-# Pyana Effect VM — Protocol Review
+# `dregg` Effect VM — Protocol Review
 
 **Verdict:** INCOHERENT (resolvable; the abstract spec is *near* coherent but the runtime/AIR seam destroys the headline guarantees).
 
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-The Effect VM advertises itself as the o1vm-equivalent for pyana: a single STARK that proves an arbitrary sequence of 24 effects took the cell from `old_commitment` to `new_commitment`, with a conservation tag (`net_delta`), an effect-sequence commitment (`effects_hash`), and a slot for `MAX_CUSTOM_EFFECTS = 4` external program proofs. The trace is `selector[24] | state_before[14] | params[8] | state_after[14] | aux[11]`, one row per effect, padded with `NoOp`. Constraints are gated by selector. Continuity, commitment-tree binding, and a single boolean sign bit on `net_delta` are the only structural invariants; balance limb ranges and underflow are explicitly outsourced to the executor. That is a defensible STARK design at the AIR layer in isolation.
+The Effect VM advertises itself as the o1vm-equivalent for dregg: a single STARK that proves an arbitrary sequence of 24 effects took the cell from `old_commitment` to `new_commitment`, with a conservation tag (`net_delta`), an effect-sequence commitment (`effects_hash`), and a slot for `MAX_CUSTOM_EFFECTS = 4` external program proofs. The trace is `selector[24] | state_before[14] | params[8] | state_after[14] | aux[11]`, one row per effect, padded with `NoOp`. Constraints are gated by selector. Continuity, commitment-tree binding, and a single boolean sign bit on `net_delta` are the only structural invariants; balance limb ranges and underflow are explicitly outsourced to the executor. That is a defensible STARK design at the AIR layer in isolation.
 
 The protocol fractures at three seams.
 
@@ -130,7 +130,7 @@ Key observations:
 
 | Item | Catalog says | Code says | Verdict |
 |------|--------------|-----------|---------|
-| Effect-set size | "18-type instruction set" (line 14) | 24 variants (effect_vm.rs:107, line 19 of PYANA_DESIGN.md) | Code is correct; catalog is stale. |
+| Effect-set size | "18-type instruction set" (line 14) | 24 variants (effect_vm.rs:107, line 19 of DREGG_DESIGN.md) | Code is correct; catalog is stale. |
 | `state_commitment` is a Poseidon2 hash of cell state | "Poseidon2 tree hash of full state" (line 26-27) | A single 31-bit BabyBear element; tree includes `bal_lo, bal_hi, nonce, field[0..7], cap_root, ZERO`. **Excludes `reserved`** (sealed_field_mask + mode_flag). | Catalog is misleading; `reserved` not committed. |
 | Custom-effect external proof binding | "BINDING: nullifier in proof must match the Effect VM's param[0] for NoteSpend rows" (line 338) | Effect VM provides only `effects_hash` containing the nullifier; *no constraint* that an external NoteSpendingAir proof shares the same nullifier as a NoteSpend row. | Catalog overstates binding; executor must check. |
 | FullTurnProof cross-proof bindings | "auth.state_root == effect_vm.old_commitment" (line 470) | The trustless path verifies the Effect VM against `commitment_to_babybear(stored_commitment)` only; there is no FullTurnProof verifier in `turn/src/executor.rs` that checks `auth.state_root == effect_vm.old_commitment`. The bindings are described but I cannot find the enforcing code. | Spec describes intent; enforcement seems absent in `verify_and_commit_proof`. |

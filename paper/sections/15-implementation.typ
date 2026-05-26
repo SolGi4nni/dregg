@@ -37,12 +37,12 @@ The system is implemented in approximately 400k lines of Rust across $tilde$45 w
     [`intent`], [Intent engine, `MatchSpec`, `trustless` 7-layer protocol (consumes real `federation::threshold_decrypt::combine_shares`), bond escrow, delay pool, gossip], [token, commit, federation],
     [`net`], [QUIC P2P, topic gossip, Plumtree, Dandelion++], [quinn],
     [`chain`], [EVM on-chain verification via SP1/Groth16, `EvmCredentialProof`], [sp1-sdk],
-    [`pyana-dsl`], [Constraint DSL proc macros (multi-backend: AIR, Kimchi, Plonky3, ZKIR, SP1, Rust evaluator)], [syn, quote],
-    [`pyana-dsl-runtime`], [DSL runtime: composition, verification, `WitnessedPredicateRegistry`], [circuit],
-    [`pyana-dsl-tests`], [DSL integration tests and examples], [pyana-dsl],
-    [`app-framework`], [Shared framework for Pyana applications: `EmbeddedExecutor`, `StarbridgeAppContext`, `AppCipherclerk` consumer], [sdk, node],
+    [`dregg-dsl`], [Constraint DSL proc macros (multi-backend: AIR, Kimchi, Plonky3, ZKIR, SP1, Rust evaluator)], [syn, quote],
+    [`dregg-dsl-runtime`], [DSL runtime: composition, verification, `WitnessedPredicateRegistry`], [circuit],
+    [`dregg-dsl-tests`], [DSL integration tests and examples], [dregg-dsl],
+    [`app-framework`], [Shared framework for Dregg applications: `EmbeddedExecutor`, `StarbridgeAppContext`, `AppCipherclerk` consumer], [sdk, node],
     [`discharge-gateway`], [Third-party caveat discharge service], [token, wire],
-    [`verifier`], [Standalone `pyana-verifier` binary: per-cell STARK verify, `bilateral-pair` ($gamma$.2 cross-cell), `replay-chain` ($"WitnessedReceipt"$ chain), `verify-bundle` (scope-2)], [circuit, turn],
+    [`verifier`], [Standalone `dregg-verifier` binary: per-cell STARK verify, `bilateral-pair` ($gamma$.2 cross-cell), `replay-chain` ($"WitnessedReceipt"$ chain), `verify-bundle` (scope-2)], [circuit, turn],
     [`teasting`], [Test assertions and property-based helpers], [proptest],
     [`preflight`], [Pre-deployment checks (routing, intents, solver, privacy)], [all],
     [`demo`], [End-to-end demo harness], [all],
@@ -75,7 +75,7 @@ pub struct AppCipherclerk {
 - No `[0u8; 64]` stub signatures (the cclerk always holds a real signing key).
 - No app-specific cclerk wrappers (`createFromFactory` is the universal cell-construction verb).
 
-In the in-browser Studio runtime (`wasm/src/runtime.rs`), the *browser is the host executor*. Anything cleartext-inside the host executor is cleartext-inside the browser process. The browser is *not* the federation: a wasm node does not hold BLS shares and cannot produce `ThresholdQC`s. `pyana_federation` does not cross-compile to wasm32; federation operations are remote-only. Browser-to-browser sealing and browser-as-prover both work.
+In the in-browser Studio runtime (`wasm/src/runtime.rs`), the *browser is the host executor*. Anything cleartext-inside the host executor is cleartext-inside the browser process. The browser is *not* the federation: a wasm node does not hold BLS shares and cannot produce `ThresholdQC`s. `dregg_federation` does not cross-compile to wasm32; federation operations are remote-only. Browser-to-browser sealing and browser-as-prover both work.
 
 == Production Apps
 
@@ -164,9 +164,9 @@ Per the security audits (May 2026), critical findings have been addressed:
 - $gamma$.2 Phase 2 joint aggregation AIR: PI-only Phase 1 closes the cross-cell binding gap for off-AIR verification; Phase 2 lifts the match-loop inside an AIR.
 - Recursive aggregation: lift `plonky3_recursion_impl` past the `P3MerklePoseidon2Air` placeholder (Lane Golden-Edge Block 1), or commit to Kimchi/Pickles as the production-grade outer recursive layer.
 
-== Command-Line Interface (`pyana`)
+== Command-Line Interface (`dregg`)
 
-The `pyana` CLI provides full-citizen access to all runtime operations:
+The `dregg` CLI provides full-citizen access to all runtime operations:
 
 #figure(
   table(
@@ -189,7 +189,7 @@ The `pyana` CLI provides full-citizen access to all runtime operations:
   caption: [CLI subcommands. The `register-federation` subcommand is the operator's entry point for trust-root management.],
 )
 
-The standalone `pyana-verifier` binary (separate from `pyana`) provides:
+The standalone `dregg-verifier` binary (separate from `dregg`) provides:
 
 - `verify <receipt>`: per-cell STARK verification against PI.
 - `bilateral-pair <receipt_a> <receipt_b>`: $gamma$.2 cross-cell consistency check using canonical `transfer_id`/`grant_id`/`intro_id` recomputation.

@@ -1,4 +1,4 @@
-# pyana-sdk + pyana-app-framework + starbridge-apps: Rust API Ergonomics Audit
+# dregg-sdk + dregg-app-framework + starbridge-apps: Rust API Ergonomics Audit
 
 **Date:** 2026-05-25
 **Auditor:** Sonnet 4.6 (read-only lane; no cargo, no persvati, no worktree isolation)
@@ -17,29 +17,29 @@
 ### #1 — `CellProgram::Cases` types not re-exported from the framework
 
 `app-framework/src/lib.rs:171–175` re-exports `CellProgram`, `ChildVkStrategy`, `FactoryDescriptor`,
-and friends from `pyana_cell` — but omits the types needed to *build* a non-trivial `CellProgram`:
+and friends from `dregg_cell` — but omits the types needed to *build* a non-trivial `CellProgram`:
 
 ```rust
 // starbridge-apps/identity/src/lib.rs:78
-use pyana_cell::program::AuthorizedSet;
+use dregg_cell::program::AuthorizedSet;
 
 // starbridge-apps/nameservice/src/lib.rs:86-87
-use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
-use pyana_cell::program::AuthorizedSet;
+use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+use dregg_cell::program::AuthorizedSet;
 
 // starbridge-apps/governed-namespace/src/lib.rs:168 (similar)
 ```
 
 Every app that writes an operation-scoped `CellProgram::Cases(vec![TransitionCase { ... }])` must add
-`pyana-cell` to its own `Cargo.toml` and import from `pyana_cell::program` and `pyana_cell::predicate`
-directly. The promise "everything via `pyana_app_framework`" is broken at the first non-trivial cell
+`dregg-cell` to its own `Cargo.toml` and import from `dregg_cell::program` and `dregg_cell::predicate`
+directly. The promise "everything via `dregg_app_framework`" is broken at the first non-trivial cell
 program. Missing from the re-export: `TransitionCase`, `TransitionGuard`, `AuthorizedSet`,
 `WitnessedPredicate`, `WitnessedPredicateKind`, `InputRef`.
 
 **Fix:** `app-framework/src/lib.rs` — add two lines after line 175:
 ```rust
-pub use pyana_cell::program::{AuthorizedSet, TransitionCase, TransitionGuard};
-pub use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+pub use dregg_cell::program::{AuthorizedSet, TransitionCase, TransitionGuard};
+pub use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
 ```
 
 ### #2 — Field-encoding helpers copy-pasted into every app
@@ -60,7 +60,7 @@ integration tests can call them; the others mark them `fn` (private), deepening 
 
 `app-framework/src/hex.rs` already exists (for short hex display) but does not expose these.
 
-**Fix:** Add `pyana_app_framework::field_from_bytes`, `field_from_u64`, `hex_encode_32` in
+**Fix:** Add `dregg_app_framework::field_from_bytes`, `field_from_u64`, `hex_encode_32` in
 `app-framework/src/fields.rs` (~15 lines) and re-export from `lib.rs`. Remove all 12 per-app copies.
 
 ### #3 — `FactoryDescriptor` struct requires the same VK value in two fields simultaneously
@@ -86,7 +86,7 @@ shows drift: it uses a byte-string placeholder `*b"starbridge-governed-namespace
 `GOVERNANCE_CHILD_PROGRAM_VK` while others compute it canonically.
 
 **Fix:** `FactoryDescriptor::with_fixed_program_vk(factory_vk, program_vk, ...)` constructor in
-`pyana-cell`. The `child_vk_strategy` would be derived as `Fixed(program_vk)`. 8-field struct literal
+`dregg-cell`. The `child_vk_strategy` would be derived as `Fixed(program_vk)`. 8-field struct literal
 becomes a 6-argument call.
 
 ### #4 — `ExecutorSubmitError` erases the underlying error type entirely
@@ -185,7 +185,7 @@ Each app that computes a canonical VK writes three tests: `vk_is_canonical_recip
 `vk_is_not_placeholder_bytes`, `vk_is_v2_layered_hash`. These test the framework's VK derivation,
 not the app's logic.
 
-**Extract to:** `pyana_app_framework::vk::assert_canonical_vk(vk, program, desc)` test helper.
+**Extract to:** `dregg_app_framework::vk::assert_canonical_vk(vk, program, desc)` test helper.
 
 ### Pattern E — untyped `serde_json::json!({...})` inspector descriptors — 4+ copies
 
@@ -220,14 +220,14 @@ in typed SDK errors is wasted. App tests must `contains()`-match; handlers canno
 of `SdkError`. An app mixing persistence with turn submission must box both or define a custom error
 enum. There is no natural composition path.
 
-### Missing: `TurnError` not re-exported from `pyana_app_framework`
+### Missing: `TurnError` not re-exported from `dregg_app_framework`
 
-`TurnError` is re-exported from `pyana_sdk` but not from `pyana_app_framework`. An app importing
-only the framework cannot pattern-match `SdkError::Turn(TurnError::...)` without adding `pyana-sdk`
+`TurnError` is re-exported from `dregg_sdk` but not from `dregg_app_framework`. An app importing
+only the framework cannot pattern-match `SdkError::Turn(TurnError::...)` without adding `dregg-sdk`
 to `Cargo.toml`. Currently academic (error erasure in `ExecutorSubmitError` makes it moot), but it
 blocks the natural fix once `ExecutorSubmitKind` variants are added.
 
-### Missing: `CredentialError` umbrella in `pyana-credentials`
+### Missing: `CredentialError` umbrella in `dregg-credentials`
 
 Three distinct error enums (`IssuanceError`, `PresentationError`, `VerificationError`) from three
 submodules. A handler that sequences issue → verify must box or erase both:
@@ -278,7 +278,7 @@ produces unbound proofs silently.
 ### D5 — `ChildVkStrategy` variants undocumented for app authors
 
 `ChildVkStrategy::Fixed` vs `ChildVkStrategy::Deterministic` — every app uses `Fixed`. When to use
-`Deterministic` is explained only in `pyana_cell`, not at the framework re-export location. App
+`Deterministic` is explained only in `dregg_cell`, not at the framework re-export location. App
 authors see an opaque import with one obvious variant and one mysterious one.
 
 ### D6 — `StarbridgeAppContext` does not cross-reference `AppServer::with_starbridge`
@@ -289,7 +289,7 @@ from the context to the HTTP wiring step. The `AppServer` example shows the wiri
 
 ### D7 — `Turn` struct's 19 fields have no "you care about these" marker
 
-`pyana_turn::Turn` — 19 fields, 12 with `#[serde(default)]`. A developer introspecting a
+`dregg_turn::Turn` — 19 fields, 12 with `#[serde(default)]`. A developer introspecting a
 `TurnReceipt` or building a custom `Turn` confronts all 19. The `make_turn` helpers hide this, but
 only if the developer finds them. No builder typestate or field grouping comments orient the reader.
 
@@ -299,15 +299,15 @@ only if the developer finds them. No builder typestate or field grouping comment
 
 **Goal:** `starbridge-badge` — create badge cells, issue badges, let holders present them.
 
-**Step 1: Add `pyana_app_framework` to Cargo.toml.** Straightforward; the crate re-exports
+**Step 1: Add `dregg_app_framework` to Cargo.toml.** Straightforward; the crate re-exports
 everything at the root. ✓
 
 **Step 2: Define slot layout constants.** Easy; follows the nameservice pattern. ✓
 
 **Step 3: Define a `CellProgram` with per-operation cases.**
 I want `CellProgram::Cases(vec![TransitionCase { guard: TransitionGuard::MethodIs("issue_badge"), ... }])`.
-I try to import `TransitionCase` from `pyana_app_framework`. Not found. I grep across the workspace:
-`use pyana_cell::program::{CellProgram, TransitionCase, TransitionGuard}`. I add `pyana-cell` to my
+I try to import `TransitionCase` from `dregg_app_framework`. Not found. I grep across the workspace:
+`use dregg_cell::program::{CellProgram, TransitionCase, TransitionGuard}`. I add `dregg-cell` to my
 `Cargo.toml`. **[Friction #1 — first real obstacle]**
 
 **Step 4: Define field-encoding helpers.**
@@ -349,7 +349,7 @@ AppServer::new(AppConfig::from_env())
 ```
 Best part of the experience. Fluent builder works well. ✓
 
-**Summary:** Happy path (straight-line submission) is smooth. The `pyana_cell::program` detour is
+**Summary:** Happy path (straight-line submission) is smooth. The `dregg_cell::program` detour is
 the first real wall. Field-helper duplication is tedious. Error erasure in `ExecutorSubmitError` is
 the worst production-quality gap.
 
@@ -361,15 +361,15 @@ Ranked by impact-per-line-changed.
 
 | # | Change | File | LoC | Impact |
 |---|--------|------|-----|--------|
-| 1 | Re-export `TransitionCase`, `TransitionGuard`, `AuthorizedSet`, `WitnessedPredicate`, `WitnessedPredicateKind`, `InputRef` from framework | `app-framework/src/lib.rs` | 2 | Closes the "everything via pyana_app_framework" promise; removes mandatory `pyana-cell` dep from all apps |
+| 1 | Re-export `TransitionCase`, `TransitionGuard`, `AuthorizedSet`, `WitnessedPredicate`, `WitnessedPredicateKind`, `InputRef` from framework | `app-framework/src/lib.rs` | 2 | Closes the "everything via dregg_app_framework" promise; removes mandatory `dregg-cell` dep from all apps |
 | 2 | Add `field_from_bytes`, `field_from_u64`, `hex_encode_32` to framework | `app-framework/src/fields.rs` + `lib.rs` | ~15 | Eliminates 12 per-app copies; prevents silent encoding drift in cross-app field elements |
 | 3 | Add `#[must_use]` to 7 execution-path functions | `sdk/src/cipherclerk.rs`, `sdk/src/runtime.rs`, `app-framework/src/cipherclerk.rs` | 7 attrs | Compiler errors on "action built but never submitted" class of bugs |
 | 4 | Add `AppCipherclerk::test_fixture(seed: u8)` under `cfg(any(test, feature = "dev"))` | `app-framework/src/cipherclerk.rs` | ~8 | Eliminates 8 near-identical fixture functions across the codebase |
 | 5 | Add `ExecutorSubmitKind` enum + `kind()` accessor on `ExecutorSubmitError` | `app-framework/src/cipherclerk.rs` | ~30 | Unblocks precise HTTP status mapping and removes substring-match test pattern |
-| 6 | Add `FactoryDescriptor::with_fixed_program_vk(...)` constructor | `pyana-cell` | ~20 | Eliminates `child_vk_strategy` duplication; prevents silent divergence |
+| 6 | Add `FactoryDescriptor::with_fixed_program_vk(...)` constructor | `dregg-cell` | ~20 | Eliminates `child_vk_strategy` duplication; prevents silent divergence |
 | 7 | Deprecate (`#[deprecated]`) the `cclerk` module aliases | `sdk/src/lib.rs:112–116`, `app-framework/src/lib.rs:72–79` | ~4 | Clears invisible API surface from autocomplete; currently `#[doc(hidden)]` but not deprecated |
-| 8 | Add `CredentialError` umbrella in `pyana-credentials` | `credentials/src/lib.rs` | ~25 | Single error type for multi-step credential flows; unblocks credential-API adoption |
-| 9 | Add `TurnError` re-export from `pyana_app_framework` | `app-framework/src/lib.rs` | 1 | Prerequisite for structured `ExecutorSubmitKind` matching without adding `pyana-sdk` dep |
+| 8 | Add `CredentialError` umbrella in `dregg-credentials` | `credentials/src/lib.rs` | ~25 | Single error type for multi-step credential flows; unblocks credential-API adoption |
+| 9 | Add `TurnError` re-export from `dregg_app_framework` | `app-framework/src/lib.rs` | 1 | Prerequisite for structured `ExecutorSubmitKind` matching without adding `dregg-sdk` dep |
 | 10 | Add "starbridge-app quick start" doc section to `app-framework/src/lib.rs` | `app-framework/src/lib.rs` | ~20 doc lines | Orients new developers to the `AppCipherclerk` → `EmbeddedExecutor` → `AppServer` flow; current Quick Start in `sdk` shows the token-management path, not the app-authoring path |
 
 ---
@@ -405,7 +405,7 @@ right fix before the first external app ships.
 
 ### SDK Readiness: substrate, not ready
 
-The happy path works and is well-documented. But the `pyana_cell::program` leakage, the field-helper
+The happy path works and is well-documented. But the `dregg_cell::program` leakage, the field-helper
 duplication, the `test_cipherclerk()` copy-paste pattern, and especially the error erasure in
 `ExecutorSubmitError` all signal a surface designed for current team members who know the internals.
 An external developer picking this up fresh hits a real obstacle by step 3 and an invisible production

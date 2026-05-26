@@ -62,7 +62,7 @@
   "composition_story_steps": [
     "step1: alice creates identity-issuer cell + issues verified-developer-v1 credential to bob",
     "step2: bob registers bob.dev in nameservice attested tier (witness predicate = credential set commitment)",
-    "step3: bob mounts pyana://bob.dev under governed-namespace (resolve target = nameservice hash)",
+    "step3: bob mounts dregg://bob.dev under governed-namespace (resolve target = nameservice hash)",
     "step4: carol posts bounty + creates subscription cell + grants bob consumer + grants own bounty cell publisher",
     "step5: dan claims bounty (Posted -> Claimed publish)",
     "step6: dan fulfills bounty (Claimed -> Fulfilled publish)",

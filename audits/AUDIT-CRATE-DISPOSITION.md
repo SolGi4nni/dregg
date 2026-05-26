@@ -1,6 +1,6 @@
 # AUDIT-CRATE-DISPOSITION.md
 
-Read-only assessment of the `audit/` workspace member (`pyana-audit`),
+Read-only assessment of the `audit/` workspace member (`dregg-audit`),
 following up on `BACKWATER-CRATES-AUDIT.md` which flagged the crate as
 dormant-but-well-formed. The designer needs to decide: revive it as a
 load-bearing component, delete it, or merge its contents into a sister
@@ -19,12 +19,12 @@ recommended verdict.
 
 ```toml
 [package]
-name = "pyana-audit"
+name = "dregg-audit"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pyana-commit = { path = "../commit" }
+dregg-commit = { path = "../commit" }
 blake3       = "1"
 serde        = { version = "1", features = ["derive"] }
 ```
@@ -36,7 +36,7 @@ on `commit` (for `hash_leaf`, `hash_node`, `empty_hash_at_depth`,
 
 ### Stated purpose (from `lib.rs` doc comment)
 
-> `pyana-audit`: Verifiable token audit trail for the pyana ZK token
+> `dregg-audit`: Verifiable token audit trail for the dregg ZK token
 > system. … privacy-preserving audit trail that proves token usage
 > history without revealing the full history to the auditor.
 
@@ -70,7 +70,7 @@ Re-exports at crate root: `BudgetEnforcer`, `BudgetExhausted`,
 
 ### Key implementation notes
 
-- **4-ary Merkle tree** with depth 12 (matches `pyana-commit::hash`
+- **4-ary Merkle tree** with depth 12 (matches `dregg-commit::hash`
   constants `HASH_ARITY = 4`, and `empty_hash_at_depth` precomputes the
   empty-subtree hashes).
 - **Incremental append**: `AuditLog::append` recomputes only the
@@ -118,7 +118,7 @@ no concepts.
 | **Hot-path check**    | `can_use(now)` against an in-memory log count             | `try_debit(silo, amount, digest)` against a local slice   |
 | **Coordination**      | None (single-writer enforcer)                             | Periodic rebalance with Ed25519-signed `SpendingCertificate`s |
 | **Abort recovery**    | N/A                                                       | `FastUnlockManager` with `UnlockVote` / `UnlockCertificate` quorum |
-| **Underlying state**  | 4-ary Merkle log (`pyana_commit::hash`)                   | `HashMap<SiloId, BudgetSlice { ceiling, spent, debits }>` |
+| **Underlying state**  | 4-ary Merkle log (`dregg_commit::hash`)                   | `HashMap<SiloId, BudgetSlice { ceiling, spent, debits }>` |
 | **Audit story**       | First-class: every debit produces an `AuditReceipt` with inclusion proof | None; spending certificates are only inputs to rebalance |
 | **Proof artifacts**   | `BudgetProof`, `CountProof`, `ConsistencyProof`, `RangeProof`, `LastUseProof` | `SpendingCertificate`, `UnlockCertificate` (purpose: liveness/safety, not third-party audit) |
 | **Byzantine model**   | Single trusted writer; the proofs defend against a *lying enforcer* to a *third-party auditor* | f-of-3f+1 silos may be Byzantine; protocol bounds maximum overspend |
@@ -132,13 +132,13 @@ Almost only the name `BudgetSpec`. And even there, the *type* is
 different:
 
 - `audit::budget::BudgetSpec { limit: u64, window: Option<Duration> }`
-- `pyana_token::traits::BudgetSpec { … }` (used by `token`, `apps/*`,
+- `dregg_token::traits::BudgetSpec { … }` (used by `token`, `apps/*`,
   `demo-agent` — *not* by `coord`)
 - `coord::budget` has no `BudgetSpec` at all; it has `BudgetSlice`,
   `BudgetCoordinator`, `BudgetVersion`, `ResourceAmount`.
 
 So there are actually *three* "budget" namespaces in the tree
-(`audit::budget`, `coord::budget`, `pyana_token::traits`), and they
+(`audit::budget`, `coord::budget`, `dregg_token::traits`), and they
 slice the problem at different layers:
 
 - **`token::traits::BudgetSpec`** — declarative policy stated in a
@@ -165,52 +165,52 @@ operational semantics are unrelated:
 
 Merging them would conflate "what did this token do" with "how much of
 my balance has each replica burned" — these are independently useful
-abstractions. If anything, the `pyana_token::traits::BudgetSpec` should
+abstractions. If anything, the `dregg_token::traits::BudgetSpec` should
 be the *one* `BudgetSpec` shared by both: the token says "limit 5 per
 hour" (token traits), the verifier enforces it and proves it
 (audit::budget), the coordinator allocates the agent's resource pool
 across silos (coord::budget).
 
 The duplication that *does* exist is between `audit::budget::BudgetSpec`
-and `pyana_token::traits::BudgetSpec`. That's a different cleanup.
+and `dregg_token::traits::BudgetSpec`. That's a different cleanup.
 
 ---
 
 ## §3 — Reverse-dep check
 
-`grep -rn "pyana-audit\|pyana_audit" --include="*.toml" --include="*.rs"`
+`grep -rn "dregg-audit\|dregg_audit" --include="*.toml" --include="*.rs"`
 turns up exactly these consumers across the workspace:
 
 **Cargo manifests:**
 
 - `audit/Cargo.toml` — the crate itself.
-- `store/Cargo.toml` — `pyana-audit = { path = "../audit", optional = true }`,
+- `store/Cargo.toml` — `dregg-audit = { path = "../audit", optional = true }`,
   gated behind the `audit-bridge` feature.
 
 **Source files (excluding `audit/` itself):**
 
 - `store/src/audit.rs` — defines `StoredAuditEvent` (a postcard-
-  serializable mirror of `pyana_audit::event::UsageEvent`) and an
+  serializable mirror of `dregg_audit::event::UsageEvent`) and an
   `AuditBridge` with two methods: `persist_audit_log_range(&log,
   from, to)` and `persist_audit_log(&log)`. Both copy from the
   in-memory `AuditLog` into redb storage.
 - `store/src/lib.rs` — one doc-comment reference.
-- `tests/src/budget.rs` — imports `pyana_audit::proofs::*` and
-  `pyana_audit::{AuditLog, BudgetEnforcer, BudgetExhausted,
+- `tests/src/budget.rs` — imports `dregg_audit::proofs::*` and
+  `dregg_audit::{AuditLog, BudgetEnforcer, BudgetExhausted,
   BudgetSpec, LogSnapshot, UsageEvent}`.
 
 **Critical: `tests/src/budget.rs` is broken at the workspace level.**
-`tests/Cargo.toml` does NOT list `pyana-audit` as a dependency:
+`tests/Cargo.toml` does NOT list `dregg-audit` as a dependency:
 
 ```toml
 [dependencies]
-pyana-circuit = { path = "../circuit" }
-pyana-turn    = { path = "../turn" }
-pyana-cell    = { path = "../cell" }
-pyana-sdk     = { path = "../sdk" }
-pyana-types   = { path = "../types" }
-pyana-bridge  = { path = "../bridge" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
+dregg-circuit = { path = "../circuit" }
+dregg-turn    = { path = "../turn" }
+dregg-cell    = { path = "../cell" }
+dregg-sdk     = { path = "../sdk" }
+dregg-types   = { path = "../types" }
+dregg-bridge  = { path = "../bridge" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 token         = { path = "../token", ... }
 blake3        = "1"
 getrandom     = { workspace = true }
@@ -219,10 +219,10 @@ proptest      = { workspace = true }
 ```
 
 …yet `tests/src/main.rs` has `mod budget;`. This means either (a) the
-`pyana-tests` crate currently doesn't compile, or (b) `mod budget;` was
+`dregg-tests` crate currently doesn't compile, or (b) `mod budget;` was
 recently added without updating Cargo.toml. I confirmed the workspace
 itself cannot resolve (`cod/Cargo.toml` is missing per `git status`
-exclusion noise), so I can't run `cargo check -p pyana-tests` cleanly
+exclusion noise), so I can't run `cargo check -p dregg-tests` cleanly
 to settle this empirically — but the manifest is missing the dep and
 the file unambiguously requires it.
 
@@ -232,7 +232,7 @@ dead code that doesn't compile, or it's a tells-us-something-is-rotten
 signal that even the protocol-test layer doesn't actively exercise the
 audit crate.
 
-No app under `apps/*` depends on `pyana-audit`. No node path
+No app under `apps/*` depends on `dregg-audit`. No node path
 (`node/`, `discharge-gateway/`, `cli/`, `demo/`, `demo-agent/`) imports
 it. The verifier crate doesn't use it. No SDK surface, no wire format.
 
@@ -245,12 +245,12 @@ That is **the entirety of the dependency**:
 ```rust
 pub fn persist_audit_log_range(
     &self,
-    log: &pyana_audit::AuditLog,
+    log: &dregg_audit::AuditLog,
     from_index: u64,
     to_index: u64,
 ) -> Result<()> { … }
 
-pub fn persist_audit_log(&self, log: &pyana_audit::AuditLog) -> Result<u64> { … }
+pub fn persist_audit_log(&self, log: &dregg_audit::AuditLog) -> Result<u64> { … }
 ```
 
 `store::audit::StoredAuditEvent` is a structural copy:
@@ -321,8 +321,8 @@ work that nobody picked up**, not the shape of an in-progress sketch.
   (`DEFAULT_HISTORICAL_ROOTS_LIMIT = 10_000`, `with_roots_limit`,
   `set_historical_roots_limit`) — somebody thought about long-running
   systems. That kind of detail rarely appears in a sketch.
-- **Domain-separation tags** are namespaced (`"pyana-audit event v1"`,
-  `"pyana-audit index-commit v1"`) — somebody was thinking about future
+- **Domain-separation tags** are namespaced (`"dregg-audit event v1"`,
+  `"dregg-audit index-commit v1"`) — somebody was thinking about future
   schema evolution.
 - **Doc comments are full prose**, including the ASCII-art architecture
   diagram in `lib.rs` and the runnable doctest example. This is
@@ -363,7 +363,7 @@ a8a4660a checkpoint
 926f90ef comprehensive polish: DoS limits, linear fallback removed, valid_after enforced, licenses, tracing, panics→errors, dead code, version standardization
 814ca85f massive integration pass: dual-hash bridge, node↔extension, EventualRef fires, SDK real proofs, budget→executor, AttestedRoot unified, deps cleaned, policy fixed
 1032644a infra docs, discovery in extension, cleanup stale review files
-8cc3c2b4 pyana: distributed object-capability authorization with ZK proofs
+8cc3c2b4 dregg: distributed object-capability authorization with ZK proofs
 ```
 
 Five commits touching `audit/`. The most recent (`a8a4660a checkpoint`)
@@ -377,7 +377,7 @@ This crate was finished, set on a shelf, and the team built around it.
 
 ---
 
-## §5 — Conceptual overlap with the rest of pyana
+## §5 — Conceptual overlap with the rest of dregg
 
 The audit crate's stated goal — "verifiable token usage history without
 revealing the full history" — overlaps with at least four other
@@ -385,7 +385,7 @@ subsystems. In each case the existing subsystem either subsumes the
 audit crate's role or covers a different surface that the audit crate
 does not.
 
-### 5a. `observability/` (pyana-observability)
+### 5a. `observability/` (dregg-observability)
 
 `observability/src/events.rs` defines `TraceEvent` with variants
 including `Authorization`, `SovereignWitness`, `StateConstraint`,
@@ -408,7 +408,7 @@ root, no inclusion proof, no third-party verifiable count). The
 designs target different consumers — observability targets the cell
 owner's Studio, audit targets a hostile third party.
 
-### 5b. `trace/` (pyana-trace)
+### 5b. `trace/` (dregg-trace)
 
 `trace/src/lib.rs` exposes `check`, `eval`, `policy`, `types`, `verify`
 modules. This crate is the *policy / trace verification* layer:
@@ -426,7 +426,7 @@ integration.
 
 `WITNESSED-RECEIPT-CHAIN-DESIGN.md` exists at workspace root.
 `turn::TurnReceipt`s form a hash-linked per-agent total order, verified
-by `pyana_turn::verify::verify_receipt_chain`. The protocol-test
+by `dregg_turn::verify::verify_receipt_chain`. The protocol-test
 crate's `ReceiptChain` invariant (`protocol-tests/src/invariants/
 receipt_chain.rs`) checks the chain is intact.
 
@@ -472,7 +472,7 @@ doesn't know anything about cell state — it just sees
 `(token_id, action_hash, verifier_id, timestamp, sequence)` opaque
 tuples.
 
-### 5e. `pyana_token::traits::BudgetSpec` (capability layer)
+### 5e. `dregg_token::traits::BudgetSpec` (capability layer)
 
 The token crate already declares budget policy as part of a macaroon
 caveat. `AuthRequest` carries `budget_states: HashMap<String, u64>`
@@ -494,7 +494,7 @@ just publishes the limit.
 | Tamper evidence                       | `verify_receipt_chain` + signed receipts                                             | Audit gives O(log N) inclusion proofs |
 | Third-party verifiable count          | Nothing currently                                                                    | **Real gap**                          |
 | Third-party verifiable time range     | Nothing currently                                                                    | **Real gap**                          |
-| Budget enforcement (single-writer)    | `coord::BudgetCoordinator` (distributed) and `pyana_token::traits::BudgetSpec` (declarative) | Audit's single-writer variant exists but unused |
+| Budget enforcement (single-writer)    | `coord::BudgetCoordinator` (distributed) and `dregg_token::traits::BudgetSpec` (declarative) | Audit's single-writer variant exists but unused |
 | Privacy from auditor                  | `observability` already hashes proofs / strips cleartext per BOUNDARIES.md           | Audit's privacy story is partial (leaks index positions) |
 | Append-only attestation               | Receipt chain                                                                        | No daylight                           |
 
@@ -536,22 +536,22 @@ deliberately discards the cryptographic content. The privacy story is
 oversold (positions leak, range proofs leak timestamps). The
 "BudgetEnforcer" is a single-writer enforcer in a system that has
 already chosen distributed enforcement (`coord::BudgetCoordinator`)
-plus declarative policy (`pyana_token::traits::BudgetSpec`) plus
-observability emission (`pyana_observability`). Reviving as a separate
+plus declarative policy (`dregg_token::traits::BudgetSpec`) plus
+observability emission (`dregg_observability`). Reviving as a separate
 crate produces a fourth budget abstraction nobody asked for.
 
 ### The MERGE plan
 
 1. **Move `audit::{event, log, proofs}` into `commit/`** (or a new
    submodule `commit::merkle_log`). The 4-ary Merkle tree primitives
-   already live in `pyana-commit`; the audit log is just a typed
+   already live in `dregg-commit`; the audit log is just a typed
    wrapper around them. The natural home for `AuditLog`,
    `InclusionProof`, `CountProof`, `RangeProof`, `LastUseProof`,
    `ConsistencyProof`, `BridgeHash`, `TimestampWitness`,
    `LogSnapshot`, `AuditReceipt` is alongside the Merkle primitives
    that already underpin them. Rename the public surface to
-   `pyana_commit::merkle_log::*` and the proofs to
-   `pyana_commit::merkle_log::proofs::*`. Drop the `audit-` prefix
+   `dregg_commit::merkle_log::*` and the proofs to
+   `dregg_commit::merkle_log::proofs::*`. Drop the `audit-` prefix
    from domain-separation tags only if you bump the schema version;
    otherwise keep them.
 
@@ -559,23 +559,23 @@ crate produces a fourth budget abstraction nobody asked for.
    over `(token_id, BudgetSpec, AuditLog)` with `record_use` doing
    `if can_use { log.append } else { Err(BudgetExhausted) }`. If
    anyone ever needs it, they can write this against the
-   `pyana_commit::merkle_log` API in twenty lines. The `BudgetSpec`
-   in audit duplicates `pyana_token::traits::BudgetSpec`; that
+   `dregg_commit::merkle_log` API in twenty lines. The `BudgetSpec`
+   in audit duplicates `dregg_token::traits::BudgetSpec`; that
    duplication should also go.
 
 3. **Update `store::audit`** to depend on
-   `pyana_commit::merkle_log::UsageEvent` instead of
-   `pyana_audit::UsageEvent`. The `store::audit::StoredAuditEvent`
+   `dregg_commit::merkle_log::UsageEvent` instead of
+   `dregg_audit::UsageEvent`. The `store::audit::StoredAuditEvent`
    mirror remains as-is (it already throws away everything
    audit-crate-specific; it doesn't care about the upstream module
    path). Delete the `audit-bridge` feature gate and make it
    unconditional — the only reason it was gated was to avoid the
-   `pyana-audit` dep, and once `pyana-audit` is gone there's nothing
+   `dregg-audit` dep, and once `dregg-audit` is gone there's nothing
    to gate.
 
 4. **Fix `tests/src/budget.rs`** — its import is currently broken
    relative to `tests/Cargo.toml`. Update the imports to the new
-   `pyana_commit::merkle_log` location and add the `pyana-commit` dep
+   `dregg_commit::merkle_log` location and add the `dregg-commit` dep
    to `tests/Cargo.toml` (already a transitive dep but should be
    explicit if directly used). Or, if `tests/src/budget.rs` was
    accidentally left in place when something was removed, delete it.
@@ -601,10 +601,10 @@ Total: under a day. No semver concern (no external consumers).
 ### What this buys
 
 - One place to look for "the Merkle-committed event log primitive"
-  (already half there: `pyana-commit` owns the hash, `pyana-audit`
+  (already half there: `dregg-commit` owns the hash, `dregg-audit`
   owns the log; merging fixes that split).
 - Removes the third "budget" namespace; leaves `coord::BudgetCoordinator`
-  (operational) and `pyana_token::traits::BudgetSpec` (declarative)
+  (operational) and `dregg_token::traits::BudgetSpec` (declarative)
   as the two budget abstractions, which is the correct count.
 - Removes 2.5K LOC of dormant-looking workspace member, replacing it
   with ~1.5K LOC inside an already-load-bearing crate.

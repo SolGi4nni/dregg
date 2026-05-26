@@ -297,7 +297,7 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-note-spending-dsl-v2".into(),
+        name: "dregg-note-spending-dsl-v2".into(),
         trace_width: NOTE_SPENDING_WIDTH,
         max_degree: 4, // Position validity is degree 4
         columns,
@@ -394,7 +394,7 @@ pub fn generate_note_spending_trace(
 
     // Rows 1..depth+1: Merkle membership proof
     // NOTE: The DSL Hash constraint computes `hash_fact(current, [sib0, sib1, sib2, position])`.
-    // This matches the DSL Merkle convention (see pyana-dsl-runtime/src/membership.rs).
+    // This matches the DSL Merkle convention (see dregg-dsl-runtime/src/membership.rs).
     let mut current = commitment;
     for i in 0..depth {
         let pos = witness.merkle_positions[i];

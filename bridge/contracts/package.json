@@ -1,10 +1,10 @@
 {
-  "name": "@pyana/bridge-contracts",
+  "name": "@dregg/bridge-contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "compile": "compact compile pyana_bridge.compact managed/pyana-bridge",
+    "compile": "compact compile dregg_bridge.compact managed/dregg-bridge",
     "deploy": "tsx deploy.ts deploy",
     "lock": "tsx deploy.ts lock",
     "unlock": "tsx deploy.ts unlock",

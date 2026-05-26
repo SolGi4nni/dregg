@@ -3,7 +3,7 @@
 //! Serves the gallery backend API and the static frontend files.
 //! WebSocket connections at `/ws` receive live updates for all gallery events.
 //!
-//! Uses `pyana-app-framework` for shared infrastructure: [`AppServer`] for
+//! Uses `dregg-app-framework` for shared infrastructure: [`AppServer`] for
 //! standard middleware (health, CORS), [`AdminAuth`] extractor for admin
 //! endpoints, and [`JsonPersistence`] for atomic state snapshots.
 
@@ -19,13 +19,13 @@ use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 use tracing::info;
 
-use pyana_app_framework::auth::{AdminMode, AdminToken, HasAdminToken};
-use pyana_app_framework::persistence::JsonPersistence;
-use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_app_framework::{EngineConfig, PyanaEngine};
+use dregg_app_framework::auth::{AdminMode, AdminToken, HasAdminToken};
+use dregg_app_framework::persistence::JsonPersistence;
+use dregg_app_framework::server::{AppConfig, AppServer};
+use dregg_app_framework::{EngineConfig, DreggEngine};
 
-use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
-use pyana_app_framework::inbox_endpoint::InboxEndpoint;
+use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
+use dregg_app_framework::inbox_endpoint::InboxEndpoint;
 
 use crate::artwork::ArtworkRegistry;
 use crate::auction::AuctionEngine;
@@ -46,9 +46,9 @@ pub struct AppState {
     pub artwork_registry: ArtworkRegistry,
     pub auction_engine: AuctionEngine,
     pub provenance_registry: ProvenanceRegistry,
-    pub engine: Arc<Mutex<PyanaEngine>>,
+    pub engine: Arc<Mutex<DreggEngine>>,
     pub ws_broadcaster: WsBroadcaster,
-    /// Admin token for protecting admin endpoints (from PYANA_ADMIN_TOKEN env var).
+    /// Admin token for protecting admin endpoints (from DREGG_ADMIN_TOKEN env var).
     pub admin_token: AdminToken,
     /// Persistence handle for atomic JSON snapshots (None = persistence disabled).
     pub persistence: Option<JsonPersistence>,
@@ -98,7 +98,7 @@ pub fn gallery_routes() -> Router<AppState> {
 ///
 /// Returns the actual `SocketAddr` the server is listening on (runs in background).
 ///
-/// The gallery uses `AdminMode::Open` when no `PYANA_ADMIN_TOKEN` is configured,
+/// The gallery uses `AdminMode::Open` when no `DREGG_ADMIN_TOKEN` is configured,
 /// matching devnet behavior (admin endpoints freely accessible without auth).
 pub async fn start_server(
     config: AppConfig,
@@ -112,7 +112,7 @@ pub async fn start_server(
     let persistence = config.persistence();
 
     // Use Open mode for admin auth: if no token is configured, admin endpoints
-    // are freely accessible (suitable for devnet). If PYANA_ADMIN_TOKEN is set,
+    // are freely accessible (suitable for devnet). If DREGG_ADMIN_TOKEN is set,
     // it will be enforced.
     let admin_token = AdminToken::from_env_with_mode(AdminMode::Open);
 
@@ -142,7 +142,7 @@ pub async fn start_server(
         artwork_registry,
         auction_engine,
         provenance_registry,
-        engine: Arc::new(Mutex::new(PyanaEngine::new(EngineConfig::new(now_ts)))),
+        engine: Arc::new(Mutex::new(DreggEngine::new(EngineConfig::new(now_ts)))),
         ws_broadcaster: WsBroadcaster::new(),
         admin_token,
         persistence,
@@ -172,7 +172,7 @@ pub async fn start_server(
     let bidder_inbox = InboxEndpoint::new(INBOX_CAPACITY, INBOX_MIN_DEPOSIT);
 
     AppServer::new(config)
-        .service_name("pyana-gallery")
+        .service_name("dregg-gallery")
         .with_cors()
         .routes(app_routes)
         .with_blinded_endpoint("/queue/bids", blinded_bids)

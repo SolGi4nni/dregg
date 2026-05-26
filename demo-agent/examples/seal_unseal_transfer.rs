@@ -14,13 +14,13 @@
 //! Key property: Alice and Bob are never online simultaneously. The sealed box
 //! is just opaque bytes that can traverse any untrusted channel.
 
-use pyana_cell::capability::CapabilityRef;
-use pyana_cell::id::CellId;
-use pyana_cell::permissions::AuthRequired;
-use pyana_cell::seal::{SealError, SealPair, SealedBox, test_seal_pair};
+use dregg_cell::capability::CapabilityRef;
+use dregg_cell::id::CellId;
+use dregg_cell::permissions::AuthRequired;
+use dregg_cell::seal::{SealError, SealPair, SealedBox, test_seal_pair};
 
 fn main() {
-    println!("=== Pyana Sealer/Unsealer Partition-Tolerant Transfer Demo ===\n");
+    println!("=== Dregg Sealer/Unsealer Partition-Tolerant Transfer Demo ===\n");
 
     // =========================================================================
     // SETUP: Create identities for Alice, Bob, Carol, and Eve

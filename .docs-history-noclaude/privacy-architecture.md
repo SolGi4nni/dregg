@@ -2,11 +2,11 @@
 
 ## Current State Assessment
 
-Pyana provides zero-knowledge authorization proofs where a prover demonstrates "I hold a valid attenuated capability chain from a federation-registered issuer that satisfies your request" without revealing the chain, intermediate states, or other capabilities. The proof system (BabyBear STARK + Poseidon2) covers: fold chain validity (attenuation is monotonic), multi-step Datalog derivation (ALLOW conclusion), issuer membership in the federation Merkle tree, and body fact membership (facts referenced in derivation actually exist in the committed tree). However, several properties expected of production anonymous credential systems are missing or incomplete: presentations are linkable (same `final_root` across proofs), the issuer was identifiable until recently (ring membership now in progress via `BlindedMerklePoseidon2StarkAir`), selective disclosure is commitment-bound but not cryptographically enforced at the circuit level in all paths, the fold chain is locally validated rather than STARK-proven end-to-end, and the federation sees turn content in cleartext.
+`dregg` provides zero-knowledge authorization proofs where a prover demonstrates "I hold a valid attenuated capability chain from a federation-registered issuer that satisfies your request" without revealing the chain, intermediate states, or other capabilities. The proof system (BabyBear STARK + Poseidon2) covers: fold chain validity (attenuation is monotonic), multi-step Datalog derivation (ALLOW conclusion), issuer membership in the federation Merkle tree, and body fact membership (facts referenced in derivation actually exist in the committed tree). However, several properties expected of production anonymous credential systems are missing or incomplete: presentations are linkable (same `final_root` across proofs), the issuer was identifiable until recently (ring membership now in progress via `BlindedMerklePoseidon2StarkAir`), selective disclosure is commitment-bound but not cryptographically enforced at the circuit level in all paths, the fold chain is locally validated rather than STARK-proven end-to-end, and the federation sees turn content in cleartext.
 
 ---
 
-## Target State: What "Anonymous Credential Parity" Means for Pyana
+## Target State: What "Anonymous Credential Parity" Means for `dregg`
 
 Parity with Idemix/BBS+/AnonCreds means:
 
@@ -64,7 +64,7 @@ Parity with Idemix/BBS+/AnonCreds means:
 
 ### Gap 6: Revocation vs Unlinkability Tension (Impact: MEDIUM / Difficulty: HIGH)
 
-**Problem**: Revocation in pyana uses the `NonRevocationAir` (sorted Merkle non-membership proof). This proves "my capability's ancestor hashes are not in the revocation tree." But if presentations are perfectly unlinkable, the revoker cannot identify which credential to add to the revocation set -- they need to know the `leaf_hash` (or some identifier) of the thing being revoked.
+**Problem**: Revocation in dregg uses the `NonRevocationAir` (sorted Merkle non-membership proof). This proves "my capability's ancestor hashes are not in the revocation tree." But if presentations are perfectly unlinkable, the revoker cannot identify which credential to add to the revocation set -- they need to know the `leaf_hash` (or some identifier) of the thing being revoked.
 
 ---
 
@@ -261,7 +261,7 @@ Three options, ordered by feasibility:
 - Requires: every cell state transition to be STARK-provable (massive circuit for the full turn executor).
 - This is FHE-grade difficulty adapted to STARKs. Not practical near-term.
 
-**Recommendation**: Option B for the medium term. Pyana's existing receipt-chain model (pre/post state hashes per turn) already provides the "state transition" structure that a validity proof would cover. The `StateTransitionAir` pattern from IVC can be adapted: instead of proving fold-chain hash continuity, prove turn-execution hash continuity (`pre_state -> effects -> post_state`).
+**Recommendation**: Option B for the medium term. `dregg`'s existing receipt-chain model (pre/post state hashes per turn) already provides the "state transition" structure that a validity proof would cover. The `StateTransitionAir` pattern from IVC can be adapted: instead of proving fold-chain hash continuity, prove turn-execution hash continuity (`pre_state -> effects -> post_state`).
 
 ---
 
@@ -290,7 +290,7 @@ Three options, ordered by feasibility:
 
 The fundamental tension: perfect unlinkability means no party can identify a specific credential holder across presentations. Revocation requires the ISSUER (but not verifiers) to identify credentials.
 
-Pyana's resolution: the `revocation_handle` is a PRF output known only to the issuer. Verifiers never see it (it is private witness in the non-revocation proof). The issuer can revoke by handle without verifiers learning which presentations are affected. This achieves "issuer-revocable, verifier-unlinkable" -- the strongest achievable property without trusted hardware.
+`dregg`'s resolution: the `revocation_handle` is a PRF output known only to the issuer. Verifiers never see it (it is private witness in the non-revocation proof). The issuer can revoke by handle without verifiers learning which presentations are affected. This achieves "issuer-revocable, verifier-unlinkable" -- the strongest achievable property without trusted hardware.
 
 ### Post-Quantum Safety
 
@@ -305,9 +305,9 @@ The only non-PQ component remains BLS12-381 threshold signatures in the federati
 
 ---
 
-## Comparison: Pyana vs Idemix/BBS+/AnonCreds (Target State)
+## Comparison: `dregg` vs Idemix/BBS+/AnonCreds (Target State)
 
-| Property | Idemix | BBS+ | AnonCreds | Pyana (target) |
+| Property | Idemix | BBS+ | AnonCreds | `dregg` (target) |
 |----------|--------|------|-----------|----------------|
 | Unlinkable multi-show | Yes | Yes | Yes | Yes (Phase 2) |
 | Selective disclosure | Yes | Yes | Yes | Yes (existing + Phase 3) |
@@ -321,7 +321,7 @@ The only non-PQ component remains BLS12-381 threshold signatures in the federati
 | Revocable + unlinkable | Via accumulators | No (standard) | Via rev. registry | Yes (Phase 5) |
 | Programmable policy | No | No | Limited Datalog | Full Datalog (32 steps, 8 body atoms) |
 
-Pyana's tradeoff: larger proofs and slower generation in exchange for post-quantum security, programmable policy (full Datalog in-STARK), issuer anonymity, and offline verification without CRL distribution.
+`dregg`'s tradeoff: larger proofs and slower generation in exchange for post-quantum security, programmable policy (full Datalog in-STARK), issuer anonymity, and offline verification without CRL distribution.
 
 ---
 

@@ -43,7 +43,7 @@ Total overhead: 60 bytes per sealed secret.
 ### Seal and Unseal
 
 ```rust
-use pyana_tokenizer::{TokenizerKeypair, SealedSecret};
+use dregg_tokenizer::{TokenizerKeypair, SealedSecret};
 
 // Generate a keypair (daemon holds this)
 let keypair = TokenizerKeypair::generate();
@@ -59,7 +59,7 @@ assert_eq!(plaintext, b"ghp_secret_token");
 ### HTTP Proxy
 
 ```rust
-use pyana_tokenizer::{TokenizerProxy, TokenizerProxyConfig};
+use dregg_tokenizer::{TokenizerProxy, TokenizerProxyConfig};
 use std::sync::Arc;
 
 let proxy = TokenizerProxy::new(TokenizerProxyConfig {

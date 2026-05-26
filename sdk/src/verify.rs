@@ -78,7 +78,7 @@ impl VerifyOutcome {
 /// # Example
 ///
 /// ```no_run
-/// use pyana_sdk::verify_authorization_proof;
+/// use dregg_sdk::verify_authorization_proof;
 ///
 /// let proof_bytes: Vec<u8> = /* received from presenter */ vec![];
 /// let federation_root: [u8; 32] = /* known public parameter */ [0u8; 32];
@@ -97,8 +97,8 @@ pub fn verify_authorization_proof(
     expected_action: &str,
     expected_resource: &str,
 ) -> Result<bool, SdkError> {
-    use pyana_circuit::BabyBear;
-    use pyana_circuit::stark;
+    use dregg_circuit::BabyBear;
+    use dregg_circuit::stark;
 
     // Interpret as raw STARK proof bytes (the standard wire format produced by
     // BridgePresentationProof::issuer_proof_bytes()).
@@ -129,7 +129,7 @@ pub fn verify_authorization_proof(
             federation_root[3],
         ]))
     } else {
-        pyana_bridge::present::bytes_to_babybear(federation_root)
+        dregg_bridge::present::bytes_to_babybear(federation_root)
     };
 
     if pi[1] != expected_root {
@@ -141,12 +141,12 @@ pub fn verify_authorization_proof(
     // Recompute the expected binding from the caller-supplied action and resource strings,
     // then compare against the proof's committed binding. This ensures a proof generated
     // for action A cannot be accepted when action B is requested.
-    if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+    if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
         return Ok(false);
     }
     let expected_binding =
-        pyana_circuit::compute_action_binding(expected_action, expected_resource);
-    for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        dregg_circuit::compute_action_binding(expected_action, expected_resource);
+    for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
         if pi[2 + i] != expected_binding[i] {
             return Ok(false); // Proof not bound to this (action, resource)
         }
@@ -154,8 +154,8 @@ pub fn verify_authorization_proof(
 
     // SECURITY: All membership proofs verified via DSL circuits (DSL cutover).
     // Dispatch to the correct DSL circuit based on the proof's air_name.
-    let circuit = pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-        .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+    let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+        .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
     if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
@@ -216,10 +216,10 @@ pub fn verify_selective_disclosure(
     federation_root: &[u8; 32],
     expected_action: &str,
     expected_resource: &str,
-    revealed_facts: &[pyana_trace::Fact],
+    revealed_facts: &[dregg_trace::Fact],
 ) -> Result<bool, SdkError> {
-    use pyana_circuit::BabyBear;
-    use pyana_circuit::stark;
+    use dregg_circuit::BabyBear;
+    use dregg_circuit::stark;
 
     // 1. Deserialize the STARK proof.
     let stark_proof = stark::proof_from_bytes(proof_bytes).map_err(|_| {
@@ -245,7 +245,7 @@ pub fn verify_selective_disclosure(
             federation_root[3],
         ]))
     } else {
-        pyana_bridge::present::bytes_to_babybear(federation_root)
+        dregg_bridge::present::bytes_to_babybear(federation_root)
     };
 
     if pi[1] != expected_root {
@@ -253,20 +253,20 @@ pub fn verify_selective_disclosure(
     }
 
     // 2b. Verify action/resource binding (pi[2..6]).
-    if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+    if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
         return Ok(false);
     }
     let expected_binding =
-        pyana_circuit::compute_action_binding(expected_action, expected_resource);
-    for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        dregg_circuit::compute_action_binding(expected_action, expected_resource);
+    for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
         if pi[2 + i] != expected_binding[i] {
             return Ok(false); // Proof not bound to this (action, resource)
         }
     }
 
     // 3. Verify the STARK proof cryptographically using DSL circuit.
-    let circuit = pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-        .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+    let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+        .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
     if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
@@ -278,7 +278,7 @@ pub fn verify_selective_disclosure(
     // We recompute the commitment from the plaintext revealed_facts and compare it to the
     // value cryptographically bound in the proof. If they don't match, the prover lied
     // about which facts were revealed (presented different facts than what the circuit proved).
-    let recomputed_commitment = pyana_bridge::compute_revealed_facts_commitment(revealed_facts);
+    let recomputed_commitment = dregg_bridge::compute_revealed_facts_commitment(revealed_facts);
 
     if revealed_facts.is_empty() {
         // No facts revealed — this is effectively a fully private proof.
@@ -305,7 +305,7 @@ pub fn verify_selective_disclosure(
         return Ok(false);
     }
 
-    let proof_commitment = pyana_circuit::binding::WideHash([
+    let proof_commitment = dregg_circuit::binding::WideHash([
         pi[RFC_PI_START],
         pi[RFC_PI_START + 1],
         pi[RFC_PI_START + 2],
@@ -333,7 +333,7 @@ pub fn verify_selective_presentation(presentation: &crate::AuthorizationPresenta
             revealed_facts,
             revealed_facts_commitment,
             ..
-        } => pyana_bridge::verify_revealed_facts_commitment(
+        } => dregg_bridge::verify_revealed_facts_commitment(
             revealed_facts,
             *revealed_facts_commitment,
         ),
@@ -363,7 +363,7 @@ pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresent
             ..
         } => {
             // 1. Verify revealed facts commitment.
-            if !pyana_bridge::verify_revealed_facts_commitment(
+            if !dregg_bridge::verify_revealed_facts_commitment(
                 revealed_facts,
                 *revealed_facts_commitment,
             ) {
@@ -372,7 +372,7 @@ pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresent
 
             // 2. Verify each predicate proof.
             for (_fact_index, pred_proof) in predicate_proofs {
-                if !pyana_bridge::verify_predicate_proof(pred_proof, pred_proof.fact_commitment) {
+                if !dregg_bridge::verify_predicate_proof(pred_proof, pred_proof.fact_commitment) {
                     return false;
                 }
             }
@@ -403,13 +403,13 @@ pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresent
 /// `Ok(true)` if the proof verifies, `Ok(false)` if verification fails,
 /// or `Err(...)` if deserialization fails.
 pub fn verify_validated_ivc_proof(proof_bytes: &[u8]) -> Result<bool, SdkError> {
-    let proof: pyana_circuit::ValidatedIvcProof =
+    let proof: dregg_circuit::ValidatedIvcProof =
         postcard::from_bytes(proof_bytes).map_err(|_| {
             SdkError::Wire("validated IVC proof bytes could not be deserialized".into())
         })?;
 
-    Ok(pyana_circuit::verify_validated_ivc(&proof)
-        == pyana_circuit::ValidatedIvcVerification::Valid)
+    Ok(dregg_circuit::verify_validated_ivc(&proof)
+        == dregg_circuit::ValidatedIvcVerification::Valid)
 }
 
 // ============================================================================
@@ -439,8 +439,8 @@ pub fn verify_production(
     federation_root: &[u8; 32],
     expected_action: &str,
     expected_resource: &str,
-) -> Result<pyana_circuit::VerifiedProof, SdkError> {
-    use pyana_circuit::proof_tier;
+) -> Result<dregg_circuit::VerifiedProof, SdkError> {
+    use dregg_circuit::proof_tier;
 
     // Perform the standard verification (including action/resource binding).
     let valid = verify_authorization_proof(
@@ -455,7 +455,7 @@ pub fn verify_production(
 
     // Return a VerifiedProof with informational tier metadata.
     // No tier gating: if the STARK verified, the proof is accepted.
-    Ok(pyana_circuit::VerifiedProof::with_federation_root(
+    Ok(dregg_circuit::VerifiedProof::with_federation_root(
         proof_tier::stark_tier(),
         proof_tier::STARK_BACKEND,
         *federation_root,
@@ -478,8 +478,8 @@ pub fn verify_any_tier(
     federation_root: &[u8; 32],
     expected_action: &str,
     expected_resource: &str,
-) -> Result<pyana_circuit::VerifiedProof, SdkError> {
-    use pyana_circuit::proof_tier;
+) -> Result<dregg_circuit::VerifiedProof, SdkError> {
+    use dregg_circuit::proof_tier;
 
     let valid = verify_authorization_proof(
         proof_bytes,
@@ -492,7 +492,7 @@ pub fn verify_any_tier(
     }
 
     // In dev mode, accept any tier.
-    Ok(pyana_circuit::VerifiedProof::with_federation_root(
+    Ok(dregg_circuit::VerifiedProof::with_federation_root(
         proof_tier::stark_tier(),
         proof_tier::STARK_BACKEND,
         *federation_root,
@@ -522,7 +522,7 @@ pub fn verify_any_tier(
 /// # Example
 ///
 /// ```no_run
-/// use pyana_sdk::verify_committed_threshold;
+/// use dregg_sdk::verify_committed_threshold;
 ///
 /// let proof_bytes: Vec<u8> = /* received from prover */ vec![];
 /// let threshold_commitment: [u8; 32] = /* public parameter */ [0u8; 32];
@@ -539,10 +539,10 @@ pub fn verify_committed_threshold(
     threshold_commitment: &[u8; 32],
     fact_commitment: &[u8; 32],
 ) -> Result<bool, SdkError> {
-    use pyana_circuit::BabyBear;
+    use dregg_circuit::BabyBear;
 
     // Deserialize the proof.
-    let proof: pyana_circuit::CommittedThresholdProof =
+    let proof: dregg_circuit::CommittedThresholdProof =
         postcard::from_bytes(proof_bytes).map_err(|_| {
             SdkError::Wire("committed threshold proof bytes could not be deserialized".into())
         })?;
@@ -561,7 +561,7 @@ pub fn verify_committed_threshold(
         fact_commitment[3],
     ]));
 
-    Ok(pyana_circuit::verify_committed_threshold(
+    Ok(dregg_circuit::verify_committed_threshold(
         &proof,
         threshold_bb,
         fact_bb,
@@ -585,14 +585,14 @@ pub fn verify_committed_threshold(
 /// when verifying ring membership proofs.
 pub fn build_federation_tree(member_keys: &[[u8; 32]]) -> [u8; 32] {
     if member_keys.is_empty() {
-        return *blake3::hash(b"pyana-federation:empty").as_bytes();
+        return *blake3::hash(b"dregg-federation:empty").as_bytes();
     }
 
     // Hash each member key to produce leaves.
     let mut leaves: Vec<[u8; 32]> = member_keys
         .iter()
         .map(|key| {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-federation-leaf-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-federation-leaf-v1");
             hasher.update(key);
             *hasher.finalize().as_bytes()
         })
@@ -634,8 +634,8 @@ mod tests {
     /// non-zero, allowing any non-empty revealed_facts to pass alongside any valid proof.
     #[test]
     fn verify_selective_disclosure_rejects_wrong_revealed_facts() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
 
         // Build a valid STARK proof with a specific revealed_facts_commitment in its PI.
         // We use a synthetic proof structure: the key point is that the PI contains
@@ -643,24 +643,24 @@ mod tests {
         // commitment we'll compute from the "wrong" revealed facts.
 
         // Create a "real" commitment from some facts.
-        let real_facts = vec![pyana_trace::Fact {
-            predicate: pyana_trace::symbol_from_str("role"),
+        let real_facts = vec![dregg_trace::Fact {
+            predicate: dregg_trace::symbol_from_str("role"),
             terms: vec![
-                pyana_trace::Term::Const(pyana_trace::symbol_from_str("alice")),
-                pyana_trace::Term::Const(pyana_trace::symbol_from_str("admin")),
+                dregg_trace::Term::Const(dregg_trace::symbol_from_str("alice")),
+                dregg_trace::Term::Const(dregg_trace::symbol_from_str("admin")),
             ],
         }];
-        let real_commitment = pyana_bridge::compute_revealed_facts_commitment(&real_facts);
+        let real_commitment = dregg_bridge::compute_revealed_facts_commitment(&real_facts);
 
         // Create wrong facts that produce a different commitment.
-        let wrong_facts = vec![pyana_trace::Fact {
-            predicate: pyana_trace::symbol_from_str("role"),
+        let wrong_facts = vec![dregg_trace::Fact {
+            predicate: dregg_trace::symbol_from_str("role"),
             terms: vec![
-                pyana_trace::Term::Const(pyana_trace::symbol_from_str("mallory")),
-                pyana_trace::Term::Const(pyana_trace::symbol_from_str("superadmin")),
+                dregg_trace::Term::Const(dregg_trace::symbol_from_str("mallory")),
+                dregg_trace::Term::Const(dregg_trace::symbol_from_str("superadmin")),
             ],
         }];
-        let wrong_commitment = pyana_bridge::compute_revealed_facts_commitment(&wrong_facts);
+        let wrong_commitment = dregg_bridge::compute_revealed_facts_commitment(&wrong_facts);
 
         // Sanity: the two commitments must differ.
         assert_ne!(real_commitment, wrong_commitment);
@@ -686,7 +686,7 @@ mod tests {
         }
 
         // Create a minimal StarkProof structure with these public inputs.
-        let proof = pyana_circuit::stark::StarkProof {
+        let proof = dregg_circuit::stark::StarkProof {
             trace_commitment: [0u8; 32],
             constraint_commitment: [0u8; 32],
             fri_commitments: vec![],
@@ -742,14 +742,14 @@ mod tests {
     /// membership but NOT that authorization concluded "Allow".
     #[test]
     fn verify_authorization_proof_rejects_membership_only_proof() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
 
         let federation_root = BabyBear::new(77777);
 
         // Build a proof with only 2 public inputs (leaf + root) — no composition commitment.
         // This represents a federation membership proof without authorization binding.
-        let proof = pyana_circuit::stark::StarkProof {
+        let proof = dregg_circuit::stark::StarkProof {
             trace_commitment: [0u8; 32],
             constraint_commitment: [0u8; 32],
             fri_commitments: vec![],
@@ -789,14 +789,14 @@ mod tests {
     /// the composition commitment is all zeros (no derivation proof bound).
     #[test]
     fn verify_authorization_proof_rejects_zero_composition() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
 
         let federation_root = BabyBear::new(88888);
 
         // Build a proof with enough public inputs but zeroed composition commitment.
         // PI layout: [leaf, root, action[4], composition[4]]
-        let proof = pyana_circuit::stark::StarkProof {
+        let proof = dregg_circuit::stark::StarkProof {
             trace_commitment: [0u8; 32],
             constraint_commitment: [0u8; 32],
             fri_commitments: vec![],
@@ -847,19 +847,19 @@ mod tests {
     /// selective disclosure mode).
     #[test]
     fn verify_selective_disclosure_rejects_short_pi() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
 
-        let facts = vec![pyana_trace::Fact {
-            predicate: pyana_trace::symbol_from_str("has_access"),
-            terms: vec![pyana_trace::Term::Const(pyana_trace::symbol_from_str(
+        let facts = vec![dregg_trace::Fact {
+            predicate: dregg_trace::symbol_from_str("has_access"),
+            terms: vec![dregg_trace::Term::Const(dregg_trace::symbol_from_str(
                 "resource_x",
             ))],
         }];
 
         // Build a proof with only 2 public inputs (leaf + root) — no commitment bound.
         let federation_root = BabyBear::new(99999);
-        let proof = pyana_circuit::stark::StarkProof {
+        let proof = dregg_circuit::stark::StarkProof {
             trace_commitment: [0u8; 32],
             constraint_commitment: [0u8; 32],
             fri_commitments: vec![],

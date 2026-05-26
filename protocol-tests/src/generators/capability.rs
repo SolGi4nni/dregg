@@ -5,7 +5,7 @@
 //! in [`super::cell`].
 
 use proptest::prelude::*;
-use pyana_cell::AuthRequired;
+use dregg_cell::AuthRequired;
 
 /// Strategy: any non-`Impossible` `AuthRequired` level.
 ///

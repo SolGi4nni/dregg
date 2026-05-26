@@ -1,6 +1,6 @@
 //! Integration tests: non-membership prove-then-verify and adversarial rejection.
 //!
-//! Uses the `NonMembershipProver` API from `pyana_circuit::non_membership` to
+//! Uses the `NonMembershipProver` API from `dregg_circuit::non_membership` to
 //! generate real STARK proofs and verify them end-to-end.  Covers:
 //!   - Honest proofs for elements NOT in the set.
 //!   - Rejection when a proof is built for an element that IS in the set.
@@ -10,7 +10,7 @@
 //!     whose `accumulator` field has been tampered; must be rejected.
 //!   - Alpha corruption: analogous tamper on the `alpha` field.
 
-use pyana_circuit::{
+use dregg_circuit::{
     field::BabyBear,
     non_membership::{NonMembershipProver, SetIdentifier, verify_non_membership_proof},
 };

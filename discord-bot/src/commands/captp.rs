@@ -24,12 +24,12 @@ pub fn register_share() -> CreateCommand {
         )
 }
 
-/// Register `/cap-accept <pyana-uri>`.
+/// Register `/cap-accept <dregg-uri>`.
 pub fn register_accept() -> CreateCommand {
     CreateCommand::new("cap-accept")
-        .description("Enliven a shared pyana URI — bot holds the live ref")
+        .description("Enliven a shared dregg URI — bot holds the live ref")
         .add_option(
-            CreateCommandOption::new(CommandOptionType::String, "uri", "pyana:// URI to enliven")
+            CreateCommandOption::new(CommandOptionType::String, "uri", "dregg:// URI to enliven")
                 .required(true),
         )
 }
@@ -188,7 +188,7 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
         }
     };
 
-    // Look up the target user's pyana key.
+    // Look up the target user's dregg key.
     let target_discord = target_id.to_string();
     let recipient_key = match state.db.get_cell_id(&target_discord).await {
         Ok(Some(id)) => id,
@@ -196,7 +196,7 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
             let embed = embeds::warning_embed(
                 "Target Has No Cipherclerk",
                 &format!(
-                    "<@{target_id}> does not have a linked pyana identity. They need to `/link-cclerk` first."
+                    "<@{target_id}> does not have a linked dregg identity. They need to `/link-cclerk` first."
                 ),
             );
             let _ = command
@@ -247,7 +247,7 @@ pub async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &Bo
     let exports = state.captp.list_exports().await;
 
     if held.is_empty() && exports.is_empty() {
-        let embed = embeds::pyana_embed("Bot Capabilities")
+        let embed = embeds::dregg_embed("Bot Capabilities")
             .description("No capabilities currently held or exported.");
         let _ = command
             .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -285,7 +285,7 @@ pub async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &Bo
         }
     }
 
-    let embed = embeds::pyana_embed("Bot Capabilities")
+    let embed = embeds::dregg_embed("Bot Capabilities")
         .description(desc)
         .field("Held", held.len().to_string(), true)
         .field("Exported", exports.len().to_string(), true);

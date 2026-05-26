@@ -1,16 +1,16 @@
 /**
  * Admin auth dialog.
  *
- * Listens for `pyana:auth-required` events emitted by app.js when a view's
+ * Listens for `dregg:auth-required` events emitted by app.js when a view's
  * fetch threw `AuthRequired`. Opens the <dialog id="auth-dialog">, prompts
  * for the admin bearer token, stores it in `sessionStorage` (NEVER
- * localStorage), and re-emits `pyana:auth-token-saved` so the requesting
+ * localStorage), and re-emits `dregg:auth-token-saved` so the requesting
  * view can retry.
  *
  * Accessibility:
  *  - native <dialog>.showModal() traps focus + handles Esc.
  *  - Enter submits via form `method="dialog"`.
- *  - On Cancel or Esc, we emit `pyana:auth-cancelled` so the requestor can
+ *  - On Cancel or Esc, we emit `dregg:auth-cancelled` so the requestor can
  *    surface "request aborted" rather than re-prompting in a loop.
  *
  * "Clear admin token" link in the header is also wired here: it appears only
@@ -44,7 +44,7 @@ export function init() {
     setAdminToken(token);
     input.value = '';
     dialog.close('ok');
-    window.dispatchEvent(new CustomEvent('pyana:auth-token-saved'));
+    window.dispatchEvent(new CustomEvent('dregg:auth-token-saved'));
   });
 
   // Cancel button:
@@ -55,7 +55,7 @@ export function init() {
   // Native close event covers Esc + cancel + submit:
   dialog.addEventListener('close', () => {
     if (dialog.returnValue !== 'ok') {
-      window.dispatchEvent(new CustomEvent('pyana:auth-cancelled'));
+      window.dispatchEvent(new CustomEvent('dregg:auth-cancelled'));
     }
   });
 
@@ -66,14 +66,14 @@ export function init() {
 
   // React to token presence changes (storage events from other tabs, or
   // local set/clear): keep the header chip in sync.
-  window.addEventListener('pyana:admin-token-changed', updateClearVisibility);
+  window.addEventListener('dregg:admin-token-changed', updateClearVisibility);
   window.addEventListener('storage', (e) => {
-    if (e.key === 'pyana_admin_token') updateClearVisibility();
+    if (e.key === 'dregg_admin_token') updateClearVisibility();
   });
   updateClearVisibility();
 
   // Listen for auth-required from any view.
-  window.addEventListener('pyana:auth-required', (e) => {
+  window.addEventListener('dregg:auth-required', (e) => {
     openDialog(e.detail || {});
   });
 }
@@ -108,7 +108,7 @@ function escFallback(e) {
   if (e.key === 'Escape') {
     dialog.removeAttribute('open');
     document.removeEventListener('keydown', escFallback);
-    window.dispatchEvent(new CustomEvent('pyana:auth-cancelled'));
+    window.dispatchEvent(new CustomEvent('dregg:auth-cancelled'));
   }
 }
 
@@ -129,12 +129,12 @@ export function runWithAuth(thunk) {
           const onSaved = () => { cleanup(); attempt(); };
           const onCancel = () => { cleanup(); reject(new Error('auth cancelled')); };
           const cleanup = () => {
-            window.removeEventListener('pyana:auth-token-saved', onSaved);
-            window.removeEventListener('pyana:auth-cancelled', onCancel);
+            window.removeEventListener('dregg:auth-token-saved', onSaved);
+            window.removeEventListener('dregg:auth-cancelled', onCancel);
           };
-          window.addEventListener('pyana:auth-token-saved', onSaved, { once: true });
-          window.addEventListener('pyana:auth-cancelled', onCancel, { once: true });
-          window.dispatchEvent(new CustomEvent('pyana:auth-required', {
+          window.addEventListener('dregg:auth-token-saved', onSaved, { once: true });
+          window.addEventListener('dregg:auth-cancelled', onCancel, { once: true });
+          window.dispatchEvent(new CustomEvent('dregg:auth-required', {
             detail: { reason: getAdminToken() ? 'initial' : 'initial' },
           }));
         } else { reject(e); }

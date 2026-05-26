@@ -4,11 +4,11 @@
 //! quota eviction, multi-agent interleaving, and proof verification through the
 //! simulation harness.
 
-use pyana_storage::QuotaId;
-use pyana_storage::queue::{
+use dregg_storage::QuotaId;
+use dregg_storage::queue::{
     MerkleQueue, QueueEntry, QueueError, empty_queue_root, verify_dequeue_proof,
 };
-use pyana_teasting::harness::SimulationHarness;
+use dregg_teasting::harness::SimulationHarness;
 
 /// Deterministic sender identity from a seed byte.
 fn sender(n: u8) -> [u8; 32] {
@@ -139,7 +139,7 @@ fn gc_removes_expired_messages_with_partial_refund() {
     let mut harness = SimulationHarness::new_federation(3);
 
     // Use CapInbox which provides gc_expired.
-    use pyana_storage::inbox::{CapInbox, InboxMessage};
+    use dregg_storage::inbox::{CapInbox, InboxMessage};
 
     let mut inbox = CapInbox::new(QuotaId(1), 10, 50);
 
@@ -215,8 +215,8 @@ fn full_queue_rejects_new_enqueue() {
 fn quota_depletion_evicts_inbox_refunds_all_deposits() {
     let mut harness = SimulationHarness::new_federation(3);
 
-    use pyana_storage::inbox::InboxMessage;
-    use pyana_storage::operator::RelayOperator;
+    use dregg_storage::inbox::InboxMessage;
+    use dregg_storage::operator::RelayOperator;
 
     let mut operator = RelayOperator::new([0xAA; 32], 100_000, 50);
     let owner = [0x01; 32];
@@ -261,7 +261,7 @@ fn quota_depletion_evicts_inbox_refunds_all_deposits() {
 fn multi_agent_enqueue_interleaved_correctly() {
     let mut harness = SimulationHarness::new_federation(3);
 
-    use pyana_storage::inbox::{CapInbox, InboxMessage};
+    use dregg_storage::inbox::{CapInbox, InboxMessage};
 
     let mut inbox = CapInbox::new(QuotaId(1), 20, 50);
     let agent_a = sender(0xAA);

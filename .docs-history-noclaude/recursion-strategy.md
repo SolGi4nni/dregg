@@ -194,12 +194,12 @@ Tier 3: History compression (for cross-federation sync / light clients)
    in-circuit IPA verifier gates, (b) actual `kimchi::verifier::verify` integration,
    (c) the STARK-in-Pickles wrapper circuit.
 
-2. **Post-quantum security matters.** Pyana tokens may circulate for years. BabyBear STARKs
+2. **Post-quantum security matters.** `dregg` tokens may circulate for years. BabyBear STARKs
    are hash-based and PQ-secure. Pickles relies on ECDLP over Pasta curves -- not suitable
    for long-lived authorization credentials if you care about PQ threats.
 
 3. **The proof size difference is manageable.** STARK proofs are ~48 KiB vs Pickles ~5 KiB.
-   For pyana's use case (authorization tokens exchanged between services), 48 KiB is fine.
+   For dregg's use case (authorization tokens exchanged between services), 48 KiB is fine.
    The 256-byte Groth16/SP1 path exists for on-chain settlement where size is critical.
 
 4. **Building STARK-in-Pickles is high-effort for marginal gain.** The STARK verifier in
@@ -215,7 +215,7 @@ Tier 3: History compression (for cross-federation sync / light clients)
 
 ### When Pickles WOULD make sense:
 
-- **Cross-system interop with Mina Protocol:** If pyana needs to post proofs to Mina L1,
+- **Cross-system interop with Mina Protocol:** If dregg needs to post proofs to Mina L1,
   Pickles is the native format. The existing backend would serve as the bridge.
 - **Extremely bandwidth-constrained channels:** If proof must be <5 KiB and PQ is not
   required, Pickles is better than STARKs.

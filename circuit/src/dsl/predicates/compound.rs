@@ -404,7 +404,7 @@ pub fn compound_predicate_circuit_descriptor() -> CircuitDescriptor {
     });
 
     CircuitDescriptor {
-        name: "pyana-compound-predicate-dsl-v2".into(),
+        name: "dregg-compound-predicate-dsl-v2".into(),
         trace_width: COMPOUND_DSL_WIDTH,
         max_degree: 5, // AtLeastOne over 5 flags has degree 5
         columns,

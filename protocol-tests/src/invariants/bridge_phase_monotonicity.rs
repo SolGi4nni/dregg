@@ -18,8 +18,8 @@
 
 use crate::Invariant;
 use proptest::prelude::*;
-use pyana_cell::note_bridge::{
-    BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope, compute_bridge_id,
+use dregg_cell::note_bridge::{
+    BridgePhase, BridgeReceiptEnvelope,
 };
 
 pub struct BridgePhaseMonotonicity;

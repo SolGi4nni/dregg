@@ -2,12 +2,12 @@
 
 ## Overview
 
-This document describes pyana's flagship integration with Base (Coinbase's L2): a system
+This document describes dregg's flagship integration with Base (Coinbase's L2): a system
 where users can hold private value (USDC/ETH notes) and present anonymous credentials
 on-chain, with all privacy guarantees backed by STARK proofs wrapped in SP1 for EVM
 verification.
 
-The integration demonstrates what makes pyana unique: not just private transfers (which
+The integration demonstrates what makes dregg unique: not just private transfers (which
 Tornado Cash/Railgun do), but **anonymous credential presentation on-chain** -- proving
 facts about yourself to smart contracts without revealing your identity.
 
@@ -17,7 +17,7 @@ facts about yourself to smart contracts without revealing your identity.
                          BASE (L2)
     ┌─────────────────────────────────────────────────────┐
     │                                                     │
-    │  PyanaVault.sol         PyanaCredentialGate.sol      │
+    │  DreggVault.sol         DreggCredentialGate.sol      │
     │  ┌──────────────┐      ┌────────────────────────┐   │
     │  │ deposit()    │      │ verifyCredential()     │   │
     │  │ withdraw()   │      │ mintWithCredential()   │   │
@@ -53,7 +53,7 @@ facts about yourself to smart contracts without revealing your identity.
     │  - Conservation    │       │  - Credential valid │
     └────────────────────┘       └─────────────────────┘
               │                             │
-              │         PYANA LAYER         │
+              │         DREGG LAYER         │
     ┌─────────┴─────────────────────────────┴─────────┐
     │                                                  │
     │  Notes (private value)    Credentials (facts)    │
@@ -72,18 +72,18 @@ facts about yourself to smart contracts without revealing your identity.
 ### 1. Private USDC Transfers (Bridge In -> Transfer -> Bridge Out)
 
 **Flow:**
-1. Alice calls `PyanaVault.deposit(USDC, 100, noteCommitment)` on Base
+1. Alice calls `DreggVault.deposit(USDC, 100, noteCommitment)` on Base
 2. The vault locks 100 USDC and emits `Deposit(token, amount, noteCommitment)`
-3. Pyana federation observes the deposit event and adds `noteCommitment` to the note tree
-4. Alice can now transfer privately inside pyana (nullifier + new note, standard UTXO model)
+3. `dregg` federation observes the deposit event and adds `noteCommitment` to the note tree
+4. Alice can now transfer privately inside dregg (nullifier + new note, standard UTXO model)
 5. Bob wants to withdraw: burns his note (reveals nullifier), generates STARK proof of valid spend
 6. SP1 wraps the STARK proof into a Groth16 proof
-7. Bob calls `PyanaVault.withdraw(USDC, 30, bobAddress, sp1Proof)` on Base
+7. Bob calls `DreggVault.withdraw(USDC, 30, bobAddress, sp1Proof)` on Base
 8. The vault verifies the proof via the SP1 Verifier Gateway, then releases 30 USDC to Bob
 
 **What's hidden:**
 - Alice's identity (she deposited, but deposits are common -- many people deposit)
-- The transfer from Alice to Bob (happens entirely inside pyana, invisible on-chain)
+- The transfer from Alice to Bob (happens entirely inside dregg, invisible on-chain)
 - Bob's connection to Alice (he withdraws with a proof, no link to the deposit)
 - The intermediate transfers (could be 1 hop or 100 hops)
 
@@ -123,7 +123,7 @@ facts about yourself to smart contracts without revealing your identity.
 ### 4. Private Voting (Token-Weighted)
 
 **Flow:**
-1. Governance contract wants to gate voting on "holds >= 1000 USDC in pyana"
+1. Governance contract wants to gate voting on "holds >= 1000 USDC in dregg"
 2. Alice generates an anonymous presentation:
    - Proves she has a note with value >= 1000 (committed-threshold on note value)
    - Proves the note is in the current note tree (Merkle membership)
@@ -138,13 +138,13 @@ facts about yourself to smart contracts without revealing your identity.
 
 ## Contract Interfaces
 
-### IPyanaVault.sol
+### IDreggVault.sol
 
 The vault holds bridged assets. Deposits create note commitments; withdrawals require
 SP1-wrapped STARK proofs of valid note spending.
 
 ```solidity
-interface IPyanaVault {
+interface IDreggVault {
     event Deposit(address indexed token, uint256 amount, bytes32 noteCommitment, uint256 leafIndex);
     event Withdrawal(address indexed token, uint256 amount, address indexed recipient, bytes32 nullifier);
 
@@ -154,14 +154,14 @@ interface IPyanaVault {
 }
 ```
 
-### IPyanaCredentialGate.sol
+### IDreggCredentialGate.sol
 
 Anonymous credential verification. The SP1 proof wraps a STARK proving:
 - Ring membership in a federation (prover is a member but identity hidden)
 - A predicate holds (e.g., age >= 18, balance >= X, membership in set Y)
 
 ```solidity
-interface IPyanaCredentialGate {
+interface IDreggCredentialGate {
     event CredentialVerified(bytes32 indexed federationRoot, bytes32 indexed predicateHash, bytes32 nullifier);
 
     function verifyCredential(

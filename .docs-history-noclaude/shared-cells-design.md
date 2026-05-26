@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-Pyana cells currently have a single `public_key: [u8; 32]` owner. The executor verifies
+`dregg` cells currently have a single `public_key: [u8; 32]` owner. The executor verifies
 Ed25519 signatures against this key. This model supports single-agent autonomy but
 cannot directly express:
 
@@ -12,7 +12,7 @@ cannot directly express:
 - **DAOs/committees**: Threshold decision-making over shared state
 
 This document explores the design space and recommends an approach that preserves
-pyana's fast-path properties while enabling multi-owner patterns.
+dregg's fast-path properties while enabling multi-owner patterns.
 
 ---
 
@@ -86,16 +86,16 @@ Key insights from the Sui paper:
    present in the transaction to access the child. This enables composable data
    structures without making them shared.
 
-### Mapping to Pyana
+### Mapping to `dregg`
 
-| Sui Concept | Pyana Equivalent | Notes |
+| Sui Concept | `dregg` Equivalent | Notes |
 |---|---|---|
 | Owned object | Cell with single `public_key` | Current model |
 | Shared object | ? | **This design doc** |
 | Immutable object | Cell with `Permissions::frozen()` | Already supported |
 | Child object | Cell with `delegate: Some(parent_id)` | Partially implemented |
 | ObjKey lock | Nonce replay protection | Similar anti-equivocation |
-| Multi-sig address | ? | Not yet in pyana |
+| Multi-sig address | ? | Not yet in dregg |
 
 ---
 
@@ -164,7 +164,7 @@ pub struct Cell {
 
 ### Option C: Keep Cells Single-Owner, Model Shared State via Capabilities (Recommended)
 
-**Core insight**: Pyana already has the building blocks for multi-owner semantics
+**Core insight**: `dregg` already has the building blocks for multi-owner semantics
 via the capability system. Rather than changing the Cell ownership model, we
 introduce a new cell archetype: the **governed cell**.
 
@@ -405,7 +405,7 @@ cell ownership -- no interaction.
 
 seL4's capability system has relevant parallels:
 
-| seL4 Concept | Pyana Equivalent | Shared-Cell Relevance |
+| seL4 Concept | `dregg` Equivalent | Shared-Cell Relevance |
 |---|---|---|
 | Endpoint (IPC channel) | Cell with `access_mode: Shared` | Multiple processes invoke |
 | CNode (capability space) | `CapabilitySet` (c-list) | Each party holds caps |
@@ -418,7 +418,7 @@ Multiple processes can invoke the same endpoint because they each hold a
 capability TO it. The endpoint itself has a single "owner" (the server
 process). Authorization is capability-based, not identity-based.
 
-This validates Option C: pyana cells are endpoints. Multiple agents can
+This validates Option C: dregg cells are endpoints. Multiple agents can
 invoke a governed cell because they hold capabilities to it. The cell's
 program (circuit) defines what operations are valid, not who "owns" it.
 
@@ -538,7 +538,7 @@ The recommended approach is **Option C + access mode annotation**:
 - Leverage existing subsystems (capabilities, delegation, conditional turns,
   composer) without modification
 
-This design preserves pyana's core performance property (fast-path finality for
+This design preserves dregg's core performance property (fast-path finality for
 owned objects) while enabling the full spectrum of multi-owner patterns through
 ZK proof authorization -- with the added benefit of privacy (anonymous credentials
 over the authorized set).

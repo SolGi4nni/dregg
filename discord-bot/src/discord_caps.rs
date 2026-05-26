@@ -2,7 +2,7 @@
 //!
 //! This module defines:
 //! 1. `DiscordCapability` — capabilities that, when exercised via CapTP, trigger Discord actions.
-//! 2. Event handlers that emit pyana turns when Discord events occur.
+//! 2. Event handlers that emit dregg turns when Discord events occur.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 // =============================================================================
-// Discord capabilities (pyana → Discord direction)
+// Discord capabilities (dregg → Discord direction)
 // =============================================================================
 
 /// The kind of Discord channel to create.
@@ -26,7 +26,7 @@ pub enum ChannelKind {
 
 /// Capabilities that, when exercised via CapTP, trigger Discord actions.
 /// Each variant is a cell with a sturdy ref. Someone holding the capability
-/// can trigger the action by exercising the cap via CapTP from any pyana client.
+/// can trigger the action by exercising the cap via CapTP from any dregg client.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DiscordCapability {
     /// Send a message to a channel.
@@ -58,7 +58,7 @@ pub enum DiscordCapability {
 pub struct RegisteredDiscordCap {
     /// The cell ID for this capability.
     pub cell_id: String,
-    /// The pyana URI (sturdy ref) for this capability.
+    /// The dregg URI (sturdy ref) for this capability.
     pub uri: Option<String>,
     /// The capability definition.
     pub capability: DiscordCapability,
@@ -214,23 +214,23 @@ impl std::fmt::Display for DiscordCapError {
 impl std::error::Error for DiscordCapError {}
 
 // =============================================================================
-// Discord events → Pyana turns (Discord → pyana direction)
+// Discord events → Dregg turns (Discord → dregg direction)
 // =============================================================================
 
-/// Queue link configuration: maps a Discord channel to a pyana programmable queue.
+/// Queue link configuration: maps a Discord channel to a dregg programmable queue.
 #[derive(Debug, Clone)]
 pub struct ChannelQueueLink {
     /// Discord channel ID.
     pub channel_id: u64,
     /// Guild ID.
     pub guild_id: u64,
-    /// Queue name in the pyana namespace.
+    /// Queue name in the dregg namespace.
     pub queue_name: String,
     /// Full namespace path (e.g., /discord/<guild-id>/<name>).
     pub namespace_path: String,
 }
 
-/// Event bridge: converts Discord events into pyana turns.
+/// Event bridge: converts Discord events into dregg turns.
 #[derive(Debug)]
 pub struct EventBridge {
     /// Active channel-to-queue links.
@@ -254,7 +254,7 @@ impl EventBridge {
     pub async fn link_channel(&self, link: ChannelQueueLink) {
         let channel_id = link.channel_id;
         self.channel_links.write().await.insert(channel_id, link);
-        info!(channel_id, "Linked channel to pyana queue");
+        info!(channel_id, "Linked channel to dregg queue");
     }
 
     /// Unlink a channel.
@@ -266,7 +266,7 @@ impl EventBridge {
             .is_some()
     }
 
-    /// Handle a Discord message event — enqueue into linked pyana queue if applicable.
+    /// Handle a Discord message event — enqueue into linked dregg queue if applicable.
     pub async fn on_message(&self, msg: &Message) {
         let channel_id = msg.channel_id.get();
         let links = self.channel_links.read().await;
@@ -288,7 +288,7 @@ impl EventBridge {
                     channel_id,
                     queue = link.queue_name,
                     error = %e,
-                    "Failed to enqueue message into pyana queue"
+                    "Failed to enqueue message into dregg queue"
                 );
             }
         }
@@ -361,7 +361,7 @@ impl EventBridge {
         }
     }
 
-    /// Submit a turn to the pyana node.
+    /// Submit a turn to the dregg node.
     async fn submit_turn(
         &self,
         namespace_path: &str,

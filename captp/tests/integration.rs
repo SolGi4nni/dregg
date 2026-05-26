@@ -1,20 +1,20 @@
-//! Integration tests exercising cross-module scenarios in pyana-captp.
+//! Integration tests exercising cross-module scenarios in dregg-captp.
 //!
 //! These tests verify that the components (Swiss table, URI, sessions, GC,
 //! handoff, pipeline, store-and-forward) compose correctly for end-to-end
 //! capability lifecycle operations.
 
-use pyana_captp::FederationId;
-use pyana_captp::session::CapSession;
-use pyana_captp::{
+use dregg_captp::FederationId;
+use dregg_captp::session::CapSession;
+use dregg_captp::{
     CrossFedPipelineBridge, DropResult, ExportGcManager, HandoffCertificate, HandoffPresentation,
     ImportGcManager, MessagePriority, MessageRelay, PipelinePromiseState, PipelineRegistry,
     PipelineResultValue, PipelinedAction, PipelinedMessage, StoreForwardClient, SwissTable,
     generate_x25519_keypair,
 };
 
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, generate_keypair};
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, generate_keypair};
 
 // =============================================================================
 // Helpers
@@ -229,7 +229,7 @@ fn cross_federation_bridge_full_flow() {
 
     // Phase 2: Remote resolves the first result
     let first_local_promise = match &outbox[0].1 {
-        pyana_captp::PipelineWireMessage::PipelineToPromise {
+        dregg_captp::PipelineWireMessage::PipelineToPromise {
             result_promise_id, ..
         } => result_promise_id.unwrap(),
         _ => panic!("expected PipelineToPromise"),
@@ -382,7 +382,7 @@ fn three_party_handoff_alice_introduces_bob_to_carol() {
 
     // Carol validates the cert end-to-end.
     let known = vec![alice_fed];
-    let acceptance = pyana_captp::handoff::validate_handoff(
+    let acceptance = dregg_captp::handoff::validate_handoff(
         &presentation,
         &alice_pk,
         &mut carol_swiss,

@@ -135,6 +135,6 @@ configured, but in test/dev paths this could mask broken proofs.
   attenuated only by the cell that holds them, not their `action_target`. This
   is an exception to the "everything keyed by action_target" pattern, and worth
   noting if anyone adds new attenuation paths.
-- `apply_bridge_mint` reaches for `pyana_circuit::dsl::note_spending` directly
+- `apply_bridge_mint` reaches for `dregg_circuit::dsl::note_spending` directly
   rather than going through the `ProofVerifier` trait — this is documented
   inline as a deliberate fix for a previous truncation bug. Preserved verbatim.

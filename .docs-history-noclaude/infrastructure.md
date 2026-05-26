@@ -1,6 +1,6 @@
-# Pyana Federation Infrastructure on GitHub Actions
+# `dregg` Federation Infrastructure on GitHub Actions
 
-The pyana federation runs as persistent infrastructure on GitHub Actions free runners. Three federation nodes plus an intent pool service stay online continuously via staggered scheduled workflows that overlap, ensuring the network is always reachable.
+The dregg federation runs as persistent infrastructure on GitHub Actions free runners. Three federation nodes plus an intent pool service stay online continuously via staggered scheduled workflows that overlap, ensuring the network is always reachable.
 
 ## How It Works
 
@@ -8,7 +8,7 @@ The pyana federation runs as persistent infrastructure on GitHub Actions free ru
 
 GitHub Actions scheduled workflows can run for up to 6 hours. By scheduling each node to restart every 5 hours (with a 5h45m actual runtime), there is always overlap between the dying instance and the fresh one. State is persisted between runs via artifacts.
 
-Since the node uses QUIC (quinn via pyana-net), the nodes are directly reachable on their runner's ephemeral public IPs. The discovery service maintains a coordination file so nodes can find each other across restarts.
+Since the node uses QUIC (quinn via dregg-net), the nodes are directly reachable on their runner's ephemeral public IPs. The discovery service maintains a coordination file so nodes can find each other across restarts.
 
 ### Schedule Stagger Logic
 
@@ -49,7 +49,7 @@ The `discovery.yml` workflow runs every 30 minutes and on `repository_dispatch` 
 4. Commits to main (if changed) for GitHub Pages hosting
 5. Uploads as `federation-discovery` artifact for cross-workflow access
 
-Clients (like the browser extension) fetch `https://emberian.github.io/pyana/discovery.json` to find active federation nodes.
+Clients (like the browser extension) fetch `https://emberian.github.io/dregg/discovery.json` to find active federation nodes.
 
 ## Required Secrets
 
@@ -57,10 +57,10 @@ Configure these in the repository settings (Settings > Secrets and variables > A
 
 | Secret              | Description                                              | Format     |
 |---------------------|----------------------------------------------------------|------------|
-| `PYANA_NODE_1_KEY`  | Ed25519 private key for Node 1 (stable identity)         | 64 hex chars |
-| `PYANA_NODE_2_KEY`  | Ed25519 private key for Node 2 (stable identity)         | 64 hex chars |
-| `PYANA_NODE_3_KEY`  | Ed25519 private key for Node 3 (stable identity)         | 64 hex chars |
-| `PYANA_ROOT_KEY`    | Federation root signing key (for token minting)          | 64 hex chars |
+| `DREGG_NODE_1_KEY`  | Ed25519 private key for Node 1 (stable identity)         | 64 hex chars |
+| `DREGG_NODE_2_KEY`  | Ed25519 private key for Node 2 (stable identity)         | 64 hex chars |
+| `DREGG_NODE_3_KEY`  | Ed25519 private key for Node 3 (stable identity)         | 64 hex chars |
+| `DREGG_ROOT_KEY`    | Federation root signing key (for token minting)          | 64 hex chars |
 
 ### Generating Keys
 
@@ -68,8 +68,8 @@ Configure these in the repository settings (Settings > Secrets and variables > A
 # Generate a random Ed25519 private key (64 hex chars = 32 bytes)
 openssl rand -hex 32
 
-# Or using the pyana toolchain (if available):
-cargo run -p pyana-demo -- keygen
+# Or using the dregg toolchain (if available):
+cargo run -p dregg-demo -- keygen
 ```
 
 Each node's key is its stable identity across restarts. The root key authorizes token minting and should be kept especially secure.
@@ -77,12 +77,12 @@ Each node's key is its stable identity across restarts. The root key authorizes 
 ## Adding a New Node
 
 1. Generate a new Ed25519 key: `openssl rand -hex 32`
-2. Add it as a repository secret: `PYANA_NODE_4_KEY`
+2. Add it as a repository secret: `DREGG_NODE_4_KEY`
 3. Copy one of the existing `federation-node-N.yml` workflows
 4. Change:
    - The schedule cron (pick a new stagger offset)
    - All references from `node-N` to `node-4`
-   - The secret reference to `PYANA_NODE_4_KEY`
+   - The secret reference to `DREGG_NODE_4_KEY`
    - The concurrency group
 5. Update `discovery.yml` to also download `federation-node-4-state`
 6. Commit and push
@@ -135,7 +135,7 @@ Each node's key is its stable identity across restarts. The root key authorizes 
 ```json
 {
   "node_id": "quic-0.0.0.0:4433",
-  "ticket": "pyana-quic://1.2.3.4:4433",
+  "ticket": "dregg-quic://1.2.3.4:4433",
   "last_seen": "2026-05-20T12:00:00Z",
   "role": "node-1",
   "protocol": "quinn-quic",

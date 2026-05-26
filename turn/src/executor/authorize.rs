@@ -195,7 +195,7 @@ impl TurnExecutor {
         if required_actions.is_empty() {
             let access_req = target_cell
                 .permissions
-                .for_action(pyana_cell::permissions::Action::Access);
+                .for_action(dregg_cell::permissions::Action::Access);
             self.check_single_auth_requirement(
                 action,
                 target_cell,
@@ -231,7 +231,7 @@ impl TurnExecutor {
                 if let Some(dest_cell) = ledger.get(to) {
                     let receive_req = dest_cell
                         .permissions
-                        .for_action(pyana_cell::permissions::Action::Receive);
+                        .for_action(dregg_cell::permissions::Action::Receive);
                     if matches!(receive_req, AuthRequired::Impossible) {
                         return Err((
                             TurnError::PermissionDenied {
@@ -279,7 +279,7 @@ impl TurnExecutor {
     pub(super) fn verify_captp_delivered(
         &self,
         action: &Action,
-        handoff_cert: &pyana_captp::HandoffCertificate,
+        handoff_cert: &dregg_captp::HandoffCertificate,
         introducer_pk: &[u8; 32],
         sender_pk: &[u8; 32],
         sender_signature: &[u8; 64],
@@ -311,7 +311,7 @@ impl TurnExecutor {
         }
 
         // 3. Verify the introducer signature on the certificate.
-        let intro_pk_wrapper = pyana_types::PublicKey(*introducer_pk);
+        let intro_pk_wrapper = dregg_types::PublicKey(*introducer_pk);
         if !handoff_cert.verify_signature(&intro_pk_wrapper) {
             return Err((
                 TurnError::InvalidAuthorization {
@@ -463,7 +463,7 @@ impl TurnExecutor {
         &self,
         action: &Action,
         target_cell: &Cell,
-        predicate: &pyana_cell::WitnessedPredicate,
+        predicate: &dregg_cell::WitnessedPredicate,
         path: &[usize],
         turn_nonce: u64,
     ) -> Result<(), (TurnError, Vec<usize>)> {
@@ -938,7 +938,7 @@ impl TurnExecutor {
         auth_required: &AuthRequired,
         path: &[usize],
         target_id: CellId,
-        effects_mask: pyana_cell::EffectMask,
+        effects_mask: dregg_cell::EffectMask,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
             (
@@ -1155,7 +1155,7 @@ impl TurnExecutor {
                         if delegator_mask != 0 {
                             if let Some(bearer_mask) = proof.allowed_effects {
                                 // Bearer specifies a facet — it must be a subset of delegator's.
-                                if !pyana_cell::is_facet_attenuation(delegator_mask, bearer_mask) {
+                                if !dregg_cell::is_facet_attenuation(delegator_mask, bearer_mask) {
                                     return Err((
                                         TurnError::BearerCapFacetAmplification {
                                             target: proof.target,
@@ -1179,8 +1179,8 @@ impl TurnExecutor {
                 proof_bytes,
                 root_issuer_commitment,
             } => {
-                use pyana_circuit::field::BabyBear;
-                use pyana_circuit::stark;
+                use dregg_circuit::field::BabyBear;
+                use dregg_circuit::stark;
                 let stark_proof = stark::proof_from_bytes(proof_bytes).map_err(|e| {
                     (
                         TurnError::BearerCapInvalidProof {
@@ -1217,7 +1217,7 @@ impl TurnExecutor {
                         ));
                     }
                 }
-                let air = pyana_circuit::EffectVmAir::new(stark_proof.trace_len);
+                let air = dregg_circuit::EffectVmAir::new(stark_proof.trace_len);
                 stark::verify(&air, &stark_proof, &public_inputs).map_err(|e| {
                     (
                         TurnError::BearerCapInvalidProof {
@@ -1241,7 +1241,7 @@ impl TurnExecutor {
         federation_id: &[u8; 32],
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-bearer-delegation-v1:");
+        hasher.update(b"dregg-bearer-delegation-v1:");
         hasher.update(federation_id);
         hasher.update(target.as_bytes());
         let perm_byte = match permissions {
@@ -1273,7 +1273,7 @@ impl TurnExecutor {
     pub fn compute_signing_message(action: &Action, federation_id: &[u8; 32]) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         // Domain separation: version-bumped to v2 when federation binding was added.
-        hasher.update(b"pyana-action-sig-v2:");
+        hasher.update(b"dregg-action-sig-v2:");
         hasher.update(federation_id);
         hasher.update(action.target.as_bytes());
         hasher.update(&action.method);
@@ -1329,7 +1329,7 @@ impl TurnExecutor {
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         // Domain separation: version-bumped to v2 when federation/nonce binding was added.
-        hasher.update(b"pyana-partial-sig-v2:");
+        hasher.update(b"dregg-partial-sig-v2:");
         hasher.update(federation_id);
         hasher.update(&action.hash());
         hasher.update(&(position as u64).to_le_bytes());
@@ -1345,7 +1345,7 @@ impl TurnExecutor {
     /// circularity that would otherwise arise from
     /// `compute_partial_signing_message`. Includes:
     ///
-    /// * Domain separator `"pyana-custom-sig-v1:"` (T-domain isolation).
+    /// * Domain separator `"dregg-custom-sig-v1:"` (T-domain isolation).
     /// * `federation_id` (T6 cross-federation replay defense).
     /// * `turn_nonce` (T11 stale-proof defense).
     /// * `position` (multi-action turn binding).
@@ -1364,13 +1364,13 @@ impl TurnExecutor {
     /// than hashing it.
     pub fn compute_custom_signing_message(
         action: &Action,
-        predicate: &pyana_cell::WitnessedPredicate,
+        predicate: &dregg_cell::WitnessedPredicate,
         position: usize,
         federation_id: &[u8; 32],
         turn_nonce: u64,
     ) -> Vec<u8> {
         let mut msg = Vec::with_capacity(256);
-        msg.extend_from_slice(b"pyana-custom-sig-v1:");
+        msg.extend_from_slice(b"dregg-custom-sig-v1:");
         msg.extend_from_slice(federation_id);
         msg.extend_from_slice(&turn_nonce.to_le_bytes());
         msg.extend_from_slice(&(position as u64).to_le_bytes());
@@ -1406,7 +1406,7 @@ impl TurnExecutor {
     pub(super) fn determine_required_permissions(
         &self,
         action: &Action,
-    ) -> Vec<(pyana_cell::permissions::Action, &'static str)> {
+    ) -> Vec<(dregg_cell::permissions::Action, &'static str)> {
         let mut result = Vec::new();
         let mut has_send = false;
         let mut has_set_state = false;
@@ -1416,7 +1416,7 @@ impl TurnExecutor {
         // A negative balance_change (withdrawal) requires Send permission.
         if let Some(delta) = action.balance_change {
             if delta < 0 && !has_send {
-                result.push((pyana_cell::permissions::Action::Send, "Send"));
+                result.push((dregg_cell::permissions::Action::Send, "Send"));
                 has_send = true;
             }
         }
@@ -1424,37 +1424,37 @@ impl TurnExecutor {
         for effect in &action.effects {
             match effect {
                 Effect::Transfer { from, .. } if from == &action.target && !has_send => {
-                    result.push((pyana_cell::permissions::Action::Send, "Send"));
+                    result.push((dregg_cell::permissions::Action::Send, "Send"));
                     has_send = true;
                 }
                 Effect::SetField { .. } if !has_set_state => {
-                    result.push((pyana_cell::permissions::Action::SetState, "SetState"));
+                    result.push((dregg_cell::permissions::Action::SetState, "SetState"));
                     has_set_state = true;
                 }
                 Effect::IncrementNonce { .. } if !has_increment_nonce => {
                     result.push((
-                        pyana_cell::permissions::Action::IncrementNonce,
+                        dregg_cell::permissions::Action::IncrementNonce,
                         "IncrementNonce",
                     ));
                     has_increment_nonce = true;
                 }
                 Effect::GrantCapability { .. } if !has_delegate => {
-                    result.push((pyana_cell::permissions::Action::Delegate, "Delegate"));
+                    result.push((dregg_cell::permissions::Action::Delegate, "Delegate"));
                     has_delegate = true;
                 }
                 Effect::RevokeCapability { .. } if !has_delegate => {
-                    result.push((pyana_cell::permissions::Action::Delegate, "Delegate"));
+                    result.push((dregg_cell::permissions::Action::Delegate, "Delegate"));
                     has_delegate = true;
                 }
                 Effect::SetPermissions { .. } => {
                     result.push((
-                        pyana_cell::permissions::Action::SetPermissions,
+                        dregg_cell::permissions::Action::SetPermissions,
                         "SetPermissions",
                     ));
                 }
                 Effect::SetVerificationKey { .. } => {
                     result.push((
-                        pyana_cell::permissions::Action::SetVerificationKey,
+                        dregg_cell::permissions::Action::SetVerificationKey,
                         "SetVerificationKey",
                     ));
                 }
@@ -1465,7 +1465,7 @@ impl TurnExecutor {
                 | Effect::CreateObligation { .. }
                     if !has_send =>
                 {
-                    result.push((pyana_cell::permissions::Action::Send, "Send"));
+                    result.push((dregg_cell::permissions::Action::Send, "Send"));
                     has_send = true;
                 }
                 // Settlement actions (release/refund/fulfill/slash) are checked for
@@ -1478,14 +1478,14 @@ impl TurnExecutor {
                 | Effect::RefundCommittedEscrow { .. }
                 | Effect::FulfillObligation { .. }
                 | Effect::SlashObligation { .. } => {
-                    result.push((pyana_cell::permissions::Action::Access, "Access"));
+                    result.push((dregg_cell::permissions::Action::Access, "Access"));
                 }
                 // Refusal mutates the target cell's audit slot + nonce
                 // (CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3); it requires
                 // SetState authority because it overwrites slot[4] with
                 // a refusal-audit commitment.
                 Effect::Refusal { .. } if !has_set_state => {
-                    result.push((pyana_cell::permissions::Action::SetState, "SetState"));
+                    result.push((dregg_cell::permissions::Action::SetState, "SetState"));
                     has_set_state = true;
                 }
                 _ => {}

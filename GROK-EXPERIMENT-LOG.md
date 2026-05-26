@@ -28,7 +28,7 @@
 
 **Task:** Remove 5 HISTORICAL-REMOVED dead stubs identified in IGNORED-TESTS-AUDIT.md:
 1. `circuit/tests/sovereign_transition.rs` — entire file (pure empty stub)
-2. `pyana-dsl-tests/src/sovereign_transition_dsl.rs:352` — `dsl_matches_handwritten_air` function
+2. `dregg-dsl-tests/src/sovereign_transition_dsl.rs:352` — `dsl_matches_handwritten_air` function
 3. `coord/src/tests.rs:1394` — `many_node_causal_dag` `#[cfg(any())]` block
 4. `coord/src/tests.rs:1446` — `rejected_turn_still_in_dag` `#[cfg(any())]` block
 5. `demo-agent/examples/unified_harness.rs:1110` — `run_federation_bootstrap` `#[cfg(any())]` block

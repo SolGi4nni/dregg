@@ -1,6 +1,6 @@
 //! Persistent Poseidon2 note commitment tree.
 //!
-//! This wraps `Poseidon2MerkleTree` from `pyana-commit` with redb persistence,
+//! This wraps `Poseidon2MerkleTree` from `dregg-commit` with redb persistence,
 //! providing a ZK-friendly note tree that can generate membership proofs
 //! suitable for use inside STARK circuits.
 //!
@@ -9,8 +9,8 @@
 //! provides fast non-ZK verification, while the Poseidon2 tree provides
 //! membership proofs that can be verified inside a STARK proof.
 
-use pyana_circuit::field::BabyBear;
-use pyana_commit::poseidon2_tree::{
+use dregg_circuit::field::BabyBear;
+use dregg_commit::poseidon2_tree::{
     Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field,
 };
 

@@ -13,9 +13,9 @@
 //! in an ocap system: you can only gain access through introduction by
 //! someone who already holds both ends of the relationship.
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, TurnBuilder, TurnExecutor, TurnResult};
 
 /// Create a cell with open permissions and a given balance.
 fn make_open_cell(seed: u8, balance: u64) -> Cell {
@@ -42,7 +42,7 @@ fn short_id(id: &CellId) -> String {
 }
 
 fn main() {
-    println!("=== Pyana Three-Party Introduction Demo ===");
+    println!("=== Dregg Three-Party Introduction Demo ===");
     println!("    Object-Capability Introduction Pattern");
     println!();
 

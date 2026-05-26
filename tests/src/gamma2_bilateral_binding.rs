@@ -5,9 +5,9 @@
 //! Phase 1 of γ.2 defines three canonical instance ids derived from public
 //! surface data:
 //!
-//!   transfer_id = Poseidon2(b"pyana-transfer-id-v1" || from || to || amount_be || sender_nonce_be)
-//!   grant_id    = Poseidon2(b"pyana-grant-id-v1"    || from || to || cap_entry_hash || sender_nonce_be)
-//!   intro_id    = Poseidon2(b"pyana-intro-id-v1"    || introducer || recipient || target || permissions_bits || introducer_nonce_be)
+//!   transfer_id = Poseidon2(b"dregg-transfer-id-v1" || from || to || amount_be || sender_nonce_be)
+//!   grant_id    = Poseidon2(b"dregg-grant-id-v1"    || from || to || cap_entry_hash || sender_nonce_be)
+//!   intro_id    = Poseidon2(b"dregg-intro-id-v1"    || introducer || recipient || target || permissions_bits || introducer_nonce_be)
 //!
 //! Each test in this file covers one of:
 //!   - happy-path symmetric/asymmetric/trilateral binding;
@@ -20,7 +20,7 @@
 //! doc but Phase 1 lands the off-AIR verifier independently from any
 //! Phase 2 joint-aggregation AIR.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 
 // ---------------------------------------------------------------------------
 // Canonical id derivations (testable today: pure-public-data functions)
@@ -30,7 +30,7 @@ use pyana_cell::CellId;
 /// STAGE-7-GAMMA-2-PI-DESIGN.md §3.1.
 fn transfer_id_preimage(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-transfer-id-v1");
+    v.extend_from_slice(b"dregg-transfer-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(&amount.to_be_bytes());
@@ -45,7 +45,7 @@ fn grant_id_preimage(
     sender_nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-grant-id-v1");
+    v.extend_from_slice(b"dregg-grant-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(cap_entry_hash);
@@ -61,7 +61,7 @@ fn intro_id_preimage(
     introducer_nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-intro-id-v1");
+    v.extend_from_slice(b"dregg-intro-id-v1");
     v.extend_from_slice(&introducer.0);
     v.extend_from_slice(&recipient.0);
     v.extend_from_slice(&target.0);
@@ -77,7 +77,7 @@ fn intro_id_preimage(
 #[test]
 fn transfer_id_preimage_includes_domain_separator() {
     let pre = transfer_id_preimage(&CellId([1u8; 32]), &CellId([2u8; 32]), 10, 0);
-    assert!(pre.starts_with(b"pyana-transfer-id-v1"));
+    assert!(pre.starts_with(b"dregg-transfer-id-v1"));
 }
 
 #[test]

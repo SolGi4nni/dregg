@@ -83,7 +83,7 @@ impl StarkAir for Poseidon2Air {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-poseidon2-v1"
+        "dregg-poseidon2-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -244,7 +244,7 @@ impl StarkAir for MerklePoseidon2Air {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-merkle-poseidon2-round-v1"
+        "dregg-merkle-poseidon2-round-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {
@@ -370,7 +370,7 @@ impl StarkAir for MerklePoseidon2StarkAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-merkle-poseidon2-v1"
+        "dregg-merkle-poseidon2-v1"
     }
 
     fn eval_constraints(
@@ -553,7 +553,7 @@ impl StarkAir for BlindedMerklePoseidon2StarkAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-blinded-merkle-poseidon2-v1"
+        "dregg-blinded-merkle-poseidon2-v1"
     }
 
     fn eval_constraints(

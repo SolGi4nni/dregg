@@ -82,9 +82,9 @@
   },
 
   "documented_gaps": [
-    "MCP_pyana_exercise_bearer_cap_emits_Authorization::Bearer_not_CapTpDelivered",
-    "MCP_does_not_expose_pyana_submit_sovereign_turn_for_witness-carrying_turns",
-    "MCP_does_not_expose_pyana_install_cell_program_for_slot_caveats",
+    "MCP_dregg_exercise_bearer_cap_emits_Authorization::Bearer_not_CapTpDelivered",
+    "MCP_does_not_expose_dregg_submit_sovereign_turn_for_witness-carrying_turns",
+    "MCP_does_not_expose_dregg_install_cell_program_for_slot_caveats",
     "MCP_exercise_tool_does_not_emit_per-cell_WitnessedReceipts_for_bilateral_bundle"
   ]
 }

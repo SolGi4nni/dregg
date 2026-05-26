@@ -1398,7 +1398,7 @@ mod tests {
         let air = MerkleStarkAir;
         let proof = prove_poseidon(&air, &trace, &pi);
 
-        assert_eq!(proof.air_name, "pyana-merkle-v1");
+        assert_eq!(proof.air_name, "dregg-merkle-v1");
         assert_eq!(proof.trace_len, 4);
         assert_eq!(proof.num_cols, 6);
         assert_eq!(proof.query_proofs.len(), NUM_QUERIES);

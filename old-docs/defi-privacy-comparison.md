@@ -1,8 +1,8 @@
-# Pyana vs Zcash/Namada: DeFi and Privacy Capability Comparison
+# `dregg` vs Zcash/Namada: DeFi and Privacy Capability Comparison
 
 ## Note Model Comparison
 
-| Feature | Zcash Orchard | Namada MASP | Pyana |
+| Feature | Zcash Orchard | Namada MASP | `dregg` |
 |---------|--------------|-------------|-------|
 | Commitment | hash(value, rcm, pk_d, rho) | Zcash-derived, multi-asset | H(owner, fields[8], randomness, creation_nonce) |
 | Nullifier derivation | PRF(nsk, rho) | Same as Zcash | H(commitment, spending_key, creation_nonce) |
@@ -13,7 +13,7 @@
 | Spending proof | Groth16/Halo2 | Groth16 | FRI-based STARK (BabyBear field, 248-bit key) |
 | Conservation enforcement | In-circuit via value commitments | Same | **Executor-side sum check** (cleartext in witness) |
 
-## What Pyana HAS
+## What `dregg` HAS
 
 **Private transfers (partial):** Notes hide sender, receiver, and amount from observers. The STARK proof proves spending authority + Merkle membership without revealing note contents. Nullifiers are federation-independent (same note = same nullifier regardless of tree position).
 
@@ -33,9 +33,9 @@
 
 1. **No Pedersen/homomorphic value commitments.** Conservation is checked by the executor summing cleartext values from NoteSpend/NoteCreate effects. The prover reveals asset_type and value to the executor. This is a major privacy gap: the executor (block producer) sees amounts.
 
-2. **No binding signatures.** Zcash uses binding sigs to prove the prover chose value commitments that actually sum to zero. Without this, pyana relies on the executor to enforce conservation rather than proving it in-circuit.
+2. **No binding signatures.** Zcash uses binding sigs to prove the prover chose value commitments that actually sum to zero. Without this, dregg relies on the executor to enforce conservation rather than proving it in-circuit.
 
-3. **No encrypted memos / in-band secret distribution.** When Alice sends Bob a note, Bob needs to learn the note's opening (randomness, creation_nonce) to later spend it. Zcash uses encrypted memo fields derivable from Bob's viewing key. Pyana has no protocol for this -- out-of-band delivery is assumed.
+3. **No encrypted memos / in-band secret distribution.** When Alice sends Bob a note, Bob needs to learn the note's opening (randomness, creation_nonce) to later spend it. Zcash uses encrypted memo fields derivable from Bob's viewing key. `dregg` has no protocol for this -- out-of-band delivery is assumed.
 
 4. **No viewing keys.** No mechanism for selective disclosure to auditors without revealing spending authority.
 

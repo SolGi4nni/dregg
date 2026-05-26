@@ -2,18 +2,18 @@
 //! and replay-deduplication behaviour.
 //!
 //! Covers:
-//! - PyanaToMidnight: self-consistency check (message hash matches payload)
-//! - PyanaToMidnight: forged/wrong pubkey attestation is rejected
-//! - PyanaToMidnight: tampered amount changes message hash → rejected
-//! - MidnightToPyana: dedup_key uniqueness across tx_hash + log_index
+//! - DreggToMidnight: self-consistency check (message hash matches payload)
+//! - DreggToMidnight: forged/wrong pubkey attestation is rejected
+//! - DreggToMidnight: tampered amount changes message hash → rejected
+//! - MidnightToDregg: dedup_key uniqueness across tx_hash + log_index
 //! - MidnightBridgeConfig: epoch key lookup returns correct key
 //! - FederationAttestation: create + verify round-trip
 //! - FederationAttestation: wrong pubkey rejects
 
 use ed25519_dalek::SigningKey;
-use pyana_bridge::midnight::{
-    EpochKey, FederationAttestation, MidnightBridgeConfig, MidnightToPyanaMessage,
-    PyanaToMidnightMessage,
+use dregg_bridge::midnight::{
+    EpochKey, FederationAttestation, MidnightBridgeConfig, MidnightToDreggMessage,
+    DreggToMidnightMessage,
 };
 
 // ============================================================================
@@ -29,15 +29,15 @@ fn make_attestation(payload: &[u8], key: &SigningKey, epoch: u64) -> FederationA
     FederationAttestation::create(payload, key, epoch)
 }
 
-fn make_pyana_to_midnight(
+fn make_dregg_to_midnight(
     nullifier: [u8; 32],
     amount: u64,
     recipient: Vec<u8>,
     nonce: u64,
     sk: &SigningKey,
     epoch: u64,
-) -> PyanaToMidnightMessage {
-    let msg_proto = PyanaToMidnightMessage {
+) -> DreggToMidnightMessage {
+    let msg_proto = DreggToMidnightMessage {
         nullifier,
         amount,
         midnight_recipient: recipient.clone(),
@@ -51,7 +51,7 @@ fn make_pyana_to_midnight(
     };
     let payload = msg_proto.canonical_payload();
     let attestation = make_attestation(&payload, sk, epoch);
-    PyanaToMidnightMessage {
+    DreggToMidnightMessage {
         nullifier,
         amount,
         midnight_recipient: recipient,
@@ -61,13 +61,13 @@ fn make_pyana_to_midnight(
 }
 
 // ============================================================================
-// Test: PyanaToMidnight self-consistency
+// Test: DreggToMidnight self-consistency
 // ============================================================================
 
 #[test]
-fn pyana_to_midnight_self_consistent() {
+fn dregg_to_midnight_self_consistent() {
     let sk = signing_key(0x01);
-    let msg = make_pyana_to_midnight([0x11; 32], 1_000, vec![0xAB; 32], 7, &sk, 1);
+    let msg = make_dregg_to_midnight([0x11; 32], 1_000, vec![0xAB; 32], 7, &sk, 1);
     assert!(
         msg.is_self_consistent(),
         "freshly created message must be self-consistent"
@@ -81,7 +81,7 @@ fn pyana_to_midnight_self_consistent() {
 #[test]
 fn tampered_amount_breaks_self_consistency() {
     let sk = signing_key(0x02);
-    let mut msg = make_pyana_to_midnight([0x22; 32], 500, vec![0xCC; 32], 3, &sk, 1);
+    let mut msg = make_dregg_to_midnight([0x22; 32], 500, vec![0xCC; 32], 3, &sk, 1);
     // Mutate the amount after attestation is created.
     msg.amount = 999_999;
     assert!(
@@ -98,7 +98,7 @@ fn tampered_amount_breaks_self_consistency() {
 fn attestation_verify_round_trip() {
     let sk = signing_key(0x03);
     let vk = sk.verifying_key();
-    let payload = b"pyana bridge test payload";
+    let payload = b"dregg bridge test payload";
     let att = FederationAttestation::create(payload, &sk, 42);
 
     assert!(
@@ -146,22 +146,22 @@ fn attestation_short_pubkey_rejected() {
 }
 
 // ============================================================================
-// Test: MidnightToPyana dedup_key is (tx_hash, log_index)
+// Test: MidnightToDregg dedup_key is (tx_hash, log_index)
 // ============================================================================
 
 #[test]
-fn midnight_to_pyana_dedup_key() {
-    let msg_a = MidnightToPyanaMessage {
+fn midnight_to_dregg_dedup_key() {
+    let msg_a = MidnightToDreggMessage {
         midnight_tx_hash: [0x01; 32],
         amount: 100,
-        pyana_recipient: [0xAA; 32],
+        dregg_recipient: [0xAA; 32],
         midnight_height: 500,
         log_index: 0,
     };
-    let msg_b = MidnightToPyanaMessage {
+    let msg_b = MidnightToDreggMessage {
         midnight_tx_hash: [0x01; 32],
         amount: 200,                 // different amount
-        pyana_recipient: [0xBB; 32], // different recipient
+        dregg_recipient: [0xBB; 32], // different recipient
         midnight_height: 501,        // different height
         log_index: 0,                // SAME tx_hash + log_index
     };
@@ -172,10 +172,10 @@ fn midnight_to_pyana_dedup_key() {
         "messages with identical (tx_hash, log_index) must share a dedup key"
     );
 
-    let msg_c = MidnightToPyanaMessage {
+    let msg_c = MidnightToDreggMessage {
         midnight_tx_hash: [0x01; 32],
         amount: 100,
-        pyana_recipient: [0xAA; 32],
+        dregg_recipient: [0xAA; 32],
         midnight_height: 500,
         log_index: 1, // different log_index
     };
@@ -270,8 +270,8 @@ fn epoch_key_lookup_none_for_gap() {
 // ============================================================================
 
 #[test]
-fn pyana_to_midnight_canonical_payload_deterministic() {
-    let msg = PyanaToMidnightMessage {
+fn dregg_to_midnight_canonical_payload_deterministic() {
+    let msg = DreggToMidnightMessage {
         nullifier: [0x01; 32],
         amount: 12345,
         midnight_recipient: vec![0xAB; 32],

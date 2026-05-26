@@ -6,9 +6,9 @@ export function initOverview() {
   const container = document.getElementById('section-overview');
   container.innerHTML = `
     <div class="section-header">
-      <h2>Welcome to the Pyana Playground</h2>
+      <h2>Welcome to the Dregg Playground</h2>
       <p>
-        Pyana is a distributed object-capability runtime that combines macaroon-style tokens,
+        Dregg is a distributed object-capability runtime that combines macaroon-style tokens,
         STARK proofs, Merkle commitments, and Datalog policy evaluation into a single coherent
         authorization system. Everything you see here runs entirely in your browser via WebAssembly
         — no server, no backend, no trust assumptions.
@@ -19,7 +19,7 @@ export function initOverview() {
     <div class="overview-arch">
       <pre>
                                   +--------------------------+
-                                  |    pyana runtime (WASM)  |
+                                  |    dregg runtime (WASM)  |
                                   +--------------------------+
                                              |
                  +---------------------------+---------------------------+
@@ -48,7 +48,7 @@ export function initOverview() {
     </div>
 
     <div class="overview-extension-note" style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:6px;padding:12px 16px;margin-bottom:24px;">
-      <strong style="color:var(--accent-bright);">Pyana Cipherclerk Extension</strong>
+      <strong style="color:var(--accent-bright);">Dregg Cipherclerk Extension</strong>
       <span style="color:var(--fg-dim);margin-left:8px;">
         Install the browser extension to manage capabilities and generate STARK proofs from any web page.
         <a href="../extension/" style="color:var(--accent-bright);text-decoration:underline;">Install now</a>
@@ -110,7 +110,7 @@ export function initOverview() {
       </div>
       <div class="overview-cap" data-nav="sandbox">
         <div class="overview-cap__title">Code Sandbox</div>
-        <div class="overview-cap__desc">Write arbitrary JavaScript against the full pyana WASM API. Experiment freely.</div>
+        <div class="overview-cap__desc">Write arbitrary JavaScript against the full dregg WASM API. Experiment freely.</div>
       </div>
     </div>
   `;

@@ -7,8 +7,8 @@
 //!
 //! Unlike BIP32 (which targets secp256k1), we use BLAKE3's `derive_key` for
 //! Ed25519-native key derivation. The derivation path uses the scheme:
-//! - `pyana/0` for the main agent identity
-//! - `pyana/1`, `pyana/2`, ... for sub-agents
+//! - `dregg/0` for the main agent identity
+//! - `dregg/1`, `dregg/2`, ... for sub-agents
 
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
@@ -38,7 +38,7 @@ pub enum MnemonicError {
 ///
 /// # Example
 /// ```
-/// use pyana_sdk::mnemonic::generate_mnemonic;
+/// use dregg_sdk::mnemonic::generate_mnemonic;
 /// let words = generate_mnemonic();
 /// assert_eq!(words.split_whitespace().count(), 24);
 /// ```
@@ -156,11 +156,11 @@ pub fn mnemonic_to_seed(mnemonic: &str, passphrase: &str) -> Result<[u8; 64], Mn
 /// Derive a 64-byte seed from raw entropy and a passphrase.
 ///
 /// Uses two rounds of BLAKE3 derive_key to produce 64 bytes:
-/// - First 32 bytes from context "pyana mnemonic seed v1 <passphrase>" over entropy
-/// - Last 32 bytes from context "pyana mnemonic seed v1 extend <passphrase>" over entropy
+/// - First 32 bytes from context "dregg mnemonic seed v1 <passphrase>" over entropy
+/// - Last 32 bytes from context "dregg mnemonic seed v1 extend <passphrase>" over entropy
 fn seed_from_entropy(entropy: &[u8; 32], passphrase: &str) -> [u8; 64] {
-    let context_a = format!("pyana mnemonic seed v1 {}", passphrase);
-    let context_b = format!("pyana mnemonic seed v1 extend {}", passphrase);
+    let context_a = format!("dregg mnemonic seed v1 {}", passphrase);
+    let context_b = format!("dregg mnemonic seed v1 extend {}", passphrase);
 
     let first_half = blake3::derive_key(&context_a, entropy);
     let second_half = blake3::derive_key(&context_b, entropy);
@@ -195,7 +195,7 @@ fn seed_from_entropy(entropy: &[u8; 32], passphrase: &str) -> [u8; 64] {
 ///    is needed at the derivation layer.
 ///
 /// 3. **Simpler path model**: BIP32/SLIP-10 use integer indices with hardened/normal
-///    distinction. We use descriptive string paths (`"pyana/0"`) which are more
+///    distinction. We use descriptive string paths (`"dregg/0"`) which are more
 ///    readable and naturally domain-separated.
 ///
 /// 4. **Performance**: BLAKE3 is ~5x faster than HMAC-SHA512, relevant when deriving
@@ -203,9 +203,9 @@ fn seed_from_entropy(entropy: &[u8; 32], passphrase: &str) -> [u8; 64] {
 ///
 /// # Derivation paths
 ///
-/// - `"pyana/0"` - Main agent identity
-/// - `"pyana/1"` - First sub-agent
-/// - `"pyana/N"` - Nth sub-agent
+/// - `"dregg/0"` - Main agent identity
+/// - `"dregg/1"` - First sub-agent
+/// - `"dregg/N"` - Nth sub-agent
 ///
 /// # Arguments
 ///
@@ -219,10 +219,10 @@ fn seed_from_entropy(entropy: &[u8; 32], passphrase: &str) -> [u8; 64] {
 /// # Example
 ///
 /// ```
-/// use pyana_sdk::mnemonic::{mnemonic_to_seed, derive_keypair, generate_mnemonic};
+/// use dregg_sdk::mnemonic::{mnemonic_to_seed, derive_keypair, generate_mnemonic};
 /// let mnemonic = generate_mnemonic();
 /// let seed = mnemonic_to_seed(&mnemonic, "").unwrap();
-/// let (public, secret) = derive_keypair(&seed, "pyana/0");
+/// let (public, secret) = derive_keypair(&seed, "dregg/0");
 /// assert_ne!(public, [0u8; 32]);
 /// ```
 pub fn derive_keypair(seed: &[u8; 64], path: &str) -> ([u8; 32], [u8; 32]) {
@@ -284,7 +284,7 @@ pub fn mnemonic_to_seed_bip39_compat(
 ///
 /// * `mnemonic` - A valid 24-word mnemonic string.
 /// * `passphrase` - Passphrase for BIP39 seed derivation (use `""` for none).
-/// * `path` - Derivation path (e.g., `"pyana/0"`).
+/// * `path` - Derivation path (e.g., `"dregg/0"`).
 ///
 /// # Returns
 ///
@@ -344,8 +344,8 @@ mod tests {
     fn test_derive_keypair_deterministic() {
         let mnemonic = generate_mnemonic();
         let seed = mnemonic_to_seed(&mnemonic, "").unwrap();
-        let (pub1, sec1) = derive_keypair(&seed, "pyana/0");
-        let (pub2, sec2) = derive_keypair(&seed, "pyana/0");
+        let (pub1, sec1) = derive_keypair(&seed, "dregg/0");
+        let (pub2, sec2) = derive_keypair(&seed, "dregg/0");
         assert_eq!(pub1, pub2);
         assert_eq!(sec1, sec2);
     }
@@ -354,8 +354,8 @@ mod tests {
     fn test_different_paths_different_keys() {
         let mnemonic = generate_mnemonic();
         let seed = mnemonic_to_seed(&mnemonic, "").unwrap();
-        let (pub0, _) = derive_keypair(&seed, "pyana/0");
-        let (pub1, _) = derive_keypair(&seed, "pyana/1");
+        let (pub0, _) = derive_keypair(&seed, "dregg/0");
+        let (pub1, _) = derive_keypair(&seed, "dregg/1");
         assert_ne!(pub0, pub1);
     }
 

@@ -1,6 +1,6 @@
 # Privacy-Governance-Fluidity Analysis
 
-How privacy and governance interact in the pyana system, what the information-theoretic limits are, and where the current implementation sits on the Pareto frontier.
+How privacy and governance interact in the dregg system, what the information-theoretic limits are, and where the current implementation sits on the Pareto frontier.
 
 ## 1. Private Cell Migration
 

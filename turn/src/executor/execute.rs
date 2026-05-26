@@ -328,8 +328,8 @@ impl TurnExecutor {
                     // executor has been configured with a signing key.
                     receipt.executor_signature = self.maybe_sign_receipt(&receipt);
 
-                    let mut delta = pyana_cell::LedgerDelta::new();
-                    let mut agent_delta = pyana_cell::CellStateDelta::empty();
+                    let mut delta = dregg_cell::LedgerDelta::new();
+                    let mut agent_delta = dregg_cell::CellStateDelta::empty();
                     agent_delta.balance_change = -(turn.fee as i64);
                     agent_delta.nonce_increment = true;
                     delta.updated.push((turn.agent, agent_delta));
@@ -340,12 +340,12 @@ impl TurnExecutor {
                     // delta (and thus AR / cross-fed consumers) reflect the
                     // full value movement.
                     if let Some(proposer_id) = &self.proposer_cell {
-                        let mut d = pyana_cell::CellStateDelta::empty();
+                        let mut d = dregg_cell::CellStateDelta::empty();
                         d.balance_change = (turn.fee / 2) as i64;
                         delta.updated.push((*proposer_id, d));
                     }
                     if let Some(treasury_id) = &self.treasury_cell {
-                        let mut d = pyana_cell::CellStateDelta::empty();
+                        let mut d = dregg_cell::CellStateDelta::empty();
                         d.balance_change = (turn.fee * 3 / 10) as i64;
                         delta.updated.push((*treasury_id, d));
                     }
@@ -540,7 +540,7 @@ impl TurnExecutor {
                 };
             }
             // Studio trace: sovereign_witness_verified — emitted once per verified witness.
-            // Fields match the pyana-observability schema (observability/src/events.rs).
+            // Fields match the dregg-observability schema (observability/src/events.rs).
             info!(kind = "sovereign_witness_verified", cell_id = %cell_id, sequence = witness.sequence, has_stark_proof = witness.transition_proof.is_some(), old_commitment = hex::encode(witness.old_commitment), new_commitment = hex::encode(witness.new_commitment), effects_hash = hex::encode(witness.effects_hash));
             sovereign_cell_ids.push(*cell_id);
             sovereign_witness_sequences.push((*cell_id, witness.sequence));
@@ -866,7 +866,7 @@ impl TurnExecutor {
         receipt: crate::turn::TurnReceipt,
         proof_bytes: Vec<u8>,
         public_inputs: Vec<u32>,
-        trace: Option<&[Vec<pyana_circuit::field::BabyBear>]>,
+        trace: Option<&[Vec<dregg_circuit::field::BabyBear>]>,
     ) -> crate::WitnessedReceipt {
         crate::WitnessedReceipt::from_components(receipt, proof_bytes, public_inputs, trace)
     }

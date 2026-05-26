@@ -1,13 +1,13 @@
 /**
- * <pyana-cipherclerk uri="pyana://cipherclerk/<agent_index>">
+ * <dregg-cipherclerk uri="dregg://cipherclerk/<agent_index>">
  *
- * Inspector for pyana_sdk::AgentCipherclerk — the canonical agent identity +
+ * Inspector for dregg_sdk::AgentCipherclerk — the canonical agent identity +
  * token holdings. Surfaces public-key material only; private keys and seed
  * material are never shown.
  *
  * URI form:
- *   pyana://cipherclerk/0       — agent at index 0
- *   pyana://cipherclerk/alice   — (future) by name; index-only today
+ *   dregg://cipherclerk/0       — agent at index 0
+ *   dregg://cipherclerk/alice   — (future) by name; index-only today
  *
  * Data sources (all through runtime signals / escape hatch; no cargo changes):
  *   - agent name + public_key + cell_id  — from create_agent result (cached by
@@ -16,7 +16,7 @@
  *   - receipt chain                      — runtime.listReceipts(agentIdx)
  *   - held tokens (HeldCapability list)  — runtime._wasm.get_capability_tree
  *     re-exposes held_tokens indirectly; direct token listing is NOT yet a
- *     first-class wasm export → now surfaced via <pyana-attenuated-token> + <pyana-bearer-cap>
+ *     first-class wasm export → now surfaced via <dregg-attenuated-token> + <dregg-bearer-cap>
  *     (Wave 3 inspectors; see their demo attenuate flows + cipherclerk Holdings tab)
  *   - sovereign cells                    — derived from listCells() filtered by
  *     matching public_key
@@ -26,12 +26,12 @@
  *   compact  — single-line: "name · N tokens · M caps · K receipts"
  *
  * Platform-vocabulary directive (Houyhnhnm § 4.2 / STARBRIDGE-PLAN § 4.5):
- *   Embeds <pyana-cell uri="..."> for cell deeplinks.
- *   Embeds <pyana-capability uri="..."> for individual capability rows.
- *   Embeds <pyana-receipt uri="..."> for receipt chain head.
+ *   Embeds <dregg-cell uri="..."> for cell deeplinks.
+ *   Embeds <dregg-capability uri="..."> for individual capability rows.
+ *   Embeds <dregg-receipt uri="..."> for receipt chain head.
  *   Does NOT reimplement their logic here.
  *
- * CSS: injected once into document head under id="pyana-cipherclerk-styles".
+ * CSS: injected once into document head under id="dregg-cipherclerk-styles".
  * Uses only site-palette tokens (--bg, --bg-raised, --fg, --fg-dim, --accent,
  * --accent-bright, --line, --sN). No fresh color literals.
  */
@@ -44,11 +44,11 @@ import { InspectorBase, renderParseError, shortHex } from './_base.js';
 // ---------------------------------------------------------------------------
 
 (function injectStyles() {
-  if (document.getElementById('pyana-cipherclerk-styles')) return;
+  if (document.getElementById('dregg-cipherclerk-styles')) return;
   const s = document.createElement('style');
-  s.id = 'pyana-cipherclerk-styles';
+  s.id = 'dregg-cipherclerk-styles';
   s.textContent = `
-/* ---- <pyana-cipherclerk> ---- */
+/* ---- <dregg-cipherclerk> ---- */
 .pcc {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;
@@ -309,10 +309,10 @@ function _agentIdentityFromTree(capTree, agentIdx) {
 }
 
 // ---------------------------------------------------------------------------
-// <pyana-cipherclerk>
+// <dregg-cipherclerk>
 // ---------------------------------------------------------------------------
 
-class PyanaCipherclerk extends InspectorBase {
+class DreggCipherclerk extends InspectorBase {
   // Track which tab is active; not a signal — component re-renders on click.
   _activeTab = 'identity';
 
@@ -332,7 +332,7 @@ class PyanaCipherclerk extends InspectorBase {
 
     const agentIdx = Number(parsed.id);
     if (!Number.isFinite(agentIdx) || agentIdx < 0) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">cipherclerk URI: agent_index must be a non-negative integer, got: ${_esc(parsed.id)}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">cipherclerk URI: agent_index must be a non-negative integer, got: ${_esc(parsed.id)}</div>`;
       return;
     }
 
@@ -419,7 +419,7 @@ class PyanaCipherclerk extends InspectorBase {
             ${cellId
               ? html`
                   <code title=${cellId}>${_esc(shortHex(cellId, 24))}</code>
-                  <pyana-cell uri=${`pyana://cell/${cellId}`} mode="compact" data-testid="pcc-cell-deeplink"></pyana-cell>`
+                  <dregg-cell uri=${`dregg://cell/${cellId}`} mode="compact" data-testid="pcc-cell-deeplink"></dregg-cell>`
               : html`<span style="color:var(--fg-dim);">—</span>`}
           </dd>
           <dt>token count</dt>
@@ -493,7 +493,7 @@ class PyanaCipherclerk extends InspectorBase {
           ${cellId ? html`
             <div style="margin-top:var(--s3,10px);">
               <div class="pcc__section-label">Sovereign Cell</div>
-              <pyana-cell uri=${`pyana://cell/${cellId}`} mode="default"></pyana-cell>
+              <dregg-cell uri=${`dregg://cell/${cellId}`} mode="default"></dregg-cell>
             </div>` : null}
         </div>`;
 
@@ -515,7 +515,7 @@ class PyanaCipherclerk extends InspectorBase {
                 <span class="pcc__token-label">slot ${String(c.slot)}</span>
                 <span class="pcc__token-resource">${_esc(c.permissions || '?')}</span>
                 <span class="pcc__token-id" title=${c.target}>→ <code>${_esc(shortHex(c.target, 20))}</code></span>
-                <pyana-capability uri=${`pyana://capability/${agentIdx}/${c.slot}`} mode="compact"></pyana-capability>
+                <dregg-capability uri=${`dregg://capability/${agentIdx}/${c.slot}`} mode="compact"></dregg-capability>
               </li>`
             )}
           </ul>`;
@@ -528,7 +528,7 @@ class PyanaCipherclerk extends InspectorBase {
             TODO: macaroon-backed HeldToken list (cclerk.tokens()) is not yet exposed via a
             wasm binding. Once <code>get_agent_tokens(handle, agent_index)</code> lands in
             wasm/src/bindings.rs, this panel will show the full token chain per
-            STARBRIDGE-PLAN § 4.5 (&lt;pyana-attenuated-token&gt;).
+            STARBRIDGE-PLAN § 4.5 (&lt;dregg-attenuated-token&gt;).
           </div>
         </div>`;
 
@@ -544,7 +544,7 @@ class PyanaCipherclerk extends InspectorBase {
         historyContent = html`
           <div>
             <div class="pcc__section-label">Chain head (most recent)</div>
-            <pyana-receipt uri=${`pyana://receipt/${head.turn_hash}`} mode="default"></pyana-receipt>
+            <dregg-receipt uri=${`dregg://receipt/${head.turn_hash}`} mode="default"></dregg-receipt>
           </div>
           <div>
             <div class="pcc__section-label">Full chain (${receiptCount} receipt${receiptCount === 1 ? '' : 's'}) — note: chain is currently global (per-agent filter awaiting wasm support)</div>
@@ -552,7 +552,7 @@ class PyanaCipherclerk extends InspectorBase {
               ${receipts.slice().reverse().map((r, i) => html`
                 <li class="pcc__chain-row" data-testid=${`pcc-receipt-row-${i}`}>
                   <span class="pcc__chain-idx">${String(receipts.length - i)}.</span>
-                  <pyana-receipt uri=${`pyana://receipt/${r.turn_hash}`} mode="compact"></pyana-receipt>
+                  <dregg-receipt uri=${`dregg://receipt/${r.turn_hash}`} mode="compact"></dregg-receipt>
                 </li>`
               )}
             </ul>
@@ -602,7 +602,7 @@ class PyanaCipherclerk extends InspectorBase {
       };
 
       return html`
-        <div class="pcc pyana-inspector pyana-inspector--cell" data-testid="pcc-root">
+        <div class="pcc dregg-inspector dregg-inspector--cell" data-testid="pcc-root">
           <div class="pcc__header">
             <span class="pcc__name" data-testid="pcc-agent-name">${_esc(agentName)}</span>
             <span class="pcc__badge">cipherclerk</span>
@@ -618,6 +618,6 @@ class PyanaCipherclerk extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-cipherclerk')) {
-  customElements.define('pyana-cipherclerk', PyanaCipherclerk);
+if (!customElements.get('dregg-cipherclerk')) {
+  customElements.define('dregg-cipherclerk', DreggCipherclerk);
 }

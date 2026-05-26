@@ -11,8 +11,8 @@
 
 use proptest::prelude::*;
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::builder::ActionBuilder;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::builder::ActionBuilder;
 
 // =============================================================================
 // Helpers
@@ -248,7 +248,7 @@ proptest! {
         let actions = ["r", "w", "rw", "rwcd"];
 
         let issuer_key = test_key("monotone-issuer");
-        let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.pyana.dev");
+        let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.dregg.dev");
 
         // Root token should verify for any request (no restrictions)
         let broad_request = AuthRequest {
@@ -298,7 +298,7 @@ proptest! {
         expiry2 in 1700000000i64..2000000000,
     ) {
         let issuer_key = test_key("double-att-issuer");
-        let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.pyana.dev");
+        let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.dregg.dev");
 
         // First attenuation: restrict to "compute" with "rw"
         let att1 = Attenuation {
@@ -891,7 +891,7 @@ fn proof_single_bit_flip_detected() {
 #[test]
 fn token_expired_cannot_be_used() {
     let issuer_key = test_key("expiry-issuer");
-    let root_token = MacaroonToken::mint(issuer_key, b"exp-kid", "test.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"exp-kid", "test.dregg.dev");
 
     // Attenuate with both a service restriction and an expiry
     let att = Attenuation {
@@ -948,10 +948,10 @@ fn empty_call_forest_rejected() {
     let executor = TurnExecutor::new(ComputronCosts::default_costs());
 
     // Build a turn with no actions at all
-    let turn = pyana_turn::Turn {
+    let turn = dregg_turn::Turn {
         agent: agent_id,
         nonce: 0,
-        call_forest: pyana_turn::CallForest::new(),
+        call_forest: dregg_turn::CallForest::new(),
         fee: 1000,
         memo: None,
         valid_until: None,

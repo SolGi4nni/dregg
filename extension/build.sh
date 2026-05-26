@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, validate, and package the Pyana Cipherclerk extension.
+# Build, validate, and package the Dregg Cipherclerk extension.
 #
 # Usage:
 #   ./build.sh          — Build WASM + validate + package
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WASM_CRATE="$PROJECT_ROOT/wasm"
 TARGET_DIR="$PROJECT_ROOT/target"
-WASM_OUT="$TARGET_DIR/wasm32-unknown-unknown/release/pyana_wasm.wasm"
+WASM_OUT="$TARGET_DIR/wasm32-unknown-unknown/release/dregg_wasm.wasm"
 DIST_DIR="$SCRIPT_DIR/dist"
 
 COMMAND="${1:-all}"
@@ -28,10 +28,10 @@ COMMAND="${1:-all}"
 # ---------------------------------------------------------------------------
 
 build_wasm() {
-  echo "[1/4] Building pyana-wasm (release, wasm32-unknown-unknown)..."
+  echo "[1/4] Building dregg-wasm (release, wasm32-unknown-unknown)..."
   cargo build \
     --manifest-path "$WASM_CRATE/Cargo.toml" \
-    -p pyana-wasm \
+    -p dregg-wasm \
     --target wasm32-unknown-unknown \
     --release
 
@@ -47,14 +47,14 @@ build_wasm() {
     --no-typescript \
     --omit-default-module-path
 
-  if [ -f "$SCRIPT_DIR/pyana_wasm_bg.wasm" ] && [ -f "$SCRIPT_DIR/pyana_wasm.js" ]; then
-    WASM_SIZE=$(wc -c < "$SCRIPT_DIR/pyana_wasm_bg.wasm" | tr -d ' ')
+  if [ -f "$SCRIPT_DIR/dregg_wasm_bg.wasm" ] && [ -f "$SCRIPT_DIR/dregg_wasm.js" ]; then
+    WASM_SIZE=$(wc -c < "$SCRIPT_DIR/dregg_wasm_bg.wasm" | tr -d ' ')
     echo "  WASM output:"
-    echo "    $SCRIPT_DIR/pyana_wasm.js"
-    echo "    $SCRIPT_DIR/pyana_wasm_bg.wasm ($WASM_SIZE bytes)"
+    echo "    $SCRIPT_DIR/dregg_wasm.js"
+    echo "    $SCRIPT_DIR/dregg_wasm_bg.wasm ($WASM_SIZE bytes)"
   else
     echo "ERROR: wasm-bindgen did not produce expected outputs."
-    ls -la "$SCRIPT_DIR"/pyana_wasm* 2>/dev/null || true
+    ls -la "$SCRIPT_DIR"/dregg_wasm* 2>/dev/null || true
     exit 1
   fi
 }
@@ -148,11 +148,11 @@ package_extension() {
   )
 
   # Add WASM files if they exist.
-  if [ -f "$SCRIPT_DIR/pyana_wasm.js" ]; then
-    FILES+=(pyana_wasm.js)
+  if [ -f "$SCRIPT_DIR/dregg_wasm.js" ]; then
+    FILES+=(dregg_wasm.js)
   fi
-  if [ -f "$SCRIPT_DIR/pyana_wasm_bg.wasm" ]; then
-    FILES+=(pyana_wasm_bg.wasm)
+  if [ -f "$SCRIPT_DIR/dregg_wasm_bg.wasm" ]; then
+    FILES+=(dregg_wasm_bg.wasm)
   fi
 
   # Build the file list (only include files that actually exist).
@@ -164,14 +164,14 @@ package_extension() {
   done
 
   # Chrome: .zip
-  local ZIP_NAME="pyana-cipherclerk-chrome.zip"
+  local ZIP_NAME="dregg-cipherclerk-chrome.zip"
   (cd "$SCRIPT_DIR" && zip -q -r "$DIST_DIR/$ZIP_NAME" "${EXISTING_FILES[@]}")
   local ZIP_SIZE
   ZIP_SIZE=$(wc -c < "$DIST_DIR/$ZIP_NAME" | tr -d ' ')
   echo "  Chrome package: $DIST_DIR/$ZIP_NAME ($ZIP_SIZE bytes)"
 
   # Firefox: .xpi (same format as zip, different extension)
-  local XPI_NAME="pyana-cipherclerk-firefox.xpi"
+  local XPI_NAME="dregg-cipherclerk-firefox.xpi"
   cp "$DIST_DIR/$ZIP_NAME" "$DIST_DIR/$XPI_NAME"
   echo "  Firefox package: $DIST_DIR/$XPI_NAME ($ZIP_SIZE bytes)"
 

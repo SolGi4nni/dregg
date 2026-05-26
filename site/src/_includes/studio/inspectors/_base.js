@@ -1,8 +1,8 @@
 /**
- * Shared InspectorBase for all <pyana-*> inspector custom elements.
+ * Shared InspectorBase for all <dregg-*> inspector custom elements.
  *
  * Each subclass implements `_render()` which:
- *   - Reads `uri` attribute (a pyana:// URI). NEVER `ref` (Preact-reserved).
+ *   - Reads `uri` attribute (a dregg:// URI). NEVER `ref` (Preact-reserved).
  *   - Reads `mode` (default | compact | inspector | raw).
  *   - Uses `this._api` (Preact + signals + htm) and `this._runtime`.
  *   - Tears down previous render via `this._dispose`.
@@ -13,8 +13,8 @@ import { findRuntime } from '../context.js';
 
 export function ready() {
   return new Promise(resolve => {
-    if (window.pyanaUi) return resolve(window.pyanaUi);
-    window.addEventListener('pyanaUi:ready', e => resolve(e.detail), { once: true });
+    if (window.dreggUi) return resolve(window.dreggUi);
+    window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
   });
 }
 
@@ -44,11 +44,11 @@ export class InspectorBase extends HTMLElement {
 /** Render a parse error in-place; returns true if errored. */
 export function renderParseError(el, refAttr, parsed, expectedKind) {
   if (!parsed) {
-    el.innerHTML = `<div class="pyana-inspector pyana-inspector--err">bad ref: ${refAttr}</div>`;
+    el.innerHTML = `<div class="dregg-inspector dregg-inspector--err">bad ref: ${refAttr}</div>`;
     return true;
   }
   if (expectedKind && parsed.kind !== expectedKind) {
-    el.innerHTML = `<div class="pyana-inspector pyana-inspector--err">wrong kind: ${parsed.kind} (expected ${expectedKind})</div>`;
+    el.innerHTML = `<div class="dregg-inspector dregg-inspector--err">wrong kind: ${parsed.kind} (expected ${expectedKind})</div>`;
     return true;
   }
   return false;

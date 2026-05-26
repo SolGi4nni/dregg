@@ -1,19 +1,19 @@
-# Pyana vs. Anoma: Competitive Analysis & Multi-Asset Swap Design
+# `dregg` vs. Anoma: Competitive Analysis & Multi-Asset Swap Design
 
 ## Feature-by-Feature Comparison
 
-| Dimension | Anoma | Pyana | Verdict |
+| Dimension | Anoma | `dregg` | Verdict |
 |-----------|-------|-------|---------|
 | **Intent architecture** | Intents are first-class: declarative partial transactions specifying desired state changes. Solvers find counterparties and compose them into balanced transactions. | Intents are Need/Offer/Query broadcast over gossip. Local Datalog-based matching. Partial fills via FillConstraints. Compound intents (multi-spec). | **Anoma is more expressive** -- their intents specify arbitrary pre/post conditions over the resource machine. Ours are capability-shaped (action + resource + constraints). But ours are *private by default* (matching is local; Anoma's solver pool is public). |
-| **State model** | Transparent Resource Machine (TRM): resources are typed, linearly consumed and produced. A resource has a label, logic function, value, quantity, and data. State is a set of resources. | Shielded Note Model: notes are committed tuples (owner, fields[8], randomness, creation_nonce). Spending = revealing nullifier. Conservation via Pedersen commitments + Bulletproof range proofs. | **Pyana is more private** -- our notes are opaque by default (commitment-based), values are hidden. Anoma's TRM is transparent by default (Taiga adds shielding as an opt-in layer). Our model is Zcash-like from birth. |
+| **State model** | Transparent Resource Machine (TRM): resources are typed, linearly consumed and produced. A resource has a label, logic function, value, quantity, and data. State is a set of resources. | Shielded Note Model: notes are committed tuples (owner, fields[8], randomness, creation_nonce). Spending = revealing nullifier. Conservation via Pedersen commitments + Bulletproof range proofs. | **`dregg` is more private** -- our notes are opaque by default (commitment-based), values are hidden. Anoma's TRM is transparent by default (Taiga adds shielding as an opt-in layer). Our model is Zcash-like from birth. |
 | **Shielded execution** | Taiga: a shielded execution engine over the TRM. Uses Halo2 proofs. Resources can be shielded (value hidden) or transparent. Partial order between shielded and transparent. | Effect VM + Cell Programs + STARK proofs: CellProgram defines valid transitions. Circuit variant requires STARK proof for each transition. Notes are always shielded. Bridge provides Presentation Proofs. | **Comparable.** Taiga and our Effect VM serve similar roles. Our advantage: STARK-native (fast proving, post-quantum friendly). Their advantage: Halo2 is more mature for arbitrary computation, accumulation-based (no FRI overhead). |
 | **Validity predicates** | Every resource type carries a "logic function" (validity predicate) that must be satisfied for the resource to be consumed/created. This is the enforcement layer. | CellProgram (Predicate variant: FieldEquals/Gte/Lte/SumEquals/Immutable; Circuit variant: arbitrary AIR). Evaluated on every state transition. | **Structurally equivalent.** Both are per-resource/per-cell transition guards. Ours support SumEquals (conservation within a cell) natively, which is nice. Anoma's are more composable (VP composition via resource logic functions that call each other). |
 | **Consensus** | Typhon: heterogeneous Narwhal-based DAG consensus. Mempool is DAG; ordering is BFT with Tendermint-like finality. | Blocklace (Cordial Miners): DAG-based BFT with cordial dissemination. Equivocation detection. Finality from supermajority ack. | **Comparable.** Both use DAG-based BFT. Cordial Miners paper is newer (2024) and has cleaner liveness arguments. Typhon has more production mileage but is heavier. |
 | **Multi-chain** | Anoma instances communicate via IBC (Inter-Blockchain Communication). Each Anoma instance is sovereign but IBC enables cross-chain atomic settlement with Light Client verification. | Three bridge levels: (1) Midnight (attestation/observation), (2) Mina (proof-carrying, recursive Pickles), (3) EVM (planned, attestation + SNARK). CapTP + Handoff certificates for capability delegation across trust boundaries. | **Different philosophies.** Anoma is IBC-native (Cosmos heritage). We are *proof-carrying* where possible (Mina bridge needs no trust assumptions beyond cryptography). Our CapTP layer enables cross-chain capability delegation, which Anoma lacks entirely. |
 | **Solver infrastructure** | Dedicated solver role: specialized participants find matches in the intent pool, compose balanced transactions, take fees. Competitive market for solver quality. | Intent engine + local matching in cipherclerks. No dedicated solver role yet. Fulfillment is direct (cclerk-to-cclerk). | **Anoma is ahead** -- their solver market creates competition for match quality. We need a solver layer (see below). |
-| **Privacy in discovery** | Intents are public in the mempool. Solvers see all intents. Information leakage is significant (your trading preferences are visible). Partial mitigation via intent encryption (FHE roadmap). | Intents are public but creator is anonymous (CommitmentId). Matching is local (cclerk evaluates privately). Fulfillment is direct (not broadcast). PIR module exists for private information retrieval. | **Pyana is significantly more private.** Our matching-is-local model means the counterparty search doesn't leak what you hold. Anoma's solver model requires revealing intent details to the solver. |
-| **Capability security** | None. Anoma has no object-capability model. Access control is via validity predicates on resources (more like smart contract guards). | Deep: bearer capabilities (macaroons), HMAC-chain attenuation, delegation, sensitivity levels, CapTP for remote caps, handoff certificates, budget gates, revocation channels. | **Pyana is far ahead.** Object capabilities are our foundational security model. Anoma has nothing comparable -- their VPs are guards, not transferable authority. |
-| **Sovereignty spectrum** | Each Anoma instance is sovereign. Cross-instance is IBC (homogeneous protocol). No partial sovereignty within an instance. | Sovereign cells with programs defining their own state transition rules. Federation hierarchy. Cells can choose their trust boundary. Factory pattern for cell templates. | **Pyana is more granular.** Sovereignty at the cell level vs. only at the chain level. A cell can define its own physics (state constraints) without launching a new chain. |
+| **Privacy in discovery** | Intents are public in the mempool. Solvers see all intents. Information leakage is significant (your trading preferences are visible). Partial mitigation via intent encryption (FHE roadmap). | Intents are public but creator is anonymous (CommitmentId). Matching is local (cclerk evaluates privately). Fulfillment is direct (not broadcast). PIR module exists for private information retrieval. | **`dregg` is significantly more private.** Our matching-is-local model means the counterparty search doesn't leak what you hold. Anoma's solver model requires revealing intent details to the solver. |
+| **Capability security** | None. Anoma has no object-capability model. Access control is via validity predicates on resources (more like smart contract guards). | Deep: bearer capabilities (macaroons), HMAC-chain attenuation, delegation, sensitivity levels, CapTP for remote caps, handoff certificates, budget gates, revocation channels. | **`dregg` is far ahead.** Object capabilities are our foundational security model. Anoma has nothing comparable -- their VPs are guards, not transferable authority. |
+| **Sovereignty spectrum** | Each Anoma instance is sovereign. Cross-instance is IBC (homogeneous protocol). No partial sovereignty within an instance. | Sovereign cells with programs defining their own state transition rules. Federation hierarchy. Cells can choose their trust boundary. Factory pattern for cell templates. | **`dregg` is more granular.** Sovereignty at the cell level vs. only at the chain level. A cell can define its own physics (state constraints) without launching a new chain. |
 
 ## The Algorithm: Coincidence of Wants via Directed Graph Cycle Detection
 
@@ -179,7 +179,7 @@ The hardest part: finding rings WITHOUT revealing everyone's intentions. Options
 
 ### The Problem
 
-Can we settle a swap atomically across pyana + Mina + EVM?
+Can we settle a swap atomically across dregg + Mina + EVM?
 
 Requirements:
 - All legs commit or all abort (atomicity across trust boundaries)
@@ -192,12 +192,12 @@ Requirements:
 - Use HTLC (Hash Time-Locked Contracts) or the observation pattern
 - Atomicity via hash locks: all legs share a secret; revealing the secret on any chain lets all others claim
 - Trust assumption: liveness of observers, finality of each chain
-- Latency: sum of finality times (Midnight ~30s, EVM ~12min with finality, pyana ~5s)
+- Latency: sum of finality times (Midnight ~30s, EVM ~12min with finality, dregg ~5s)
 
 **Level 2 (Mina -- proof-carrying):**
-- Verify the pyana STARK proof on Mina via recursive wrapping (already implemented in `bridge/src/mina.rs`)
-- The Mina zkApp can verify that a pyana state transition occurred without trusting any intermediary
-- Atomicity: the Mina side verifies the pyana-side commitment PROOF before releasing
+- Verify the dregg STARK proof on Mina via recursive wrapping (already implemented in `bridge/src/mina.rs`)
+- The Mina zkApp can verify that a dregg state transition occurred without trusting any intermediary
+- Atomicity: the Mina side verifies the dregg-side commitment PROOF before releasing
 - This is the holy grail: **trustless atomic settlement without hash locks**
 
 **Level 3 (CapTP -- capability-based delegation):**
@@ -212,29 +212,29 @@ Requirements:
 Cross-Chain Atomic Settlement Protocol:
 
 1. SETUP:
-   - Alice (pyana) wants asset on Mina
-   - Bob (Mina) wants asset on pyana
+   - Alice (dregg) wants asset on Mina
+   - Bob (Mina) wants asset on dregg
    - Both post exchange intents
 
 2. COMMIT PHASE:
    Alice generates secret s, computes h = BLAKE3(s)
-   Alice posts conditional turn on pyana: 
-     "Transfer X to Bob's pyana-cell, conditioned on knowledge of preimage of h"
+   Alice posts conditional turn on dregg: 
+     "Transfer X to Bob's dregg-cell, conditioned on knowledge of preimage of h"
    Bob sees this (via Mina bridge relay), posts conditional zkApp transaction on Mina:
      "Transfer Y to Alice's Mina address, conditioned on knowledge of preimage of h"
 
 3. CLAIM PHASE:
    Alice reveals s on Mina (claims Y from Bob's zkApp)
    Bob extracts s from Alice's Mina tx (visible on-chain)
-   Bob reveals s on pyana (claims X from Alice's conditional turn)
+   Bob reveals s on dregg (claims X from Alice's conditional turn)
 
 4. TIMEOUT:
    If Alice doesn't reveal s within T blocks on Mina, Bob's zkApp refunds
-   If Bob doesn't claim on pyana within T+delta, Alice's conditional refunds
+   If Bob doesn't claim on dregg within T+delta, Alice's conditional refunds
    (Standard HTLC timeout cascade)
 
 Enhancement for privacy:
-   - Alice's pyana-side commitment uses shielded notes (amount hidden)
+   - Alice's dregg-side commitment uses shielded notes (amount hidden)
    - The hash h is derived from a joint computation (not just Alice's secret)
    - Bob's Mina side can verify Alice's commitment via recursive STARK proof
      (the proof proves "a note of value >= X was locked with hash h" without
@@ -249,7 +249,7 @@ A Handoff Certificate is a signed statement: "I authorize R to contact T with th
 
 ```
 HandoffCertificate {
-    introducer: pyana_federation_key,
+    introducer: dregg_federation_key,
     recipient: bob_mina_pubkey,
     swiss_number: <pre-registered claim token>,
     permissions: "claim:asset_X:amount_100",
@@ -289,7 +289,7 @@ Pros: UX is seamless. Cons: requires active solver market, adds latency.
 **Option B: Direct multi-asset acceptance (federation policy)**
 
 Federation nodes accept payment in a whitelist of tokens:
-- Node operator configures: "I accept computrons, USDC, ETH, pyana-native at rates X, Y, Z"
+- Node operator configures: "I accept computrons, USDC, ETH, dregg-native at rates X, Y, Z"
 - The turn's `fee` field becomes multi-typed
 - Conservation law still holds (the node creates a computron-valued note from the input token, burns computrons for the fee, keeps the input token)
 
@@ -395,7 +395,7 @@ Anoma has NO object-capability model. Their security is guards-based (validity p
 Our intent matching happens LOCALLY in cipherclerks. Anoma's happens in public solver pools. This is a fundamental architectural choice with massive privacy implications:
 
 - In Anoma: "I want to buy ETH for USDC at price X" is visible to all solvers (front-running vector)
-- In pyana: the cclerk privately evaluates "can I satisfy this?" without revealing what it holds or whether it matched
+- In dregg: the cclerk privately evaluates "can I satisfy this?" without revealing what it holds or whether it matched
 
 ### 3. Sovereignty Spectrum (Cell-Level)
 
@@ -442,7 +442,7 @@ Our storage layer is metered and rented (computrons per byte per epoch). This cr
 
 ### Phase 4: Cross-Chain Ring Trades
 - HTLC-based atomic settlement for ring trades spanning chains
-- Proof-carrying leg for Mina side (verify pyana STARK on Mina)
+- Proof-carrying leg for Mina side (verify dregg STARK on Mina)
 - Attestation leg for Midnight/EVM side
 - CapTP handoff for capability legs
 
@@ -479,7 +479,7 @@ Our storage layer is metered and rented (computrons per byte per epoch). This cr
 
 **Anoma's core advantage:** Intent composability and solver infrastructure. Their intents can express any state predicate; their solvers find optimal matches in a competitive market. We should steal the concept of composable exchange intents and ring-trade solving.
 
-**Pyana's core advantages:** Privacy (matching is local, notes are shielded), capability security (delegation, attenuation, revocation), sovereignty granularity (cell-level), and proof-carrying bridges (no trust assumptions). These are architectural choices baked into our foundations that Anoma cannot easily retrofit.
+**`dregg`'s core advantages:** Privacy (matching is local, notes are shielded), capability security (delegation, attenuation, revocation), sovereignty granularity (cell-level), and proof-carrying bridges (no trust assumptions). These are architectural choices baked into our foundations that Anoma cannot easily retrofit.
 
 **The multi-asset swap algorithm** is cycle detection in the intent compatibility graph (Top Trading Cycles / kidney exchange / Coincidence of Wants solving). It does NOT require a common denominator because each participant specifies their own subjective "I have X, I want Y" without pricing either against a base. Our existing partial fill infrastructure (FillConstraints, residual intents, compound MatchSpecs) provides the primitives; we need the graph layer and solver role on top.
 

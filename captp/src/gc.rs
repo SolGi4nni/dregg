@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use pyana_types::CellId;
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::{FederationId, StrandId};

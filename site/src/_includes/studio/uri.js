@@ -1,23 +1,23 @@
 /**
- * pyana:// URI parsing and formatting.
+ * dregg:// URI parsing and formatting.
  *
- * Format: pyana://<kind>/<id>[@<height>][/<sub>...]
+ * Format: dregg://<kind>/<id>[@<height>][/<sub>...]
  *
  * Examples:
- *   pyana://cell/abc123
- *   pyana://cell/abc123@42
- *   pyana://cell/abc123/cap/dns
- *   pyana://turn/deadbeef
+ *   dregg://cell/abc123
+ *   dregg://cell/abc123@42
+ *   dregg://cell/abc123/cap/dns
+ *   dregg://turn/deadbeef
  *
  * Resolution is the runtime's job; this module only parses.
  */
 
-const KIND_RX = /^pyana:\/\/([a-z-]+)\/([^?#@/]+)(?:@([0-9a-f]+|[0-9]+))?(?:\/(.*))?$/i;
+const KIND_RX = /^dregg:\/\/([a-z-]+)\/([^?#@/]+)(?:@([0-9a-f]+|[0-9]+))?(?:\/(.*))?$/i;
 
 export function parseRef(s) {
   if (typeof s !== 'string') throw new TypeError('ref must be a string');
   const m = KIND_RX.exec(s.trim());
-  if (!m) throw new Error(`not a pyana ref: ${s}`);
+  if (!m) throw new Error(`not a dregg ref: ${s}`);
   const [, kind, id, height, sub] = m;
   return {
     kind,
@@ -33,7 +33,7 @@ export function isRef(s) {
 }
 
 export function makeRef(kind, id, opts = {}) {
-  let s = `pyana://${kind}/${id}`;
+  let s = `dregg://${kind}/${id}`;
   if (opts.height != null) s += `@${opts.height}`;
   if (opts.sub?.length) s += `/${opts.sub.join('/')}`;
   return s;

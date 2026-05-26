@@ -4,12 +4,12 @@
 //! convert to ZK commitments, evaluate authorization, and produce a verified
 //! presentation proof.
 
-use pyana_circuit::fold_air::FoldAir;
-use pyana_circuit::merkle_air::MerkleAir;
-use pyana_circuit::{BabyBear, ConstraintProver, PresentationVerification};
-use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_trace::Conclusion;
+use dregg_circuit::fold_air::FoldAir;
+use dregg_circuit::merkle_air::MerkleAir;
+use dregg_circuit::{BabyBear, ConstraintProver, PresentationVerification};
+use dregg_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_trace::Conclusion;
 
 use crate::authorize::{self, AuthError};
 use crate::convert::macaroon_to_factset;
@@ -46,7 +46,7 @@ fn test_federation_root() -> [u8; 32] {
 /// Compute the BabyBear federation root that the synthetic Poseidon2 Merkle path
 /// produces for a given key. This lets tests construct a builder with a matching root.
 fn compute_matching_federation_root_bb(key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::compute_parent_poseidon2;
+    use dregg_circuit::merkle_air::compute_parent_poseidon2;
     let issuer_hash = crate::present::bytes_to_babybear(key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -88,11 +88,11 @@ fn test_end_to_end_macaroon_to_zk_proof() {
     let root_key = test_root_key();
 
     // ── Step 1: Mint a root token ───────────────────────────────────────────
-    let root_token = MacaroonToken::mint(root_key, b"issuer-kid-42", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"issuer-kid-42", "dregg.dev");
 
     // Verify the root token works.
     let root_clearance = root_token.verify(&AuthRequest::default()).unwrap();
-    assert_eq!(root_clearance.format, pyana_token::TokenFormat::Macaroon);
+    assert_eq!(root_clearance.format, dregg_token::TokenFormat::Macaroon);
 
     // ── Step 2: First attenuation — restrict to app "dashboard" with rw ─────
     let att1 = Attenuation {
@@ -197,7 +197,7 @@ fn test_end_to_end_denial() {
     let root_key = test_root_key();
     let federation_root = test_federation_root();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-deny", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-deny", "dregg.dev");
 
     let mut builder = BridgePresentationBuilder::new(root_key, federation_root);
     builder.set_root_token(root_token);
@@ -226,7 +226,7 @@ fn test_end_to_end_denial() {
 #[test]
 fn test_conversion_preserves_semantics() {
     let root_key = test_root_key();
-    let token = MacaroonToken::mint(root_key, b"kid-sem", "pyana.dev");
+    let token = MacaroonToken::mint(root_key, b"kid-sem", "dregg.dev");
 
     // Attenuate with multiple restrictions.
     let att = Attenuation {
@@ -358,7 +358,7 @@ fn test_circuit_fold_proofs() {
     let root_key = test_root_key();
     let federation_root = test_federation_root();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-circuit", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-circuit", "dregg.dev");
 
     let mut builder = BridgePresentationBuilder::new(root_key, federation_root);
     builder.set_root_token(root_token);
@@ -390,7 +390,7 @@ fn test_circuit_fold_proofs() {
 fn test_service_scoped_full_pipeline() {
     let root_key = test_root_key();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-svc", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-svc", "dregg.dev");
 
     let mut builder = test_builder_with_matching_root(root_key);
     builder.set_root_token(root_token);
@@ -434,7 +434,7 @@ fn test_service_scoped_full_pipeline() {
 fn test_unrestricted_token_proof() {
     let root_key = test_root_key();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-unr", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-unr", "dregg.dev");
 
     let mut builder = test_builder_with_matching_root(root_key);
     builder.set_root_token(root_token);
@@ -471,7 +471,7 @@ fn test_multiple_features_attenuation() {
     let root_key = test_root_key();
     let federation_root = test_federation_root();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-feat", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-feat", "dregg.dev");
 
     let mut builder = BridgePresentationBuilder::new(root_key, federation_root);
     builder.set_root_token(root_token);
@@ -520,7 +520,7 @@ fn test_issuer_membership_circuit_rejects_wrong_federation_root() {
 fn test_presentation_air_full_verification() {
     let root_key = test_root_key();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-full", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-full", "dregg.dev");
 
     let mut builder = test_builder_with_matching_root(root_key);
     builder.set_root_token(root_token);
@@ -555,7 +555,7 @@ fn test_presentation_air_full_verification() {
 fn test_proof_metadata() {
     let root_key = test_root_key();
 
-    let root_token = MacaroonToken::mint(root_key, b"kid-meta", "pyana.dev");
+    let root_token = MacaroonToken::mint(root_key, b"kid-meta", "dregg.dev");
 
     let mut builder = test_builder_with_matching_root(root_key);
     builder.set_root_token(root_token);
@@ -600,7 +600,7 @@ fn test_deterministic_verification() {
     let root_key = test_root_key();
 
     let build_and_prove = || {
-        let root_token = MacaroonToken::mint(root_key, b"kid-det", "pyana.dev");
+        let root_token = MacaroonToken::mint(root_key, b"kid-det", "dregg.dev");
         let mut builder = test_builder_with_matching_root(root_key);
         builder.set_root_token(root_token);
 
@@ -641,7 +641,7 @@ fn test_deterministic_verification() {
 #[test]
 fn test_fact_set_merkle_commitment() {
     let root_key = test_root_key();
-    let token = MacaroonToken::mint(root_key, b"kid-merkle", "pyana.dev");
+    let token = MacaroonToken::mint(root_key, b"kid-merkle", "dregg.dev");
 
     let att = Attenuation {
         apps: vec![("app-a".into(), "r".into())],

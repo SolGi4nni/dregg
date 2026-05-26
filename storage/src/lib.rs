@@ -1,4 +1,4 @@
-//! # pyana-storage
+//! # dregg-storage
 //!
 //! # Migration to cell-program templates
 //!
@@ -6,15 +6,15 @@
 //! this crate's `inbox`, `pubsub`, `blinded`, `programmable`,
 //! `operator`, and `relay` modules are **deprecated** in favor of
 //! cell-program templates in
-//! [`pyana_storage_templates`](https://crates.io/crates/pyana-storage-templates):
+//! [`dregg_storage_templates`](https://crates.io/crates/dregg-storage-templates):
 //!
 //! | Legacy (this crate) | Canonical replacement |
 //! |---|---|
-//! | [`inbox::CapInbox`] | `pyana_storage_templates::cap_inbox` (§3.1) |
-//! | [`programmable::ProgrammableQueue`] | `pyana_storage_templates::programmable_queue` (§3.2) |
-//! | [`pubsub::PubSubTopic`] | `pyana_storage_templates::pubsub_topic` (§3.3) |
-//! | [`blinded::BlindedQueue`] | `pyana_storage_templates::blinded_queue` (§3.4) |
-//! | [`operator::RelayOperator`] | `pyana_storage_templates::relay_operator` (§3.5) |
+//! | [`inbox::CapInbox`] | `dregg_storage_templates::cap_inbox` (§3.1) |
+//! | [`programmable::ProgrammableQueue`] | `dregg_storage_templates::programmable_queue` (§3.2) |
+//! | [`pubsub::PubSubTopic`] | `dregg_storage_templates::pubsub_topic` (§3.3) |
+//! | [`blinded::BlindedQueue`] | `dregg_storage_templates::blinded_queue` (§3.4) |
+//! | [`operator::RelayOperator`] | `dregg_storage_templates::relay_operator` (§3.5) |
 //! | [`relay::MeteredRelay`] | folds into `relay_operator` (§3.5 + §6.1) |
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §6 the legacy structs become thin

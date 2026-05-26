@@ -1,6 +1,6 @@
 // starbridge-apps/subscription/pages/turn-builders.js
 //
-// JS shim wrapping `window.pyana.signTurn(turnSpec)` (the extension
+// JS shim wrapping `window.dregg.signTurn(turnSpec)` (the extension
 // cclerk API — see extension/src/page.ts) with subscription-domain
 // conveniences that mirror the Rust turn-builders in src/lib.rs:
 //
@@ -9,7 +9,7 @@
 //   build_grant_publisher_action  → grant_publisher(...)
 //   build_grant_consumer_action   → grant_consumer(...)
 //
-// All four produce a `turnSpec` for `window.pyana.signTurn` and resolve
+// All four produce a `turnSpec` for `window.dregg.signTurn` and resolve
 // to the resulting `TurnReceipt`. No app-domain enforcement runs here:
 // the subscription cell-program (`subscription_program` in src/lib.rs)
 // is the enforcement loop, evaluated executor-side on every turn. The
@@ -39,7 +39,7 @@ const TOPIC_CONSUMER_GRANTED  = 'subscription-consumer-granted';
 
 function u64BE(n) {
   // Big-endian-padded 32-byte field element. Matches the Rust
-  // `u64_field` helper in src/lib.rs and pyana_cell::program::field_from_u64_be.
+  // `u64_field` helper in src/lib.rs and dregg_cell::program::field_from_u64_be.
   const view = new Uint8Array(32);
   const bn = BigInt(n);
   for (let i = 0; i < 8; i += 1) {
@@ -59,21 +59,21 @@ function fieldToU64BE(bytes) {
 async function sha256(bytes) {
   // Browser SubtleCrypto fallback; matches the inspectors.js hash used
   // for `message_root` placeholder folding. A real deployment uses
-  // pyana's Poseidon2 binding when wasm exposes it.
+  // dregg's Poseidon2 binding when wasm exposes it.
   const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const out = await crypto.subtle.digest('SHA-256', buf);
   return new Uint8Array(out);
 }
 
 async function payloadHash(payload) {
-  if (window.pyana?.blake3) return window.pyana.blake3(payload);
+  if (window.dregg?.blake3) return window.dregg.blake3(payload);
   return sha256(new TextEncoder().encode(payload));
 }
 
 async function foldRoot(oldRoot, leaf) {
   // Placeholder: `(old || leaf) -> SHA-256`. Real deployments fold via
   // Poseidon2 over the MerkleQueue ring.
-  if (window.pyana?.poseidonFold) return window.pyana.poseidonFold(oldRoot, leaf);
+  if (window.dregg?.poseidonFold) return window.dregg.poseidonFold(oldRoot, leaf);
   const buf = new Uint8Array(64);
   buf.set(oldRoot, 0);
   buf.set(leaf, 32);
@@ -94,12 +94,12 @@ async function foldRoot(oldRoot, leaf) {
  * @returns {Promise<TurnReceipt>}
  */
 async function publish(subscriptionUri, payload) {
-  const cell = await window.pyana.readCell(subscriptionUri);
+  const cell = await window.dregg.readCell(subscriptionUri);
   const oldHead = fieldToU64BE(cell.state.fields[SEQ_HEAD_SLOT]);
   const newHead = u64BE(oldHead + 1);
   const payHash = await payloadHash(payload);
   const newRoot = await foldRoot(cell.state.fields[MESSAGE_ROOT_SLOT], payHash);
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: subscriptionUri,
     method: 'publish',
     effects: [
@@ -126,11 +126,11 @@ async function publish(subscriptionUri, payload) {
  * @returns {Promise<TurnReceipt>}
  */
 async function consume(subscriptionUri) {
-  const cell = await window.pyana.readCell(subscriptionUri);
+  const cell = await window.dregg.readCell(subscriptionUri);
   const oldTail = fieldToU64BE(cell.state.fields[SEQ_TAIL_SLOT]);
   const newTail = u64BE(oldTail + 1);
   const latestPayload = cell.state.fields[LATEST_PAYLOAD_SLOT];
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: subscriptionUri,
     method: 'consume',
     effects: [
@@ -157,12 +157,12 @@ async function consume(subscriptionUri) {
  * @returns {Promise<TurnReceipt>}
  */
 async function grant_publisher(subscriptionUri, newPublisherPk) {
-  const cell = await window.pyana.readCell(subscriptionUri);
+  const cell = await window.dregg.readCell(subscriptionUri);
   const newRoot = await foldRoot(
     cell.state.fields[PUBLISHERS_ROOT_SLOT],
     newPublisherPk,
   );
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: subscriptionUri,
     method: 'grant_publisher',
     effects: [
@@ -182,12 +182,12 @@ async function grant_publisher(subscriptionUri, newPublisherPk) {
  * consumers set. Mirrors `build_grant_consumer_action` in src/lib.rs.
  */
 async function grant_consumer(subscriptionUri, newConsumerPk) {
-  const cell = await window.pyana.readCell(subscriptionUri);
+  const cell = await window.dregg.readCell(subscriptionUri);
   const newRoot = await foldRoot(
     cell.state.fields[CONSUMERS_ROOT_SLOT],
     newConsumerPk,
   );
-  return window.pyana.signTurn({
+  return window.dregg.signTurn({
     target: subscriptionUri,
     method: 'grant_consumer',
     effects: [
@@ -206,11 +206,11 @@ async function grant_consumer(subscriptionUri, newConsumerPk) {
 
 if (typeof window !== 'undefined') {
   // Self-register the subscription builders under
-  // `window.pyana.builders.subscription`. The shared turn-builders
+  // `window.dregg.builders.subscription`. The shared turn-builders
   // registry imports this module for the side effect.
-  if (!window.pyana) window.pyana = {};
-  if (!window.pyana.builders) window.pyana.builders = {};
-  window.pyana.builders.subscription = {
+  if (!window.dregg) window.dregg = {};
+  if (!window.dregg.builders) window.dregg.builders = {};
+  window.dregg.builders.subscription = {
     publish,
     consume,
     grant_publisher,

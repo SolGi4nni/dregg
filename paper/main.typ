@@ -1,5 +1,5 @@
-// Pyana whitepaper entry point
+// Dregg whitepaper entry point
 // Compile with: typst compile main.typ
-// Or compile pyana.typ directly: typst compile pyana.typ
+// Or compile dregg.typ directly: typst compile dregg.typ
 
-#include "pyana.typ"
+#include "dregg.typ"

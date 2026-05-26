@@ -8,7 +8,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::batch_executor::{BatchExecutor, ClientTurnRequest, BatchExecution};
+//! use dregg_app_framework::batch_executor::{BatchExecutor, ClientTurnRequest, BatchExecution};
 //!
 //! impl BatchExecutor for MySequencer {
 //!     type Error = MyError;
@@ -17,7 +17,7 @@
 //! }
 //! ```
 
-use pyana_types::CellId;
+use dregg_types::CellId;
 
 /// A single turn request from a client, queued for batch execution.
 #[derive(Clone, Debug)]

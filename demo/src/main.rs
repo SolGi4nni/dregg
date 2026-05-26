@@ -1,6 +1,6 @@
-//! PYANA Federated Authorization Demo
+//! DREGG Federated Authorization Demo
 //!
-//! This demo simulates cross-silo federated authorization using the pyana
+//! This demo simulates cross-silo federated authorization using the dregg
 //! token system. Two independent organizations ("silos") communicate via
 //! in-process message passing to demonstrate:
 //!
@@ -55,7 +55,7 @@ impl DemoState {
         DemoState {
             acme_authority: Authority::new("acme.corp"),
             partner_authority: Authority::new("partner.org"),
-            federation: Federation::new("pyana-demo-federation"),
+            federation: Federation::new("dregg-demo-federation"),
             revocation_registry: RevocationRegistry::new(),
         }
     }
@@ -166,7 +166,7 @@ impl DemoState {
 
         let token = self.acme_authority.mint_token(facts, rules);
 
-        // Also compute the REAL Merkle commitment using pyana-commit.
+        // Also compute the REAL Merkle commitment using dregg-commit.
         let real_merkle_root = commit_state::compute_merkle_root(&token.facts, &token.rules);
 
         // Print results.
@@ -199,7 +199,7 @@ impl DemoState {
             token.state_root_hex()
         );
         println!(
-            "  {} Merkle commitment (pyana-commit 4-ary tree): {}",
+            "  {} Merkle commitment (dregg-commit 4-ary tree): {}",
             arrow(),
             authority::hex_encode(&real_merkle_root[..4])
         );
@@ -244,7 +244,7 @@ impl DemoState {
         let delta = FoldDelta::compute(root_token, &attenuated);
         let delta_valid = delta.verify(&attenuated);
 
-        // Also compute the REAL fold delta using pyana-commit.
+        // Also compute the REAL fold delta using dregg-commit.
         let real_fold_result = commit_state::compute_real_fold_delta(
             &root_token.facts,
             &root_token.rules,
@@ -293,7 +293,7 @@ impl DemoState {
             if delta_valid { checkmark() } else { cross() }
         );
         println!(
-            "  {} Real fold delta (pyana-commit Merkle): {}",
+            "  {} Real fold delta (dregg-commit Merkle): {}",
             arrow(),
             if real_fold_valid {
                 format!("{} ({} removals verified)", checkmark(), remove_facts.len())
@@ -355,7 +355,7 @@ impl DemoState {
             if issuer_ok { checkmark() } else { cross() }
         );
 
-        // Generate a REAL STARK proof of issuer membership using pyana-circuit.
+        // Generate a REAL STARK proof of issuer membership using dregg-circuit.
         let member_keys: Vec<[u8; 32]> = vec![
             *self.acme_authority.public_key.as_bytes(),
             *self.partner_authority.public_key.as_bytes(),
@@ -546,7 +546,7 @@ fn print_header() {
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"
     );
-    println!("\x1b[1m  PYANA FEDERATED AUTHORIZATION DEMO\x1b[0m");
+    println!("\x1b[1m  DREGG FEDERATED AUTHORIZATION DEMO\x1b[0m");
     println!(
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"

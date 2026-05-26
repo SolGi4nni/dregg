@@ -15,8 +15,8 @@
 //! error, so a misconfigured helper that forgets to set a real authorizer fails
 //! loudly rather than silently submitting unauthenticated turns.
 
-use pyana_turn::action::{Action, Authorization, BearerCapProof};
-use pyana_turn::executor::TurnExecutor;
+use dregg_turn::action::{Action, Authorization, BearerCapProof};
+use dregg_turn::executor::TurnExecutor;
 
 /// Errors from authorizing an action.
 #[derive(Debug, Clone)]
@@ -113,7 +113,7 @@ impl SignedAuthorizer {
 impl Authorizer for SignedAuthorizer {
     fn authorize(&self, ctx: AuthContext<'_>) -> Result<Authorization, AuthError> {
         use ed25519_dalek::Signer;
-        use pyana_turn::action::CommitmentMode;
+        use dregg_turn::action::CommitmentMode;
 
         let message = match ctx.action.commitment_mode {
             CommitmentMode::Full => {
@@ -217,8 +217,8 @@ impl Authorizer for RejectingAuthorizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_turn::action::{CommitmentMode, DelegationMode, symbol};
-    use pyana_types::CellId;
+    use dregg_turn::action::{CommitmentMode, DelegationMode, symbol};
+    use dregg_types::CellId;
 
     fn dummy_action() -> Action {
         // Use a zeroed Signature as a placeholder so this file does not

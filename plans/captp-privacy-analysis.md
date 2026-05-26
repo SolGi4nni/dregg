@@ -68,7 +68,7 @@ For a HOSTED cell enlivening: the turn IS visible to the federation because the 
 
 ## Finding 4: The Turn is Published to the Blocklace as Payload
 
-From `blocklace/src/pyana_bridge.rs` (line 166):
+From `blocklace/src/dregg_bridge.rs` (line 166):
 ```rust
 pub fn submit_turn(&self, blocklace: &mut Blocklace, turn_data: Vec<u8>) -> BlockId {
     let block = blocklace.add_block(Payload::Turn(turn_data));
@@ -96,7 +96,7 @@ Looking at the architecture:
 
 ### 1. By Design or Bug?
 
-**By design.** In the Goblins model, the vat (a single process) maintains the SwissTable internally. In pyana, the federation IS the vat. All N nodes replicate vat state, including the SwissTable. This is architecturally identical to the single-process case -- the "trust boundary" is the federation boundary, not individual nodes.
+**By design.** In the Goblins model, the vat (a single process) maintains the SwissTable internally. In dregg, the federation IS the vat. All N nodes replicate vat state, including the SwissTable. This is architecturally identical to the single-process case -- the "trust boundary" is the federation boundary, not individual nodes.
 
 The SwissTable is not a "leaked secret" -- it is vat-internal state that happens to be replicated across N processes instead of one.
 
@@ -143,7 +143,7 @@ In Spritely/Goblins:
 - The vat is a single process -- no replication
 - Swiss numbers are never visible outside the vat
 
-In pyana:
+In dregg:
 - The federation maintains swiss tables via replicated execution
 - All N nodes are "the vat" collectively
 - Swiss numbers are visible to all N nodes (equivalently: to the vat)
@@ -159,7 +159,7 @@ In pyana:
 
 This is identical to Goblins: the vat has full access to all objects within it. Object capability security in Goblins prevents OBJECTS from accessing each other without authority -- it does not prevent the VAT from accessing objects. The vat is the trusted computing base.
 
-In pyana: the federation has full access to all hosted cells within it. CapTP capability security prevents CELLS from accessing each other without authority -- it does not prevent the FEDERATION from accessing cells. The federation is the trusted computing base.
+In dregg: the federation has full access to all hosted cells within it. CapTP capability security prevents CELLS from accessing each other without authority -- it does not prevent the FEDERATION from accessing cells. The federation is the trusted computing base.
 
 **This is not a bug. This is the correct architecture.**
 

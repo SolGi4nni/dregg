@@ -27,16 +27,16 @@ preserved for archaeology, not as current truth.
 | File | Class | One-line description |
 |---|---|---|
 | `README.md` | entry | Repo entry point; one-screen pitch + key capabilities. |
-| `NEW-WORLD.md` | canonical | The current coherent story of what pyana is — layers, naming, composition. Read after `README.md`. Updated 2026-05-25. |
+| `NEW-WORLD.md` | canonical | The current coherent story of what dregg is — layers, naming, composition. Read after `README.md`. Updated 2026-05-25. |
 | `TOPLEVEL-MD-INDEX.md` | entry | This file. Updated 2026-05-25. |
 
 ### Canonical reference
 
 | File | Class | One-line description |
 |---|---|---|
-| `PYANA_DESIGN.md` | canonical | Older architectural overview (Fabric / Cells / Turns). Pre-dates `NEW-WORLD.md`; still accurate at the headline level. |
+| `DREGG_DESIGN.md` | canonical | Older architectural overview (Fabric / Cells / Turns). Pre-dates `NEW-WORLD.md`; still accurate at the headline level. |
 | `BOUNDARIES.md` | canonical | What's inside, what's outside, what enforces the boundary. Companion audit set: `audits/AUDIT-privacy.md`, etc. |
-| `PREDICATE-INVENTORY.md` | canonical | Every predicate in pyana + the `WitnessedPredicate` unification. |
+| `PREDICATE-INVENTORY.md` | canonical | Every predicate in dregg + the `WitnessedPredicate` unification. |
 | `EFFECT-VM-SHAPE-A.md` | canonical | Origin master plan for codebase remediation. Stage 3 complete; Stage 7+ has its own docs. |
 | `EXECUTOR-HONESTY-AUDIT.md` | canonical | Framework + threat ledger for executor honesty (T1..T15). Tracks which threats are closed at AIR, recursion, or off-chain. |
 | `CAVEAT-LAYER-COVERAGE.md` | canonical | Three-layer audit (slot caveats × token caveats × Effect-VM AIRs) of constraint vocabulary coverage. |
@@ -58,7 +58,7 @@ preserved for archaeology, not as current truth.
 | `DFA-RATIONALIZATION-DESIGN.md` | design-active | Decide the future shape of the three DFA / pattern-routing implementations. |
 | `SOVEREIGN-WITNESS-AIR-DESIGN.md` | design-active | Implementation design for the algebraic teeth identified in `audits/AUDIT-sovereign-witness-teeth.md`. |
 | `STAGE-7-GAMMA-2-PI-DESIGN.md` | design-active | Bilateral cross-cell algebraic binding via shared PIs (Phase 1). Phase 1 implemented. |
-| `DESIGN-dsl.md` | design-active | Pyana user-facing DSL surface. |
+| `DESIGN-dsl.md` | design-active | `dregg` user-facing DSL surface. |
 | `DESIGN-receipts.md` | design-active | Sovereign / federation / bridge receipt formats; BLS ThresholdQC; IBC-style bridge phases. |
 | `DESIGN-commitment-framework.md` | design-active | Typed `Commitment<T>` framework, dual BLAKE3+Poseidon2. |
 | `DESIGN-captp-integration.md` | design-active | Wire `captp/` into the AIR variants (`ExportSturdyRef` / `EnlivenRef` / `DropRef` / `ValidateHandoff`). |
@@ -86,9 +86,9 @@ preserved for archaeology, not as current truth.
 | `AIR-SOUNDNESS-AUDIT.md` | canonical | Complete AIR soundness sweep; attack sketches for T1.5, T2.5, T2.7, T2.9, T2.11. Source commit `ce1e2def`. |
 | `EXECUTOR-VK-AUDIT.md` | canonical | Executor + VK layering audit with closure plans for T1.3, T1.6, T1.7, T2.17, T2.18, T3.3. |
 | `RECEIPT-ARCHITECTURE-STUDY.md` | canonical | Receipt chain / audit trail deep dive; receipts as the primary causal record. |
-| `HOUYHNHNM-COMPARISON.md` | design-study | Side-by-side comparison of pyana vs. Houyhnhnm system principles. |
-| `HOUYHNHNM-DEEP-CRITIQUE.md` | design-study | Deep critique of pyana from the Houyhnhnm perspective (source `1a8299eb`). |
-| `PROTOCOL-CATEGORICAL-ANALYSIS.md` | design-study | Categorical treatment of pyana protocol primitives (Tier 1/2/3 punch list). |
+| `HOUYHNHNM-COMPARISON.md` | design-study | Side-by-side comparison of dregg vs. Houyhnhnm system principles. |
+| `HOUYHNHNM-DEEP-CRITIQUE.md` | design-study | Deep critique of dregg from the Houyhnhnm perspective (source `1a8299eb`). |
+| `PROTOCOL-CATEGORICAL-ANALYSIS.md` | design-study | Categorical treatment of dregg protocol primitives (Tier 1/2/3 punch list). |
 | `KIMI-DAMAGE-AUDIT.md` | canonical | Audit of prior Kimi-authored code for soundness regressions. |
 | `TEST-REALITY-AUDIT.md` | canonical | Test suite honesty audit — fake assertions, scaffold `must_pass` labeling. |
 | `MULTI-NODE-DEVNET-RUN.md` | canonical | First end-to-end multi-node devnet run report. |
@@ -103,7 +103,7 @@ preserved for archaeology, not as current truth.
 | `STARBRIDGE-APPS-TEST-AUDIT.md` | canonical | Test audit for starbridge-apps. |
 | `META-TEST-AUDIT.md` | canonical | Meta-level test audit: scaffold labels, fake assertions, must_pass demotion. |
 | `SUBSTRATE-TEST-AUDIT.md` | canonical | Test audit for storage-templates, credentials, app-framework substrate. |
-| `AUDIT-pyana-turn-verifier-test-quality.md` | canonical | Turn + verifier test quality audit (standalone). |
+| `AUDIT-dregg-turn-verifier-test-quality.md` | canonical | Turn + verifier test quality audit (standalone). |
 
 ### Session summaries
 
@@ -139,7 +139,7 @@ audits/AUDIT-sovereign-witness-teeth.md     audits/AUDIT-trace-crate.md
 audits/AUDIT-turn-executor.md               audits/AUDIT-cclerk.md
 audits/AUDIT-wasm.md                        audits/BACKWATER-CRATES-AUDIT.md
 audits/CELL-CRATE-REVIEW.md                 audits/MCP-AUDIT.md
-audits/REVIEW-effect-vm.md                  audits/SDK-PYANASCRIPT-AUDIT.md
+audits/REVIEW-effect-vm.md                  audits/SDK-DREGGSCRIPT-AUDIT.md
 audits/SDK-REVIEW.md                        audits/STORAGE-REFLECTIVITY-RBG-DFA-AUDIT.md
 ```
 
@@ -156,7 +156,7 @@ for archaeology — not current truth.
 | `docs-history/APPS-AS-USERSPACE-AUDIT.md` | Subsumed by `STARBRIDGE-APPS-PLAN.md` + slot-caveats work. |
 | `docs-history/APPS-USERSPACE-GAPS.md` | Lane-C-era gap analysis; subsumed. |
 | `docs-history/DSL-TO-EFFECT-VM-FEASIBILITY-STUDY.md` | Verdict was "fool's errand"; preserved as the negative result. |
-| `docs-history/PYANA-FLAWS-FROM-APPS.md` | Motivating audit; flaws either fixed, in flight, or rolled into `EXECUTOR-HONESTY-AUDIT.md`. |
+| `docs-history/DREGG-FLAWS-FROM-APPS.md` | Motivating audit; flaws either fixed, in flight, or rolled into `EXECUTOR-HONESTY-AUDIT.md`. |
 | `docs-history/STAGE-7-PLUS-DESIGN.md` | Superseded by `STAGE-7-GAMMA-2-PI-DESIGN.md`. |
 | `docs-history/STAGE-7-GAMMA-AGGREGATION-DESIGN.md` | Superseded by `STAGE-7-GAMMA-2-PI-DESIGN.md` (which picks γ off the shelf with Phase 1 PI binding). |
 | `docs-history/WITNESSED-RECEIPT-CHAIN-DESIGN.md` | Subsumed by the current witnessed-receipt implementation + `NEW-WORLD.md`. |

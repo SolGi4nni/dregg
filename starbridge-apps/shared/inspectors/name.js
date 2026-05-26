@@ -2,15 +2,15 @@
 //
 // First per-app inspectors for starbridge-apps (STARBRIDGE-PLAN §4.8).
 // Exports and registers:
-//   <pyana-name>          — domain view of a name cell (reuses <pyana-cell> + <pyana-capability>)
-//   <pyana-name-registry> — list view (reuses platform list patterns)
+//   <dregg-name>          — domain view of a name cell (reuses <dregg-cell> + <dregg-capability>)
+//   <dregg-name-registry> — list view (reuses platform list patterns)
 //
-// These are the canonical versions for Studio / <pyana-app-list> / /starbridge/.
+// These are the canonical versions for Studio / <dregg-app-list> / /starbridge/.
 // The legacy full impl (with forms + actions) remains in
 // nameservice/pages/inspectors.js for the standalone fragment.
 //
 // Reuses platform vocabulary per the hard rule in STUDIO.md and STARBRIDGE-PLAN:
-// never fork <pyana-cell>, <pyana-capability> etc.
+// never fork <dregg-cell>, <dregg-capability> etc.
 
 const NAME_HASH_SLOT = 2;
 const OWNER_HASH_SLOT = 3;
@@ -57,15 +57,15 @@ function u64FromBE32(bytes) {
 
 async function tipHeight() {
   if (typeof window === 'undefined') return null;
-  if (window.pyana?.blockHeight) {
-    try { return Number(await window.pyana.blockHeight()); } catch { return null; }
+  if (window.dregg?.blockHeight) {
+    try { return Number(await window.dregg.blockHeight()); } catch { return null; }
   }
   return null;
 }
 
-// ─── <pyana-name> (reuses platform <pyana-cell> and capability views) ───
+// ─── <dregg-name> (reuses platform <dregg-cell> and capability views) ───
 
-class PyanaNameElement extends HTMLElement {
+class DreggNameElement extends HTMLElement {
   static get observedAttributes() { return ['uri', 'name']; }
 
   constructor() {
@@ -94,29 +94,29 @@ class PyanaNameElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-name-card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; background: #fff; }
-        .pyana-name-header { font-weight: 600; margin-bottom: 0.5rem; }
-        .pyana-name-meta { font-size: 0.85rem; color: #555; margin: 0.25rem 0; }
+        .dregg-name-card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; background: #fff; }
+        .dregg-name-header { font-weight: 600; margin-bottom: 0.5rem; }
+        .dregg-name-meta { font-size: 0.85rem; color: #555; margin: 0.25rem 0; }
         code { font-family: ui-monospace, monospace; }
-        .pyana-name-embed { margin-top: 0.5rem; border-top: 1px solid #eee; padding-top: 0.5rem; }
+        .dregg-name-embed { margin-top: 0.5rem; border-top: 1px solid #eee; padding-top: 0.5rem; }
       </style>
-      <div class="pyana-name-card">
-        <div class="pyana-name-header">${escapeHtml(nameAttr || '(name cell)')}</div>
-        <div class="pyana-name-meta">uri: <code>${escapeHtml(uri)}</code></div>
-        <div class="pyana-name-embed">
+      <div class="dregg-name-card">
+        <div class="dregg-name-header">${escapeHtml(nameAttr || '(name cell)')}</div>
+        <div class="dregg-name-meta">uri: <code>${escapeHtml(uri)}</code></div>
+        <div class="dregg-name-embed">
           <!-- Reuse the platform cell inspector (full fidelity, including program + caps) -->
-          <pyana-cell uri="${escapeHtml(uri)}" mode="default"></pyana-cell>
+          <dregg-cell uri="${escapeHtml(uri)}" mode="default"></dregg-cell>
         </div>
-        <div class="pyana-name-meta">name-hash slot ${NAME_HASH_SLOT}, owner ${OWNER_HASH_SLOT}, expiry ${EXPIRY_SLOT}, revoked ${REVOKED_SLOT}, target ${RESOLVE_TARGET_SLOT}</div>
-        ${tip != null ? `<div class="pyana-name-meta">tip height: ${tip}</div>` : ''}
+        <div class="dregg-name-meta">name-hash slot ${NAME_HASH_SLOT}, owner ${OWNER_HASH_SLOT}, expiry ${EXPIRY_SLOT}, revoked ${REVOKED_SLOT}, target ${RESOLVE_TARGET_SLOT}</div>
+        ${tip != null ? `<div class="dregg-name-meta">tip height: ${tip}</div>` : ''}
       </div>
     `;
   }
 }
 
-// ─── <pyana-name-registry> (light list; can embed name inspectors) ───
+// ─── <dregg-name-registry> (light list; can embed name inspectors) ───
 
-class PyanaNameRegistryElement extends HTMLElement {
+class DreggNameRegistryElement extends HTMLElement {
   static get observedAttributes() { return ['uri', 'page-size']; }
 
   constructor() {
@@ -142,14 +142,14 @@ class PyanaNameRegistryElement extends HTMLElement {
     const uri = this.getAttribute('uri') || '';
     this._loading = true;
     try {
-      if (window.pyana?.nameservice?.listEntries) {
-        this._entries = await window.pyana.nameservice.listEntries(uri) || [];
+      if (window.dregg?.nameservice?.listEntries) {
+        this._entries = await window.dregg.nameservice.listEntries(uri) || [];
       } else {
         // Fallback: empty (host must provide enumerator or use cell list + filter)
         this._entries = [];
       }
     } catch (e) {
-      console.warn('[pyana-name-registry] load failed', e);
+      console.warn('[dregg-name-registry] load failed', e);
       this._entries = [];
     }
     this._loading = false;
@@ -229,16 +229,16 @@ class PyanaNameRegistryElement extends HTMLElement {
 }
 
 // Register
-const TAGS = ['pyana-name', 'pyana-name-registry'];
+const TAGS = ['dregg-name', 'dregg-name-registry'];
 
 for (const tag of TAGS) {
-  const Ctor = tag === 'pyana-name' ? PyanaNameElement : PyanaNameRegistryElement;
+  const Ctor = tag === 'dregg-name' ? DreggNameElement : DreggNameRegistryElement;
   if (typeof customElements !== 'undefined' && !customElements.get(tag)) {
     customElements.define(tag, Ctor);
   }
-  if (typeof window !== 'undefined' && window.pyana?.register) {
-    window.pyana.register(tag, Ctor);
+  if (typeof window !== 'undefined' && window.dregg?.register) {
+    window.dregg.register(tag, Ctor);
   }
 }
 
-export { PyanaNameElement, PyanaNameRegistryElement, TAGS, NAME_HASH_SLOT, OWNER_HASH_SLOT, EXPIRY_SLOT, REVOKED_SLOT, RESOLVE_TARGET_SLOT };
+export { DreggNameElement, DreggNameRegistryElement, TAGS, NAME_HASH_SLOT, OWNER_HASH_SLOT, EXPIRY_SLOT, REVOKED_SLOT, RESOLVE_TARGET_SLOT };

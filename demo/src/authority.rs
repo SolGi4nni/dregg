@@ -8,12 +8,12 @@
 //! Verification requires only the public key -- no secret key material.
 //!
 //! Cryptographic primitives (`PublicKey`, `SigningKey`, `hex_encode`) are
-//! re-exported from the canonical `pyana-types` crate.
+//! re-exported from the canonical `dregg-types` crate.
 
 use crate::token::{Fact, Rule, TokenState};
 
-// Re-export canonical types from pyana-types.
-pub use pyana_types::{PublicKey, SigningKey, hex_encode};
+// Re-export canonical types from dregg-types.
+pub use dregg_types::{PublicKey, SigningKey, hex_encode};
 
 /// An authority represents one organization's signing identity.
 pub struct Authority {
@@ -28,7 +28,7 @@ pub struct Authority {
 impl Authority {
     /// Create a new authority with a random Ed25519 keypair.
     pub fn new(name: &str) -> Self {
-        let (signing_key, public_key) = pyana_types::generate_keypair();
+        let (signing_key, public_key) = dregg_types::generate_keypair();
 
         Authority {
             name: name.to_string(),
@@ -84,14 +84,14 @@ impl Authority {
     /// Sign a message using the authority's Ed25519 signing key.
     /// Returns a 64-byte Ed25519 signature.
     pub fn sign(&self, message: &[u8; 32]) -> [u8; 64] {
-        let sig = pyana_types::sign(&self.signing_key, message);
+        let sig = dregg_types::sign(&self.signing_key, message);
         sig.0
     }
 
     /// Sign an arbitrary-length message using the authority's Ed25519 signing key.
     /// Returns a 64-byte Ed25519 signature.
     pub fn sign_bytes(&self, message: &[u8]) -> [u8; 64] {
-        let sig = pyana_types::sign(&self.signing_key, message);
+        let sig = dregg_types::sign(&self.signing_key, message);
         sig.0
     }
 
@@ -99,7 +99,7 @@ impl Authority {
     /// Uses Ed25519 public-key verification -- no secret key needed.
     pub fn verify_signature(&self, message: &[u8; 32], signature: &[u8; 64]) -> bool {
         self.public_key
-            .verify(message, &pyana_types::Signature(*signature))
+            .verify(message, &dregg_types::Signature(*signature))
     }
 }
 
@@ -123,7 +123,7 @@ impl VerificationKey {
     /// Only requires the public key -- true asymmetric verification.
     pub fn verify(&self, message: &[u8; 32], signature: &[u8; 64]) -> bool {
         self.public_key
-            .verify(message, &pyana_types::Signature(*signature))
+            .verify(message, &dregg_types::Signature(*signature))
     }
 }
 
@@ -194,7 +194,7 @@ mod tests {
         // Verify the signature with only the public key.
         assert!(
             auth.public_key
-                .verify(&token.state_root, &pyana_types::Signature(token.signature))
+                .verify(&token.state_root, &dregg_types::Signature(token.signature))
         );
     }
 }

@@ -1,6 +1,6 @@
 //! Protocol messages for the tokenizer daemon IPC.
 //!
-//! Uses postcard (length-prefixed) for wire encoding, consistent with `pyana-wire`.
+//! Uses postcard (length-prefixed) for wire encoding, consistent with `dregg-wire`.
 //! Frame format: `[4-byte LE payload length][postcard-encoded message]`
 
 use serde::{Deserialize, Serialize};

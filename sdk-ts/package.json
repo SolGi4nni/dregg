@@ -1,7 +1,7 @@
 {
-  "name": "@pyana/sdk",
+  "name": "@dregg/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the pyana distributed authorization system",
+  "description": "TypeScript SDK for the dregg distributed authorization system",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -23,7 +23,7 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "pyana",
+    "dregg",
     "authorization",
     "macaroon",
     "stark",
@@ -33,7 +33,7 @@
   ],
   "license": "AGPL-3.0-or-later",
   "peerDependencies": {
-    "pyana-wasm": ">=0.1.0"
+    "dregg-wasm": ">=0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
@@ -42,6 +42,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/pyana/sdk-ts"
+    "url": "https://github.com/dregg/sdk-ts"
   }
 }

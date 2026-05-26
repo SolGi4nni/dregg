@@ -44,7 +44,7 @@ impl std::fmt::Display for BlockId {
 /// The payload carried by a block.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Payload {
-    /// A pyana turn (serialized state transition).
+    /// A dregg turn (serialized state transition).
     Turn(Vec<u8>),
     /// An acknowledgment (I've seen these blocks).
     Ack,
@@ -203,7 +203,7 @@ impl Block {
         predecessors: &[BlockId],
     ) -> Vec<u8> {
         let mut buf = Vec::with_capacity(18 + 32 + 8 + 32 + predecessors.len() * 32);
-        buf.extend_from_slice(b"pyana-blocklace-v1");
+        buf.extend_from_slice(b"dregg-blocklace-v1");
         buf.extend_from_slice(creator);
         buf.extend_from_slice(&seq.to_le_bytes());
         // Hash the payload to keep the signed content compact.
@@ -666,7 +666,7 @@ impl Blocklace {
     ///
     /// `round(block) = 1 + max(round(pred))` over the block's predecessors,
     /// or `1` if the block has no predecessors. Bind this into the federation
-    /// [`pyana_types::AttestedRoot`] to distinguish forks (closes audit F3).
+    /// [`dregg_types::AttestedRoot`] to distinguish forks (closes audit F3).
     ///
     /// This is intentionally a per-block accessor (not a full DAG sweep);
     /// callers wanting the rounds for the whole DAG should iterate.

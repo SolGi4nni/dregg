@@ -1,27 +1,27 @@
-# Succinct History for Pyana
+# Succinct History for `dregg`
 
-Analysis of whether and how pyana can achieve Mina-style succinct history:
+Analysis of whether and how dregg can achieve Mina-style succinct history:
 constant-size (or near-constant) proofs that allow new nodes to bootstrap
 without replaying all historical blocks.
 
 ---
 
-## 1. What "Succinct History" Means for Pyana
+## 1. What "Succinct History" Means for `dregg`
 
 In Mina, "succinct" means: a new node downloads a single ~1 KiB proof that
 attests "there exists a valid chain from genesis to this state." The node
 trusts this proof + the current state snapshot and is fully synced.
 
-For pyana, the question is different because the system architecture differs:
+For dregg, the question is different because the system architecture differs:
 
-| Concern | Mina | Pyana |
+| Concern | Mina | `dregg` |
 |---------|------|-------|
 | State ownership | Global ledger (one state for all accounts) | Per-agent proof chains (each agent owns their state) |
 | Consensus | Probabilistic finality (Ouroboros Samasika) | Instant finality (BFT with QC) |
 | What blocks contain | Full state transitions for all accounts | Nullifier batches + state root commitments |
 | What new nodes need | Valid chain proof + snarked ledger | Federation state + latest QC + note/nullifier trees |
 
-Pyana's "succinct history" therefore has two dimensions:
+`dregg`'s "succinct history" therefore has two dimensions:
 
 1. **Federation history**: Can a new federation observer skip replaying all
    blocks and trust a constant-size proof that the current state roots are valid?
@@ -34,7 +34,7 @@ The hard problem is (1). Agent history is already solved by design.
 
 ---
 
-## 2. What Pyana Already Has
+## 2. What `dregg` Already Has
 
 ### 2.1 LightClientProof (Immediate Succinct Verification)
 
@@ -153,7 +153,7 @@ proof means verifying BLS signatures inside a STARK.
 
 ### 5.1 The Problem
 
-Pyana's `ThresholdQC` uses BLS12-381 threshold signatures via the `hints` crate.
+`dregg`'s `ThresholdQC` uses BLS12-381 threshold signatures via the `hints` crate.
 Verification requires:
 - One BLS12-381 pairing: `e(agg_pk, H(m)) == e(g1, agg_sig)`
 - One SNARK proof verification (the `hints` SNARK proving weight threshold)
@@ -223,7 +223,7 @@ all deferred claims. This amortizes BLS verification across the proving pipeline
 
 ## 6. What's Prunable Today (Without New Proofs)
 
-Even without recursive proofs of consensus, pyana can prune aggressively:
+Even without recursive proofs of consensus, dregg can prune aggressively:
 
 ### 6.1 Old Blocks (Keep Only Headers)
 
@@ -295,7 +295,7 @@ that's checked separately via QC.
 
 **Difficulty: Low. Already scaffolded in `chain/` crate.**
 
-The `chain/` workspace wraps pyana STARKs in SP1 for EVM verification.
+The `chain/` workspace wraps dregg STARKs in SP1 for EVM verification.
 Extending this to wrap the recursive state transition proof gives:
 - A Groth16 proof (~260 bytes) of the entire federation history
 - Verifiable on Ethereum for ~200k gas
@@ -450,9 +450,9 @@ switching to a STARK-friendly signature scheme (Section 8.2).
    to the snarked ledger). This is needed because Mina's proofs are generated
    asynchronously (snarking is not instant).
 
-### 10.2 What Transfers to Pyana
+### 10.2 What Transfers to `dregg`
 
-| Mina Concept | Pyana Equivalent | Applicability |
+| Mina Concept | `dregg` Equivalent | Applicability |
 |-------------|-----------------|---------------|
 | Blockchain SNARK | Recursive state transition STARK | Yes, but without BLS |
 | Snarked ledger | Note tree + nullifier set snapshot | Direct mapping |
@@ -466,31 +466,31 @@ switching to a STARK-friendly signature scheme (Section 8.2).
 ### 10.3 What Doesn't Transfer
 
 1. **Probabilistic finality handling**: Mina needs the transition frontier because
-   forks can happen. Pyana's BFT consensus provides instant finality -- once a QC
+   forks can happen. `dregg`'s BFT consensus provides instant finality -- once a QC
    is formed, the block is final forever. No fork choice needed.
 
 2. **SNARK workers / proof market**: Mina has an ecosystem of snarkers racing to
-   produce proofs. Pyana's federation members produce proofs as part of block
+   produce proofs. `dregg`'s federation members produce proofs as part of block
    finalization (or don't, in the trust-the-QC model).
 
 3. **Scan state**: Mina batches transaction proofs in a tree structure that
-   multiple snarkers fill in parallel. Pyana doesn't need this because its
+   multiple snarkers fill in parallel. `dregg` doesn't need this because its
    transition function is simpler (nullifier insertion, not arbitrary zkApp logic).
 
 4. **Account timing/vesting**: Mina's succinct state includes vesting schedules
-   that affect minimum balance. Pyana has no equivalent (cells have simpler economics).
+   that affect minimum balance. `dregg` has no equivalent (cells have simpler economics).
 
-### 10.4 Key Advantage Pyana Has
+### 10.4 Key Advantage `dregg` Has
 
 **BFT finality eliminates the transition frontier entirely.** In Mina, a significant
 portion of bootstrap complexity comes from the sliding window of unfinalized blocks
-and fork choice. Pyana's instant finality means:
+and fork choice. `dregg`'s instant finality means:
 - No forks to handle
 - No "best tip" selection
 - No staged ledger prediction
 - Bootstrap is just: latest QC + state snapshot + done
 
-This makes pyana's bootstrap protocol fundamentally simpler than Mina's.
+This makes dregg's bootstrap protocol fundamentally simpler than Mina's.
 
 ---
 
@@ -587,7 +587,7 @@ No trust in any party beyond the genesis config.
 | Phase 4 (Full succinct) | ~260 bytes total | Only genesis config | Quarters |
 
 **The key insight**: BFT finality + state roots in blocks + LightClientProof
-already gives pyana a workable succinct verification system TODAY. The gap
+already gives dregg a workable succinct verification system TODAY. The gap
 between "trust the QC" and "trust only genesis" is real but the intermediate
 steps (Phases 1-3) provide meaningful security improvements without requiring
 the hardest research (in-circuit BLS).
@@ -595,7 +595,7 @@ the hardest research (in-circuit BLS).
 The 80/20 answer is **Phase 0 + Phase 1**: checkpoint-based pruning with per-block
 state transition proofs. This gives new nodes O(1) bootstrap (from checkpoint)
 with cryptographic assurance that state transitions are valid, while still
-trusting the federation for ordering. This matches the security model pyana
+trusting the federation for ordering. This matches the security model dregg
 already assumes (the federation is honest for ordering) while adding proof that
 the state was computed correctly.
 

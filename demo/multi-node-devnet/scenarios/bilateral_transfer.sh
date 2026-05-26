@@ -5,7 +5,7 @@
 # binding: when Effect::Transfer credits bob_cell @ F2 by 100 and
 # debits alice_cell_stub @ F2 by 100, the two per-cell witness rows
 # project from one shared Effect::Transfer with a shared transfer_id.
-# A bilateral pair verifier (`pyana-verifier bilateral-pair`) accepts
+# A bilateral pair verifier (`dregg-verifier bilateral-pair`) accepts
 # the pair iff:
 #   (a) both proofs verify independently against their per-cell AIRs
 #   (b) PI[transfer_id] matches across the pair
@@ -50,7 +50,7 @@ f2_status=$(http_get "http://127.0.0.1:$F2_PORT/status")
 [ -n "$f2_status" ] && record F2_live true || record F2_live false
 
 # ── 2: a fresh transfer_id has the right shape ─────────────────────
-# transfer_id = H("pyana-gamma2-transfer-id-v1" || alice_cell ||
+# transfer_id = H("dregg-gamma2-transfer-id-v1" || alice_cell ||
 # bob_cell || amount || nonce || federation_id_F2). It MUST be derived
 # (audit F1-style derivation), not chosen.
 ALICE_CELL=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || printf '%064x' $RANDOM)
@@ -62,7 +62,7 @@ if command -v python3 >/dev/null 2>&1; then
     TRANSFER_ID=$(python3 - <<EOF
 import hashlib
 h = hashlib.blake2b(digest_size=32)
-h.update(b"pyana-gamma2-transfer-id-v1")
+h.update(b"dregg-gamma2-transfer-id-v1")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))
@@ -81,7 +81,7 @@ EOF
     TRANSFER_ID_2=$(python3 - <<EOF
 import hashlib
 h = hashlib.blake2b(digest_size=32)
-h.update(b"pyana-gamma2-transfer-id-v1")
+h.update(b"dregg-gamma2-transfer-id-v1")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))
@@ -103,7 +103,7 @@ if command -v python3 >/dev/null 2>&1; then
     TRANSFER_ID_F1=$(python3 - <<EOF
 import hashlib
 h = hashlib.blake2b(digest_size=32)
-h.update(b"pyana-gamma2-transfer-id-v1")
+h.update(b"dregg-gamma2-transfer-id-v1")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))

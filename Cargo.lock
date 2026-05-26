@@ -6160,7 +6160,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-app-framework"
+name = "dregg-app-framework"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
@@ -6168,14 +6168,14 @@ dependencies = [
  "blake3",
  "ed25519-dalek",
  "http",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-intent",
- "pyana-sdk",
- "pyana-storage",
- "pyana-turn",
- "pyana-types",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-intent",
+ "dregg-sdk",
+ "dregg-storage",
+ "dregg-turn",
+ "dregg-types",
  "reqwest",
  "serde",
  "serde_json",
@@ -6186,23 +6186,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-audit"
+name = "dregg-audit"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-commit",
+ "dregg-commit",
  "serde",
 ]
 
 [[package]]
-name = "pyana-blocklace"
+name = "dregg-blocklace"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
  "postcard",
  "proptest",
- "pyana-types",
+ "dregg-types",
  "rand 0.8.6",
  "serde",
  "thiserror 2.0.18",
@@ -6210,7 +6210,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-bridge"
+name = "dregg-bridge"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6218,34 +6218,34 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-bridge",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dsl-runtime",
- "pyana-macaroon",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
+ "dregg-bridge",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dsl-runtime",
+ "dregg-macaroon",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
  "serde",
  "tokio",
 ]
 
 [[package]]
-name = "pyana-captp"
+name = "dregg-captp"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "bs58",
  "getrandom 0.3.4",
  "postcard",
- "pyana-cell",
- "pyana-types",
+ "dregg-cell",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-cell"
+name = "dregg-cell"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6257,10 +6257,10 @@ dependencies = [
  "merlin",
  "postcard",
  "proptest",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dsl-runtime",
- "pyana-types",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dsl-runtime",
+ "dregg-types",
  "serde",
  "serde_json",
  "x25519-dalek",
@@ -6268,7 +6268,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-circuit"
+name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
  "ark-ec",
@@ -6315,13 +6315,13 @@ dependencies = [
  "p3-util 0.5.1",
  "poly-commitment",
  "postcard",
- "pyana-bridge",
- "pyana-cell",
- "pyana-dsl",
- "pyana-dsl-runtime",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
+ "dregg-bridge",
+ "dregg-cell",
+ "dregg-dsl",
+ "dregg-dsl-runtime",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rmp-serde",
@@ -6331,7 +6331,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-cli"
+name = "dregg-cli"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6353,46 +6353,46 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-commit"
+name = "dregg-commit"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-circuit",
- "pyana-dsl-runtime",
+ "dregg-circuit",
+ "dregg-dsl-runtime",
  "serde",
 ]
 
 [[package]]
-name = "pyana-coord"
+name = "dregg-coord"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
- "pyana-blocklace",
- "pyana-cell",
- "pyana-turn",
- "pyana-types",
+ "dregg-blocklace",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
  "serde",
 ]
 
 [[package]]
-name = "pyana-credentials"
+name = "dregg-credentials"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-bridge",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-macaroon",
- "pyana-token",
- "pyana-trace",
+ "dregg-bridge",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-macaroon",
+ "dregg-token",
+ "dregg-trace",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "pyana-demo"
+name = "dregg-demo"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6400,16 +6400,16 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "postcard",
- "pyana-app-framework",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-credentials",
- "pyana-federation",
- "pyana-turn",
- "pyana-types",
- "pyana-verifier",
+ "dregg-app-framework",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-credentials",
+ "dregg-federation",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-verifier",
  "serde",
  "serde_json",
  "starbridge-governed-namespace",
@@ -6419,60 +6419,60 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-demo-agent"
+name = "dregg-demo-agent"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-bridge",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-coord",
- "pyana-dsl-runtime",
- "pyana-federation",
- "pyana-intent",
- "pyana-sdk",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
- "pyana-types",
+ "dregg-bridge",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-coord",
+ "dregg-dsl-runtime",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-sdk",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
+ "dregg-types",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-dfa"
+name = "dregg-dfa"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "postcard",
- "pyana-federation",
+ "dregg-federation",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-directory"
+name = "dregg-directory"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-cell",
- "pyana-dfa",
- "pyana-types",
+ "dregg-cell",
+ "dregg-dfa",
+ "dregg-types",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "pyana-discharge-gateway"
+name = "dregg-discharge-gateway"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
  "clap",
- "pyana-macaroon",
+ "dregg-macaroon",
  "serde",
  "serde_json",
  "tokio",
@@ -6482,17 +6482,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-discord-bot"
+name = "dregg-discord-bot"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
  "blake3",
  "futures-util",
  "hex",
- "pyana-app-framework",
- "pyana-captp",
- "pyana-sdk",
- "pyana-storage",
+ "dregg-app-framework",
+ "dregg-captp",
+ "dregg-sdk",
+ "dregg-storage",
  "reqwest",
  "serde",
  "serde_json",
@@ -6506,7 +6506,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-dsl"
+name = "dregg-dsl"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -6515,18 +6515,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-dsl-differential"
+name = "dregg-dsl-differential"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-circuit",
- "pyana-dsl",
- "pyana-dsl-runtime",
+ "dregg-circuit",
+ "dregg-dsl",
+ "dregg-dsl-runtime",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-dsl-runtime"
+name = "dregg-dsl-runtime"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6543,23 +6543,23 @@ dependencies = [
  "p3-uni-stark 0.5.1",
  "p3-util 0.5.1",
  "postcard",
- "pyana-circuit",
+ "dregg-circuit",
  "rmp-serde",
  "serde",
 ]
 
 [[package]]
-name = "pyana-dsl-tests"
+name = "dregg-dsl-tests"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-circuit",
- "pyana-dsl",
- "pyana-dsl-runtime",
+ "dregg-circuit",
+ "dregg-dsl",
+ "dregg-dsl-runtime",
 ]
 
 [[package]]
-name = "pyana-federation"
+name = "dregg-federation"
 version = "0.1.0"
 dependencies = [
  "ark-ff 0.5.0",
@@ -6572,12 +6572,12 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "postcard",
- "pyana-captp",
- "pyana-cell",
- "pyana-commit",
- "pyana-hints",
- "pyana-turn",
- "pyana-types",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-commit",
+ "dregg-hints",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde_json",
  "tokio",
@@ -6585,7 +6585,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-hints"
+name = "dregg-hints"
 version = "0.0.5"
 dependencies = [
  "ark-bls12-381",
@@ -6609,7 +6609,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-intent"
+name = "dregg-intent"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6617,21 +6617,21 @@ dependencies = [
  "getrandom 0.3.4",
  "globset",
  "postcard",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dfa",
- "pyana-federation",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dfa",
+ "dregg-federation",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
  "serde",
  "serde_json",
  "x25519-dalek",
 ]
 
 [[package]]
-name = "pyana-macaroon"
+name = "dregg-macaroon"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -6648,13 +6648,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-net"
+name = "dregg-net"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "bytes",
  "postcard",
- "pyana-types",
+ "dregg-types",
  "quinn",
  "rand 0.9.4",
  "rcgen",
@@ -6667,7 +6667,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-node"
+name = "dregg-node"
 version = "0.1.0"
 dependencies = [
  "argon2",
@@ -6685,24 +6685,24 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "postcard",
- "pyana-app-framework",
- "pyana-blocklace",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-coord",
- "pyana-credentials",
- "pyana-dsl-runtime",
- "pyana-federation",
- "pyana-intent",
- "pyana-macaroon",
- "pyana-net",
- "pyana-persist",
- "pyana-sdk",
- "pyana-storage",
- "pyana-turn",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-blocklace",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-coord",
+ "dregg-credentials",
+ "dregg-dsl-runtime",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-macaroon",
+ "dregg-net",
+ "dregg-persist",
+ "dregg-sdk",
+ "dregg-storage",
+ "dregg-turn",
+ "dregg-types",
  "quinn",
  "rustls 0.23.40",
  "serde",
@@ -6723,23 +6723,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-observability"
+name = "dregg-observability"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "hex",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-federation",
- "pyana-turn",
- "pyana-types",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-federation",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-persist"
+name = "dregg-persist"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6747,13 +6747,13 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-audit",
- "pyana-blocklace",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-federation",
- "pyana-types",
+ "dregg-audit",
+ "dregg-blocklace",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-federation",
+ "dregg-types",
  "redb",
  "serde",
  "subtle",
@@ -6761,7 +6761,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-preflight"
+name = "dregg-preflight"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6769,51 +6769,51 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-blocklace",
- "pyana-bridge",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-federation",
- "pyana-intent",
- "pyana-sdk",
- "pyana-storage",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
- "pyana-wire",
+ "dregg-blocklace",
+ "dregg-bridge",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-sdk",
+ "dregg-storage",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-wire",
  "serde_json",
  "tokio",
  "toml",
 ]
 
 [[package]]
-name = "pyana-protocol-tests"
+name = "dregg-protocol-tests"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
  "postcard",
  "proptest",
- "pyana-cell",
- "pyana-circuit",
- "pyana-turn",
- "pyana-types",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-turn",
+ "dregg-types",
  "serde",
 ]
 
 [[package]]
-name = "pyana-rbg"
+name = "dregg-rbg"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-cell",
- "pyana-types",
+ "dregg-cell",
+ "dregg-types",
 ]
 
 [[package]]
-name = "pyana-sdk"
+name = "dregg-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -6825,20 +6825,20 @@ dependencies = [
  "hmac 0.12.1",
  "pbkdf2",
  "postcard",
- "pyana-bridge",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dsl-runtime",
- "pyana-dsl-tests",
- "pyana-intent",
- "pyana-macaroon",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
- "pyana-types",
- "pyana-wire",
+ "dregg-bridge",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dsl-runtime",
+ "dregg-dsl-tests",
+ "dregg-intent",
+ "dregg-macaroon",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-wire",
  "reqwest",
  "rmp-serde",
  "serde",
@@ -6852,25 +6852,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-sdk-consensus-demo"
+name = "dregg-sdk-consensus-demo"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
  "postcard",
- "pyana-blocklace",
- "pyana-captp",
- "pyana-cell",
- "pyana-federation",
- "pyana-sdk",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
- "pyana-wire",
+ "dregg-blocklace",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-federation",
+ "dregg-sdk",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-wire",
 ]
 
 [[package]]
-name = "pyana-secrets"
+name = "dregg-secrets"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -6886,7 +6886,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-storage"
+name = "dregg-storage"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -6897,25 +6897,25 @@ dependencies = [
  "ark-std 0.5.0",
  "blake3",
  "poly-commitment",
- "pyana-cell",
- "pyana-circuit",
+ "dregg-cell",
+ "dregg-circuit",
  "serde",
 ]
 
 [[package]]
-name = "pyana-storage-templates"
+name = "dregg-storage-templates"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "pyana-teasting"
+name = "dregg-teasting"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -6923,26 +6923,26 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-blocklace",
- "pyana-bridge",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-coord",
- "pyana-dsl-runtime",
- "pyana-federation",
- "pyana-intent",
- "pyana-macaroon",
- "pyana-net",
- "pyana-persist",
- "pyana-sdk",
- "pyana-storage",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
- "pyana-verifier",
- "pyana-wire",
+ "dregg-blocklace",
+ "dregg-bridge",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-coord",
+ "dregg-dsl-runtime",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-macaroon",
+ "dregg-net",
+ "dregg-persist",
+ "dregg-sdk",
+ "dregg-storage",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-verifier",
+ "dregg-wire",
  "serde",
  "tokio",
  "tracing",
@@ -6950,25 +6950,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-tests"
+name = "dregg-tests"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "getrandom 0.3.4",
  "postcard",
  "proptest",
- "pyana-bridge",
- "pyana-cell",
- "pyana-circuit",
- "pyana-dsl-runtime",
- "pyana-sdk",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
+ "dregg-bridge",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-dsl-runtime",
+ "dregg-sdk",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
 ]
 
 [[package]]
-name = "pyana-token"
+name = "dregg-token"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -6978,9 +6978,9 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "globset",
- "pyana-commit",
- "pyana-macaroon",
- "pyana-trace",
+ "dregg-commit",
+ "dregg-macaroon",
+ "dregg-trace",
  "rand 0.9.4",
  "rmp-serde",
  "scalable_cuckoo_filter",
@@ -6990,7 +6990,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-tokenizer"
+name = "dregg-tokenizer"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -7007,7 +7007,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-trace"
+name = "dregg-trace"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -7016,7 +7016,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-turn"
+name = "dregg-turn"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -7027,12 +7027,12 @@ dependencies = [
  "hex",
  "postcard",
  "proptest",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dsl-runtime",
- "pyana-types",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dsl-runtime",
+ "dregg-types",
  "serde",
  "serde_json",
  "tracing",
@@ -7040,7 +7040,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-types"
+name = "dregg-types"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -7052,26 +7052,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-verifier"
+name = "dregg-verifier"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "hex",
  "postcard",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-federation",
- "pyana-turn",
- "pyana-types",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-federation",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde_json",
  "tempfile",
 ]
 
 [[package]]
-name = "pyana-wasm"
+name = "dregg-wasm"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -7083,19 +7083,19 @@ dependencies = [
  "js-sys",
  "lockstitch",
  "postcard",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-coord",
- "pyana-federation",
- "pyana-intent",
- "pyana-macaroon",
- "pyana-observability",
- "pyana-sdk",
- "pyana-token",
- "pyana-trace",
- "pyana-turn",
- "pyana-types",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-coord",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-macaroon",
+ "dregg-observability",
+ "dregg-sdk",
+ "dregg-token",
+ "dregg-trace",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -7106,7 +7106,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-wire"
+name = "dregg-wire"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -7114,18 +7114,18 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
- "pyana-bridge",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-dfa",
- "pyana-dsl-runtime",
- "pyana-federation",
- "pyana-persist",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
+ "dregg-bridge",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-dfa",
+ "dregg-dsl-runtime",
+ "dregg-federation",
+ "dregg-persist",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
  "rustls-pemfile",
  "serde",
  "tokio",
@@ -9747,11 +9747,11 @@ name = "starbridge-governed-namespace"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-dfa",
- "pyana-turn",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-dfa",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
@@ -9761,12 +9761,12 @@ name = "starbridge-identity"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-circuit",
- "pyana-credentials",
- "pyana-token",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-credentials",
+ "dregg-token",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
@@ -9776,10 +9776,10 @@ name = "starbridge-nameservice"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-turn",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
  "serde",
  "serde_json",
 ]
@@ -9789,9 +9789,9 @@ name = "starbridge-subscription"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-types",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
  "serde",
  "serde_json",
 ]

@@ -1,9 +1,9 @@
 //! Bridge-action binding wrapper.
 //!
-//! Wraps `pyana_circuit::bridge_action_air` with bridge-side ergonomics: a
+//! Wraps `dregg_circuit::bridge_action_air` with bridge-side ergonomics: a
 //! `PortableActionBinding` type that bundles a serialized STARK proof with
 //! its typed parameters, plus prove/verify helpers tied to
-//! `pyana_cell::note_bridge`'s shapes.
+//! `dregg_cell::note_bridge`'s shapes.
 //!
 //! # Why this exists
 //!
@@ -17,7 +17,7 @@
 //! AIR's binding (whose primary job is the spending-key + Merkle proof), but
 //! they leave a high-bit / high-byte tail unbound at the algebraic level.
 //!
-//! The sibling AIR in `pyana_circuit::bridge_action_air` carries the full
+//! The sibling AIR in `dregg_circuit::bridge_action_air` carries the full
 //! 32 bytes of each hash field (8 limbs × 4 bytes) and the full 64 bits of
 //! amount (low 32 + high 32). This module is the bridge-side seam that
 //! produces and consumes those proofs.
@@ -38,10 +38,10 @@
 //! attests that the typed parameters used to apply the mint match the ones
 //! the prover committed to at trace-generation time.
 
-use pyana_circuit::bridge_action_air::{
+use dregg_circuit::bridge_action_air::{
     BridgeActionWitness, prove_bridge_action, verify_bridge_action,
 };
-use pyana_circuit::stark::{StarkProof, proof_from_bytes, proof_to_bytes};
+use dregg_circuit::stark::{StarkProof, proof_from_bytes, proof_to_bytes};
 use serde::{Deserialize, Serialize};
 
 /// A portable, self-describing bridge-action binding.
@@ -59,7 +59,7 @@ pub struct PortableActionBinding {
     pub destination_federation: [u8; 32],
     /// The full u64 amount.
     pub amount: u64,
-    /// The serialized `pyana_circuit::stark::StarkProof` for the
+    /// The serialized `dregg_circuit::stark::StarkProof` for the
     /// `bridge_action_air::BridgeActionAir`.
     pub proof_bytes: Vec<u8>,
 }
@@ -67,7 +67,7 @@ pub struct PortableActionBinding {
 /// Produce a `PortableActionBinding` from typed parameters.
 ///
 /// The returned object is suitable for inclusion in a wire-format bridge
-/// presentation alongside `pyana_cell::note_bridge::PortableNoteProof`.
+/// presentation alongside `dregg_cell::note_bridge::PortableNoteProof`.
 pub fn create_action_binding(
     nullifier: [u8; 32],
     recipient: [u8; 32],

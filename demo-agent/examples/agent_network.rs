@@ -1,6 +1,6 @@
 //! AI Agent Coordination Network — 8-Cell Ocap-Secured Infrastructure
 //!
-//! Port of the Persvati "AI Agent Coordination Network" demo into pyana's API.
+//! Port of the Persvati "AI Agent Coordination Network" demo into dregg's API.
 //!
 //! Eight cells form a distributed AI infrastructure. Every interaction is
 //! capability-secured, budget-gated, and cryptographically receipted.
@@ -33,12 +33,12 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-use pyana_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::verify::verify_receipt_chain;
-use pyana_turn::{
+use dregg_cell::derivation::{DerivationEdge, DerivationNode, DerivationTree, DerivationType};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::verify::verify_receipt_chain;
+use dregg_turn::{
     Action, Authorization, BudgetGate, BudgetSlice, CallForest, CommitmentMode, ComputronCosts,
     DelegationMode, Effect, EventualRef, Pipeline, PipelineError, TurnBuilder, TurnExecutor,
     TurnReceipt, TurnResult, execute_pipeline,
@@ -71,7 +71,7 @@ fn short_id(id: &CellId) -> String {
     format!("{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3])
 }
 
-fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> pyana_turn::Turn {
+fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> dregg_turn::Turn {
     let action = Action {
         target: agent,
         method: [0u8; 32],
@@ -86,7 +86,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> pyana_turn::Tur
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
-    pyana_turn::Turn {
+    dregg_turn::Turn {
         agent,
         nonce,
         call_forest: forest,
@@ -108,7 +108,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> pyana_turn::Tur
 }
 
 fn main() {
-    println!("=== Pyana AI Agent Coordination Network (8-Cell Demo) ===");
+    println!("=== Dregg AI Agent Coordination Network (8-Cell Demo) ===");
     println!("    Ocap-Secured Distributed AI Infrastructure");
     println!();
 
@@ -980,7 +980,7 @@ fn main() {
     // SUMMARY
     // =========================================================================
     println!("=========================================================================");
-    println!("  PYANA AI AGENT COORDINATION NETWORK -- RESULTS");
+    println!("  DREGG AI AGENT COORDINATION NETWORK -- RESULTS");
     println!("=========================================================================");
     println!("  Cells:                     8");
     println!("  Pipeline turns:            4 (across 4 cell boundaries, 0 round trips)");
@@ -997,7 +997,7 @@ fn main() {
     println!("  Capability introductions:  6 (5 from developer + 1 from gateway)");
     println!("=========================================================================");
     println!();
-    println!("  This demonstrates pyana as a RUNTIME: 8 cells coordinating with");
+    println!("  This demonstrates dregg as a RUNTIME: 8 cells coordinating with");
     println!("  ocap security, budget metering, promise pipelining, and cryptographic");
     println!("  audit -- not just a credential system.");
     println!();

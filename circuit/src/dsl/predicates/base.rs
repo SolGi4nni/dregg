@@ -298,7 +298,7 @@ pub fn predicate_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-predicate-dsl-v2".into(),
+        name: "dregg-predicate-dsl-v2".into(),
         trace_width: TRACE_WIDTH,
         max_degree: 3,
         columns,

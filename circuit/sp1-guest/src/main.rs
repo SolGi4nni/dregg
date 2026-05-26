@@ -2,15 +2,15 @@
 //!
 //! This program runs inside SP1's RISC-V zkVM and proves, in a single execution:
 //!
-//! 1. **Token caveat verification**: Evaluates the REAL `pyana_token::pyana_caveats::verify_caveats`
+//! 1. **Token caveat verification**: Evaluates the REAL `dregg_token::dregg_caveats::verify_caveats`
 //!    function against a committed caveat set and authorization request. This is the actual
 //!    production verification logic, not a reimplementation.
 //!
-//! 2. **Cell precondition evaluation**: Evaluates `pyana_cell::preconditions::Preconditions::evaluate`
+//! 2. **Cell precondition evaluation**: Evaluates `dregg_cell::preconditions::Preconditions::evaluate`
 //!    against a cell state and evaluation context. Proves that all preconditions (nonce, balance,
 //!    field equality, network height, time range) are satisfied.
 //!
-//! 3. **Cell program constraint checking**: Evaluates `pyana_cell::program::CellProgram::evaluate`
+//! 3. **Cell program constraint checking**: Evaluates `dregg_cell::program::CellProgram::evaluate`
 //!    to prove that a state transition satisfies all program constraints (field equality,
 //!    ordering, conservation laws, immutability).
 //!
@@ -20,7 +20,7 @@
 //! # Why This Matters
 //!
 //! The whole point of a zkVM is proving YOUR actual code, not a rewrite. This guest program
-//! imports and calls the real `token` and `pyana-cell` crate logic, compiled to RISC-V.
+//! imports and calls the real `token` and `dregg-cell` crate logic, compiled to RISC-V.
 //! The proof guarantees that the exact same code running in production was evaluated correctly.
 //!
 //! # Public Outputs (committed to the proof)
@@ -36,15 +36,15 @@ sp1_zkvm::entrypoint!(main);
 
 use serde::{Deserialize, Serialize};
 
-use pyana_cell::preconditions::{EvalContext, Preconditions};
-use pyana_cell::program::CellProgram;
-use pyana_cell::state::CellState;
-use pyana_token::pyana_caveats;
-use pyana_token::pyana_macaroon;
-use pyana_token::traits::AuthRequest;
+use dregg_cell::preconditions::{EvalContext, Preconditions};
+use dregg_cell::program::CellProgram;
+use dregg_cell::state::CellState;
+use dregg_token::dregg_caveats;
+use dregg_token::dregg_macaroon;
+use dregg_token::traits::AuthRequest;
 
 // Re-use the macaroon caveat types from the token crate's dependency.
-use pyana_macaroon::caveat::{CaveatSet, WireCaveat};
+use dregg_macaroon::caveat::{CaveatSet, WireCaveat};
 
 // ============================================================================
 // Input / Output Types
@@ -205,7 +205,7 @@ fn wire_to_auth_request(wire: &AuthRequestWire) -> AuthRequest {
 }
 
 fn wire_to_preconditions(wire: &PreconditionsWire) -> Preconditions {
-    use pyana_cell::preconditions::{CellStatePrecondition, NetworkPrecondition, TimeRange};
+    use dregg_cell::preconditions::{CellStatePrecondition, NetworkPrecondition, TimeRange};
 
     let cell_state = if wire.nonce.is_some()
         || wire.min_balance.is_some()
@@ -264,7 +264,7 @@ fn wire_to_eval_context(wire: &EvalContextWire) -> EvalContext {
 }
 
 fn wire_to_cell_program(wire: &CellProgramWire) -> CellProgram {
-    use pyana_cell::program::StateConstraint;
+    use dregg_cell::program::StateConstraint;
 
     match wire {
         CellProgramWire::None => CellProgram::None,
@@ -312,7 +312,7 @@ fn wire_to_cell_program(wire: &CellProgramWire) -> CellProgram {
 /// Hash the caveat set for commitment.
 fn hash_caveat_set(wire_caveats: &[WireCaveatWire]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-caveat-set-v1:");
+    hasher.update(b"dregg-caveat-set-v1:");
     hasher.update(&(wire_caveats.len() as u32).to_le_bytes());
     for wc in wire_caveats {
         hasher.update(&wc.caveat_type.to_le_bytes());
@@ -338,13 +338,13 @@ fn main() {
     let auth_request = wire_to_auth_request(&input.auth_request);
 
     #[allow(deprecated)] // verify_caveats is deprecated in favor of datalog_verify, but it's
-    // the self-contained evaluator that doesn't need pyana-trace/pyana-commit.
-    let authorized = pyana_caveats::verify_caveats(&caveat_set, &auth_request).is_ok();
+    // the self-contained evaluator that doesn't need dregg-trace/dregg-commit.
+    let authorized = dregg_caveats::verify_caveats(&caveat_set, &auth_request).is_ok();
 
     // ── Step 2: Cell precondition evaluation ────────────────────────────────
     //
     // If preconditions are provided, evaluate them using the REAL
-    // Preconditions::evaluate function from the pyana-cell crate.
+    // Preconditions::evaluate function from the dregg-cell crate.
     let preconditions_met = match (
         &input.preconditions,
         &input.cell_state,
@@ -362,7 +362,7 @@ fn main() {
     // ── Step 3: Cell program constraint checking ────────────────────────────
     //
     // If a cell program is provided, evaluate it using the REAL
-    // CellProgram::evaluate function from the pyana-cell crate.
+    // CellProgram::evaluate function from the dregg-cell crate.
     let program_valid = match (&input.cell_program, &input.new_cell_state) {
         (Some(prog_wire), Some(new_state_wire)) => {
             let program = wire_to_cell_program(prog_wire);

@@ -1,5 +1,5 @@
 // Blinded Queues — commit/reveal/consume with real BLAKE3 commitments via the
-// pyana wasm pkg. Demonstrates nullifier-set semantics + double-consume reject.
+// dregg wasm pkg. Demonstrates nullifier-set semantics + double-consume reject.
 
 import { mountSection, blake3CommitmentLike, randomBytes, hex, shortHex } from './_newworld.js';
 import { renderBlindedQueueSvg } from '../visualizers/blinded-queue.js';
@@ -111,7 +111,7 @@ export function initBlindedQueues(wasm) {
                 </tr>
               `)}
               ${commits.value.length === 0 ? html`
-                <tr><td colspan="5" class="pyana-empty" style="padding:16px;">no commits yet — make one above.</td></tr>
+                <tr><td colspan="5" class="dregg-empty" style="padding:16px;">no commits yet — make one above.</td></tr>
               ` : null}
             </tbody>
           </table>

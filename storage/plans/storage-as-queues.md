@@ -310,7 +310,7 @@ using Mina-compatible proof systems. Key concepts that apply here:
 
 4. **Recursive Proofs of Storage**: Ensue builds on Mina's recursive SNARKs to
    maintain a rolling proof that "all committed data is still available." For
-   pyana: the IVC chain already provides recursive proofs. A queue's integrity
+   dregg: the IVC chain already provides recursive proofs. A queue's integrity
    can be part of the recursive state: "at block N, queue Q has root R with
    T messages, and all messages from head to tail are retrievable."
 

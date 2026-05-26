@@ -1,16 +1,16 @@
-# DESIGN: Pyana Receipt Formats
+# DESIGN: `dregg` Receipt Formats
 
 **Author:** receipt-design subagent
 **Date:** 2026-05-23
 **Status:** design — implementation tracks the migration plan in §8.
-**Companion docs:** `AUDIT-turn-executor.md`, `AUDIT-circuit.md`, `REVIEW-effect-vm.md`, `PYANA_DESIGN.md`.
+**Companion docs:** `AUDIT-turn-executor.md`, `AUDIT-circuit.md`, `REVIEW-effect-vm.md`, `DREGG_DESIGN.md`.
 
-Receipts are the lingua franca of trust boundaries. A pyana receipt is the
+Receipts are the lingua franca of trust boundaries. A dregg receipt is the
 artifact that lets one principal — cclerk, federation, bridge endpoint,
 verifier — say to another, *"This state transition really happened, and here
 is the cryptographic evidence."* They are the only object that crosses every
 boundary in the system: in-circuit ↔ out-of-circuit, federation A ↔ federation
-B, executor ↔ cclerk, and (via the bridge) pyana ↔ Midnight/Cardano.
+B, executor ↔ cclerk, and (via the bridge) dregg ↔ Midnight/Cardano.
 
 This document inventories the receipt shapes currently scattered through the
 codebase, lists the gaps the audits have surfaced, and proposes a single
@@ -33,13 +33,13 @@ shape.
 - `effects_hash` (`[u8;32]`) — currently a BLAKE3 over the runtime effects list
 - `computrons_used`, `action_count`, `timestamp`, `agent`
 - `previous_receipt_hash: Option<[u8;32]>` — the receipt-chain link
-- `federation_id: [u8;32]` — added in `pyana-receipt-v2`, prevents cross-federation replay
+- `federation_id: [u8;32]` — added in `dregg-receipt-v2`, prevents cross-federation replay
 - routing/introduction/derivation/event metadata
 - `executor_signature: Option<Vec<u8>>` — Ed25519 over `receipt_hash()`. **Unset on every path traced.**
 - `finality: Finality` — `Final` or `Tentative` (solo mode)
 
 The canonical hash is `receipt_hash()` (`turn.rs:303-368`), versioned
-`pyana-receipt-v2`, with explicit byte tags for `Option` discriminants and a
+`dregg-receipt-v2`, with explicit byte tags for `Option` discriminants and a
 length-prefix on every variable-length field.
 
 Verified by `verify::verify_receipt_chain` (`turn/src/verify.rs:117-181`) and
@@ -53,7 +53,7 @@ Binds:
 - `nullifier: [u8;32]`
 - `destination_federation: [u8;32]`
 - `mint_height: u64`
-- `signature: [u8;64]` (Ed25519 over `BLAKE3_derive_key("pyana-bridge-receipt-v1", nullifier || dest_fed || mint_height_le)`)
+- `signature: [u8;64]` (Ed25519 over `BLAKE3_derive_key("dregg-bridge-receipt-v1", nullifier || dest_fed || mint_height_le)`)
 
 Verified via `verify_bridge_receipt` (`note_bridge.rs:604-628`) against a
 **caller-supplied** `trusted_keys: &[[u8;32]]`. No on-chain trust root.
@@ -69,7 +69,7 @@ amount/asset binding. This receipt cannot, by itself, answer "who got what?"
 
 #### `TurnSign` + `TurnCertificate` — fast-path quorum
 `turn/src/fast_path.rs:169-197`. Validators issue `TurnSign` (Ed25519
-signature over `pyana-fast-path-sign-v2 || turn_hash`, height-tagged).
+signature over `dregg-fast-path-sign-v2 || turn_hash`, height-tagged).
 `TurnCertificate` aggregates `2f+1` `TurnSign`s + the original turn + an
 optional STARK proof. Verified in `assemble_certificate` (`fast_path.rs:430`)
 and `execute_certified_turn` (`fast_path.rs:468`). This is BFT consensus
@@ -88,7 +88,7 @@ of individual Ed25519 votes. Verified via `is_valid_with_keys` or
 `TurnReceipt` and the block certificate are not formally chained.
 
 #### `BlocklaceTurnReceipt`
-`blocklace/src/pyana_bridge.rs:119-132`. Produced when a blocklace block
+`blocklace/src/dregg_bridge.rs:119-132`. Produced when a blocklace block
 containing a turn reaches finality. Binds `block_id`, `submitter`, `seq`,
 `turn_data`, `tier`, `finality_height`. **Has no signature** — it's a
 local-bookkeeping record, not a receipt that crosses a trust boundary.
@@ -211,7 +211,7 @@ itself as a public input to a subsequent proof.
 ```rust
 pub struct SovereignReceipt {
     // ── domain & chain ───────────────────────────────────────────────────
-    /// Version tag: "pyana-sov-receipt-v1"
+    /// Version tag: "dregg-sov-receipt-v1"
     pub version: u32,
     /// Federation that produced this receipt. Prevents cross-fed replay.
     pub federation_id: [u8; 32],
@@ -264,7 +264,7 @@ pub struct SovereignReceipt {
 
 `receipt_hash_blake3(r) = BLAKE3(domain || canonical_bytes(r_minus_sig))` where:
 
-- `domain = "pyana-sov-receipt-v1"` (length-prefixed)
+- `domain = "dregg-sov-receipt-v1"` (length-prefixed)
 - `canonical_bytes` is a deterministic serialization. Recommended: every
   fixed-size field as raw bytes in struct-declaration order; every
   `Option<T>` as a single `0x00` tag or `0x01 || canonical(T)`; every
@@ -283,7 +283,7 @@ This gives a single 32-byte BLAKE3 digest suitable for:
 
 `receipt_hash_poseidon2(r) → [BabyBear; 4]`. Computed by absorbing the same
 canonical fields into a Poseidon2 sponge, in declaration order, using the
-4→1 hash gadget already in `pyana_commit::hash`. Layout for a fixed-arity
+4→1 hash gadget already in `dregg_commit::hash`. Layout for a fixed-arity
 absorb (each row is one Poseidon2 4→1 call):
 
 ```
@@ -350,7 +350,7 @@ be aggregable over many turns.
 
 ### 4.1 Architecture choice: aggregate vs. multi-sig
 
-Pyana already has two flavors of quorum proof:
+`dregg` already has two flavors of quorum proof:
 
 - **Per-voter Ed25519**: `QuorumCertificate.votes: Vec<(usize, Signature)>`.
   Verified one by one. O(n) verifier work, O(n) certificate size.
@@ -372,7 +372,7 @@ adding FROST would duplicate the crypto without changing the abstraction.
 
 ```rust
 pub struct FederationReceipt {
-    /// Version tag: "pyana-fed-receipt-v1"
+    /// Version tag: "dregg-fed-receipt-v1"
     pub version: u32,
     /// Federation identity (BLAKE3 over the committee's static descriptor).
     pub federation_id: [u8; 32],
@@ -454,7 +454,7 @@ The fast path (`turn/src/fast_path.rs`) collects 2f+1 `TurnSign`s into a
 `TurnCertificate`. This is morally identical to a `QuorumCertificate` over
 the turn hash. The integration is:
 
-1. `TurnSign` signatures are Ed25519 over `pyana-fast-path-sign-v2 ||
+1. `TurnSign` signatures are Ed25519 over `dregg-fast-path-sign-v2 ||
    turn_hash` (already a real Ed25519 sig per the live tree; the historical
    P0-1 finding is fixed).
 2. When `execute_certified_turn` succeeds, it should emit a
@@ -534,12 +534,12 @@ This is structurally close to IBC's `MsgSendPacket` /
 - `TimeoutPacket` — the sender proves *non-inclusion* of a `PacketReceipt`
   on the receiver to reclaim funds.
 
-Pyana's bridge is morally the same flow with two important differences:
-(1) pyana federations don't have a shared light-client of each other; they
+`dregg`'s bridge is morally the same flow with two important differences:
+(1) dregg federations don't have a shared light-client of each other; they
 trust each other's signed receipts directly. So all four IBC commitments
-collapse to *signed receipts*. (2) Pyana wants in-circuit verification of
+collapse to *signed receipts*. (2) `dregg` wants in-circuit verification of
 each phase's receipt as part of the next phase's proof — IBC verifies via
-light-client Merkle inclusion proofs, pyana verifies via Poseidon2
+light-client Merkle inclusion proofs, dregg verifies via Poseidon2
 signature recomputation in the next-phase circuit.
 
 References: ICS-004 spec
@@ -554,7 +554,7 @@ and federation IDs are bound in both directions for replay protection:
 
 ```rust
 pub struct BridgeReceiptEnvelope {
-    /// Version tag: "pyana-bridge-receipt-v2"
+    /// Version tag: "dregg-bridge-receipt-v2"
     pub version: u32,
     /// Phase: 1=Lock, 2=Mint, 3=Finalize, 4=Cancel.
     pub phase: u8,
@@ -562,7 +562,7 @@ pub struct BridgeReceiptEnvelope {
     pub src_federation_id: [u8; 32],
     /// Destination federation id.
     pub dst_federation_id: [u8; 32],
-    /// Unique bridge-instance id: BLAKE3("pyana-bridge-id-v1" || lock_nullifier
+    /// Unique bridge-instance id: BLAKE3("dregg-bridge-id-v1" || lock_nullifier
     ///   || src_fed || dst_fed || initiating_nonce). Identical across all 4
     ///   phase receipts; serves as the cross-phase join key.
     pub bridge_id: [u8; 32],
@@ -608,7 +608,7 @@ pub enum BridgePhasePayload {
         /// Source-side timeout height after which Phase 4 (cancel) is allowed.
         timeout_height: u64,
         /// The portable spending proof (what the destination needs to verify
-        /// the lock is real). For pyana this is a Schnorr proof bound to
+        /// the lock is real). For dregg this is a Schnorr proof bound to
         /// the cross-federation key derivation.
         spending_proof_digest: [u8; 32],  // BLAKE3 of the proof bytes
     },
@@ -708,7 +708,7 @@ Properties:
    - `Phase1.payload` includes `nullifier`, `value_commitment`,
      `asset_type`, `expected_recipient_commitment`, `timeout_height`.
    - `spending_proof_digest` matches the proof the dst received OOB
-     (since pyana doesn't have light-clients of source-side state, the
+     (since dregg doesn't have light-clients of source-side state, the
      full spending proof must be transmitted alongside the receipt; the
      digest binds it).
    - `Phase1.payload.timeout_height` is far enough in the future that
@@ -775,7 +775,7 @@ unenforceable receipt — the source cancels, the source's
 from the same `bridge_id` is rejected with `BridgeError::InvalidBridgeState`.
 
 This makes the bridge **synchronous within Δproto+Δmint+Δsafe blocks**.
-For pyana's federation cadence (1s blocks typically), `Δproto = 5`,
+For dregg's federation cadence (1s blocks typically), `Δproto = 5`,
 `Δmint = 5`, `Δsafe = 5` gives a 15-block (15s) lower bound on
 `timeout_height - lock_height`. The lock initiator can set higher
 timeouts; lower is rejected at lock-creation time.
@@ -786,7 +786,7 @@ include a `timestamp < timeout` proof or the recv is rejected.
 
 ### 5.6 BLAKE3 form
 
-`bridge_receipt_hash_blake3(r) = BLAKE3("pyana-bridge-receipt-v2" ||
+`bridge_receipt_hash_blake3(r) = BLAKE3("dregg-bridge-receipt-v2" ||
 canonical_envelope_minus_qc)`. The QC is *not* included in the BLAKE3
 hash for chain-link purposes — the chain link is over the *body*, so
 that a re-aggregated certificate (e.g. converting per-voter votes to
@@ -833,7 +833,7 @@ For phases 1, 2, 3 (cross-federation), the receiving federation must
 verify the QC of the issuing federation. The receiving federation looks
 up the issuing federation's committee by
 `(federation_id, committee_epoch)`. This lookup table is the trust root:
-every federation pyana talks to must be registered with at least one
+every federation dregg talks to must be registered with at least one
 known committee descriptor (BLS group public key, or a list of validator
 Ed25519 keys with the threshold).
 
@@ -938,7 +938,7 @@ The pattern, generalized:
 1. Define one canonical byte serialization `canonical_bytes(r)` over the
    receipt struct. Deterministic, no `serde` defaults, explicit length
    prefixes, explicit `Option` tags.
-2. `receipt_hash_blake3(r) = BLAKE3("pyana-<type>-receipt-v<n>" ||
+2. `receipt_hash_blake3(r) = BLAKE3("dregg-<type>-receipt-v<n>" ||
    canonical_bytes(r))`. Used for hash-map keys, network dedup,
    Ed25519/BLS signing targets, and chain links (`previous_*_hash`).
 3. `receipt_hash_poseidon2(r) = Poseidon2_absorb_sponge(canonical_bytes(r)
@@ -990,7 +990,7 @@ any order, but the dependencies below are real.
 
 ### 8.1 Block 1 — Turn hash covers all proof fields (P1-1)
 
-`turn/src/turn.rs:133`. Bump version tag to `pyana-turn-v3:` and include
+`turn/src/turn.rs:133`. Bump version tag to `dregg-turn-v3:` and include
 `execution_proof`, `execution_proof_cell`, `execution_proof_new_commitment`,
 `conservation_proof`, `sovereign_witnesses`, and `custom_program_proofs`
 in `Turn::hash()`. The cipherclerk's `compute_turn_bytes` (AUDIT-cclerk P2-10)
@@ -1153,7 +1153,7 @@ receive.
 The three-receipt design is unified by a single dual-hash discipline
 (BLAKE3 + Poseidon2 over identical canonical bytes), a single
 chain-link discipline (`previous_*_receipt_hash` everywhere), and
-explicit version tags (`pyana-<type>-receipt-vN`).
+explicit version tags (`dregg-<type>-receipt-vN`).
 
 The bridge receipt is the most security-critical because it crosses
 federations with no shared light-client, timeouts make recovery

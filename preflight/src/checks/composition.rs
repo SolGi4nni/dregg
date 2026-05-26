@@ -1,11 +1,11 @@
 //! Proof composition checks: AND composition, IVC chaining, aggregation.
 
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
-use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
-use pyana_commit::poseidon2_tree::Poseidon2MerkleTree;
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
+use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
 
 use crate::report::{CheckResult, run_check};
 
@@ -133,7 +133,7 @@ fn check_and_composition() -> Result<(), String> {
 
 fn check_ivc_chain() -> Result<(), String> {
     // Chain 3 proofs sequentially via IVC, verify single proof covers all.
-    use pyana_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
 
     let initial_root = BabyBear::new(50000);
 

@@ -5,7 +5,7 @@
 //! resolve where, then atomically swaps the active table. The
 //! `apps/governed-namespace/` app implemented this in 740 lines of
 //! ad-hoc Rust; this module collapses that to a thin composition over
-//! `pyana-dfa::RouteTable` + an [`InMemoryDirectory`].
+//! `dregg-dfa::RouteTable` + an [`InMemoryDirectory`].
 //!
 //! # Shape
 //!
@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub use pyana_dfa::router::RouteTable;
-use pyana_dfa::router::{RouteTableBuilder, RouteTarget, Router};
+pub use dregg_dfa::router::RouteTable;
+use dregg_dfa::router::{RouteTableBuilder, RouteTarget, Router};
 
 use crate::directory::{
     Directory, DirectoryEntry, DirectoryError, DiscoveryFilter, InMemoryDirectory, Listing, Version,
@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::ResourceHandle;
     use crate::directory::EntryKind;
-    use pyana_dfa::router::RouteTableBuilder;
+    use dregg_dfa::router::RouteTableBuilder;
 
     fn fixture_entry(seed: u8) -> DirectoryEntry {
         DirectoryEntry {

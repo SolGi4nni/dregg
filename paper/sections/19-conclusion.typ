@@ -4,7 +4,7 @@
 
 = Conclusion
 
-Pyana demonstrates that object-capability authorization is naturally structured as incrementally verifiable computation, and that this structure scales from a credential system to a full distributed object runtime---*a proof-carrying capability mesh*---with zero-knowledge privacy, E-style messaging, proof-carrying state, sovereign cell ownership, and algebraically-bound cross-cell composition.
+Dregg demonstrates that object-capability authorization is naturally structured as incrementally verifiable computation, and that this structure scales from a credential system to a full distributed object runtime---*a proof-carrying capability mesh*---with zero-knowledge privacy, E-style messaging, proof-carrying state, sovereign cell ownership, and algebraically-bound cross-cell composition.
 
 The Capability Derivation Tree duality (kernel-enforced vs. proof-carried) suggests a broader principle: any security invariant maintained synchronously by a kernel can be maintained asynchronously by a proof system, trading latency for distribution. The RevocationChannel spectrum (from bearer-token impunity to kernel-like instant revocation) makes this tradeoff explicit and application-selectable.
 
@@ -22,7 +22,7 @@ The economic model demonstrates that federated validation is viable without infl
 
 The 14-boundary vocabulary (BOUNDARIES.md) makes the implicit, plural, per-subsystem boundaries that already exist in the codebase *explicit*. A `FieldVisibility::Committed` slot is commitment-inside external readers but cleartext-inside the host executor; a sovereign-cell-in-witness-mode is cleartext-inside the executor for the duration of the turn but commitment-inside the federation's persistent storage. Naming the boundary is the precondition to noticing when it slips.
 
-The agent substrate provides a "home for AI"---not a physical location but the set of invariants, protocols, and economic structures that allow autonomous agents to coexist productively without requiring blind trust. Pyana provides these invariants at the protocol level, making them as inescapable for networked agents as seL4's capability checks are for local processes.
+The agent substrate provides a "home for AI"---not a physical location but the set of invariants, protocols, and economic structures that allow autonomous agents to coexist productively without requiring blind trust. Dregg provides these invariants at the protocol level, making them as inescapable for networked agents as seL4's capability checks are for local processes.
 
 == The two visions
 
@@ -36,7 +36,7 @@ The system is operational. What works today:
 
 - All STARK proofs use real Poseidon2 constraints over BabyBear4 (124-bit security)---no vacuous proofs.
 - Effect VM AIR at $tilde$151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1.
-- Stage 7-$gamma$.0 shared-PI bundle joins per-cell proofs of one turn; Stage 7-$gamma$.2 Phase 1 PI-only bilateral binding via canonical `transfer_id` / `grant_id` / `intro_id`; off-AIR `pyana-verifier bilateral-pair` subcommand.
+- Stage 7-$gamma$.0 shared-PI bundle joins per-cell proofs of one turn; Stage 7-$gamma$.2 Phase 1 PI-only bilateral binding via canonical `transfer_id` / `grant_id` / `intro_id`; off-AIR `dregg-verifier bilateral-pair` subcommand.
 - Unified `Federation` type with $"federation_id" = "BLAKE3"("committee_pubkeys" || "epoch")$; `AttestedRoot` v3 binds federation context.
 - `KnownFederations` registry persisted at `<data-dir>/known_federations/<federation_id>.json`; `register-federation` CLI; `CapTpState::sync_known_federations` integration.
 - `Authorization::CapTpDelivered` makes CapTP messages produce on-ledger Turns; the `pending_captp_turns` queue is drained.
@@ -56,10 +56,10 @@ The system is operational. What works today:
 - Stealth addresses, Pedersen commitments with Bulletproof range proofs, Dandelion++ stem routing, delay pool with dummy traffic.
 - EVM bridge with SP1/Groth16 ($tilde$200K gas), Midnight attestation bridge (Level 1+1.5), Mina bridge designed.
 - Private Vickrey auction (4-phase: garbled circuits + OT + threshold + ring + stealth).
-- Two-federation end-to-end demo (`demo/two-ai-handoff/`) with real STARK proofs and the standalone `pyana-verifier` accepting from cold.
+- Two-federation end-to-end demo (`demo/two-ai-handoff/`) with real STARK proofs and the standalone `dregg-verifier` accepting from cold.
 - CapTP with sturdy refs, distributed GC, three-party handoff, pipelining, store-and-forward.
 - Service mesh, governed namespaces, petname nameservice, storage economics.
-- `pyana` CLI (cell/turn/cap/cipherclerk/federation/register-federation/namespace/storage/directory/proof/route/doctor); standalone `pyana-verifier` (verify, bilateral-pair, replay-chain, verify-bundle).
+- `dregg` CLI (cell/turn/cap/cipherclerk/federation/register-federation/namespace/storage/directory/proof/route/doctor); standalone `dregg-verifier` (verify, bilateral-pair, replay-chain, verify-bundle).
 
 What remains:
 

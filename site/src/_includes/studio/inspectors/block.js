@@ -1,5 +1,5 @@
 /**
- * <pyana-block uri="pyana://block/<height>"> — block at a given height.
+ * <dregg-block uri="dregg://block/<height>"> — block at a given height.
  *
  * IMPORTANT: the wasm sim does NOT expose a block getter. `propose_block`
  * returns the new block_hash + height; `simulate_consensus_round` returns
@@ -18,7 +18,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaBlock extends InspectorBase {
+class DreggBlock extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -38,22 +38,22 @@ class PyanaBlock extends InspectorBase {
 
     const Component = () => {
       const b = sig.value;
-      if (!b) return html`<div class="pyana-inspector pyana-inspector--empty">block at height ${height} not in JS log (no wasm getter available)</div>`;
+      if (!b) return html`<div class="dregg-inspector dregg-inspector--empty">block at height ${height} not in JS log (no wasm getter available)</div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code>h=${String(b.height)}</code>
             · fed #${String(b.fed_index)}
             · <code title=${b.block_hash}>${shortHex(b.block_hash)}</code>
           </span>`;
       }
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">block</span>
-            <code class="pyana-inspector__id">height ${String(b.height)}</code>
+            <span class="dregg-inspector__kind">block</span>
+            <code class="dregg-inspector__id">height ${String(b.height)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>height</dt><dd>${String(b.height)}</dd>
             <dt>federation</dt><dd>#${String(b.fed_index)}</dd>
             <dt>block hash</dt><dd><code>${b.block_hash}</code></dd>
@@ -66,4 +66,4 @@ class PyanaBlock extends InspectorBase {
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-block')) customElements.define('pyana-block', PyanaBlock);
+if (!customElements.get('dregg-block')) customElements.define('dregg-block', DreggBlock);

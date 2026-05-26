@@ -1,5 +1,5 @@
 /**
- * Playwright test for <pyana-blocklace-sim> inspector.
+ * Playwright test for <dregg-blocklace-sim> inspector.
  *
  * Run with:
  *   node tests/studio/blocklace-sim.mjs
@@ -44,12 +44,12 @@ async function run() {
   await page.addScriptTag({ url: INSPECTOR_URL, type: 'module' });
 
   // Wait for the custom element to register.
-  await page.waitForFunction(() => !!customElements.get('pyana-blocklace-sim'), { timeout: 10000 });
-  console.log('[test] <pyana-blocklace-sim> registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-blocklace-sim'), { timeout: 10000 });
+  console.log('[test] <dregg-blocklace-sim> registered.');
 
-  // Mount the element directly in the document body (outside pyana-app; it's self-contained).
+  // Mount the element directly in the document body (outside dregg-app; it's self-contained).
   await page.evaluate(() => {
-    const el = document.createElement('pyana-blocklace-sim');
+    const el = document.createElement('dregg-blocklace-sim');
     el.setAttribute('node-count', '4');
     el.setAttribute('id', 'test-sim');
     document.body.appendChild(el);
@@ -169,7 +169,7 @@ async function run() {
 
   // ─── Test 9: compact mode renders summary ─────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-blocklace-sim');
+    const el = document.createElement('dregg-blocklace-sim');
     el.setAttribute('node-count', '3');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-sim-compact');
@@ -192,7 +192,7 @@ async function run() {
 
   // ─── Test 10: node-count=5 gives 5 column headers in SVG ─────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-blocklace-sim');
+    const el = document.createElement('dregg-blocklace-sim');
     el.setAttribute('node-count', '5');
     el.setAttribute('id', 'test-sim-5nodes');
     document.body.appendChild(el);
@@ -213,7 +213,7 @@ async function run() {
     !e.includes('NetworkError') &&
     !e.includes('WASM') &&
     !e.includes('net::ERR_') &&
-    !e.includes('pyana') // runtime errors from studio.html are not our concern
+    !e.includes('dregg') // runtime errors from studio.html are not our concern
   );
   if (realErrors.length > 0) {
     console.error('[test] JS errors:', realErrors);

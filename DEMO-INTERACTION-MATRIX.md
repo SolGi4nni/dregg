@@ -1,6 +1,6 @@
 # Demo Interaction-Pattern Matrix
 
-This file enumerates **every protocol interaction pattern** pyana supports
+This file enumerates **every protocol interaction pattern** dregg supports
 and records which demo scenario (today) exercises it. The matrix is a
 working document for the "demo complexity upgrade" lane.
 
@@ -22,7 +22,7 @@ Convention: each row is a primitive. Coverage is one of:
 The four scenario columns are:
 
 - **silver** — `demo/two-ai-handoff/` (the existing Silver-Vision demo; real
-  STARK proofs through `pyana-node` + `pyana-verifier`)
+  STARK proofs through `dregg-node` + `dregg-verifier`)
 - **multi** — `demo/multi-node-devnet/scenarios/*` (devnet-shape scenarios)
 - **xapp** — `demo/cross-app-e2e/` (in-flight, parallel lane)
 - **imatrix** — `demo/two-ai-handoff/` + new `silver-helper` subcommands
@@ -94,7 +94,7 @@ The four scenario columns are:
 | γ.2 bilateral (Transfer / Grant / Introduce) | OK (Transfer) | OK | XAPP (Grant) | NEW (Introduce) | |
 | γ.2 unilateral (incoming Effect) | PART | — | — | NEW | imatrix adds the Introduce-recipient side |
 | Ring-closure (multi-hop incoming) | MISS | MISS | MISS | MISS | requires N≥3 cells, no demo yet |
-| `BilateralBundle` pair-verify | OK | OK | XAPP | — | `pyana-verifier bilateral-pair` |
+| `BilateralBundle` pair-verify | OK | OK | XAPP | — | `dregg-verifier bilateral-pair` |
 | Aggregated bundle (γ.2 Phase 2) | PART | — | — | NEW | imatrix exercises `aggregated-bundle` subcmd |
 
 ## 5. Federation
@@ -113,7 +113,7 @@ The four scenario columns are:
 | Primitive | silver | multi | xapp | imatrix | Notes |
 | --- | --- | --- | --- | --- | --- |
 | STARK Effect-AIR (`Transfer`, `Grant`, `SetField`, etc.) | OK | OK | XAPP | — | per-turn proofs |
-| WitnessedReceipt v1 replay chain (Silver Vision) | OK | OK | XAPP | — | `pyana-verifier replay-chain` |
+| WitnessedReceipt v1 replay chain (Silver Vision) | OK | OK | XAPP | — | `dregg-verifier replay-chain` |
 | WitnessedReceipt scope-2 (recursive proof) | PART | — | — | NEW | imatrix exercises `scope-recursive` subcmd against a chain that has compressed proofs |
 | Aggregated bundle (`aggregated-bundle` subcmd) | PART | — | — | NEW | imatrix invokes the verifier subcommand |
 | VK v2 layered registry | PART | — | — | — | |
@@ -154,7 +154,7 @@ The four scenario columns are:
 
 | Primitive | silver | multi | xapp | imatrix | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `WitnessedReceipt::from_components_with_compression` (recursive scope-2) | PART | — | — | NEW | imatrix builds a WR with `recursive_compress: true` and runs `pyana-verifier scope-recursive` |
+| `WitnessedReceipt::from_components_with_compression` (recursive scope-2) | PART | — | — | NEW | imatrix builds a WR with `recursive_compress: true` and runs `dregg-verifier scope-recursive` |
 | `WitnessedReceipt::from_components_strict_recursive` | MISS | — | — | NEW | imatrix triggers the strict path |
 | Adversarial: scope-recursive rejects tampered recursive proof | MISS | — | — | NEW | |
 
@@ -188,7 +188,7 @@ Implementing in order of "biggest coverage gain per LOC":
 
 4. **`make-recursive-witness`** — build a Turn, produce its
    `WitnessedReceipt`, recompress to a scope-2 recursive proof, then shell
-   to `pyana-verifier scope-recursive`. Tampered proof must reject.
+   to `dregg-verifier scope-recursive`. Tampered proof must reject.
    - **Adds rows:** §10 all three rows.
 
 5. **`make-sealer-unsealer`** (stretch) — exercise the

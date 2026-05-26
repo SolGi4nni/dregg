@@ -1,4 +1,4 @@
-//! `pyana-audit`: Verifiable token audit trail for the pyana ZK token system.
+//! `dregg-audit`: Verifiable token audit trail for the dregg ZK token system.
 //!
 //! This crate implements a privacy-preserving audit trail that proves token usage
 //! history without revealing the full history to the auditor. It provides:
@@ -50,8 +50,8 @@
 //! # Example
 //!
 //! ```rust
-//! use pyana_audit::budget::{BudgetEnforcer, BudgetSpec};
-//! use pyana_audit::event::UsageEvent;
+//! use dregg_audit::budget::{BudgetEnforcer, BudgetSpec};
+//! use dregg_audit::event::UsageEvent;
 //!
 //! let token_id = [0x42; 32];
 //! let mut enforcer = BudgetEnforcer::new(token_id, BudgetSpec::total(5));

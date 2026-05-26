@@ -4,7 +4,7 @@
 
 ## Problem Statement
 
-Pyana commits public datasets (note trees, revocation trees, capability registries, intent pools) as Poseidon2 Merkle trees over BabyBear. A querier may need to access these datasets without revealing which entry they care about:
+`dregg` commits public datasets (note trees, revocation trees, capability registries, intent pools) as Poseidon2 Merkle trees over BabyBear. A querier may need to access these datasets without revealing which entry they care about:
 
 - **Nullifier check**: "Has this specific nullifier been spent?" without revealing which nullifier.
 - **Capability lookup**: "Does capability X exist in the federation registry?" without revealing X.
@@ -30,7 +30,7 @@ The server holds a database D of N entries. The client wants D[i] without reveal
 **Server computation**: O(N) -- the fundamental lower bound. The server cannot skip entries without learning which one the client wants.
 **Security**: Computational (lattice-based: LWE, RLWE).
 
-**Pyana relevance**: A federation node holds the Merkle tree; an agent wants to check a leaf without the node learning which leaf. The node is the "server."
+**`dregg` relevance**: A federation node holds the Merkle tree; an agent wants to check a leaf without the node learning which leaf. The node is the "server."
 
 ### 1.2 Multi-Server PIR (IT-PIR)
 
@@ -40,7 +40,7 @@ The database is replicated across k non-colluding servers. The client sends a di
 **Server computation**: O(N) per server.
 **Security**: Information-theoretic (unconditional) against fewer than t colluding servers.
 
-**Pyana relevance**: If the federation has multiple independent nodes, the client can query different nodes with shares of the request. Assumes honest-majority among the queried nodes. This maps naturally to pyana's federation topology.
+**`dregg` relevance**: If the federation has multiple independent nodes, the client can query different nodes with shares of the request. Assumes honest-majority among the queried nodes. This maps naturally to dregg's federation topology.
 
 ### 1.3 Symmetric PIR (SPIR)
 
@@ -50,7 +50,7 @@ Both sides have privacy:
 
 **Construction**: PIR + oblivious transfer (OT). The server's privacy comes from limiting what the client can extract per query.
 
-**Pyana relevance**: When the federation wants to rate-limit queries or prevent bulk extraction of the capability registry while still allowing private lookups.
+**`dregg` relevance**: When the federation wants to rate-limit queries or prevent bulk extraction of the capability registry while still allowing private lookups.
 
 ### 1.4 Verifiable PIR (vPIR)
 
@@ -58,7 +58,7 @@ The client can verify that the server answered honestly (returned the correct D[
 
 **Construction**: PIR + commitment to the database (Merkle root or polynomial commitment). The server provides a proof that the answer is consistent with the public commitment.
 
-**Pyana relevance**: Critical. The federation's datasets are already committed (Poseidon2 Merkle roots are attested via BLS threshold signatures). We need the PIR answer to be provably consistent with the attested root.
+**`dregg` relevance**: Critical. The federation's datasets are already committed (Poseidon2 Merkle roots are attested via BLS threshold signatures). We need the PIR answer to be provably consistent with the attested root.
 
 ### 1.5 Verifiable PIR with ZK Composition
 
@@ -69,7 +69,7 @@ The most powerful variant: the client proves to a THIRD party that they performe
 2. Client generates a STARK proving: "I queried the committed database, got answer A, and A satisfies predicate P."
 3. Third party verifies: "someone queried the database and the result satisfies P" -- without learning the query or A.
 
-**Pyana relevance**: "I checked the revocation tree and my token is NOT revoked" is exactly this pattern -- a verifiable PIR with a non-membership predicate. The current `NonRevocationAir` solves this, but the QUERY is not private (the federation node providing the Merkle path learns which token is being checked).
+**`dregg` relevance**: "I checked the revocation tree and my token is NOT revoked" is exactly this pattern -- a verifiable PIR with a non-membership predicate. The current `NonRevocationAir` solves this, but the QUERY is not private (the federation node providing the Merkle path learns which token is being checked).
 
 ---
 
@@ -101,7 +101,7 @@ The most powerful variant: the client proves to a THIRD party that they performe
 - For N = 2^20: cube side = ~100. Upload: ~400 KB. Download: ~400 bytes.
 - Server computation: O(N) unchanged.
 
-**Verdict for pyana**: Feasible for databases up to ~1M entries. Communication is acceptable. Server computation is the bottleneck (O(N) per query). For the revocation tree (typically <10K entries), this is <1ms server-side. For large intent pools (100K entries), ~50ms per query.
+**Verdict for dregg**: Feasible for databases up to ~1M entries. Communication is acceptable. Server computation is the bottleneck (O(N) per query). For the revocation tree (typically <10K entries), this is <1ms server-side. For large intent pools (100K entries), ~50ms per query.
 
 ### 2.2 Polynomial-Based PIR (BabyBear-Native)
 
@@ -147,7 +147,7 @@ Neither server sees v_i (only a random share of it).
 **Server computation**: N multiplications + N additions = O(N) per server. In BabyBear: ~65us for N=65K.
 **Security**: Unconditional against either server alone. Requires non-collusion.
 
-**Pyana mapping**: Two federation nodes that don't share query traffic. Each sees a random-looking vector. This is extremely practical for pyana's multi-node federation architecture.
+**`dregg` mapping**: Two federation nodes that don't share query traffic. Each sees a random-looking vector. This is extremely practical for dregg's multi-node federation architecture.
 
 ### 2.4 Summary Table
 
@@ -194,7 +194,7 @@ This creates a bootstrapping problem (PIR to enable PIR). However:
 - The client retrieves the correct proof using IT-PIR over BabyBear (the proof table is the "database").
 - This is a 2-level PIR: level 1 (BabyBear IT-PIR) retrieves the KZG proof; level 2 (KZG verification) provides verifiability.
 
-### 3.2 Integration with Pyana's Hint System
+### 3.2 Integration with `dregg`'s Hint System
 
 The `hints/src/kzg.rs` already provides:
 - `KZG10::eth_setup(max_degree)` -- load Ethereum trusted setup
@@ -279,7 +279,7 @@ For in-STARK ORAM:
 | Single-query case | Worse than IT-PIR or KZG-PIR in every metric |
 | Implementation complexity | HIGH (ORAM state management, eviction protocols) |
 
-**Verdict**: ORAM-in-STARK is NOT the right approach for pyana's single-query PIR needs. It becomes relevant only if a client makes MANY private queries in sequence (e.g., an agent scanning the entire intent pool privately). For that use case, ORAM amortizes to O(log N) per query after setup. But for the common case (one lookup), IT-PIR or KZG-PIR dominates.
+**Verdict**: ORAM-in-STARK is NOT the right approach for dregg's single-query PIR needs. It becomes relevant only if a client makes MANY private queries in sequence (e.g., an agent scanning the entire intent pool privately). For that use case, ORAM amortizes to O(log N) per query after setup. But for the common case (one lookup), IT-PIR or KZG-PIR dominates.
 
 ### 4.5 When ORAM Makes Sense
 
@@ -292,7 +292,7 @@ For in-STARK ORAM:
 
 ### 5.1 The Privacy Problem in Intent Discovery
 
-Current architecture (from `pyana-intent`):
+Current architecture (from `dregg-intent`):
 - Intents are broadcast to the gossip pool with public `MatchSpec`.
 - Potential fulfillers match locally (their capabilities stay private).
 - Fulfillment uses commit-reveal (anti-frontrunning).
@@ -374,7 +374,7 @@ Instead of exact tag matching, support KEYWORD search over intent descriptions:
 - Use an inverted index: for each possible keyword hash, the index stores the list of matching intent IDs.
 - Apply IT-PIR over the inverted index.
 
-**Cost for pyana**:
+**Cost for dregg**:
 - Keyword space: 2^16 possible keyword hashes (after bucketing).
 - Index size: 2^16 rows * 32 entries per row = 2M field elements = 8 MB.
 - IT-PIR upload: 2^16 * 4 = 256 KB per server.
@@ -490,7 +490,7 @@ struct VerifiablePIRAir {
 
 ---
 
-## 7. Concrete Recommendation: Which PIR Variant for Pyana First?
+## 7. Concrete Recommendation: Which PIR Variant for `dregg` First?
 
 ### 7.1 Decision Matrix
 
@@ -507,8 +507,8 @@ struct VerifiablePIRAir {
 **Rationale**:
 1. **Field-native**: Operates entirely in BabyBear arithmetic. No foreign-field emulation, no lattice parameters, no pairings.
 2. **Post-quantum safe**: Security is information-theoretic (unconditional against non-colluding servers).
-3. **Trivial implementation**: Matrix-vector multiply in BabyBear. We already have the field arithmetic in `pyana-circuit`.
-4. **Natural topology fit**: Pyana federations have multiple nodes. Querying two non-colluding nodes is a natural pattern. Nodes already replicate the database.
+3. **Trivial implementation**: Matrix-vector multiply in BabyBear. We already have the field arithmetic in `dregg-circuit`.
+4. **Natural topology fit**: `dregg` federations have multiple nodes. Querying two non-colluding nodes is a natural pattern. Nodes already replicate the database.
 5. **Extremely fast**: Sub-millisecond server computation for databases up to 100K entries.
 6. **Composable**: The PIR result feeds directly into STARK witness generation without type conversion.
 7. **Low communication for practical database sizes**: 256 KB upload for 64K-entry database. Acceptable for network round-trips.
@@ -528,7 +528,7 @@ If only one federation node is reachable (e.g., light clients behind NAT), latti
 
 ### Phase 1: IT-PIR Library (2-3 weeks)
 
-**Dependencies**: `pyana-circuit::field::BabyBear` (field arithmetic).
+**Dependencies**: `dregg-circuit::field::BabyBear` (field arithmetic).
 
 **Deliverables**:
 1. `pir/src/lib.rs` -- core PIR types and traits:
@@ -555,7 +555,7 @@ If only one federation node is reachable (e.g., light clients behind NAT), latti
 
 ### Phase 2: Intent Pool Integration (2-3 weeks)
 
-**Dependencies**: Phase 1, `pyana-intent`, `pyana-node`.
+**Dependencies**: Phase 1, `dregg-intent`, `dregg-node`.
 
 **Deliverables**:
 1. `node/src/pir_service.rs` -- node-side PIR responder:
@@ -578,7 +578,7 @@ If only one federation node is reachable (e.g., light clients behind NAT), latti
 
 ### Phase 3: Private Non-Revocation Witness Retrieval (3-4 weeks)
 
-**Dependencies**: Phase 1, `pyana-circuit::non_revocation_air`, `pyana-store`.
+**Dependencies**: Phase 1, `dregg-circuit::non_revocation_air`, `dregg-store`.
 
 **Deliverables**:
 1. PIR-enabled revocation set query:

@@ -12,10 +12,10 @@
 //! `CREATE_ESCROW_AMOUNT_LIMBS`. The verifier's PI matching loop catches
 //! any disagreement.
 
-use pyana_circuit::effect_vm::{
+use dregg_circuit::effect_vm::{
     self, CellState, Effect, generate_effect_vm_trace, u64_from_4_limbs_16, u64_to_4_limbs_16,
 };
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 fn make_initial_state(balance: u64) -> CellState {
     CellState::new(balance, 0)

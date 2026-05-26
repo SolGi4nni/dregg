@@ -252,8 +252,8 @@ pub struct SovereignRegistration {
     /// binding to the trace.
     ///
     /// Default (when `None`):
-    /// [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4).
-    /// Hard cap: [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP`]
+    /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] (=4).
+    /// Hard cap: [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_HARD_CAP`]
     /// (=64).
     #[serde(default)]
     pub max_custom_effects: Option<u8>,
@@ -923,7 +923,7 @@ impl Ledger {
 
     /// The root of an empty tree.
     fn compute_empty_root() -> [u8; 32] {
-        *blake3::hash(b"pyana-cell:empty-ledger").as_bytes()
+        *blake3::hash(b"dregg-cell:empty-ledger").as_bytes()
     }
 
     /// Iterate over all cells.

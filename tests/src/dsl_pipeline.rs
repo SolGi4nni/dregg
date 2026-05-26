@@ -13,18 +13,18 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
-use pyana_cell::{Cell, CellId, Ledger};
-use pyana_circuit::dsl::{CellProgram, DslCircuit, ProgramRegistry};
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-use pyana_circuit::stark::{self, StarkAir};
-use pyana_dsl_runtime::circuit::{
+use dregg_cell::{Cell, CellId, Ledger};
+use dregg_circuit::dsl::{CellProgram, DslCircuit, ProgramRegistry};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::stark::{self, StarkAir};
+use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 // ============================================================================
-// Temporal predicate descriptor (from pyana-dsl-tests/src/temporal_dsl.rs)
+// Temporal predicate descriptor (from dregg-dsl-tests/src/temporal_dsl.rs)
 // ============================================================================
 
 const VALUE: usize = 0;
@@ -210,7 +210,7 @@ fn temporal_predicate_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-temporal-predicate-dsl-v1".into(),
+        name: "dregg-temporal-predicate-dsl-v1".into(),
         trace_width: TRACE_WIDTH,
         max_degree: 2,
         columns,
@@ -274,16 +274,16 @@ fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<BabyBear> {
 }
 
 /// Compute the effects hash the same way the executor does.
-fn compute_effects_hash(turn: &pyana_turn::Turn) -> [u8; 32] {
+fn compute_effects_hash(turn: &dregg_turn::Turn) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-sovereign-effects-v1:");
+    hasher.update(b"dregg-sovereign-effects-v1:");
     for root in &turn.call_forest.roots {
         hash_tree_effects(root, &mut hasher);
     }
     *hasher.finalize().as_bytes()
 }
 
-fn hash_tree_effects(tree: &pyana_turn::CallTree, hasher: &mut blake3::Hasher) {
+fn hash_tree_effects(tree: &dregg_turn::CallTree, hasher: &mut blake3::Hasher) {
     for effect in &tree.action.effects {
         hasher.update(&effect.hash());
     }

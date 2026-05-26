@@ -19,7 +19,7 @@ LOG_DIR="${LOG_DIR:-$STATE_DIR/logs}"
 PID_DIR="${PID_DIR:-$STATE_DIR/pids}"
 
 # Pre-built node binary location. NO CARGO INVOCATIONS in this lane —
-# the operator builds pyana-node out-of-band (e.g. via the existing
+# the operator builds dregg-node out-of-band (e.g. via the existing
 # demo/two-ai-handoff/run.sh build step, or a separate "make build"
 # loop). start_devnet.sh checks that the binary exists and bails with
 # a helpful message if not.
@@ -28,17 +28,17 @@ PID_DIR="${PID_DIR:-$STATE_DIR/pids}"
 # (common after `cargo build --release`). Operator can still override
 # NODE_BIN/VERIFIER_BIN.
 if [ -z "${NODE_BIN:-}" ]; then
-    if [ -x "$REPO_ROOT/target/debug/pyana-node" ]; then
-        NODE_BIN="$REPO_ROOT/target/debug/pyana-node"
-    elif [ -x "$REPO_ROOT/target/release/pyana-node" ]; then
-        NODE_BIN="$REPO_ROOT/target/release/pyana-node"
+    if [ -x "$REPO_ROOT/target/debug/dregg-node" ]; then
+        NODE_BIN="$REPO_ROOT/target/debug/dregg-node"
+    elif [ -x "$REPO_ROOT/target/release/dregg-node" ]; then
+        NODE_BIN="$REPO_ROOT/target/release/dregg-node"
     fi
 fi
 if [ -z "${VERIFIER_BIN:-}" ]; then
-    if [ -x "$REPO_ROOT/target/debug/pyana-verifier" ]; then
-        VERIFIER_BIN="$REPO_ROOT/target/debug/pyana-verifier"
-    elif [ -x "$REPO_ROOT/target/release/pyana-verifier" ]; then
-        VERIFIER_BIN="$REPO_ROOT/target/release/pyana-verifier"
+    if [ -x "$REPO_ROOT/target/debug/dregg-verifier" ]; then
+        VERIFIER_BIN="$REPO_ROOT/target/debug/dregg-verifier"
+    elif [ -x "$REPO_ROOT/target/release/dregg-verifier" ]; then
+        VERIFIER_BIN="$REPO_ROOT/target/release/dregg-verifier"
     fi
 fi
 
@@ -194,7 +194,7 @@ require_node_bin() {
     if [ ! -x "$NODE_BIN" ]; then
         devnet_fail "node binary not found at $NODE_BIN"
         devnet_dim "build it out-of-band (NO cargo in this lane). For instance:"
-        devnet_dim "  cd $REPO_ROOT && cargo build -p pyana-node"
+        devnet_dim "  cd $REPO_ROOT && cargo build -p dregg-node"
         devnet_dim "or rely on demo/two-ai-handoff/run.sh's build step."
         return 1
     fi

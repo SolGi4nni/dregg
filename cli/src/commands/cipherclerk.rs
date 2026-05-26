@@ -15,7 +15,7 @@ pub enum CipherclerkCommand {
     /// Submit basic turn (transfer intent shortcut).
     ///
     /// Fixed shape to match SubmitTurnRequest (agent/nonce/fee). Note: this
-    /// path produces no-effect turns; real transfers use `pyana turn build`
+    /// path produces no-effect turns; real transfers use `dregg turn build`
     /// (full effects + CallForest). Old recipient-only body was 422 skew.
     Transfer {
         /// Recipient cell ID or public key.
@@ -104,7 +104,7 @@ async fn transfer(
     // meant this never performed a real Transfer effect. We now emit the exact shape
     // the deserializer + handler require. Nonce=0 and dummy agent will typically be
     // rejected by the executor (correctly) with a structured response rather than 422.
-    // For real effectful transfers use `pyana turn build` (interactive) or submit a
+    // For real effectful transfers use `dregg turn build` (interactive) or submit a
     // full turn JSON that the node can execute via its internal paths.
     let user_memo = memo.unwrap_or_default();
     let body = serde_json::json!({
@@ -136,7 +136,7 @@ async fn transfer(
         abbrev_hex(to, 8, 4)
     ));
     ctx.kv("Turn ID", &abbrev_hex(turn_id, 8, 4));
-    ctx.info("  Note: this advanced the receipt chain only. Use `pyana turn build` for full effect-bearing turns.");
+    ctx.info("  Note: this advanced the receipt chain only. Use `dregg turn build` for full effect-bearing turns.");
 
     Ok(())
 }

@@ -39,7 +39,7 @@
 //! - **Outbid**: `"outbid:<auction_id>:<new_high_bid_hex>"` (encrypted with bidder pubkey).
 //! - **Won**: `"won:<auction_id>:claim_within_50_blocks"` (encrypted with winner pubkey).
 
-use pyana_app_framework::inbox_endpoint::InboxEndpoint;
+use dregg_app_framework::inbox_endpoint::InboxEndpoint;
 
 /// Default inbox capacity per auction window.
 pub const INBOX_CAPACITY: usize = 512;
@@ -81,7 +81,7 @@ pub mod tests {
     use axum::http::{Method, Request, StatusCode};
     use tower::util::ServiceExt;
 
-    use pyana_app_framework::inbox_endpoint::InboxEndpoint;
+    use dregg_app_framework::inbox_endpoint::InboxEndpoint;
 
     fn hex64(seed: u64) -> String {
         format!("{seed:064x}")

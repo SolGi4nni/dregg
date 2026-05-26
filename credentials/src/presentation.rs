@@ -2,7 +2,7 @@
 //!
 //! A [`Presentation`] proves that the holder possesses a valid credential
 //! authorizing some action, without leaking the credential's contents. It
-//! wraps `pyana_bridge::present::BridgePresentationProof` plus the
+//! wraps `dregg_bridge::present::BridgePresentationProof` plus the
 //! verifier-visible disclosure set.
 //!
 //! # Modes
@@ -18,12 +18,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
 
-use pyana_bridge::present::{
+use dregg_bridge::present::{
     BridgePredicateProof, BridgePresentationBuilder, BridgePresentationProof, FederationRegistry,
     prove_predicate_for_fact,
 };
-use pyana_circuit::poseidon2;
-use pyana_token::AuthRequest;
+use dregg_circuit::poseidon2;
+use dregg_token::AuthRequest;
 
 use crate::issuance::Credential;
 use crate::schema::{AttrValue, PredicateRequest};
@@ -145,7 +145,7 @@ impl Presentation {
 /// Wire-safe presentation (no `AuthorizationTrace`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WirePresentation {
-    pub proof: pyana_bridge::present::WirePresentationProof,
+    pub proof: dregg_bridge::present::WirePresentationProof,
     pub disclosed: Vec<(String, AttrValue)>,
     pub predicate_proofs: Vec<NamedPredicateProof>,
     pub anonymous: bool,
@@ -195,7 +195,7 @@ fn present_impl(
     // We don't trust the holder to remember the exact attenuation; we
     // re-derive it from `credential.attributes`.
     let root_token =
-        pyana_token::MacaroonToken::mint(credential.root_key, b"pyana-credential", "pyana.dev");
+        dregg_token::MacaroonToken::mint(credential.root_key, b"dregg-credential", "dregg.dev");
 
     let mut builder =
         BridgePresentationBuilder::new(credential.root_key, credential.federation_root);
@@ -220,7 +220,7 @@ fn present_impl(
         apps.push((app_id.clone(), actions.to_string()));
     }
 
-    let att = pyana_token::Attenuation {
+    let att = dregg_token::Attenuation {
         confine_user: Some(holder_user),
         features,
         not_after: credential.not_after,
@@ -266,7 +266,7 @@ fn present_impl(
             .prove(request)
             .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?
     } else {
-        let marker = pyana_bridge::present::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
+        let marker = dregg_bridge::present::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
         builder
             .prove_local_constraint_check_only(&marker, request)
             .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?
@@ -278,7 +278,7 @@ fn present_impl(
         // Compute the state root we need to bind predicate proofs to.
         // The bridge keeps this internal, so we expose only the
         // final-state root the proof was generated under.
-        let state_root = pyana_bridge::present::bb_from_bytes(&proof.final_state_root);
+        let state_root = dregg_bridge::present::bb_from_bytes(&proof.final_state_root);
 
         for req in &options.predicates {
             let value = credential
@@ -301,9 +301,9 @@ fn present_impl(
             let fact_hash = poseidon2::hash_fact(
                 attr_symbol,
                 &[
-                    pyana_circuit::field::BabyBear::new(predicate_value),
-                    pyana_circuit::field::BabyBear::ZERO,
-                    pyana_circuit::field::BabyBear::ZERO,
+                    dregg_circuit::field::BabyBear::new(predicate_value),
+                    dregg_circuit::field::BabyBear::ZERO,
+                    dregg_circuit::field::BabyBear::ZERO,
                 ],
             );
 
@@ -328,23 +328,23 @@ fn present_impl(
 
 /// Recompute the revealed-facts commitment over a list of fact terms.
 ///
-/// Mirrors `pyana_bridge::present::compute_revealed_facts_commitment` but
+/// Mirrors `dregg_bridge::present::compute_revealed_facts_commitment` but
 /// works against our `AttrValue`-derived fact-term bytes.
-fn compute_revealed_terms_commitment(terms: &[[u8; 32]]) -> pyana_circuit::binding::WideHash {
+fn compute_revealed_terms_commitment(terms: &[[u8; 32]]) -> dregg_circuit::binding::WideHash {
     // Hash each term into BabyBear, then fold via Poseidon2.
     let mut hashes = Vec::with_capacity(terms.len());
     for term in terms {
         hashes.push(blake3_to_babybear(term));
     }
-    pyana_circuit::binding::WideHash::from_poseidon2("pyana-credentials-revealed", &hashes)
+    dregg_circuit::binding::WideHash::from_poseidon2("dregg-credentials-revealed", &hashes)
 }
 
-fn blake3_to_babybear(bytes: &[u8]) -> pyana_circuit::field::BabyBear {
+fn blake3_to_babybear(bytes: &[u8]) -> dregg_circuit::field::BabyBear {
     let h = blake3::hash(bytes);
     let b = h.as_bytes();
     let val = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     // BabyBear field is 31-bit; mask to stay in range.
-    pyana_circuit::field::BabyBear::new(val & ((1u32 << 30) - 1))
+    dregg_circuit::field::BabyBear::new(val & ((1u32 << 30) - 1))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

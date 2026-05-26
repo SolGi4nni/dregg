@@ -77,7 +77,7 @@ adversarial coverage **uneven**.
 - Cost accounting: `executor.rs:10539`.
 - Audit-slot mutation guard (refusal must not co-occur with SetState):
   `executor.rs:7235`.
-- Effect-tag: `pyana_cell::EFFECT_REFUSAL` registered at
+- Effect-tag: `dregg_cell::EFFECT_REFUSAL` registered at
   `cell/src/lib.rs:80`.
 - **GAP:** no test in `turn/src/executor.rs` or `cell/src/`
   *constructs* `Effect::Refusal` to exercise the executor pathway.
@@ -158,7 +158,7 @@ exists; only the cross-crate fixture is missing. Surface:
 
 **Status: MOSTLY-LANDED-MINOR-GAPS.**
 
-- `pyana-storage-templates/` crate exists with all 5 modules
+- `dregg-storage-templates/` crate exists with all 5 modules
   (`blinded_queue.rs` 608, `cap_inbox.rs` 649, `programmable_queue.rs`
   672, `pubsub_topic.rs` 520, `relay_operator.rs` 656). Each is a
   real `FactoryDescriptor` + `CellProgram::Cases` impl with slot
@@ -193,7 +193,7 @@ exists; only the cross-crate fixture is missing. Surface:
 **Next step:** triage the un-deprecated `storage/src/` modules. For
 the secondaries that should ALSO be templated (atomic, multi_asset
 look like natural candidates), open a follow-up lane to extend
-`pyana-storage-templates/` with 2–3 more reference templates. For the
+`dregg-storage-templates/` with 2–3 more reference templates. For the
 ones that are protocol-substrate (metering, dedup) — add an
 `#[allow(deprecated)]` carve-out doc in `storage/src/lib.rs` so the
 migration story is honest about *what isn't on the cell-programs path*.

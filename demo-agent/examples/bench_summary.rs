@@ -3,13 +3,13 @@
 //! This is NOT statistically rigorous (use `cargo bench` for that). It gives
 //! a fast "what are the numbers?" without criterion's warmup/iteration overhead.
 //!
-//! Run with: `cargo run --release -p pyana-demo-agent --example bench_summary`
+//! Run with: `cargo run --release -p dregg-demo-agent --example bench_summary`
 
 use std::time::{Duration, Instant};
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::{hash_4_to_1, hash_many};
-use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::{hash_4_to_1, hash_many};
+use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -60,12 +60,12 @@ fn make_derivation_step(
     step_idx: u32,
     state_root: BabyBear,
     is_final: bool,
-) -> pyana_circuit::derivation_air::DerivationWitness {
-    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-    use pyana_circuit::poseidon2::hash_fact;
+) -> dregg_circuit::derivation_air::DerivationWitness {
+    use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+    use dregg_circuit::poseidon2::hash_fact;
 
     let pred = if is_final {
-        BabyBear::new(pyana_circuit::multi_step_air::ALLOW_PREDICATE)
+        BabyBear::new(dregg_circuit::multi_step_air::ALLOW_PREDICATE)
     } else {
         BabyBear::new(step_idx * 100 + 1)
     };
@@ -119,13 +119,13 @@ fn make_derivation_step(
     }
 }
 
-fn build_witness(num_steps: usize) -> pyana_circuit::multi_step_air::MultiStepWitness {
+fn build_witness(num_steps: usize) -> dregg_circuit::multi_step_air::MultiStepWitness {
     let state_root = BabyBear::new(0x1234_5678);
     let request_hash = BabyBear::new(0xABCD_0001);
     let steps: Vec<_> = (0..num_steps)
         .map(|i| make_derivation_step(i as u32, state_root, i == num_steps - 1))
         .collect();
-    pyana_circuit::multi_step_air::build_multi_step_witness(state_root, request_hash, steps)
+    dregg_circuit::multi_step_air::build_multi_step_witness(state_root, request_hash, steps)
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ fn build_witness(num_steps: usize) -> pyana_circuit::multi_step_air::MultiStepWi
 fn main() {
     println!();
     println!("================================================================================");
-    println!("  PYANA Proof Benchmark Summary (single-run, release build)");
+    println!("  DREGG Proof Benchmark Summary (single-run, release build)");
     println!("================================================================================");
     println!();
     println!(
@@ -215,8 +215,8 @@ fn main() {
     // ─── 2. Poseidon2 STARK (2-row trace) ───────────────────────────────────
 
     {
-        use pyana_circuit::poseidon2::WIDTH;
-        use pyana_circuit::poseidon2_air::Poseidon2Air;
+        use dregg_circuit::poseidon2::WIDTH;
+        use dregg_circuit::poseidon2_air::Poseidon2Air;
 
         let input: [BabyBear; WIDTH] = [
             BabyBear::new(1),
@@ -302,7 +302,7 @@ fn main() {
     // ─── 4. Note spending proof (depth 4, 8) ────────────────────────────────
 
     {
-        use pyana_circuit::note_spending_air::{
+        use dregg_circuit::note_spending_air::{
             create_test_witness, prove_note_spend, test_spending_key, verify_note_spend,
         };
 
@@ -351,7 +351,7 @@ fn main() {
     // ─── 5. Multi-step derivation (1, 8, 32 steps) ─────────────────────────
 
     {
-        use pyana_circuit::multi_step_air::{
+        use dregg_circuit::multi_step_air::{
             prove_authorization_stark, verify_authorization_stark,
         };
 
@@ -387,7 +387,7 @@ fn main() {
     // ─── 6. State transition IVC (1, 5, 20 steps) ──────────────────────────
 
     {
-        use pyana_circuit::ivc::{
+        use dregg_circuit::ivc::{
             create_test_chain, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
         };
 
@@ -444,7 +444,7 @@ fn main() {
     // ─── 7. Non-revocation (1, 4, 8 ancestors) ─────────────────────────────
 
     {
-        use pyana_dsl_runtime::revocation::{
+        use dregg_dsl_runtime::revocation::{
             DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
             verify_non_revocation_dsl,
         };
@@ -489,7 +489,7 @@ fn main() {
     // ─── 8. Composed: BodyMembershipProof ───────────────────────────────────
 
     {
-        use pyana_circuit::body_membership::{
+        use dregg_circuit::body_membership::{
             BodyFactMerkleProof, collect_body_fact_hashes, prove_authorization_with_membership,
             verify_authorization_with_membership,
         };
@@ -551,7 +551,7 @@ fn main() {
     // ─── 9. Composed: ChunkedAuthorization ──────────────────────────────────
 
     {
-        use pyana_circuit::chunked_derivation::{
+        use dregg_circuit::chunked_derivation::{
             prove_chunked_authorization, verify_chunked_authorization,
         };
 
@@ -589,7 +589,7 @@ fn main() {
     // ─── 10. Full pipeline end-to-end ───────────────────────────────────────
 
     {
-        use pyana_circuit::multi_step_air::{
+        use dregg_circuit::multi_step_air::{
             prove_authorization_stark, verify_authorization_stark,
         };
 
@@ -619,7 +619,7 @@ fn main() {
     // ─── 11. Macaroon token (non-proof context) ─────────────────────────────
 
     {
-        use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+        use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
         let key = {
             let mut k = [0u8; 32];
@@ -629,11 +629,11 @@ fn main() {
 
         let d_mint = time_op_avg(
             || {
-                let _ = MacaroonToken::mint(key, b"kid", "pyana.dev");
+                let _ = MacaroonToken::mint(key, b"kid", "dregg.dev");
             },
             10_000,
         );
-        let tok = MacaroonToken::mint(key, b"kid", "pyana.dev");
+        let tok = MacaroonToken::mint(key, b"kid", "dregg.dev");
         let req = AuthRequest::default();
         let d_verify = time_op_avg(
             || {

@@ -281,7 +281,7 @@ async fn browse(
 
     if paths.is_empty() {
         ctx.info(&format!("Namespace is empty at '{}'.", start_path));
-        ctx.info("  Mount a service with: pyana namespace mount <path> <sturdy-ref>");
+        ctx.info("  Mount a service with: dregg namespace mount <path> <sturdy-ref>");
         return Ok(());
     }
 

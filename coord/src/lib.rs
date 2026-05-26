@@ -1,6 +1,6 @@
-//! # pyana-coord
+//! # dregg-coord
 //!
-//! Three-layer turn coordination for the Pyana agent network.
+//! Three-layer turn coordination for the Dregg agent network.
 //!
 //! ## Layer 1: Causal Chaining (cheap, async, no coordination needed)
 //!

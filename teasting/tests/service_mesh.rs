@@ -9,12 +9,12 @@
 
 use std::collections::BTreeMap;
 
-use pyana_captp::sturdy::SwissTable;
-use pyana_captp::uri::PyanaUri;
-use pyana_cell::AuthRequired;
-use pyana_teasting::agent::SimAgent;
-use pyana_teasting::federation::quick_federation;
-use pyana_types::CellId;
+use dregg_captp::sturdy::SwissTable;
+use dregg_captp::uri::DreggUri;
+use dregg_cell::AuthRequired;
+use dregg_teasting::agent::SimAgent;
+use dregg_teasting::federation::quick_federation;
+use dregg_types::CellId;
 
 // =============================================================================
 // Inline service registry (models governed-namespace/src/registry.rs semantics)
@@ -277,7 +277,7 @@ fn test_discover_and_resolve_service() {
     assert_eq!(resolved.sturdy_ref, uri_string);
 
     // Bob parses and enlivens the URI.
-    let parsed = PyanaUri::parse(&resolved.sturdy_ref).unwrap();
+    let parsed = DreggUri::parse(&resolved.sturdy_ref).unwrap();
     let enliven_result = swiss_table.enliven(&parsed.swiss, 10);
     assert!(enliven_result.is_ok());
     let entry = enliven_result.unwrap();
@@ -301,13 +301,13 @@ fn test_cas_concurrent_mount_conflict() {
     let mut registry = ServiceRegistry::new();
 
     // Alice mounts first.
-    let alice_entry = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/swiss", 100);
+    let alice_entry = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/swiss", 100);
     let result = registry.mount("/services/shared/oracle", alice_entry, 0);
     assert!(result.is_ok());
     assert_eq!(result.unwrap().version, 1);
 
     // Bob tries to mount at the same path with expected_version=0 (stale).
-    let bob_entry = make_compute_entry(bob.public_key().0, "pyana://bob/cell/swiss", 100);
+    let bob_entry = make_compute_entry(bob.public_key().0, "dregg://bob/cell/swiss", 100);
     let err = registry
         .mount("/services/shared/oracle", bob_entry, 0)
         .unwrap_err();
@@ -340,7 +340,7 @@ fn test_ttl_expiry_removes_service() {
     let mut registry = ServiceRegistry::new();
 
     // Alice mounts a service that expires at block 50.
-    let mut entry = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/swiss", 0);
+    let mut entry = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/swiss", 0);
     entry.expires_at = Some(50); // Expires at block 50.
     registry
         .mount("/services/alice/temp-oracle", entry, 0)
@@ -377,7 +377,7 @@ fn test_unhealthy_service_still_discoverable() {
 
     let mut registry = ServiceRegistry::new();
 
-    let entry = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/swiss", 100);
+    let entry = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/swiss", 100);
     registry.mount("/services/alice/oracle", entry, 0).unwrap();
 
     // Initially health is unknown.
@@ -395,7 +395,7 @@ fn test_unhealthy_service_still_discoverable() {
     // Still resolvable.
     let resolved = registry.resolve("/services/alice/oracle").unwrap();
     assert_eq!(resolved.health, HealthStatus::Unhealthy);
-    assert_eq!(resolved.sturdy_ref, "pyana://alice/cell/swiss");
+    assert_eq!(resolved.sturdy_ref, "dregg://alice/cell/swiss");
 }
 
 // =============================================================================
@@ -412,26 +412,26 @@ fn test_cas_update_increments_version() {
     let mut registry = ServiceRegistry::new();
 
     // Initial mount.
-    let entry_v1 = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/v1", 100);
+    let entry_v1 = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/v1", 100);
     registry
         .mount("/services/alice/oracle", entry_v1, 0)
         .unwrap();
 
     // Update with correct version (1).
-    let entry_v2 = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/v2", 200);
+    let entry_v2 = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/v2", 200);
     let updated = registry
         .mount("/services/alice/oracle", entry_v2, 1)
         .unwrap();
     assert_eq!(updated.version, 2);
-    assert_eq!(updated.sturdy_ref, "pyana://alice/cell/v2");
+    assert_eq!(updated.sturdy_ref, "dregg://alice/cell/v2");
 
     // Update again with correct version (2).
-    let entry_v3 = make_oracle_entry(alice.public_key().0, "pyana://alice/cell/v3", 300);
+    let entry_v3 = make_oracle_entry(alice.public_key().0, "dregg://alice/cell/v3", 300);
     let updated = registry
         .mount("/services/alice/oracle", entry_v3, 2)
         .unwrap();
     assert_eq!(updated.version, 3);
-    assert_eq!(updated.sturdy_ref, "pyana://alice/cell/v3");
+    assert_eq!(updated.sturdy_ref, "dregg://alice/cell/v3");
 }
 
 // =============================================================================
@@ -449,13 +449,13 @@ fn test_multi_tag_discovery() {
     let mut registry = ServiceRegistry::new();
 
     // Alice's oracle (tags: oracle, prices, defi).
-    let alice_oracle = make_oracle_entry(alice.public_key().0, "pyana://alice/oracle/1", 100);
+    let alice_oracle = make_oracle_entry(alice.public_key().0, "dregg://alice/oracle/1", 100);
     registry
         .mount("/services/alice/oracle", alice_oracle, 0)
         .unwrap();
 
     // Bob's compute (tags: compute, gpu).
-    let bob_compute = make_compute_entry(bob.public_key().0, "pyana://bob/compute/1", 100);
+    let bob_compute = make_compute_entry(bob.public_key().0, "dregg://bob/compute/1", 100);
     registry
         .mount("/services/bob/compute", bob_compute, 0)
         .unwrap();
@@ -464,7 +464,7 @@ fn test_multi_tag_discovery() {
     let alice_hybrid = ServiceEntry {
         name: "oracle-compute".to_string(),
         kind: ServiceKind::Oracle,
-        sturdy_ref: "pyana://alice/hybrid/1".to_string(),
+        sturdy_ref: "dregg://alice/hybrid/1".to_string(),
         owner: alice.public_key().0,
         version: 0,
         tags: vec![

@@ -1,5 +1,5 @@
 [package]
-name = "pyana-app-framework"
+name = "dregg-app-framework"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,17 +7,17 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Production application framework for pyana apps — server infra, admin auth, persistence, proof middleware, content stores, escrow lifecycle"
+description = "Production application framework for dregg apps — server infra, admin auth, persistence, proof middleware, content stores, escrow lifecycle"
 
 [dependencies]
-pyana-sdk = { path = "../sdk" }
-pyana-turn = { path = "../turn" }
-pyana-intent = { path = "../intent" }
-pyana-circuit = { path = "../circuit" }
-pyana-cell = { path = "../cell" }
-pyana-types = { path = "../types" }
-pyana-storage = { path = "../storage" }
-pyana-captp = { path = "../captp" }
+dregg-sdk = { path = "../sdk" }
+dregg-turn = { path = "../turn" }
+dregg-intent = { path = "../intent" }
+dregg-circuit = { path = "../circuit" }
+dregg-cell = { path = "../cell" }
+dregg-types = { path = "../types" }
+dregg-storage = { path = "../storage" }
+dregg-captp = { path = "../captp" }
 
 axum = "0.8"
 http = "1"
@@ -36,7 +36,7 @@ tower = "0.5"
 
 [features]
 default = []
-dev = ["pyana-sdk/dev"]
+dev = ["dregg-sdk/dev"]
 
 [lints]
 workspace = true

@@ -204,9 +204,9 @@ impl WrapConfig {
 ///
 /// # Example
 /// ```ignore
-/// use pyana_circuit::poseidon_stark::prove_poseidon;
-/// use pyana_circuit::stark::{MerkleStarkAir, generate_merkle_trace};
-/// use pyana_circuit::backends::stark_in_pickles::{wrap_stark_in_pickles, WrapConfig};
+/// use dregg_circuit::poseidon_stark::prove_poseidon;
+/// use dregg_circuit::stark::{MerkleStarkAir, generate_merkle_trace};
+/// use dregg_circuit::backends::stark_in_pickles::{wrap_stark_in_pickles, WrapConfig};
 ///
 /// let (trace, pi) = generate_merkle_trace(seed, &leaves, &indices);
 /// let air = MerkleStarkAir;
@@ -539,7 +539,7 @@ mod tests {
         );
         let wrapped = wrapped.unwrap();
 
-        assert_eq!(wrapped.air_name, "pyana-merkle-v1");
+        assert_eq!(wrapped.air_name, "dregg-merkle-v1");
         assert_eq!(wrapped.public_inputs.len(), pi.len());
         assert_eq!(wrapped.num_queries_verified, 1);
         assert!(wrapped.circuit_row_count > 0);
@@ -637,7 +637,7 @@ mod tests {
         );
         let composed = composed.unwrap();
 
-        assert_eq!(composed.air_name, "pyana-merkle-v1+pyana-merkle-v1");
+        assert_eq!(composed.air_name, "dregg-merkle-v1+dregg-merkle-v1");
         assert_eq!(composed.public_inputs.len(), pi_a.len() + pi_b.len());
 
         println!("Composed proof:");
@@ -666,7 +666,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             WrapError::AirMismatch { expected, actual } => {
-                assert_eq!(expected, "pyana-merkle-v1");
+                assert_eq!(expected, "dregg-merkle-v1");
                 assert_eq!(actual, "fake-air");
             }
             other => panic!("Expected AirMismatch, got {:?}", other),

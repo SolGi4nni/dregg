@@ -53,7 +53,7 @@ export interface LegacyEffect {
   data?: Record<string, unknown>;
 }
 
-/** A turn: the atomic unit of state transition in Pyana. */
+/** A turn: the atomic unit of state transition in Dregg. */
 export interface Turn {
   action: string;
   resource?: string;
@@ -83,7 +83,7 @@ export interface TurnReceipt {
 /** Finality level for a block. */
 export type FinalityLevel = "proposed" | "committed" | "finalized";
 
-/** A block in the Pyana ledger. */
+/** A block in the Dregg ledger. */
 export interface Block {
   id: BlockId;
   height: number;

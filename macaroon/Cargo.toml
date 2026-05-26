@@ -1,5 +1,5 @@
 [package]
-name = "pyana-macaroon"
+name = "dregg-macaroon"
 version = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
@@ -29,7 +29,7 @@ zeroize = { workspace = true, optional = true }
 criterion = { workspace = true }
 
 [lib]
-name = "pyana_macaroon"
+name = "dregg_macaroon"
 crate-type = ["lib"]
 
 [[bench]]

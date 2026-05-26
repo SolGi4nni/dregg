@@ -1,7 +1,7 @@
 //! Faceted capabilities: E-language restricted object views.
 //!
 //! In E, a facet is a restricted view of an object that only exposes a subset
-//! of the object's interface. In pyana, this is implemented as a bitmask on a
+//! of the object's interface. In dregg, this is implemented as a bitmask on a
 //! capability: when exercising a capability via `ExerciseViaCapability`, the
 //! executor checks that every inner effect's kind is permitted by the
 //! capability's facet mask.

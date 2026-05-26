@@ -18,7 +18,7 @@
 //!
 //! **Post AIR-soundness audit (commit `ce1e2def`).** The default
 //! registry now installs `NotYetWiredVerifier` for the kinds whose real
-//! cryptographic verifier lives in `pyana-circuit` / `pyana-bridge`
+//! cryptographic verifier lives in `dregg-circuit` / `dregg-bridge`
 //! (Dfa, Temporal, MerkleMembership, BlindedSet, BridgePredicate,
 //! PedersenEquality) — those verifiers **reject** every proof until a
 //! host installs the real adapter. NonMembership ships with the real
@@ -30,19 +30,19 @@
 //! constructor preserves the prior permissive shape under an honest
 //! name and is kept for plumbing-only tests.
 
-use pyana_cell::predicate::{
+use dregg_cell::predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateRegistry,
 };
-use pyana_turn::ComputronCosts;
-use pyana_turn::TurnExecutor;
+use dregg_turn::ComputronCosts;
+use dregg_turn::TurnExecutor;
 
 // ─────────────────────────────────────────────────────────────────────
 // Registry surface tests (default_builtins constructor)
 // ─────────────────────────────────────────────────────────────────────
 
 /// The default registry MUST reject Dfa proofs until a host installs the
-/// real `pyana_circuit::dsl::circuit` adapter. Prior behavior was to
+/// real `dregg_circuit::dsl::circuit` adapter. Prior behavior was to
 /// accept any non-empty proof bytes — a soundness loss caught by the
 /// AIR audit.
 #[test]
@@ -164,7 +164,7 @@ fn turn_executor_can_swap_registry() {
     // Custom-only registry.
     let mut custom_reg = WitnessedPredicateRegistry::empty();
     struct AcceptAll;
-    impl pyana_cell::predicate::WitnessedPredicateVerifier for AcceptAll {
+    impl dregg_cell::predicate::WitnessedPredicateVerifier for AcceptAll {
         fn name(&self) -> &'static str {
             "test-accept-all"
         }

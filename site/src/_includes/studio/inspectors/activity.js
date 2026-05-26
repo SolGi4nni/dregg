@@ -1,10 +1,10 @@
 /**
- * <pyana-activity> — live observability event feed inspector (Task #30).
+ * <dregg-activity> — live observability event feed inspector (Task #30).
  *
  * Subscribes to the runtime's signal-cached getTraceEvents() (which calls
- * the canonical wasm get_trace_events_json backed by pyana-observability
+ * the canonical wasm get_trace_events_json backed by dregg-observability
  * EventLog + Emitter). Pure rendering of Rust types — no JS reimplementation
- * of pyana (substrate rule).
+ * of dregg (substrate rule).
  *
  * Renders all 7 TraceEvent variants using platform vocabulary:
  *   turn_lifecycle, authorization, sovereign_witness_verified,
@@ -19,7 +19,7 @@
  *             and variant-specific payload summary (KV or short desc).
  *
  * Usage (no uri needed; global to the runtime):
- *   <pyana-activity mode="default"></pyana-activity>
+ *   <dregg-activity mode="default"></dregg-activity>
  */
 
 import { InspectorBase, shortHex } from './_base.js';
@@ -122,7 +122,7 @@ function renderPayload(kind, payload, html) {
   return html`<pre style="font-size:0.65rem;margin:0">${JSON.stringify(payload).slice(0, 200)}</pre>`;
 }
 
-class PyanaActivity extends InspectorBase {
+class DreggActivity extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const mode = this.getAttribute('mode') || 'default';
@@ -144,7 +144,7 @@ class PyanaActivity extends InspectorBase {
         const last = evs.length ? evs[evs.length - 1] : null;
         const lastKind = last ? (last.kind || '—') : '—';
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             ${count} events${tierBadge(html)} • last: ${lastKind}
           </span>`;
       }
@@ -152,7 +152,7 @@ class PyanaActivity extends InspectorBase {
       // Default: live scrolling feed
       if (!evs.length) {
         return html`
-          <div class="pyana-inspector pyana-inspector--empty">
+          <div class="dregg-inspector dregg-inspector--empty">
             No observability events yet. Execute turns to populate the live feed.
             ${tierBadge(html)}
           </div>`;
@@ -179,7 +179,7 @@ class PyanaActivity extends InspectorBase {
       });
 
       return html`
-        <div class="pyana-inspector pyana-inspector--activity" style="max-height:320px;overflow:auto;border:1px solid var(--line,#333);border-radius:4px;padding:4px;background:var(--bg-raised,#111)">
+        <div class="dregg-inspector dregg-inspector--activity" style="max-height:320px;overflow:auto;border:1px solid var(--line,#333);border-radius:4px;padding:4px;background:var(--bg-raised,#111)">
           <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 6px 4px;font-size:0.75rem;color:var(--fg-dim)">
             <span>Live Activity Feed ${tierBadge(html)}</span>
             <span>${count} events</span>
@@ -193,4 +193,4 @@ class PyanaActivity extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-activity')) customElements.define('pyana-activity', PyanaActivity);
+if (!customElements.get('dregg-activity')) customElements.define('dregg-activity', DreggActivity);

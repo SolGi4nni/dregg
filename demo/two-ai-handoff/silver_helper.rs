@@ -1,24 +1,24 @@
 //! `silver-helper`: substrate-honest demo helper for the two-AI handoff demo.
 //!
 //! This binary is the demo's bridge to the parts of the substrate that the
-//! MCP layer of `pyana-node` does not (yet) expose:
+//! MCP layer of `dregg-node` does not (yet) expose:
 //!
 //!   * **`Authorization::CapTpDelivered`** — assembling a canonical signed
 //!     CapTP-delivered Turn (introducer-signed `HandoffCertificate` +
 //!     recipient-signed `captp_delivered_signing_message`). MCP today only
-//!     emits `Authorization::Bearer`. GAP: a `pyana_exercise_handoff_cert`
+//!     emits `Authorization::Bearer`. GAP: a `dregg_exercise_handoff_cert`
 //!     MCP tool would close this.
 //!   * **`SovereignCellWitness`** — assembling the Ed25519+sequence shape
 //!     of a sovereign-cell witness, with optional STARK transition proof.
-//!     MCP's `pyana_make_sovereign` produces the registration but no MCP
-//!     tool emits a witness-carrying Turn. GAP: a `pyana_submit_sovereign_turn`
+//!     MCP's `dregg_make_sovereign` produces the registration but no MCP
+//!     tool emits a witness-carrying Turn. GAP: a `dregg_submit_sovereign_turn`
 //!     would close this.
 //!   * **Slot caveats (`StateConstraint::WriteOnce`)** — installing a
 //!     `WriteOnce` caveat on a slot of a demo cell and exercising the
 //!     positive (first-write) and negative (re-write rejected) paths
-//!     against `pyana_cell::CellProgram::evaluate`. MCP does not expose
-//!     a `pyana_install_cell_program` tool today. GAP.
-//!   * **γ.2 bilateral binding** — assembling a `pyana_verifier::BilateralBundle`
+//!     against `dregg_cell::CellProgram::evaluate`. MCP does not expose
+//!     a `dregg_install_cell_program` tool today. GAP.
+//!   * **γ.2 bilateral binding** — assembling a `dregg_verifier::BilateralBundle`
 //!     from a Turn with a single `Effect::Transfer { from: alice, to: bob }`,
 //!     fabricating the alice-side and bob-side `WitnessedReceipt`s with the
 //!     correct γ.2 PI layout, and proving that both pair-verify against
@@ -38,19 +38,19 @@ use std::process::ExitCode;
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
-use pyana_captp::HandoffCertificate;
-use pyana_cell::{
+use dregg_captp::HandoffCertificate;
+use dregg_cell::{
     AuthRequired, Cell, CellId, CellProgram, CellState, FIELD_ZERO, FieldElement, ProgramError,
     StateConstraint, field_from_u64,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_turn::bilateral_schedule::ExpectedBilateral;
-use pyana_turn::{
+use dregg_circuit::field::BabyBear;
+use dregg_turn::bilateral_schedule::ExpectedBilateral;
+use dregg_turn::{
     Action, Authorization, CallForest, CommitmentMode, DelegationMode, Effect,
     SovereignCellWitness, Turn, TurnReceipt, WitnessedReceipt,
 };
-use pyana_types::FederationId;
-use pyana_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
+use dregg_types::FederationId;
+use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
 
 // ---------------------------------------------------------------------------
 // Deterministic demo keypair derivation
@@ -65,7 +65,7 @@ use pyana_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receip
 /// does here.
 fn derive_demo_key(seed: &[u8], role: &str) -> SigningKey {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-two-ai-demo-key-v1:");
+    hasher.update(b"dregg-two-ai-demo-key-v1:");
     hasher.update(seed);
     hasher.update(b"|role|");
     hasher.update(role.as_bytes());
@@ -93,7 +93,7 @@ struct HandoffArtifacts {
     cert_bytes_hex: String,
     /// JSON-serialized `HandoffCertificate` for human inspection.
     cert_json: serde_json::Value,
-    /// The `pyana-handoff:` compact base58 URI form.
+    /// The `dregg-handoff:` compact base58 URI form.
     handoff_uri: String,
     /// The recipient's signature over the presentation message
     /// (`presentation_message_v1` || cert.nonce || target_cell || target_federation).
@@ -238,7 +238,7 @@ struct RecursiveWitnessArtifact {
     /// True iff the strict-recursive constructor returned Ok.
     strict_recursive_built: bool,
     /// Path to the chain.json the verifier should consume with
-    /// `pyana-verifier scope-recursive`.
+    /// `dregg-verifier scope-recursive`.
     chain_path: String,
     /// Path to the tampered chain (must reject).
     chain_path_tampered: String,
@@ -268,11 +268,11 @@ fn cmd_init_identities(state_dir: &PathBuf, seed: &str) -> std::io::Result<()> {
     let bob = derive_demo_key(seed.as_bytes(), "bob");
     let alice_pk = alice.verifying_key().to_bytes();
     let bob_pk = bob.verifying_key().to_bytes();
-    // The demo's "F1" federation_id is BLAKE3("pyana-fed-id-v1" || alice_pk || epoch=0)
+    // The demo's "F1" federation_id is BLAKE3("dregg-fed-id-v1" || alice_pk || epoch=0)
     // mirroring the genesis derivation in `node/src/genesis.rs:133`.
     let federation_id_f1 = {
         let mut h = blake3::Hasher::new();
-        h.update(b"pyana-fed-id-v1");
+        h.update(b"dregg-fed-id-v1");
         h.update(&alice_pk);
         h.update(&0u64.to_le_bytes());
         *h.finalize().as_bytes()
@@ -328,10 +328,10 @@ fn cmd_make_handoff(state_dir: &PathBuf, alice_cell_hex: &str, bob_cell_hex: &st
     // variant would use a distinct target_federation, per SILVER-VISION-E2E.
     let mut swiss = [0u8; 32];
     swiss[..4].copy_from_slice(b"DEMO");
-    // HandoffCertificate::create wants `pyana_types::SigningKey`. Wrap
+    // HandoffCertificate::create wants `dregg_types::SigningKey`. Wrap
     // alice's ed25519-dalek key in the substrate newtype using the
     // shared 32-byte secret material.
-    let alice_sk_substrate = pyana_types::SigningKey::from_bytes(&alice_sk.to_bytes());
+    let alice_sk_substrate = dregg_types::SigningKey::from_bytes(&alice_sk.to_bytes());
     let cert = HandoffCertificate::create(
         &alice_sk_substrate,
         federation_id_f1,
@@ -346,7 +346,7 @@ fn cmd_make_handoff(state_dir: &PathBuf, alice_cell_hex: &str, bob_cell_hex: &st
     );
 
     // Bob signs the presentation message.
-    let presentation_msg = pyana_captp::HandoffPresentation::presentation_message(&cert);
+    let presentation_msg = dregg_captp::HandoffPresentation::presentation_message(&cert);
     let presentation_sig = bob_sk.sign(&presentation_msg);
 
     let cert_bytes = cert.to_bytes();
@@ -417,7 +417,7 @@ fn cmd_make_captp_delivered(
 
     let action = Action {
         target: alice_cell,
-        method: pyana_turn::action::symbol("transfer"),
+        method: dregg_turn::action::symbol("transfer"),
         args: vec![],
         authorization: Authorization::CapTpDelivered {
             handoff_cert: cert.clone(),
@@ -489,7 +489,7 @@ fn cmd_make_captp_delivered(
 
 /// Subcommand: `verify-captp-delivered` — Charlie-side verification of the
 /// canonical signing message and signatures. The executor's
-/// `verify_captp_delivered` lives behind `pyana-node`, but the checks are
+/// `verify_captp_delivered` lives behind `dregg-node`, but the checks are
 /// public Ed25519 + canonical messages, so we can reproduce them in the
 /// helper for the demo.
 fn cmd_verify_captp_delivered(state_dir: &PathBuf) -> bool {
@@ -525,7 +525,7 @@ fn cmd_verify_captp_delivered(state_dir: &PathBuf) -> bool {
     // (2) sender_pk == cert.recipient_pk
     let check_sender = sender_pk == &cert.recipient_pk;
     // (3) introducer signature on cert verifies
-    let intro_pk_obj = pyana_types::PublicKey(*intro_pk);
+    let intro_pk_obj = dregg_types::PublicKey(*intro_pk);
     let check_cert_sig = cert.verify_signature(&intro_pk_obj);
     // (4) sender signature on canonical message verifies
     let signing_message = Authorization::captp_delivered_signing_message(
@@ -611,7 +611,7 @@ fn cmd_verify_captp_delivered_tampered(state_dir: &PathBuf) -> bool {
 /// This closes the gap flagged in the meta-audit: previously charlie verified
 /// the CapTpDelivered cert via a standalone `silver-helper verify-captp-delivered`
 /// call (off-band from the witnessed chain). With this chain entry, charlie can
-/// include the CapTpDelivered Turn in the same `pyana-verifier replay-chain` call
+/// include the CapTpDelivered Turn in the same `dregg-verifier replay-chain` call
 /// that verifies the grant + exercise proofs, making the cert verification
 /// in-chain rather than off-band.
 ///
@@ -623,11 +623,11 @@ fn cmd_verify_captp_delivered_tampered(state_dir: &PathBuf) -> bool {
 /// The authorization (CapTpDelivered) is in the Turn itself — the STARK proof
 /// covers the effect execution, and `verify-captp-delivered` covers the auth.
 fn cmd_make_captp_delivered_chain(state_dir: &PathBuf) {
-    use pyana_circuit::effect_vm::{
+    use dregg_circuit::effect_vm::{
         self as evm, CellState as VmCellState, EffectVmAir, EffectVmContext,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark;
 
     // Load the CapTpDelivered Turn artifact.
     let art: CapTpDeliveredArtifact = serde_json::from_str(
@@ -658,7 +658,7 @@ fn cmd_make_captp_delivered_chain(state_dir: &PathBuf) {
         evm::generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
 
     // Tag as agent cell so the verifier's single-proof-per-WR check passes.
-    public_inputs[pyana_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
+    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
 
     let air = EffectVmAir::new(trace.len());
     let proof = stark::prove(&air, &trace, &public_inputs);
@@ -1106,7 +1106,7 @@ fn cmd_slot_caveat_suite(state_dir: &PathBuf) {
 ///     CredentialSet { .. } }])` is well-formed and round-trips through
 ///     JSON.
 fn cmd_make_credential_set_auth(state_dir: &PathBuf) {
-    use pyana_cell::program::AuthorizedSet;
+    use dregg_cell::program::AuthorizedSet;
 
     // Synthetic but stable identity-issuer cell + schema. In the cross-app
     // composition these come from `starbridge_identity::issuer_cell` (the
@@ -1184,7 +1184,7 @@ fn cmd_make_introduce(
 
     let action = Action {
         target: introducer_cell,
-        method: pyana_turn::action::symbol("introduce"),
+        method: dregg_turn::action::symbol("introduce"),
         args: vec![],
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
@@ -1283,7 +1283,7 @@ fn cmd_make_introduce(
     // Tampered: flip a felt inside the introducer's PI. We target the first
     // Introduce-accumulator slot of the introducer cell's PI; the verifier's
     // reconstruction from `sched` will disagree.
-    use pyana_circuit::effect_vm::pi as p;
+    use dregg_circuit::effect_vm::pi as p;
     let mut tampered_intro_wr = intro_wr.clone();
     // OUTGOING_INTRODUCE_ROOT lives at the same struct location as
     // OUTGOING_TRANSFER_ROOT for the introducer side. The exact slot matters
@@ -1364,7 +1364,7 @@ fn cmd_make_introduce(
 ///      itself broke.
 ///
 ///   3. **Chain JSON for the verifier**: emit a single-entry chain to
-///      `silver.recursive-chain.json` for charlie / `pyana-verifier
+///      `silver.recursive-chain.json` for charlie / `dregg-verifier
 ///      scope-recursive` to consume. Also emit a tampered variant
 ///      (`recursive_vk_hash` corrupted) so the verifier's registry-lookup
 ///      gate is exercised as `must_not_pass`.
@@ -1374,11 +1374,11 @@ fn cmd_make_introduce(
 /// substrate-honest artifact existed for the verifier's
 /// `scope-recursive` subcommand to consume.
 fn cmd_make_recursive_witness(state_dir: &PathBuf, turn_nonce: u64) {
-    use pyana_circuit::effect_vm::{
+    use dregg_circuit::effect_vm::{
         self as evm, CellState as VmCellState, EffectVmAir, EffectVmContext,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark;
 
     // Build a minimal real Effect VM trace. A single NoOp at `actor_nonce =
     // turn_nonce` yields a trace of length 2 (the AIR pads to the next
@@ -1402,7 +1402,7 @@ fn cmd_make_recursive_witness(state_dir: &PathBuf, turn_nonce: u64) {
     // tag the verifier expects. The AIR itself does not constrain this
     // slot (it is an executor-asserted bundle tag), so the proof remains
     // valid.
-    public_inputs[pyana_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
+    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
 
     let air = EffectVmAir::new(trace.len());
     let proof = stark::prove(&air, &trace, &public_inputs);
@@ -1414,7 +1414,7 @@ fn cmd_make_recursive_witness(state_dir: &PathBuf, turn_nonce: u64) {
     // `previous_receipt_hash = None`. `turn_hash` is left as all-zero
     // to match `ctx.turn_hash = [BabyBear::ZERO; 4]` and the PI's
     // `canonical_32_to_felts_4([0; 32])`-derived TURN_HASH slots.
-    let agent_cell = pyana_types::CellId::from_bytes([0u8; 32]);
+    let agent_cell = dregg_types::CellId::from_bytes([0u8; 32]);
     let receipt = TurnReceipt {
         turn_hash: [0u8; 32],
         forest_hash: [0u8; 32],
@@ -1509,7 +1509,7 @@ fn cmd_make_recursive_witness(state_dir: &PathBuf, turn_nonce: u64) {
 /// for the canonical Transfer turn (alice -> bob, 100). Build one
 /// `WitnessedReceipt` per cell with the γ.2 PI layout computed from the
 /// turn's `ExpectedBilateral` schedule. Also emit a tampered bundle where
-/// alice's OUTGOING_TRANSFER_ROOT has one felt flipped — `pyana-verifier
+/// alice's OUTGOING_TRANSFER_ROOT has one felt flipped — `dregg-verifier
 /// bilateral-pair` must reject it.
 fn cmd_make_bilateral_bundle(
     state_dir: &PathBuf,
@@ -1526,7 +1526,7 @@ fn cmd_make_bilateral_bundle(
     // alice's must be 1.
     let action = Action {
         target: alice_cell,
-        method: pyana_turn::action::symbol("transfer"),
+        method: dregg_turn::action::symbol("transfer"),
         args: vec![],
         // We use Unchecked here because bilateral verification operates on
         // the bilateral schedule (call_forest + nonce), not the auth path.
@@ -1617,7 +1617,7 @@ fn cmd_make_bilateral_bundle(
     // Tampered: corrupt one felt in alice's OUTGOING_TRANSFER_ROOT. The
     // verifier must reject because the schedule's reconstruction will
     // disagree with alice's claimed root.
-    use pyana_circuit::effect_vm::pi as p;
+    use dregg_circuit::effect_vm::pi as p;
     let mut tampered_alice_wr = alice_wr.clone();
     tampered_alice_wr.public_inputs[p::OUTGOING_TRANSFER_ROOT_BASE] =
         BabyBear::new(0x1234_5678).as_u32();

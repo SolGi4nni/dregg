@@ -1,13 +1,13 @@
 # Cell Crate Deep Review
 
-A read-only deep review of every file in `/Users/ember/dev/breadstuffs/cell/src/`. The cell crate is the agent-model analog of a Mina zkApp account — but it has grown to absorb the bulk of pyana's identity, capability, privacy, and cross-federation primitives. Many modules look like miniature library crates in their own right.
+A read-only deep review of every file in `/Users/ember/dev/breadstuffs/cell/src/`. The cell crate is the agent-model analog of a Mina zkApp account — but it has grown to absorb the bulk of dregg's identity, capability, privacy, and cross-federation primitives. Many modules look like miniature library crates in their own right.
 
 The crate's source-file inventory (line counts):
 
 | File | LoC | Role |
 |---|---:|---|
 | `lib.rs` | 117 | module facade + public re-exports |
-| `id.rs` | 5 | trivial pass-through of `pyana_types::CellId` |
+| `id.rs` | 5 | trivial pass-through of `dregg_types::CellId` |
 | `cell.rs` | 439 | the `Cell` struct, sealing accessors, sovereign/hosted modes |
 | `state.rs` | 382 | mutable per-cell state (8 fields + nonce/balance + CapTP roots) |
 | `permissions.rs` | 180 | `AuthRequired` × `Action` permission matrix |
@@ -33,15 +33,15 @@ The crate's source-file inventory (line counts):
 | `tests.rs` | 1914 | 108 unit + integration + audit-adversarial tests |
 | **Total** | **17,893** | |
 
-The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly-empty file; everything else is loaded.
+The single-line `id.rs` (just `pub use dregg_types::CellId;`) is the only mostly-empty file; everything else is loaded.
 
 ---
 
 ## `lib.rs` (~117 LoC)
 
-- **One-sentence purpose.** The module index and the public face of `pyana-cell`: declares the 24 modules and re-exports their headline types.
+- **One-sentence purpose.** The module index and the public face of `dregg-cell`: declares the 24 modules and re-exports their headline types.
 - **Key types/functions.** Module declarations; one giant `pub use` block.
-- **Notable design choices.** Feature-gating is concentrated here: ten modules are `#[cfg(feature = "crypto")]` (capability_proof, note_bridge, oblivious_transfer, peer_exchange, seal, stealth, value_commitment). The default feature set is `crypto`, but the gating is what makes a stripped-down build (e.g. SP1 guest in `circuit/sp1-guest/`) cheap. The non-crypto skeleton is exactly what the SP1 guest's `target/debug/.fingerprint/pyana-cell-...json` shows: `"features": "[\"zkvm\"]"`, with only `cell`, `capability`, `delegation`, `derivation`, `id`, `ledger`, `note`, `nullifier_set`, `permissions`, `preconditions`, `program`, `revocation_channel`, `state` compiled.
+- **Notable design choices.** Feature-gating is concentrated here: ten modules are `#[cfg(feature = "crypto")]` (capability_proof, note_bridge, oblivious_transfer, peer_exchange, seal, stealth, value_commitment). The default feature set is `crypto`, but the gating is what makes a stripped-down build (e.g. SP1 guest in `circuit/sp1-guest/`) cheap. The non-crypto skeleton is exactly what the SP1 guest's `target/debug/.fingerprint/dregg-cell-...json` shows: `"features": "[\"zkvm\"]"`, with only `cell`, `capability`, `delegation`, `derivation`, `id`, `ledger`, `note`, `nullifier_set`, `permissions`, `preconditions`, `program`, `revocation_channel`, `state` compiled.
 - **Integration status.** Trivially consumed everywhere; cell is depended on by `turn`, `captp`, `intent`, `wire`, `circuit`, `app-framework` (per their Cargo.toml files). `federation` declares it but its production code doesn't import it — only `federation/tests/cross_federation_bridge_receipt.rs` does. `storage` does not depend on the cell crate at all, contrary to the designer's note's expectation.
 - **What's surprising / non-obvious.** The `crypto` feature is the default, so most callers transparently get the heavy modules (bulletproofs, curve25519-dalek, ed25519, x25519, chacha20-poly1305, getrandom, merlin, zeroize). Forgetting to add `default-features = false` to a downstream `Cargo.toml` silently pulls in the entire privacy stack — including Bulletproofs/Merlin — into every build.
 - **Open issues / TODOs / FIXMEs / "stub" markers.** None inline.
@@ -50,10 +50,10 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 
 ## `id.rs` (~5 LoC)
 
-- **One-sentence purpose.** `pub use pyana_types::CellId;` — `CellId` lives in `pyana-types` but the cell crate is its primary consumer, so this file is the documentation surface for "what CellId is and how it's derived."
+- **One-sentence purpose.** `pub use dregg_types::CellId;` — `CellId` lives in `dregg-types` but the cell crate is its primary consumer, so this file is the documentation surface for "what CellId is and how it's derived."
 - **Key types/functions.** `CellId` (the re-export).
-- **Notable design choices.** Keeping `CellId` in `pyana-types` lets `pyana-types` be a leaf crate every other crate (chain, federation, turn) can depend on without taking the privacy-stack transitive deps. The doc-comment notes the canonical derivation is `CellId::derive_raw(&[u8;32], &[u8;32])` via "domain-separated BLAKE3 hashing".
-- **Integration status.** Every crate that touches a cell ultimately gets `CellId` through this re-export or directly from `pyana_types`. Many of the executor's signing messages embed `cell.id().as_bytes()`.
+- **Notable design choices.** Keeping `CellId` in `dregg-types` lets `dregg-types` be a leaf crate every other crate (chain, federation, turn) can depend on without taking the privacy-stack transitive deps. The doc-comment notes the canonical derivation is `CellId::derive_raw(&[u8;32], &[u8;32])` via "domain-separated BLAKE3 hashing".
+- **Integration status.** Every crate that touches a cell ultimately gets `CellId` through this re-export or directly from `dregg_types`. Many of the executor's signing messages embed `cell.id().as_bytes()`.
 - **What's surprising / non-obvious.** The 5-line file invites the false impression that there's nothing to know. There's a quiet invariant lurking: `id == derive_raw(public_key, token_id)`, enforced only at construction time and re-checked by `Cell::verify_id_integrity` (P2-3). The crate's sealing of `Cell::id`/`public_key`/`token_id` (P0-1) and the `Ledger::update_with` closure form exist precisely because `id` could otherwise drift out of sync after deserialization or after raw mutation.
 - **Open issues / TODOs / FIXMEs / "stub" markers.** None. (The invariant-restoration logic lives in `cell.rs` and `ledger.rs`.)
 
@@ -125,14 +125,14 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **One-sentence purpose.** The snapshot+refresh delegation model: a child cell holds a point-in-time copy of its parent's c-list, signed by the parent.
 - **Key types/functions.**
   - `DelegatedRef` — full struct with `source`, `child`, snapshot `Vec<CapabilityRef>`, `delegation_epoch`, `refreshed_at`, `max_staleness`, `clist_commitment: [u8;32]`, `parent_signature: [u8;64]`.
-  - `DelegatedRef::compute_clist_commitment(serialized_clist) -> [u8;32]` — domain-separated BLAKE3 derive_key "pyana-delegation-clist-commitment-v1".
+  - `DelegatedRef::compute_clist_commitment(serialized_clist) -> [u8;32]` — domain-separated BLAKE3 derive_key "dregg-delegation-clist-commitment-v1".
   - `DelegatedRef::signing_message(clist_commitment, epoch, child_id) -> [u8;32]`.
   - `DelegatedRef::verify_parent_signature(&self, parent_pubkey)` — Ed25519 `verify_strict`.
 - **Notable design choices.**
   - **The c-list itself isn't put in the signed message** — its `clist_commitment` is. So the snapshot is bound to a fixed parent c-list state without inlining the whole list in the signature.
   - **`max_staleness == 0` means "always stale"** (always refresh). Otherwise `now - refreshed_at > max_staleness` is stale.
   - **Inline `delegation_sig_serde` module** — `serde` can't derive Serialize/Deserialize for `[u8; 64]` out of the box (>32 byte arrays). This pattern repeats across the crate (capability_proof, peer_exchange, note_bridge).
-- **Integration status.** Field on `Cell`. Tested in `turn/src/tests.rs:5589` (`use pyana_cell::DelegatedRef`).
+- **Integration status.** Field on `Cell`. Tested in `turn/src/tests.rs:5589` (`use dregg_cell::DelegatedRef`).
 - **What's surprising / non-obvious.**
   - `Cell::spawn_child_with_delegation` produces a `DelegatedRef` with a `[0u8; 64]` placeholder signature. This is `pub(crate)` (P1-5) precisely so external code can't mint forged delegations. Callers building real delegations must use `DelegatedRef::new` and sign properly. The crate uses the placeholder pattern internally for "privileged" spawn-child flow where the signature isn't needed — but exposing it would be unsafe.
   - Verification is feature-gated (`#[cfg(feature = "crypto")]`); without the `crypto` feature, `verify_parent_signature` doesn't exist, so the no-crypto build can ingest delegations but cannot validate them.
@@ -151,7 +151,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `DerivationRecord` — receipt-level representation, hashable for inclusion in `TurnReceipt`.
 - **Notable design choices.**
   - **"NOT consulted during turn execution"** — the module doc-comment is explicit: the CDT is an off-chain/verifier-side data structure reconstructed from `DerivationRecord`s in turn receipts. Runtime revocation is handled by `RevocationChannelSet` (O(1)). The CDT lets external verifiers ask "was this cap derived from a revoked ancestor?"
-  - **`revocation_hash(cell, slot)`** uses derive-key "pyana-cdt-revocation-v1", matching the nullifier-set domain separation so ZK non-membership proofs can be cross-compatible.
+  - **`revocation_hash(cell, slot)`** uses derive-key "dregg-cdt-revocation-v1", matching the nullifier-set domain separation so ZK non-membership proofs can be cross-compatible.
   - The module's ZK-integration plan (Poseidon2 Merkle proofs) is documented in detail in the module doc-comment but not yet implemented.
 - **Integration status.** Consumed by `turn::turn` (`DerivationRecord`), `turn::executor`, `circuit::dsl::revocation`, and three `demo-agent/examples/` files (`cdt_revocation.rs`, `agent_network.rs`, `compute_marketplace.rs`).
 - **What's surprising / non-obvious.**
@@ -191,7 +191,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `compute_canonical_state_commitment(&Cell) -> [u8; 32]` — BLAKE3 derive_key over identity, mode, full `CellState`, full `Permissions`, VK hash, capability_root, delegate, full delegation snapshot (with per-cap leaf hashing — P2-4 fix), and program.
   - `compute_canonical_capability_root(&CapabilitySet) -> [u8; 32]`.
   - `canonical_to_babybear_pi(&[u8; 32]) -> [u32; 8]` — bytes-to-felts adapter for STARK public-input binding (8 limbs × 30 bits = 240 bits of the 256-bit commitment).
-  - Constants: `CANONICAL_COMMITMENT_CONTEXT` (`pyana-cell:canonical-state-commitment v1`), `CANONICAL_CAP_ROOT_CONTEXT`.
+  - Constants: `CANONICAL_COMMITMENT_CONTEXT` (`dregg-cell:canonical-state-commitment v1`), `CANONICAL_CAP_ROOT_CONTEXT`.
 - **Notable design choices.**
   - **One function rules them all.** `Cell::state_commitment()` and `Ledger::hash_cell()` are now thin wrappers — the module's `three_commitments_agree_byte_for_byte` adversarial test asserts byte-equality.
   - **30-bit BabyBear packing**: BabyBear's modulus is `2^31 − 2^27 + 1`. Packing 30 bits per felt (8+8+8+6) gives a unique encoding with no modular-reduction collisions. The trailing `hi & 0x3F` mask drops the top 2 bits per 4-byte word; that's a 16-bit loss across 8 felts (32 bytes → 240 bits). The full hash bytes are still in `Cell::state_commitment()`; only the STARK-public-input form is truncated.
@@ -221,7 +221,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - **`Immutable` fails closed when `old_state` is None and `nonce > 0`** — i.e. an executor that forgot to pass old_state cannot accidentally satisfy an immutability constraint. Only the initialization path (`nonce == 0`) is allowed without old_state.
   - **`Circuit` evaluation always returns `CircuitProofRequired`.** The local evaluation cannot prove a circuit; the executor must check the proof before calling `program.evaluate()`. This is a deliberate fail-closed: if `evaluate` is called and we hit the Circuit branch, the executor failed to enforce the proof gate.
   - **`Custom { constraint_hash }`** is "external verifier" only — local evaluation returns `CustomConstraintUnevaluable`.
-- **Integration status.** `pyana-cell::CellProgram` is used by the SP1 guest (`circuit/sp1-guest/src/main.rs`), the DSL pipeline (`tests/src/dsl_pipeline.rs`, `pyana-dsl-tests/*`), the kimchi native DSL backend, the Plonky3 DSL circuit, and the effect-VM constraint module.
+- **Integration status.** `dregg-cell::CellProgram` is used by the SP1 guest (`circuit/sp1-guest/src/main.rs`), the DSL pipeline (`tests/src/dsl_pipeline.rs`, `dregg-dsl-tests/*`), the kimchi native DSL backend, the Plonky3 DSL circuit, and the effect-VM constraint module.
 - **What's surprising / non-obvious.** `Predicate` constraints are checked by the executor in cleartext — they're for hosted-cell programs or sovereign cells where the agent provides the witness state. `Circuit` programs are zero-knowledge: the proof carries authorization. The two paths are not interchangeable.
 - **Open issues / TODOs / FIXMEs / "stub" markers.** None inline.
 
@@ -241,7 +241,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **Notable design choices.**
   - **`min_nonce` exists alongside `nonce`** — the `nonce` field pins to an exact value (causes races against concurrent submitters); `min_nonce` is for monotonic "see-then-set" patterns. Both can be checked; both can be present.
   - **Empty preconditions hash to a domain-separated constant**, not zero. Prevents collision with uninitialized data.
-- **Integration status.** `pyana-cell::Preconditions` is consumed by `turn::action`, `turn::builder`, `turn::preconditions`, `turn::tests`, `turn::pending`, `turn::executor`. It's a core authorization-bound primitive.
+- **Integration status.** `dregg-cell::Preconditions` is consumed by `turn::action`, `turn::builder`, `turn::preconditions`, `turn::tests`, `turn::pending`, `turn::executor`. It's a core authorization-bound primitive.
 - **What's surprising / non-obvious.** The `proved_state: Option<bool>` precondition lets an action say "this only applies if the cell was recently proof-authorized" — i.e. the actor wants to chain off a previous ZK transition. This couples turn-execution to the `proved_state` flag (which `set_proved_state` in `state.rs` mutates).
 - **Open issues / TODOs / FIXMEs / "stub" markers.** None.
 
@@ -284,10 +284,10 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `Provenance { created_by_factory, creation_proof_hash, creation_height, derivation_param_hash }` — what gets stamped on every factory-created cell; `verify_derivation` recomputes `derive_child_vk` from `(factory_vk, param_hash)` and asserts match.
   - `FactoryRegistry` — HashMap of deployed descriptors + per-epoch creation counts for budget enforcement; `validate_and_record`.
 - **Notable design choices.**
-  - **`derive_child_vk(factory_vk, param_hash) = BLAKE3_derive_key("pyana-derived-child-vk-v1", factory_vk || param_hash)`** — the off-circuit version. The doc-comment says "the circuit version uses Poseidon2 over BabyBear elements," but the on-circuit binding isn't here.
+  - **`derive_child_vk(factory_vk, param_hash) = BLAKE3_derive_key("dregg-derived-child-vk-v1", factory_vk || param_hash)`** — the off-circuit version. The doc-comment says "the circuit version uses Poseidon2 over BabyBear elements," but the on-circuit binding isn't here.
   - **`creation_budget`** is per-epoch; `advance_epoch` clears prior-epoch counters (retain only current epoch).
   - **`FactoryError` variants** include `DerivedVkMismatch`, `VkNotInApprovedSet`, `ProgramMismatch`, `CapabilityOutsideTemplate`, `FieldConstraintViolation`, `BudgetExceeded`, `FactoryVkMismatch` — strong error-typed gating.
-- **Integration status.** `pyana-cell::factory::*` is consumed by `wasm::privacy`, `turn::action`, `turn::executor`, `starbridge-apps::nameservice`, `sdk::cclerk`, `node::mcp`, `node::api`, `preflight::checks::cells`, `preflight::checks::sovereign`. It's wired in.
+- **Integration status.** `dregg-cell::factory::*` is consumed by `wasm::privacy`, `turn::action`, `turn::executor`, `starbridge-apps::nameservice`, `sdk::cclerk`, `node::mcp`, `node::api`, `preflight::checks::cells`, `preflight::checks::sovereign`. It's wired in.
 - **What's surprising / non-obvious.**
   - This is one of the few cell modules with **a real test suite that exercises every variant**: `test_derived_vk_strategy_creates_correct_vk`, `test_from_set_strategy_allows_approved_vk`, `test_budget_resets_on_epoch_advance`, `test_provenance_derivation_verification`. Compared to, say, capability_proof's stub StarkMembership path, factories are battle-ready.
   - **`is_in_approved_set` is linear (`Vec::contains`)** — not Merkle membership as the doc-comment ("order-independent Merkle tree") suggests. For small approved-set sizes this is fine; if a factory ever ships with hundreds of approved VKs, linear scan would be the bottleneck.
@@ -329,8 +329,8 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **One-sentence purpose.** Anonymous notes (Zcash-style): a content-addressed `(owner, fields[8], randomness, creation_nonce)` tuple. Commitments go into the note tree; nullifiers (only the owner can compute) get published on spend.
 - **Key types/functions.**
   - `Note { owner, fields, randomness, creation_nonce }`.
-  - `NoteCommitment([u8; 32])` — `BLAKE3_derive_key("pyana-note commitment v1", owner || fields[0..8] || randomness || creation_nonce)`.
-  - `Nullifier([u8; 32])` — `BLAKE3_derive_key("pyana-note nullifier v1", commitment || spending_key || creation_nonce)`. **Position-independent.**
+  - `NoteCommitment([u8; 32])` — `BLAKE3_derive_key("dregg-note commitment v1", owner || fields[0..8] || randomness || creation_nonce)`.
+  - `Nullifier([u8; 32])` — `BLAKE3_derive_key("dregg-note nullifier v1", commitment || spending_key || creation_nonce)`. **Position-independent.**
   - `PositionedNote { note, commitment, tree_position }` — tree_position is metadata for Merkle proof generation, NOT for nullifier derivation.
   - `Note::poseidon2_commitment` (feature `zkvm`) — for the in-circuit note tree.
   - `NoteBatcher { pending, batch_interval_blocks, last_batch_height, max_batch_size }` — timing-correlation mitigation by batching note tree insertions.
@@ -342,7 +342,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **What's surprising / non-obvious.**
   - The BLAKE3-vs-Poseidon2 split is documented but easy to miss: a developer wiring a new note-spending path needs to choose the right commitment for the audience (off-chain dedup ↔ BLAKE3, in-circuit Merkle proof ↔ Poseidon2). The structs are the same `Note`; only the `commitment()` vs `poseidon2_commitment()` call differs.
   - **`NoteBatcher`** has full unit tests but no external caller — yet its existence is the timing-correlation defense's API. Someone has to add it to the executor or federation sync layer for it to do anything.
-  - The doc-comment of `Note::nullifier` explicitly disambiguates from the **separate** EVM-withdrawal nullifier scheme in `pyana_chain::withdraw::derive_nullifier` (different domain separation, different SP1 circuit). This kind of cross-crate guidance is exactly the "things I'd want to know if I were the designer."
+  - The doc-comment of `Note::nullifier` explicitly disambiguates from the **separate** EVM-withdrawal nullifier scheme in `dregg_chain::withdraw::derive_nullifier` (different domain separation, different SP1 circuit). This kind of cross-crate guidance is exactly the "things I'd want to know if I were the designer."
 - **Open issues / TODOs / FIXMEs / "stub" markers.** None.
 
 ---
@@ -356,7 +356,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `BridgedNullifierSet` — sorted `Vec<[u8;32]>`, `insert` rejects double-bridge.
   - **Two-phase locking bridge:** `PendingBridge { nullifier, destination_federation, value, asset_type, timeout_height, spending_proof, state: BridgeState }`. `BridgeState::{ Locked, Finalized, Cancelled }`. `PendingBridgeSet` indexes by nullifier.
   - `initiate_bridge` (Phase 1), `finalize_bridge` (Phase 3, requires `BridgeReceipt` signed by destination), `cancel_bridge` (Phase 4, requires `current_height > timeout_height`).
-  - `BridgeReceipt { nullifier, destination_federation, mint_height, signature: [u8; 64] }`. `BridgeReceipt::signing_message` = `BLAKE3_derive_key("pyana-bridge-receipt-v1", nullifier || destination_federation || mint_height_le)`.
+  - `BridgeReceipt { nullifier, destination_federation, mint_height, signature: [u8; 64] }`. `BridgeReceipt::signing_message` = `BLAKE3_derive_key("dregg-bridge-receipt-v1", nullifier || destination_federation || mint_height_le)`.
   - **Four-phase receipt envelope** (Stage 9 P3.D / DESIGN-receipts.md §5):
     - `BridgePhase::{ Locked = 1, Witnessed = 2, Finalized = 3, Refunded = 4 }` with `next_valid()`.
     - `BridgePhasePayload` per-phase data.
@@ -373,7 +373,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **Integration status.** The single-shot `BridgeReceipt` path is consumed by `turn::executor`. The four-phase `BridgeReceiptEnvelope` and `BridgePhaseLog` are tested in `federation/tests/cross_federation_bridge_receipt.rs` but not yet consumed by production federation code.
 - **What's surprising / non-obvious.**
   - The file is 2428 LoC, of which roughly the second half is tests (`mod tests` starts around line 1291). The adversarial-test suite includes cross-federation replay, double-bridge, untrusted-root, tampered-STARK-proof, value mismatch, asset-type confusion, nullifier-from-different-note, expired root, and full two-phase happy/timeout/forgery paths.
-  - **`AttestedRoot`** (the source federation's attested commitment) comes from `pyana-types`, not this crate — but the bridge logic is entirely here.
+  - **`AttestedRoot`** (the source federation's attested commitment) comes from `dregg-types`, not this crate — but the bridge logic is entirely here.
   - **Two unconsumed-in-prod surfaces**: `BridgeDestination` (the multi-chain routing enum, only useful at bridge initiation) and the entire four-phase envelope (Federation-to-federation gossip body). Both are tested and ready; both await a production wiring on the federation/intent side.
 - **Open issues / TODOs / FIXMEs / "stub" markers.** One inline `TODO`: "Ensure NoteSpendingAir includes value and asset_type in public inputs." This is a real, named gap.
 
@@ -388,11 +388,11 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `remove(nullifier)` — ONLY for journal rollback. Documented as "set is append-only outside of rollback."
   - `MerkleMembershipProof { element, index, siblings }`.
   - `NonMembershipProof { absent, left_neighbor, right_neighbor, left_membership_proof, right_membership_proof, root }` — uses adjacent-neighbor pattern: shows two consecutive nullifiers bracketing the absent value, each with Merkle membership proof, plus an adjacency check.
-  - `root()` — Merkle root over sorted leaves (leaves: `BLAKE3("pyana-nullifier-leaf v1", n)`; nodes: `BLAKE3("pyana-nullifier-node v1", left || right)`).
+  - `root()` — Merkle root over sorted leaves (leaves: `BLAKE3("dregg-nullifier-leaf v1", n)`; nodes: `BLAKE3("dregg-nullifier-node v1", left || right)`).
 - **Notable design choices.**
   - **`BTreeSet` for O(log N) insert + sorted iteration.** Prior code used `Vec::insert` at a binary-search position — O(N) shift on every insert. The comment is explicit.
   - **Adjacent-neighbor non-membership** requires both neighbors' indices to be consecutive (left_proof.index + 1 == right_proof.index). The `verify_non_membership` adjacency check is the critical correctness property.
-- **Integration status.** Consumed by `turn::executor` (and re-exported via `pyana-cell::nullifier_set`). The Merkle membership proof side is internal to the crate; external code typically only sees `insert`/`contains`.
+- **Integration status.** Consumed by `turn::executor` (and re-exported via `dregg-cell::nullifier_set`). The Merkle membership proof side is internal to the crate; external code typically only sees `insert`/`contains`.
 - **What's surprising / non-obvious.**
   - The Merkle tree is rebuilt **on every** `root()` / `prove_non_membership` call (no cached tree). That's fine at small N but quadratic-ish at large N. There's no incremental tree like `Ledger` has.
   - `remove` exists only for rollback — it's not part of the public abstract data type. Anyone calling it outside the journal-rollback path is breaking the append-only invariant.
@@ -434,7 +434,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `StealthAnnouncement { ephemeral_pubkey, note_commitment, view_tag: u8 }` — posted alongside a note; `view_tag` is first byte of shared secret for ~255/256 false-positive pre-filtering.
 - **Notable design choices.**
   - **Mixed key types**: X25519 for DH (view), Ed25519 for point addition (one-time pubkey derivation). Two different curves used appropriately for their operation.
-  - **`from_bytes_mod_order`** — the shared scalar is reduced mod l for Ed25519 safety. The shared scalar is derived via BLAKE3 keyed derivation ("pyana-stealth scalar v1") for domain separation.
+  - **`from_bytes_mod_order`** — the shared scalar is reduced mod l for Ed25519 safety. The shared scalar is derived via BLAKE3 keyed derivation ("dregg-stealth scalar v1") for domain separation.
   - **Constant-time equality** for ownership check (`constant_time_eq`).
   - **View key delegation pattern**: the recipient can give a scanning service the `view_private_key` without granting spending authority (view ≠ spend).
 - **Integration status.** `StealthKeys`, `StealthMetaAddress`, `StealthAddress`, `StealthAnnouncement` are consumed by `wasm::privacy`, `apps/gallery/src/private_vickrey.rs`, `preflight::checks::privacy`, `sdk::cclerk`. The marketplace / gallery integration is real.
@@ -461,7 +461,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - **Asset-type-specific generators** prevent cross-asset conservation attacks. `V_asset_a` and `V_asset_b` have unknown DL relation, so an attacker cannot forge `commit(v, r) on V_a == commit(v', r') on V_b`.
   - **Pedersen generators reused** by Bulletproofs via `PedersenGens { B: value_generator(), B_blinding: randomness_generator() }`. The Bulletproofs library calls them `B` and `B_blinding`; mapping our `V` and `R` to them keeps the schemes consistent.
   - **Adversarial test `full_conservation_negative_value_attack_fails`** is the canonical demonstration of *why* range proofs matter: an attacker who knows scalar arithmetic could commit to a "negative" value (e.g. `Scalar::from(100) - Scalar::from(1_000_100)` mod l) and produce a conservation-balancing pair, but they cannot produce a 64-bit range proof for it.
-  - **Schnorr challenge** uses `blake3::new_derive_key("pyana-conservation-challenge v1")` + 64-byte wide reduction to scalar. Standard transcript pattern.
+  - **Schnorr challenge** uses `blake3::new_derive_key("dregg-conservation-challenge v1")` + 64-byte wide reduction to scalar. Standard transcript pattern.
 - **Integration status.** `ValueCommitment`, `ValueCommitmentBytes`, `BulletproofRangeProof`, `prove_conservation` are consumed by `turn::executor`, `turn::action`, `turn::escrow`, `turn::tests`. The committed-note executor path is wired.
 - **What's surprising / non-obvious.**
   - **Bulletproof verification is per-proof**, not batched. The trait's `batch_verify` does a per-proof loop with a comment: "bulletproofs supports verify_multiple but only for aggregated proofs; independently-created proofs verify one at a time."
@@ -484,7 +484,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **Notable design choices.**
   - **Small-order point rejection.** `OtSender::encrypt` rejects identity and small-order receiver points to prevent cofactor attacks where the DH shared secret would be trivially predictable.
   - **Edwards form (not Ristretto)** for the point arithmetic. The point addition `B = A + b_key * G` (choice=1) is straightforward on the curve; the receiver's decryption key is `b_key * A` regardless of choice (works for both branches by construction).
-  - **1-of-N via bit decomposition + BLAKE3 combine.** For each bit of `choice`, run one 1-of-2 OT to obtain `key_{choice_bit_i}`; combine keys per index via `BLAKE3_derive_key("pyana-ot-combine-v1", ...)`. The receiver only has the correct keys for their choice index.
+  - **1-of-N via bit decomposition + BLAKE3 combine.** For each bit of `choice`, run one 1-of-2 OT to obtain `key_{choice_bit_i}`; combine keys per index via `BLAKE3_derive_key("dregg-ot-combine-v1", ...)`. The receiver only has the correct keys for their choice index.
 - **Integration status.** The four `Ot*` types and `ot_1_of_n` are **NOT consumed anywhere outside the cell crate**. No external grep hit. This is a perfectly-built privacy primitive with no caller.
 - **What's surprising / non-obvious.**
   - The Chou-Orlandi simulation-secure UC construction is implemented in 584 lines including tests. The tests include `sender_cannot_determine_choice_from_receiver_message` (statistical), `ot_choice_0_cannot_decrypt_m1` (security), `ot_large_messages` (1KB), and `ot_randomized_100_choices`.
@@ -502,10 +502,10 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
   - `PeerExchange { my_cell, my_signing_key: SigningKey, my_sequence, peer_views: HashMap<CellId, PeerCellView> }`.
   - `create_transition`, `create_transition_at(timestamp)` (for wasm / deterministic tests), `verify_transition`.
   - `PeerExchangeError::{ InvalidSignature, CommitmentMismatch, SequenceGap, TimestampRegression, UnknownPeer, InvalidTransitionProof }`.
-  - `verify_stark_transition` (feature `zkvm`) — deserializes the proof via `pyana_circuit::stark`, builds Stage-1 Effect VM public inputs (old/new commitments widened to 4 BabyBears via `pyana_commit::typed::canonical_32_to_felts_4`), and verifies via `EffectVmAir`.
+  - `verify_stark_transition` (feature `zkvm`) — deserializes the proof via `dregg_circuit::stark`, builds Stage-1 Effect VM public inputs (old/new commitments widened to 4 BabyBears via `dregg_commit::typed::canonical_32_to_felts_4`), and verifies via `EffectVmAir`.
 - **Notable design choices.**
   - **Five-check verification**: signature → commitment match → sequence gap → timestamp regression → STARK proof (if present).
-  - **Commitment widening.** Previously a 4-byte truncation of the 32-byte commitment gave only ~31 bits of binding. The new path uses `pyana_commit::typed::canonical_32_to_felts_4` for a 4-felt encoding (~124-bit binding). This is the Stage-1 EFFECT-VM-SHAPE-A.md uplift.
+  - **Commitment widening.** Previously a 4-byte truncation of the 32-byte commitment gave only ~31 bits of binding. The new path uses `dregg_commit::typed::canonical_32_to_felts_4` for a 4-felt encoding (~124-bit binding). This is the Stage-1 EFFECT-VM-SHAPE-A.md uplift.
   - **`create_transition_at` exposes the timestamp** for wasm environments (no SystemTime) and deterministic replay tests. Receiver-side `TimestampRegression` check is unchanged.
 - **Integration status.** `PeerExchange` is consumed by `wasm::bindings`, `wasm::runtime`, `sdk::cclerk`, `node::mcp`. This is the API JS/wasm cipherclerks see.
 - **What's surprising / non-obvious.**
@@ -520,7 +520,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 
 - **One-sentence purpose.** Opt-in synchrony primitive for **instant capability revocation**: a revoker creates a `RevocationChannel`, subjects subscribe by adding the `channel_id` to their `DelegatedRef`, and the executor checks channel state on every gated exercise.
 - **Key types/functions.**
-  - `ChannelId = [u8; 32]` — derived as `BLAKE3("pyana-revocation-channel" || revoker || nonce_le)`.
+  - `ChannelId = [u8; 32]` — derived as `BLAKE3("dregg-revocation-channel" || revoker || nonce_le)`.
   - `ChannelState::Active` / `Tripped { reason: [u8;32], tripped_at: u64 }`.
   - `RevocationChannel { channel_id, revoker: CellId, state, subscribers: Vec<CellId>, created_at }` with `trip`, `subscribe`/`unsubscribe`, `is_subscriber`.
   - `RevocationChannelSet { channels: HashMap<ChannelId, RevocationChannel> }` — the in-process registry. `is_channel_active`, `check_exercise_permitted(channel_id, now, last_checked_at, max_staleness)`.
@@ -544,7 +544,7 @@ The single-line `id.rs` (just `pub use pyana_types::CellId;`) is the only mostly
 - **Notable design choices.**
   - **The final 234-line section is the audit-adversarial test suite.** Each test cites the audit ticket number. P0-1 sealing is asserted via the `compile_fail` doctests in `cell.rs` / `state.rs` and via runtime test that `Ledger::update_with` rejects identity-breaking mutations. P2-2 nonce overflow tests verify `increment_nonce` returns false at u64::MAX. P2-3 integrity tests confirm `verify_id_integrity` flags broken cells.
   - **`integration / scenario tests`** section starting around line 1260 — multi-cell flows (transfer + grant + revoke + delegate + spawn_child).
-- **Integration status.** `#[cfg(test)] mod tests;` in `lib.rs`. Tests run with `cargo test -p pyana-cell`.
+- **Integration status.** `#[cfg(test)] mod tests;` in `lib.rs`. Tests run with `cargo test -p dregg-cell`.
 - **What's surprising / non-obvious.**
   - The audit-adversarial section is one of the most useful entry points for *understanding the security invariants*. A new contributor should read it before reading any module.
   - **108 tests, but coverage is uneven by module.** `capability_proof.rs`, `seal.rs`, `peer_exchange.rs`, `oblivious_transfer.rs`, `value_commitment.rs`, `note_bridge.rs`, `stealth.rs`, `derivation.rs`, `factory.rs`, `revocation_channel.rs`, `program.rs`, `nullifier_set.rs`, `commitment.rs`, `facet.rs` all have their own `#[cfg(test)] mod tests` blocks. The crate-level `tests.rs` focuses on Cell/Ledger/CellState/Permissions/Capabilities — the foundational types — and on cross-module integration.
@@ -578,12 +578,12 @@ The internal dependencies of cell/ form a fairly clean layered DAG. From bottom 
              factory, note_bridge]
         |
         v
-       id.rs --> pyana-types::CellId
+       id.rs --> dregg-types::CellId
 ```
 
 More specifically:
 
-- **`id.rs`** is the leaf — just a re-export of `pyana_types::CellId`.
+- **`id.rs`** is the leaf — just a re-export of `dregg_types::CellId`.
 - **`state.rs`, `permissions.rs`, `program.rs`, `preconditions.rs`, `facet.rs`** depend only on `id.rs` (or nothing).
 - **`capability.rs`** depends on `id.rs`, `permissions.rs`, `facet.rs`.
 - **`delegation.rs`** depends on `id.rs`, `capability.rs`.
@@ -648,13 +648,13 @@ This crate stitches together a remarkable number of primitives. By purpose:
 | **Bulletproofs** (`bulletproofs`, `merlin`) | `RangeProof::prove_single`, `verify_single`, 64-bit range | Per-output range proofs preventing negative-value inflation in Pedersen-commit transfers |
 | **Schnorr signatures** | hand-rolled over Ristretto + BLAKE3 challenge | Conservation excess-blinding proof |
 | **ChaCha20-Poly1305** (`chacha20poly1305`) | direct AEAD | Sealed-box encryption (cell-to-cell capability transfer), OT message encryption |
-| **Poseidon2** (`pyana-circuit`) | feature-gated `zkvm`-only | Note's in-circuit commitment (`Note::poseidon2_commitment`), CDT ZK proof scaffolding (future), STARK-commitment binding (`canonical_to_babybear_pi`) |
+| **Poseidon2** (`dregg-circuit`) | feature-gated `zkvm`-only | Note's in-circuit commitment (`Note::poseidon2_commitment`), CDT ZK proof scaffolding (future), STARK-commitment binding (`canonical_to_babybear_pi`) |
 | **Zeroize** (`zeroize`) | `Drop` impls | Secret cleanup in `SealPair`, `StealthKeys` |
 | **getrandom** (`getrandom`) | `fill` | All ephemeral randomness; documented to panic on failure |
 
 The cryptographic story is wide. The crate is essentially a curated bundle of "every primitive a privacy-respecting agent-cell platform needs," and it's well-organized: each primitive has a clear file with its own tests. The risk is **transitive bloat**: enabling the default `crypto` feature pulls in all of these crates, which is most consumers' default.
 
-What's *not* here: no SP1/Halo2/Plonky3 inside the cell crate itself — those live in `pyana-circuit` (feature-gated `zkvm`). The crate stops at "give me the primitive bytes"; the circuit-side AIRs are downstream.
+What's *not* here: no SP1/Halo2/Plonky3 inside the cell crate itself — those live in `dregg-circuit` (feature-gated `zkvm`). The crate stops at "give me the primitive bytes"; the circuit-side AIRs are downstream.
 
 ### Surprises
 
@@ -674,14 +674,14 @@ Things I wish I'd known before reading every file:
 
 ---
 
-## Composition with the rest of pyana
+## Composition with the rest of dregg
 
 ### Composition with `turn/`
 
 `turn::executor` is by far the heaviest cell consumer. The import at `turn/src/executor.rs:42-50`:
 
 ```rust
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
     Preconditions, RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
     note::NoteError,
@@ -709,27 +709,27 @@ Per `cell/src/state.rs`, two CapTP-prep fields — `swiss_table_root` and `refco
 
 ### Composition with `federation/`
 
-Federation **declares** a pyana-cell dependency but its production code does not import any cell type — only its tests do (`federation/tests/cross_federation_bridge_receipt.rs`). The bridge receipt envelope tests live there because the four-phase protocol is precisely what federations exchange end-to-end.
+Federation **declares** a dregg-cell dependency but its production code does not import any cell type — only its tests do (`federation/tests/cross_federation_bridge_receipt.rs`). The bridge receipt envelope tests live there because the four-phase protocol is precisely what federations exchange end-to-end.
 
-Federation attests roots over cell states via `pyana_types::AttestedRoot`, which is consumed by `note_bridge::PortableNoteProof`. The federation gets the *root* type from `pyana-types`; the cell crate's `Ledger` produces the root via `compute_canonical_state_commitment` per leaf.
+Federation attests roots over cell states via `dregg_types::AttestedRoot`, which is consumed by `note_bridge::PortableNoteProof`. The federation gets the *root* type from `dregg-types`; the cell crate's `Ledger` produces the root via `compute_canonical_state_commitment` per leaf.
 
 ### Composition with `circuit/`
 
-`pyana-circuit` does not directly import `pyana-cell` (no `use pyana_cell` in `circuit/src/`). The relationship is the inverse: the cell crate has a `feature = "zkvm"` that depends on `pyana-circuit` for `Poseidon2`, `BabyBear`, `EffectVmAir`, `stark`. This is used by:
+`dregg-circuit` does not directly import `dregg-cell` (no `use dregg_cell` in `circuit/src/`). The relationship is the inverse: the cell crate has a `feature = "zkvm"` that depends on `dregg-circuit` for `Poseidon2`, `BabyBear`, `EffectVmAir`, `stark`. This is used by:
 
 - `note.rs::Note::poseidon2_commitment` — in-circuit commitment for note tree.
 - `peer_exchange.rs::PeerExchange::verify_stark_transition` — verifies a STARK proof of state transition via `EffectVmAir`.
 - `commitment.rs::canonical_to_babybear_pi` — the bytes-to-felts adapter that *should* bind the STARK's `state_commit` public input. Per the file's `REVIEW[circuit-fix-coordination]` markers, the actual binding inside the circuit AIR is still pending.
 
-The SP1 guest at `circuit/sp1-guest/src/main.rs` uses the no-crypto cell crate (`features = ["zkvm"]`) and calls `pyana_cell::preconditions::Preconditions::evaluate` and `pyana_cell::program::CellProgram::evaluate` *inside the proof* — the cell crate's preconditions and program evaluation logic is part of what the STARK proves.
+The SP1 guest at `circuit/sp1-guest/src/main.rs` uses the no-crypto cell crate (`features = ["zkvm"]`) and calls `dregg_cell::preconditions::Preconditions::evaluate` and `dregg_cell::program::CellProgram::evaluate` *inside the proof* — the cell crate's preconditions and program evaluation logic is part of what the STARK proves.
 
 ### Composition with `storage/`
 
-Storage **does not depend on the cell crate**. The designer's question framing assumed it did; in fact the storage primitives are operator-side and use `pyana_types::CellId` directly via that crate. The cell crate's `note.rs` / `nullifier_set.rs` / `note_bridge.rs` provide the *consume-once* analog of storage primitives, but they live alongside, not on top.
+Storage **does not depend on the cell crate**. The designer's question framing assumed it did; in fact the storage primitives are operator-side and use `dregg_types::CellId` directly via that crate. The cell crate's `note.rs` / `nullifier_set.rs` / `note_bridge.rs` provide the *consume-once* analog of storage primitives, but they live alongside, not on top.
 
 ### Composition with `app-framework/`
 
-`app-framework` imports lightweight cell types: `AuthRequired`, `CellId`, `state::FieldElement`. Apps (`app-framework::dispute`, `escrow`, `captp_server`) build over cell primitives but treat the cell-crate as a stable foundation rather than extending it. `app-framework::lib.rs` re-exports `pyana_cell::state::FieldElement` so app authors don't need to import the cell crate themselves for the common case.
+`app-framework` imports lightweight cell types: `AuthRequired`, `CellId`, `state::FieldElement`. Apps (`app-framework::dispute`, `escrow`, `captp_server`) build over cell primitives but treat the cell-crate as a stable foundation rather than extending it. `app-framework::lib.rs` re-exports `dregg_cell::state::FieldElement` so app authors don't need to import the cell crate themselves for the common case.
 
 `app-framework::captp_server` uses `AuthRequired` and `CellId` for CapTP-flavored RPC.
 

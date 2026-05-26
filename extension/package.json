@@ -1,5 +1,5 @@
 {
-  "name": "pyana-extension",
+  "name": "dregg-extension",
   "private": true,
   "scripts": {
     "build": "node build.mjs",

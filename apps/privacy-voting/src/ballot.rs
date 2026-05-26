@@ -4,7 +4,7 @@
 //! only the commitment during the commit phase:
 //!
 //! ```text
-//! commit = blake3-derive("pyana-ballot-v1" || proposal_id || option_index_le || randomness)
+//! commit = blake3-derive("dregg-ballot-v1" || proposal_id || option_index_le || randomness)
 //! ```
 //!
 //! and reveals the underlying `(option_index, randomness)` later. Anyone can
@@ -33,7 +33,7 @@ pub struct BallotReveal {
 
 /// Domain tag for ballot commitments. Mismatched tags produce different
 /// commitments, preventing cross-protocol replay.
-pub const BALLOT_COMMIT_TAG: &str = "pyana-ballot-v1";
+pub const BALLOT_COMMIT_TAG: &str = "dregg-ballot-v1";
 
 /// Compute a ballot commitment.
 pub fn commit(proposal_id: &ProposalId, option_index: u32, randomness: &[u8; 32]) -> Commitment {

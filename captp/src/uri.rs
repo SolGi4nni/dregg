@@ -1,9 +1,9 @@
-//! Pyana URI parsing and formatting.
+//! Dregg URI parsing and formatting.
 //!
-//! A `pyana://` URI represents a durable capability reference:
+//! A `dregg://` URI represents a durable capability reference:
 //!
 //! ```text
-//! pyana://<federation-id-base58>/<cell-id-base58>/<swiss-number-base58>
+//! dregg://<federation-id-base58>/<cell-id-base58>/<swiss-number-base58>
 //! ```
 //!
 //! The federation ID identifies which federation to connect to, the cell ID
@@ -13,10 +13,10 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Errors that can occur when parsing a `pyana://` URI.
+/// Errors that can occur when parsing a `dregg://` URI.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UriError {
-    /// The URI does not start with the `pyana://` scheme.
+    /// The URI does not start with the `dregg://` scheme.
     InvalidScheme,
     /// The URI does not have exactly three path segments.
     WrongSegmentCount { found: usize },
@@ -36,7 +36,7 @@ pub enum UriError {
 impl fmt::Display for UriError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UriError::InvalidScheme => write!(f, "URI must start with 'pyana://'"),
+            UriError::InvalidScheme => write!(f, "URI must start with 'dregg://'"),
             UriError::WrongSegmentCount { found } => {
                 write!(f, "expected 3 path segments, found {found}")
             }
@@ -56,7 +56,7 @@ impl fmt::Display for UriError {
 
 impl std::error::Error for UriError {}
 
-/// A `pyana://` URI representing a durable capability reference.
+/// A `dregg://` URI representing a durable capability reference.
 ///
 /// Contains enough information to enliven (reconnect to) a capability:
 /// - `federation_id`: identifies the federation (or reference group) hosting the target
@@ -69,25 +69,25 @@ impl std::error::Error for UriError {}
 /// (the reference group that orders/hosts the target cell). The field name is
 /// preserved for wire-format stability.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PyanaUri {
+pub struct DreggUri {
     /// The group (federation) hosting the target. Equivalent to `GroupId` in the unified model.
     pub federation_id: [u8; 32],
     pub cell_id: [u8; 32],
     pub swiss: [u8; 32],
 }
 
-impl PyanaUri {
-    /// Parse a `pyana://` URI string into its components.
+impl DreggUri {
+    /// Parse a `dregg://` URI string into its components.
     ///
     /// # Format
     ///
     /// ```text
-    /// pyana://<federation-id-base58>/<cell-id-base58>/<swiss-number-base58>
+    /// dregg://<federation-id-base58>/<cell-id-base58>/<swiss-number-base58>
     /// ```
     ///
     /// Each segment must decode to exactly 32 bytes.
     pub fn parse(s: &str) -> Result<Self, UriError> {
-        let rest = s.strip_prefix("pyana://").ok_or(UriError::InvalidScheme)?;
+        let rest = s.strip_prefix("dregg://").ok_or(UriError::InvalidScheme)?;
 
         let segments: Vec<&str> = rest.split('/').collect();
         if segments.len() != 3 {
@@ -100,7 +100,7 @@ impl PyanaUri {
         let cell_id = decode_segment(segments[1], "cell_id")?;
         let swiss = decode_segment(segments[2], "swiss")?;
 
-        Ok(PyanaUri {
+        Ok(DreggUri {
             federation_id,
             cell_id,
             swiss,
@@ -110,7 +110,7 @@ impl PyanaUri {
     /// Format this URI as a string.
     pub fn to_uri_string(&self) -> String {
         format!(
-            "pyana://{}/{}/{}",
+            "dregg://{}/{}/{}",
             bs58::encode(&self.federation_id).into_string(),
             bs58::encode(&self.cell_id).into_string(),
             bs58::encode(&self.swiss).into_string()
@@ -118,15 +118,15 @@ impl PyanaUri {
     }
 }
 
-impl fmt::Display for PyanaUri {
+impl fmt::Display for DreggUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_uri_string())
     }
 }
 
-impl fmt::Debug for PyanaUri {
+impl fmt::Debug for DreggUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PyanaUri({})", self.to_uri_string())
+        write!(f, "DreggUri({})", self.to_uri_string())
     }
 }
 
@@ -158,35 +158,35 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xaa; 32],
             cell_id: [0xbb; 32],
             swiss: [0xcc; 32],
         };
 
         let s = uri.to_uri_string();
-        assert!(s.starts_with("pyana://"));
+        assert!(s.starts_with("dregg://"));
 
-        let parsed = PyanaUri::parse(&s).unwrap();
+        let parsed = DreggUri::parse(&s).unwrap();
         assert_eq!(parsed, uri);
     }
 
     #[test]
     fn parse_invalid_scheme() {
-        let err = PyanaUri::parse("http://foo/bar/baz").unwrap_err();
+        let err = DreggUri::parse("http://foo/bar/baz").unwrap_err();
         assert_eq!(err, UriError::InvalidScheme);
     }
 
     #[test]
     fn parse_wrong_segments() {
-        let err = PyanaUri::parse("pyana://foo/bar").unwrap_err();
+        let err = DreggUri::parse("dregg://foo/bar").unwrap_err();
         assert!(matches!(err, UriError::WrongSegmentCount { found: 2 }));
     }
 
     #[test]
     fn parse_invalid_base58() {
         // '0', 'O', 'I', 'l' are not valid base58 characters
-        let err = PyanaUri::parse("pyana://0invalid/bar/baz").unwrap_err();
+        let err = DreggUri::parse("dregg://0invalid/bar/baz").unwrap_err();
         assert!(matches!(err, UriError::Base58Decode { .. }));
     }
 
@@ -195,8 +195,8 @@ mod tests {
         // Encode a 16-byte value — too short
         let short = bs58::encode(&[0xaa; 16]).into_string();
         let valid = bs58::encode(&[0xbb; 32]).into_string();
-        let s = format!("pyana://{short}/{valid}/{valid}");
-        let err = PyanaUri::parse(&s).unwrap_err();
+        let s = format!("dregg://{short}/{valid}/{valid}");
+        let err = DreggUri::parse(&s).unwrap_err();
         assert!(matches!(
             err,
             UriError::InvalidLength {
@@ -209,13 +209,13 @@ mod tests {
 
     #[test]
     fn display_impl() {
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [1; 32],
             cell_id: [2; 32],
             swiss: [3; 32],
         };
         let displayed = format!("{uri}");
-        assert!(displayed.starts_with("pyana://"));
+        assert!(displayed.starts_with("dregg://"));
         assert_eq!(displayed, uri.to_uri_string());
     }
 }

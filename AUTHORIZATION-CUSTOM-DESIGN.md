@@ -67,7 +67,7 @@ pub struct AuthModeDescriptor {
     pub vk_hash: [u8; 32],
     /// Human-readable name + version. e.g. ("multisig", semver(2,0,0)).
     pub human_name: String,
-    pub semver: pyana_types::SemVer,
+    pub semver: dregg_types::SemVer,
     /// Authoring package reference (chain-attested or local).
     pub authoring_package: PackageRef,
     /// Boundary-contract advertisement (BOUNDARIES.md §5.2).
@@ -231,7 +231,7 @@ key + voting-weight Merkle root, and the proof attests
 canonical message." Differs from §3.1 only in the weight algebra:
 some signers count more than one vote. Same shape; different verifier.
 
-Motivating app: governance turns on the `pyana-governance` cell
+Motivating app: governance turns on the `dregg-governance` cell
 proposed in `APPS-AS-USERSPACE-AUDIT.md` Lane H. Today such a turn
 would have to either:
 - carry a full `Vec<(signer_pk, signature)>` plus weight metadata
@@ -270,7 +270,7 @@ is "I hold this cap in my c-list and can prove membership without
 revealing other caps." The use case is privacy-preserving
 cap-presentation — a cell can require auth-by-cap-X without learning
 which other caps the holder has, which is what
-`pyana-nameservice`'s `name-owner` proof should look like once the
+`dregg-nameservice`'s `name-owner` proof should look like once the
 sovereign cell extends to private c-list membership.
 
 ### §3.5. Compute-attested auth
@@ -294,7 +294,7 @@ credential_ring_root }` — the action is authorized because the
 sender proves membership in a blinded credential ring (e.g., "a
 verified user of platform P") without revealing which credential.
 
-Motivating app: `pyana-gallery`'s `verified-buyer` gate — a buyer
+Motivating app: `dregg-gallery`'s `verified-buyer` gate — a buyer
 proves they belong to the platform's blinded buyer ring before the
 seller's release-on-receipt action commits.
 
@@ -844,7 +844,7 @@ Pick two apps from §3:
 
 - **`compute-exchange`** registers a `temporal_unlock_v1` auth mode
   for time-locked turn release (§3.3).
-- **`pyana-multisig` (new factory)** registers `kof_n_multisig_v2`
+- **`dregg-multisig` (new factory)** registers `kof_n_multisig_v2`
   for multisig auth (§3.1).
 
 Each requires:
@@ -939,7 +939,7 @@ proof. App-defined `Custom` verifiers could be:
 
 Recommendation: **(c) for federation-registered, (b) for testing,
 (a) for the eventual default.** The DSL-described path
-(`pyana-dsl/src/temporal.rs` is the existing precedent) gives the
+(`dregg-dsl/src/temporal.rs` is the existing precedent) gives the
 strongest cross-implementation determinism.
 
 This needs alignment with the slot-caveat / `WitnessedPredicate` IR
@@ -983,7 +983,7 @@ Recommendation: **(b)**. Cells that want a custom auth declare
 using `AuthRequired::Signature` / `Proof` and ignore `Custom`. The
 lattice stays narrow; mode-specificity is a cell-level decision.
 
-Action: extend `pyana_cell::AuthRequired` with
+Action: extend `dregg_cell::AuthRequired` with
 `Custom { vk_hash: [u8; 32] }`. The cell's permissions can demand
 "this action's authorization must be `Authorization::Custom` with
 predicate.kind's hash equal to vk_hash."

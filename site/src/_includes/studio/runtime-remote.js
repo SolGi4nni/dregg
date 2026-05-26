@@ -1,5 +1,5 @@
 /**
- * RemoteRuntime — read-only Runtime over a live pyana federation node's HTTP API.
+ * RemoteRuntime — read-only Runtime over a live dregg federation node's HTTP API.
  *
  * Mirrors the API shape of createInMemoryRuntime, but every mutation throws
  * NotPermitted: this runtime is a viewport, not a controller. The live node
@@ -16,7 +16,7 @@
  * api.js — that module is bound to localStorage-configured base URL + the
  * explorer's auth flow; this runtime takes its base URL explicitly.
  *
- * CORS realism: when used against devnet.pyana.fg-goose.online from a
+ * CORS realism: when used against devnet.dregg.fg-goose.online from a
  * browser-localhost origin the fetches will reject with a CORS error. The
  * runtime still constructs cleanly; signals stay null until the network
  * cooperates. (FOLLOWUP-07: now surfaces actionable guidance in logs for
@@ -71,10 +71,10 @@ export async function createRemoteRuntime({ signals, baseUrl }) {
   }
 
   // --- Extension bridge for passive debugger (Phase 1/2, STARBRIDGE-FOLLOWUP-06) ---
-  // When running inside the Pyana Cipherclerk extension (iframe panel, or any
+  // When running inside the Dregg Cipherclerk extension (iframe panel, or any
   // extension page), chrome.runtime is present. We poll the background's
   // synthesized activity feed (populated from the live WS bus + cclerk ops,
-  // exactly the TraceEvent shape for <pyana-activity>) via "pyana:getActivityFeed".
+  // exactly the TraceEvent shape for <dregg-activity>) via "dregg:getActivityFeed".
   // This lets RemoteRuntime (and all inspectors including activity) work against
   // *real node events* using the extension's authenticated connection, without
   // needing direct node /observability/stream (avoids CORS/auth issues).
@@ -87,7 +87,7 @@ export async function createRemoteRuntime({ signals, baseUrl }) {
       if (destroyed) return;
       try {
         const resp = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: 'pyana:getActivityFeed' }, (r) => resolve(r));
+          chrome.runtime.sendMessage({ type: 'dregg:getActivityFeed' }, (r) => resolve(r));
         });
         if (resp && resp.result) {
           traceEventsSignal.value = resp.result;

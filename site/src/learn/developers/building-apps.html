@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Building Apps on Pyana — Pyana</title>
+<title>Building Apps on <code>dregg</code> — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -13,11 +13,11 @@
       <span class="docs-breadcrumb__sep">/</span>
       <span>Building Apps</span>
     </nav>
-<h1>Building Apps on Pyana</h1>
+<h1>Building Apps on <code>dregg</code></h1>
 
     <p>
-      A pyana app is an HTTP service that uses <code>pyana-app-framework</code>
-      for infrastructure and <code>pyana-sdk</code> for cell/turn/proof
+      A dregg app is an HTTP service that uses <code>dregg-app-framework</code>
+      for infrastructure and <code>dregg-sdk</code> for cell/turn/proof
       operations. The framework gives you health checks, CORS, admin auth,
       persistence, and proof verification out of the box.
     </p>
@@ -25,20 +25,20 @@
     <h2 id="app-server">Using AppServer</h2>
 
     <p>
-      The <code>AppServer</code> builder from <code>pyana_app_framework::server</code>
+      The <code>AppServer</code> builder from <code>dregg_app_framework::server</code>
       sets up the standard middleware stack:
     </p>
 
-    <pre><code class="language-rust">use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_app_framework::{AdminAuth, JsonPersistence, PyanaEngine};
+    <pre><code class="language-rust">use dregg_app_framework::server::{AppConfig, AppServer};
+use dregg_app_framework::{AdminAuth, JsonPersistence, DreggEngine};
 use axum::{Router, routing::post};
 
 #[tokio::main]
 async fn main() {
     let config = AppConfig::from_env();
 
-    // Initialize the pyana engine (connects to node, manages cipherclerk)
-    let engine = PyanaEngine::new(EngineConfig::from_env()).await;
+    // Initialize the dregg engine (connects to node, manages cipherclerk)
+    let engine = DreggEngine::new(EngineConfig::from_env()).await;
 
     // Build the app
     AppServer::new(config)
@@ -51,7 +51,7 @@ async fn main() {
         .unwrap();
 }
 
-fn app_routes(engine: PyanaEngine) -> Router {
+fn app_routes(engine: DreggEngine) -> Router {
     Router::new()
         .route("/api/action", post(handle_action))
         .with_state(engine)
@@ -59,9 +59,9 @@ fn app_routes(engine: PyanaEngine) -> Router {
 
     <p>
       Environment variables: <code>LISTEN</code> (bind address, default
-      <code>0.0.0.0:3000</code>), <code>PYANA_NODE_URL</code> (federation
-      node), <code>PYANA_ADMIN_TOKEN</code> (for <code>/admin/*</code> routes),
-      <code>PYANA_STATE_FILE</code> (JSON persistence path).
+      <code>0.0.0.0:3000</code>), <code>DREGG_NODE_URL</code> (federation
+      node), <code>DREGG_ADMIN_TOKEN</code> (for <code>/admin/*</code> routes),
+      <code>DREGG_STATE_FILE</code> (JSON persistence path).
     </p>
 
     <h2 id="nameservice">Register in the Nameservice</h2>
@@ -72,7 +72,7 @@ fn app_routes(engine: PyanaEngine) -> Router {
     </p>
 
     <pre><code># From the CLI:
-pyana namespace mount "services/my-app" \
+dregg namespace mount "services/my-app" \
   --endpoint "https://my-app.example.com" \
   --cell-id &lt;your-service-cell-id&gt;</code></pre>
 
@@ -89,7 +89,7 @@ pyana namespace mount "services/my-app" \
       headers automatically:
     </p>
 
-    <pre><code class="language-rust">use pyana_app_framework::middleware::VerifiedPresentation;
+    <pre><code class="language-rust">use dregg_app_framework::middleware::VerifiedPresentation;
 
 async fn handle_action(
     VerifiedPresentation(proof): VerifiedPresentation,
@@ -143,20 +143,20 @@ async fn handle_action(
 
     <pre><code class="language-rust">// Cargo.toml
 // [dependencies]
-// pyana-app-framework = { path = "../app-framework" }
-// pyana-sdk = { path = "../sdk" }
+// dregg-app-framework = { path = "../app-framework" }
+// dregg-sdk = { path = "../sdk" }
 // axum = "0.8"
 // tokio = { version = "1", features = ["full"] }
 // serde_json = "1"
 
-use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_app_framework::{PyanaEngine, JsonPersistence, CellId};
-use pyana_sdk::embed::EngineConfig;
+use dregg_app_framework::server::{AppConfig, AppServer};
+use dregg_app_framework::{DreggEngine, JsonPersistence, CellId};
+use dregg_sdk::embed::EngineConfig;
 use axum::{Router, Json, routing::{get, post}};
 use serde_json::{json, Value};
 
 struct AppState {
-    engine: PyanaEngine,
+    engine: DreggEngine,
     persistence: JsonPersistence,
 }
 
@@ -165,7 +165,7 @@ async fn main() {
     tracing_subscriber::init();
 
     let config = AppConfig::from_env();
-    let engine = PyanaEngine::new(EngineConfig::from_env()).await;
+    let engine = DreggEngine::new(EngineConfig::from_env()).await;
     let persistence = JsonPersistence::new(
         config.state_file.clone().unwrap_or("state.json".into())
     );

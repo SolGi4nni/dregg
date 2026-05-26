@@ -25,7 +25,7 @@ async function init() {
   }
   try {
     const resp = await chrome.runtime.sendMessage({
-      type: 'pyana:getPendingDecision',
+      type: 'dregg:getPendingDecision',
       nonce: NONCE,
     });
     if (resp && resp.result && resp.result.payload) {
@@ -45,7 +45,7 @@ async function init() {
 function sendDecision(granted) {
   if (!NONCE) return;
   chrome.runtime.sendMessage({
-    type: 'pyana:originPermissionDecision',
+    type: 'dregg:originPermissionDecision',
     nonce: NONCE,
     granted,
   });

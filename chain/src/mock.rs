@@ -55,11 +55,11 @@ Then build the guest program:
 
 After that, use `--features prove` instead of `--features mock`:
 
-  cargo build -p pyana-chain --no-default-features --features prove
+  cargo build -p dregg-chain --no-default-features --features prove
 
 For on-chain verification, also enable the `on-chain` feature:
 
-  cargo build -p pyana-chain --no-default-features --features prove,on-chain
+  cargo build -p dregg-chain --no-default-features --features prove,on-chain
 ";
 
 /// Print setup instructions for the SP1 toolchain.

@@ -54,7 +54,7 @@ Zoe's offer pattern:
 
 **What Zoe adds that we lack: "offer safety" as a KERNEL GUARANTEE.**
 In Agoric, Zoe guarantees that if your offer fails, you get your payment back.
-This is not just a timeout -- it's synchronous rollback. In pyana, if a
+This is not just a timeout -- it's synchronous rollback. In dregg, if a
 conditional turn times out, the deposit is burned (not returned). The escrow
 timeout_height does give refund semantics, but only after the timeout -- there's
 no immediate rollback on condition failure.
@@ -147,7 +147,7 @@ enforcement uniform.
 E's model assumes an event loop: messages arrive, handlers fire, new messages
 are sent, eventually promises resolve. Time is asynchronous and non-deterministic.
 
-Pyana's model is block-based: turns execute deterministically within a block,
+`dregg`'s model is block-based: turns execute deterministically within a block,
 state transitions are atomic, time advances discretely (block heights). There is
 no event loop.
 
@@ -191,7 +191,7 @@ not just timing.
 
 ### 2.3 The Eventual Send as Intent + Conditional Turn (Composed)
 
-The full E-style eventual send in pyana requires composing two primitives:
+The full E-style eventual send in dregg requires composing two primitives:
 
 ```
 1. Sender publishes Intent { kind: Need, matcher: "transfer(100) to alice" }
@@ -270,9 +270,9 @@ Where:
 - `condition`: What "fulfillment" means (reveal commitment opening, deliver proof)
 - `deadline`: Block height by which fulfillment must occur
 
-### 3.2 Properties and Pyana Mapping
+### 3.2 Properties and `dregg` Mapping
 
-| Property | Meaning | Pyana Primitive |
+| Property | Meaning | `dregg` Primitive |
 |----------|---------|-----------------|
 | Binding | Promisor MUST fulfill or lose stake | `CreateObligation { stake, deadline }` |
 | Transferable | Promise can be passed to others | Bearer cap over obligation ID |
@@ -388,7 +388,7 @@ The zkPromise maps cleanly to Mina's programming model:
   "verify this proof verifies that proof" is how you chain promises without
   re-executing the full computation
 
-What pyana adds beyond what Mina has natively:
+What dregg adds beyond what Mina has natively:
 - The ECONOMIC BINDING (obligation + slash) -- Mina has no built-in staking on
   future actions
 - The PRIVACY layer (committed escrow hides parties and amounts)
@@ -562,7 +562,7 @@ fn resolve_commitment_gate(
 
 ---
 
-## 5. Concrete Recommendations for Pyana
+## 5. Concrete Recommendations for `dregg`
 
 ### BUILD (High Value, Fits Naturally)
 
@@ -725,9 +725,9 @@ Item 6 can happen any time (pure rename/refactor).
 
 ---
 
-## Appendix A: E-Language Promise States and Their Pyana Equivalents
+## Appendix A: E-Language Promise States and Their `dregg` Equivalents
 
-| E state | Meaning | Pyana equivalent |
+| E state | Meaning | `dregg` equivalent |
 |---------|---------|------------------|
 | Unresolved | Promise exists, no value yet | `PendingStatus::Pending` |
 | Fulfilled | Promise resolved to a value | `ResolutionOutcome::Resolved(receipt)` |
@@ -737,7 +737,7 @@ Item 6 can happen any time (pure rename/refactor).
 
 ## Appendix B: Agoric Concept Mapping
 
-| Agoric | Pyana | Notes |
+| Agoric | `dregg` | Notes |
 |--------|-------|-------|
 | Vat | Cell | Isolated execution context |
 | Kernel | Executor | Mediates all interactions |
@@ -755,7 +755,7 @@ Item 6 can happen any time (pure rename/refactor).
 
 ## Appendix C: OCapN/CapTP Concept Mapping
 
-| OCapN/CapTP | Pyana | Gap? |
+| OCapN/CapTP | `dregg` | Gap? |
 |-------------|-------|------|
 | Locator | `CellId` + `federation_id` | OK |
 | Vine (live ref) | C-list entry | OK |

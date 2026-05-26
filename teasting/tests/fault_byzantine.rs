@@ -12,15 +12,15 @@
 //! - DFA routing is deterministic and verifiable
 //! - Nullifier uniqueness prevents double-spend
 
-use pyana_captp::{
+use dregg_captp::{
     FederationId, HandoffCertificate, HandoffPresentation, SwissTable, validate_handoff,
 };
-use pyana_cell::{AuthRequired, CellId, Nullifier, NullifierSet};
-use pyana_teasting::assertions::assert_no_double_spend;
-use pyana_teasting::federation::{dual_federation, quick_federation};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_types::generate_keypair;
-use pyana_wire::message::WireMessage;
+use dregg_cell::{AuthRequired, CellId, Nullifier, NullifierSet};
+use dregg_teasting::assertions::assert_no_double_spend;
+use dregg_teasting::federation::{dual_federation, quick_federation};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_types::generate_keypair;
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Helpers
@@ -90,7 +90,7 @@ fn test_byzantine_bad_state_root_rejected() {
     // by any node that verifies against the real attested root
     let fake_presentation = WireMessage::PresentToken {
         proof: vec![0xBA, 0xAD], // garbage proof bytes
-        request: pyana_wire::message::AuthorizationRequest {
+        request: dregg_wire::message::AuthorizationRequest {
             resource: "/admin/escalate".to_string(),
             action: "escalate_privileges".to_string(),
             principal: "byzantine-node".to_string(),
@@ -251,7 +251,7 @@ fn test_byzantine_fabricated_captp_messages() {
     // This should be rejected by the swiss table validation
     // (The test verifies that unknown swiss numbers don't grant access)
     let session = harness.session(0, 1).unwrap();
-    let fake_uri = pyana_captp::PyanaUri {
+    let fake_uri = dregg_captp::DreggUri {
         federation_id: session.fed_a_id.0,
         cell_id: [0xFF; 32],
         swiss: fake_swiss,
@@ -340,8 +340,8 @@ fn test_byzantine_certificate_replay_rejected() {
 /// the classification. The Byzantine claim must be provably false.
 #[test]
 fn test_byzantine_routing_deterministic() {
-    use pyana_teasting::router_sim::SimRouter;
-    use pyana_wire::dfa_router::{RouteTarget, cell_target};
+    use dregg_teasting::router_sim::SimRouter;
+    use dregg_wire::dfa_router::{RouteTarget, cell_target};
 
     // Create a router with known routes
     let router = SimRouter::with_routes(&[

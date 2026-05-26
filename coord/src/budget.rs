@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────

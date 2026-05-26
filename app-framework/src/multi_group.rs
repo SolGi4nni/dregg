@@ -7,14 +7,14 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::multi_group::MultiGroupConfig;
-//! use pyana_captp::GroupId;
+//! use dregg_app_framework::multi_group::MultiGroupConfig;
+//! use dregg_captp::GroupId;
 //!
 //! let config = MultiGroupConfig::new(vec![main_group, partner_group]);
 //! assert!(config.includes(&main_group));
 //! ```
 
-pub use pyana_captp::GroupId;
+pub use dregg_captp::GroupId;
 
 /// Configuration for multi-federation-group membership.
 ///
@@ -42,7 +42,7 @@ impl MultiGroupConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_captp::FederationId;
+    use dregg_captp::FederationId;
 
     fn gid(b: u8) -> GroupId {
         FederationId([b; 32])

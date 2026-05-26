@@ -9,7 +9,7 @@ export function initGallery(wasm) {
     <div class="section-header">
       <h2>Interactive Gallery</h2>
       <p>
-        Real-world scenarios that compose multiple pyana primitives. Each demo walks
+        Real-world scenarios that compose multiple dregg primitives. Each demo walks
         through a complete workflow step-by-step, showing how stealth addresses, bearer caps,
         commitments, and STARK proofs work together.
       </p>
@@ -284,7 +284,7 @@ export function initGallery(wasm) {
 
     showExplainer(ammExplainer, {
       prover: `Created liquidity pool:\n- Reserve A: ${reserveA} TOKEN-A\n- Reserve B: ${reserveB} TOKEN-B\n- k = ${reserveA} * ${reserveB} = ${k}\n\nConstant product: after every swap, reserveA * reserveB >= k`,
-      verifier: `Pool state committed to Merkle tree\nInvariant k is publicly known\nAnyone can verify: new_x * new_y >= k\n\nIn pyana: reserves are committed (hidden) but the invariant proof is public.`,
+      verifier: `Pool state committed to Merkle tree\nInvariant k is publicly known\nAnyone can verify: new_x * new_y >= k\n\nIn dregg: reserves are committed (hidden) but the invariant proof is public.`,
       delta: `The AMM pool uses committed reserves — the exact amounts are hidden inside Pedersen commitments. The conservation proof ensures the constant-product invariant holds without revealing the actual reserve values. This prevents MEV (maximal extractable value) attacks by hiding pool state from front-runners.`,
     });
   });

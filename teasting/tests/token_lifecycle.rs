@@ -1,6 +1,6 @@
 //! Token lifecycle integration test: mint → attenuate → delegate → present → verify.
 //!
-//! DESIGN NOTE: In pyana's macaroon model, HMAC verification requires the root key.
+//! DESIGN NOTE: In dregg's macaroon model, HMAC verification requires the root key.
 //! The `attenuate()` method deliberately zeroes the root key on derived tokens
 //! (security: prevents forging). This means:
 //!
@@ -11,8 +11,8 @@
 //! These tests exercise: minting, STARK proof generation for root tokens,
 //! chain proofs for attenuation sequences, and delegation flows.
 
-use pyana_sdk::{Attenuation, AuthRequest};
-use pyana_teasting::agent::{SimAgent, shared_root_key};
+use dregg_sdk::{Attenuation, AuthRequest};
+use dregg_teasting::agent::{SimAgent, shared_root_key};
 
 /// Root token: mint and verify locally (root holder has the key).
 #[test]

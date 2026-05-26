@@ -16,7 +16,7 @@ Existing approaches each fail along a different axis:
 
 == The thesis: proof-carrying capability mesh
 
-Pyana frames the answer as a single shape---a *proof-carrying capability mesh*. The kernel of the system is:
+Dregg frames the answer as a single shape---a *proof-carrying capability mesh*. The kernel of the system is:
 
 + *OCapN-lineage Capability Transport Protocol* between sovereign cells (vats), with sturdy references, distributed garbage collection, three-party handoff, promise pipelining, and store-and-forward.
 + *Effect VM execution* that batches per-turn effects into a single STARK over a real BabyBear AIR (currently $tilde$151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1).
@@ -27,7 +27,7 @@ Pyana frames the answer as a single shape---a *proof-carrying capability mesh*. 
 + *Trustless intent matching* with real threshold-encrypted intent pool (Shamir over GF(256) + ChaCha20-Poly1305).
 + *Federation bypass via `peer_exchange`*: two sovereign cells can directly exchange signed (optionally STARK-attested) state transitions without ever touching consensus, then promote to federation order on reconnect.
 
-The thesis under this shape: any security invariant maintained synchronously by a kernel can be maintained asynchronously by a proof system, trading latency for distribution. The "kernel" in Pyana is not a process or a service but a *constraint family*---the AIR plus the predicate registry plus the canonical-message signing discipline. That constraint family is the thing every party trusts; everything else is replaceable.
+The thesis under this shape: any security invariant maintained synchronously by a kernel can be maintained asynchronously by a proof system, trading latency for distribution. The "kernel" in Dregg is not a process or a service but a *constraint family*---the AIR plus the predicate registry plus the canonical-message signing discipline. That constraint family is the thing every party trusts; everything else is replaceable.
 
 == Two visions, one runtime
 
@@ -41,7 +41,7 @@ The handoff between the two visions is structural: Silver produces real `Witness
 
 == Contributions
 
-Pyana's contributions span six architectural layers:
+Dregg's contributions span six architectural layers:
 
 *Authorization and Privacy:* (1) proving monotonic attenuation of a bearer token chain in zero knowledge; (2) a distributed CDT that replaces kernel enforcement with cryptographic proof; (3) multi-modal authorization (`Signature`, `Proof`, `Breadstuff`, `Bearer`, `CapTpDelivered`, and the new `Authorization::Custom { predicate: WitnessedPredicate }` for app-defined modes); (4) a 21+ variant `StateConstraint` predicate vocabulary unified with witness-attached predicates under `WitnessedPredicate` with kind registry (`Dfa`, `Temporal`, `MerkleMembership`, `BlindedMembership`, `BridgePredicate`, `PedersenEquality`, `Custom { vk_hash }`); (5) a 14-boundary vocabulary (BOUNDARIES.md) for cleartext-inside / commitment-inside / acceptance-inside / out-of-band populations.
 
@@ -49,7 +49,7 @@ Pyana's contributions span six architectural layers:
 
 *Unified Fabric:* (11) one canonical `Federation` type subsumes the four prior disjoint concepts; (12) `AttestedRoot` v3 binds $"federation_id"$ plus blocklace `block_id` plus finality round; (13) `KnownFederations` registry persisted at `<data-dir>/known_federations/<federation_id>.json` with `register-federation` CLI; (14) DFA routing as a first-class userspace primitive with `RouteTarget::Userspace { kind, payload }` dispatch and governance-bound atomic table swaps; (15) interest-based dissemination with subscription-filtered block propagation.
 
-*Proof System:* (16) a backend-agnostic constraint DSL compiling to 8 targets from a single source; (17) the Effect VM AIR at $tilde$151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1; (18) Stage 7-$gamma$.0 shared-PI bundle joining per-cell proofs of one turn; (19) Stage 7-$gamma$.2 Phase 1 bilateral cross-cell binding with off-AIR `pyana-verifier bilateral-pair` subcommand; (20) generalized `plonky3_recursion_impl` substrate lifted past `P3MerklePoseidon2Air` as the recursive verifier AIR; (21) Kimchi/Pickles as a credible production-grade alternative outer recursive layer.
+*Proof System:* (16) a backend-agnostic constraint DSL compiling to 8 targets from a single source; (17) the Effect VM AIR at $tilde$151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1; (18) Stage 7-$gamma$.0 shared-PI bundle joining per-cell proofs of one turn; (19) Stage 7-$gamma$.2 Phase 1 bilateral cross-cell binding with off-AIR `dregg-verifier bilateral-pair` subcommand; (20) generalized `plonky3_recursion_impl` substrate lifted past `P3MerklePoseidon2Air` as the recursive verifier AIR; (21) Kimchi/Pickles as a credible production-grade alternative outer recursive layer.
 
 *Trustless Coordination:* (22) trustless intent engine wired into production (`node::state::trustless_intent_engine`) using real Shamir-over-GF(256) + ChaCha20-Poly1305 threshold decryption from `federation::threshold_decrypt`; (23) bond escrow with predicate-attested matching; (24) bridge with destination-federation algebraic binding in AIR (closes T6); (25) executor delegation spectrum from full sovereignty to delegated execution with challenge protocols.
 

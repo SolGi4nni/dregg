@@ -2,7 +2,7 @@
 //!
 //! Stage 1 widening (`EFFECT-VM-SHAPE-A.md`): commitments grow from 1 felt
 //! (~31-bit binding) to 4 felts (~124-bit binding), via the typed
-//! `Commitment4<T>` framework (`pyana_commit::typed`). Position 0 of each
+//! `Commitment4<T>` framework (`dregg_commit::typed`). Position 0 of each
 //! 4-tuple corresponds to the in-trace `state::STATE_COMMIT` continuity
 //! column; positions 1..3 are bound to the canonical cell state by the
 //! executor PI matching loop.
@@ -336,7 +336,7 @@ pub const VK_PI_LAYOUT_VERSION: u32 = 2;
 /// with a variable-length transition list) carry a 32B→4-felt
 /// commitment in `(p0, p1, p2, p3)`.
 ///
-/// Type tags (kept in sync with `pyana_cell::program::StateConstraint`):
+/// Type tags (kept in sync with `dregg_cell::program::StateConstraint`):
 pub const SLOT_CAVEAT_COUNT: usize = 101;
 /// Maximum number of slot caveats bindable through the PI manifest.
 /// Cells declaring more than this fall back to executor-only
@@ -400,7 +400,7 @@ pub const CROSS_EFFECT_DEP_ENTRY_SIZE: usize = 6;
 pub const CROSS_EFFECT_DEPS_BASE: usize = CROSS_EFFECT_DEPS_COUNT + 1; // 127
 
 /// Field-name tags for cross-effect dependencies. Kept in sync with
-/// `pyana_turn::binding_proof::EffectDependency::field_name` string
+/// `dregg_turn::binding_proof::EffectDependency::field_name` string
 /// match in `TurnExecutor::extract_named_field_32b`.
 pub const CROSS_EFFECT_FIELD_TAG_NULLIFIER: u32 = 1;
 pub const CROSS_EFFECT_FIELD_TAG_NOTE_COMMITMENT: u32 = 2;
@@ -468,7 +468,7 @@ pub const UNILATERAL_ATTESTATIONS_ROOT_LEN: usize = 4;
 pub const MAX_UNILATERAL_ATTESTATIONS: usize = 8;
 
 // Type tags for `UnilateralAttestationKind` — kept in sync with
-// `pyana_turn::bilateral_schedule::UnilateralAttestationKind`. Zero is
+// `dregg_turn::bilateral_schedule::UnilateralAttestationKind`. Zero is
 // the "no attestation" sentinel (count == 0 → all data zero).
 pub const UNILATERAL_ATTESTATION_KIND_SELF_STATE_TRANSITION: u32 = 1;
 pub const UNILATERAL_ATTESTATION_KIND_SELF_NONCE_BUMP: u32 = 2;
@@ -484,7 +484,7 @@ pub const UNILATERAL_ATTESTATION_KIND_CUSTOM_BASE: u32 = 0x4000_0000;
 // the EffectVmAir previously only carried a single-felt `event_hash` for
 // `Effect::EmitEvent`, which collided with the runtime `Event { topic,
 // data }` canonical encoding (32B topic ‖ 32B payload). The MCP
-// `pyana_register_service` tool was synthesising a `SetField` row as a
+// `dregg_register_service` tool was synthesising a `SetField` row as a
 // workaround. These PI slots replace that workaround with a real
 // algebraic binding:
 //

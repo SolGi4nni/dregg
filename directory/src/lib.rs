@@ -1,4 +1,4 @@
-//! `pyana-directory` — Canonical named-capability directory primitive.
+//! `dregg-directory` — Canonical named-capability directory primitive.
 //!
 //! # Why this crate exists
 //!
@@ -6,12 +6,12 @@
 //! same directory shape: a versioned `BTreeMap<Name, Entry>` with CAS
 //! semantics, ACL-bound access, expiry, dispute, and (in the latter)
 //! governance-mediated table swaps. The audit
-//! (`PYANA-FLAWS-FROM-APPS.md` G33) prescribes:
+//! (`DREGG-FLAWS-FROM-APPS.md` G33) prescribes:
 //!
-//! > Canonical name-directory primitive (`pyana-directory` crate).
+//! > Canonical name-directory primitive (`dregg-directory` crate).
 //! > CapTP has `SwissTable` (swiss → live capability); no platform
 //! > analog for *named* (human-readable → swiss/sturdy-ref, with rent /
-//! > expiry / dispute baked in). A `pyana-directory` crate combining
+//! > expiry / dispute baked in). A `dregg-directory` crate combining
 //! > `SwissTable` + `Authorizer` + `EscrowManager`-backed rent +
 //! > Merkle-rooted name index would replace ~80% of the nameservice and
 //! > governed-namespace code.
@@ -29,7 +29,7 @@
 //!   sturdy-ref-shaped resource handle.
 //! - [`InMemoryDirectory`] — the in-process reference implementation,
 //!   suitable as the cell-state backing for a `DirectoryCell`.
-//! - [`DfaRoutedDirectory`] — composition with `pyana-dfa` for
+//! - [`DfaRoutedDirectory`] — composition with `dregg-dfa` for
 //!   governance-bound atomic table swaps (the
 //!   `apps/governed-namespace/` pattern). A new policy table is staged,
 //!   then the entire directory atomically transitions when the
@@ -65,7 +65,7 @@ pub use directory::{
 pub use meta::{MetaDirectory, PeerHandle};
 
 /// A sturdy-ref-shaped resource handle. Decoupled from
-/// `captp::uri::PyanaUri` so this crate does not pull in the full CapTP
+/// `captp::uri::DreggUri` so this crate does not pull in the full CapTP
 /// dependency just to typedef a 96-byte triple.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ResourceHandle {
@@ -87,10 +87,10 @@ impl ResourceHandle {
     }
 
     /// Encode as a CapTP-shaped URI string. Lossy: tools that need the
-    /// real `captp::uri::PyanaUri` should parse this back themselves.
+    /// real `captp::uri::DreggUri` should parse this back themselves.
     pub fn to_uri(&self) -> String {
         format!(
-            "pyana://{}/{}/{}",
+            "dregg://{}/{}/{}",
             hex_encode(&self.federation_id),
             hex_encode(&self.cell_id),
             hex_encode(&self.swiss),

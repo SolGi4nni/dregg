@@ -116,7 +116,7 @@ common enough they deserve their own variant — call it
 `TemporalPredicate` or, more generally, `ProofAttached { circuit_id,
 expected_pi: ProofPiSpec }`. Same shape as
 `EscrowCondition::ProofPresented` (which is itself broken per
-PYANA-FLAWS G3 — `verification_key: [u8;32]` is the wrong shape).
+DREGG-FLAWS G3 — `verification_key: [u8;32]` is the wrong shape).
 Adding it here fixes both surfaces simultaneously.
 
 ---
@@ -311,7 +311,7 @@ guards on actions. The relationship to `StateConstraint`:
 - **`Precondition`** is *read-only* — "before applying this action,
   assert the cell's current state matches X." Failing causes
   `TurnError::PreconditionFailed`. Evaluated by
-  `pyana_cell::CellStatePrecondition::evaluate` before any effect runs.
+  `dregg_cell::CellStatePrecondition::evaluate` before any effect runs.
 - **`StateConstraint`** is *transition-checking* — "after applying
   this action, assert the new state passes program-declared invariants."
   Failing causes `ProgramError::ConstraintViolated`. Evaluated after
@@ -503,7 +503,7 @@ holes for replay. Should be a §X under "Open questions" or, better,
 ### 3.7 The Caveat surface (`token/`, `macaroon/`)
 
 The non-state-constraint **caveat** vocabulary lives in
-`token/src/pyana_caveats.rs` and `macaroon/`. It includes (per
+`token/src/dregg_caveats.rs` and `macaroon/`. It includes (per
 grep): `Organization`, `App`, `Service`, `Feature`, `ValidityWindow`,
 `ConfineUser`, `OauthProvider`, `OauthScope`, `FromMachine`,
 `Command`, `FeatureGlob`, `Budget`, `Revocable`, … plus apps-audit-named
@@ -570,7 +570,7 @@ DSL. The right shape is to push complex conditionals into the
 **DSL surface** (§3 of the design) and have the compiler emit
 either a named variant if it matches, or `Custom` with a registered
 expression. Apps that need conditional logic should author it as a
-`#[pyana_caveat]` function, not as nested enum variants.
+`#[dregg_caveat]` function, not as nested enum variants.
 
 **Verdict: reject.** Push to DSL.
 
@@ -709,7 +709,7 @@ not 14**.
 
 ### 5.1 What the design says
 
-§8 of `SLOT-CAVEATS-DESIGN.md`: pyana-dsl compiler "emits
+§8 of `SLOT-CAVEATS-DESIGN.md`: dregg-dsl compiler "emits
 `StateConstraint::Custom { constraint_hash, description }` and
 registers the compiled expression in the runtime's expression
 table (audit §3.4(b)'s 'ExpressionEquals')."
@@ -727,7 +727,7 @@ String, description: String }`.
 — it cannot be evaluated locally (`cell/src/program.rs:267`).
 Custom constraints today *fail closed*.
 
-**Per the lift:** "the runtime's expression table (the pyana-dsl
+**Per the lift:** "the runtime's expression table (the dregg-dsl
 runtime)." So `Custom` becomes evaluable via a runtime registry
 keyed by `constraint_hash`, with the DSL providing the compiled
 expression. This is the §3.4(b) `ExpressionEquals` audit shape.
@@ -738,7 +738,7 @@ expression. This is the §3.4(b) `ExpressionEquals` audit shape.
 strict mono, capability uniqueness, temporal predicates) falls into
 `Custom` if not given its own variant. That has three failure modes:
 
-1. **Cross-implementation drift.** Two pyana implementations
+1. **Cross-implementation drift.** Two dregg implementations
    register different expressions under the same `constraint_hash`
    (or worse, *can't* register the expression and just trust the
    `description`). The hash is supposed to bind, but without a
@@ -768,9 +768,9 @@ prompting designers to add a named variant.
 **(b) Expression table is content-addressed and canonical.** The
 `constraint_hash` is **the hash of the compiled DSL IR**, not an
 arbitrary blob. Two implementations must produce identical IRs from
-identical source, or the lookup fails. The pyana-dsl compiler emits
+identical source, or the lookup fails. The dregg-dsl compiler emits
 a stable serialized IR; the hash is over that. (Implementation
-note: this is what `pyana-dsl/src/ir.rs` should expose as a
+note: this is what `dregg-dsl/src/ir.rs` should expose as a
 canonical postcard schema.)
 
 **(c) `Custom` must declare its read-set.** `Custom { hash,
@@ -804,7 +804,7 @@ should land with:
 
 ```rust
 Custom {
-    /// Hash of the canonical DSL IR (pyana-dsl).
+    /// Hash of the canonical DSL IR (dregg-dsl).
     ir_hash: [u8; 32],
     /// Structured human/version descriptor.
     descriptor: CustomDescriptor,
@@ -851,7 +851,7 @@ for v1, with one caveat.
 
 - **App devs already write Rust.** Every retained starbridge-app
   is a Rust crate. Writing `StateConstraint::WriteOnce { index: 0 }`
-  directly is no harder than writing a `#[pyana_caveat]` function;
+  directly is no harder than writing a `#[dregg_caveat]` function;
   the former is more explicit about what's being declared.
 
 - **The DSL is unsound for v1 anyway.** §3 of the design admits
@@ -891,7 +891,7 @@ Concretely:
   `Custom { ir_hash, descriptor, reads }`. App authors write
   `StateConstraint::*` literals directly. The Rust enum is the
   authoring surface.
-- **v2 (later):** `pyana-dsl` adds the `#[pyana_caveat]` attribute
+- **v2 (later):** `dregg-dsl` adds the `#[dregg_caveat]` attribute
   macro, which **emits one of the 20 named variants** when the
   predicate pattern-matches, falling back to `Custom { ir_hash, … }`
   only for genuinely novel predicates. The DSL is **a sugar layer
@@ -968,7 +968,7 @@ impact:
     CustomDescriptor, reads: ReadSet }` per §5.4.
 
 11. The `EvalContext` struct **must avoid the name collision** with
-    `pyana_cell::preconditions::EvalContext` (which exists today
+    `dregg_cell::preconditions::EvalContext` (which exists today
     and has `block_height: u64, timestamp: i64`). Either
     extend the existing struct, or name the new one
     `StateConstraintCtx`. Lane G missed this; it's a compile
@@ -1039,7 +1039,7 @@ is correctly deferred.
 Things the codebase doesn't unambiguously decide and that this
 evaluation can't answer:
 
-1. **Naming collision: `EvalContext`.** `pyana_cell::preconditions`
+1. **Naming collision: `EvalContext`.** `dregg_cell::preconditions`
    already has `EvalContext { block_height, timestamp }` (used by
    `Preconditions::evaluate`). Lane G's proposed `EvalContext`
    adds `current_epoch`, `sender`, `sender_epoch_count`,
@@ -1121,15 +1121,15 @@ evaluation can't answer:
 
 11. **The DSL question reframed.** If the lifted-enum-first
     approach is adopted (§6), what's the disposition of
-    `pyana-dsl`? Stays as a separate crate for caveat-on-data
-    (the original macaroon-shaped pyana-caveats), with the
+    `dregg-dsl`? Stays as a separate crate for caveat-on-data
+    (the original macaroon-shaped dregg-caveats), with the
     cell-program-side punted to direct enum-literal construction
-    for v1? Or does `pyana-dsl` get extended for cell programs in
+    for v1? Or does `dregg-dsl` get extended for cell programs in
     v1.5, when patterns emerge that the enum can't express?
 
 12. **Should `StateConstraint` and `Precondition` share atoms?**
     §3.1 above. Vocabulary atoms (slot, height, range) could be
-    co-defined in a `pyana-predicates` crate. Worth it for
+    co-defined in a `dregg-predicates` crate. Worth it for
     coherence, or premature abstraction?
 
 ---
@@ -1151,7 +1151,7 @@ correctness**:
   variants, raising 14 → 21.)
 - Refinements to three existing variants (`PreimageGate`,
   `SenderAuthorized`, `Custom`).
-- Name collision with the existing `pyana_cell::EvalContext`.
+- Name collision with the existing `dregg_cell::EvalContext`.
 - Under-stated relationship to `Action::preconditions`
   (Lane H's surface), to caveats (`token/`, `macaroon/`), and to
   γ.2 cross-cell binding.

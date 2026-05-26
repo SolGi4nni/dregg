@@ -5,11 +5,11 @@ byte-equal what the Rust starbridge-apps produce — same domain-keyed
 derivation, same byte ordering, same digest size.
 
 The shape mirrors:
-- `pyana_cell::program::AuthorizedSet::credential_set_commitment`
+- `dregg_cell::program::AuthorizedSet::credential_set_commitment`
 - `starbridge_identity::schema_commitment`
 - `starbridge_subscription::bounty_state_payload_hash`
 - `starbridge_nameservice::resolve_target` / `name_hash`
-- `pyana_app_framework::FieldElement` (32-byte big-endian-padded u64)
+- `dregg_app_framework::FieldElement` (32-byte big-endian-padded u64)
 """
 
 import blake3
@@ -36,7 +36,7 @@ def hash_blake3(*parts: bytes) -> bytes:
 
 
 def blake3_field(data: bytes) -> bytes:
-    """Mirrors `pyana_app_framework::FieldElement` byte form (32 bytes)."""
+    """Mirrors `dregg_app_framework::FieldElement` byte form (32 bytes)."""
     return hash_blake3(data)
 
 
@@ -58,19 +58,19 @@ def credential_set_commitment(issuer_cell: bytes, schema_commitment_bytes: bytes
     """Mirror of `AuthorizedSet::credential_set_commitment`.
 
     Byte-equal to the Rust:
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-credential-set-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-credential-set-v1");
         hasher.update(issuer_cell);
         hasher.update(credential_schema_id);
         *hasher.finalize().as_bytes()
     """
-    return hash_keyed("pyana-credential-set-v1", issuer_cell, schema_commitment_bytes)
+    return hash_keyed("dregg-credential-set-v1", issuer_cell, schema_commitment_bytes)
 
 
 def schema_commitment(schema_name: str, attributes: list[str]) -> bytes:
     """Mirror of `starbridge_identity::schema_commitment`.
 
     Byte-equal to the Rust:
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-credential-schema-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-credential-schema-v1");
         hasher.update(schema.name.as_bytes());
         hasher.update(&(schema.attributes.len() as u64).to_le_bytes());
         for attr in &schema.attributes {
@@ -83,7 +83,7 @@ def schema_commitment(schema_name: str, attributes: list[str]) -> bytes:
     for attr in attributes:
         parts.append(len(attr).to_bytes(8, "little"))
         parts.append(attr.encode("utf-8"))
-    return hash_keyed("pyana-credential-schema-v1", *parts)
+    return hash_keyed("dregg-credential-schema-v1", *parts)
 
 
 def bounty_state_payload_hash(
@@ -94,7 +94,7 @@ def bounty_state_payload_hash(
 ) -> bytes:
     """Mirror of `starbridge_subscription::bounty_state_payload_hash`."""
     return hash_keyed(
-        "pyana-bounty-state-v1",
+        "dregg-bounty-state-v1",
         bounty_id,
         bytes([prior_tag]),
         bytes([new_tag]),

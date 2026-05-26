@@ -1531,7 +1531,7 @@ mod tests {
             public_inputs: vec![12345, 0],
             trace_len: 4,
             num_cols: 6,
-            air_name: "pyana-merkle-v1".to_string(),
+            air_name: "dregg-merkle-v1".to_string(),
             nonce: None,
             boundary_query_values: Vec::new(),
             boundary_query_paths: Vec::new(),

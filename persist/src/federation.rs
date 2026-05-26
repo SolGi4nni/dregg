@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 use crate::tables;
 use crate::{PersistentStore, Result, StoreError};
 
-pub use pyana_types::{FederationId, PublicKey, Signature, ThresholdQC};
+pub use dregg_types::{FederationId, PublicKey, Signature, ThresholdQC};
 
 /// A stored attested root, capturing the federation's consensus state at a
 /// particular block height.
 ///
-/// Uses the canonical `pyana_types::PublicKey` (32 bytes) and
-/// `pyana_types::Signature` (64 bytes) for correct Ed25519 representation.
+/// Uses the canonical `dregg_types::PublicKey` (32 bytes) and
+/// `dregg_types::Signature` (64 bytes) for correct Ed25519 representation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredAttestedRoot {
     /// The Merkle root of the revocation tree (cell state).
@@ -52,7 +52,7 @@ pub struct StoredAttestedRoot {
     pub federation_id: FederationId,
     /// v4 (#80): Merkle root over the canonical `receipt_hash()` of every
     /// receipt this attestation covers. `None` for legacy roots predating
-    /// the receipt-stream binding. See `pyana_types::AttestedRoot`.
+    /// the receipt-stream binding. See `dregg_types::AttestedRoot`.
     #[serde(default)]
     pub receipt_stream_root: Option<[u8; 32]>,
 }
@@ -99,13 +99,13 @@ impl StoredAttestedRoot {
 
     /// Compute the canonical message that was signed for this attested root.
     ///
-    /// Mirrors [`pyana_types::AttestedRoot::signing_message`] (v3): includes
+    /// Mirrors [`dregg_types::AttestedRoot::signing_message`] (v3): includes
     /// `federation_id`, `note_tree_root`, `nullifier_set_root`,
     /// `blocklace_block_id`, and `finality_round` with `0x00 | 0x01 || value`
     /// framing for unambiguous `Option` encoding.
     fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-attested-root-v4");
+        msg.extend_from_slice(b"dregg-attested-root-v4");
         msg.extend_from_slice(&self.federation_id.0);
         msg.extend_from_slice(&self.merkle_root);
         match self.note_tree_root {

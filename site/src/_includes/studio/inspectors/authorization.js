@@ -1,5 +1,5 @@
 /**
- * <pyana-authorization> — per-action authorization inspector.
+ * <dregg-authorization> — per-action authorization inspector.
  *
  * Attribute contract:
  *   data  — JSON-stringified AuthorizationView (required)
@@ -19,7 +19,7 @@
  *   { kind: "OneOf",            num_candidates, proof_index }
  *
  * No runtime lookup is needed — data is passed in directly as a JSON attr.
- * This lets receipt.js / turn.js embed it inline without a pyana:// URI.
+ * This lets receipt.js / turn.js embed it inline without a dregg:// URI.
  *
  * Compact mode: colored badge showing the variant kind.
  * Default mode: KV grid with all fields for the variant.
@@ -93,7 +93,7 @@ function variantRows(auth, html) {
       <dt>introducer pk</dt><dd><code title=${auth.introducer_pk}>${shortHex(auth.introducer_pk, 16)}</code></dd>
       <dt>sender pk</dt><dd><code title=${auth.sender_pk}>${shortHex(auth.sender_pk, 16)}</code></dd>
       <dt>sender sig</dt><dd><code title=${auth.sender_signature}>${shortHex(auth.sender_signature, 16)}</code></dd>
-      <dt>cert</dt><dd><pyana-handoff-certificate data=${certData} mode="compact"></pyana-handoff-certificate></dd>
+      <dt>cert</dt><dd><dregg-handoff-certificate data=${certData} mode="compact"></dregg-handoff-certificate></dd>
     `;
   }
 
@@ -121,7 +121,7 @@ function variantRows(auth, html) {
 // Custom element
 // ---------------------------------------------------------------------------
 
-class PyanaAuthorization extends InspectorBase {
+class DreggAuthorization extends InspectorBase {
   static get observedAttributes() { return ['data', 'mode']; }
 
   _render() {
@@ -137,11 +137,11 @@ class PyanaAuthorization extends InspectorBase {
     try {
       auth = JSON.parse(dataAttr);
     } catch (e) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">pyana-authorization: bad data attr: ${e.message}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">dregg-authorization: bad data attr: ${e.message}</div>`;
       return;
     }
     if (!auth || typeof auth.kind !== 'string') {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">pyana-authorization: data missing "kind" field</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">dregg-authorization: data missing "kind" field</div>`;
       return;
     }
 
@@ -151,7 +151,7 @@ class PyanaAuthorization extends InspectorBase {
     const Component = () => {
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact pyana-authorization--badge"
+          <span class="dregg-inspector dregg-inspector--compact dregg-authorization--badge"
                 style=${kindStyle(auth.kind)}>
             ${auth.kind}
           </span>`;
@@ -159,18 +159,18 @@ class PyanaAuthorization extends InspectorBase {
 
       // Default: header + KV grid
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pyana-authorization">
+        <div class="dregg-inspector dregg-inspector--cell dregg-authorization">
           <header>
-            <span class="pyana-inspector__kind">authorization</span>
-            <span class="pyana-authorization--badge" style=${kindStyle(auth.kind)}>${auth.kind}</span>
+            <span class="dregg-inspector__kind">authorization</span>
+            <span class="dregg-authorization--badge" style=${kindStyle(auth.kind)}>${auth.kind}</span>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             ${variantRows(auth, html)}
           </dl>
         </div>`;
     };
 
-    // PyanaAuthorization doesn't consume a runtime signal — auth is static
+    // DreggAuthorization doesn't consume a runtime signal — auth is static
     // from the data attr. We still wrap in effect() to match the base pattern
     // and enable teardown; the effect doesn't subscribe to any signal so it
     // only runs once.
@@ -178,6 +178,6 @@ class PyanaAuthorization extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-authorization')) {
-  customElements.define('pyana-authorization', PyanaAuthorization);
+if (!customElements.get('dregg-authorization')) {
+  customElements.define('dregg-authorization', DreggAuthorization);
 }

@@ -11,7 +11,7 @@
 
 const Bidding = (() => {
     // Local storage key prefix for bid secrets.
-    const STORAGE_PREFIX = 'pyana_gallery_bid_';
+    const STORAGE_PREFIX = 'dregg_gallery_bid_';
 
     /**
      * Generate a cryptographic random nonce (32 bytes).
@@ -155,8 +155,8 @@ const Bidding = (() => {
     /**
      * Simplified BLAKE3 hash for browser demo.
      *
-     * NOTE: In production, this is replaced by the pyana WASM SDK which
-     * provides real BLAKE3 with keyed derivation ("pyana-gallery-bid-commitment-v1").
+     * NOTE: In production, this is replaced by the dregg WASM SDK which
+     * provides real BLAKE3 with keyed derivation ("dregg-gallery-bid-commitment-v1").
      * This demo version uses a simpler hash that produces deterministic 32-byte output.
      */
     function blake3Hash(data) {

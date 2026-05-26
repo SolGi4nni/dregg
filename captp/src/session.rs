@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::AuthRequired;
-use pyana_types::CellId;
+use dregg_cell::AuthRequired;
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::StrandId;

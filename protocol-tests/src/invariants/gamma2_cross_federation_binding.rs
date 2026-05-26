@@ -16,7 +16,7 @@
 
 use crate::Invariant;
 use proptest::prelude::*;
-use pyana_cell::id::CellId;
+use dregg_cell::id::CellId;
 
 pub struct Gamma2CrossFederationBinding;
 impl Invariant for Gamma2CrossFederationBinding {
@@ -30,7 +30,7 @@ impl Invariant for Gamma2CrossFederationBinding {
 
 fn transfer_pre_intra_fed(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-transfer-id-v1");
+    v.extend_from_slice(b"dregg-transfer-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(&amount.to_be_bytes());
@@ -46,7 +46,7 @@ fn intro_pre_intra_fed(
     nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(160);
-    v.extend_from_slice(b"pyana-intro-id-v1");
+    v.extend_from_slice(b"dregg-intro-id-v1");
     v.extend_from_slice(&introducer.0);
     v.extend_from_slice(&recipient.0);
     v.extend_from_slice(&target.0);
@@ -123,7 +123,7 @@ fn transfer_pre_cross_fed_v2(
     sender_nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(192);
-    v.extend_from_slice(b"pyana-transfer-id-v2-xfed");
+    v.extend_from_slice(b"dregg-transfer-id-v2-xfed");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(src_fed);
@@ -157,6 +157,6 @@ fn cross_fed_preimage_domain_separator_is_distinct_from_v1() {
         v1, v2,
         "v1 (intra-fed) and v2 (cross-fed) preimages must differ at the domain separator"
     );
-    assert!(v1.starts_with(b"pyana-transfer-id-v1"));
-    assert!(v2.starts_with(b"pyana-transfer-id-v2-xfed"));
+    assert!(v1.starts_with(b"dregg-transfer-id-v1"));
+    assert!(v2.starts_with(b"dregg-transfer-id-v2-xfed"));
 }

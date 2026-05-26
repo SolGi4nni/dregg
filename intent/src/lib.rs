@@ -1,4 +1,4 @@
-//! Distributed Intent Engine for Pyana.
+//! Distributed Intent Engine for Dregg.
 //!
 //! # Trust Model
 //!
@@ -227,11 +227,11 @@ impl CommitmentId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StakeProof {
     /// The note commitment being staked.
-    pub commitment: pyana_cell::NoteCommitment,
+    pub commitment: dregg_cell::NoteCommitment,
     /// The Poseidon2 Merkle tree root that this proof is valid against.
-    pub merkle_root: pyana_circuit::field::BabyBear,
+    pub merkle_root: dregg_circuit::field::BabyBear,
     /// The Poseidon2 Merkle inclusion proof demonstrating the commitment is in the tree.
-    pub merkle_proof: pyana_commit::Poseidon2MerkleProof,
+    pub merkle_proof: dregg_commit::Poseidon2MerkleProof,
     /// Claimed minimum value of the staked note (informational; cannot be verified
     /// without opening the commitment, but allows pool policies to filter).
     pub minimum_value: u64,
@@ -252,7 +252,7 @@ pub enum StakeRequirement {
 
 impl StakeRequirement {
     /// Check whether this requirement includes a valid stake against a known root.
-    pub fn has_valid_stake(&self, known_root: pyana_circuit::field::BabyBear) -> bool {
+    pub fn has_valid_stake(&self, known_root: dregg_circuit::field::BabyBear) -> bool {
         match self {
             Self::None => false,
             Self::Proven(proof) => verify_stake(proof, known_root),
@@ -269,24 +269,24 @@ impl StakeRequirement {
 ///
 /// This proves the staker has knowledge of a real note that EXISTS in the tree,
 /// preventing spam from entities that have never committed real state.
-pub fn verify_stake(stake: &StakeProof, known_root: pyana_circuit::field::BabyBear) -> bool {
+pub fn verify_stake(stake: &StakeProof, known_root: dregg_circuit::field::BabyBear) -> bool {
     // The proof's root must match the federation's attested root
     if stake.merkle_root != known_root {
         return false;
     }
 
     // Convert the BLAKE3 note commitment to a Poseidon2 field element
-    let leaf = pyana_commit::commitment_to_field(&stake.commitment.0);
+    let leaf = dregg_commit::commitment_to_field(&stake.commitment.0);
 
     // Verify the Merkle inclusion proof
-    pyana_commit::Poseidon2MerkleTree::verify_membership(known_root, leaf, &stake.merkle_proof)
+    dregg_commit::Poseidon2MerkleTree::verify_membership(known_root, leaf, &stake.merkle_proof)
 }
 
 /// Verify that an intent has a valid stake proof for gossip propagation.
 ///
 /// Returns true if the intent carries a valid stake proof that verifies against
 /// the given known note tree root.
-pub fn verify_intent_stake(intent: &Intent, known_root: pyana_circuit::field::BabyBear) -> bool {
+pub fn verify_intent_stake(intent: &Intent, known_root: dregg_circuit::field::BabyBear) -> bool {
     match &intent.stake_proof {
         Some(proof) => verify_stake(proof, known_root),
         None => false,
@@ -474,7 +474,7 @@ impl Intent {
         };
 
         let canonical = postcard::to_allocvec(&body).unwrap_or_default();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-intent-id-v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-intent-id-v2");
         hasher.update(&canonical);
         *hasher.finalize().as_bytes()
     }
@@ -531,8 +531,8 @@ pub fn current_epoch(block_height: u64) -> u64 {
 /// - Within an epoch, the K uses are distinguishable but not linkable to other epochs
 /// - The nullifier does not reveal the underlying note value
 pub fn compute_stake_nullifier(commitment: &[u8; 32], epoch: u64, counter: u32) -> [u8; 32] {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2::hash_many;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2::hash_many;
 
     // Encode commitment as 8 field elements
     let commitment_elements = BabyBear::encode_hash(commitment);
@@ -554,7 +554,7 @@ pub fn compute_stake_nullifier(commitment: &[u8; 32], epoch: u64, counter: u32) 
     // Hash to get a single field element, then expand to 32 bytes deterministically
     // We use a domain-separated BLAKE3 hash of the Poseidon2 output to get 32 bytes
     let poseidon_output = hash_many(&elements);
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-stake-nullifier-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-stake-nullifier-v1");
     hasher.update(&poseidon_output.as_u32().to_le_bytes());
     // Include raw inputs in the BLAKE3 for collision resistance in the 32-byte domain
     hasher.update(commitment);
@@ -575,12 +575,12 @@ pub(crate) fn getrandom(buf: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::field::BabyBear;
-    use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
+    use dregg_circuit::field::BabyBear;
+    use dregg_commit::{Poseidon2MerkleTree, commitment_to_field};
 
     /// Helper: build a small Poseidon2 tree with some notes and return a valid StakeProof
     /// for a given note commitment.
-    fn build_stake_proof(commitment: &pyana_cell::NoteCommitment) -> (StakeProof, BabyBear) {
+    fn build_stake_proof(commitment: &dregg_cell::NoteCommitment) -> (StakeProof, BabyBear) {
         let mut tree = Poseidon2MerkleTree::with_depth(4);
 
         // Insert some other notes first
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn verify_stake_valid_proof() {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let (stake_proof, root) = build_stake_proof(&commitment);
 
         // Valid proof against the correct root
@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn verify_stake_wrong_root_fails() {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let (stake_proof, _root) = build_stake_proof(&commitment);
 
         // Wrong root should fail
@@ -719,12 +719,12 @@ mod tests {
 
     #[test]
     fn verify_stake_wrong_commitment_fails() {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let (_stake_proof, root) = build_stake_proof(&commitment);
 
         // Create a proof with a different commitment but same merkle_proof
         // (the proof won't verify because the leaf doesn't match)
-        let wrong_commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+        let wrong_commitment = dregg_cell::NoteCommitment([0xFF; 32]);
         let bad_stake = StakeProof {
             commitment: wrong_commitment,
             merkle_root: root,
@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn verify_intent_stake_with_proof() {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let (stake_proof, root) = build_stake_proof(&commitment);
 
         let spec = MatchSpec {
@@ -778,7 +778,7 @@ mod tests {
 
     #[test]
     fn stake_requirement_has_valid_stake() {
-        let commitment = pyana_cell::NoteCommitment([0xDE; 32]);
+        let commitment = dregg_cell::NoteCommitment([0xDE; 32]);
         let (stake_proof, root) = build_stake_proof(&commitment);
 
         let req = StakeRequirement::Proven(stake_proof);

@@ -13,10 +13,10 @@
 //! workers operate offline using the snapshot, and revocation is eventual
 //! (bounded by max_staleness).
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::action::symbol;
-use pyana_turn::turn::Turn;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::action::symbol;
+use dregg_turn::turn::Turn;
+use dregg_turn::{
     Action, Authorization, CallForest, CallTree, CommitmentMode, ComputronCosts, DelegationMode,
     Effect, TurnExecutor, TurnResult,
 };
@@ -70,7 +70,7 @@ fn make_turn(agent: CellId, nonce: u64, action: Action) -> Turn {
 }
 
 fn main() {
-    println!("=== Pyana Snapshot+Refresh Delegation Demo ===");
+    println!("=== Dregg Snapshot+Refresh Delegation Demo ===");
     println!("    E-style capability inheritance with eventual revocation");
     println!();
 
@@ -377,9 +377,9 @@ fn main() {
 
     println!("Bonus: Staleness checking (acceptor-side)");
 
-    let delegation = pyana_cell::DelegatedRef::new(
+    let delegation = dregg_cell::DelegatedRef::new(
         parent_id,
-        pyana_cell::CellId::from_bytes([0u8; 32]), // placeholder child
+        dregg_cell::CellId::from_bytes([0u8; 32]), // placeholder child
         vec![],
         0,
         1000,      // refreshed at t=1000

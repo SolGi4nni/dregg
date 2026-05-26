@@ -8,11 +8,11 @@
 //! 5. Use `NullifierSet` non-membership proofs for revocation checking
 //! 6. Show that revocation is privacy-preserving (verifier doesn't learn which
 //!    tokens are NOT revoked)
-//! 7. Integrate with the pyana-trace Datalog evaluator (revocation rules)
+//! 7. Integrate with the dregg-trace Datalog evaluator (revocation rules)
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::{NonMembershipProof, NullifierSet};
-use pyana_trace::{
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::{NonMembershipProof, NullifierSet};
+use dregg_trace::{
     AuthorizationRequest, Conclusion, Evaluator, Fact, Term, standard_policy, symbol_from_str,
     verify_trace,
 };
@@ -51,12 +51,12 @@ impl TokenHandle {
     }
 
     /// Get the nullifier (unique identifier for revocation tracking).
-    fn nullifier(&self) -> pyana_cell::note::Nullifier {
+    fn nullifier(&self) -> dregg_cell::note::Nullifier {
         self.note.nullifier(&self.spending_key)
     }
 
     /// Get the note commitment.
-    fn commitment(&self) -> pyana_cell::note::NoteCommitment {
+    fn commitment(&self) -> dregg_cell::note::NoteCommitment {
         self.note.commitment()
     }
 }
@@ -128,7 +128,7 @@ struct AuthResult {
 }
 
 fn main() {
-    println!("=== Pyana Token Revocation Demo ===\n");
+    println!("=== Dregg Token Revocation Demo ===\n");
 
     // =========================================================================
     // STEP 1: Mint tokens
@@ -428,7 +428,7 @@ fn main() {
     // =========================================================================
     println!("--- Step 8: DATALOG INTEGRATION (revocation rules) ---\n");
 
-    println!("  The standard pyana policy includes revocation rules:");
+    println!("  The standard dregg policy includes revocation rules:");
     println!("    Rule 30: not_revoked_ok(T) :- not_revoked(T)");
     println!("    Rule 31: deny :- revocable(T), revoked(T)");
     println!();

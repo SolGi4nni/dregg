@@ -1,4 +1,4 @@
-//! # pyana-blocklace
+//! # dregg-blocklace
 //!
 //! # Trust Model
 //!
@@ -60,7 +60,7 @@ pub mod delegation;
 pub mod dissemination;
 pub mod finality;
 pub mod ordering;
-pub mod pyana_bridge;
+pub mod dregg_bridge;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -116,7 +116,7 @@ impl Block {
     /// It does NOT cover the signature (so the signature can be verified against
     /// the hash without circular dependency).
     pub fn id(&self) -> BlockId {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-blocklace-block-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-blocklace-block-v1");
         hasher.update(&self.creator);
         hasher.update(&self.sequence.to_le_bytes());
         hasher.update(&(self.predecessors.len() as u32).to_le_bytes());

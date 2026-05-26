@@ -764,7 +764,7 @@ pub fn verify_recursive_proof(
 /// - Uses the Pasta cycle: Pallas proof verified in Vesta circuit, and vice versa
 /// - The final proof is constant-size regardless of how many steps were folded
 ///
-/// This is the "holy grail" for pyana: an unbounded attenuation chain
+/// This is the "holy grail" for dregg: an unbounded attenuation chain
 /// (arbitrary number of fold steps) compressed into a single ~1 KiB proof.
 ///
 /// # How it works

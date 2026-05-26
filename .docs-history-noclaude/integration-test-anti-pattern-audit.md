@@ -28,19 +28,19 @@ The single biggest source of noise is a **mass duplicate-stub epidemic**: ~151 i
 
 | File | Test Name | Lines | Assertion Count | Confidence |
 |---|---|---|---|---|
-| `teasting/tests/cross_federation_captp_turn.rs` | `handoff_certificate_validate_via_pyana_captp_api_exists` | 6 | 0 | **High** |
+| `teasting/tests/cross_federation_captp_turn.rs` | `handoff_certificate_validate_via_dregg_captp_api_exists` | 6 | 0 | **High** |
 | `teasting/tests/cross_federation_captp_turn.rs` | `cellid_and_federationid_are_distinct_types` | 8 | 0 | **High** |
-| `pyana-storage-templates/src/blinded_queue.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
-| `pyana-storage-templates/src/cap_inbox.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
-| `pyana-storage-templates/src/programmable_queue.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
-| `pyana-storage-templates/src/pubsub_topic.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
-| `pyana-storage-templates/src/relay_operator.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
+| `dregg-storage-templates/src/blinded_queue.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
+| `dregg-storage-templates/src/cap_inbox.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
+| `dregg-storage-templates/src/programmable_queue.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
+| `dregg-storage-templates/src/pubsub_topic.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
+| `dregg-storage-templates/src/relay_operator.rs` | `descriptor_validates_against_canonical_program` | 4 | 0* | **Medium** |
 | `teasting/tests/invariants.rs` | `test_constitution_valid_basic` | 3 | 1 (helper) | Low |
 
 *These call `.expect("...")` which panics on failure, so they do assert validity, but they assert only that the descriptor struct validates against its own definition—essentially a compile-time/API-shape check.
 
 **Recommendations**
-- Delete `handoff_certificate_validate_via_pyana_captp_api_exists` and `cellid_and_federationid_are_distinct_types`; compilation already enforces both.
+- Delete `handoff_certificate_validate_via_dregg_captp_api_exists` and `cellid_and_federationid_are_distinct_types`; compilation already enforces both.
 - Either delete the `descriptor_validates_against_canonical_program` quintet or replace them with structural assertions (e.g., assert specific field values, not just that validation returns `Ok`).
 
 ---
@@ -135,7 +135,7 @@ The single biggest source of noise is a **mass duplicate-stub epidemic**: ~151 i
 
 | Test Name | Files |
 |---|---|
-| `grant_sender_action_shape` | `pyana-storage-templates/src/programmable_queue.rs` (duplicates `cap_inbox.rs`) |
+| `grant_sender_action_shape` | `dregg-storage-templates/src/programmable_queue.rs` (duplicates `cap_inbox.rs`) |
 | `descriptor_validates_against_canonical_program` | `blinded_queue.rs`, `cap_inbox.rs`, `programmable_queue.rs`, `pubsub_topic.rs`, `relay_operator.rs` |
 
 **Recommendations**
@@ -245,7 +245,7 @@ This anti-pattern heavily overlaps with Anti-Pattern 6. The distinguishing facto
 
 1. **Immediate (low effort, high impact)**
    - Delete all `panic!("blocked")` stubs (~151 tests across 13 files).
-   - Delete `handoff_certificate_validate_via_pyana_captp_api_exists` and `cellid_and_federationid_are_distinct_types`.
+   - Delete `handoff_certificate_validate_via_dregg_captp_api_exists` and `cellid_and_federationid_are_distinct_types`.
    - Replace exact error-string assertions in `defi_primitives.rs` and `private_vickrey.rs` with `matches!` or `contains` checks.
 
 2. **Short-term (medium effort)**

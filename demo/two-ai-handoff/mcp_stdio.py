@@ -1,6 +1,6 @@
 """Tiny MCP-over-stdio JSON-RPC client.
 
-The pyana node exposes its MCP server as `pyana-node mcp`, reading JSON-RPC
+The dregg node exposes its MCP server as `dregg-node mcp`, reading JSON-RPC
 requests from stdin and writing responses to stdout (one JSON object per line).
 We don't need a real MCP SDK for that — just newline-delimited JSON.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 class McpClient:
-    """A persistent `pyana-node mcp` subprocess we talk JSON-RPC to."""
+    """A persistent `dregg-node mcp` subprocess we talk JSON-RPC to."""
 
     def __init__(self, node_bin: str, data_dir: str, label: str, log_dir: Path):
         self.label = label
@@ -24,7 +24,7 @@ class McpClient:
         self.stderr_log = open(log_dir / f"{label}.node.stderr.log", "wb")
 
         env = os.environ.copy()
-        env.setdefault("RUST_LOG", "pyana_node=info,warn")
+        env.setdefault("RUST_LOG", "dregg_node=info,warn")
 
         self.proc = subprocess.Popen(
             [node_bin, "mcp", "--data-dir", data_dir],

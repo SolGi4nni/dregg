@@ -1,6 +1,6 @@
-//! Standard policy set for the pyana authorization model.
+//! Standard policy set for the dregg authorization model.
 //!
-//! Provides pre-built rules matching the pyana authorization semantics:
+//! Provides pre-built rules matching the dregg authorization semantics:
 //! - App-scoped access: allow if the request app has the requested action
 //! - Service-scoped access: allow if the request service has the requested action
 //! - Unrestricted access: allow if the token grants unrestricted access
@@ -48,7 +48,7 @@ pub mod rule_ids {
     pub const CONFINE_USER_DENY: u32 = 52;
 }
 
-/// Returns the standard pyana authorization policy rule set.
+/// Returns the standard dregg authorization policy rule set.
 ///
 /// This is the **secure** policy that uses exact hash matching (`MemberOf`)
 /// instead of substring matching (`Contains`). It expects per-action facts:
@@ -261,7 +261,7 @@ pub fn standard_policy() -> Vec<Rule> {
     rules
 }
 
-/// Returns the legacy pyana authorization policy rule set.
+/// Returns the legacy dregg authorization policy rule set.
 ///
 /// **DEPRECATED**: This policy uses `Contains` (substring matching) for action checking,
 /// which is vulnerable to collisions (e.g. "threadwrite" matches "write"). Use

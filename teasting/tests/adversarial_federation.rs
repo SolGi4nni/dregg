@@ -20,9 +20,9 @@
 //! Many tests are `#[ignore]`d on AttestedRoot v3 / federation-id ↔
 //! committee binding (AUDIT-federation.md F1/F3). The BLS share
 //! withhold + threshold near-miss tests are exercisable today against
-//! `pyana_federation::threshold::FederationCommittee`.
+//! `dregg_federation::threshold::FederationCommittee`.
 
-use pyana_federation::threshold::generate_test_committee;
+use dregg_federation::threshold::generate_test_committee;
 
 // ===========================================================================
 // BLS share withhold: t-1 of n must fail aggregation

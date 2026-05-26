@@ -1,5 +1,5 @@
 /**
- * <pyana-intent uri="pyana://intent/<id_or_index>"> — single intent.
+ * <dregg-intent uri="dregg://intent/<id_or_index>"> — single intent.
  *
  * The wasm sim does NOT expose a getter to recover an intent's full spec by
  * id or index after creation. As a workaround, the JS runtime keeps a
@@ -13,7 +13,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaIntent extends InspectorBase {
+class DreggIntent extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -32,10 +32,10 @@ class PyanaIntent extends InspectorBase {
 
     const Component = () => {
       const i = sig.value;
-      if (!i) return html`<div class="pyana-inspector pyana-inspector--empty">intent not in JS ledger: <code>${shortHex(parsed.id, 16)}</code></div>`;
+      if (!i) return html`<div class="dregg-inspector dregg-inspector--empty">intent not in JS ledger: <code>${shortHex(parsed.id, 16)}</code></div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code title=${i.intent_id}>${shortHex(i.intent_id)}</code>
             · ${i.kind}
             · ${i.actions.length} action${i.actions.length === 1 ? '' : 's'}
@@ -48,12 +48,12 @@ class PyanaIntent extends InspectorBase {
         ? i.constraints.map(c => html`<code>${JSON.stringify(c)}</code> `)
         : html`<span style="opacity:0.6">(none)</span>`;
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">intent</span>
-            <code class="pyana-inspector__id" title=${i.intent_id}>${shortHex(i.intent_id, 24)}</code>
+            <span class="dregg-inspector__kind">intent</span>
+            <code class="dregg-inspector__id" title=${i.intent_id}>${shortHex(i.intent_id, 24)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>kind</dt><dd>${i.kind}</dd>
             <dt>intent id</dt><dd><code>${i.intent_id}</code></dd>
             <dt>index</dt><dd>${String(i.intent_index)}</dd>
@@ -68,4 +68,4 @@ class PyanaIntent extends InspectorBase {
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-intent')) customElements.define('pyana-intent', PyanaIntent);
+if (!customElements.get('dregg-intent')) customElements.define('dregg-intent', DreggIntent);

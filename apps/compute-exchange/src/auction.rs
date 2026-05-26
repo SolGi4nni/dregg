@@ -9,7 +9,7 @@
 //! This prevents MEV-style attacks where a watcher sees an incoming order and races
 //! to consume the same offering first.
 
-use pyana_app_framework::compute_commitment_hash;
+use dregg_app_framework::compute_commitment_hash;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================

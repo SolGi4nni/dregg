@@ -1,6 +1,6 @@
-# AUDIT — Nullifiers in pyana
+# AUDIT — Nullifiers in dregg
 
-**Question:** what is a nullifier in pyana, who computes it, who checks it, and
+**Question:** what is a nullifier in dregg, who computes it, who checks it, and
 where is the binding incomplete?
 
 **Short answer:** nullifiers exist and are heavily relied on, but the word names
@@ -27,7 +27,7 @@ distinct semantic clusters:
 ### 1a. Note nullifiers (Zcash-shape) — the flagship
 - `cell/src/note.rs:31` — `pub struct Nullifier(pub [u8; 32])`.
 - `cell/src/note.rs:179` — `Note::nullifier(spending_key)`:
-  `BLAKE3_derive_key("pyana-note nullifier v1", commitment || spending_key || creation_nonce)`.
+  `BLAKE3_derive_key("dregg-note nullifier v1", commitment || spending_key || creation_nonce)`.
 - `cell/src/nullifier_set.rs` — `NullifierSet` (BTreeSet + Merkle tree with
   domain-separated leaf/node hashes and adjacent-neighbor non-membership
   proofs).
@@ -57,7 +57,7 @@ rolled back via the journal.
   `HashSet<[u8;32]>` of `proof_hash`; second presentation of the same proof
   fails with `"proof already used"`.
 - `turn/src/conditional.rs:227-262` — `compute_proof_hash` uses
-  `BLAKE3_derive_key("pyana-proof-nullifier-v1", ...)`.
+  `BLAKE3_derive_key("dregg-proof-nullifier-v1", ...)`.
 - `node/src/state.rs:94` / `node/src/api.rs:2089-2110` — the node persists
   "proof nullifiers" (used proof hashes) in the store on receipt, with a
   warning log if persistence fails.
@@ -69,7 +69,7 @@ sees the nullifier.
 ### 1d. Stake nullifiers (anti-Sybil for gossip)
 - `intent/src/lib.rs:520-559` — `compute_stake_nullifier(commitment, epoch, counter)`:
   Poseidon2 over (commitment, epoch, counter) post-hashed with
-  `BLAKE3("pyana-stake-nullifier-v1", ...)` to lift back to 32 bytes.
+  `BLAKE3("dregg-stake-nullifier-v1", ...)` to lift back to 32 bytes.
 - `intent/src/gossip.rs:236-303` — `used_stake_nullifiers: HashSet<[u8;32]>`,
   cleared every epoch boundary.
 
@@ -87,7 +87,7 @@ rate-limit, not a permanent "spent" record.
 - `chain/src/credential.rs:226-239` — `compute_presentation_nullifier(serial, action_domain)`
   for anonymous-credential sybil resistance.
 - `chain/src/withdraw.rs:178-...` — withdrawal-style nullifier
-  (`blake3("pyana-nullifier-v1", nullifier_key || note_commitment)`) — note
+  (`blake3("dregg-nullifier-v1", nullifier_key || note_commitment)`) — note
   this is a **different domain string** and a **different derivation** from
   the note nullifier in `cell/src/note.rs`. Either this is dead/parallel
   code, or there are two incompatible note flavours.
@@ -171,7 +171,7 @@ $ grep -rn 'store_nullifier|spend_note_atomic|is_nullifier_spent' --include='*.r
 
 **No production code calls it.** The only place a `NullifierSet` is actually
 populated by note spends is `wasm/src/runtime.rs:267-283`
-(`PyanaRuntime::spend_note`) — i.e. the browser simulator. The proptest in
+(`DreggRuntime::spend_note`) — i.e. the browser simulator. The proptest in
 `cell/tests/proptest_nullifier.rs` exercises `NullifierSet` directly, not
 through the executor.
 
@@ -334,7 +334,7 @@ end-to-end before trusting any other claim in this audit.**
 (The DSL note-spending path is the canonical one going forward — see the
 `#[deprecated]` attributes at `note_spending_air.rs:252,519,530`. So the
 relevant code to read is `circuit/src/dsl/note_spending.rs:73-...` and
-whatever `pyana_circuit::stark::verify` does with the public-input bytes.
+whatever `dregg_circuit::stark::verify` does with the public-input bytes.
 Out of scope for this audit; the bug surface is the same regardless of which
 proving path.)
 
@@ -405,11 +405,11 @@ single trait or interface that unifies them.
 
 3. **How does the verifier slice the 80-byte / 112-byte PI buffer?**
    (§7.) A spot-check of `wire/src/server.rs`'s `ProofVerifier` impl
-   against what `pyana_circuit::stark::verify` expects would resolve this.
+   against what `dregg_circuit::stark::verify` expects would resolve this.
 
 4. **`chain/src/withdraw.rs` vs `cell/src/note.rs` — two note nullifier
-   derivations.** They use different domain strings (`"pyana-nullifier-v1"`
-   vs `"pyana-note nullifier v1"`) and different inputs
+   derivations.** They use different domain strings (`"dregg-nullifier-v1"`
+   vs `"dregg-note nullifier v1"`) and different inputs
    (`(nullifier_key, commitment)` vs `(commitment, spending_key, creation_nonce)`).
    Is `chain/src/withdraw.rs` dead, parallel-design code, or active? If
    active, the two flavours can never be cross-verified.
@@ -437,7 +437,7 @@ single trait or interface that unifies them.
 
 ---
 
-## 11. Should pyana have nullifiers? Recommendation.
+## 11. Should dregg have nullifiers? Recommendation.
 
 It already does, abundantly. The recommendation is **consolidation and
 completion**, not introduction:

@@ -6,7 +6,7 @@
 //! # Design
 //!
 //! In Mina, `use_full_commitment = false` lets a party sign their AccountUpdate
-//! without seeing the rest of the transaction. Pyana's `CommitmentMode::Partial`
+//! without seeing the rest of the transaction. Dregg's `CommitmentMode::Partial`
 //! provides the same capability: the signer commits to their action's content
 //! and position, but not to what other actions exist in the turn.
 //!
@@ -19,7 +19,7 @@
 //! ```
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 
 use crate::action::{Action, CommitmentMode};
 use crate::executor::TurnExecutor;

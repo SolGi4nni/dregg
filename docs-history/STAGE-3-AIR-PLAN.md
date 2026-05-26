@@ -122,14 +122,14 @@ Effect::RevokeCapability { cell, slot } if cell == cell_id => {
 ### Verification checklist
 
 - [ ] `cargo check --workspace --all-targets` clean
-- [ ] `cargo test -p pyana-circuit effect_vm` — existing tests still pass
+- [ ] `cargo test -p dregg-circuit effect_vm` — existing tests still pass
 - [ ] New `test_revoke_capability` exercises a single-effect trace with
       non-zero starting cap_root and asserts it changes
 - [ ] `bash demo/two-ai-handoff/run.sh` still PASS — the demo doesn't use
       RevokeCapability but the AIR width change might shift verifier
       expectations; both prover and verifier rebuild from the same crate
       so should stay consistent
-- [ ] `cargo test -p pyana-protocol-tests --lib` still 11/11
+- [ ] `cargo test -p dregg-protocol-tests --lib` still 11/11
 
 ### Risk specifics
 
@@ -137,7 +137,7 @@ Effect::RevokeCapability { cell, slot } if cell == cell_id => {
 - State_before now starts at index 25 (was 24); state_after at 39 (was 38); etc.
 - Any test or code that hardcodes those base offsets needs updating
 - The `EffectVmAir::new(trace_len)` signature is unchanged
-- The proof's `air_name` stays "pyana-effect-vm-v1" — the verifier's VK hash
+- The proof's `air_name` stays "dregg-effect-vm-v1" — the verifier's VK hash
   is the SHA-256 of that string and stays the same
 
 ## EmitEvent — second attempt

@@ -1,23 +1,23 @@
-# pyana-discord-bot
+# dregg-discord-bot
 
-Discord bot for the pyana devnet — custodial cipherclerks, transfers,
+Discord bot for the dregg devnet — custodial cipherclerks, transfers,
 explorer, presence attestation, CapTP, governance, queues, names,
 federation.
 
 This crate was promoted out of `apps/` and now lives at the workspace
 toplevel (`/discord-bot`), as a peer of `node/`, `sdk/`, `app-framework/`
-etc. — it is not an app, it is a *consumer of* the canonical pyana
+etc. — it is not an app, it is a *consumer of* the canonical dregg
 SDK surface.
 
 ## Cipherclerk handle
 
 Per-user cipherclerks are backed by the canonical
-[`pyana_app_framework::AppCipherclerk`](../app-framework/src/cipherclerk.rs) over
-[`pyana_sdk::AgentCipherclerk`](../sdk/src/cipherclerk.rs). Each Discord user is
+[`dregg_app_framework::AppCipherclerk`](../app-framework/src/cipherclerk.rs) over
+[`dregg_sdk::AgentCipherclerk`](../sdk/src/cipherclerk.rs). Each Discord user is
 mapped to a deterministic Ed25519 identity:
 
 ```
-seed = BLAKE3_derive_key("pyana-discord-bot-v1", bot_secret || discord_user_id)
+seed = BLAKE3_derive_key("dregg-discord-bot-v1", bot_secret || discord_user_id)
 agent = AgentCipherclerk::from_key_bytes(seed)
 cclerk = AppCipherclerk::new(agent, federation_id)
 ```
@@ -79,11 +79,11 @@ Environment variables (see `src/config.rs`):
 | `DISCORD_TOKEN`  | yes      | Discord bot token                            |
 | `DISCORD_APP_ID` | yes      | Discord application id (u64)                 |
 | `BOT_SECRET`     | yes      | 64 hex chars (32 bytes) — master key seed    |
-| `DEVNET_URL`     | no       | defaults to `https://devnet.pyana.fg-goose.online` |
+| `DEVNET_URL`     | no       | defaults to `https://devnet.dregg.fg-goose.online` |
 | `DATABASE_URL`   | no       | defaults to `sqlite:bot.db`                  |
 
 ## Build
 
 ```bash
-cargo build -p pyana-discord-bot
+cargo build -p dregg-discord-bot
 ```

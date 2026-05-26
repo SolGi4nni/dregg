@@ -1,14 +1,14 @@
 //! Factory and Sovereign checks: deploy, peer exchange, multi-party atomic, IVC history.
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, Cell, CellId, CellMode, ChildVkStrategy, FactoryDescriptor, FactoryRegistry,
     FieldConstraint, Ledger, Permissions,
 };
-use pyana_circuit::BabyBear;
-use pyana_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
-use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_circuit::BabyBear;
+use dregg_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
+use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 use crate::report::{CheckResult, run_check};
 

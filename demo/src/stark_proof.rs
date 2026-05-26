@@ -1,20 +1,20 @@
 //! STARK proof generation and verification for issuer membership.
 //!
-//! This module uses the REAL `pyana_circuit::stark` module to generate and verify
+//! This module uses the REAL `dregg_circuit::stark` module to generate and verify
 //! a STARK proof that an issuer's public key is a member of the federation.
 //!
 //! The proof demonstrates membership in a 4-ary Merkle tree using the
 //! collision-resistant Poseidon2-based DSL circuit
-//! (`pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit`) with FRI-based
+//! (`dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit`) with FRI-based
 //! polynomial commitment.
 //!
 //! NOTE: This was migrated away from the deprecated `MerkleStarkAir`, which
 //! enforced a linear (trivially invertible) hash binding and was provably unsound.
 
-use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
-use pyana_circuit::dsl::membership::generate_merkle_poseidon2_trace;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark;
+use dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+use dregg_circuit::dsl::membership::generate_merkle_poseidon2_trace;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::stark;
 
 /// Result of a STARK-proven issuer membership verification.
 pub struct StarkMembershipResult {

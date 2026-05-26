@@ -5,10 +5,10 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::preconditions::CellStatePrecondition;
-use pyana_cell::{Cell, CellId, Ledger, Preconditions};
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
-use pyana_turn::{CallForest, ComputronCosts, Turn};
+use dregg_cell::preconditions::CellStatePrecondition;
+use dregg_cell::{Cell, CellId, Ledger, Preconditions};
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+use dregg_turn::{CallForest, ComputronCosts, Turn};
 
 use crate::atomic::{AtomicForest, AtomicForestBuilder, Coordinator, Decision, Participant, Vote};
 use crate::causal::CausalDag;
@@ -66,15 +66,15 @@ fn make_cell(key_byte: u8, balance: u64) -> Cell {
     let token_id = [0u8; 32]; // default token domain
     let mut cell = Cell::with_balance(pk, token_id, balance);
     // Make permissions fully permissive for tests.
-    cell.permissions = pyana_cell::Permissions {
-        send: pyana_cell::AuthRequired::None,
-        receive: pyana_cell::AuthRequired::None,
-        set_state: pyana_cell::AuthRequired::None,
-        set_permissions: pyana_cell::AuthRequired::None,
-        set_verification_key: pyana_cell::AuthRequired::None,
-        increment_nonce: pyana_cell::AuthRequired::None,
-        delegate: pyana_cell::AuthRequired::None,
-        access: pyana_cell::AuthRequired::None,
+    cell.permissions = dregg_cell::Permissions {
+        send: dregg_cell::AuthRequired::None,
+        receive: dregg_cell::AuthRequired::None,
+        set_state: dregg_cell::AuthRequired::None,
+        set_permissions: dregg_cell::AuthRequired::None,
+        set_verification_key: dregg_cell::AuthRequired::None,
+        increment_nonce: dregg_cell::AuthRequired::None,
+        delegate: dregg_cell::AuthRequired::None,
+        access: dregg_cell::AuthRequired::None,
     };
     cell
 }
@@ -314,7 +314,7 @@ mod causal_dag {
         dag.insert_genesis(h1).unwrap();
 
         let err = dag.insert_genesis(h1).unwrap_err();
-        assert_eq!(err, pyana_types::CausalError::Duplicate(h1));
+        assert_eq!(err, dregg_types::CausalError::Duplicate(h1));
     }
 
     #[test]
@@ -325,7 +325,7 @@ mod causal_dag {
 
         // Try to insert h2 depending on h1, but h1 is not in the DAG.
         let err = dag.insert(h2, &[h1]).unwrap_err();
-        assert!(matches!(err, pyana_types::CausalError::MissingDeps { .. }));
+        assert!(matches!(err, dregg_types::CausalError::MissingDeps { .. }));
     }
 
     #[test]
@@ -399,7 +399,7 @@ mod causal_dag {
 }
 
 // CausalLedger, CausalTurn, and CausalTurnBuilder were deleted in Block 4.
-// The node uses pyana_types::CausalDag directly; the ledger wrapper was dead production code.
+// The node uses dregg_types::CausalDag directly; the ledger wrapper was dead production code.
 // Tests for CausalDag remain in the causal_dag module above.
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -938,7 +938,7 @@ mod coordinator_tests {
 mod participant_tests {
     use super::*;
     use crate::atomic::CommitMessage;
-    use pyana_turn::TurnReceipt;
+    use dregg_turn::TurnReceipt;
 
     fn setup_participant_scenario() -> (
         Ledger,
@@ -1048,7 +1048,7 @@ mod participant_tests {
         let sig_2 = Vote::sign_yes(&proposal_id, &af.hash, &signing_keys[1]);
         let commit = CommitMessage {
             proposal_id,
-            receipt: pyana_turn::TurnReceipt {
+            receipt: dregg_turn::TurnReceipt {
                 turn_hash: [0u8; 32],
                 forest_hash: [0u8; 32],
                 pre_state_hash: [0u8; 32],
@@ -1150,7 +1150,7 @@ mod integration {
         // Grant cell_a a capability to reach cell_b (needed for cross-cell actions).
         cell_a
             .capabilities
-            .grant(id_b, pyana_cell::AuthRequired::None);
+            .grant(id_b, dregg_cell::AuthRequired::None);
         let id_a = ledger.insert_cell(cell_a).unwrap();
         ledger.insert_cell(cell_b).unwrap();
 
@@ -1159,9 +1159,9 @@ mod integration {
         let (signing_keys, participant_keys) = make_participant_keys(&[node_a, node_b]);
 
         // Phase 1: Apply a turn directly against the ledger (no CausalLedger wrapper).
-        // CausalLedger was deleted; production code routes through pyana_turn::TurnExecutor.
+        // CausalLedger was deleted; production code routes through dregg_turn::TurnExecutor.
         {
-            use pyana_turn::TurnExecutor;
+            use dregg_turn::TurnExecutor;
             let executor = TurnExecutor::new(zero_costs());
             let t1 = make_transfer_turn(id_a, id_a, id_b, 1000, 0, 0);
             executor.execute(&t1, &mut ledger);

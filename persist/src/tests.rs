@@ -55,7 +55,7 @@ fn sample_attested_root(height: u64) -> StoredAttestedRoot {
         ],
         threshold_qc: None,
         threshold: 2,
-        federation_id: pyana_types::FederationId::PLACEHOLDER,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
     }
 }
@@ -1049,7 +1049,7 @@ fn store_root_hex() {
 
 #[test]
 fn test_store_note_roundtrip() {
-    use pyana_cell::note::Note;
+    use dregg_cell::note::Note;
 
     let store = new_store();
 
@@ -1088,7 +1088,7 @@ fn test_store_note_roundtrip() {
 
 #[test]
 fn test_nullifier_persistence() {
-    use pyana_cell::note::{Note, Nullifier};
+    use dregg_cell::note::{Note, Nullifier};
 
     let store = new_store();
     let note = Note::with_randomness([1u8; 32], [1, 100, 0, 0, 0, 0, 0, 0], [10u8; 32]);
@@ -1115,7 +1115,7 @@ fn test_nullifier_persistence() {
 
 #[test]
 fn test_nullifier_persistence_across_restart() {
-    use pyana_cell::note::Note;
+    use dregg_cell::note::Note;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note_test.redb");
@@ -1143,7 +1143,7 @@ fn test_nullifier_persistence_across_restart() {
 
 #[test]
 fn test_spend_note_atomic() {
-    use pyana_cell::note::{Note, Nullifier};
+    use dregg_cell::note::{Note, Nullifier};
 
     let store = new_store();
 
@@ -1177,7 +1177,7 @@ fn test_spend_note_atomic() {
 
 #[test]
 fn test_spend_note_atomic_double_spend_no_side_effects() {
-    use pyana_cell::note::Note;
+    use dregg_cell::note::Note;
 
     let store = new_store();
 
@@ -1202,7 +1202,7 @@ fn test_spend_note_atomic_double_spend_no_side_effects() {
 
 #[test]
 fn test_attested_root_includes_note_tree() {
-    use pyana_cell::note::Note;
+    use dregg_cell::note::Note;
 
     let store = new_store();
 
@@ -1237,7 +1237,7 @@ fn test_attested_root_includes_note_tree() {
         quorum_signatures: vec![(PublicKey([0x11; 32]), Signature([0x22; 64]))],
         threshold_qc: None,
         threshold: 1,
-        federation_id: pyana_types::FederationId::PLACEHOLDER,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
     };
 

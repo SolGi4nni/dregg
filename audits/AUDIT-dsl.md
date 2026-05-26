@@ -4,7 +4,7 @@
 
 ## Summary
 
-The "DSL framework" of pyana — comprising `turn::builder::{TurnBuilder, ActionBuilder}`, the `intent/` crate's intent expression + solver surface, the `app-framework/` crate's lifecycle helpers, and `sdk::cclerk::AgentCipherclerk`'s authoring methods — is a thin, untyped envelope around the runtime `turn::action::Effect` enum. Compared to the 41 runtime `Effect` variants, the user-facing surface is broken in three structural ways: (1) **coverage is sparse and inconsistent** — fewer than 25% of effect variants are reachable through any typed helper; the rest require apps to hand-construct `Effect::*` literals, defeating the purpose of having a framework; (2) **authorization defaults to `Authorization::Unchecked` everywhere** — every helper in `app-framework/src/escrow.rs`, every `Action` constructed in `apps/gallery/`, and every helper in `intent/src/fulfillment.rs` that builds a payment turn ships with `Unchecked` auth, so the framework's "secure-by-default" claim does not hold; (3) **lowering is silently lossy and not injective** — `AgentCipherclerk::convert_effects_to_vm` (sdk/src/cipherclerk.rs:4322) truncates 32-byte field elements to 4 bytes mod the BabyBear prime and maps roughly half of all `Effect` variants to `VmEffect::NoOp`, so the STARK proof that allegedly attests to a turn's execution does not, in fact, attest to its `Effect` content. There are additional smaller hazards: the two unstaged files (`intent/src/solver.rs`, `intent/src/trustless.rs`) cohere with the rest of `intent/` but the solver's settlement-amount computation has a bug (`min(x).max(x)` collapse), `apps/gallery/src/settlement.rs:92,110` declares conservation-law `balance_change` values that violate the documented invariant, and several `nonce: 0` placeholders in turn-building helpers ship without a way to be overridden by callers. The `ActionBuilder` itself is largely clean but does not validate that mutually exclusive fields (e.g. `Authorization::Proof.bound_action` vs `method`) agree, and `effect()` accepts arbitrary `Effect` literals so it inherits all the runtime invariants without enforcing any of them.
+The "DSL framework" of dregg — comprising `turn::builder::{TurnBuilder, ActionBuilder}`, the `intent/` crate's intent expression + solver surface, the `app-framework/` crate's lifecycle helpers, and `sdk::cclerk::AgentCipherclerk`'s authoring methods — is a thin, untyped envelope around the runtime `turn::action::Effect` enum. Compared to the 41 runtime `Effect` variants, the user-facing surface is broken in three structural ways: (1) **coverage is sparse and inconsistent** — fewer than 25% of effect variants are reachable through any typed helper; the rest require apps to hand-construct `Effect::*` literals, defeating the purpose of having a framework; (2) **authorization defaults to `Authorization::Unchecked` everywhere** — every helper in `app-framework/src/escrow.rs`, every `Action` constructed in `apps/gallery/`, and every helper in `intent/src/fulfillment.rs` that builds a payment turn ships with `Unchecked` auth, so the framework's "secure-by-default" claim does not hold; (3) **lowering is silently lossy and not injective** — `AgentCipherclerk::convert_effects_to_vm` (sdk/src/cipherclerk.rs:4322) truncates 32-byte field elements to 4 bytes mod the BabyBear prime and maps roughly half of all `Effect` variants to `VmEffect::NoOp`, so the STARK proof that allegedly attests to a turn's execution does not, in fact, attest to its `Effect` content. There are additional smaller hazards: the two unstaged files (`intent/src/solver.rs`, `intent/src/trustless.rs`) cohere with the rest of `intent/` but the solver's settlement-amount computation has a bug (`min(x).max(x)` collapse), `apps/gallery/src/settlement.rs:92,110` declares conservation-law `balance_change` values that violate the documented invariant, and several `nonce: 0` placeholders in turn-building helpers ship without a way to be overridden by callers. The `ActionBuilder` itself is largely clean but does not validate that mutually exclusive fields (e.g. `Authorization::Proof.bound_action` vs `method`) agree, and `effect()` accepts arbitrary `Effect` literals so it inherits all the runtime invariants without enforcing any of them.
 
 ## Findings table
 
@@ -67,7 +67,7 @@ let action = Action {
 ```rust
 fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
     let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
-    BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+    BabyBear::new(val_u32 % dregg_circuit::field::BABYBEAR_P)
 }
 …
 for effect in effects {
@@ -272,7 +272,7 @@ impl ActionBuilder {
 
 10 helpers exist. The `Effect` enum (`turn/src/action.rs:220-619`) has 41 variants. The other 31 (`NoteSpend`, `NoteCreate`, `CreateSealPair`, `Seal`, `Unseal`, `BridgeMint`, `BridgeLock`, `BridgeFinalize`, `BridgeCancel`, `PipelinedSend`, `CreateObligation`, `FulfillObligation`, `SlashObligation`, `CreateEscrow`, `ReleaseEscrow`, `RefundEscrow`, `CreateCommittedEscrow`, `ReleaseCommittedEscrow`, `RefundCommittedEscrow`, `ExerciseViaCapability`, `MakeSovereign`, `CreateCellFromFactory`, `QueueAllocate`, `QueueEnqueue`, `QueueDequeue`, `QueueResize`, `QueueAtomicTx`, `QueuePipelineStep`, `SpawnWithDelegation`, `RefreshDelegation`, `RevokeDelegation`) require the user to construct `Effect::*` literals manually and pass through `.effect(e)`.
 
-**Impact:** The "framework" provides no type-safety improvement over directly constructing the runtime structs; apps that need any non-trivial effect must import `pyana_turn::action::Effect` and assemble it themselves, defeating the abstraction.
+**Impact:** The "framework" provides no type-safety improvement over directly constructing the runtime structs; apps that need any non-trivial effect must import `dregg_turn::action::Effect` and assemble it themselves, defeating the abstraction.
 
 **Fix:** Either (a) generate the builder via macro from the `Effect` enum, (b) accept that the builder is for the common-case effects only and document the lower-level path, or (c) split the framework into "high-level" (intent → action) and "low-level" (effect plumbing) crates so the inconsistency isn't hidden.
 
@@ -317,7 +317,7 @@ let agent = CellId::from_bytes(escrow_id);
 ```rust
 let action = Action {
     target: payer_cell,
-    method: pyana_turn::action::symbol("fulfillment_payment"),
+    method: dregg_turn::action::symbol("fulfillment_payment"),
     args: Vec::new(),
     authorization: Authorization::Unchecked,
     …
@@ -361,7 +361,7 @@ Effect::GrantCapability { to, cap, .. } if to == cell_id => {
 
 ```rust
 fn compute_escrow_id(from: &CellId, to: &CellId, amount: u64, timeout: u64) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-app-framework-escrow-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-app-framework-escrow-id-v1");
     hasher.update(from.as_bytes());
     hasher.update(to.as_bytes());
     hasher.update(&amount.to_le_bytes());
@@ -558,7 +558,7 @@ Summary: **10 of 41 variants (24%)** have a typed `ActionBuilder` helper. **3 of
 
 Worse: the `intent` crate's "lowering" is essentially limited to `Effect::Transfer` (payments), `Effect::NoteSpend` / `Effect::NoteCreate` (committed payments), and `Effect::RefundEscrow` (cancellation). The trustless solver's "settlement turn" produces `SettlementAction` (`trustless.rs:253-264`) which is a *separate type* from `Effect::Transfer` — there is no code that converts a `CompoundTurn` (the trustless settle output) into an executable `Turn`. The output of `TrustlessIntentEngine::finalize` is structurally a settlement but operationally a payload that must be hand-translated by the federation node.
 
-Conversely, the runtime's `Effect::CreateCellFromFactory`, `Effect::MakeSovereign`, the entire `Bridge*` family, the entire `QueueProgram` family, `ExerciseViaCapability`, and the bearer-cap delegation chain are not constructable from the high-level surface at all — apps that want these must reach into `pyana_turn::action::Effect` directly.
+Conversely, the runtime's `Effect::CreateCellFromFactory`, `Effect::MakeSovereign`, the entire `Bridge*` family, the entire `QueueProgram` family, `ExerciseViaCapability`, and the bearer-cap delegation chain are not constructable from the high-level surface at all — apps that want these must reach into `dregg_turn::action::Effect` directly.
 
 The `app-framework`'s `RingTradeParticipant` trait and `Settlement` type also do not produce `Effect`s — they delegate to app-specific `settle_leg` impls. So the framework's "ring trade" abstraction is not actually a turn-builder; it's a coordination protocol.
 
@@ -570,7 +570,7 @@ The `app-framework`'s `RingTradeParticipant` trait and `Settlement` type also do
 
 2. **Should `intent` lower to `Effect` at all, or is its job purely matching/discovery?** The current code lowers in three places (`fulfillment.rs:789`, `:1131`, `:1171`) — each builds a turn from scratch. If apps are expected to take a `Match` and translate to effects themselves, then `fulfillment.rs`'s embedded turn-builders are vestigial. If the intent layer is supposed to own the lowering, then the trustless engine's `CompoundTurn` → `Turn` translation is the missing piece.
 
-3. **What is the relationship between `pyana-dsl` (the source-to-circuit DSL in `pyana-dsl/src/`) and the "DSL" of this audit?** The `pyana-dsl` crate has its own `gen_*` backends but does not appear to produce `Effect` values — it produces circuit definitions. Are these meant to converge?
+3. **What is the relationship between `dregg-dsl` (the source-to-circuit DSL in `dregg-dsl/src/`) and the "DSL" of this audit?** The `dregg-dsl` crate has its own `gen_*` backends but does not appear to produce `Effect` values — it produces circuit definitions. Are these meant to converge?
 
 4. **`Authorization::Unchecked` as the builder default is convenient but unsafe.** Should the builder require an authorization at construction time? Or should the executor's policy be tightened (forbid `Unchecked` outside of tests)?
 
@@ -584,4 +584,4 @@ The `app-framework`'s `RingTradeParticipant` trait and `Settlement` type also do
 
 9. **Is `RegisterName` a planned `Effect` variant?** `sdk/src/names.rs:659` comments "Submit Effect::RegisterName to the federation" but no such variant exists in `turn::action::Effect`. Either the variant is missing or the comment is stale.
 
-10. **The unstaged files (`intent/src/solver.rs`, `intent/src/trustless.rs`) cohere structurally with the rest of `intent/`** — same `Intent` / `CommitmentId` / `IntentId` types, same error-type-per-module style, similar `RingTrade` shape. The cohesion concern is the *opposite* — they are not yet integrated. The trustless engine produces `CompoundTurn` but no consumer translates it to `Turn`; the ring solver produces `RingTrade` and `Settlement` but only `RingTradeParticipant::settle_leg` (in `app-framework`) is wired to consume settlements. Should there be a `pyana_intent::lowering` module that converts `RingTrade` / `Settlement` / `CompoundTurn` into an executable `Turn`?
+10. **The unstaged files (`intent/src/solver.rs`, `intent/src/trustless.rs`) cohere structurally with the rest of `intent/`** — same `Intent` / `CommitmentId` / `IntentId` types, same error-type-per-module style, similar `RingTrade` shape. The cohesion concern is the *opposite* — they are not yet integrated. The trustless engine produces `CompoundTurn` but no consumer translates it to `Turn`; the ring solver produces `RingTrade` and `Settlement` but only `RingTradeParticipant::settle_leg` (in `app-framework`) is wired to consume settlements. Should there be a `dregg_intent::lowering` module that converts `RingTrade` / `Settlement` / `CompoundTurn` into an executable `Turn`?

@@ -228,7 +228,7 @@ pub struct EvmProof {
     pub verifier_address: String,
 }
 
-/// Generate a Groth16 proof wrapping a pyana STARK proof for EVM verification.
+/// Generate a Groth16 proof wrapping a dregg STARK proof for EVM verification.
 ///
 /// This function:
 /// 1. Sets up the SP1 prover with our guest program ELF
@@ -323,7 +323,7 @@ async fn real_wrap(
     // Load the guest program ELF (built by `cargo prove build`).
     // include_elf! embeds the ELF at compile time from the build artifact produced
     // by sp1-build in build.rs.
-    let elf = include_elf!("pyana-sp1-program");
+    let elf = include_elf!("dregg-sp1-program");
 
     // Set up the CPU prover (local proving, no network).
     let prover = ProverClient::builder().cpu().build().await;

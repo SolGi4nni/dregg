@@ -2,7 +2,7 @@ import express from 'express';
 import type { Server } from 'http';
 
 /**
- * Mock pyana node HTTP server for deterministic testing.
+ * Mock dregg node HTTP server for deterministic testing.
  * Simulates all endpoints the extension calls.
  */
 
@@ -96,7 +96,7 @@ export class MockNode {
       const cellId = req.body.cell_id || 'abcd'.repeat(16);
       const nodeId = 'node_mock_001';
       res.json({
-        uri: `pyana://${nodeId}/${cellId}`,
+        uri: `dregg://${nodeId}/${cellId}`,
         cell_id: cellId,
         node_id: nodeId,
       });
@@ -106,7 +106,7 @@ export class MockNode {
     this.app.post('/turns/peer-exchange', (req, res) => {
       this.state.lastPeerExchange = req.body;
       const uri = req.body.uri || '';
-      const parts = uri.replace('pyana://', '').split('/');
+      const parts = uri.replace('dregg://', '').split('/');
       res.json({
         ref_id: `ref_${Date.now()}`,
         cell_id: parts[1] || 'unknown',
@@ -148,7 +148,7 @@ export class MockNode {
       }
       const match = this.state.services.find(s => s.path === path);
       if (match) {
-        res.json({ ...match, sturdyRef: `pyana://node_mock_001/${match.name}` });
+        res.json({ ...match, sturdyRef: `dregg://node_mock_001/${match.name}` });
       } else {
         res.status(404).json({ error: 'Path not found' });
       }

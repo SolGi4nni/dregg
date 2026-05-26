@@ -15,7 +15,7 @@
 //!
 //! All currently `#[ignore]`d on the sovereign-witness AIR teeth lane.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 
 // ===========================================================================
 // Phase 1: legal witness path
@@ -189,10 +189,10 @@ fn sovereign_witness_cross_federation_replay_rejects() {
 
 #[test]
 fn sovereign_witnesses_field_is_covered_by_turn_hash() {
-    use pyana_cell::Cell;
-    use pyana_cell::CellId;
-    use pyana_turn::SovereignCellWitness;
-    use pyana_turn::Turn;
+    use dregg_cell::Cell;
+    use dregg_cell::CellId;
+    use dregg_turn::SovereignCellWitness;
+    use dregg_turn::Turn;
     use std::collections::HashMap;
 
     let agent = CellId([1u8; 32]);
@@ -200,7 +200,7 @@ fn sovereign_witnesses_field_is_covered_by_turn_hash() {
     let make_turn = |witnesses: HashMap<CellId, SovereignCellWitness>| Turn {
         agent,
         nonce: 0,
-        call_forest: pyana_turn::CallForest::new(),
+        call_forest: dregg_turn::CallForest::new(),
         fee: 0,
         memo: None,
         valid_until: None,
@@ -258,20 +258,20 @@ fn sovereign_witnesses_field_is_covered_by_turn_hash() {
         1,
     );
     assert!(
-        msg.starts_with(b"pyana-sovereign-witness-v1:"),
+        msg.starts_with(b"dregg-sovereign-witness-v1:"),
         "signing message must begin with the v1 domain separator"
     );
 }
 
 #[test]
 fn turn_sovereign_witnesses_field_is_a_map_and_constructs_empty() {
-    use pyana_turn::Turn;
+    use dregg_turn::Turn;
     use std::collections::HashMap;
     let agent = CellId([1u8; 32]);
     let turn = Turn {
         agent,
         nonce: 0,
-        call_forest: pyana_turn::CallForest::new(),
+        call_forest: dregg_turn::CallForest::new(),
         fee: 0,
         memo: None,
         valid_until: None,

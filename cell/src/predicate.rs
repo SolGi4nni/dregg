@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 /// opaque and produces a domain-keyed BLAKE3 hash:
 ///
 /// ```text
-/// vk_hash = BLAKE3_keyed("pyana-witnessed-predicate-vk-v1",
+/// vk_hash = BLAKE3_keyed("dregg-witnessed-predicate-vk-v1",
 ///                        len(bytes) || bytes)
 /// ```
 ///
@@ -64,7 +64,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Why opaque bytes?
 ///
-/// Custom predicates may be authored in many representations: pyana-DSL
+/// Custom predicates may be authored in many representations: dregg-DSL
 /// IR, WASM, raw AIR descriptors, Pickles circuit serializations, etc.
 /// The platform does not pick the language; it picks the *commitment
 /// shape*. Apps using the same language interoperate transparently;
@@ -91,7 +91,7 @@ use serde::{Deserialize, Serialize};
 /// Failure mode if violated: validator's re-execution disagrees with
 /// the executor's acceptance bit; soundness failure.
 pub fn canonical_predicate_vk(predicate_bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-witnessed-predicate-vk-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-witnessed-predicate-vk-v1");
     hasher.update(&(predicate_bytes.len() as u64).to_le_bytes());
     hasher.update(predicate_bytes);
     *hasher.finalize().as_bytes()
@@ -574,7 +574,7 @@ impl WitnessedPredicateRegistry {
     /// circuit crate can do so.
     ///
     /// Production callers should register real verifiers from the
-    /// `pyana-circuit` (or app-side) crates before evaluating any
+    /// `dregg-circuit` (or app-side) crates before evaluating any
     /// real witnessed predicate.
     pub fn with_stubs() -> Self {
         let mut r = Self::empty();
@@ -625,7 +625,7 @@ impl WitnessedPredicateRegistry {
     /// (`AIR-SOUNDNESS-AUDIT.md`) flagged this as the single largest
     /// playground risk amplifier.
     ///
-    /// The cell crate cannot depend on `pyana-circuit` (it would close a
+    /// The cell crate cannot depend on `dregg-circuit` (it would close a
     /// dependency cycle), so the *real* per-kind verifiers must be
     /// installed by the host at startup via
     /// [`WitnessedPredicateRegistry::register_builtin`]. Until that
@@ -635,7 +635,7 @@ impl WitnessedPredicateRegistry {
     /// # Migration for callers
     ///
     /// - **Production hosts** must install real verifiers (e.g. the
-    ///   forthcoming `pyana_circuit::witnessed_predicate::default_registry()`
+    ///   forthcoming `dregg_circuit::witnessed_predicate::default_registry()`
     ///   adapter) for every kind they intend to exercise.
     /// - **Tests** that exercise *plumbing only* (executor dispatch,
     ///   registry routing, error mapping) should switch to
@@ -901,7 +901,7 @@ impl WitnessProducerRegistry {
     /// satisfies the unit-counit identity in tests.
     ///
     /// Production callers must replace stubs with real per-kind
-    /// producers (`pyana-circuit` for Dfa / Temporal /
+    /// producers (`dregg-circuit` for Dfa / Temporal /
     /// MerkleMembership / BlindedSet / BridgePredicate /
     /// PedersenEquality, app-side for `Custom`).
     pub fn with_stubs() -> Self {
@@ -1106,7 +1106,7 @@ impl WitnessedPredicateVerifier for StubVerifier {
 
 // ─────────────────────────────────────────────────────────────────────
 // NotYetWiredVerifier — soundness-honest default for kinds whose real
-// verifier lives in `pyana-circuit` and must be host-installed.
+// verifier lives in `dregg-circuit` and must be host-installed.
 // ─────────────────────────────────────────────────────────────────────
 
 /// A verifier that **always rejects**, used as the default registration
@@ -1115,7 +1115,7 @@ impl WitnessedPredicateVerifier for StubVerifier {
 ///
 /// # Why this exists
 ///
-/// The cell crate cannot depend on `pyana-circuit` (cycle). The real
+/// The cell crate cannot depend on `dregg-circuit` (cycle). The real
 /// per-kind verifiers (`dsl::circuit` for Dfa, `dsl::membership` for
 /// Merkle/BlindedSet, `temporal_predicate_dsl` for Temporal,
 /// `bridge::present::verify_predicate_proof` for BridgePredicate,
@@ -1151,42 +1151,42 @@ impl NotYetWiredVerifier {
         Self {
             kind: WitnessedPredicateKind::Dfa,
             name: "not-yet-wired-dfa",
-            upstream: "pyana_circuit::dsl::circuit",
+            upstream: "dregg_circuit::dsl::circuit",
         }
     }
     fn temporal() -> Self {
         Self {
             kind: WitnessedPredicateKind::Temporal,
             name: "not-yet-wired-temporal",
-            upstream: "pyana_circuit::temporal_predicate_dsl",
+            upstream: "dregg_circuit::temporal_predicate_dsl",
         }
     }
     fn merkle_membership() -> Self {
         Self {
             kind: WitnessedPredicateKind::MerkleMembership,
             name: "not-yet-wired-merkle-membership",
-            upstream: "pyana_circuit::dsl::membership::verify_membership_dsl_full",
+            upstream: "dregg_circuit::dsl::membership::verify_membership_dsl_full",
         }
     }
     fn blinded_set() -> Self {
         Self {
             kind: WitnessedPredicateKind::BlindedSet,
             name: "not-yet-wired-blinded-set",
-            upstream: "pyana_circuit::dsl::membership::verify_blinded_membership_dsl_full",
+            upstream: "dregg_circuit::dsl::membership::verify_blinded_membership_dsl_full",
         }
     }
     fn bridge_predicate() -> Self {
         Self {
             kind: WitnessedPredicateKind::BridgePredicate,
             name: "not-yet-wired-bridge-predicate",
-            upstream: "pyana_bridge::present::verify_predicate_proof",
+            upstream: "dregg_bridge::present::verify_predicate_proof",
         }
     }
     fn pedersen_equality() -> Self {
         Self {
             kind: WitnessedPredicateKind::PedersenEquality,
             name: "not-yet-wired-pedersen-equality",
-            upstream: "pyana_circuit::value_commitment (Schnorr) / bulletproofs (range)",
+            upstream: "dregg_circuit::value_commitment (Schnorr) / bulletproofs (range)",
         }
     }
 }
@@ -1260,9 +1260,9 @@ impl WitnessedPredicateVerifier for NotYetWiredVerifier {
 ///
 /// # Versioning
 ///
-/// The keyed-derive domain `pyana-nonmembership-adjacency-v1` is a
+/// The keyed-derive domain `dregg-nonmembership-adjacency-v1` is a
 /// versioned wire format. The Golden lift will introduce
-/// `pyana-nonmembership-adjacency-v2` with a different layout that
+/// `dregg-nonmembership-adjacency-v2` with a different layout that
 /// includes leaf-index public inputs; v1 and v2 produce different
 /// tags so the cut-over is unambiguous.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1305,7 +1305,7 @@ impl NonMembershipNeighborProof {
     /// Compute the canonical adjacency tag for a non-membership
     /// neighbor witness.
     ///
-    /// `tag = BLAKE3_keyed("pyana-nonmembership-adjacency-v1",
+    /// `tag = BLAKE3_keyed("dregg-nonmembership-adjacency-v1",
     ///                     commitment || lower || upper)`.
     ///
     /// The prover must reconstruct this from the set's Merkle root
@@ -1325,7 +1325,7 @@ impl NonMembershipNeighborProof {
     /// (Golden Vision); this commitment-keyed form is the interim
     /// rung. Document this when wiring `Renounced` flows.
     pub fn adjacency_tag(commitment: &[u8; 32], lower: &[u8; 32], upper: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-nonmembership-adjacency-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-nonmembership-adjacency-v1");
         hasher.update(commitment);
         hasher.update(lower);
         hasher.update(upper);
@@ -1422,7 +1422,7 @@ impl WitnessedPredicateVerifier for SortedNeighborNonMembershipVerifier {
         if proof.adjacency_tag != expected {
             return Err(WitnessedPredicateError::Rejected {
                 kind_name: "NonMembership",
-                reason: "adjacency_tag does not match BLAKE3_keyed(\"pyana-nonmembership-adjacency-v1\", commitment || lower || upper); the prover did not bind to this set's commitment".into(),
+                reason: "adjacency_tag does not match BLAKE3_keyed(\"dregg-nonmembership-adjacency-v1\", commitment || lower || upper); the prover did not bind to this set's commitment".into(),
             });
         }
         // Enforce strict ordering: lower < candidate < upper.
@@ -1772,7 +1772,7 @@ mod tests {
     // The prior public-sentinel attack: pick lower=0x00…, upper=0xFF…,
     // adjacency_tag=0xFE…, "prove" non-membership in an arbitrary set
     // without knowing the set's commitment. Today the adjacency_tag is
-    // derived from BLAKE3_keyed("pyana-nonmembership-adjacency-v1",
+    // derived from BLAKE3_keyed("dregg-nonmembership-adjacency-v1",
     // commitment || lower || upper), so a prover who doesn't know the
     // commitment cannot reconstruct the tag.
 

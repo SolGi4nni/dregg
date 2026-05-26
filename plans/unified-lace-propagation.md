@@ -34,7 +34,7 @@ or FabricAddress. The "federation" a capability belongs to is just a GroupId.
 | `pipeline.rs` | 61, 95, 271, 360, 425-688 | `sender: FederationId`, `notify_federation`, outbox keyed by FederationId | All should be StrandId (pipeline is bilateral) | moderate | can-wait |
 | `store_forward.rs` | 50, 76, 135, 653, 768-872 | `destination: FederationId`, queues keyed by FederationId | Destination is a FabricAddress; queues keyed by StrandId | major | can-wait |
 | `sturdy.rs` | 143, 146 | `make_uri(federation_id: [u8; 32], ...)` | Parameter name stays (URI format is stable) but doc updated | trivial | done |
-| `uri.rs` | 67, 92 | `federation_id: [u8; 32]` field in PyanaUri | Keep field (wire format stable); add doc alias "group_id" | trivial | done |
+| `uri.rs` | 67, 92 | `federation_id: [u8; 32]` field in DreggUri | Keep field (wire format stable); add doc alias "group_id" | trivial | done |
 
 ### Strategy
 Add a doc comment and type alias re-export at `captp/src/lib.rs` bridging
@@ -48,7 +48,7 @@ Add a doc comment and type alias re-export at `captp/src/lib.rs` bridging
 WireMessage variants use `federation_id: [u8; 32]` and `federation_root: [u8; 32]`
 throughout. The server tracks `PeerRole::CapTpPeer { federation_id }` and
 `federation_root` for authentication. `federation_bridge.rs` connects to the
-`pyana_federation` crate (behind a feature flag).
+`dregg_federation` crate (behind a feature flag).
 
 ### Instances
 
@@ -59,7 +59,7 @@ throughout. The server tracks `PeerRole::CapTpPeer { federation_id }` and
 | `server.rs` | 735, 805 | `PeerRole::CapTpPeer { federation_id }` | Should become `CapTpPeer { strand_id }` or `{ group_id }` | moderate | can-wait |
 | `server.rs` | 890, 896, 942 | `CapTpSessionManager.sessions: HashMap<FederationId, CapSession>`, `known_federations` | Key by StrandId; known_federations becomes known_groups | moderate | can-wait |
 | `server.rs` | 1679, 1797, 2236-2239 | CapHello message handling uses federation_id | Rename in next wire protocol version | moderate | can-wait |
-| `federation_bridge.rs` | all | Feature-gated bridge to `pyana_federation` | Entire module is legacy; will be replaced by cross-reference DAG proofs | major | can-wait |
+| `federation_bridge.rs` | all | Feature-gated bridge to `dregg_federation` | Entire module is legacy; will be replaced by cross-reference DAG proofs | major | can-wait |
 | `codec.rs` | 233 | Test fixture with `federation_root` | Test-only; cosmetic | trivial | cosmetic |
 | `hardening.rs` | 316, 490, 561 | `federation_id` in test/hardening code | Test-only; cosmetic | trivial | cosmetic |
 | `auth.rs` | 488, 493, 536 | Test fixtures with `federation_id` | Test-only; cosmetic | trivial | cosmetic |

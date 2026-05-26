@@ -793,7 +793,7 @@ impl Sp1Backend {
         // Compute the token ID hash (same as guest program).
         let token_id_hash = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"pyana-token-id:");
+            hasher.update(b"dregg-token-id:");
             hasher.update(&input.nonce_bytes);
             *hasher.finalize().as_bytes()
         };
@@ -981,7 +981,7 @@ fn hmac_sha256_host(key: &[u8], data: &[u8]) -> [u8; 32] {
 /// Compute context hash on the host side (must match guest program).
 fn compute_context_hash_host(context: &Sp1AuthContext) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-auth-context-v1:");
+    hasher.update(b"dregg-auth-context-v1:");
     hasher.update(&context.current_time.to_le_bytes());
     hasher.update(&context.resource_id.to_le_bytes());
     hasher.update(&context.action_mask.to_le_bytes());
@@ -1325,7 +1325,7 @@ impl Sp1Backend {
         {
             // SIMULATION MODE: structural checks only, no real ZK verification.
             eprintln!(
-                "[pyana-circuit] WARNING: Sp1Backend datalog verification is running in \
+                "[dregg-circuit] WARNING: Sp1Backend datalog verification is running in \
                  SIMULATION MODE. No cryptographic proof is being verified. \
                  Enable the `sp1` feature for real ZK verification."
             );
@@ -1380,7 +1380,7 @@ impl Sp1Backend {
 /// Hash a fact (must match the guest program's hash_fact function).
 fn hash_fact_host(fact: &Sp1Fact) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-fact-v1:");
+    hasher.update(b"dregg-fact-v1:");
     hasher.update(&fact.predicate.to_le_bytes());
     hasher.update(&(fact.terms.len() as u32).to_le_bytes());
     for term in &fact.terms {
@@ -1420,7 +1420,7 @@ fn verify_fact_merkle_proof(
         }
 
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-merkle-4ary:");
+        hasher.update(b"dregg-merkle-4ary:");
         for child in &children {
             hasher.update(child);
         }
@@ -1458,7 +1458,7 @@ fn process_attenuation_host(
 
         // Compute new root after removals (same as guest).
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-attenuate-v1:");
+        hasher.update(b"dregg-attenuate-v1:");
         hasher.update(&current_root);
         hasher.update(&(step.removed_facts.len() as u32).to_le_bytes());
         for fact in &step.removed_facts {
@@ -1473,7 +1473,7 @@ fn process_attenuation_host(
 /// Compute policy commitment on the host side (same as guest).
 fn compute_policy_commitment_host(rules: &[Sp1Rule]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-policy-v1:");
+    hasher.update(b"dregg-policy-v1:");
     hasher.update(&(rules.len() as u32).to_le_bytes());
 
     for rule in rules {
@@ -2078,7 +2078,7 @@ impl PredicateBackend for Sp1Backend {
     fn verify_predicate(proof: &Self::PredicateProof) -> Result<bool, String> {
         // SIMULATION MODE: structural checks only, no real ZK verification.
         eprintln!(
-            "[pyana-circuit] WARNING: Sp1Backend predicate verification is running in \
+            "[dregg-circuit] WARNING: Sp1Backend predicate verification is running in \
              SIMULATION MODE. No cryptographic proof is being verified. \
              Enable the `sp1` feature for real ZK verification."
         );
@@ -2506,7 +2506,7 @@ impl IvcBackend for Sp1Backend {
     fn verify_ivc(proof: &Self::IvcProof) -> Result<IvcOutput, String> {
         // SIMULATION MODE: structural checks only, no real ZK verification.
         eprintln!(
-            "[pyana-circuit] WARNING: Sp1Backend IVC verification is running in \
+            "[dregg-circuit] WARNING: Sp1Backend IVC verification is running in \
              SIMULATION MODE. No cryptographic proof is being verified. \
              Enable the `sp1` feature for real ZK verification."
         );
@@ -3103,7 +3103,7 @@ mod tests {
         // Compute the token ID hash (leaf).
         let token_id_hash = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"pyana-token-id:");
+            hasher.update(b"dregg-token-id:");
             hasher.update(&nonce_bytes);
             *hasher.finalize().as_bytes()
         };
@@ -3278,7 +3278,7 @@ mod tests {
         // Verify it matches the expected token ID hash.
         let expected = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"pyana-token-id:");
+            hasher.update(b"dregg-token-id:");
             hasher.update(&input.nonce_bytes);
             *hasher.finalize().as_bytes()
         };
@@ -3324,7 +3324,7 @@ mod tests {
 
         // Root = hash of all 4 children.
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-merkle-4ary:");
+        hasher.update(b"dregg-merkle-4ary:");
         for leaf in &leaves {
             hasher.update(leaf);
         }

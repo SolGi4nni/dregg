@@ -469,7 +469,7 @@ pub fn compute_commitment_hash(
     fulfiller_secret: &[u8; 32],
     epoch: u64,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-commit-reveal-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-fulfillment-commit-reveal-v1");
     hasher.update(intent_id);
     hasher.update(fulfiller_secret);
     hasher.update(&epoch.to_le_bytes());

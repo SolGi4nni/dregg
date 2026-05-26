@@ -10,9 +10,9 @@
 //!   3. Chain links are correct after multiple commits.
 //!   4. `was_encrypted = false` on the cleartext path.
 
-use pyana_cell::{CellId, Ledger};
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::{
+use dregg_cell::{CellId, Ledger};
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::{
     CallForest, ComputronCosts, Turn, TurnExecutor, TurnResult, verify_receipt_chain,
 };
 use zeroize::Zeroizing;
@@ -53,7 +53,7 @@ fn make_cclerk(label: &str) -> AgentCipherclerk {
 
 /// Derive the agent CellId from a cipherclerk the same way the node handler does.
 fn agent_from_cclerk(cclerk: &AgentCipherclerk) -> CellId {
-    CellId(pyana_cell::CellId::derive_raw(&cclerk.public_key().0, &[0u8; 32]).0)
+    CellId(dregg_cell::CellId::derive_raw(&cclerk.public_key().0, &[0u8; 32]).0)
 }
 
 // ---------------------------------------------------------------------------

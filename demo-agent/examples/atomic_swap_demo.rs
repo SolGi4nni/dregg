@@ -9,22 +9,22 @@
 //! 6. Neither party needs to trust the other or the matcher
 
 use ed25519_dalek::{Signer, SigningKey};
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::{CellId, Preconditions};
-use pyana_turn::CallForest;
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::composer::{SignedFragment, TurnComposer};
-use pyana_turn::executor::TurnExecutor;
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::{CellId, Preconditions};
+use dregg_turn::CallForest;
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::composer::{SignedFragment, TurnComposer};
+use dregg_turn::executor::TurnExecutor;
 
 /// Helper to create an Ed25519 signing key from seed bytes
 fn make_signing_key(seed: &[u8]) -> SigningKey {
-    let hash = blake3::derive_key("pyana-demo-signing-key-v1", seed);
+    let hash = blake3::derive_key("dregg-demo-signing-key-v1", seed);
     SigningKey::from_bytes(&hash)
 }
 
 fn main() {
-    println!("=== Pyana Atomic Swap Demo (Multi-Party Composition) ===\n");
+    println!("=== Dregg Atomic Swap Demo (Multi-Party Composition) ===\n");
 
     // --- Setup: Create participants with real Ed25519 keys ---
     let alice_sk = make_signing_key(b"alice-atomic-swap-secret");

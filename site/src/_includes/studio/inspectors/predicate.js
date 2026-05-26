@@ -1,8 +1,8 @@
 /**
- * <pyana-predicate> — Studio inspector for pyana-dsl / Datalog policy evaluation.
+ * <dregg-predicate> — Studio inspector for dregg-dsl / Datalog policy evaluation.
  *
  * Two modes:
- *   Read mode  — attribute uri="pyana://predicate/<hash>" or data-predicate='{"facts":[],"rules":[]}'
+ *   Read mode  — attribute uri="dregg://predicate/<hash>" or data-predicate='{"facts":[],"rules":[]}'
  *                Renders stored predicate (facts + built-in rules) view-only.
  *   Editor mode — attribute mode="editor"
  *                 Two textareas (facts JSON, request JSON), evaluate button,
@@ -20,12 +20,12 @@
  * Access via runtime._wasm (the documented escape hatch in runtime-in-memory.js).
  *
  * Integration points for other inspectors:
- *   - <pyana-capability> caveat display: embed in editor mode with data-predicate
+ *   - <dregg-capability> caveat display: embed in editor mode with data-predicate
  *     containing the token's restriction facts + a read-only request field for
  *     the target invocation.
- *   - <pyana-cell-program> Witnessed constraint display: a StateConstraintView with
+ *   - <dregg-cell-program> Witnessed constraint display: a StateConstraintView with
  *     kind="Witnessed" and predicate_kind="Custom"|"Dfa" can inline a
- *     <pyana-predicate> in read mode to show the embedded policy.
+ *     <dregg-predicate> in read mode to show the embedded policy.
  */
 
 import { InspectorBase, shortHex } from './_base.js';
@@ -51,8 +51,8 @@ const DEFAULT_REQUEST = {
 };
 
 // ---------------------------------------------------------------------------
-// STANDARD_RULES: human-readable descriptions of pyana's built-in Datalog rules.
-// These mirror the rule_ids in pyana-trace/src/policy.rs standard_policy().
+// STANDARD_RULES: human-readable descriptions of dregg's built-in Datalog rules.
+// These mirror the rule_ids in dregg-trace/src/policy.rs standard_policy().
 // Shown read-only; the actual rules are compiled into the wasm crate.
 // ---------------------------------------------------------------------------
 
@@ -90,20 +90,20 @@ function _ruleLabel(id) {
 }
 
 // ---------------------------------------------------------------------------
-// <pyana-predicate>
+// <dregg-predicate>
 // ---------------------------------------------------------------------------
 
-class PyanaPredicate extends InspectorBase {
+class DreggPredicate extends InspectorBase {
   static get observedAttributes() { return ['uri', 'mode', 'data-predicate']; }
 
   connectedCallback() {
     // Override: we need the runtime for wasm access, but also work standalone
     // (editor mode with no runtime — just a wasm global).
     super.connectedCallback().catch(() => {
-      // No <pyana-app> ancestor in standalone use; render anyway with
-      // direct wasm access from window.pyana if available.
+      // No <dregg-app> ancestor in standalone use; render anyway with
+      // direct wasm access from window.dregg if available.
       this._runtime = null;
-      this._api = window.pyanaUi || null;
+      this._api = window.dreggUi || null;
       this._render();
     });
   }
@@ -142,14 +142,14 @@ class PyanaPredicate extends InspectorBase {
 
   _renderCompact(facts, lastResult) {
     const decisionHtml = lastResult
-      ? `<span class="pyana-pred__decision pyana-pred__decision--${lastResult.conclusion}">${lastResult.conclusion.toUpperCase()}</span>`
+      ? `<span class="dregg-pred__decision dregg-pred__decision--${lastResult.conclusion}">${lastResult.conclusion.toUpperCase()}</span>`
       : '';
     // Count only named rules (exclude the null-id default-deny sentinel)
     const rulesCount = STANDARD_RULES.filter(r => r.id != null).length;
     this.innerHTML =
-      `<span class="pyana-pred pyana-pred--compact">` +
-        `<span class="pyana-pred__badge">Predicate</span>` +
-        ` <span class="pyana-pred__summary">${facts.length} fact${facts.length === 1 ? '' : 's'} · ${rulesCount} rules` +
+      `<span class="dregg-pred dregg-pred--compact">` +
+        `<span class="dregg-pred__badge">Predicate</span>` +
+        ` <span class="dregg-pred__summary">${facts.length} fact${facts.length === 1 ? '' : 's'} · ${rulesCount} rules` +
         (decisionHtml ? ` · ${decisionHtml}` : '') +
         `</span>` +
       `</span>`;
@@ -159,15 +159,15 @@ class PyanaPredicate extends InspectorBase {
 
   _renderReadMode(facts, lastResult) {
     const root = document.createElement('div');
-    root.className = 'pyana-pred pyana-pred--read';
+    root.className = 'dregg-pred dregg-pred--read';
 
     // Header
     const headerEl = document.createElement('div');
-    headerEl.className = 'pyana-pred__header';
+    headerEl.className = 'dregg-pred__header';
     headerEl.innerHTML =
-      `<span class="pyana-pred__badge">Predicate (Datalog)</span>` +
+      `<span class="dregg-pred__badge">Predicate (Datalog)</span>` +
       (lastResult
-        ? ` <span class="pyana-pred__decision pyana-pred__decision--${_esc(lastResult.conclusion)}">${_esc(lastResult.conclusion.toUpperCase())}</span>`
+        ? ` <span class="dregg-pred__decision dregg-pred__decision--${_esc(lastResult.conclusion)}">${_esc(lastResult.conclusion.toUpperCase())}</span>`
         : '');
     root.appendChild(headerEl);
 
@@ -184,33 +184,33 @@ class PyanaPredicate extends InspectorBase {
 
   _renderEditor() {
     const root = document.createElement('div');
-    root.className = 'pyana-pred pyana-pred--editor';
+    root.className = 'dregg-pred dregg-pred--editor';
 
     // Header row with badge + decision badge (populated after evaluation)
     const headerEl = document.createElement('div');
-    headerEl.className = 'pyana-pred__header';
-    headerEl.innerHTML = `<span class="pyana-pred__badge">Predicate (Datalog)</span>`;
+    headerEl.className = 'dregg-pred__header';
+    headerEl.innerHTML = `<span class="dregg-pred__badge">Predicate (Datalog)</span>`;
     root.appendChild(headerEl);
 
     // Two-column layout: left = facts + request + evaluate button; right = rules
     const cols = document.createElement('div');
-    cols.className = 'pyana-pred__cols';
+    cols.className = 'dregg-pred__cols';
     root.appendChild(cols);
 
     // ── Left column ────────────────────────────────────────────────────────
     const left = document.createElement('div');
-    left.className = 'pyana-pred__col pyana-pred__col--left';
+    left.className = 'dregg-pred__col dregg-pred__col--left';
     cols.appendChild(left);
 
     // Facts pane (structured list with add row + delete per row)
     const factsSection = document.createElement('div');
-    factsSection.className = 'pyana-pred__section';
+    factsSection.className = 'dregg-pred__section';
     factsSection.innerHTML =
-      `<div class="pyana-pred__section-label">Facts` +
-        `<button class="pyana-pred__add-btn" title="Add fact">+ Add</button>` +
+      `<div class="dregg-pred__section-label">Facts` +
+        `<button class="dregg-pred__add-btn" title="Add fact">+ Add</button>` +
       `</div>`;
     const factsList = document.createElement('ul');
-    factsList.className = 'pyana-pred__facts-list';
+    factsList.className = 'dregg-pred__facts-list';
     factsSection.appendChild(factsList);
     left.appendChild(factsSection);
 
@@ -221,17 +221,17 @@ class PyanaPredicate extends InspectorBase {
       factsList.innerHTML = '';
       factsData.forEach((fact, idx) => {
         const li = document.createElement('li');
-        li.className = 'pyana-pred__fact-row';
+        li.className = 'dregg-pred__fact-row';
         li.innerHTML =
-          `<code class="pyana-pred__fact-pred">${_esc(fact.predicate)}</code>` +
-          `<span class="pyana-pred__fact-terms">(${fact.terms.map(t => _esc(String(t))).join(', ')})</span>` +
-          `<button class="pyana-pred__remove-btn" data-idx="${idx}" title="Remove fact">×</button>`;
+          `<code class="dregg-pred__fact-pred">${_esc(fact.predicate)}</code>` +
+          `<span class="dregg-pred__fact-terms">(${fact.terms.map(t => _esc(String(t))).join(', ')})</span>` +
+          `<button class="dregg-pred__remove-btn" data-idx="${idx}" title="Remove fact">×</button>`;
         factsList.appendChild(li);
       });
     };
     renderFactsList();
 
-    factsSection.querySelector('.pyana-pred__add-btn').addEventListener('click', () => {
+    factsSection.querySelector('.dregg-pred__add-btn').addEventListener('click', () => {
       const pred = window.prompt('Predicate name:', 'my-fact');
       if (!pred) return;
       const termsStr = window.prompt('Terms (comma-separated):', 'value1, value2') || '';
@@ -241,7 +241,7 @@ class PyanaPredicate extends InspectorBase {
     });
 
     factsList.addEventListener('click', e => {
-      const btn = e.target.closest('.pyana-pred__remove-btn');
+      const btn = e.target.closest('.dregg-pred__remove-btn');
       if (!btn) return;
       const idx = Number(btn.dataset.idx);
       factsData.splice(idx, 1);
@@ -250,11 +250,11 @@ class PyanaPredicate extends InspectorBase {
 
     // Request pane
     const reqSection = document.createElement('div');
-    reqSection.className = 'pyana-pred__section pyana-pred__section--request';
-    reqSection.innerHTML = `<div class="pyana-pred__section-label">Request</div>`;
+    reqSection.className = 'dregg-pred__section dregg-pred__section--request';
+    reqSection.innerHTML = `<div class="dregg-pred__section-label">Request</div>`;
 
     const reqGrid = document.createElement('div');
-    reqGrid.className = 'pyana-pred__req-grid';
+    reqGrid.className = 'dregg-pred__req-grid';
 
     const appIdInput = _makeInput('app_id', DEFAULT_REQUEST.app_id, 'App ID');
     const actionInput = _makeInput('action', DEFAULT_REQUEST.action, 'Action');
@@ -268,15 +268,15 @@ class PyanaPredicate extends InspectorBase {
 
     // Evaluate button + error display
     const evalRow = document.createElement('div');
-    evalRow.className = 'pyana-pred__eval-row';
+    evalRow.className = 'dregg-pred__eval-row';
     const evalBtn = document.createElement('button');
-    evalBtn.className = 'pyana-pred__eval-btn';
+    evalBtn.className = 'dregg-pred__eval-btn';
     evalBtn.textContent = 'Evaluate';
     const denyExampleBtn = document.createElement('button');
-    denyExampleBtn.className = 'pyana-pred__deny-btn';
+    denyExampleBtn.className = 'dregg-pred__deny-btn';
     denyExampleBtn.textContent = 'Try denied request';
     const errEl = document.createElement('div');
-    errEl.className = 'pyana-pred__err';
+    errEl.className = 'dregg-pred__err';
     errEl.style.display = 'none';
     evalRow.appendChild(evalBtn);
     evalRow.appendChild(denyExampleBtn);
@@ -285,24 +285,24 @@ class PyanaPredicate extends InspectorBase {
 
     // Trace pane (appears after evaluation)
     const traceSection = document.createElement('div');
-    traceSection.className = 'pyana-pred__section pyana-pred__section--trace';
+    traceSection.className = 'dregg-pred__section dregg-pred__section--trace';
     traceSection.style.display = 'none';
-    traceSection.innerHTML = `<div class="pyana-pred__section-label">Derivation Trace</div>`;
+    traceSection.innerHTML = `<div class="dregg-pred__section-label">Derivation Trace</div>`;
     const traceBody = document.createElement('div');
-    traceBody.className = 'pyana-pred__trace-body';
+    traceBody.className = 'dregg-pred__trace-body';
     traceSection.appendChild(traceBody);
     left.appendChild(traceSection);
 
     // ── Right column ───────────────────────────────────────────────────────
     const right = document.createElement('div');
-    right.className = 'pyana-pred__col pyana-pred__col--right';
+    right.className = 'dregg-pred__col dregg-pred__col--right';
     right.appendChild(this._buildRulesPane(false));
     cols.appendChild(right);
 
     // ── Evaluate logic ─────────────────────────────────────────────────────
     const getWasm = () => {
       if (this._runtime && this._runtime._wasm) return this._runtime._wasm;
-      if (window.pyana) return window.pyana;
+      if (window.dregg) return window.dregg;
       return null;
     };
 
@@ -343,11 +343,11 @@ class PyanaPredicate extends InspectorBase {
       const elapsedMs = (performance.now() - t0).toFixed(2);
 
       // Update decision badge in header
-      const existing = headerEl.querySelector('.pyana-pred__decision');
+      const existing = headerEl.querySelector('.dregg-pred__decision');
       if (existing) existing.remove();
       const decBadge = document.createElement('span');
       const allow = result.conclusion === 'allow';
-      decBadge.className = `pyana-pred__decision pyana-pred__decision--${result.conclusion}`;
+      decBadge.className = `dregg-pred__decision dregg-pred__decision--${result.conclusion}`;
       decBadge.textContent = result.conclusion.toUpperCase();
       headerEl.appendChild(decBadge);
 
@@ -357,31 +357,31 @@ class PyanaPredicate extends InspectorBase {
 
       // Summary row
       const summary = document.createElement('div');
-      summary.className = 'pyana-pred__trace-summary';
+      summary.className = 'dregg-pred__trace-summary';
       summary.innerHTML =
-        `<span class="pyana-pred__trace-rule">${_esc(_ruleLabel(result.policy_rule_id))}</span>` +
+        `<span class="dregg-pred__trace-rule">${_esc(_ruleLabel(result.policy_rule_id))}</span>` +
         ` · ${result.num_derivation_steps} step${result.num_derivation_steps === 1 ? '' : 's'}` +
-        ` · <span class="pyana-pred__trace-timing">${elapsedMs}ms</span>`;
+        ` · <span class="dregg-pred__trace-timing">${elapsedMs}ms</span>`;
       traceBody.appendChild(summary);
 
       if (result.steps && result.steps.length > 0) {
         result.steps.forEach((step, i) => {
           const stepEl = document.createElement('div');
-          stepEl.className = 'pyana-pred__trace-step';
+          stepEl.className = 'dregg-pred__trace-step';
           // Indentation represents inference depth (using rule_id as a rough proxy;
           // deeper rules fire first in the bottom-up Datalog evaluation)
           const indent = Math.min(step.rule_id, 3);
           stepEl.style.paddingLeft = `${indent * 16}px`;
           stepEl.innerHTML =
-            `<span class="pyana-pred__trace-step-num">${i + 1}</span>` +
-            `<span class="pyana-pred__trace-step-rule">rule #${step.rule_id} · ${_esc(_ruleLabel(step.rule_id))}</span>` +
-            `<code class="pyana-pred__trace-step-pred" title="${_esc(step.derived_predicate_hex)}">${_esc(shortHex(step.derived_predicate_hex, 16))}</code>` +
-            `<span class="pyana-pred__trace-step-bindings">${step.num_bindings} binding${step.num_bindings === 1 ? '' : 's'}</span>`;
+            `<span class="dregg-pred__trace-step-num">${i + 1}</span>` +
+            `<span class="dregg-pred__trace-step-rule">rule #${step.rule_id} · ${_esc(_ruleLabel(step.rule_id))}</span>` +
+            `<code class="dregg-pred__trace-step-pred" title="${_esc(step.derived_predicate_hex)}">${_esc(shortHex(step.derived_predicate_hex, 16))}</code>` +
+            `<span class="dregg-pred__trace-step-bindings">${step.num_bindings} binding${step.num_bindings === 1 ? '' : 's'}</span>`;
           traceBody.appendChild(stepEl);
         });
       } else {
         const empty = document.createElement('div');
-        empty.className = 'pyana-pred__trace-empty';
+        empty.className = 'dregg-pred__trace-empty';
         empty.textContent = allow
           ? 'Matched by unrestricted/default rule — no derivation steps.'
           : 'No rules fired — default DENY applied.';
@@ -403,16 +403,16 @@ class PyanaPredicate extends InspectorBase {
 
   _buildRulesPane(editable) {
     const section = document.createElement('div');
-    section.className = 'pyana-pred__section pyana-pred__section--rules';
-    section.innerHTML = `<div class="pyana-pred__section-label">Policy Rules <span class="pyana-pred__rules-note">(built-in, read-only)</span></div>`;
+    section.className = 'dregg-pred__section dregg-pred__section--rules';
+    section.innerHTML = `<div class="dregg-pred__section-label">Policy Rules <span class="dregg-pred__rules-note">(built-in, read-only)</span></div>`;
     const list = document.createElement('ul');
-    list.className = 'pyana-pred__rules-list';
+    list.className = 'dregg-pred__rules-list';
     for (const rule of STANDARD_RULES) {
       const li = document.createElement('li');
-      li.className = 'pyana-pred__rule-row';
+      li.className = 'dregg-pred__rule-row';
       li.innerHTML =
-        `<span class="pyana-pred__rule-label${rule.id == null ? ' pyana-pred__rule-label--default' : ''}">${_esc(rule.label)}</span>` +
-        `<code class="pyana-pred__rule-body">${_esc(rule.body)}</code>`;
+        `<span class="dregg-pred__rule-label${rule.id == null ? ' dregg-pred__rule-label--default' : ''}">${_esc(rule.label)}</span>` +
+        `<code class="dregg-pred__rule-body">${_esc(rule.body)}</code>`;
       list.appendChild(li);
     }
     section.appendChild(list);
@@ -423,23 +423,23 @@ class PyanaPredicate extends InspectorBase {
 
   _buildFactsList(facts, editable) {
     const section = document.createElement('div');
-    section.className = 'pyana-pred__section';
-    section.innerHTML = `<div class="pyana-pred__section-label">Facts (${facts.length})</div>`;
+    section.className = 'dregg-pred__section';
+    section.innerHTML = `<div class="dregg-pred__section-label">Facts (${facts.length})</div>`;
     if (!facts.length) {
       const empty = document.createElement('div');
-      empty.className = 'pyana-pred__facts-empty';
+      empty.className = 'dregg-pred__facts-empty';
       empty.textContent = 'No facts defined.';
       section.appendChild(empty);
       return section;
     }
     const list = document.createElement('ul');
-    list.className = 'pyana-pred__facts-list';
+    list.className = 'dregg-pred__facts-list';
     facts.forEach(f => {
       const li = document.createElement('li');
-      li.className = 'pyana-pred__fact-row';
+      li.className = 'dregg-pred__fact-row';
       li.innerHTML =
-        `<code class="pyana-pred__fact-pred">${_esc(f.predicate)}</code>` +
-        `<span class="pyana-pred__fact-terms">(${(f.terms || []).map(t => _esc(String(t))).join(', ')})</span>`;
+        `<code class="dregg-pred__fact-pred">${_esc(f.predicate)}</code>` +
+        `<span class="dregg-pred__fact-terms">(${(f.terms || []).map(t => _esc(String(t))).join(', ')})</span>`;
       list.appendChild(li);
     });
     section.appendChild(list);
@@ -447,8 +447,8 @@ class PyanaPredicate extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-predicate')) {
-  customElements.define('pyana-predicate', PyanaPredicate);
+if (!customElements.get('dregg-predicate')) {
+  customElements.define('dregg-predicate', DreggPredicate);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,14 +457,14 @@ if (!customElements.get('pyana-predicate')) {
 
 function _makeInput(name, defaultValue, label) {
   const container = document.createElement('div');
-  container.className = 'pyana-pred__req-field';
+  container.className = 'dregg-pred__req-field';
   const lbl = document.createElement('label');
   lbl.textContent = label;
   const input = document.createElement('input');
   input.type = 'text';
   input.name = name;
   input.value = defaultValue;
-  input.className = 'pyana-pred__req-input';
+  input.className = 'dregg-pred__req-input';
   container.appendChild(lbl);
   container.appendChild(input);
   return { container, input };
@@ -476,18 +476,18 @@ function _makeInput(name, defaultValue, label) {
 // ---------------------------------------------------------------------------
 
 (function injectStyles() {
-  if (document.getElementById('pyana-predicate-styles')) return;
+  if (document.getElementById('dregg-predicate-styles')) return;
   const s = document.createElement('style');
-  s.id = 'pyana-predicate-styles';
+  s.id = 'dregg-predicate-styles';
   s.textContent = `
-/* ── <pyana-predicate> ─────────────────────────────────────────────────── */
-.pyana-pred {
+/* ── <dregg-predicate> ─────────────────────────────────────────────────── */
+.dregg-pred {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;
 }
 
 /* Compact */
-.pyana-pred--compact {
+.dregg-pred--compact {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -497,12 +497,12 @@ function _makeInput(name, defaultValue, label) {
   border-radius: 4px;
   font-size: 0.82rem;
 }
-.pyana-pred__summary {
+.dregg-pred__summary {
   color: var(--fg-dim, #8a948f);
 }
 
 /* Header */
-.pyana-pred__header {
+.dregg-pred__header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -510,7 +510,7 @@ function _makeInput(name, defaultValue, label) {
   padding-bottom: var(--s2, 6px);
   border-bottom: 1px solid var(--line, #2a302d);
 }
-.pyana-pred__badge {
+.dregg-pred__badge {
   padding: 2px 10px;
   background: color-mix(in srgb, #7090c0 70%, var(--bg, #0a0f0d));
   color: #fff;
@@ -522,27 +522,27 @@ function _makeInput(name, defaultValue, label) {
 }
 
 /* Decision badge */
-.pyana-pred__decision {
+.dregg-pred__decision {
   padding: 3px 14px;
   border-radius: 3px;
   font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
-.pyana-pred__decision--allow {
+.dregg-pred__decision--allow {
   background: color-mix(in srgb, var(--accent, #5b8a5a) 70%, var(--bg, #0a0f0d));
   color: #0a0f0d;
 }
-.pyana-pred__decision--deny {
+.dregg-pred__decision--deny {
   background: color-mix(in srgb, #d4685c 70%, var(--bg, #0a0f0d));
   color: #fff;
 }
 
 /* Section headers */
-.pyana-pred__section {
+.dregg-pred__section {
   margin-bottom: var(--s3, 10px);
 }
-.pyana-pred__section-label {
+.dregg-pred__section-label {
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -553,7 +553,7 @@ function _makeInput(name, defaultValue, label) {
   align-items: center;
   gap: 8px;
 }
-.pyana-pred__rules-note {
+.dregg-pred__rules-note {
   font-weight: 400;
   text-transform: none;
   font-size: 0.72rem;
@@ -561,7 +561,7 @@ function _makeInput(name, defaultValue, label) {
 }
 
 /* Facts list */
-.pyana-pred__facts-list {
+.dregg-pred__facts-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -569,7 +569,7 @@ function _makeInput(name, defaultValue, label) {
   flex-direction: column;
   gap: 3px;
 }
-.pyana-pred__fact-row {
+.dregg-pred__fact-row {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -578,18 +578,18 @@ function _makeInput(name, defaultValue, label) {
   border: 1px solid var(--line, #2a302d);
   border-radius: 3px;
 }
-.pyana-pred__fact-pred {
+.dregg-pred__fact-pred {
   color: var(--accent-bright, #7db87b);
   font-size: 0.80rem;
   white-space: nowrap;
 }
-.pyana-pred__fact-terms {
+.dregg-pred__fact-terms {
   color: var(--fg-dim, #8a948f);
   font-size: 0.78rem;
   flex: 1;
   word-break: break-all;
 }
-.pyana-pred__remove-btn {
+.dregg-pred__remove-btn {
   background: none;
   border: none;
   color: var(--fg-dim, #8a948f);
@@ -599,8 +599,8 @@ function _makeInput(name, defaultValue, label) {
   padding: 0 2px;
   opacity: 0.6;
 }
-.pyana-pred__remove-btn:hover { opacity: 1; color: #d4685c; }
-.pyana-pred__add-btn {
+.dregg-pred__remove-btn:hover { opacity: 1; color: #d4685c; }
+.dregg-pred__add-btn {
   background: none;
   border: 1px solid var(--line, #2a302d);
   border-radius: 3px;
@@ -610,15 +610,15 @@ function _makeInput(name, defaultValue, label) {
   padding: 1px 7px;
   font-family: inherit;
 }
-.pyana-pred__add-btn:hover { border-color: var(--accent, #5b8a5a); color: var(--accent-bright, #7db87b); }
-.pyana-pred__facts-empty {
+.dregg-pred__add-btn:hover { border-color: var(--accent, #5b8a5a); color: var(--accent-bright, #7db87b); }
+.dregg-pred__facts-empty {
   color: var(--fg-dim, #8a948f);
   font-size: 0.82rem;
   font-style: italic;
 }
 
 /* Rules list */
-.pyana-pred__rules-list {
+.dregg-pred__rules-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -626,7 +626,7 @@ function _makeInput(name, defaultValue, label) {
   flex-direction: column;
   gap: 4px;
 }
-.pyana-pred__rule-row {
+.dregg-pred__rule-row {
   padding: 4px 8px;
   background: var(--bg-raised, #121b16);
   border: 1px solid var(--line, #2a302d);
@@ -635,17 +635,17 @@ function _makeInput(name, defaultValue, label) {
   flex-direction: column;
   gap: 2px;
 }
-.pyana-pred__rule-label {
+.dregg-pred__rule-label {
   font-size: 0.75rem;
   font-weight: 600;
   color: color-mix(in srgb, #7090c0 80%, var(--fg, #e4ddd0));
 }
-.pyana-pred__rule-label--default {
+.dregg-pred__rule-label--default {
   color: var(--fg-dim, #8a948f);
   font-weight: 400;
   font-style: italic;
 }
-.pyana-pred__rule-body {
+.dregg-pred__rule-body {
   font-size: 0.72rem;
   color: var(--fg-dim, #8a948f);
   white-space: pre-wrap;
@@ -653,23 +653,23 @@ function _makeInput(name, defaultValue, label) {
 }
 
 /* Request fields */
-.pyana-pred__req-grid {
+.dregg-pred__req-grid {
   display: flex;
   flex-direction: column;
   gap: var(--s2, 6px);
 }
-.pyana-pred__req-field {
+.dregg-pred__req-field {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.pyana-pred__req-field label {
+.dregg-pred__req-field label {
   font-size: 0.72rem;
   color: var(--fg-dim, #8a948f);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.pyana-pred__req-input {
+.dregg-pred__req-input {
   background: var(--bg-raised, #121b16);
   border: 1px solid var(--line, #2a302d);
   border-radius: 4px;
@@ -680,20 +680,20 @@ function _makeInput(name, defaultValue, label) {
   width: 100%;
   box-sizing: border-box;
 }
-.pyana-pred__req-input:focus {
+.dregg-pred__req-input:focus {
   outline: none;
   border-color: var(--accent, #5b8a5a);
 }
 
 /* Evaluate row */
-.pyana-pred__eval-row {
+.dregg-pred__eval-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: var(--s3, 10px);
   flex-wrap: wrap;
 }
-.pyana-pred__eval-btn {
+.dregg-pred__eval-btn {
   background: var(--accent, #5b8a5a);
   border: none;
   border-radius: 4px;
@@ -704,8 +704,8 @@ function _makeInput(name, defaultValue, label) {
   font-weight: 600;
   padding: 6px 16px;
 }
-.pyana-pred__eval-btn:hover { filter: brightness(1.15); }
-.pyana-pred__deny-btn {
+.dregg-pred__eval-btn:hover { filter: brightness(1.15); }
+.dregg-pred__deny-btn {
   background: none;
   border: 1px solid var(--line, #2a302d);
   border-radius: 4px;
@@ -715,8 +715,8 @@ function _makeInput(name, defaultValue, label) {
   font-size: 0.82rem;
   padding: 5px 12px;
 }
-.pyana-pred__deny-btn:hover { border-color: #d4685c; color: #e08878; }
-.pyana-pred__err {
+.dregg-pred__deny-btn:hover { border-color: #d4685c; color: #e08878; }
+.dregg-pred__err {
   color: #d4685c;
   font-size: 0.82rem;
   border: 1px solid color-mix(in srgb, #d4685c 40%, var(--line));
@@ -726,29 +726,29 @@ function _makeInput(name, defaultValue, label) {
 }
 
 /* Trace pane */
-.pyana-pred__section--trace {
+.dregg-pred__section--trace {
   margin-top: var(--s3, 10px);
   padding: var(--s2, 6px) var(--s3, 10px);
   background: var(--bg-raised, #121b16);
   border: 1px solid var(--line, #2a302d);
   border-radius: 4px;
 }
-.pyana-pred__trace-summary {
+.dregg-pred__trace-summary {
   font-size: 0.82rem;
   color: var(--fg-dim, #8a948f);
   margin-bottom: var(--s2, 6px);
   padding-bottom: var(--s2, 6px);
   border-bottom: 1px solid var(--line, #2a302d);
 }
-.pyana-pred__trace-rule {
+.dregg-pred__trace-rule {
   font-weight: 600;
   color: var(--fg, #e4ddd0);
 }
-.pyana-pred__trace-timing {
+.dregg-pred__trace-timing {
   font-size: 0.75rem;
   opacity: 0.7;
 }
-.pyana-pred__trace-step {
+.dregg-pred__trace-step {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -756,58 +756,58 @@ function _makeInput(name, defaultValue, label) {
   font-size: 0.78rem;
   border-bottom: 1px dotted color-mix(in srgb, var(--line, #2a302d) 50%, transparent);
 }
-.pyana-pred__trace-step:last-child { border-bottom: none; }
-.pyana-pred__trace-step-num {
+.dregg-pred__trace-step:last-child { border-bottom: none; }
+.dregg-pred__trace-step-num {
   color: var(--fg-dim, #8a948f);
   min-width: 1.4em;
   text-align: right;
   font-size: 0.72rem;
 }
-.pyana-pred__trace-step-rule {
+.dregg-pred__trace-step-rule {
   color: color-mix(in srgb, #7090c0 80%, var(--fg, #e4ddd0));
   flex: 1;
   white-space: nowrap;
 }
-.pyana-pred__trace-step-pred {
+.dregg-pred__trace-step-pred {
   color: var(--fg-dim, #8a948f);
   font-size: 0.72rem;
   white-space: nowrap;
 }
-.pyana-pred__trace-step-bindings {
+.dregg-pred__trace-step-bindings {
   color: var(--fg-dim, #8a948f);
   font-size: 0.72rem;
   white-space: nowrap;
 }
-.pyana-pred__trace-empty {
+.dregg-pred__trace-empty {
   color: var(--fg-dim, #8a948f);
   font-size: 0.82rem;
   font-style: italic;
 }
 
 /* Editor two-column layout */
-.pyana-pred--editor {
+.dregg-pred--editor {
   padding: var(--s3, 10px);
   background: var(--bg-raised, #121b16);
   border: 1px solid var(--line, #2a302d);
   border-radius: 6px;
 }
-.pyana-pred__cols {
+.dregg-pred__cols {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--s4, 16px);
 }
 @media (max-width: 640px) {
-  .pyana-pred__cols { grid-template-columns: 1fr; }
+  .dregg-pred__cols { grid-template-columns: 1fr; }
 }
-.pyana-pred__col--left,
-.pyana-pred__col--right {
+.dregg-pred__col--left,
+.dregg-pred__col--right {
   display: flex;
   flex-direction: column;
   gap: var(--s2, 6px);
 }
 
 /* Read mode */
-.pyana-pred--read {
+.dregg-pred--read {
   padding: var(--s3, 10px);
   background: var(--bg-raised, #121b16);
   border: 1px solid var(--line, #2a302d);

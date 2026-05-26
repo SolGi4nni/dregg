@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
-pyana-dsl-runtime = { path = "../../pyana-dsl-runtime" }
-pyana-turn = { path = "../../turn" }
-pyana-intent = { path = "../../intent" }
+dregg-app-framework = { path = "../../app-framework" }
+dregg-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+dregg-dsl-runtime = { path = "../../dregg-dsl-runtime" }
+dregg-turn = { path = "../../turn" }
+dregg-intent = { path = "../../intent" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

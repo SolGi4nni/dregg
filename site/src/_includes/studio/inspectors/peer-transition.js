@@ -1,5 +1,5 @@
 /**
- * <pyana-peer-transition> — structured view of a PeerStateTransition.
+ * <dregg-peer-transition> — structured view of a PeerStateTransition.
  *
  * Attributes (one of):
  *   bytes  — base64-encoded raw postcard bytes; element decodes via
@@ -16,12 +16,12 @@
  *
  * Pattern note (STARBRIDGE FOLLOWUP 09): Imports InspectorBase/shortHex but extends
  * HTMLElement directly (data/bytes-driven, used standalone in studio.html:87 peer-paste UX
- * and cross-tab Discord flows; does not require <pyana-app> uri). See cell.js style in
+ * and cross-tab Discord flows; does not require <dregg-app> uri). See cell.js style in
  * inspectors.js:23 (uses base + signals + preact). For full runtime integration see
  * runtime-in-memory.js:453 (decodePeerTransition wrapper), wasm/src/bindings.rs:1451
  * (create/verify/decode_peer_transition), wasm/src/runtime.rs (PeerExchange via cipherclerk).
- * Real peer/fed surfaces in pyana_federation + node net/gossip; no JS reimpl of transitions.
- * See STARBRIDGE-PLAN §11.4 success + §4.5 for <pyana-peer-transition> + blocklace peer.
+ * Real peer/fed surfaces in dregg_federation + node net/gossip; no JS reimpl of transitions.
+ * See STARBRIDGE-PLAN §11.4 success + §4.5 for <dregg-peer-transition> + blocklace peer.
  */
 
 import { InspectorBase, shortHex } from './_base.js';
@@ -39,7 +39,7 @@ function tsToISO(ts) {
   try { return new Date(Number(ts) * 1000).toISOString(); } catch { return String(ts); }
 }
 
-class PyanaPeerTransition extends HTMLElement {
+class DreggPeerTransition extends HTMLElement {
   static get observedAttributes() { return ['bytes', 'data', 'mode']; }
 
   constructor() {
@@ -51,12 +51,12 @@ class PyanaPeerTransition extends HTMLElement {
   }
 
   async connectedCallback() {
-    // Wait for pyanaUi ready — gives us h/render/html/effect.
-    if (window.pyanaUi) {
-      this._api = window.pyanaUi;
+    // Wait for dreggUi ready — gives us h/render/html/effect.
+    if (window.dreggUi) {
+      this._api = window.dreggUi;
     } else {
       this._api = await new Promise(resolve => {
-        window.addEventListener('pyanaUi:ready', e => resolve(e.detail), { once: true });
+        window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
       });
     }
     this._tryFindWasm();
@@ -66,7 +66,7 @@ class PyanaPeerTransition extends HTMLElement {
 
   _tryFindWasm() {
     if (this._wasm) return;
-    // Walk ancestors to find pyana-app which has .runtime set after wasm init.
+    // Walk ancestors to find dregg-app which has .runtime set after wasm init.
     let el = this.parentElement;
     while (el && !el.runtime) el = el.parentElement;
     this._runtime = el?.runtime || null;
@@ -123,7 +123,7 @@ class PyanaPeerTransition extends HTMLElement {
     }
 
     if (this._err) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err" style="padding:4px 8px;font-size:0.8rem;">${this._err}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err" style="padding:4px 8px;font-size:0.8rem;">${this._err}</div>`;
       return;
     }
 
@@ -131,7 +131,7 @@ class PyanaPeerTransition extends HTMLElement {
 
     if (mode === 'compact') {
       this.innerHTML =
-        `<span class="pyana-inspector pyana-inspector--compact" style="font-size:0.8rem;">` +
+        `<span class="dregg-inspector dregg-inspector--compact" style="font-size:0.8rem;">` +
         `seq=${d.sequence} ` +
         `cell=<code title="${d.cell_id}">${shortHex(d.cell_id)}</code> ` +
         `newC=<code title="${d.new_commitment}">${shortHex(d.new_commitment)}</code>` +
@@ -156,13 +156,13 @@ class PyanaPeerTransition extends HTMLElement {
     };
 
     this.innerHTML =
-      `<div class="pyana-inspector pyana-inspector--cell" style="font-size:0.8rem;">` +
+      `<div class="dregg-inspector dregg-inspector--cell" style="font-size:0.8rem;">` +
         `<header style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">` +
-          `<span class="pyana-inspector__kind">PeerStateTransition</span>` +
-          `<code class="pyana-inspector__id" style="font-size:1rem;font-weight:700;">seq&nbsp;${d.sequence}</code>` +
+          `<span class="dregg-inspector__kind">PeerStateTransition</span>` +
+          `<code class="dregg-inspector__id" style="font-size:1rem;font-weight:700;">seq&nbsp;${d.sequence}</code>` +
           `<span style="margin-left:auto;">${proofIndicator}</span>` +
         `</header>` +
-        `<dl class="pyana-inspector__kv" style="display:grid;grid-template-columns:max-content 1fr;gap:2px 8px;word-break:break-all;">` +
+        `<dl class="dregg-inspector__kv" style="display:grid;grid-template-columns:max-content 1fr;gap:2px 8px;word-break:break-all;">` +
           kv('cell_id',         d.cell_id,         'cell_id') +
           kv('old_commitment',  d.old_commitment,  'old_commitment') +
           kv('new_commitment',  d.new_commitment,  'new_commitment') +
@@ -179,6 +179,6 @@ class PyanaPeerTransition extends HTMLElement {
   }
 }
 
-if (!customElements.get('pyana-peer-transition')) {
-  customElements.define('pyana-peer-transition', PyanaPeerTransition);
+if (!customElements.get('dregg-peer-transition')) {
+  customElements.define('dregg-peer-transition', DreggPeerTransition);
 }

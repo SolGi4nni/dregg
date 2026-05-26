@@ -89,7 +89,7 @@ not surfaced as an authority *type*.
 **Cell:** `CellId = BLAKE3(public_key || token_id)`
 (`cell::id::CellId::derive_raw`, `cell::derivation`).
 
-**Federation:** `FederationId = BLAKE3("pyana-fed-id-v1", sorted_members,
+**Federation:** `FederationId = BLAKE3("dregg-fed-id-v1", sorted_members,
 epoch)` (`federation::identity::derive_federation_id_with_epoch`).
 
 **Homomorphism strength:** Very strong. Both ids are *commitments to
@@ -105,7 +105,7 @@ authority-state — the committee at this moment). These are different
 
 **Resolution:** factor the id derivation as:
 ```
-id = H("pyana-principal-id-v1", authority, scope)
+id = H("dregg-principal-id-v1", authority, scope)
 ```
 where `scope` is the cell-vs-federation discriminator plus any
 non-authority mix-ins (`token_id` for cells, `epoch` for federations).
@@ -616,7 +616,7 @@ pub enum CommitmentLink {
 }
 
 pub struct PrincipalId([u8; 32]);
-// derived as H("pyana-principal-id-v1", authority_canonical, scope)
+// derived as H("dregg-principal-id-v1", authority_canonical, scope)
 ```
 
 ### 4.2 What this buys

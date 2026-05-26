@@ -61,7 +61,7 @@
 //! would carry `ValueCommitment` instead of (or alongside) cleartext `value` fields.
 //!
 //! Per-asset-type conservation requires asset-type-specific generators:
-//! `V_asset = hash_to_point("pyana-value-generator", asset_type_bytes)`.
+//! `V_asset = hash_to_point("dregg-value-generator", asset_type_bytes)`.
 //! This prevents cross-asset conservation attacks (committing to asset A on one side
 //! and asset B on the other).
 
@@ -79,7 +79,7 @@ use std::ops::{Add, Neg, Sub};
 /// via `from_uniform_bytes` (Elligator2 map — guaranteed to produce a valid point
 /// with no cofactor issues).
 fn hash_to_generator(domain: &[u8]) -> RistrettoPoint {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-pedersen generator v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-pedersen generator v1");
     hasher.update(domain);
     let mut xof = hasher.finalize_xof();
     let mut uniform = [0u8; 64];
@@ -88,27 +88,27 @@ fn hash_to_generator(domain: &[u8]) -> RistrettoPoint {
 }
 
 /// Value generator `V`: the base point for the committed amount.
-/// `V = hash_to_point("pyana-value-generator")`.
+/// `V = hash_to_point("dregg-value-generator")`.
 pub fn value_generator() -> RistrettoPoint {
-    hash_to_generator(b"pyana-value-generator")
+    hash_to_generator(b"dregg-value-generator")
 }
 
 /// Randomness generator `R`: the base point for the blinding factor.
-/// `R = hash_to_point("pyana-randomness-generator")`.
+/// `R = hash_to_point("dregg-randomness-generator")`.
 ///
 /// The discrete log relationship between V and R is unknown by construction
 /// (random oracle model on BLAKE3).
 pub fn randomness_generator() -> RistrettoPoint {
-    hash_to_generator(b"pyana-randomness-generator")
+    hash_to_generator(b"dregg-randomness-generator")
 }
 
-/// Asset-type-specific value generator: `V_asset = hash_to_point("pyana-value-generator", asset_type_le_bytes)`.
+/// Asset-type-specific value generator: `V_asset = hash_to_point("dregg-value-generator", asset_type_le_bytes)`.
 ///
 /// Using different generators per asset type prevents cross-asset conservation attacks.
 /// An attacker cannot forge `commit(v, r) on V_a == commit(v', r') on V_b` because
 /// the discrete log between V_a and V_b is unknown.
 pub fn asset_value_generator(asset_type: u64) -> RistrettoPoint {
-    let mut domain = b"pyana-value-generator:".to_vec();
+    let mut domain = b"dregg-value-generator:".to_vec();
     domain.extend_from_slice(&asset_type.to_le_bytes());
     hash_to_generator(&domain)
 }
@@ -286,7 +286,7 @@ impl CommittedNote {
     /// Compute the note commitment hash.
     ///
     /// ```text
-    /// H("pyana-committed-note v1", owner || value_commitment_bytes || asset_type_le || creation_nonce || rcm)
+    /// H("dregg-committed-note v1", owner || value_commitment_bytes || asset_type_le || creation_nonce || rcm)
     /// ```
     fn compute_note_commitment(
         owner: &[u8; 32],
@@ -295,7 +295,7 @@ impl CommittedNote {
         creation_nonce: &[u8; 32],
         note_randomness: &[u8; 32],
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-committed-note v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-committed-note v1");
         hasher.update(owner);
         hasher.update(&value_commitment.to_bytes().0);
         hasher.update(&asset_type.to_le_bytes());
@@ -356,14 +356,14 @@ pub struct ConservationProof {
 /// Compute the Schnorr challenge for the conservation proof.
 ///
 /// ```text
-/// e = H("pyana-conservation-challenge v1", R_nonce || excess_point || message)
+/// e = H("dregg-conservation-challenge v1", R_nonce || excess_point || message)
 /// ```
 fn schnorr_challenge(
     nonce_point: &RistrettoPoint,
     excess_point: &RistrettoPoint,
     message: &[u8],
 ) -> Scalar {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-conservation-challenge v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-conservation-challenge v1");
     hasher.update(&nonce_point.compress().to_bytes());
     hasher.update(&excess_point.compress().to_bytes());
     hasher.update(message);
@@ -610,7 +610,7 @@ pub struct BulletproofRangeProof {
 impl BulletproofRangeProof {
     /// Create a fresh Fiat-Shamir transcript for range proof domain separation.
     fn transcript() -> Transcript {
-        Transcript::new(b"pyana-range-proof v1")
+        Transcript::new(b"dregg-range-proof v1")
     }
 
     /// Prove that `value` is in `[0, 2^64)` given the blinding factor.

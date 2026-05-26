@@ -28,7 +28,7 @@
 //!   pk = sk * G
 //!
 //! Sign(sk, message):
-//!   k = BLAKE3("pyana-schnorr-nonce" || sk || message) mod ORDER   (deterministic nonce)
+//!   k = BLAKE3("dregg-schnorr-nonce" || sk || message) mod ORDER   (deterministic nonce)
 //!   R = k * G
 //!   e = Poseidon2(R.x || R.y || pk.x || pk.y || message_hash)     (Fiat-Shamir challenge)
 //!   s = k - e * sk mod ORDER
@@ -76,7 +76,7 @@ pub struct SchnorrSignature {
 /// The secret key is derived deterministically from the seed via BLAKE3.
 /// The public key is sk * G.
 pub fn schnorr_keygen(seed: &[u8; 32]) -> (SchnorrSecretKey, SchnorrPublicKey) {
-    let sk_bytes = blake3::derive_key("pyana-schnorr-keygen-v1", seed);
+    let sk_bytes = blake3::derive_key("dregg-schnorr-keygen-v1", seed);
     let sk = scalar_from_bytes(&sk_bytes);
 
     // Ensure sk != 0 (astronomically unlikely but handle it)
@@ -102,12 +102,12 @@ pub fn schnorr_sign(
     pk: &SchnorrPublicKey,
     message: &[u8],
 ) -> SchnorrSignature {
-    // Derive deterministic nonce: k = H("pyana-schnorr-nonce" || sk_bytes || message)
+    // Derive deterministic nonce: k = H("dregg-schnorr-nonce" || sk_bytes || message)
     let sk_bytes = scalar_to_bytes(&sk.0);
     let mut nonce_input = Vec::with_capacity(32 + message.len());
     nonce_input.extend_from_slice(&sk_bytes);
     nonce_input.extend_from_slice(message);
-    let k_bytes = blake3::derive_key("pyana-schnorr-nonce-v1", &nonce_input);
+    let k_bytes = blake3::derive_key("dregg-schnorr-nonce-v1", &nonce_input);
     let k = scalar_from_bytes(&k_bytes);
 
     // R = k * G

@@ -1,7 +1,7 @@
 //! Facts: fixed-arity tuples of field elements.
 //!
 //! A Fact is a predicate + up to 3 terms. Unused term slots are zero.
-//! This is the fundamental unit of knowledge in the pyana system.
+//! This is the fundamental unit of knowledge in the dregg system.
 
 use serde::{Deserialize, Serialize};
 
@@ -112,7 +112,7 @@ impl Fact {
 
     /// Compute the leaf hash of this fact using the domain-separated leaf hash.
     ///
-    /// Uses `hash::hash_leaf()` (domain: "pyana-commit leaf v1") to ensure
+    /// Uses `hash::hash_leaf()` (domain: "dregg-commit leaf v1") to ensure
     /// consistency with the Merkle tree's leaf hashing and prevent
     /// domain-confusion attacks between leaf and node hashes.
     pub fn leaf_hash(&self) -> [u8; 32] {

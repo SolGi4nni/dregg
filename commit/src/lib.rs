@@ -1,6 +1,6 @@
-//! `pyana-commit`: Core commitment scheme for the pyana ZK token system.
+//! `dregg-commit`: Core commitment scheme for the dregg ZK token system.
 //!
-//! This crate provides the foundational data structures for the pyana token system:
+//! This crate provides the foundational data structures for the dregg token system:
 //!
 //! - **Field elements**: 253-bit values representing facts in the algebraic domain.
 //! - **Facts**: Fixed-arity tuples (predicate + up to 3 terms) encoded as field elements.

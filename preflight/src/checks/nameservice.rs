@@ -1,7 +1,7 @@
 //! Name resolution checks: petnames, registration, delegation, hierarchical resolution.
 
-use pyana_captp::uri::PyanaUri;
-use pyana_sdk::names::{NameError, PetnameDb, validate_name_segment};
+use dregg_captp::uri::DreggUri;
+use dregg_sdk::names::{NameError, PetnameDb, validate_name_segment};
 
 use crate::report::{CheckResult, run_check};
 
@@ -13,11 +13,11 @@ pub fn run() -> Vec<CheckResult> {
     ]
 }
 
-fn make_test_uri(label: &str) -> PyanaUri {
+fn make_test_uri(label: &str) -> DreggUri {
     let fed_id = *blake3::hash(format!("fed-{label}").as_bytes()).as_bytes();
     let cell_id = *blake3::hash(format!("cell-{label}").as_bytes()).as_bytes();
     let swiss = *blake3::hash(format!("swiss-{label}").as_bytes()).as_bytes();
-    PyanaUri {
+    DreggUri {
         federation_id: fed_id,
         cell_id,
         swiss,

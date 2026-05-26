@@ -1,10 +1,10 @@
 [package]
-name = "pyana-cli"
+name = "dregg-cli"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "pyana"
+name = "dregg"
 path = "src/main.rs"
 
 [dependencies]

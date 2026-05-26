@@ -1,7 +1,7 @@
 # RevocationChannel: Opt-in Synchrony for Instant Revocation
 
 A design for a synchrony primitive that enables instant capability revocation
-when both the revoker and the subject opt in, without abandoning pyana's
+when both the revoker and the subject opt in, without abandoning dregg's
 async-by-default execution model.
 
 ---
@@ -14,7 +14,7 @@ exercising delegated capabilities.
 
 ```
 RevocationChannel {
-    channel_id: [u8; 32],       // H("pyana-revocation-channel" || revoker || nonce)
+    channel_id: [u8; 32],       // H("dregg-revocation-channel" || revoker || nonce)
     revoker: CellId,            // the cell authorized to trip this channel
     subjects: Vec<CellId>,      // cells that check this channel before acting
     state: ChannelState,        // Active | Tripped { reason: [u8; 32], height: u64 }
@@ -73,7 +73,7 @@ epoch-based revocation does today. The improvement is in the PUSH mechanism.
 
 ## 4. Comparison to seL4 CDT Revoke
 
-| Property | seL4 CDT | Pyana RevocationChannel |
+| Property | seL4 CDT | `dregg` RevocationChannel |
 |----------|----------|-------------------------|
 | Mechanism | Kernel walks capability derivation tree | Federation attests channel state flip |
 | Latency | Instant (kernel syscall) | Bounded async (next attestation + gossip) |
@@ -83,7 +83,7 @@ epoch-based revocation does today. The improvement is in the PUSH mechanism.
 | Granularity | Per-capability | Per-channel (can gate one or many caps) |
 
 The core trade-off: seL4 has a single trusted kernel that can atomically walk
-the derivation tree. Pyana has no single authority — the federation is the
+the derivation tree. `dregg` has no single authority — the federation is the
 closest analog, and it operates in rounds. We accept bounded delay in exchange
 for distribution, fault tolerance, and offline operation.
 

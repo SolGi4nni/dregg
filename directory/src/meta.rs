@@ -27,7 +27,7 @@ pub struct PeerHandle {
 /// federation's directory cell. The structure is deliberately simple:
 /// constitution-level changes (which federations are recognized) take
 /// place via a route-table swap on the host (see
-/// `pyana_directory::DfaRoutedDirectory`).
+/// `dregg_directory::DfaRoutedDirectory`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MetaDirectory {
     peers: BTreeMap<[u8; 32], PeerHandle>,

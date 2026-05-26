@@ -13,7 +13,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_dsl_runtime::garbled::{
+//! use dregg_dsl_runtime::garbled::{
 //!     prove_garbled_evaluation_dsl, verify_garbled_evaluation_dsl,
 //!     GarbledDslProof, ExtendedGateRecord, GateType,
 //! };
@@ -333,7 +333,7 @@ pub fn garbled_extended_descriptor() -> CircuitDescriptor {
     });
 
     CircuitDescriptor {
-        name: "pyana-garbled-evaluation-extended-dsl-v1".into(),
+        name: "dregg-garbled-evaluation-extended-dsl-v1".into(),
         trace_width: GARBLED_DSL_WIDTH,
         max_degree: 3,
         columns,

@@ -1,6 +1,6 @@
-//! # pyana-privacy-voting
+//! # dregg-privacy-voting
 //!
-//! Privacy-preserving voting on the pyana protocol. Voters with a valid
+//! Privacy-preserving voting on the dregg protocol. Voters with a valid
 //! eligibility credential (a signed [`DelegatedToken`] envelope issued by a
 //! known authority) submit hidden vote-commitments into a blinded queue, then
 //! reveal during a separate phase. The tally is verifiable from the reveals
@@ -29,7 +29,7 @@
 //! - The tally is computed from the reveal log; any observer with the log can
 //!   recompute it.
 //!
-//! [`DelegatedToken`]: pyana_sdk::cipherclerk::DelegatedToken
+//! [`DelegatedToken`]: dregg_sdk::cipherclerk::DelegatedToken
 
 pub mod ballot;
 pub mod effects;

@@ -6,7 +6,7 @@
 
 == Design Goals
 
-Capability systems excel at access control but traditionally lack discoverability: if you don't already hold a capability, how do you find one? Pyana's service mesh provides governed discovery without compromising the capability model. The three primitives---mount, discover, resolve---build atop DFA-based routing and constitutional governance to provide namespace-level access control provable via STARK lookup tables.
+Capability systems excel at access control but traditionally lack discoverability: if you don't already hold a capability, how do you find one? Dregg's service mesh provides governed discovery without compromising the capability model. The three primitives---mount, discover, resolve---build atop DFA-based routing and constitutional governance to provide namespace-level access control provable via STARK lookup tables.
 
 == DFA Routing as a First-Class Userspace Caveat
 
@@ -19,7 +19,7 @@ The DFA approach provides:
 - *Atomic route updates*: swap the entire DFA table in one operation (constitutional amendment).
 - *STARK-provable*: classification decisions are provable via lookup tables in the Effect VM; the DFA-acceptance predicate is a single registered `WitnessedPredicateKind`.
 
-Three implementations of DFA-shaped machinery existed in the tree pre-rationalization (`wire::dfa_router`, `rbg::routing`, `apps/governed-namespace::routes`), none subsuming the others. The rationalization (per `DFA-RATIONALIZATION-DESIGN.md`): promote the `rbg::routing` compiler shape (`Pattern $arrow.r$ NFA $arrow.r$ DFA`, regex with intersection, AIR-trace) into `wire::dfa_router` as the single canonical engine; delete `apps/governed-namespace::routes` (a `BTreeMap`-backed longest-prefix matcher wearing DFA's clothes); lift the `DirectoryCell` / `ScopedIntentPool` / `MetaDirectory` cluster into `pyana-directory`. The vocabulary (`Route`, `Predicate`, `RouteCaveat`) is what authors touch.
+Three implementations of DFA-shaped machinery existed in the tree pre-rationalization (`wire::dfa_router`, `rbg::routing`, `apps/governed-namespace::routes`), none subsuming the others. The rationalization (per `DFA-RATIONALIZATION-DESIGN.md`): promote the `rbg::routing` compiler shape (`Pattern $arrow.r$ NFA $arrow.r$ DFA`, regex with intersection, AIR-trace) into `wire::dfa_router` as the single canonical engine; delete `apps/governed-namespace::routes` (a `BTreeMap`-backed longest-prefix matcher wearing DFA's clothes); lift the `DirectoryCell` / `ScopedIntentPool` / `MetaDirectory` cluster into `dregg-directory`. The vocabulary (`Route`, `Predicate`, `RouteCaveat`) is what authors touch.
 
 === Route Table Structure
 
@@ -171,7 +171,7 @@ A governed capability registry maps service descriptors to cell endpoints:
   "model": "llama-70b",
   "rate_limit": 100,
   "location": StrandId(0xab12...),
-  "capability": SturdyRef("pyana://...")
+  "capability": SturdyRef("dregg://...")
 }
 ```
 

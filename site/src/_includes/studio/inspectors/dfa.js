@@ -1,7 +1,7 @@
 /**
- * <pyana-dfa uri="pyana://dfa/<service>" | data-dfa="...">
+ * <dregg-dfa uri="dregg://dfa/<service>" | data-dfa="...">
  *
- * Inspector for pyana_dfa::Dfa / RouteTable / GovernedRouter.
+ * Inspector for dregg_dfa::Dfa / RouteTable / GovernedRouter.
  * SVG node-and-edge visualization of the compiled DFA (states + transitions).
  * Reuses platform vocabulary for filters and routes.
  *
@@ -18,7 +18,7 @@
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 import { parseRef } from '../uri.js';
 
-class PyanaDfa extends InspectorBase {
+class DreggDfa extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -32,7 +32,7 @@ class PyanaDfa extends InspectorBase {
     let dfaData = null;
     if (dataAttr) {
       try { dfaData = JSON.parse(dataAttr); } catch (e) {
-        this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">bad data-dfa: ${e.message}</div>`;
+        this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">bad data-dfa: ${e.message}</div>`;
         return;
       }
     } else if (refAttr) {
@@ -47,11 +47,11 @@ class PyanaDfa extends InspectorBase {
     const Component = () => {
       if (!dfaData) {
         return html`
-          <div class="pyana-inspector pyana-inspector--dfa pdfa">
-            <div class="pdfa__header"><span class="pyana-inspector__kind">dfa</span> ${parsed ? shortHex(parsed.id, 12) : ''}</div>
+          <div class="dregg-inspector dregg-inspector--dfa pdfa">
+            <div class="pdfa__header"><span class="dregg-inspector__kind">dfa</span> ${parsed ? shortHex(parsed.id, 12) : ''}</div>
             <div style="color:var(--fg-dim);font-size:0.8rem;margin:4px 0;">
-              awaiting DFA data (data-dfa JSON or wasm compile_dfa / get_dfa binding from pyana_dfa crate).
-              <button class="pbs__btn" style="margin-left:8px;font-size:0.7rem;padding:1px 6px;" id="dfa-load-sample">Load sample (pyana_dfa compiler example)</button>
+              awaiting DFA data (data-dfa JSON or wasm compile_dfa / get_dfa binding from dregg_dfa crate).
+              <button class="pbs__btn" style="margin-left:8px;font-size:0.7rem;padding:1px 6px;" id="dfa-load-sample">Load sample (dregg_dfa compiler example)</button>
             </div>
             <div style="font-size:0.7rem;color:var(--fg-dim);">
               Ties to blocklace Constitution.routes_commitment (BLAKE3 of RouteTable). See dfa/{compiler,router}.rs + DFA-RATIONALIZATION-DESIGN.md + blocklace/src/constitution.rs:54.
@@ -63,7 +63,7 @@ class PyanaDfa extends InspectorBase {
       const trans = dfaData.transitions || dfaData.edges || [];
 
       if (mode === 'compact') {
-        return html`<span class="pyana-inspector pyana-inspector--compact">DFA ${states.length} states · ${trans.length} trans</span>`;
+        return html`<span class="dregg-inspector dregg-inspector--compact">DFA ${states.length} states · ${trans.length} trans</span>`;
       }
 
       // Improved SVG visualization (layered layout + proper edges, following delegation-graph/merkle patterns; no JS reimpl of DFA semantics)
@@ -104,17 +104,17 @@ class PyanaDfa extends InspectorBase {
       });
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pdfa">
-          <header><span class="pyana-inspector__kind">dfa</span> ${dfaData.name || shortHex(dfaData.hash || dfaData.routes_commitment || '', 8)}</header>
+        <div class="dregg-inspector dregg-inspector--cell pdfa">
+          <header><span class="dregg-inspector__kind">dfa</span> ${dfaData.name || shortHex(dfaData.hash || dfaData.routes_commitment || '', 8)}</header>
           <svg width="${boxW}" height="${boxH}" style="border:1px solid var(--line);background:var(--bg);border-radius:4px;">
             ${svgEdges}
             ${svgNodes}
           </svg>
           <div style="font-size:0.75rem;margin-top:4px;color:var(--fg-dim);">
-            ${states.length} states · ${trans.length} transitions (from pyana_dfa::compiler / RouteTable). Use for RelayOperator, PubSubTopicFilter, CapTP pre-filters, governed routing.
+            ${states.length} states · ${trans.length} transitions (from dregg_dfa::compiler / RouteTable). Use for RelayOperator, PubSubTopicFilter, CapTP pre-filters, governed routing.
           </div>
           ${dfaData.air_fingerprint || dfaData.routes_commitment ? html`<div style="font-size:0.65rem;">commit / AIR: ${shortHex(dfaData.air_fingerprint || dfaData.routes_commitment || '', 10)}</div>` : ''}
-          <div style="font-size:0.65rem;margin-top:2px;color:#6a8070;">Sample or data-dfa from dfa crate; real compile_dfa stub in wasm/bindings.rs:1136 (see pyana_dfa::router::GovernedRouter + blocklace constitution link).</div>
+          <div style="font-size:0.65rem;margin-top:2px;color:#6a8070;">Sample or data-dfa from dfa crate; real compile_dfa stub in wasm/bindings.rs:1136 (see dregg_dfa::router::GovernedRouter + blocklace constitution link).</div>
         </div>`;
     };
 
@@ -122,6 +122,6 @@ class PyanaDfa extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-dfa')) {
-  customElements.define('pyana-dfa', PyanaDfa);
+if (!customElements.get('dregg-dfa')) {
+  customElements.define('dregg-dfa', DreggDfa);
 }

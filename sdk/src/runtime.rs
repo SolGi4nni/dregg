@@ -10,13 +10,13 @@
 
 use std::sync::{Arc, Mutex, RwLock};
 
-use pyana_cell::{Cell, CellId, Ledger};
-use pyana_token::{Attenuation, AuthToken};
-use pyana_turn::{
+use dregg_cell::{Cell, CellId, Ledger};
+use dregg_token::{Attenuation, AuthToken};
+use dregg_turn::{
     Action, Authorization, BudgetGate, BudgetSlice, CallForest, ComputronCosts, DelegationMode,
     Effect, Turn, TurnExecutor, TurnReceipt, TurnResult, action::symbol,
 };
-use pyana_types::PublicKey;
+use dregg_types::PublicKey;
 
 use crate::cipherclerk::{AgentCipherclerk, HeldToken};
 use crate::error::SdkError;
@@ -36,8 +36,8 @@ use crate::error::SdkError;
 /// # Example
 ///
 /// ```no_run
-/// use pyana_sdk::{AgentCipherclerk, AgentRuntime, Effect};
-/// use pyana_types::CellId;
+/// use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect};
+/// use dregg_types::CellId;
 /// use std::sync::{Arc, RwLock};
 ///
 /// let cipherclerk = Arc::new(RwLock::new(AgentCipherclerk::new()));
@@ -78,7 +78,7 @@ impl AgentRuntime {
     /// # Example
     ///
     /// ```no_run
-    /// use pyana_sdk::{AgentCipherclerk, AgentRuntime};
+    /// use dregg_sdk::{AgentCipherclerk, AgentRuntime};
     ///
     /// let cipherclerk = AgentCipherclerk::new();
     /// let runtime = AgentRuntime::new_simple(cipherclerk, "my-domain");
@@ -205,7 +205,7 @@ impl AgentRuntime {
     /// rejected with `TurnError::BudgetExhausted`.
     ///
     /// Call this when the agent's current silo has provided a budget slice via
-    /// the StingrayCounter (pyana_coord::StingrayCounter).
+    /// the StingrayCounter (dregg_coord::StingrayCounter).
     pub fn set_budget_gate(&mut self, silo_id: u32, slice: BudgetSlice) {
         self.executor
             .set_budget_gate(BudgetGate::new(silo_id, slice));
@@ -603,7 +603,7 @@ impl SubAgent {
     /// `false` for `Deny` / `Inconclusive` / parse failure. The durable
     /// binding is re-verified first so a post-receive tampering returns
     /// `false`.
-    pub fn can_authorize(&self, request: &pyana_token::AuthRequest) -> bool {
+    pub fn can_authorize(&self, request: &dregg_token::AuthRequest) -> bool {
         if self.token.reverify_delegation_binding().is_err() {
             return false;
         }
@@ -612,7 +612,7 @@ impl SubAgent {
             .authorize(&self.token, request, crate::VerificationMode::Trusted)
         {
             Ok(crate::AuthorizationPresentation::Trusted { trace, .. }) => {
-                matches!(trace.conclusion, pyana_trace::Conclusion::Allow { .. })
+                matches!(trace.conclusion, dregg_trace::Conclusion::Allow { .. })
             }
             // Any other presentation kind shouldn't occur from Trusted mode;
             // be conservative.

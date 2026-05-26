@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Storage: Quotas, Inboxes, and Economics — Pyana</title>
+<title>Storage: Quotas, Inboxes, and Economics — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Storage: Quotas, Inboxes, and Economics</h1>
 
     <p>
-      Pyana provides computron-metered storage with anti-spam protection. Sovereign
+      <code>dregg</code> provides computron-metered storage with anti-spam protection. Sovereign
       cells pay almost nothing (the federation stores only a 32-byte commitment).
       Hosted cells and inbox messages pay proportional to size and duration.
       Understanding storage economics helps you design applications that are
@@ -66,7 +66,7 @@
     </p>
 
     <pre><code># Check your space bank
-pyana storage bank
+dregg storage bank
 # Output:
 #   Bank: default
 #   Allocation: 100 MiB
@@ -113,7 +113,7 @@ pyana storage bank
 
     <h3>Inspecting Your Inbox</h3>
     <pre><code># Check inbox status
-pyana storage inbox
+dregg storage inbox
 # Output:
 #   Pending messages: 3
 #   Total size: 4.2 KiB
@@ -121,10 +121,10 @@ pyana storage inbox
 #   Deposits held: 1500 computrons
 
 # Process inbox messages
-pyana storage inbox process --all
+dregg storage inbox process --all
 
 # Drop expired messages (reclaim space)
-pyana storage inbox gc</code></pre>
+dregg storage inbox gc</code></pre>
 
     <h2 id="rent">Storage Rent and Lifecycle</h2>
 
@@ -144,7 +144,7 @@ pyana storage inbox gc</code></pre>
     </ul>
 
     <pre><code># Check rent status
-pyana storage status
+dregg storage status
 # Output:
 #   Mode: hosted
 #   State size: 45 KiB
@@ -153,7 +153,7 @@ pyana storage status
 #   Runway: ~266 epochs
 
 # Switch to sovereign to stop paying rent
-pyana cell sovereign --cell $CELL_ID
+dregg cell sovereign --cell $CELL_ID
 # Now the federation stores only your 32-byte commitment (10 computrons/epoch)</code></pre>
 
     <h2 id="erasure">Erasure Coding</h2>
@@ -165,10 +165,10 @@ pyana cell sovereign --cell $CELL_ID
     </p>
 
     <pre><code># Enable erasure coding (7 shards, need any 4 to reconstruct)
-pyana storage erasure enable --cell $CELL_ID --shards 7 --threshold 4
+dregg storage erasure enable --cell $CELL_ID --shards 7 --threshold 4
 
 # Check shard health
-pyana storage erasure status --cell $CELL_ID
+dregg storage erasure status --cell $CELL_ID
 # Output:
 #   Shards: 7/7 healthy
 #   Threshold: 4
@@ -176,7 +176,7 @@ pyana storage erasure status --cell $CELL_ID
 #   Last challenge: 12 blocks ago (all passed)
 
 # Disable erasure coding (return to sovereign-only)
-pyana storage erasure disable --cell $CELL_ID</code></pre>
+dregg storage erasure disable --cell $CELL_ID</code></pre>
 
     <p>
       Nodes periodically prove they still hold their shard via challenge-response
@@ -186,7 +186,7 @@ pyana storage erasure disable --cell $CELL_ID</code></pre>
 
     <h2 id="sdk">SDK Storage Operations</h2>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -220,7 +220,7 @@ for msg in messages {
           with data availability guarantees (any k-of-n nodes can reconstruct).</li>
       <li><strong>Set reasonable TTLs on inbox messages:</strong> Short TTLs reduce deposit cost.
           Use longer TTLs only for truly offline recipients.</li>
-      <li><strong>Monitor rent runway:</strong> Use <code>pyana storage status</code> to check
+      <li><strong>Monitor rent runway:</strong> Use <code>dregg storage status</code> to check
           how many epochs your balance covers. Top up before entering Decay.</li>
       <li><strong>GC regularly:</strong> Process inbox messages and delete expired data to
           reduce ongoing costs.</li>
@@ -230,7 +230,7 @@ for msg in messages {
     <ul>
       <li><a href="/learn/architecture/economics.html">Economic Model</a> -- Full fee schedule and incentive analysis</li>
       <li><a href="service-mesh.html">Service Mesh</a> -- Service state persistence patterns</li>
-      <li><a href="/learn/users/cli.html">CLI Reference</a> -- <code>pyana storage</code> command details</li>
+      <li><a href="/learn/users/cli.html">CLI Reference</a> -- <code>dregg storage</code> command details</li>
     </ul>
 
   </main>

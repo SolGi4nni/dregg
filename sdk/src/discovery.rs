@@ -3,7 +3,7 @@
 //! The [`PrivateDiscoveryClient`] enables agents to discover intents matching a
 //! given capability tag without revealing which tag they are querying.
 //!
-//! The protocol requires two independent pyana nodes (non-colluding servers).
+//! The protocol requires two independent dregg nodes (non-colluding servers).
 //! The client constructs two complementary PIR query vectors and sends one to each
 //! node. Neither node can determine the target tag from its query alone.
 //!
@@ -13,8 +13,8 @@
 //! actual HTTP calls. A default implementation is provided when the `reqwest`
 //! feature is available; otherwise callers must supply their own transport.
 
-use pyana_circuit::field::BabyBear;
-use pyana_intent::pir::{
+use dregg_circuit::field::BabyBear;
+use dregg_intent::pir::{
     PirResponse, combine_pir_responses, decode_intent_ids, generate_pir_queries,
 };
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ pub struct PirQueryResponse {
     pub response: Vec<u32>,
 }
 
-/// Trait abstracting HTTP calls to a PIR-enabled pyana node.
+/// Trait abstracting HTTP calls to a PIR-enabled dregg node.
 ///
 /// Implementors handle the actual network transport (reqwest, hyper, etc.).
 /// The default test implementation uses in-memory state.
@@ -66,7 +66,7 @@ pub trait PirTransport: Send + Sync {
 
 /// HTTP transport using `reqwest`.
 ///
-/// This is the production transport. It issues real HTTP requests to pyana node
+/// This is the production transport. It issues real HTTP requests to dregg node
 /// endpoints `/pir/info` (GET) and `/pir/query` (POST).
 #[cfg(feature = "reqwest")]
 pub struct ReqwestTransport {
@@ -129,7 +129,7 @@ impl PirTransport for ReqwestTransport {
 
 /// Client for private intent discovery using 2-server IT-PIR.
 ///
-/// Queries two independent pyana nodes so that neither learns which capability
+/// Queries two independent dregg nodes so that neither learns which capability
 /// tag the agent is looking for. The two responses are combined locally to
 /// reveal only the matching intent IDs.
 ///
@@ -144,11 +144,11 @@ impl PirTransport for ReqwestTransport {
 /// # Example
 ///
 /// ```no_run
-/// use pyana_sdk::discovery::PrivateDiscoveryClient;
+/// use dregg_sdk::discovery::PrivateDiscoveryClient;
 ///
-/// # async fn example() -> Result<(), pyana_sdk::SdkError> {
+/// # async fn example() -> Result<(), dregg_sdk::SdkError> {
 /// // In production, use ReqwestTransport (with `reqwest` feature)
-/// // let transport = pyana_sdk::discovery::ReqwestTransport::new();
+/// // let transport = dregg_sdk::discovery::ReqwestTransport::new();
 /// // let client = PrivateDiscoveryClient::new("http://node-a:8080", "http://node-b:8080", transport);
 /// // let ids = client.discover_intents("action:read").await?;
 /// # Ok(())
@@ -168,8 +168,8 @@ impl<T: PirTransport> PrivateDiscoveryClient<T> {
     ///
     /// # Arguments
     ///
-    /// * `node_a` - Base URL of the first pyana node (e.g., `"http://localhost:8080"`).
-    /// * `node_b` - Base URL of the second pyana node (must be different from `node_a`).
+    /// * `node_a` - Base URL of the first dregg node (e.g., `"http://localhost:8080"`).
+    /// * `node_b` - Base URL of the second dregg node (must be different from `node_a`).
     /// * `transport` - The HTTP transport to use for requests.
     pub fn new(node_a: &str, node_b: &str, transport: T) -> Self {
         Self {
@@ -322,8 +322,8 @@ impl crate::cipherclerk::AgentCipherclerk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_intent::pir::{IntentIndex, PirQuery, compute_pir_response};
-    use pyana_intent::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec};
+    use dregg_intent::pir::{IntentIndex, PirQuery, compute_pir_response};
+    use dregg_intent::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

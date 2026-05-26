@@ -174,7 +174,7 @@ fn compute_commitment(
     accept_map: &BTreeMap<StateId, RouteTarget>,
     prefix_lens: &BTreeMap<StateId, usize>,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-dfa-route-table-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-dfa-route-table-v1");
     for t in transitions {
         hasher.update(&t.to_le_bytes());
     }

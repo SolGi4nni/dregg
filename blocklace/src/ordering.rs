@@ -586,7 +586,7 @@ impl ReferenceGroup {
     pub fn compute_id(&self) -> [u8; 32] {
         let mut sorted = self.participants.clone();
         sorted.sort();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-group-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-group-id-v1");
         for p in &sorted {
             hasher.update(p);
         }

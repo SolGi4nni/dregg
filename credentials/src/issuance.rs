@@ -10,7 +10,7 @@
 //! A credential is a triple:
 //! 1. The issuer's 32-byte HMAC root key (the issuer keeps a copy; the
 //!    holder receives a *derived* per-credential subkey when needed —
-//!    see G39 / G40 of PYANA-FLAWS-FROM-APPS.md for the non-revocation
+//!    see G39 / G40 of DREGG-FLAWS-FROM-APPS.md for the non-revocation
 //!    binding work this enables).
 //! 2. The macaroon token bytes (`em2_...` base64-encoded).
 //! 3. The federation root the credential was anchored against. Verifiers
@@ -22,12 +22,12 @@
 //! when the holder constructs a `Credential` from an encoded token they
 //! already trust (e.g., when reconstructing from disk).
 
-use pyana_macaroon::Macaroon;
+use dregg_macaroon::Macaroon;
 use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
 
-use pyana_token::{Attenuation, AuthToken, MacaroonToken};
+use dregg_token::{Attenuation, AuthToken, MacaroonToken};
 
 use crate::schema::{AttrValue, AttributeAttenuation, CredentialAttributes, CredentialSchema};
 
@@ -47,7 +47,7 @@ pub struct IssuerKeys {
     /// signature key. Bound into the macaroon's `kid`.
     pub kid: Vec<u8>,
     /// Macaroon location field. By convention this is a stable identifier
-    /// for the issuer's domain (e.g., `"pyana.dev"`).
+    /// for the issuer's domain (e.g., `"dregg.dev"`).
     pub location: String,
 }
 
@@ -90,7 +90,7 @@ pub struct Credential {
     /// The issuer's HMAC root key. The holder needs this to reconstruct
     /// the `MacaroonToken` for attenuation/presentation. The issuer
     /// transmits this *out-of-band* over a secure channel (e.g., the
-    /// `pyana-storage::Inbox` encrypted-to-holder primitive — G12).
+    /// `dregg-storage::Inbox` encrypted-to-holder primitive — G12).
     pub root_key: [u8; 32],
 
     /// The federation root this credential is anchored against.
@@ -194,11 +194,11 @@ pub fn issue(
 
     let attenuated = root
         .attenuate(&att)
-        .map_err(|e: pyana_token::TokenError| IssuanceError::Backend(e.to_string()))?;
+        .map_err(|e: dregg_token::TokenError| IssuanceError::Backend(e.to_string()))?;
 
     let encoded = attenuated
         .to_encoded()
-        .map_err(|e: pyana_token::TokenError| IssuanceError::Encoding(e.to_string()))?;
+        .map_err(|e: dregg_token::TokenError| IssuanceError::Encoding(e.to_string()))?;
 
     Ok(Credential {
         encoded,

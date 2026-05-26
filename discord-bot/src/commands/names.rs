@@ -1,6 +1,6 @@
 //! Name service commands: `/name-register`, `/name-resolve`, `/name-whois`.
 //!
-//! Guild-scoped namespace registration and resolution via the pyana governed namespace.
+//! Guild-scoped namespace registration and resolution via the dregg governed namespace.
 
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
@@ -71,7 +71,7 @@ pub async fn handle_register(ctx: &Context, command: &CommandInteraction, state:
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You need a linked pyana identity to register names. Use `/link-cclerk` first.",
+                "You need a linked dregg identity to register names. Use `/link-cclerk` first.",
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -177,7 +177,7 @@ pub async fn handle_resolve(ctx: &Context, command: &CommandInteraction, state: 
                 }
             };
 
-            let embed = embeds::pyana_embed("Name Resolved")
+            let embed = embeds::dregg_embed("Name Resolved")
                 .field("Name", &name, true)
                 .field("Cell ID", format!("`{}`", result.cell_id), false)
                 .field("URI", format!("```\n{}\n```", result.uri), false)
@@ -265,7 +265,7 @@ pub async fn handle_whois(ctx: &Context, command: &CommandInteraction, state: &B
                 desc.push_str("\nNo names registered for this cell in this guild.");
             }
 
-            let embed = embeds::pyana_embed("Whois").description(desc);
+            let embed = embeds::dregg_embed("Whois").description(desc);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

@@ -1,4 +1,4 @@
-//! StarkProofVerifier: bridges the pyana-circuit STARK verifier to the TurnExecutor's
+//! StarkProofVerifier: bridges the dregg-circuit STARK verifier to the TurnExecutor's
 //! `ProofVerifier` trait.
 //!
 //! This module provides the concrete implementation that wires the ZK presentation
@@ -34,14 +34,14 @@
 
 use std::sync::Arc;
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::binding::compute_action_binding;
-use pyana_circuit::stark;
-use pyana_dsl_runtime::ProgramRegistry;
-use pyana_turn::ProofVerifier;
+use dregg_circuit::BabyBear;
+use dregg_circuit::binding::compute_action_binding;
+use dregg_circuit::stark;
+use dregg_dsl_runtime::ProgramRegistry;
+use dregg_turn::ProofVerifier;
 
 /// A `ProofVerifier` implementation that verifies real STARK proofs from the
-/// pyana-circuit layer.
+/// dregg-circuit layer.
 ///
 /// The verifier checks that:
 /// 1. The proof bytes deserialize to a valid `StarkProof`.
@@ -121,14 +121,14 @@ impl ProofVerifier for StarkProofVerifier {
             .collect();
 
         // Expect at least [leaf_hash, merkle_root, action_binding[0..4]]
-        if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
 
         // 3. Verify the action binding commitment (4 elements, 124-bit security).
         // The action binding occupies pi[2..6] (after leaf_hash and merkle_root).
         let expected_binding = compute_action_binding(action, resource);
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if pi[2 + i] != expected_binding[i] {
                 return false;
             }
@@ -168,7 +168,7 @@ impl ProofVerifier for StarkProofVerifier {
         // SECURITY: When freshness is required (max_proof_age_secs > 0), the proof
         // MUST include a timestamp. Rejecting proofs without timestamps prevents a
         // prover from stripping the timestamp to bypass freshness enforcement.
-        let timestamp_idx = 2 + pyana_circuit::ACTION_BINDING_WIDTH; // = 6
+        let timestamp_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH; // = 6
         if self.max_proof_age_secs > 0 {
             if pi.len() <= timestamp_idx {
                 // Timestamp required but proof does not include one — reject.
@@ -190,8 +190,8 @@ impl ProofVerifier for StarkProofVerifier {
         }
 
         // 6. Verify the STARK proof cryptographically using DSL circuit.
-        let circuit = pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-            .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+        let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+            .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
         stark::verify(&circuit, &stark_proof, &pi).is_ok()
     }
 }
@@ -201,10 +201,10 @@ impl ProofVerifier for StarkProofVerifier {
 #[deprecated(note = "All proofs now use DSL-based verification. This constant is unused.")]
 #[allow(dead_code)]
 const KNOWN_AIR_NAMES: &[&str] = &[
-    "pyana-merkle-poseidon2-v1",
-    "pyana-blinded-merkle-poseidon2-v1",
-    "pyana-poseidon2-v1",
-    "pyana-merkle-poseidon2-round-v1",
+    "dregg-merkle-poseidon2-v1",
+    "dregg-blinded-merkle-poseidon2-v1",
+    "dregg-poseidon2-v1",
+    "dregg-merkle-poseidon2-round-v1",
 ];
 
 /// A `ProofVerifier` that supports both hardcoded AIRs and DSL-generated circuits.
@@ -272,13 +272,13 @@ impl DslAwareProofVerifier {
             .collect();
 
         // Expect at least [leaf_hash, merkle_root, action_binding[0..4]]
-        if pi.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
 
         // Verify the action binding commitment.
         let expected_binding = compute_action_binding(action, resource);
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if pi[2 + i] != expected_binding[i] {
                 return false;
             }
@@ -295,7 +295,7 @@ impl DslAwareProofVerifier {
         }
 
         // Timestamp freshness check (if configured).
-        let timestamp_idx = 2 + pyana_circuit::ACTION_BINDING_WIDTH;
+        let timestamp_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
         if self.max_proof_age_secs > 0 {
             if pi.len() <= timestamp_idx {
                 return false;
@@ -315,7 +315,7 @@ impl DslAwareProofVerifier {
         }
 
         // Dispatch to the correct DSL circuit based on air_name.
-        use pyana_dsl_runtime::descriptors::{
+        use dregg_dsl_runtime::descriptors::{
             BLINDED_MERKLE_AIR_NAME, blinded_merkle_poseidon2_circuit, merkle_poseidon2_circuit,
         };
         if stark_proof.air_name == BLINDED_MERKLE_AIR_NAME {
@@ -371,11 +371,11 @@ impl DslAwareProofVerifier {
 
         // Action binding check: pi[0..4] must match the expected action binding.
         // This prevents replay of a valid proof to authorize a different action.
-        if pi.len() < pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi.len() < dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
         let expected_binding = compute_action_binding(action, resource);
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if pi[i] != expected_binding[i] {
                 return false;
             }
@@ -383,7 +383,7 @@ impl DslAwareProofVerifier {
 
         // Timestamp freshness check (same logic as the known-AIR path).
         // For DSL programs, the timestamp lives at pi[ACTION_BINDING_WIDTH] (index 4).
-        let timestamp_idx = pyana_circuit::ACTION_BINDING_WIDTH; // = 4
+        let timestamp_idx = dregg_circuit::ACTION_BINDING_WIDTH; // = 4
         if self.max_proof_age_secs > 0 {
             if pi.len() <= timestamp_idx {
                 // Timestamp required but proof does not include one — reject.
@@ -405,7 +405,7 @@ impl DslAwareProofVerifier {
         }
 
         // Verify using the program's DslCircuit.
-        let circuit = pyana_dsl_runtime::DslCircuit::new(program.descriptor.clone());
+        let circuit = dregg_dsl_runtime::DslCircuit::new(program.descriptor.clone());
         stark::verify(&circuit, stark_proof, &pi).is_ok()
     }
 }
@@ -434,17 +434,17 @@ impl ProofVerifier for DslAwareProofVerifier {
         // 3. Action binding check (standard convention: pi[2..6] for known circuits,
         //    pi[0..4] for custom programs).
         let (binding_offset, has_root_check) =
-            if pyana_dsl_runtime::descriptors::is_known_dsl_air(&stark_proof.air_name) {
+            if dregg_dsl_runtime::descriptors::is_known_dsl_air(&stark_proof.air_name) {
                 (2, true) // Standard circuits: [leaf, root, binding...]
             } else {
                 (0, false) // Custom programs: [binding...]
             };
 
-        if pi.len() < binding_offset + pyana_circuit::ACTION_BINDING_WIDTH {
+        if pi.len() < binding_offset + dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
         let expected_binding = compute_action_binding(action, resource);
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if pi[binding_offset + i] != expected_binding[i] {
                 return false;
             }
@@ -463,7 +463,7 @@ impl ProofVerifier for DslAwareProofVerifier {
         }
 
         // 5. Timestamp freshness check (if configured).
-        let timestamp_idx = binding_offset + pyana_circuit::ACTION_BINDING_WIDTH;
+        let timestamp_idx = binding_offset + dregg_circuit::ACTION_BINDING_WIDTH;
         if self.max_proof_age_secs > 0 {
             if pi.len() <= timestamp_idx {
                 return false;
@@ -485,7 +485,7 @@ impl ProofVerifier for DslAwareProofVerifier {
         // 6. Resolve the circuit and verify.
         // First: try standard DSL circuits by air_name.
         if let Some(circuit) =
-            pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+            dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
         {
             return stark::verify(&circuit, &stark_proof, &pi).is_ok();
         }
@@ -498,10 +498,10 @@ impl ProofVerifier for DslAwareProofVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::binding::compute_action_binding;
-    use pyana_circuit::stark::{proof_to_bytes, prove};
-    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+    use dregg_circuit::binding::compute_action_binding;
+    use dregg_circuit::stark::{proof_to_bytes, prove};
+    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     /// Encode a BabyBear value as a 32-byte verification key.
     ///

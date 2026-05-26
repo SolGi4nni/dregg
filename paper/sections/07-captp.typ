@@ -14,7 +14,7 @@ The integration-complete Silver Vision invariant: *a CapTP-delivered message pro
 
 A sturdy reference is a durable, serializable capability URI that survives disconnection and enables offline sharing:
 
-$ "pyana://" chevron.l "federation_id" chevron.r "/" chevron.l "cell_id" chevron.r "/" chevron.l "swiss_number" chevron.r $
+$ "dregg://" chevron.l "federation_id" chevron.r "/" chevron.l "cell_id" chevron.r "/" chevron.l "swiss_number" chevron.r $
 
 The swiss number is a cryptographic bearer secret (256 bits of entropy). Possession of the swiss number IS authorization---no additional proof is needed to _enliven_ the reference. The swiss table maps swiss numbers to live capabilities within a federation node.
 
@@ -22,7 +22,7 @@ The swiss number is a cryptographic bearer secret (256 bits of entropy). Possess
 
 To convert a sturdy ref into a live reference:
 
-+ Parse the `pyana://` URI to extract federation ID, cell ID, and swiss number.
++ Parse the `dregg://` URI to extract federation ID, cell ID, and swiss number.
 + Connect to the federation (via QUIC transport, identified by federation ID).
 + Present the swiss number to the target node's swiss table.
 + If valid: receive a live reference token (an import entry in the CapTP session).

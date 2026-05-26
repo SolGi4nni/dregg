@@ -6,13 +6,13 @@
 //! 3. Forged proofs (valid proof structure but wrong public inputs) are rejected.
 //! 4. Proof manipulation (bit flips, truncation) causes verification failure.
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::predicate_air::{
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::predicate_air::{
     PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, prove_in_range,
     prove_predicate, verify_in_range, verify_predicate,
 };
-use pyana_teasting::assertions::{assert_predicate_rejects, assert_predicate_verifies};
+use dregg_teasting::assertions::{assert_predicate_rejects, assert_predicate_verifies};
 
 /// Helper: create a fact commitment for a given value.
 fn test_fact_commitment(value: u32) -> BabyBear {

@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Using the Cipherclerk — Pyana</title>
+<title>Using the Cipherclerk — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Using the Cipherclerk</h1>
 
     <p>
-      The pyana cipherclerk manages your agent identity, capability tokens, and proof
+      The dregg cipherclerk manages your agent identity, capability tokens, and proof
       generation. It runs as a browser extension with all cryptographic operations
       happening locally -- your keys never leave your device.
     </p>
@@ -25,23 +25,23 @@
 
     <h3>Creating an Identity</h3>
     <p>
-      A pyana identity is an Ed25519 keypair. The cipherclerk generates this from a
+      A dregg identity is an Ed25519 keypair. The cipherclerk generates this from a
       24-word BIP39 mnemonic using BLAKE3-based hierarchical derivation at path
-      <code>pyana/0</code>. The mnemonic is your master backup -- store it securely
+      <code>dregg/0</code>. The mnemonic is your master backup -- store it securely
       offline.
     </p>
 
     <h3>Sub-agent Derivation</h3>
     <p>
       From a single mnemonic you can derive multiple agent identities. Each lives at
-      a different path (<code>pyana/1</code>, <code>pyana/2</code>, etc.). This lets
+      a different path (<code>dregg/1</code>, <code>dregg/2</code>, etc.). This lets
       you run multiple agents with independent identities backed by a single recovery phrase.
     </p>
 
     <h3>Restoring a Cipherclerk</h3>
     <p>
       Enter your 24-word mnemonic and optional passphrase. The cipherclerk deterministically
-      re-derives the same keypair at <code>pyana/0</code> and any sub-agents you had.
+      re-derives the same keypair at <code>dregg/0</code> and any sub-agents you had.
     </p>
 
     <h2 id="tokens">Token Management</h2>

@@ -1,4 +1,4 @@
-//! Shared HTTP server infrastructure for pyana apps.
+//! Shared HTTP server infrastructure for dregg apps.
 //!
 //! Provides [`AppConfig`] for environment-based configuration, [`AppServer`] as a
 //! builder for setting up standard middleware (health, admin auth, CORS), and common
@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::server::{AppConfig, AppServer};
+//! use dregg_app_framework::server::{AppConfig, AppServer};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -26,10 +26,10 @@
 //!
 //! - `GET /health` — JSON health response with timestamp
 //! - CORS headers (permissive by default, suitable for local dev and SPAs)
-//! - Admin auth on `/admin/*` routes (reads `PYANA_ADMIN_TOKEN`)
+//! - Admin auth on `/admin/*` routes (reads `DREGG_ADMIN_TOKEN`)
 //! - Environment-based listen address (`LISTEN` env var, default `0.0.0.0:3000`)
-//! - Optional state file path (`PYANA_STATE_FILE` env var)
-//! - Optional node URL (`PYANA_NODE_URL` env var)
+//! - Optional state file path (`DREGG_STATE_FILE` env var)
+//! - Optional node URL (`DREGG_NODE_URL` env var)
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -59,15 +59,15 @@ pub struct AppConfig {
     pub listen: String,
 
     /// Optional path to the state file for JSON persistence.
-    /// Read from `PYANA_STATE_FILE` env var.
+    /// Read from `DREGG_STATE_FILE` env var.
     pub state_file: Option<PathBuf>,
 
     /// Admin bearer token for `/admin/*` routes.
-    /// Read from `PYANA_ADMIN_TOKEN` env var.
+    /// Read from `DREGG_ADMIN_TOKEN` env var.
     pub admin_token: AdminToken,
 
-    /// Optional pyana node URL for federation root sync.
-    /// Read from `PYANA_NODE_URL` env var.
+    /// Optional dregg node URL for federation root sync.
+    /// Read from `DREGG_NODE_URL` env var.
     pub node_url: Option<String>,
 }
 
@@ -76,9 +76,9 @@ impl AppConfig {
     pub fn from_env() -> Self {
         Self {
             listen: std::env::var("LISTEN").unwrap_or_else(|_| "0.0.0.0:3000".into()),
-            state_file: std::env::var("PYANA_STATE_FILE").ok().map(PathBuf::from),
+            state_file: std::env::var("DREGG_STATE_FILE").ok().map(PathBuf::from),
             admin_token: AdminToken::from_env(),
-            node_url: std::env::var("PYANA_NODE_URL").ok(),
+            node_url: std::env::var("DREGG_NODE_URL").ok(),
         }
     }
 
@@ -123,7 +123,7 @@ impl Default for AppConfig {
 // AppServer builder
 // =============================================================================
 
-/// Builder for a standard pyana app HTTP server.
+/// Builder for a standard dregg app HTTP server.
 ///
 /// Provides a fluent API for adding common middleware and routes, then starting
 /// the server with `serve()`.
@@ -150,7 +150,7 @@ impl AppServer {
         Self {
             config,
             router: Router::new(),
-            service_name: "pyana-app".into(),
+            service_name: "dregg-app".into(),
             pending_registration: None,
             cipherclerk: None,
             executor: None,
@@ -163,7 +163,7 @@ impl AppServer {
     /// Handlers can then extract it via `axum::Extension<AppCipherclerk>`
     /// and build signed actions/turns through it — no `[0u8; 64]`
     /// placeholder signatures, no direct
-    /// `pyana_turn::builder::ActionBuilder` imports.
+    /// `dregg_turn::builder::ActionBuilder` imports.
     pub fn with_cipherclerk(mut self, cipherclerk: crate::cipherclerk::AppCipherclerk) -> Self {
         self.router = self.router.layer(axum::Extension(cipherclerk.clone()));
         self.cipherclerk = Some(cipherclerk);
@@ -376,7 +376,7 @@ impl AppServer {
     /// Set the app's nameservice registration.
     ///
     /// Just before the server starts, it will POST to the nameservice
-    /// (`PYANA_NAMESERVICE_URL`) to register under `name` with `tags`.
+    /// (`DREGG_NAMESERVICE_URL`) to register under `name` with `tags`.
     /// Registration failure is logged but does NOT abort startup.
     pub fn with_name(mut self, name: impl Into<String>, tags: Vec<String>) -> Self {
         self.pending_registration = Some(crate::discovery::NameRegistration {
@@ -463,7 +463,7 @@ async fn health_handler(service_name: String) -> impl IntoResponse {
 /// (e.g., block height, pool count, connection status).
 ///
 /// ```ignore
-/// use pyana_app_framework::server::health_with_metadata;
+/// use dregg_app_framework::server::health_with_metadata;
 ///
 /// let handler = health_with_metadata("my-app", || async {
 ///     json!({"block_height": 42, "pools": 3})
@@ -509,7 +509,7 @@ where
 // Common error response type
 // =============================================================================
 
-/// Standard JSON error response used by all pyana app endpoints.
+/// Standard JSON error response used by all dregg app endpoints.
 ///
 /// Serializes to `{"error": "<message>"}`.
 #[derive(Clone, Debug, serde::Serialize)]

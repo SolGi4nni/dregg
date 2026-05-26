@@ -3,13 +3,13 @@
 //! Uses deterministic randomness (getrandom seeded from iteration index)
 //! to generate random inputs and verify system invariants hold.
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-use pyana_circuit::poseidon2::{hash_2_to_1, hash_4_to_1, hash_fact, hash_many};
-use pyana_commit::Fact as CommitFact;
-use pyana_commit::{FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain};
-use pyana_trace::policy::minimal_policy;
-use pyana_trace::types::*;
-use pyana_trace::{Evaluator, symbol_from_str, verify_trace};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1, hash_fact, hash_many};
+use dregg_commit::Fact as CommitFact;
+use dregg_commit::{FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain};
+use dregg_trace::policy::minimal_policy;
+use dregg_trace::types::*;
+use dregg_trace::{Evaluator, symbol_from_str, verify_trace};
 
 // =============================================================================
 // Deterministic random number generation
@@ -513,7 +513,7 @@ fn random_tampered_traces_never_verify() {
 
 #[test]
 fn blake3_leaf_hash_no_collision_10k() {
-    use pyana_commit::hash_leaf;
+    use dregg_commit::hash_leaf;
     let mut rng = Rng::new(400);
     let mut seen = std::collections::HashSet::new();
 
@@ -526,7 +526,7 @@ fn blake3_leaf_hash_no_collision_10k() {
 
 #[test]
 fn blake3_node_hash_no_collision_10k() {
-    use pyana_commit::hash_node;
+    use dregg_commit::hash_node;
     let mut rng = Rng::new(401);
     let mut seen = std::collections::HashSet::new();
 

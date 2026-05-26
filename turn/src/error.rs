@@ -3,7 +3,7 @@
 //! TurnError covers all the ways a turn can fail: authorization issues,
 //! precondition violations, resource limits, and structural problems.
 
-use pyana_cell::{AuthRequired, CellId, ChannelId};
+use dregg_cell::{AuthRequired, CellId, ChannelId};
 use serde::{Deserialize, Serialize};
 
 /// All possible failure modes when executing a turn.

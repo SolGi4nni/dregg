@@ -11,14 +11,14 @@
 //! - DropRef/EnlivenRef ordering anomalies handled gracefully
 //! - Concurrent writes resolved via CAS semantics (exactly one wins)
 
-use pyana_captp::FederationId;
-use pyana_cell::{AuthRequired, CellId};
-use pyana_teasting::captp_sim::SimCapTpSession;
-use pyana_teasting::fault::{FaultConfig, FaultyNetwork};
-use pyana_teasting::federation::dual_federation;
-use pyana_teasting::harness::SimulationHarness;
-use pyana_teasting::mesh_sim::{MeshError, ServiceEntry, SimServiceMesh};
-use pyana_wire::message::WireMessage;
+use dregg_captp::FederationId;
+use dregg_cell::{AuthRequired, CellId};
+use dregg_teasting::captp_sim::SimCapTpSession;
+use dregg_teasting::fault::{FaultConfig, FaultyNetwork};
+use dregg_teasting::federation::dual_federation;
+use dregg_teasting::harness::SimulationHarness;
+use dregg_teasting::mesh_sim::{MeshError, ServiceEntry, SimServiceMesh};
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Helpers
@@ -277,7 +277,7 @@ fn test_concurrent_mount_cas_semantics() {
         path: path.to_string(),
         cell_id: test_cell(0x01),
         federation_id: test_federation(),
-        sturdy_ref: "pyana://test/agent1".to_string(),
+        sturdy_ref: "dregg://test/agent1".to_string(),
         name: "agent1-service".to_string(),
         tags: vec!["contested".to_string()],
         version: 1,
@@ -288,7 +288,7 @@ fn test_concurrent_mount_cas_semantics() {
         path: path.to_string(),
         cell_id: test_cell(0x02),
         federation_id: test_federation(),
-        sturdy_ref: "pyana://test/agent2".to_string(),
+        sturdy_ref: "dregg://test/agent2".to_string(),
         name: "agent2-service".to_string(),
         tags: vec!["contested".to_string()],
         version: 1,
@@ -321,7 +321,7 @@ fn test_concurrent_mount_cas_semantics() {
 
     // No corruption: the router still works correctly
     let resolved = mesh.resolve(&format!("{path}/transfer"));
-    assert_eq!(resolved, Some("pyana://test/agent1"));
+    assert_eq!(resolved, Some("dregg://test/agent1"));
 }
 
 // =============================================================================

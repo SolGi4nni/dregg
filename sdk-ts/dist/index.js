@@ -24,8 +24,8 @@ __export(index_exports, {
   MerkleTree: () => MerkleTree,
   PredicateEvaluator: () => PredicateEvaluator,
   ProofEngine: () => ProofEngine,
-  PyanaClient: () => PyanaClient,
-  PyanaRuntime: () => PyanaRuntime,
+  DreggClient: () => DreggClient,
+  DreggRuntime: () => DreggRuntime,
   TokenOps: () => TokenOps
 });
 module.exports = __toCommonJS(index_exports);
@@ -39,7 +39,7 @@ var AgentCipherclerk = class _AgentCipherclerk {
   /**
    * Create a new AgentCipherclerk with a randomly generated root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @returns A new AgentCipherclerk instance with a fresh root key.
    */
   static async create(wasm) {
@@ -50,7 +50,7 @@ var AgentCipherclerk = class _AgentCipherclerk {
   /**
    * Create an AgentCipherclerk from an existing root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param rootKey - A 32-byte root key (Uint8Array or hex string).
    * @returns A new AgentCipherclerk instance using the provided key.
    * @throws Error if the key is not exactly 32 bytes.
@@ -172,7 +172,7 @@ var TokenOps = class {
    * Demonstrate a fold operation: create a token state, then attenuate it
    * by removing facts, showing the Merkle root transition.
    *
-   * This models the core pyana attenuation primitive where tokens can only
+   * This models the core dregg attenuation primitive where tokens can only
    * monotonically lose capabilities (facts are removed, never added).
    *
    * @param options - The facts and removal list.
@@ -205,7 +205,7 @@ var TokenOps = class {
    * intent engine (postcard serialization + BLAKE3 domain-separated hash).
    *
    * This produces a deterministic 32-byte ID that matches `Intent::compute_id()`
-   * in the `pyana-intent` crate.
+   * in the `dregg-intent` crate.
    *
    * @param input - The intent specification.
    * @returns 64-character hex-encoded intent ID.
@@ -220,7 +220,7 @@ var TokenOps = class {
     }
   }
   /**
-   * Derive a keypair from a BIP39 mnemonic using pyana's BLAKE3 derivation path.
+   * Derive a keypair from a BIP39 mnemonic using dregg's BLAKE3 derivation path.
    *
    * Returns 64 bytes: first 32 are the secret key seed, last 32 are reserved
    * for the public key (computed externally with Ed25519).
@@ -620,7 +620,7 @@ var PredicateEvaluator = class {
   /**
    * Evaluate a Datalog authorization request against a set of facts.
    *
-   * Uses the standard pyana policy rules to derive an allow/deny conclusion.
+   * Uses the standard dregg policy rules to derive an allow/deny conclusion.
    * The derivation trace is returned for debugging and auditability.
    *
    * @param facts - The facts representing the current authorization state.
@@ -695,7 +695,7 @@ function extractError5(e) {
 }
 
 // src/runtime.ts
-var PyanaRuntime = class {
+var DreggRuntime = class {
   constructor(wasm) {
     this.destroyed = false;
     this.wasm = wasm;
@@ -1587,12 +1587,12 @@ function extractError6(e) {
 }
 
 // src/index.ts
-var PyanaClient = class _PyanaClient {
+var DreggClient = class _DreggClient {
   /**
-   * Create a new PyanaClient. Prefer using `PyanaClient.init()` which
+   * Create a new DreggClient. Prefer using `DreggClient.init()` which
    * handles async cclerk creation.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param cclerk - A pre-created AgentCipherclerk instance.
    */
   constructor(wasm, cclerk) {
@@ -1604,38 +1604,38 @@ var PyanaClient = class _PyanaClient {
     this.predicates = new PredicateEvaluator(wasm);
   }
   /**
-   * Initialize a PyanaClient with a fresh random cclerk.
+   * Initialize a DreggClient with a fresh random cclerk.
    *
    * This is the recommended way to create a client instance.
    *
-   * @param wasm - The initialized pyana-wasm module.
-   * @returns A fully initialized PyanaClient.
+   * @param wasm - The initialized dregg-wasm module.
+   * @returns A fully initialized DreggClient.
    */
   static async init(wasm) {
     const cclerk = await AgentCipherclerk.create(wasm);
-    return new _PyanaClient(wasm, cclerk);
+    return new _DreggClient(wasm, cclerk);
   }
   /**
-   * Initialize a PyanaClient with an existing root key.
+   * Initialize a DreggClient with an existing root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param rootKey - A 32-byte root key (Uint8Array or hex string).
-   * @returns A PyanaClient using the provided key.
+   * @returns A DreggClient using the provided key.
    */
   static fromKey(wasm, rootKey) {
     const cclerk = AgentCipherclerk.fromKey(wasm, rootKey);
-    return new _PyanaClient(wasm, cclerk);
+    return new _DreggClient(wasm, cclerk);
   }
   /**
-   * Create a new PyanaRuntime for full distributed system simulation.
+   * Create a new DreggRuntime for full distributed system simulation.
    *
    * The runtime provides agents, cells, turns, federations, intents,
    * notes, capabilities, and revocation channels -- all running in WASM.
    *
-   * @returns A new PyanaRuntime instance.
+   * @returns A new DreggRuntime instance.
    */
   createRuntime() {
-    return new PyanaRuntime(this.wasm);
+    return new DreggRuntime(this.wasm);
   }
 };
 // Annotate the CommonJS export names for ESM import in node:
@@ -1644,7 +1644,7 @@ var PyanaClient = class _PyanaClient {
   MerkleTree,
   PredicateEvaluator,
   ProofEngine,
-  PyanaClient,
-  PyanaRuntime,
+  DreggClient,
+  DreggRuntime,
   TokenOps
 });

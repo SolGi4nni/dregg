@@ -1,4 +1,4 @@
-//! Pyana-specific peer messages exchanged over iroh connections.
+//! Dregg-specific peer messages exchanged over iroh connections.
 //!
 //! All messages are serialized with postcard (a compact no_std-friendly format)
 //! and framed with a 4-byte big-endian length prefix over QUIC streams.
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // Used by pad_message for random fill.
 use rand::Rng;
 
-/// Messages exchanged between pyana peers over direct QUIC connections
+/// Messages exchanged between dregg peers over direct QUIC connections
 /// or disseminated via gossip.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PeerMessage {

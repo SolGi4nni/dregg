@@ -1,6 +1,6 @@
 # Proof Statements Catalog
 
-Formal catalog of every proof statement in the pyana circuit system, expressed as logical propositions with composition analysis and gap identification.
+Formal catalog of every proof statement in the dregg circuit system, expressed as logical propositions with composition analysis and gap identification.
 
 ---
 
@@ -1265,7 +1265,7 @@ There EXISTS a valid state transition (old_state -> new_state) such that:
 
 ## Full Circuit Inventory
 
-Complete map of all circuits in the pyana system, organized by location.
+Complete map of all circuits in the dregg system, organized by location.
 
 ### Core Circuits (`circuit/src/`)
 
@@ -1320,7 +1320,7 @@ Complete map of all circuits in the pyana system, organized by location.
 | lending | `circuit.rs` | InterestAccrualCircuit | Proves correct compound interest computation over N blocks |
 | gallery | `private_vickrey.rs` | VickreyCircuit + GarbledEvaluationAir | Privacy-preserving Vickrey auction via garbled circuits + STARK proof |
 
-### DSL Test Circuits (`pyana-dsl-tests/src/`)
+### DSL Test Circuits (`dregg-dsl-tests/src/`)
 
 | File | Circuit | One-Line Description |
 |------|---------|---------------------|

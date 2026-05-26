@@ -1,7 +1,7 @@
 {
   "scenario": "cross_fed_handoff",
-  "summary": "Alice on F1 creates a real bearer cap (via pyana_create_bearer_cap MCP) targeting Bob on F2; OOB URI delivery (cp of pyana+bearer shim); F2 performs bilateral transfer (pyana_bilateral_action) producing real WitnessedReceipts with STARK proofs; CrossFedReceiptBundle v1 assembled from recipient_chain + attested roots (from /federation/roots) + HandoffCertificate built from delegation_chain; pyana-verifier verify-cross-fed-bundle accepts the bundle (exit 0 + overall_verified=true) and rejects a tampered version (introducer flipped). All core assertions drive real pyana-node MCP and the verifier binary.",
-  "actors": ["alice@F1 (node-1)", "bob@F2 (node-1)", "F1 committee (3 validators)", "F2 committee (3 validators)", "pyana-verifier (charlie)"],
+  "summary": "Alice on F1 creates a real bearer cap (via dregg_create_bearer_cap MCP) targeting Bob on F2; OOB URI delivery (cp of dregg+bearer shim); F2 performs bilateral transfer (dregg_bilateral_action) producing real WitnessedReceipts with STARK proofs; CrossFedReceiptBundle v1 assembled from recipient_chain + attested roots (from /federation/roots) + HandoffCertificate built from delegation_chain; dregg-verifier verify-cross-fed-bundle accepts the bundle (exit 0 + overall_verified=true) and rejects a tampered version (introducer flipped). All core assertions drive real dregg-node MCP and the verifier binary.",
+  "actors": ["alice@F1 (node-1)", "bob@F2 (node-1)", "F1 committee (3 validators)", "F2 committee (3 validators)", "dregg-verifier (charlie)"],
 
   "must_pass": [
     "both_federations_responding",
@@ -18,7 +18,7 @@
 
   "scaffold_only": [],
 
-  "scaffold_only_explanation": "Old bash-theater assertions (alice_uri_produced_on_F1, uri_delivered_to_F2_inbox, handoff_replay_artifact_constructed, handoff_tampered_artifact_distinguishable) removed. They only tested heredoc writes, cp, and jq diff on synthetic JSON. All assertions now exercise the real MCP tools on pyana-node and the verify-cross-fed-bundle path in pyana-verifier.",
+  "scaffold_only_explanation": "Old bash-theater assertions (alice_uri_produced_on_F1, uri_delivered_to_F2_inbox, handoff_replay_artifact_constructed, handoff_tampered_artifact_distinguishable) removed. They only tested heredoc writes, cp, and jq diff on synthetic JSON. All assertions now exercise the real MCP tools on dregg-node and the verify-cross-fed-bundle path in dregg-verifier.",
 
   "must_not_pass": [],
 
@@ -26,9 +26,9 @@
 
   "blocked_on": [
     "SILVER-VISION §5.2.3: validate_handoff registry-lookup hardening + SwissTable wiring (scenario bypasses via direct bilateral_action)",
-    "Full CapTP delivery lane (pyana_captp_deliver + PresentHandoff + HandoffPresentation); scenario manually assembles the bundle and uses unchecked bilateral for receipt production",
+    "Full CapTP delivery lane (dregg_captp_deliver + PresentHandoff + HandoffPresentation); scenario manually assembles the bundle and uses unchecked bilateral for receipt production",
     "AttestedRoot export with real quorum signatures (current /federation/roots only returns height+merkle_root+count; bundle synthesizes roots with empty sigs — is_valid may pass in devnet single-node posture)",
-    "Real compact pyana-handoff: URI (still using pyana+bearer:<json> shim per two-ai-handoff blocker-2)",
+    "Real compact dregg-handoff: URI (still using dregg+bearer:<json> shim per two-ai-handoff blocker-2)",
     "Receipt federation_id + executor_signature binding for cross-fed receipts (devnet bilateral turns are local and use Authorization::Unchecked)",
     "bundle serde (#108 fixed 2026-05-25): hex_to_ints() now converts all [u8;32]/[u8;64] hex fields (merkle_root, federation_id, nonce, swiss, recipient_pk, introducer_signature, target_cell) to integer arrays before writing the bundle JSON, matching AttestedRoot + HandoffCertificate serde expectations"
   ],

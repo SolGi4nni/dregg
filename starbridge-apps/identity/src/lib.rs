@@ -1,5 +1,5 @@
 //! `starbridge-identity` — userspace verifiable-credentials app composing
-//! `pyana-credentials` (G31).
+//! `dregg-credentials` (G31).
 //!
 //! Companion docs:
 //! - `../../../STARBRIDGE-APPS-PLAN.md` §3.2 — the per-app design sketch
@@ -17,14 +17,14 @@
 //! `apps/identity/` (audited 2026-05-24) re-invented credential primitives
 //! badly: `Credential` had no signature field; the verifier trusted a
 //! `verified: bool` set on the holder; selective disclosure truncated text
-//! to 4 bytes. `PYANA-FLAWS-FROM-APPS.md` G31 promoted `bridge::present` to
-//! the `pyana-credentials` crate. **This starbridge-app is the thin
+//! to 4 bytes. `DREGG-FLAWS-FROM-APPS.md` G31 promoted `bridge::present` to
+//! the `dregg-credentials` crate. **This starbridge-app is the thin
 //! userspace shell that survives once the credential primitive is
 //! correctly factored out**: schemas, factory descriptor, turn-builders,
 //! and inspector wiring.
 //!
 //! All ZK heavy lifting (blinded merkle, predicate disclosure, ring proof,
-//! non-revocation) lives in `pyana-credentials`. This crate composes that
+//! non-revocation) lives in `dregg-credentials`. This crate composes that
 //! through cell-programs: `Effect::SetField` + `Effect::EmitEvent`, never a
 //! domain-specific `Effect::IssueCredential` or
 //! `Authorization::Unchecked` placeholder.
@@ -53,8 +53,8 @@
 //!
 //! 4. [`register`] — `StarbridgeAppContext` mount that installs the
 //!    factory descriptor and the four inspector descriptors
-//!    (`pyana-credential`, `pyana-credential-issue-form`,
-//!    `pyana-credential-present-form`, `pyana-credential-verifier`).
+//!    (`dregg-credential`, `dregg-credential-issue-form`,
+//!    `dregg-credential-present-form`, `dregg-credential-verifier`).
 //!
 //! # What this crate is NOT
 //!
@@ -63,21 +63,21 @@
 //!   shape; the starbridge-host imports this crate's [`register`] and
 //!   wires it via `AppServer`.
 //! - Not a cclerk. The holder's credentials live wherever the host
-//!   chooses to store them (inbox queues, `pyana-storage`, etc.).
+//!   chooses to store them (inbox queues, `dregg-storage`, etc.).
 //! - Not a federation registry. Issuer-membership Merkle trees are
 //!   maintained outside this crate; the host wires them through
 //!   `PresentationOptions::federation_registry`.
 
 #![forbid(unsafe_code)]
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
     CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk,
     field_from_u64, hex_encode_32, symbol,
 };
 
-pub use pyana_credentials::{
+pub use dregg_credentials::{
     AttrValue, AttributeAttenuation, Credential, CredentialAttributes, CredentialSchema,
     IssuanceError, IssuerKeys, Predicate, PredicateRequest, Presentation, PresentationError,
     PresentationOptions, RevocationProof, RevocationRegistry, VerificationError,
@@ -304,7 +304,7 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 /// Compute a 32-byte commitment for a credential schema. Used as the
 /// `SCHEMA_COMMITMENT_SLOT` value at issuer-cell creation time.
 pub fn schema_commitment(schema: &CredentialSchema) -> FieldElement {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-credential-schema-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-credential-schema-v1");
     hasher.update(schema.name.as_bytes());
     hasher.update(&(schema.attributes.len() as u64).to_le_bytes());
     for attr in &schema.attributes {
@@ -335,7 +335,7 @@ pub fn schema_commitment(schema: &CredentialSchema) -> FieldElement {
 /// # ZK composition
 ///
 /// The credential itself (signed macaroon + attribute attenuation) is
-/// produced by `pyana_credentials::issue(...)`. This function consumes
+/// produced by `dregg_credentials::issue(...)`. This function consumes
 /// the resulting `Credential` and records only its 32-byte id. The signed
 /// proof of issuance is the macaroon inside `credential`, not this action
 /// — the action's role is to anchor the issuance on a cell so verifiers
@@ -386,7 +386,7 @@ pub fn build_issue_credential_action(
 ///
 /// # TODO — non-revocation STARK binding
 ///
-/// `pyana-credentials` G39 calls for the non-revocation circuit to bind
+/// `dregg-credentials` G39 calls for the non-revocation circuit to bind
 /// `pi::REVOCATION_HASH` to the credential id. When that lands, the
 /// presentation verifier will additionally check the proof's
 /// `REVOCATION_HASH` against this slot — until then verifiers use the
@@ -425,7 +425,7 @@ pub fn build_revoke_credential_action(
 /// emitted. The latter is `[0u8; 32]` for anonymous presentations and the
 /// holder's cell id otherwise.
 ///
-/// The presentation itself was produced by `pyana_credentials::present(...)`
+/// The presentation itself was produced by `dregg_credentials::present(...)`
 /// (or `present_anonymous(...)`); the action's role is to give the holder
 /// a cell-bound audit trail of their own presentations without exposing
 /// the contents.
@@ -458,7 +458,7 @@ pub fn build_present_credential_action(
 /// credential presentation against the verifier's expectations.
 ///
 /// Runs the verification synchronously via
-/// `pyana_credentials::verify(presentation, &options)`; the resulting
+/// `dregg_credentials::verify(presentation, &options)`; the resulting
 /// boolean drives the emitted event.
 ///
 /// Effects:
@@ -473,7 +473,7 @@ pub fn build_present_credential_action(
 /// `options.revocation` carries the non-revocation proof anchored against
 /// the **issuer cell's current `REVOCATION_ROOT_SLOT`**. The caller is
 /// responsible for reading that slot off-chain (e.g., via
-/// `<pyana-credential>` inspector or a direct cell-state read), building
+/// `<dregg-credential>` inspector or a direct cell-state read), building
 /// the `RevocationProof`, and supplying it here. When G39 lands the
 /// non-revocation STARK directly, this hand-wiring goes away.
 pub fn build_verify_presentation_action(
@@ -515,12 +515,12 @@ pub fn build_verify_presentation_action(
 /// 1. The issuer factory descriptor under [`ISSUER_FACTORY_VK`].
 /// 2. Four inspector descriptors mounted under the
 ///    `/starbridge-apps/identity/inspectors.js` module:
-///    - `pyana-credential` — read-only credential view (attributes,
+///    - `dregg-credential` — read-only credential view (attributes,
 ///      schema, status).
-///    - `pyana-credential-issue-form` — issuer's UI form.
-///    - `pyana-credential-present-form` — holder's UI (selective
+///    - `dregg-credential-issue-form` — issuer's UI form.
+///    - `dregg-credential-present-form` — holder's UI (selective
 ///      disclosure picker + predicate request builder).
-///    - `pyana-credential-verifier` — verifier's UI showing accept /
+///    - `dregg-credential-verifier` — verifier's UI showing accept /
 ///      reject and the revealed-facts trace.
 ///
 /// Returns the registered factory VK.
@@ -535,9 +535,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "credential".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-credential",
+            "component": "dregg-credential",
             "module": module_path,
-            "uri_prefix": "pyana://credential/",
+            "uri_prefix": "dregg://credential/",
             "summary_fields": ["schema", "holder_id", "issued_at", "not_after", "status"],
             "factory_vk_hex": factory_vk_hex,
             "child_program_vk_hex": hex_encode_32(&issuer_child_program_vk()),
@@ -548,9 +548,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "credential-issue-form".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-credential-issue-form",
+            "component": "dregg-credential-issue-form",
             "module": module_path,
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "method": "issue_credential",
             "factory_vk_hex": factory_vk_hex,
             "schemas": [
@@ -565,9 +565,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "credential-present-form".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-credential-present-form",
+            "component": "dregg-credential-present-form",
             "module": module_path,
-            "uri_prefix": "pyana://credential/",
+            "uri_prefix": "dregg://credential/",
             "method": "present_credential",
             "supports_anonymous": true,
             "supports_predicates": true,
@@ -578,9 +578,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "credential-verifier".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-credential-verifier",
+            "component": "dregg-credential-verifier",
             "module": module_path,
-            "uri_prefix": "pyana://presentation/",
+            "uri_prefix": "dregg://presentation/",
             "method": "verify_presentation",
         }),
     });
@@ -614,7 +614,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///
 /// Reads through to [`AuthorizedSet::credential_set_commitment`] so the
 /// cell-program executor and the userspace builders agree on the byte
-/// shape. The value is `blake3_derive_key("pyana-credential-set-v1") ||
+/// shape. The value is `blake3_derive_key("dregg-credential-set-v1") ||
 /// issuer_cell || schema_commitment`.
 pub fn credential_set_commitment(issuer_cell: CellId, schema: &CredentialSchema) -> [u8; 32] {
     let schema_id = schema_commitment(schema);
@@ -656,8 +656,8 @@ pub fn credential_set_predicate(
     issuer_cell: CellId,
     schema: &CredentialSchema,
     proof_witness_index: usize,
-) -> pyana_cell::predicate::WitnessedPredicate {
-    use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+) -> dregg_cell::predicate::WitnessedPredicate {
+    use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
     WitnessedPredicate {
         kind: WitnessedPredicateKind::BlindedSet,
         commitment: credential_set_commitment(issuer_cell, schema),
@@ -677,15 +677,15 @@ fn bool_field(value: bool) -> FieldElement {
     out
 }
 
-/// Hash a `pyana_circuit::binding::WideHash` to its 32-byte digest form.
+/// Hash a `dregg_circuit::binding::WideHash` to its 32-byte digest form.
 ///
 /// The bridge's `revealed_facts_commitment` is carried as a `WideHash`
 /// (4×BabyBear field elements). We expose it as a 32-byte fact-term by
 /// blake3-hashing its little-endian byte serialization — this is the same
-/// shape used by `pyana_credentials::Presentation::to_wire` callers.
-fn wide_hash_bytes(hash: &pyana_circuit::binding::WideHash) -> FieldElement {
+/// shape used by `dregg_credentials::Presentation::to_wire` callers.
+fn wide_hash_bytes(hash: &dregg_circuit::binding::WideHash) -> FieldElement {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-credential-revealed-commitment");
+    hasher.update(b"dregg-credential-revealed-commitment");
     for limb in hash.as_slice().iter() {
         hasher.update(&limb.as_u32().to_le_bytes());
     }
@@ -699,7 +699,7 @@ fn wide_hash_bytes(hash: &pyana_circuit::binding::WideHash) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
+    use dregg_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
     fn test_cipherclerk() -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
@@ -777,7 +777,7 @@ mod tests {
         // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1, the child program VK
         // is the canonical hash of the program text. Validators with
         // the program can re-derive the VK.
-        let expected = pyana_app_framework::canonical_program_vk(&issuer_program());
+        let expected = dregg_app_framework::canonical_program_vk(&issuer_program());
         assert_eq!(
             issuer_child_program_vk(),
             expected,
@@ -802,7 +802,7 @@ mod tests {
         // must differ from the v1 program-bytes-only hash.
         let program = issuer_program();
         let v2 = issuer_child_program_vk();
-        let v1 = pyana_app_framework::canonical_program_bytes_hash(&program);
+        let v1 = dregg_app_framework::canonical_program_bytes_hash(&program);
         assert_ne!(
             v2, v1,
             "v2 layered hash must differ from v1 program-bytes-only hash"
@@ -816,7 +816,7 @@ mod tests {
         // VK v2: use the app-framework wrapper that binds the
         // descriptor's child_program_vk against the *layered* vk_hash
         // (program bytes + Effect VM AIR + verifier + proving system).
-        pyana_app_framework::validate_child_vk_canonical(&d, &program)
+        dregg_app_framework::validate_child_vk_canonical(&d, &program)
             .expect("descriptor's child_program_vk must bind to issuer_program() under v2");
     }
 

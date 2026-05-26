@@ -1,4 +1,4 @@
-import { PyanaFederation } from './PyanaFederation';
+import { DreggFederation } from './DreggFederation';
 import { Field, Mina, PrivateKey, PublicKey, UInt64, fetchAccount } from 'o1js';
 
 // ---------------------------------------------------------------------------
@@ -30,24 +30,24 @@ export interface BridgeTxResult {
 }
 
 /**
- * BridgeRelay: orchestrates bridge operations between pyana and Mina.
+ * BridgeRelay: orchestrates bridge operations between dregg and Mina.
  *
  * The relay is responsible for:
- * 1. Observing pyana state transitions and submitting proofs to Mina
- * 2. Observing Mina deposit events and crediting notes on pyana
- * 3. Processing withdrawal requests from pyana users
+ * 1. Observing dregg state transitions and submitting proofs to Mina
+ * 2. Observing Mina deposit events and crediting notes on dregg
+ * 3. Processing withdrawal requests from dregg users
  *
- * This class provides the Mina-side transaction construction. The pyana-side
+ * This class provides the Mina-side transaction construction. The dregg-side
  * observation and proof generation happens in the Rust bridge code.
  */
 export class BridgeRelay {
-  private zkApp: PyanaFederation;
+  private zkApp: DreggFederation;
   private config: BridgeConfig;
   private defaultFee: number;
 
   constructor(config: BridgeConfig) {
     this.config = config;
-    this.zkApp = new PyanaFederation(config.zkAppAddress);
+    this.zkApp = new DreggFederation(config.zkAppAddress);
     this.defaultFee = config.txFee ?? 100_000_000; // 0.1 MINA default
   }
 
@@ -77,7 +77,7 @@ export class BridgeRelay {
    * Submit a state advance to the Mina zkApp.
    *
    * Called by the relay after:
-   * 1. A new pyana block is finalized
+   * 1. A new dregg block is finalized
    * 2. The STARK proof is generated (Rust side)
    * 3. The STARK is verified in a Kimchi circuit
    * 4. The Kimchi proof is wrapped in Pickles
@@ -116,13 +116,13 @@ export class BridgeRelay {
   }
 
   /**
-   * Process a deposit (user locks tokens on Mina, credited on pyana).
+   * Process a deposit (user locks tokens on Mina, credited on dregg).
    *
    * The note commitment should be computed as:
-   *   Poseidon(blinding || recipientPyanaAddress || amount)
+   *   Poseidon(blinding || recipientDreggAddress || amount)
    *
    * After this transaction is confirmed, the relay observes the deposit event
-   * and creates the corresponding note on the pyana side.
+   * and creates the corresponding note on the dregg side.
    */
   async processDeposit(
     senderKey: PrivateKey,
@@ -153,10 +153,10 @@ export class BridgeRelay {
   }
 
   /**
-   * Process a withdrawal (user proves note spend on pyana, unlocks on Mina).
+   * Process a withdrawal (user proves note spend on dregg, unlocks on Mina).
    *
    * The withdrawal requires:
-   * - A valid nullifier (proving the pyana note was spent)
+   * - A valid nullifier (proving the dregg note was spent)
    * - The state root at which the spend was proven
    * - The amount must not exceed totalLocked
    *

@@ -40,7 +40,7 @@
 //! Stage 2 — replay the captured (executor-produced) ledger by re-executing
 //!           the same `Turn` sequence on a fresh ledger and confirm the
 //!           final state hash matches.
-//! Stage 3 — verify ALL 5 STARK proofs via `pyana_verifier::replay_chain`,
+//! Stage 3 — verify ALL 5 STARK proofs via `dregg_verifier::replay_chain`,
 //!           assert every entry is `Verified` (not just absent-`Rejected`).
 //! Stage 4 — tamper one receipt's effects_hash mid-chain; re-verify and
 //!           assert the chain rejects exactly that entry.
@@ -71,20 +71,20 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signer as _, SigningKey as DalekSigningKey};
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_circuit::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_circuit::{
     BabyBear, CellState as VmCellState, Effect as VmEffect, EffectVmAir,
     effect_vm::pi as vm_pi,
     generate_effect_vm_trace,
     stark::{self, proof_to_bytes},
 };
-use pyana_commit::typed::canonical_32_to_felts_4;
-use pyana_turn::{
+use dregg_commit::typed::canonical_32_to_felts_4;
+use dregg_turn::{
     ActionBuilder, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect, Turn,
     TurnExecutor, TurnReceipt, TurnResult,
 };
-use pyana_types::{AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes};
-use pyana_verifier::{
+use dregg_types::{AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes};
+use dregg_verifier::{
     ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle, replay_chain,
 };
 
@@ -330,8 +330,8 @@ fn run_graph(executor: &TurnExecutor, ledger: &mut Ledger, ids: [CellId; 5]) -> 
 
     // Credential field on issuer cell: field[0] = blake3("credential-v1").
     let credential_value = *blake3::hash(b"silver-credential-v1").as_bytes();
-    // Name registered by registry cell: field[0] = blake3("alice.pyana").
-    let name_value = *blake3::hash(b"alice.pyana").as_bytes();
+    // Name registered by registry cell: field[0] = blake3("alice.dregg").
+    let name_value = *blake3::hash(b"alice.dregg").as_bytes();
     // Bounty amount published by subscription cell: field[0] = bounty payload.
     let bounty_value = *blake3::hash(b"bounty-100").as_bytes();
     // Settlement field on E: a chain-head record.
@@ -561,7 +561,7 @@ fn silver_vision_graph_e2e() {
     );
     assert_eq!(
         ledger.get(&ids[1]).unwrap().state.fields[0],
-        *blake3::hash(b"alice.pyana").as_bytes(),
+        *blake3::hash(b"alice.dregg").as_bytes(),
         "step2 effect must be visible on registry"
     );
     assert_eq!(
@@ -905,7 +905,7 @@ fn turn_depends_on_is_bound_into_turn_hash() {
         Effect::SetField {
             cell: ids[1],
             index: 0,
-            value: *blake3::hash(b"alice.pyana").as_bytes(),
+            value: *blake3::hash(b"alice.dregg").as_bytes(),
         },
         "step2: B registers name (consumes A's credential)",
     );

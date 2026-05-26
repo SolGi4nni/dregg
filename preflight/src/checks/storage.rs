@@ -1,13 +1,13 @@
 //! Storage subsystem checks: MerkleQueue, CapInbox, programmable queues, WAL, dedup, pub-sub.
 
-use pyana_storage::QuotaId;
-use pyana_storage::dedup::DeduplicationFilter;
-use pyana_storage::inbox::{CapInbox, InboxMessage};
-use pyana_storage::programmable::{
+use dregg_storage::QuotaId;
+use dregg_storage::dedup::DeduplicationFilter;
+use dregg_storage::inbox::{CapInbox, InboxMessage};
+use dregg_storage::programmable::{
     ProgramError, ProgrammableQueue, QueueConstraint, QueueProgram, ValidationContext,
 };
-use pyana_storage::pubsub::PubSubTopic;
-use pyana_storage::queue::{MerkleQueue, QueueEntry};
+use dregg_storage::pubsub::PubSubTopic;
+use dregg_storage::queue::{MerkleQueue, QueueEntry};
 
 use crate::report::{CheckResult, run_check};
 
@@ -97,7 +97,7 @@ fn check_cap_inbox() -> Result<(), String> {
 
     // Receive with insufficient deposit should fail.
     let msg2 = InboxMessage::SturdyRef {
-        uri: "pyana://fed/cell/swiss".to_string(),
+        uri: "dregg://fed/cell/swiss".to_string(),
         sender,
     };
     let result = inbox.receive(msg2, 10); // 10 < min_deposit of 50

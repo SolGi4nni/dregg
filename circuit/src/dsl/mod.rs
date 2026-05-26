@@ -1,7 +1,7 @@
 //! DSL circuit runtime: descriptors, trace generators, prove/verify functions.
 //!
 //! This module contains the production DSL infrastructure that was previously
-//! split across `pyana-dsl-runtime`. It lives here to avoid a circular dependency
+//! split across `dregg-dsl-runtime`. It lives here to avoid a circular dependency
 //! (circuit depends on dsl-runtime which depends on circuit).
 //!
 //! The [`circuit`] sub-module provides the runtime-interpreted `StarkAir` implementation

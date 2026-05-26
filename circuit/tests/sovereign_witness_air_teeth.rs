@@ -21,11 +21,11 @@
 //! proof whose AIR-bound `WITNESS_KEY_COMMIT` disagrees with the
 //! honest PI, and the verifier rejects.
 
-use pyana_circuit::effect_vm::{
+use dregg_circuit::effect_vm::{
     self, CellState, Effect, EffectVmContext, generate_effect_vm_trace_ext,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark::{prove, verify};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::stark::{prove, verify};
 
 fn initial_state() -> CellState {
     CellState::new(1_000_000, 0)

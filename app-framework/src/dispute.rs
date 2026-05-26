@@ -1,4 +1,4 @@
-//! Optimistic dispute/slashing framework for pyana apps.
+//! Optimistic dispute/slashing framework for dregg apps.
 //!
 //! # Design Philosophy
 //!
@@ -43,7 +43,7 @@
 //! disputes left as a TODO (section 10.1 of HELLAS_DESIGN_BOOK.md). This module
 //! implements that TODO as a reusable framework.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 /// Serde helper for [u8; 64] (Ed25519 signature).
@@ -493,7 +493,7 @@ impl std::error::Error for DisputeError {}
 
 /// Effects to emit when a settlement is finalized (no dispute).
 ///
-/// These map to `pyana_turn::Effect` variants that the app's executor applies.
+/// These map to `dregg_turn::Effect` variants that the app's executor applies.
 #[derive(Clone, Debug)]
 pub struct FinalizationEffects {
     /// Release the claimant's stake (FulfillObligation).
@@ -564,7 +564,7 @@ pub fn compute_settlement_id(
     counterparty: &CellId,
     submitted_at: u64,
 ) -> SettlementId {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-dispute-settlement-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-dispute-settlement-id-v1");
     hasher.update(obligation_id);
     hasher.update(claimant.as_bytes());
     hasher.update(counterparty.as_bytes());
@@ -578,7 +578,7 @@ pub fn compute_dispute_id(
     challenger: &CellId,
     filed_at: u64,
 ) -> DisputeId {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-dispute-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-dispute-id-v1");
     hasher.update(settlement_id);
     hasher.update(challenger.as_bytes());
     hasher.update(&filed_at.to_le_bytes());
@@ -697,7 +697,7 @@ pub trait BlindedDisputable: Disputable {
     fn file_blinded_dispute(
         &mut self,
         settlement_id: SettlementId,
-        challenger: pyana_cell::CellId,
+        challenger: dregg_cell::CellId,
         evidence_commitment: [u8; 32],
         challenger_stake: u64,
     ) -> Result<DisputeId, Self::Error>;

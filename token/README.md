@@ -2,7 +2,7 @@
 
 Unified authorization token abstraction over two token formats: Macaroon
 (HMAC-SHA256, symmetric) and Biscuit (Ed25519, Datalog authorization). The rest
-of the Pyana auth stack works through the `AuthToken` trait defined here.
+of the `dregg` auth stack works through the `AuthToken` trait defined here.
 
 ## Overview
 
@@ -41,7 +41,7 @@ Token format is chosen at mint time. Verification auto-detects from the prefix.
 ## Usage
 
 ```rust
-use pyana_token::{AuthRequest, AuthToken, Attenuation, MacaroonToken, TokenFormat};
+use dregg_token::{AuthRequest, AuthToken, Attenuation, MacaroonToken, TokenFormat};
 
 // Auto-detect format from prefix
 let fmt = TokenFormat::detect("em2_base64data...")?; // -> TokenFormat::Macaroon
@@ -66,7 +66,7 @@ let encoded = restricted.to_encoded()?;
 
 ## Typed Macaroon Caveats
 
-The `pyana_caveats` module defines typed caveat IDs (0-12) with MsgPack encoding:
+The `dregg_caveats` module defines typed caveat IDs (0-12) with MsgPack encoding:
 
 | ID | Caveat | Verification |
 |----|--------|-------------|

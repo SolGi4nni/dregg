@@ -1,8 +1,8 @@
-# Design Rationale: Why Pyana Exists This Way
+# Design Rationale: Why `dregg` Exists This Way
 
 ## System Identity
 
-Pyana: prove what you can do without showing who you are.
+`dregg`: prove what you can do without showing who you are.
 
 Private, portable, offline-verifiable authorization proofs for mutually suspicious agents. The system lets software agents prove authorization without revealing who authorized them, what else they can do, or that they are the same agent who acted before.
 
@@ -10,7 +10,7 @@ The core promise is unlinkable capability delegation verified by zero-knowledge 
 
 ## The E Lineage
 
-Pyana is a faithful implementation of Mark Miller's capability security model from E, translated into a proof-verification architecture.
+`dregg` is a faithful implementation of Mark Miller's capability security model from E, translated into a proof-verification architecture.
 
 **Direct correspondences:**
 
@@ -20,13 +20,13 @@ Pyana is a faithful implementation of Mark Miller's capability security model fr
 - **Granovetter introductions** become `Effect::Introduce` with lifetime bounds — capabilities flow only along existing edges in the capability graph, with explicit expiry.
 - **Delegation snapshots** become `DelegatedRef` for offline verification — frozen capability evidence that can be checked without network access.
 
-**What pyana transforms:** Cells are verified state-slots rather than live objects. Proofs authorize state transitions rather than routing messages. The verification layer replaces the execution layer as the enforcement mechanism. This is the fundamental architectural shift — E enforced capabilities at message-dispatch time; pyana enforces them at proof-verification time.
+**What dregg transforms:** Cells are verified state-slots rather than live objects. Proofs authorize state transitions rather than routing messages. The verification layer replaces the execution layer as the enforcement mechanism. This is the fundamental architectural shift — E enforced capabilities at message-dispatch time; dregg enforces them at proof-verification time.
 
-**What pyana adds beyond E:** Private capabilities via ZK, federation consensus as trust anchor, cross-domain portability via proof-carrying notes, and conservation laws enabling economic coordination.
+**What dregg adds beyond E:** Private capabilities via ZK, federation consensus as trust anchor, cross-domain portability via proof-carrying notes, and conservation laws enabling economic coordination.
 
-**The key tension:** Privacy versus accountability. E required caller identification for accountability — you could always ask "who sent this message?" Pyana's ZK breaks this intentionally. Unlinkability IS the feature for its threat model: surveillance resistance across trust boundaries. Resolution: the `Either` authorization mode allows both paths. Systems that need accountability use signature-based auth; systems that need privacy use proof-based auth; systems that need both offer either.
+**The key tension:** Privacy versus accountability. E required caller identification for accountability — you could always ask "who sent this message?" `dregg`'s ZK breaks this intentionally. Unlinkability IS the feature for its threat model: surveillance resistance across trust boundaries. Resolution: the `Either` authorization mode allows both paths. Systems that need accountability use signature-based auth; systems that need privacy use proof-based auth; systems that need both offer either.
 
-**The incomplete promise:** Eventual refs exist but don't cross turn boundaries. True async promises mediated by the causal DAG would reunite E's live-object model with pyana's proof-verification layer. This remains future work.
+**The incomplete promise:** Eventual refs exist but don't cross turn boundaries. True async promises mediated by the causal DAG would reunite E's live-object model with dregg's proof-verification layer. This remains future work.
 
 ## Trust Topology
 

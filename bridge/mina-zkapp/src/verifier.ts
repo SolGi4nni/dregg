@@ -34,7 +34,7 @@ export class StateTransitionInput extends Struct({
 // ---------------------------------------------------------------------------
 
 /**
- * PyanaVerifier: recursive proof program for pyana state transitions.
+ * DreggVerifier: recursive proof program for dregg state transitions.
  *
  * Architecture:
  * 1. The Rust side produces a STARK proof of a state transition batch.
@@ -52,8 +52,8 @@ export class StateTransitionInput extends Struct({
  * prover can produce a valid proof for this program, the underlying STARK
  * was valid (because the Pickles wrapping ensures it).
  */
-export const PyanaVerifier = ZkProgram({
-  name: 'pyana-state-verifier',
+export const DreggVerifier = ZkProgram({
+  name: 'dregg-state-verifier',
   publicInput: StateTransitionInput,
 
   methods: {
@@ -119,10 +119,10 @@ export const PyanaVerifier = ZkProgram({
 // ---------------------------------------------------------------------------
 
 /**
- * The proof class produced by PyanaVerifier. Use this type when accepting
+ * The proof class produced by DreggVerifier. Use this type when accepting
  * proofs in other contracts or programs.
  */
-export class PyanaStateProof extends ZkProgram.Proof(PyanaVerifier) {}
+export class DreggStateProof extends ZkProgram.Proof(DreggVerifier) {}
 
 // ---------------------------------------------------------------------------
 // Verification key management
@@ -133,6 +133,6 @@ export class PyanaStateProof extends ZkProgram.Proof(PyanaVerifier) {}
  * This must be done before any proofs can be generated or verified.
  */
 export async function compileVerifier(): Promise<{ verificationKey: string }> {
-  const result = await PyanaVerifier.compile();
+  const result = await DreggVerifier.compile();
   return { verificationKey: result.verificationKey.data };
 }

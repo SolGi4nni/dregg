@@ -1,6 +1,6 @@
 # Devnet Genesis Configuration
 
-This directory contains the genesis state for the pyana devnet federation. It defines the initial accounts, deployed applications, route table, and validator set that every connecting node bootstraps from.
+This directory contains the genesis state for the dregg devnet federation. It defines the initial accounts, deployed applications, route table, and validator set that every connecting node bootstraps from.
 
 ## Files
 
@@ -24,18 +24,18 @@ The script will:
 1. Generate Ed25519 keypairs for 3 validators (`keys/node-{0,1,2}.key`)
 2. Generate Ed25519 keypairs for 10 accounts (`keys/{alice,bob,...}.key`)
 3. Compute a federation ID and routes commitment
-4. If `pyana-node` is on PATH, invoke its genesis subcommand for canonical output
+4. If `dregg-node` is on PATH, invoke its genesis subcommand for canonical output
 5. Otherwise, leave the template `genesis.json` with placeholder keys
 
 ### Prerequisites
 
-- Rust toolchain (to build `pyana-node`)
+- Rust toolchain (to build `dregg-node`)
 - `openssl` (fallback key generation)
 
-### Building pyana-node
+### Building dregg-node
 
 ```bash
-cargo build --release -p pyana-node
+cargo build --release -p dregg-node
 export PATH="$PWD/target/release:$PATH"
 ./deploy/genesis/generate.sh --force
 ```
@@ -102,10 +102,10 @@ After generating:
 
 ```bash
 # Copy genesis to the running node
-scp genesis.json devnet.pyana.fg-goose.online:/opt/pyana-data/
+scp genesis.json devnet.dregg.fg-goose.online:/opt/dregg-data/
 
 # Restart the node to load new genesis
-ssh devnet.pyana.fg-goose.online sudo systemctl restart pyana-gateway
+ssh devnet.dregg.fg-goose.online sudo systemctl restart dregg-gateway
 ```
 
 Or use the automated deploy:

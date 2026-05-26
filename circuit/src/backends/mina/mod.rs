@@ -1,4 +1,4 @@
-//! Mina/Kimchi proof backend for pyana.
+//! Mina/Kimchi proof backend for dregg.
 //!
 //! This backend uses the Kimchi proof system (a Plonk variant from Mina Protocol)
 //! with Pasta curves (Pallas/Vesta cycle) and IPA polynomial commitments.

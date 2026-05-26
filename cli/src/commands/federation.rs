@@ -166,7 +166,7 @@ async fn propose(
     let proposal_id = data["proposal_id"].as_str().unwrap_or("?");
     ctx.success(&format!("Proposal submitted: {}", proposal_id));
     ctx.kv("Type", proposal_type);
-    ctx.info("  Validators can vote with: pyana federation vote <id> yes|no");
+    ctx.info("  Validators can vote with: dregg federation vote <id> yes|no");
 
     Ok(())
 }

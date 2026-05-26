@@ -2,7 +2,7 @@
 name = "starbridge-governed-namespace"
 version = "0.1.0"
 edition = "2024"
-description = "Starbridge userspace governed-namespace — DFA-routed governance app. Composes pyana-dfa (GovernedRouter, RouteTableBuilder, AIR-attestable accept/reject) with pyana-directory (named-cell registry) and per-slot caveats to land governance-bound atomic table swaps as a starbridge-app."
+description = "Starbridge userspace governed-namespace — DFA-routed governance app. Composes dregg-dfa (GovernedRouter, RouteTableBuilder, AIR-attestable accept/reject) with dregg-directory (named-cell registry) and per-slot caveats to land governance-bound atomic table swaps as a starbridge-app."
 
 # Greenfield rebuild of `apps/governed-namespace/` following
 # STARBRIDGE-APPS-PLAN.md §3.3. The legacy crate ran a `RoutingTable`
@@ -14,7 +14,7 @@ description = "Starbridge userspace governed-namespace — DFA-routed governance
 # carrier via `WitnessedPredicate { kind: Custom { vk_hash: GOVERNANCE_VK } }`
 # under `Authorization::Custom`, and the table swap is atomic
 # (route_table_root := new_root, version += 1) in a single executor
-# turn — exactly the shape `pyana_dfa::GovernedRouter::update_routes`
+# turn — exactly the shape `dregg_dfa::GovernedRouter::update_routes`
 # already enforces in memory.
 #
 # Companion docs:
@@ -31,11 +31,11 @@ description = "Starbridge userspace governed-namespace — DFA-routed governance
 name = "starbridge_governed_namespace"
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-cell = { path = "../../cell", default-features = false }
-pyana-dfa = { path = "../../dfa" }
-pyana-turn = { path = "../../turn" }
-pyana-types = { path = "../../types" }
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-dfa = { path = "../../dfa" }
+dregg-turn = { path = "../../turn" }
+dregg-types = { path = "../../types" }
 
 blake3 = "1"
 serde = { workspace = true }

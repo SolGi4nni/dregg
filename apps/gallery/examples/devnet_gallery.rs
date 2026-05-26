@@ -11,17 +11,17 @@
 //! ## Running
 //!
 //! ```bash
-//! cargo run -p pyana-gallery --example devnet_gallery
+//! cargo run -p dregg-gallery --example devnet_gallery
 //! ```
 
-use pyana_gallery::server::start_server;
-use pyana_gallery::{
+use dregg_gallery::server::start_server;
+use dregg_gallery::{
     CreateAuctionRequest, RegisterArtworkRequest, RevealBidRequest, SubmitBidRequest,
     compute_bid_commitment, id_to_hex,
 };
 
-use pyana_app_framework::CellId;
-use pyana_app_framework::server::AppConfig;
+use dregg_app_framework::CellId;
+use dregg_app_framework::server::AppConfig;
 use reqwest::Client;
 use serde_json::Value;
 
@@ -29,7 +29,7 @@ use serde_json::Value;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().init();
 
-    println!("=== Pyana Gallery: Devnet Integration Demo ===\n");
+    println!("=== Dregg Gallery: Devnet Integration Demo ===\n");
 
     // =========================================================================
     // Step 0: Start gallery server
@@ -333,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     println!("=== Devnet Gallery Demo Complete ===\n");
     println!("Full stack exercised:");
-    println!("  Gallery Server (axum) -> pyana-sdk (PyanaEngine) -> Turn execution");
+    println!("  Gallery Server (axum) -> dregg-sdk (DreggEngine) -> Turn execution");
     println!("  REST API -> Commit-Reveal Bidding -> Atomic Settlement -> Provenance");
     println!();
     println!("Server remains running at: {base}");

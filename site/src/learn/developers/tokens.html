@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Token Lifecycle — Pyana</title>
+<title>Token Lifecycle — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Token Lifecycle</h1>
 
     <p>
-      Tokens in pyana follow a one-way lifecycle: they are minted, attenuated (restricted),
+      Tokens in dregg follow a one-way lifecycle: they are minted, attenuated (restricted),
       delegated to other agents, presented for verification, and eventually expire or are
       revoked. Tokens can never be amplified -- only narrowed.
     </p>
@@ -77,7 +77,7 @@
       the v2 envelope structure and authority-policy decision graph are
       covered there. Token-error edge cases (expired, malformed, revoked,
       mis-scoped) surface as typed errors from
-      <code>pyana_token::verify</code> — match on the variant rather than
+      <code>dregg_token::verify</code> — match on the variant rather than
       the message string.
     </p>
 

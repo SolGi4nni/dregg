@@ -1,4 +1,4 @@
-# DSL Redesign — `pyana` user-facing surface
+# DSL Redesign — `dregg` user-facing surface
 
 **Status:** Proposed. Supersedes the ad-hoc surface audited in `AUDIT-dsl.md`.
 **Companion:** Effect VM Shape A (`EFFECT-VM-SHAPE-A.md`).
@@ -22,19 +22,19 @@ The redesign collapses this into a single layered tower:
 
 ```
  +--------------------------------------------------------------+
- |  Intent       — "I want X" — declarative, ~12 variants       |  pyana_intent::dsl
+ |  Intent       — "I want X" — declarative, ~12 variants       |  dregg_intent::dsl
  +--------------------------------------------------------------+
                        Lowering (deterministic, total, tested)
  +--------------------------------------------------------------+
- |  EffectPlan   — typed builders, all 41 variants reachable    |  pyana_turn::dsl
+ |  EffectPlan   — typed builders, all 41 variants reachable    |  dregg_turn::dsl
  +--------------------------------------------------------------+
                        Authorization + Sealing
  +--------------------------------------------------------------+
- |  SealedTurn   — Turn whose every Action carries proven auth  |  pyana_turn::SealedTurn
+ |  SealedTurn   — Turn whose every Action carries proven auth  |  dregg_turn::SealedTurn
  +--------------------------------------------------------------+
                        Cipherclerk::submit (signs, attaches witnesses)
  +--------------------------------------------------------------+
- |  Turn         — runtime executable (unchanged shape)         |  pyana_turn::turn::Turn
+ |  Turn         — runtime executable (unchanged shape)         |  dregg_turn::turn::Turn
  +--------------------------------------------------------------+
 ```
 
@@ -74,7 +74,7 @@ pub struct RingSettlementIntent {
 }
 ```
 
-The federation node calls `pyana_intent::lowering::lower(intent)` to get an
+The federation node calls `dregg_intent::lowering::lower(intent)` to get an
 `EffectPlan`, then `cclerk.seal_and_submit(plan)`. The federation node is the
 agent of record on the settlement; the solver_id is a witness on the action,
 not a turn-level field.
@@ -83,7 +83,7 @@ not a turn-level field.
 still the canonical "this leg moves N of asset A from commitment X to
 commitment Y" type. But it is reframed: it is the *output shape of one
 edge of the ring graph*, not a thing that gets executed directly. The
-Settlement → Effect lowering lives in `pyana_intent::lowering`.
+Settlement → Effect lowering lives in `dregg_intent::lowering`.
 
 **`RingTradeParticipant::settle_leg` is removed.** Apps no longer translate
 `Settlement` into effects themselves. The lowering does it once,
@@ -530,7 +530,7 @@ fn dsl_covers_every_effect_variant() {
     // Uses an `EffectKind` enum that is `#[derive(EnumIter)]` plus a build.rs
     // assertion that every kind has a corresponding `effect_*` method.
     let kinds: HashSet<_> = EffectKind::iter().collect();
-    let covered = pyana_turn::dsl::ALL_HELPER_KINDS;
+    let covered = dregg_turn::dsl::ALL_HELPER_KINDS;
     assert_eq!(kinds, covered.iter().copied().collect());
 }
 ```
@@ -548,12 +548,12 @@ redesign separates:
 
 - **`MatchSpec` / `IntentKind` (Need/Offer/Query)** — *discovery* intents.
   These do not lower to effects; their job is to find a `Match`. They stay in
-  `pyana_intent::matcher`.
-- **`pyana_intent::dsl::Intent`** — *executable* intents. These lower to
+  `dregg_intent::matcher`.
+- **`dregg_intent::dsl::Intent`** — *executable* intents. These lower to
   `EffectPlan` via `Lowering`. This is the new canonical user-facing surface.
 
 ```rust
-// pyana_intent/src/dsl.rs
+// dregg_intent/src/dsl.rs
 
 /// An executable user intention. ~12 variants, each maps to one of a few
 /// well-understood effect patterns.
@@ -616,7 +616,7 @@ pub enum Intent {
 ### The `Lowering` trait
 
 ```rust
-// pyana_intent/src/lowering.rs
+// dregg_intent/src/lowering.rs
 
 pub trait Lowering {
     /// Lower this intent into a sequence of effects targeted at specific cells.
@@ -651,7 +651,7 @@ pub struct PendingAction {
 ### Properties (with tests)
 
 ```rust
-// pyana_intent/src/lowering/tests.rs
+// dregg_intent/src/lowering/tests.rs
 
 #[test] fn lowering_is_total() {
     // For every variant of Intent (via EnumIter), construct a default
@@ -897,23 +897,23 @@ pub struct UncheckedAuthorizer { _proof_of_acknowledgement: AckUnsafeUncheckedAu
 
 ```rust
 impl<'a> EscrowManager<'a> {
-    pub fn new(engine: &'a mut PyanaEngine, auth: Box<dyn Authorizer>) -> Self;
+    pub fn new(engine: &'a mut DreggEngine, auth: Box<dyn Authorizer>) -> Self;
 }
 
 impl<'a> RingTradeCoordinator<'a> {        // (was ring_trade.rs)
-    pub fn new(engine: &'a mut PyanaEngine, auth: Box<dyn Authorizer>) -> Self;
+    pub fn new(engine: &'a mut DreggEngine, auth: Box<dyn Authorizer>) -> Self;
 }
 
 impl<'a> QueueEndpoint<'a> {
-    pub fn new(engine: &'a mut PyanaEngine, auth: Box<dyn Authorizer>) -> Self;
+    pub fn new(engine: &'a mut DreggEngine, auth: Box<dyn Authorizer>) -> Self;
 }
 
 impl<'a> InboxEndpoint<'a> {
-    pub fn new(engine: &'a mut PyanaEngine, auth: Box<dyn Authorizer>) -> Self;
+    pub fn new(engine: &'a mut DreggEngine, auth: Box<dyn Authorizer>) -> Self;
 }
 
 impl<'a> BlindedEndpoint<'a> {
-    pub fn new(engine: &'a mut PyanaEngine, auth: Box<dyn Authorizer>) -> Self;
+    pub fn new(engine: &'a mut DreggEngine, auth: Box<dyn Authorizer>) -> Self;
 }
 ```
 
@@ -1108,7 +1108,7 @@ trustless engine's output remains theoretical.
 - [ ] `turn/src/dsl/conservation.rs` — `derive_balance_change` (§5).
 - [ ] `turn/src/action.rs` — `balance_change` becomes `pub(crate)`; add new `Threshold` and `RegisterName` variants.
 - [ ] Remove `Authorization::Unchecked` default from `ActionBuilder::new`; delete the old `ActionBuilder` and `TurnBuilder`.
-- [ ] New `pyana_turn::dsl::{ActionBuilder, TurnBuilder}` in `turn/src/dsl/mod.rs`.
+- [ ] New `dregg_turn::dsl::{ActionBuilder, TurnBuilder}` in `turn/src/dsl/mod.rs`.
 
 ### Phase B — Effect coverage (week 1-2)
 
@@ -1181,9 +1181,9 @@ guarantees:
   fee is a single `u64`. A future redesign may distribute it across actions.
 - **PIR-based intent matching as a DSL surface.** Currently in
   `intent/src/pir.rs`, exposed via lower-level APIs only.
-- **`pyana-dsl` (the source-to-circuit DSL).** The audit's question 3 asks
+- **`dregg-dsl` (the source-to-circuit DSL).** The audit's question 3 asks
   whether this should converge with the framework DSL. Answer: not yet.
-  `pyana-dsl` produces *circuits*; this DSL produces *turns*. They are
+  `dregg-dsl` produces *circuits*; this DSL produces *turns*. They are
   consumed by orthogonal subsystems (the prover vs. the executor). A
   future round may add a "deploy this circuit as a custom program" intent
   that bridges the two.

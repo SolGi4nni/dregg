@@ -1,10 +1,10 @@
 //! Simulated DFA router for testing route classification and governance updates.
 //!
-//! Wraps the real `GovernedRouter` from `pyana-dfa` (via the wire re-export)
+//! Wraps the real `GovernedRouter` from `dregg-dfa` (via the wire re-export)
 //! with ergonomic test helpers for building route tables, classifying paths,
 //! and proposing governance amendments.
 
-use pyana_wire::dfa_router::{
+use dregg_wire::dfa_router::{
     GovernanceProof, GovernedRouter, RouteTarget, RouteUpdateError, cell_target, compile_routes,
     federation_target,
 };
@@ -103,8 +103,8 @@ impl SimRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_captp::FederationId as GroupId;
-    use pyana_types::CellId;
+    use dregg_captp::FederationId as GroupId;
+    use dregg_types::CellId;
 
     fn test_cell(n: u8) -> CellId {
         CellId([n; 32])

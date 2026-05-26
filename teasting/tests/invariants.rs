@@ -1,13 +1,13 @@
-//! Property-based invariant checks for pyana's core correctness properties.
+//! Property-based invariant checks for dregg's core correctness properties.
 //!
 //! These tests verify that fundamental system invariants hold after applying
 //! sequences of operations to the ledger, federation, and CapTP layers.
 
 use std::collections::HashMap;
 
-use pyana_captp::{CapSession, ExportGcManager, FederationId};
-use pyana_cell::{Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Nullifier, NullifierSet};
-use pyana_teasting::assertions::{
+use dregg_captp::{CapSession, ExportGcManager, FederationId};
+use dregg_cell::{Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Nullifier, NullifierSet};
+use dregg_teasting::assertions::{
     assert_conservation_invariant, assert_constitution_valid,
     assert_directory_version_monotonicity, assert_gc_consistency, assert_no_double_spend,
     assert_nonce_monotonicity,
@@ -219,10 +219,10 @@ fn test_gc_consistency_basic() {
 
     // Create sessions that hold live imports.
     let mut session_x = CapSession::new(fed_x.0);
-    session_x.import(cell_a, pyana_cell::AuthRequired::None);
+    session_x.import(cell_a, dregg_cell::AuthRequired::None);
 
     let mut session_y = CapSession::new(fed_y.0);
-    session_y.import(cell_b, pyana_cell::AuthRequired::None);
+    session_y.import(cell_b, dregg_cell::AuthRequired::None);
 
     // No zero-ref cells yet.
     assert_gc_consistency(&export_gc, &[session_x.clone(), session_y.clone()], &[]);
@@ -252,7 +252,7 @@ fn test_gc_consistency_violation_detected() {
 
     // Session still has live import -- violation!
     let mut session = CapSession::new(fed_x.0);
-    session.import(cell_a, pyana_cell::AuthRequired::None);
+    session.import(cell_a, dregg_cell::AuthRequired::None);
 
     assert_gc_consistency(&export_gc, &[session], &[cell_a]);
 }
@@ -409,7 +409,7 @@ fn test_routing_drift_detected() {
 // =============================================================================
 
 fn compute_routes_commitment(routes: &[[u8; 32]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana:routes-commitment-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg:routes-commitment-v1");
     hasher.update(&(routes.len() as u64).to_le_bytes());
     for route in routes {
         hasher.update(route);

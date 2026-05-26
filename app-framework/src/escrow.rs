@@ -1,8 +1,8 @@
-//! High-level escrow lifecycle helpers built on `pyana-turn` effects.
+//! High-level escrow lifecycle helpers built on `dregg-turn` effects.
 //!
 //! Wraps the low-level `Effect::CreateEscrow`, `Effect::ReleaseEscrow`, and
 //! `Effect::RefundEscrow` into a managed workflow that submits turns to a
-//! `PyanaEngine`.
+//! `DreggEngine`.
 //!
 //! # Authentication
 //!
@@ -15,12 +15,12 @@
 //! explicit choice (Ed25519 sign, capability token, bearer cap) and produces a
 //! loud error if the authorizer rejects.
 
-use pyana_cell::CellId;
-use pyana_sdk::embed::PyanaEngine;
-use pyana_turn::action::{Action, CommitmentMode, DelegationMode, Effect, Symbol, symbol};
-use pyana_turn::escrow::EscrowCondition;
-use pyana_turn::turn::Turn;
-use pyana_turn::{CallForest, CallTree};
+use dregg_cell::CellId;
+use dregg_sdk::embed::DreggEngine;
+use dregg_turn::action::{Action, CommitmentMode, DelegationMode, Effect, Symbol, symbol};
+use dregg_turn::escrow::EscrowCondition;
+use dregg_turn::turn::Turn;
+use dregg_turn::{CallForest, CallTree};
 
 use crate::authorizer::{AuthContext, AuthError, Authorizer};
 
@@ -65,17 +65,17 @@ impl From<AuthError> for EscrowError {
     }
 }
 
-/// Manages escrow creation, release, and refund via a `PyanaEngine`.
+/// Manages escrow creation, release, and refund via a `DreggEngine`.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use pyana_app_framework::escrow::EscrowManager;
-/// use pyana_app_framework::authorizer::SignedAuthorizer;
-/// use pyana_sdk::embed::{PyanaEngine, EngineConfig};
-/// use pyana_turn::escrow::EscrowCondition;
+/// use dregg_app_framework::escrow::EscrowManager;
+/// use dregg_app_framework::authorizer::SignedAuthorizer;
+/// use dregg_sdk::embed::{DreggEngine, EngineConfig};
+/// use dregg_turn::escrow::EscrowCondition;
 ///
-/// let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+/// let mut engine = DreggEngine::new(EngineConfig::for_testing());
 /// let authorizer = SignedAuthorizer::from_secret_bytes([7u8; 32]);
 /// let mut mgr = EscrowManager::new(&mut engine, Box::new(authorizer));
 ///
@@ -86,7 +86,7 @@ impl From<AuthError> for EscrowError {
 /// ).unwrap();
 /// ```
 pub struct EscrowManager<'a> {
-    engine: &'a mut PyanaEngine,
+    engine: &'a mut DreggEngine,
     authorizer: Box<dyn Authorizer>,
 }
 
@@ -109,7 +109,7 @@ impl<'a> EscrowManager<'a> {
     /// the audit found that the previous default was an authentication gap.
     ///
     /// [`SignedAuthorizer`]: crate::authorizer::SignedAuthorizer
-    pub fn new(engine: &'a mut PyanaEngine, authorizer: Box<dyn Authorizer>) -> Self {
+    pub fn new(engine: &'a mut DreggEngine, authorizer: Box<dyn Authorizer>) -> Self {
         Self { engine, authorizer }
     }
 
@@ -130,7 +130,7 @@ impl<'a> EscrowManager<'a> {
     ) -> Result<Action, EscrowError> {
         let federation_id = self.engine.executor().local_federation_id;
         let placeholder_authorization =
-            pyana_turn::action::Authorization::Signature([0u8; 32], [0u8; 32]);
+            dregg_turn::action::Authorization::Signature([0u8; 32], [0u8; 32]);
         let probe = Action {
             target: unsigned.target,
             method: unsigned.method,
@@ -277,7 +277,7 @@ impl<'a> EscrowManager<'a> {
 
 /// Compute a deterministic escrow ID from its creation parameters.
 fn compute_escrow_id(from: &CellId, to: &CellId, amount: u64, timeout: u64) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-app-framework-escrow-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-app-framework-escrow-id-v1");
     hasher.update(from.as_bytes());
     hasher.update(to.as_bytes());
     hasher.update(&amount.to_le_bytes());

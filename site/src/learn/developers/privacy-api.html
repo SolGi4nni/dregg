@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Privacy API Reference — Pyana</title>
+<title>Privacy API Reference — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,8 +16,8 @@
 <h1>Privacy API Reference</h1>
 
     <p>
-      The <code>pyana_sdk::privacy</code> module provides ergonomic wrappers around
-      pyana's privacy primitives. Each method documents what the verifier learns and
+      The <code>dregg_sdk::privacy</code> module provides ergonomic wrappers around
+      dregg's privacy primitives. Each method documents what the verifier learns and
       what stays hidden.
     </p>
 
@@ -58,7 +58,7 @@
       <li><strong>Mechanism:</strong> BlindedMerklePoseidon2StarkAir with fresh per-presentation blinding.</li>
     </ul>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, AuthRequest};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, AuthRequest};
 
 let mut cclerk = AgentCipherclerk::new();
 let token = cclerk.mint_token(b"secret-key-32-bytes-here!!!!!!!!!", "service");
@@ -147,7 +147,7 @@ let presentation = cclerk.authorize_anonymously(&token, &request).unwrap();
       <li><strong>Mechanism:</strong> Pedersen commitment to amount + Bulletproof range proof + stealth address derivation.</li>
     </ul>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
 
 let mut alice = AgentCipherclerk::new();
 let mut bob = AgentCipherclerk::new();
@@ -177,7 +177,7 @@ let incoming = bob.scan_for_notes(&note_tree).unwrap();</code></pre>
 
     <h2 id="verification">Verification Helpers</h2>
 
-    <pre><code class="language-rust">use pyana_sdk::{
+    <pre><code class="language-rust">use dregg_sdk::{
     verify_anonymous_presentation,
     verify_non_revocation_proof,
     verify_note_spending,

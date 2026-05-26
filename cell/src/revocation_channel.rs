@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::id::CellId;
 
 /// Unique identifier for a revocation channel.
-/// Derived as: BLAKE3("pyana-revocation-channel" || revoker || nonce)
+/// Derived as: BLAKE3("dregg-revocation-channel" || revoker || nonce)
 pub type ChannelId = [u8; 32];
 
 /// The state of a revocation channel.
@@ -83,7 +83,7 @@ impl RevocationChannel {
     /// Create a new active revocation channel.
     ///
     /// The `channel_id` is derived deterministically from the revoker and a nonce:
-    /// `BLAKE3("pyana-revocation-channel" || revoker.as_bytes() || nonce.to_le_bytes())`
+    /// `BLAKE3("dregg-revocation-channel" || revoker.as_bytes() || nonce.to_le_bytes())`
     pub fn new(revoker: CellId, nonce: u64, created_at: u64) -> Self {
         let channel_id = Self::derive_channel_id(&revoker, nonce);
         RevocationChannel {
@@ -115,7 +115,7 @@ impl RevocationChannel {
     /// Derive a channel ID from revoker identity and nonce.
     pub fn derive_channel_id(revoker: &CellId, nonce: u64) -> ChannelId {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-revocation-channel");
+        hasher.update(b"dregg-revocation-channel");
         hasher.update(revoker.as_bytes());
         hasher.update(&nonce.to_le_bytes());
         *hasher.finalize().as_bytes()

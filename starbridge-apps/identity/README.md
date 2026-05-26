@@ -1,7 +1,7 @@
 # starbridge-identity
 
 The second starbridge-app — verifiable credentials, rebuilt as a thin
-userspace shell over `pyana-credentials`.
+userspace shell over `dregg-credentials`.
 
 See `src/lib.rs` for the in-source design notes. See
 `../nameservice/README.md` for the pattern anchor.
@@ -11,14 +11,14 @@ See `src/lib.rs` for the in-source design notes. See
 `apps/identity/` (audited 2026-05-24) re-invented credential primitives
 badly: `Credential` had no signature field; the verifier trusted a
 `verified: bool` set on the holder; selective disclosure truncated text
-to 4 bytes. `PYANA-FLAWS-FROM-APPS.md` G31 promoted `bridge::present` to
-the `pyana-credentials` crate. **This starbridge-app is the thin
+to 4 bytes. `DREGG-FLAWS-FROM-APPS.md` G31 promoted `bridge::present` to
+the `dregg-credentials` crate. **This starbridge-app is the thin
 userspace shell that survives once the credential primitive is correctly
 factored out**: schemas, factory descriptor, turn-builders, inspector
 wiring, web components.
 
 All ZK heavy lifting (blinded merkle, predicate disclosure, ring proof,
-non-revocation) lives in `pyana-credentials`. This app composes that
+non-revocation) lives in `dregg-credentials`. This app composes that
 through cell-programs (`Effect::SetField` + `Effect::EmitEvent`), never
 a domain-specific `Effect::IssueCredential` or
 `Authorization::Unchecked` placeholder.
@@ -43,7 +43,7 @@ a domain-specific `Effect::IssueCredential` or
   - `build_revoke_credential_action(cclerk, issuer_cell, credential_id, new_root)`
   - `build_present_credential_action(cclerk, holder_cell, &presentation)`
   - `build_verify_presentation_action(cclerk, verifier_cell, &presentation, &options)`
-- **Re-exports** of the `pyana-credentials` API surface (`issue`,
+- **Re-exports** of the `dregg-credentials` API surface (`issue`,
   `present`, `present_anonymous`, `verify`, `revoke`, `Credential`,
   `Presentation`, `CredentialSchema`, `IssuerKeys`,
   `PresentationOptions`, `VerificationOptions`, `RevocationProof`,
@@ -53,11 +53,11 @@ a domain-specific `Effect::IssueCredential` or
   `employment_schema()`.
 - **`register(ctx)`** — `StarbridgeAppContext` mount that installs the
   factory descriptor and four inspector descriptors:
-  - `pyana-credential` (read-only credential view)
-  - `pyana-credential-issue-form` (issuer's UI)
-  - `pyana-credential-present-form` (holder's selective-disclosure
+  - `dregg-credential` (read-only credential view)
+  - `dregg-credential-issue-form` (issuer's UI)
+  - `dregg-credential-present-form` (holder's selective-disclosure
     picker)
-  - `pyana-credential-verifier` (verifier's UI)
+  - `dregg-credential-verifier` (verifier's UI)
 - **Slot-layout constants:** `SCHEMA_COMMITMENT_SLOT`,
   `ISSUANCE_COUNTER_SLOT`, `REVOCATION_ROOT_SLOT`,
   `ISSUER_AUTH_ROOT_SLOT`.
@@ -66,25 +66,25 @@ a domain-specific `Effect::IssueCredential` or
 
 - `pages/index.html` — site fragment under `/starbridge-apps/identity/`.
 - `pages/inspectors.js` — four custom elements
-  (`<pyana-credential>`, `<pyana-credential-issue-form>`,
-  `<pyana-credential-present-form>`, `<pyana-credential-verifier>`).
+  (`<dregg-credential>`, `<dregg-credential-issue-form>`,
+  `<dregg-credential-present-form>`, `<dregg-credential-verifier>`).
 - `pages/turn-builders.js` — JS shim wrapping
-  `window.pyana.signTurn(turnSpec)` with `issue_credential`,
+  `window.dregg.signTurn(turnSpec)` with `issue_credential`,
   `revoke_credential`, `present_credential`, `verify_presentation`
   helpers that mirror the Rust turn-builders.
 
-## How it composes with `pyana-credentials`
+## How it composes with `dregg-credentials`
 
 This crate **does not implement any cryptography**. Every credential
-operation routes through `pyana-credentials` (which itself wraps
-`pyana-bridge::present` per G31):
+operation routes through `dregg-credentials` (which itself wraps
+`dregg-bridge::present` per G31):
 
-| starbridge-identity operation | pyana-credentials call |
+| starbridge-identity operation | dregg-credentials call |
 |---|---|
-| issue (`build_issue_credential_action`) | `pyana_credentials::issue(issuer, schema, holder_id, attrs, issued_at, not_after)` |
-| present (`build_present_credential_action`) | `pyana_credentials::present(cred, request, options)` or `present_anonymous` for multi-show-unlinkable |
-| verify (`build_verify_presentation_action`) | `pyana_credentials::verify(presentation, options)` |
-| revoke (`build_revoke_credential_action`) | `pyana_credentials::revoke(registry, cred)` |
+| issue (`build_issue_credential_action`) | `dregg_credentials::issue(issuer, schema, holder_id, attrs, issued_at, not_after)` |
+| present (`build_present_credential_action`) | `dregg_credentials::present(cred, request, options)` or `present_anonymous` for multi-show-unlinkable |
+| verify (`build_verify_presentation_action`) | `dregg_credentials::verify(presentation, options)` |
+| revoke (`build_revoke_credential_action`) | `dregg_credentials::revoke(registry, cred)` |
 
 The userspace action wraps each operation in a cell-bound audit trail:
 
@@ -124,15 +124,15 @@ turn, not just at construction. Together they enforce:
 - Only issuers in the published key-set can submit any state-modifying
   turn on the issuer cell.
 
-## Compatibility with the in-browser PyanaRuntime + extension cclerk
+## Compatibility with the in-browser DreggRuntime + extension cclerk
 
 `build_*_action` returns an `Action` carrying a real
 `Authorization::Signature(..)` produced by the cclerk. That action is
 what `cclerk.signTurn(turnSpec)` (the extension API surface — see
 `../../extension/src/page.ts`) expects to wrap in a `Turn` for
-submission. The in-browser `PyanaRuntime`
+submission. The in-browser `DreggRuntime`
 (`../../wasm/src/runtime.rs`) executes the resulting turn against the
-same `pyana_turn::TurnExecutor` code-path that native CLIs use.
+same `dregg_turn::TurnExecutor` code-path that native CLIs use.
 
 ## Coexistence with `apps/identity/`
 
@@ -181,7 +181,7 @@ cargo test  -p starbridge-identity
 > caveat-correctness lane in `cell/`, `turn/`, `circuit/`, `wire/`,
 > `captp/`, `federation/`. Until that lane lands, `cargo check -p
 > starbridge-identity` may fail upstream of this crate (e.g., in
-> `pyana-turn`'s `Authorization::Custom` match coverage). The
+> `dregg-turn`'s `Authorization::Custom` match coverage). The
 > starbridge-identity sources are written against the **post-lane**
 > shapes and the in-source unit tests + integration tests are correct
 > against the documented APIs.

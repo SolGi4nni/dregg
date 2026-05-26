@@ -31,7 +31,7 @@ Coarse classification of the AIR/verifier surfaces in scope:
 
 ### Top recommendation
 
-The Silver-Vision-blocker is **registry wiring**: stand up `pyana-circuit`-side real verifiers for the 6 stubbed `WitnessedPredicateKind` variants and have `WitnessedPredicateRegistry::default_builtins()` (cell/src/predicate.rs:620) return them, replacing `with_stubs()`. The underlying AIRs (`dsl::circuit` for DFA, `dsl::membership` for MerkleMembership/BlindedSet, `temporal_predicate_dsl` for Temporal, `bridge::present` for BridgePredicate, the existing Schnorr/Bulletproof primitives for PedersenEquality) already exist with real `eval_constraints`. The current registry default is the single biggest playground-risk amplifier: it converts every witnessed-predicate caveat into a no-op.
+The Silver-Vision-blocker is **registry wiring**: stand up `dregg-circuit`-side real verifiers for the 6 stubbed `WitnessedPredicateKind` variants and have `WitnessedPredicateRegistry::default_builtins()` (cell/src/predicate.rs:620) return them, replacing `with_stubs()`. The underlying AIRs (`dsl::circuit` for DFA, `dsl::membership` for MerkleMembership/BlindedSet, `temporal_predicate_dsl` for Temporal, `bridge::present` for BridgePredicate, the existing Schnorr/Bulletproof primitives for PedersenEquality) already exist with real `eval_constraints`. The current registry default is the single biggest playground-risk amplifier: it converts every witnessed-predicate caveat into a no-op.
 
 ---
 
@@ -221,7 +221,7 @@ relies on the recursive proof alone.
 
 Encodes program_bytes || air_fingerprint ||
 verifier_fingerprint.canonical_bytes() || ps_bytes under the
-`"pyana-vk-v2"` BLAKE3 derive_key. Length-prefixed where variable, fixed
+`"dregg-vk-v2"` BLAKE3 derive_key. Length-prefixed where variable, fixed
 fingerprint widths fixed-width. Tests (lines 240-376) cover every
 single-component change producing distinct hashes, variant-tag
 disambiguation, and concatenation-attack resistance.
@@ -271,7 +271,7 @@ playground user picks.
 
 ### §2.J `SortedNeighborNonMembershipVerifier` — `cell/src/predicate.rs:1142`
 
-**Doc claim** (lines 1093-1098, quoted): "When `pyana-circuit`'s real
+**Doc claim** (lines 1093-1098, quoted): "When `dregg-circuit`'s real
 non-membership STARK lands the adjacency check joins this verifier
 (today the STARK is the proof of 'lower, upper are consecutive leaves
 under `commitment`'; this verifier proves only the ordering relation
@@ -467,7 +467,7 @@ The following DSL modules have real `eval_constraints` and serve as the
 inner machinery that the `WitnessedPredicate` stubs *should* be wired
 to:
 
-- `circuit/src/dsl/circuit.rs::PyanaCircuit` (line 426) — DFA / state
+- `circuit/src/dsl/circuit.rs::DreggCircuit` (line 426) — DFA / state
   machine AIR.
 - `circuit/src/dsl/membership.rs::verify_membership_dsl_full` (line 256)
   / `verify_blinded_membership_dsl_full` (line 312) — Merkle and
@@ -517,7 +517,7 @@ Fix-cost legend: L = ≤1 day wiring; M = 1-3 days (new verifier + tests); H = �
 
 ### Per SILVER-SOUND / STUB
 
-- **`StubVerifier::dfa`** → register `pyana_circuit::dsl::circuit`'s
+- **`StubVerifier::dfa`** → register `dregg_circuit::dsl::circuit`'s
   DFA verifier under `WitnessedPredicateRegistry::default_builtins()`.
   The DSL backend has a complete AIR with real `eval_constraints`
   (`circuit/src/dsl/circuit.rs:426`); the wiring task is wrapping it in

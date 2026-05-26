@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Running a Node — Pyana</title>
+<title>Running a Node — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Running a Node</h1>
 
     <p>
-      A pyana node participates in federation consensus, verifies STARK proofs,
+      A dregg node participates in federation consensus, verifies STARK proofs,
       tracks nullifiers, and serves the HTTP/WebSocket API. It stores 32-byte
       commitments -- not cell contents.
     </p>
@@ -24,21 +24,21 @@
     <h2 id="basic-run">Starting the Node</h2>
 
     <pre><code class="language-rust"># Build from source
-cargo build -p pyana-node --release
+cargo build -p dregg-node --release
 
 # Initialize data directory and generate keypair
-pyana-node init --data-dir ~/.pyana
+dregg-node init --data-dir ~/.dregg
 
 # Run with defaults (solo mode, localhost only)
-pyana-node run</code></pre>
+dregg-node run</code></pre>
 
-    <p>Full options for <code>pyana-node run</code>:</p>
+    <p>Full options for <code>dregg-node run</code>:</p>
 
-    <pre><code>pyana-node run \
+    <pre><code>dregg-node run \
   --port 8420 \
   --bind 127.0.0.1 \
   --gossip-port 9420 \
-  --data-dir ~/.pyana \
+  --data-dir ~/.dregg \
   --federation-peers "peer1:9420,peer2:9420" \
   --federation-mode full \
   --consensus blocklace \
@@ -53,7 +53,7 @@ pyana-node run</code></pre>
       cross-references on the shared DAG.
     </p>
 
-    <pre><code>pyana-node run --groups &lt;group-id-hex-1&gt;,&lt;group-id-hex-2&gt;</code></pre>
+    <pre><code>dregg-node run --groups &lt;group-id-hex-1&gt;,&lt;group-id-hex-2&gt;</code></pre>
 
     <p>
       Group IDs are 64-character hex strings. When specified, the node joins
@@ -68,7 +68,7 @@ pyana-node run</code></pre>
       This is a separate service from the main node:
     </p>
 
-    <pre><code>pyana-node relay \
+    <pre><code>dregg-node relay \
   --port 3100 \
   --bond 10000 \
   --max-capacity 100000 \
@@ -96,10 +96,10 @@ pyana-node run</code></pre>
 curl http://127.0.0.1:8420/status
 
 # Node status via CLI
-pyana node status
+dregg node status
 
 # System health (cclerk, federation, storage)
-pyana doctor</code></pre>
+dregg doctor</code></pre>
 
     <p>Key things to monitor:</p>
 
@@ -113,7 +113,7 @@ pyana doctor</code></pre>
 
     <p>
       The node emits structured tracing via <code>tracing</code>. Set
-      <code>RUST_LOG=pyana_node=info</code> for production,
+      <code>RUST_LOG=dregg_node=info</code> for production,
       <code>=debug</code> for troubleshooting.
     </p>
 
@@ -123,7 +123,7 @@ pyana doctor</code></pre>
       For new networks, generate genesis configuration:
     </p>
 
-    <pre><code>pyana-node genesis \
+    <pre><code>dregg-node genesis \
   --validators 4 \
   --epoch-length 1000 \
   --checkpoint-interval 100 \
@@ -149,7 +149,7 @@ pyana doctor</code></pre>
       pruning to bound storage growth:
     </p>
 
-    <pre><code>pyana-node run --enable-pruning --checkpoint-interval 1000</code></pre>
+    <pre><code>dregg-node run --enable-pruning --checkpoint-interval 1000</code></pre>
 
     <p>
       With pruning enabled, blocks below the latest checkpoint are removed.

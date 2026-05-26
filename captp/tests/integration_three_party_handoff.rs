@@ -8,12 +8,12 @@
 //! - Positive: cert round-tripped through compact string still validates
 //! - GC integration: after handoff, import tracked and DropRef generated on release
 
-use pyana_captp::{
+use dregg_captp::{
     ExportGcManager, FederationId, HandoffCertificate, HandoffError, HandoffPresentation,
     ImportGcManager, SwissTable, validate_handoff,
 };
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, generate_keypair};
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, generate_keypair};
 
 fn fed(b: u8) -> FederationId {
     FederationId([b; 32])
@@ -221,7 +221,7 @@ fn cert_compact_string_roundtrip_still_validates() {
 
     // Simulate out-of-band transport: encode to compact string, then decode.
     let compact = cert.to_compact_string();
-    assert!(compact.starts_with("pyana-handoff:"));
+    assert!(compact.starts_with("dregg-handoff:"));
     let decoded_cert =
         HandoffCertificate::from_compact_string(&compact).expect("compact string must deserialize");
 
@@ -292,5 +292,5 @@ fn handoff_followed_by_gc_lifecycle() {
 
     // Carol's side processes the drop → CanRevoke.
     let drop_result = alice_export_gc.process_drop(carol_cell, carol_fed);
-    assert_eq!(drop_result, pyana_captp::DropResult::CanRevoke);
+    assert_eq!(drop_result, dregg_captp::DropResult::CanRevoke);
 }

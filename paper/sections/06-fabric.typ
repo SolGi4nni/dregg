@@ -33,7 +33,7 @@ The Morpheus simulator harness is dead code (per `AUDIT-morpheus-federation-bloc
 
 == `federation_id` as Commitment
 
-$ "federation_id" = "BLAKE3"("pyana-fed-id-v1" || "sorted_members" || "epoch") $
+$ "federation_id" = "BLAKE3"("dregg-fed-id-v1" || "sorted_members" || "epoch") $
 
 Two federations with the same committee at the same epoch *are the same federation*. Membership rotation produces a new `epoch`, which produces a new `federation_id`. Blocklace continuity across epochs gives the federation its identity-over-time; the `federation_id` itself is per-epoch.
 
@@ -70,7 +70,7 @@ pub struct KnownFederationEntry {
 }
 ```
 
-The `pyana register-federation` CLI subcommand atomically adds an entry. `CapTpState::sync_known_federations` keeps the in-memory CapTP routing table consistent with the on-disk registry on every startup and on every registry change.
+The `dregg register-federation` CLI subcommand atomically adds an entry. `CapTpState::sync_known_federations` keeps the in-memory CapTP routing table consistent with the on-disk registry on every startup and on every registry change.
 
 This registry is the trust root for cross-federation operations. A receiver of a CapTP-delivered Turn at federation $F_2$ that claims to originate from federation $F_1$ checks: (a) the Turn's `federation_id` matches an entry in $F_2$'s known-federations registry; (b) the introducer's signature on the handoff certificate verifies under the public key listed in that entry; (c) the `AttestedRoot` carries a `ThresholdQC` that verifies under $F_1$'s committee key. No entry in `known_federations` $arrow.r.double$ no acceptance. This closes `AUDIT-distributed-semantics.md` GAP-3 (the wire layer formerly accepted `introducer_pk` from the wire message and trusted it).
 
@@ -125,7 +125,7 @@ Any single existing member can unilaterally add new members. Optimized for small
 
 == Interest-Based Dissemination
 
-In a unified blocklace with many strands, transmitting every block to every node is prohibitive. Pyana uses _subscriptions_ to filter dissemination. A `Subscription` declares which strands a node wants to receive (direct subscriptions, referenced closure, causal depth). The dissemination protocol (Cordial Dissemination) respects subscriptions: a node pushes blocks only to peers whose subscription includes the block's creator. Bandwidth drops from $O(|"strands"|)$ to $O(|"subscription"|)$ per node while preserving causal closure for ordering.
+In a unified blocklace with many strands, transmitting every block to every node is prohibitive. Dregg uses _subscriptions_ to filter dissemination. A `Subscription` declares which strands a node wants to receive (direct subscriptions, referenced closure, causal depth). The dissemination protocol (Cordial Dissemination) respects subscriptions: a node pushes blocks only to peers whose subscription includes the block's creator. Bandwidth drops from $O(|"strands"|)$ to $O(|"subscription"|)$ per node while preserving causal closure for ordering.
 
 == Strand-Based Addressing
 

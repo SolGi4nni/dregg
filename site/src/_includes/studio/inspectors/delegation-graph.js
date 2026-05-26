@@ -1,8 +1,8 @@
 /**
- * <pyana-delegation-graph> — SVG visualizer of the capability delegation graph.
+ * <dregg-delegation-graph> — SVG visualizer of the capability delegation graph.
  *
  * Attribute contract:
- *   uri   — optional pyana://federation/<idx> to annotate heading (v0: ignored for filtering)
+ *   uri   — optional dregg://federation/<idx> to annotate heading (v0: ignored for filtering)
  *   mode  — "default" | "compact" (compact: text summary + thumbnail SVG)
  *
  * Data source: runtime._wasm.get_delegation_graph(runtime._handle)
@@ -15,7 +15,7 @@
  *   - Edges: directed arrows, colored by permissions, labeled with one-letter abbrev
  *   - Hover node: tooltip with full cell_id
  *   - Hover edge: tooltip with full permissions + slot
- *   - Click node: emits pyana:navigate CustomEvent { uri: "pyana://cell/<id>" }
+ *   - Click node: emits dregg:navigate CustomEvent { uri: "dregg://cell/<id>" }
  *
  * Permission abbreviations (from Rust Debug fmt):
  *   Signature → S   Proof → P   None → N   Impossible → I   Either → E
@@ -186,7 +186,7 @@ function buildSVG(nodes, edges, opts = {}) {
     const textColor = named ? '#4ade80' : '#94a3b8';
     const label = nd.agent_name ? nd.agent_name : shortHex(nd.cell_id, 6);
     const tooltip = nd.cell_id;
-    const navigateUri = `pyana://cell/${nd.cell_id}`;
+    const navigateUri = `dregg://cell/${nd.cell_id}`;
     return `<g class="pdg-node" data-tooltip="${tooltip}" data-uri="${navigateUri}"
         style="cursor:pointer">
       <circle cx="${p.x}" cy="${p.y}" r="${nodeR}"
@@ -262,7 +262,7 @@ function buildThumbnailSVG(nodes, edges) {
 // Custom element
 // ---------------------------------------------------------------------------
 
-class PyanaDelegationGraph extends InspectorBase {
+class DreggDelegationGraph extends InspectorBase {
   static get observedAttributes() { return ['uri', 'mode']; }
 
   _render() {
@@ -277,7 +277,7 @@ class PyanaDelegationGraph extends InspectorBase {
     try {
       graph = this._runtime._wasm.get_delegation_graph(this._runtime._handle) || graph;
     } catch (e) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">delegation-graph: ${e.message}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">delegation-graph: ${e.message}</div>`;
       return;
     }
 
@@ -301,7 +301,7 @@ class PyanaDelegationGraph extends InspectorBase {
     if (compact) {
       // Compact: "N cells, M caps" + tiny SVG thumbnail
       const wrapper = document.createElement('span');
-      wrapper.className = 'pyana-inspector pyana-inspector--compact pdg-compact';
+      wrapper.className = 'dregg-inspector dregg-inspector--compact pdg-compact';
       wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:10px;';
       wrapper.innerHTML =
         buildThumbnailSVG(nodes, edges) +
@@ -315,14 +315,14 @@ class PyanaDelegationGraph extends InspectorBase {
 
     // --- Default mode: full SVG graph ---
     const container = document.createElement('div');
-    container.className = 'pyana-inspector pyana-inspector--cell pdg-container';
+    container.className = 'dregg-inspector dregg-inspector--cell pdg-container';
     container.style.cssText = 'padding:0;overflow:hidden;';
 
     // Header bar
     const header = document.createElement('header');
     header.style.cssText = 'padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline;';
     header.innerHTML =
-      `<span class="pyana-inspector__kind" style="background:var(--accent,#5b8a5a);color:#0a0f0d;padding:2px 8px;border-radius:3px;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">delegation graph</span>` +
+      `<span class="dregg-inspector__kind" style="background:var(--accent,#5b8a5a);color:#0a0f0d;padding:2px 8px;border-radius:3px;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em;">delegation graph</span>` +
       `<span style="font-size:0.8rem;color:var(--fg-dim,#8a948f);font-family:ui-monospace,monospace;">` +
         `${nodes.length} cell${nodes.length !== 1 ? 's' : ''} · ` +
         `${edges.length} cap${edges.length !== 1 ? 's' : ''}` +
@@ -331,7 +331,7 @@ class PyanaDelegationGraph extends InspectorBase {
 
     if (nodes.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'pyana-inspector pyana-inspector--empty';
+      empty.className = 'dregg-inspector dregg-inspector--empty';
       empty.style.cssText = 'margin:0;border-radius:0 0 6px 6px;';
       empty.textContent = 'no cells in this runtime';
       container.appendChild(empty);
@@ -380,7 +380,7 @@ class PyanaDelegationGraph extends InspectorBase {
     svgEl.addEventListener('click', ev => {
       const g = ev.target.closest('.pdg-node');
       if (!g || !g.dataset.uri) return;
-      this.dispatchEvent(new CustomEvent('pyana:navigate', {
+      this.dispatchEvent(new CustomEvent('dregg:navigate', {
         bubbles: true,
         composed: true,
         detail: { uri: g.dataset.uri },
@@ -403,6 +403,6 @@ class PyanaDelegationGraph extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-delegation-graph')) {
-  customElements.define('pyana-delegation-graph', PyanaDelegationGraph);
+if (!customElements.get('dregg-delegation-graph')) {
+  customElements.define('dregg-delegation-graph', DreggDelegationGraph);
 }

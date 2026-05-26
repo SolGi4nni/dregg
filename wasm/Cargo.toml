@@ -1,11 +1,11 @@
 [package]
-name = "pyana-wasm"
+name = "dregg-wasm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "WebAssembly playground for pyana token primitives"
+description = "WebAssembly playground for dregg token primitives"
 
 [lib]
 crate-type = ["cdylib"]
@@ -20,28 +20,28 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 # Local crates (only WASM-safe ones)
-pyana-macaroon = { path = "../macaroon" }
-pyana-trace = { path = "../trace" }
-pyana-commit = { path = "../commit" }
-pyana-circuit = { path = "../circuit", default-features = false, features = ["mock"] }
-pyana-cell = { path = "../cell", default-features = false }
-pyana-turn = { path = "../turn", default-features = false }
-pyana-coord = { path = "../coord", default-features = false }
-pyana-intent = { path = "../intent", default-features = false }
-pyana-sdk = { path = "../sdk", default-features = false }
+dregg-macaroon = { path = "../macaroon" }
+dregg-trace = { path = "../trace" }
+dregg-commit = { path = "../commit" }
+dregg-circuit = { path = "../circuit", default-features = false, features = ["mock"] }
+dregg-cell = { path = "../cell", default-features = false }
+dregg-turn = { path = "../turn", default-features = false }
+dregg-coord = { path = "../coord", default-features = false }
+dregg-intent = { path = "../intent", default-features = false }
+dregg-sdk = { path = "../sdk", default-features = false }
 # sdk pulls bulletproofs (via cell crypto) — already covered by the
 # clear_on_drop override below, but listing here for grep-ability.
-pyana-types = { path = "../types" }
+dregg-types = { path = "../types" }
 # Federation (pure types + consensus orchestration). The `runtime` feature
 # (tokio + crossbeam transport) is non-wasm32, hence default-features = false.
-pyana-federation = { path = "../federation", default-features = false }
-# Observability (EventLog + Emitter for live <pyana-activity> feed). All
+dregg-federation = { path = "../federation", default-features = false }
+# Observability (EventLog + Emitter for live <dregg-activity> feed). All
 # heavy deps (circuit/federation) already gated in its own Cargo.toml;
 # wasm consumes with default-features=false for wasm32 safety.
-pyana-observability = { path = "../observability", default-features = false }
+dregg-observability = { path = "../observability", default-features = false }
 
 # Token crate without biscuit (biscuit-auth has complex deps)
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 
 blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
@@ -50,14 +50,14 @@ x25519-dalek = { workspace = true }
 zeroize = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
 
-# Indirect dep via bulletproofs (pulled in by pyana-cell when turn/coord/intent
+# Indirect dep via bulletproofs (pulled in by dregg-cell when turn/coord/intent
 # enable their default crypto feature). clear_on_drop's default build invokes
 # a C compiler (build.rs -> cc -> clang --target=wasm32) which has no working
 # wasm32 toolchain on most systems. The `no_cc` feature switches it to a pure
 # Rust implementation. Declaring it directly here unifies the feature across
 # the workspace so wasm-pack succeeds.
 clear_on_drop = { version = "0.2", features = ["no_cc"] }
-# Indirect dep via `hints` (pulled in by pyana-federation -> hints). Lockstitch
+# Indirect dep via `hints` (pulled in by dregg-federation -> hints). Lockstitch
 # uses inline x86_64 / aarch64 AES intrinsics unless the `portable` feature is
 # enabled. The wasm32 target has neither, so we force `portable` here.
 lockstitch = { version = "0.29", features = ["portable"] }

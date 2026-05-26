@@ -85,7 +85,7 @@ AMOUNT=42
 if command -v python3 >/dev/null 2>&1; then
     XID=$(python3 - <<EOF
 import hashlib
-h = hashlib.blake2b(digest_size=32, person=b"pyana-peer-exch-")
+h = hashlib.blake2b(digest_size=32, person=b"dregg-peer-exch-")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))
@@ -107,7 +107,7 @@ EOF
     # crept into the peer-exchange ID, violating bypass semantics).
     XID_CONTROL=$(python3 - <<EOF
 import hashlib
-h = hashlib.blake2b(digest_size=32, person=b"pyana-peer-exch-")
+h = hashlib.blake2b(digest_size=32, person=b"dregg-peer-exch-")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))
@@ -116,7 +116,7 @@ EOF
 )
     XID_FED_BOUND=$(python3 - <<EOF
 import hashlib
-h = hashlib.blake2b(digest_size=32, person=b"pyana-peer-exch-")
+h = hashlib.blake2b(digest_size=32, person=b"dregg-peer-exch-")
 h.update(bytes.fromhex("$ALICE_CELL"))
 h.update(bytes.fromhex("$BOB_CELL"))
 h.update(($AMOUNT).to_bytes(8, 'little'))
@@ -181,14 +181,14 @@ if command -v python3 >/dev/null 2>&1; then
     _sw_result=$(python3 - "$ALICE_CELL" "$BOB_CELL" <<'SWEOF'
 import sys, secrets, hashlib
 # Canonical SovereignCellWitness signing message layout (per cell/src/sovereign.rs):
-#   "pyana-sovereign-witness-v1" || cell_id || prev_state || post_state || sequence (8-byte LE)
+#   "dregg-sovereign-witness-v1" || cell_id || prev_state || post_state || sequence (8-byte LE)
 alice_cell = bytes.fromhex(sys.argv[1])
 bob_cell   = bytes.fromhex(sys.argv[2])
 prev_state = bytes(32)          # all-zero pre-state (initial)
 post_state = secrets.token_bytes(32)  # fresh random post-state
 sequence   = (1).to_bytes(8, 'little')
 
-msg = (b"pyana-sovereign-witness-v1"
+msg = (b"dregg-sovereign-witness-v1"
        + alice_cell + prev_state + post_state + sequence)
 
 # Try cryptography (PyCA) first; fall back to nacl; fall back to fail.

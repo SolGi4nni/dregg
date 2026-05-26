@@ -4,10 +4,10 @@
  * Anonymous reads: summary rows only (name, depth, root, vk_hash).
  * Admin reads: full entries (gated by api.runWithAuth → auth-dialog).
  *
- * Visualizer reuse: the detail panel embeds a `<pyana-vizzer>` element per
+ * Visualizer reuse: the detail panel embeds a `<dregg-vizzer>` element per
  * family (`programmable-queue`, `blinded-queue`, `inbox-lifecycle`); the
  * matching modules are loaded as <script type="module"> from explorer
- * index.html and self-register via runtime-bootstrap's `pyana:ready` event.
+ * index.html and self-register via runtime-bootstrap's `dregg:ready` event.
  */
 
 import { bus, state } from '../app.js';
@@ -94,7 +94,7 @@ function render() {
   if (!root) return;
   const rows = cachedSummaries[activeTab] || [];
   if (!rows.length) {
-    root.innerHTML = '<div class="pyana-empty">No queues found for this family.</div>';
+    root.innerHTML = '<div class="dregg-empty">No queues found for this family.</div>';
     return;
   }
   root.innerHTML = `
@@ -145,7 +145,7 @@ function openDetail(row) {
 
   body.innerHTML = `
     <h3>${escapeHtml(row.service)} / ${escapeHtml(row.name || '')}</h3>
-    <dl class="pyana-kv">
+    <dl class="dregg-kv">
       <dt>Family</dt><dd>${row.family}</dd>
       <dt>Depth</dt><dd>${api.formatNumber(row.depth ?? row.leaves_count ?? 0)}</dd>
       <dt>Root</dt><dd class="mono">${row.root || '--'}</dd>
@@ -156,7 +156,7 @@ function openDetail(row) {
     </dl>
 
     <h4>Visualization</h4>
-    <pyana-vizzer data-vizzer="${vizName}"
+    <dregg-vizzer data-vizzer="${vizName}"
                   data-service="${escapeAttr(row.service)}"
                   data-name="${escapeAttr(row.name || '')}"
                   data-root="${escapeAttr(row.root || '')}">
@@ -164,7 +164,7 @@ function openDetail(row) {
         Static summary: depth ${row.depth ?? row.leaves_count ?? 0},
         root ${api.shortHash(row.root)}.
       </div>
-    </pyana-vizzer>
+    </dregg-vizzer>
 
     <h4>Entries</h4>
     <div id="queue-entries-host">
@@ -174,8 +174,8 @@ function openDetail(row) {
   `;
 
   // Re-mount visualizers in this newly-injected subtree.
-  if (window.pyana?.mount) {
-    try { window.pyana.mount(body); } catch (e) { console.warn('[queues] mount failed', e); }
+  if (window.dregg?.mount) {
+    try { window.dregg.mount(body); } catch (e) { console.warn('[queues] mount failed', e); }
   }
 
   document.getElementById('queue-load-entries')?.addEventListener('click', () => loadEntries(row));
@@ -191,7 +191,7 @@ async function loadEntries(row) {
   try {
     const entries = await runWithAuth(() => fn(row.service));
     if (!entries || !entries.length) {
-      host.innerHTML = '<div class="pyana-empty">Queue is empty.</div>';
+      host.innerHTML = '<div class="dregg-empty">Queue is empty.</div>';
       return;
     }
     host.innerHTML = `
@@ -202,7 +202,7 @@ async function loadEntries(row) {
             <tr>
               <td>${i}</td>
               <td class="mono">${api.shortHash(e.commitment || e.payload_hash || '', 14, 6)}</td>
-              <td><span class="pyana-pill" data-state="${pillStateFor(e)}">${escapeHtml(e.status || 'live')}</span></td>
+              <td><span class="dregg-pill" data-state="${pillStateFor(e)}">${escapeHtml(e.status || 'live')}</span></td>
             </tr>
           `).join('')}
         </tbody>
@@ -211,9 +211,9 @@ async function loadEntries(row) {
     `;
   } catch (e) {
     if (e.message === 'auth cancelled') {
-      host.innerHTML = '<div class="pyana-empty">Auth cancelled — counts only.</div>';
+      host.innerHTML = '<div class="dregg-empty">Auth cancelled — counts only.</div>';
     } else {
-      host.innerHTML = `<div class="pyana-empty">Failed to load entries: ${escapeHtml(e.message || String(e))}</div>`;
+      host.innerHTML = `<div class="dregg-empty">Failed to load entries: ${escapeHtml(e.message || String(e))}</div>`;
     }
   }
 }

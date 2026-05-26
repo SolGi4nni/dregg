@@ -1,6 +1,6 @@
 //! Token state, facts, rules, attenuation, and fold deltas.
 //!
-//! A token in the pyana system is a structured authorization state that
+//! A token in the dregg system is a structured authorization state that
 //! carries:
 //! - **Facts**: concrete capabilities (app access, service access, etc.)
 //! - **Rules**: authorization policies that evaluate facts against requests
@@ -14,13 +14,13 @@
 //!
 //! NOTE: This module provides the demo's high-level authorization logic (facts,
 //! rules, checks, authorize). The REAL Merkle commitment and fold delta verification
-//! is computed in parallel via `commit_state.rs` using `pyana_commit::TokenState`
-//! and `pyana_commit::FoldDelta`. The state_root here uses a flat BLAKE3 hash;
+//! is computed in parallel via `commit_state.rs` using `dregg_commit::TokenState`
+//! and `dregg_commit::FoldDelta`. The state_root here uses a flat BLAKE3 hash;
 //! the real commitment uses a 4-ary Poseidon-style Merkle tree.
 //!
-//! // TODO: integrate with real pyana_commit::TokenState as the primary state
+//! // TODO: integrate with real dregg_commit::TokenState as the primary state
 //! // representation, replacing the flat BLAKE3 state_root with the real Merkle root.
-//! // This would require mapping demo Facts to pyana_commit::Fact field elements
+//! // This would require mapping demo Facts to dregg_commit::Fact field elements
 //! // and running authorization against the Merkle-committed state.
 
 use crate::authority::{PublicKey, hex_encode};
@@ -42,7 +42,7 @@ pub struct Fact {
     pub actions: String,
 }
 
-/// Enumeration of fact types in the pyana system.
+/// Enumeration of fact types in the dregg system.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FactKind {
     /// Application access: app("name", "actions")
@@ -261,7 +261,7 @@ pub struct AuthorizationRequest {
 // Token State
 // =============================================================================
 
-/// The complete state of a pyana authorization token.
+/// The complete state of a dregg authorization token.
 #[derive(Clone)]
 pub struct TokenState {
     /// Unique identifier for this token.

@@ -95,7 +95,7 @@ impl Checkpoint {
     ///
     /// The hash commits to all state roots, federation members, epoch, and height.
     pub fn content_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-checkpoint-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-checkpoint-v1");
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.ledger_state_root);
         hasher.update(&self.note_tree_root);

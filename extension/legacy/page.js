@@ -1,13 +1,13 @@
-// Injected into page context. Defines window.pyana API.
+// Injected into page context. Defines window.dregg API.
 // Security: uses nonce-based event channels to prevent spoofing (Bug 7 fix).
 
 // Retrieve the session nonce from the script tag's data attribute.
-const currentScript = document.currentScript || document.querySelector('script[data-pyana-nonce]');
-const SESSION_NONCE = currentScript?.dataset?.pyanaNonce;
+const currentScript = document.currentScript || document.querySelector('script[data-dregg-nonce]');
+const SESSION_NONCE = currentScript?.dataset?.dreggNonce;
 
 if (!SESSION_NONCE) {
-  console.error('[pyana] Failed to initialize: missing session nonce.');
-  throw new Error('pyana: injection integrity check failed');
+  console.error('[dregg] Failed to initialize: missing session nonce.');
+  throw new Error('dregg: injection integrity check failed');
 }
 
 const pending = new Map();
@@ -15,21 +15,21 @@ let idCounter = 0;
 
 function sendMessage(type, payload) {
   return new Promise((resolve, reject) => {
-    const id = `pyana_${Date.now()}_${idCounter++}`;
+    const id = `dregg_${Date.now()}_${idCounter++}`;
     pending.set(id, { resolve, reject });
-    window.dispatchEvent(new CustomEvent(`pyana:request:${SESSION_NONCE}`, {
+    window.dispatchEvent(new CustomEvent(`dregg:request:${SESSION_NONCE}`, {
       detail: { type, id, ...payload },
     }));
     setTimeout(() => {
       if (pending.has(id)) {
         pending.delete(id);
-        reject(new Error('Pyana: request timed out'));
+        reject(new Error('Dregg: request timed out'));
       }
     }, 30000);
   });
 }
 
-window.addEventListener(`pyana:response:${SESSION_NONCE}`, (event) => {
+window.addEventListener(`dregg:response:${SESSION_NONCE}`, (event) => {
   const detail = event.detail;
   if (!detail) return;
   const resolver = pending.get(detail.id);
@@ -50,17 +50,17 @@ const eventListeners = new Map(); // event -> Set<callback>
 
 function addListener(event, callback) {
   if (typeof callback !== 'function') {
-    throw new TypeError('pyana.on: callback must be a function');
+    throw new TypeError('dregg.on: callback must be a function');
   }
   // Only expose non-sensitive event types to pages.
   const validEvents = ['ready', 'authorization', 'revoked', 'stealthNoteReceived', 'privateTransfer', 'intentFulfilled', 'privacyModeChanged'];
   if (!validEvents.includes(event)) {
-    throw new Error(`pyana.on: unknown event "${event}". Valid: ${validEvents.join(', ')}`);
+    throw new Error(`dregg.on: unknown event "${event}". Valid: ${validEvents.join(', ')}`);
   }
   if (!eventListeners.has(event)) {
     eventListeners.set(event, new Set());
     // Subscribe to this event type in the background.
-    sendMessage('pyana:subscribe', { event }).catch(() => {});
+    sendMessage('dregg:subscribe', { event }).catch(() => {});
   }
   eventListeners.get(event).add(callback);
 }
@@ -73,12 +73,12 @@ function removeListener(event, callback) {
 }
 
 // Listen for event notifications forwarded from content script (nonce-secured channel).
-window.addEventListener(`pyana:event:${SESSION_NONCE}`, (event) => {
+window.addEventListener(`dregg:event:${SESSION_NONCE}`, (event) => {
   const { eventName, payload } = event.detail || {};
   const listeners = eventListeners.get(eventName);
   if (listeners) {
     for (const cb of listeners) {
-      try { cb(payload); } catch (e) { console.error('[pyana] event handler error:', e); }
+      try { cb(payload); } catch (e) { console.error('[dregg] event handler error:', e); }
     }
   }
 });
@@ -109,7 +109,7 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
-const pyana = {
+const dregg = {
   /**
    * Request authorization for an action on a resource.
    * The cipherclerk evaluates internally and produces a ZK proof if allowed.
@@ -126,15 +126,15 @@ const pyana = {
    * @returns {Promise<{allowed: boolean, proof?: number[], facts?: string[], mode?: string, disclosedFacts?: string[], error?: string}>}
    */
   authorize(request) {
-    return sendMessage('pyana:authorize', { request });
+    return sendMessage('dregg:authorize', { request });
   },
 
   /**
-   * Check if the pyana cipherclerk extension is connected and available.
+   * Check if the dregg cipherclerk extension is connected and available.
    * @returns {Promise<boolean>}
    */
   isConnected() {
-    return sendMessage('pyana:isConnected').then(() => true).catch(() => false);
+    return sendMessage('dregg:isConnected').then(() => true).catch(() => false);
   },
 
   /**
@@ -146,7 +146,7 @@ const pyana = {
    * @returns {Promise<boolean>}
    */
   canAuthorize(request) {
-    return sendMessage('pyana:canAuthorize', { request });
+    return sendMessage('dregg:canAuthorize', { request });
   },
 
   /**
@@ -163,14 +163,14 @@ const pyana = {
       try {
         tokenData = JSON.parse(new TextDecoder().decode(tokenBytes));
       } catch (e) {
-        return Promise.reject(new Error('pyana.provision: invalid token bytes'));
+        return Promise.reject(new Error('dregg.provision: invalid token bytes'));
       }
     } else if (tokenBytes && typeof tokenBytes === 'object') {
       tokenData = tokenBytes;
     } else {
-      return Promise.reject(new Error('pyana.provision: tokenBytes must be Uint8Array or object'));
+      return Promise.reject(new Error('dregg.provision: tokenBytes must be Uint8Array or object'));
     }
-    return sendMessage('pyana:provision', { tokenData });
+    return sendMessage('dregg:provision', { tokenData });
   },
 
   /**
@@ -182,7 +182,7 @@ const pyana = {
    * @returns {Promise<{intentId: string, expiry: number}>}
    */
   postIntent(matchSpec, options) {
-    return sendMessage('pyana:postIntent', { matchSpec, options });
+    return sendMessage('dregg:postIntent', { matchSpec, options });
   },
 
   /**
@@ -191,7 +191,7 @@ const pyana = {
    * @returns {Promise<{spendPubkey: number[], viewPubkey: number[]}>}
    */
   getStealthAddress() {
-    return sendMessage('pyana:getStealthAddress', {});
+    return sendMessage('dregg:getStealthAddress', {});
   },
 
   /**
@@ -203,7 +203,7 @@ const pyana = {
    * @returns {Promise<{intentId: string, expiry: number, encrypted: boolean}>}
    */
   postEncryptedIntent(matchSpec, options) {
-    return sendMessage('pyana:postEncryptedIntent', { matchSpec, options });
+    return sendMessage('dregg:postEncryptedIntent', { matchSpec, options });
   },
 
   /**
@@ -216,7 +216,7 @@ const pyana = {
    * @returns {Promise<{success: boolean, turnId?: string, commitment?: number[]}>}
    */
   privateTransfer(amount, assetType, recipientStealthMeta) {
-    return sendMessage('pyana:privateTransfer', { amount, assetType, recipientStealthMeta });
+    return sendMessage('dregg:privateTransfer', { amount, assetType, recipientStealthMeta });
   },
 
   /**
@@ -229,7 +229,7 @@ const pyana = {
    * @returns {Promise<{bearerTokenHex: string, targetCell: string, action: string}>}
    */
   createBearerCap(targetCellHex, action, expiry) {
-    return sendMessage('pyana:createBearerCap', { targetCellHex, action, expiry: expiry || 0 });
+    return sendMessage('dregg:createBearerCap', { targetCellHex, action, expiry: expiry || 0 });
   },
 
   /**
@@ -243,7 +243,7 @@ const pyana = {
    * @returns {Promise<{valid: boolean, expired: boolean}>}
    */
   verifyBearerCap(bearerTokenHex, delegatorKeyHex, targetCellHex, action, expiry) {
-    return sendMessage('pyana:verifyBearerCap', {
+    return sendMessage('dregg:verifyBearerCap', {
       bearerTokenHex, delegatorKeyHex, targetCellHex, action, expiry,
     });
   },
@@ -258,7 +258,7 @@ const pyana = {
    * @returns {Promise<{childVk: string, paramHash: string, factoryVk: string}>}
    */
   createFromFactory(factoryVkHex, ownerPubkeyHex, initialBalance) {
-    return sendMessage('pyana:createFromFactory', {
+    return sendMessage('dregg:createFromFactory', {
       factoryVkHex, ownerPubkeyHex, initialBalance,
     });
   },
@@ -271,7 +271,7 @@ const pyana = {
    * @returns {Promise<{fromFactory: boolean, factoryVk: string|null}>}
    */
   verifyProvenance(cellVkHex, knownFactoryVks) {
-    return sendMessage('pyana:verifyProvenance', { cellVkHex, knownFactoryVks });
+    return sendMessage('dregg:verifyProvenance', { cellVkHex, knownFactoryVks });
   },
 
   /**
@@ -283,7 +283,7 @@ const pyana = {
    * @returns {Promise<{cellId: string, stateCommitment: string, mode: string}>}
    */
   makeCellSovereign(cellIdHex) {
-    return sendMessage('pyana:makeCellSovereign', { cellIdHex });
+    return sendMessage('dregg:makeCellSovereign', { cellIdHex });
   },
 
   /**
@@ -294,7 +294,7 @@ const pyana = {
    * @returns {Promise<{exchangeId: string, proofCommitment: string}>}
    */
   peerExchange(receiverCellHex, amount) {
-    return sendMessage('pyana:peerExchange', { receiverCellHex, amount });
+    return sendMessage('dregg:peerExchange', { receiverCellHex, amount });
   },
 
   /**
@@ -305,11 +305,11 @@ const pyana = {
    * @returns {Promise<{composedProof: string, mode: string, inputCount: number, valid: boolean}>}
    */
   composeProofs(proofs, mode) {
-    return sendMessage('pyana:composeProofs', { proofs, mode });
+    return sendMessage('dregg:composeProofs', { proofs, mode });
   },
 
   /**
-   * Build, sign, and submit a turn to the pyana node.
+   * Build, sign, and submit a turn to the dregg node.
    * The turn is constructed locally (via WASM), signed with the cipherclerk's key,
    * and then POSTed to the configured node endpoint.
    *
@@ -317,16 +317,16 @@ const pyana = {
    * @returns {Promise<{turnId?: string, submitted: boolean, error?: string, nodeResult?: object}>}
    */
   signTurn(turnSpec) {
-    return sendMessage('pyana:signTurn', { turnSpec });
+    return sendMessage('dregg:signTurn', { turnSpec });
   },
 
   /**
-   * Query the cipherclerk's balance from the pyana node.
+   * Query the cipherclerk's balance from the dregg node.
    *
    * @returns {Promise<{balance?: number, error?: string}>}
    */
   queryBalance() {
-    return sendMessage('pyana:queryBalance', {});
+    return sendMessage('dregg:queryBalance', {});
   },
 
   /**
@@ -336,7 +336,7 @@ const pyana = {
    * @returns {Promise<{nodeUrl: string, wssUrl: string, wsUrl: string, devnetKey: string}>}
    */
   getNodeConfig() {
-    return sendMessage('pyana:getNodeConfig', {});
+    return sendMessage('dregg:getNodeConfig', {});
   },
 
   /**
@@ -347,7 +347,7 @@ const pyana = {
    * @returns {Promise<{success: boolean, nodeUrl: string}>}
    */
   setNodeConfig(config) {
-    return sendMessage('pyana:setNodeConfig', { config });
+    return sendMessage('dregg:setNodeConfig', { config });
   },
 
   // =========================================================================
@@ -355,21 +355,21 @@ const pyana = {
   // =========================================================================
 
   /**
-   * Share a cell as a pyana:// URI (export sturdy ref).
+   * Share a cell as a dregg:// URI (export sturdy ref).
    * @param {string} cellId - 64-char hex cell ID.
    * @returns {Promise<{uri: string, cellId: string, nodeId: string}>}
    */
   shareCapability(cellId) {
-    return sendMessage('pyana:shareCapability', { cellId });
+    return sendMessage('dregg:shareCapability', { cellId });
   },
 
   /**
-   * Accept (enliven) a pyana:// URI, returning live ref info.
-   * @param {string} uri - A pyana:// URI.
+   * Accept (enliven) a dregg:// URI, returning live ref info.
+   * @param {string} uri - A dregg:// URI.
    * @returns {Promise<{refId: string, cellId: string, nodeId: string, permissions: string}>}
    */
   acceptCapability(uri) {
-    return sendMessage('pyana:acceptCapability', { uri });
+    return sendMessage('dregg:acceptCapability', { uri });
   },
 
   /**
@@ -379,7 +379,7 @@ const pyana = {
    * @returns {Promise<{certificateHash: string, cellId: string, recipientPk: string}>}
    */
   createHandoff(cellId, recipientPk) {
-    return sendMessage('pyana:createHandoff', { cellId, recipientPk });
+    return sendMessage('dregg:createHandoff', { cellId, recipientPk });
   },
 
   // =========================================================================
@@ -393,7 +393,7 @@ const pyana = {
    * @returns {Promise<{path: string, version: number, kind: string}>}
    */
   mountService(path, opts) {
-    return sendMessage('pyana:mountService', { path, ...opts });
+    return sendMessage('dregg:mountService', { path, ...opts });
   },
 
   /**
@@ -402,7 +402,7 @@ const pyana = {
    * @returns {Promise<{results: Array}>}
    */
   discoverServices(tags) {
-    return sendMessage('pyana:discoverServices', { tags });
+    return sendMessage('dregg:discoverServices', { tags });
   },
 
   /**
@@ -411,7 +411,7 @@ const pyana = {
    * @returns {Promise<object>}
    */
   resolvePath(path) {
-    return sendMessage('pyana:resolvePath', { path });
+    return sendMessage('dregg:resolvePath', { path });
   },
 
   // =========================================================================
@@ -424,7 +424,7 @@ const pyana = {
    * @returns {Promise<{hash: string, size: number}>}
    */
   storageWrite(data) {
-    return sendMessage('pyana:storageWrite', { data: arrayBufferToBase64(data) });
+    return sendMessage('dregg:storageWrite', { data: arrayBufferToBase64(data) });
   },
 
   /**
@@ -433,7 +433,7 @@ const pyana = {
    * @returns {Promise<{hash: string, data: ArrayBuffer, size: number}>}
    */
   storageRead(hash) {
-    return sendMessage('pyana:storageRead', { hash }).then(result => {
+    return sendMessage('dregg:storageRead', { hash }).then(result => {
       if (result && result.data) {
         result.data = base64ToArrayBuffer(result.data);
       }
@@ -446,7 +446,7 @@ const pyana = {
    * @returns {Promise<{bytesStored: number, bytesLimit: number, computronsUsed: number, computronsRemaining: number, objectCount: number}>}
    */
   storageQuota() {
-    return sendMessage('pyana:storageQuota', {});
+    return sendMessage('dregg:storageQuota', {});
   },
 
   // =========================================================================
@@ -458,7 +458,7 @@ const pyana = {
    * @returns {Promise<{mode: string, height: number, peerCount: number, merkleRoot: string}>}
    */
   federationStatus() {
-    return sendMessage('pyana:federationStatus', {});
+    return sendMessage('dregg:federationStatus', {});
   },
 
   /**
@@ -467,7 +467,7 @@ const pyana = {
    * @returns {Promise<{proposalId: string, submitted: boolean}>}
    */
   proposeRoutes(routes) {
-    return sendMessage('pyana:proposeRoutes', { routes });
+    return sendMessage('dregg:proposeRoutes', { routes });
   },
 
   /**
@@ -477,7 +477,7 @@ const pyana = {
    * @returns {Promise<{accepted: boolean, proposalId: string}>}
    */
   voteOnProposal(proposalId, approve) {
-    return sendMessage('pyana:voteOnProposal', { proposalId, approve });
+    return sendMessage('dregg:voteOnProposal', { proposalId, approve });
   },
 
   /**
@@ -501,10 +501,10 @@ const pyana = {
   },
 };
 
-Object.defineProperty(window, 'pyana', {
-  value: Object.freeze(pyana),
+Object.defineProperty(window, 'dregg', {
+  value: Object.freeze(dregg),
   writable: false,
   configurable: false,
 });
 
-window.dispatchEvent(new Event('pyana:ready'));
+window.dispatchEvent(new Event('dregg:ready'));

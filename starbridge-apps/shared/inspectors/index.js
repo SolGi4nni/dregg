@@ -2,28 +2,28 @@
 //
 // Inspector registry for starbridge-apps. Each app contributes its
 // domain inspectors (web components published as ES modules — see
-// site/STUDIO.md §6) and registers them via `window.pyana.register`.
+// site/STUDIO.md §6) and registers them via `window.dregg.register`.
 //
 // This module also publishes two cross-app primitive components:
 //
-//   <pyana-token-cap>  — visual representation of a capability /
+//   <dregg-token-cap>  — visual representation of a capability /
 //                        receipt token. Renders the cap's target,
 //                        action, expiry, and tag bytes as a tangible
 //                        artifact. Used by every app's success-state.
 //
-//   <pyana-status-bar> — inline loading / error / success status bar.
+//   <dregg-status-bar> — inline loading / error / success status bar.
 //                        Apps drive it via `setAttribute('state', ...)`
 //                        with one of `idle | loading | error | success`.
 //
-// Both elements are namespaced under `.pyana-shared-*` so they don't
+// Both elements are namespaced under `.dregg-shared-*` so they don't
 // collide with per-app styles.
 
 // =========================================================================
-// <pyana-token-cap>
+// <dregg-token-cap>
 // =========================================================================
 //
 // Tangible visual representation of a capability. Attributes:
-//   target  — pyana://cell/... URI
+//   target  — dregg://cell/... URI
 //   action  — string method/topic the cap authorizes
 //   expiry  — u64 block height (or epoch); 0 / unset == "no expiry"
 //   tag     — short hex of the cap-bytes (for visual fingerprint)
@@ -31,9 +31,9 @@
 //   kind    — "bearer" | "delegated" | "receipt"  (default "receipt")
 //
 // Apps that hand a cap or receipt back from a turn render
-// <pyana-token-cap ...> as the success badge.
+// <dregg-token-cap ...> as the success badge.
 
-class PyanaTokenCapElement extends HTMLElement {
+class DreggTokenCapElement extends HTMLElement {
   static get observedAttributes() {
     return ['target', 'action', 'expiry', 'tag', 'issuer', 'kind', 'label'];
   }
@@ -65,7 +65,7 @@ class PyanaTokenCapElement extends HTMLElement {
           display: inline-block;
           font-family: ui-monospace, SFMono-Regular, monospace;
         }
-        .pyana-shared-cap {
+        .dregg-shared-cap {
           display: inline-grid;
           grid-template-columns: max-content 1fr;
           gap: 0.1rem 0.6rem;
@@ -78,7 +78,7 @@ class PyanaTokenCapElement extends HTMLElement {
           font-size: 0.85rem;
           color: #1a2350;
         }
-        .pyana-shared-cap-header {
+        .dregg-shared-cap-header {
           grid-column: 1 / -1;
           display: flex;
           align-items: center;
@@ -87,7 +87,7 @@ class PyanaTokenCapElement extends HTMLElement {
           padding-bottom: 0.35rem;
           border-bottom: 1px dashed #aab3e8;
         }
-        .pyana-shared-cap-kind {
+        .dregg-shared-cap-kind {
           background: #303a85;
           color: #fff;
           padding: 0.05rem 0.45rem;
@@ -96,10 +96,10 @@ class PyanaTokenCapElement extends HTMLElement {
           font-weight: 700;
           letter-spacing: 0.06em;
         }
-        .pyana-shared-cap-label { font-weight: 600; }
-        .pyana-shared-cap-key   { color: #50609e; font-size: 0.75rem; }
-        .pyana-shared-cap-val   { word-break: break-all; }
-        .pyana-shared-cap-tag   {
+        .dregg-shared-cap-label { font-weight: 600; }
+        .dregg-shared-cap-key   { color: #50609e; font-size: 0.75rem; }
+        .dregg-shared-cap-val   { word-break: break-all; }
+        .dregg-shared-cap-tag   {
           font-size: 0.78rem;
           background: #fff;
           padding: 0.05rem 0.35rem;
@@ -107,31 +107,31 @@ class PyanaTokenCapElement extends HTMLElement {
           border: 1px solid #d0d8f5;
         }
       </style>
-      <span class="pyana-shared-cap">
-        <span class="pyana-shared-cap-header">
-          <span class="pyana-shared-cap-kind">${escapeHtml(kind)}</span>
-          <span class="pyana-shared-cap-label">${escapeHtml(label)}</span>
-          ${tag ? `<span class="pyana-shared-cap-tag">${escapeHtml(shortTag)}</span>` : ''}
+      <span class="dregg-shared-cap">
+        <span class="dregg-shared-cap-header">
+          <span class="dregg-shared-cap-kind">${escapeHtml(kind)}</span>
+          <span class="dregg-shared-cap-label">${escapeHtml(label)}</span>
+          ${tag ? `<span class="dregg-shared-cap-tag">${escapeHtml(shortTag)}</span>` : ''}
         </span>
         ${target ? `
-          <span class="pyana-shared-cap-key">target</span>
-          <span class="pyana-shared-cap-val">${escapeHtml(shortTarget)}</span>` : ''}
+          <span class="dregg-shared-cap-key">target</span>
+          <span class="dregg-shared-cap-val">${escapeHtml(shortTarget)}</span>` : ''}
         ${action ? `
-          <span class="pyana-shared-cap-key">action</span>
-          <span class="pyana-shared-cap-val">${escapeHtml(action)}</span>` : ''}
+          <span class="dregg-shared-cap-key">action</span>
+          <span class="dregg-shared-cap-val">${escapeHtml(action)}</span>` : ''}
         ${issuer ? `
-          <span class="pyana-shared-cap-key">issuer</span>
-          <span class="pyana-shared-cap-val">${escapeHtml(shortIssuer)}</span>` : ''}
+          <span class="dregg-shared-cap-key">issuer</span>
+          <span class="dregg-shared-cap-val">${escapeHtml(shortIssuer)}</span>` : ''}
         ${expiry && expiry !== '0' ? `
-          <span class="pyana-shared-cap-key">expiry</span>
-          <span class="pyana-shared-cap-val">${escapeHtml(expiry)}</span>` : ''}
+          <span class="dregg-shared-cap-key">expiry</span>
+          <span class="dregg-shared-cap-val">${escapeHtml(expiry)}</span>` : ''}
       </span>
     `;
   }
 }
 
 // =========================================================================
-// <pyana-status-bar>
+// <dregg-status-bar>
 // =========================================================================
 //
 // Inline status bar driven by attributes:
@@ -141,7 +141,7 @@ class PyanaTokenCapElement extends HTMLElement {
 //
 // Used by every app's mutation forms.
 
-class PyanaStatusBarElement extends HTMLElement {
+class DreggStatusBarElement extends HTMLElement {
   static get observedAttributes() {
     return ['state', 'message', 'receipt'];
   }
@@ -167,7 +167,7 @@ class PyanaStatusBarElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
-        .pyana-shared-status {
+        .dregg-shared-status {
           display: flex;
           gap: 0.5rem;
           align-items: center;
@@ -179,16 +179,16 @@ class PyanaStatusBarElement extends HTMLElement {
           border-radius: 4px;
           font: 0.85rem ui-monospace, SFMono-Regular, monospace;
         }
-        .pyana-shared-status-spin {
+        .dregg-shared-status-spin {
           width: 0.8rem;
           height: 0.8rem;
           border: 2px solid rgba(0,0,0,0.15);
           border-top-color: currentColor;
           border-radius: 50%;
-          animation: pyana-shared-spin 0.7s linear infinite;
+          animation: dregg-shared-spin 0.7s linear infinite;
         }
-        @keyframes pyana-shared-spin { to { transform: rotate(360deg); } }
-        .pyana-shared-status-receipt {
+        @keyframes dregg-shared-spin { to { transform: rotate(360deg); } }
+        .dregg-shared-status-receipt {
           margin-left: auto;
           padding: 0.05rem 0.4rem;
           background: rgba(0,0,0,0.06);
@@ -197,12 +197,12 @@ class PyanaStatusBarElement extends HTMLElement {
         }
       </style>
       ${state === 'idle' ? '' : `
-        <div class="pyana-shared-status" role="status">
-          ${state === 'loading' ? '<span class="pyana-shared-status-spin" aria-hidden="true"></span>' : ''}
+        <div class="dregg-shared-status" role="status">
+          ${state === 'loading' ? '<span class="dregg-shared-status-spin" aria-hidden="true"></span>' : ''}
           ${state === 'success' ? '<span aria-hidden="true">✓</span>' : ''}
           ${state === 'error'   ? '<span aria-hidden="true">✗</span>' : ''}
           <span>${escapeHtml(message)}</span>
-          ${receipt ? `<code class="pyana-shared-status-receipt">${escapeHtml(receipt)}</code>` : ''}
+          ${receipt ? `<code class="dregg-shared-status-receipt">${escapeHtml(receipt)}</code>` : ''}
         </div>
       `}
     `;
@@ -224,17 +224,17 @@ function escapeHtml(s) {
 // =========================================================================
 
 if (typeof customElements !== 'undefined') {
-  if (!customElements.get('pyana-token-cap')) {
-    customElements.define('pyana-token-cap', PyanaTokenCapElement);
+  if (!customElements.get('dregg-token-cap')) {
+    customElements.define('dregg-token-cap', DreggTokenCapElement);
   }
-  if (!customElements.get('pyana-status-bar')) {
-    customElements.define('pyana-status-bar', PyanaStatusBarElement);
+  if (!customElements.get('dregg-status-bar')) {
+    customElements.define('dregg-status-bar', DreggStatusBarElement);
   }
 }
 
-if (typeof window !== 'undefined' && window.pyana?.register) {
-  window.pyana.register('pyana-token-cap', PyanaTokenCapElement);
-  window.pyana.register('pyana-status-bar', PyanaStatusBarElement);
+if (typeof window !== 'undefined' && window.dregg?.register) {
+  window.dregg.register('dregg-token-cap', DreggTokenCapElement);
+  window.dregg.register('dregg-status-bar', DreggStatusBarElement);
 }
 
 // =========================================================================
@@ -249,7 +249,7 @@ import('/starbridge-apps/subscription/pages/inspectors.js').catch(() => {});
 
 // Nameservice inspectors + turn-builders.
 // Canonical per-app inspectors now in shared/ (STARBRIDGE-PLAN §4.8) — reuses
-// platform <pyana-cell>, <pyana-capability> etc. Legacy pages/ version kept
+// platform <dregg-cell>, <dregg-capability> etc. Legacy pages/ version kept
 // for standalone fragment compatibility.
 import('/starbridge-apps/shared/inspectors/name.js').catch(() => {});
 import('/starbridge-apps/shared/turn-builders/nameservice.js').catch(() => {});
@@ -272,9 +272,9 @@ export const registry = {
 export function register(app, tag, component) {
   if (!registry[app]) registry[app] = {};
   registry[app][tag] = component;
-  if (typeof window !== 'undefined' && window.pyana?.register) {
-    window.pyana.register(tag, component);
+  if (typeof window !== 'undefined' && window.dregg?.register) {
+    window.dregg.register(tag, component);
   }
 }
 
-export { PyanaTokenCapElement, PyanaStatusBarElement, escapeHtml };
+export { DreggTokenCapElement, DreggStatusBarElement, escapeHtml };

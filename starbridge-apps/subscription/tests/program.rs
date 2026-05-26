@@ -21,10 +21,10 @@
 //! 7. Operation-scoping: publish op doesn't advance tail; consume op
 //!    doesn't advance head.
 
-use pyana_app_framework::symbol;
-use pyana_cell::StateConstraint;
-use pyana_cell::program::{CellProgram, ProgramError, TransitionMeta};
-use pyana_cell::state::{CellState, FIELD_ZERO, FieldElement};
+use dregg_app_framework::symbol;
+use dregg_cell::StateConstraint;
+use dregg_cell::program::{CellProgram, ProgramError, TransitionMeta};
+use dregg_cell::state::{CellState, FIELD_ZERO, FieldElement};
 
 use starbridge_subscription::{
     CAPACITY_SLOT, CONSUMERS_ROOT_SLOT, LATEST_PAYLOAD_SLOT, MESSAGE_ROOT_SLOT, OWNER_PK_HASH_SLOT,

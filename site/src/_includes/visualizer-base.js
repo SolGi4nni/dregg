@@ -2,7 +2,7 @@
  * Visualizer base — small utilities every visualizer module is encouraged
  * to use so the look-and-feel stays coherent.
  *
- * Import this *after* `runtime-bootstrap.js` has fired the `pyana:ready`
+ * Import this *after* `runtime-bootstrap.js` has fired the `dregg:ready`
  * event:
  *
  *   import { defineVisualizer, useStepper } from '/_includes/visualizer-base.js';
@@ -21,8 +21,8 @@
 
 function ready() {
   return new Promise(resolve => {
-    if (window.pyanaUi) return resolve(window.pyanaUi);
-    window.addEventListener('pyanaUi:ready', e => resolve(e.detail), { once: true });
+    if (window.dreggUi) return resolve(window.dreggUi);
+    window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
   });
 }
 

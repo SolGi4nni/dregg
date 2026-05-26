@@ -10,7 +10,7 @@ use super::{get_json, post_json};
 
 #[derive(Subcommand)]
 pub enum CapCommand {
-    /// Export/verify bearer for a cell (pyana:// sturdy ref).
+    /// Export/verify bearer for a cell (dregg:// sturdy ref).
     ///
     /// Now sends correct BearerAuthRequest shape (bearer_proof + target_cell + action).
     /// Old {cell_id, attenuation} caused 422. Endpoint is verifier; full proof
@@ -24,9 +24,9 @@ pub enum CapCommand {
         attenuate: Option<String>,
     },
 
-    /// Enliven a pyana:// sturdy reference URI.
+    /// Enliven a dregg:// sturdy reference URI.
     Enliven {
-        /// The pyana:// URI to enliven.
+        /// The dregg:// URI to enliven.
         uri: String,
     },
 
@@ -78,7 +78,7 @@ async fn export(
     // BearerAuthRequest { bearer_proof: Value, target_cell: String, action: String }.
     // Old {cell_id, attenuation} produced missing bearer_proof (and field name skew).
     // We send a minimal bearer_proof object so the outer Json extract succeeds.
-    // The inner deserial to pyana_turn::BearerCapProof may still 400 if not a
+    // The inner deserial to dregg_turn::BearerCapProof may still 400 if not a
     // real proof — that's expected and surfaces as structured {authorized:false, error}.
     // Real generation of BearerCapProof + sturdy refs now lives in the SDK/wasm
     // (see wasm privacy + captp paths); this CLI path now correctly reaches the
@@ -111,7 +111,7 @@ async fn export(
     // /captp/export-style flows in other clients.
     let node_id = "local";
     let secret = "placeholder-see-sdk-for-real-bearer";
-    let uri = format!("pyana://{}/{}/{}", node_id, cell_id, secret);
+    let uri = format!("dregg://{}/{}/{}", node_id, cell_id, secret);
 
     ctx.success("Exported sturdy reference (via bearer-auth verify path):");
     eprintln!("  {}", console::style(&uri).cyan().bold());
@@ -119,7 +119,7 @@ async fn export(
     ctx.info("Share this URI to grant access. Recipient uses:");
     eprintln!(
         "  {}",
-        console::style(format!("pyana cap enliven \"{}\"", &uri)).dim()
+        console::style(format!("dregg cap enliven \"{}\"", &uri)).dim()
     );
     ctx.info("  (Note: full cryptographic bearer export uses SDK BearerCapProof generation.)");
 
@@ -127,14 +127,14 @@ async fn export(
 }
 
 async fn enliven(cfg: &Config, ctx: &Context, uri: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse the pyana:// URI.
-    if !uri.starts_with("pyana://") {
-        return Err("Invalid URI: must start with pyana://".into());
+    // Parse the dregg:// URI.
+    if !uri.starts_with("dregg://") {
+        return Err("Invalid URI: must start with dregg://".into());
     }
 
-    let parts: Vec<&str> = uri.trim_start_matches("pyana://").split('/').collect();
+    let parts: Vec<&str> = uri.trim_start_matches("dregg://").split('/').collect();
     if parts.len() < 3 {
-        return Err("Invalid URI format. Expected: pyana://<node>/<cell>/<secret>".into());
+        return Err("Invalid URI format. Expected: dregg://<node>/<cell>/<secret>".into());
     }
 
     let node_id = parts[0];
@@ -208,7 +208,7 @@ async fn list(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::Err
     let empty = vec![];
     let tokens = data.as_array().unwrap_or(&empty);
     if tokens.is_empty() {
-        ctx.info("No capabilities held. Use `pyana cap enliven` to add one.");
+        ctx.info("No capabilities held. Use `dregg cap enliven` to add one.");
         return Ok(());
     }
 

@@ -56,8 +56,8 @@
 mod golden_pickles {
     use std::collections::HashMap;
 
-    use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-    use pyana_circuit::{
+    use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+    use dregg_circuit::{
         BabyBear, CellState as VmCellState, Effect as VmEffect, EffectVmAir,
         backends::stark_in_pickles::{
             WrapConfig, compose_wrapped_starks, verify_pickles_wrapped_stark, wrap_stark_in_pickles,
@@ -65,7 +65,7 @@ mod golden_pickles {
         generate_effect_vm_trace,
         poseidon_stark::prove_poseidon,
     };
-    use pyana_turn::{
+    use dregg_turn::{
         ActionBuilder, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect, Turn,
         TurnExecutor, TurnResult,
     };
@@ -215,7 +215,7 @@ mod golden_pickles {
             Effect::SetField {
                 cell: ids[1],
                 index: 0,
-                value: *blake3::hash(b"alice.pyana").as_bytes(),
+                value: *blake3::hash(b"alice.dregg").as_bytes(),
             },
             "golden-step2",
         );
@@ -353,7 +353,7 @@ mod golden_pickles {
             let pp = prove_poseidon(air, trace, pi);
             let w = wrap_stark_in_pickles(&pp, air, pi, Some(&fast))
                 .unwrap_or_else(|e| panic!("wrap leaf {i}: {e}"));
-            assert_eq!(w.air_name, "pyana-effect-vm-v1", "leaf {i}: wrong AIR name");
+            assert_eq!(w.air_name, "dregg-effect-vm-v1", "leaf {i}: wrong AIR name");
             println!(
                 "  leaf {i}: Kimchi rows={}, Pickles proof={} bytes",
                 w.circuit_row_count,
@@ -434,8 +434,8 @@ mod golden_pickles {
             })
             .collect();
 
-        assert_eq!(leaves[0].air_name, "pyana-effect-vm-v1");
-        assert_eq!(leaves[1].air_name, "pyana-effect-vm-v1");
+        assert_eq!(leaves[0].air_name, "dregg-effect-vm-v1");
+        assert_eq!(leaves[1].air_name, "dregg-effect-vm-v1");
 
         let composed = compose_wrapped_starks(&leaves[0], &leaves[1])
             .expect("2-leaf composition must succeed");
@@ -485,7 +485,7 @@ mod golden_pickles {
 mod golden_pickles {
     #[test]
     fn pickles_bridge_mina_feature_required() {
-        // pyana-circuit defaults include mina, so this branch normally never executes.
+        // dregg-circuit defaults include mina, so this branch normally never executes.
         println!("golden_vision_pickles_bridge: skipped (mina feature not enabled)");
     }
 }

@@ -6,15 +6,15 @@
 
 == Thesis
 
-seL4 provides hardware-enforced capability isolation for processes on a single machine. Pyana provides cryptographically-enforced capability isolation for agents across a network, using ZK proofs where seL4 uses hardware rings. The result is a coordination substrate for AI agents: not a chatbot wrapper or an API gateway, but the runtime environment in which AI agents exist as first-class entities with identity, memory, authority, economic relationships, and auditable histories.
+seL4 provides hardware-enforced capability isolation for processes on a single machine. Dregg provides cryptographically-enforced capability isolation for agents across a network, using ZK proofs where seL4 uses hardware rings. The result is a coordination substrate for AI agents: not a chatbot wrapper or an API gateway, but the runtime environment in which AI agents exist as first-class entities with identity, memory, authority, economic relationships, and auditable histories.
 
-== The seL4/Pyana Structural Correspondence
+== The seL4/Dregg Structural Correspondence
 
 #figure(
   table(
     columns: (auto, auto, auto),
     align: (left, left, left),
-    table.header([*seL4 Concept*], [*Pyana Concept*], [*Agent Meaning*]),
+    table.header([*seL4 Concept*], [*Dregg Concept*], [*Agent Meaning*]),
     [Process], [Cell], [Agent's identity + state + authority boundary],
     [CNode (c-list)], [CapabilitySet], [Exhaustive set of permitted actions],
     [IPC], [Turn], [Agent performs atomic actions on the world],
@@ -27,7 +27,7 @@ seL4 provides hardware-enforced capability isolation for processes on a single m
     [VSpace], [Receipt chain (IVC)], [Self-proving execution history],
     [Fault handler], [ProofObligation], [What happens on misbehavior],
   ),
-  caption: [Structural correspondence between seL4 kernel primitives and Pyana's distributed capability system.],
+  caption: [Structural correspondence between seL4 kernel primitives and Dregg's distributed capability system.],
 )
 
 This is not a surface-level metaphor. The structural isomorphism runs deep: confinement (cells can only name capabilities in their c-list), monotonic attenuation (delegation can only narrow), revocation via derivation tree, and no ambient authority.
@@ -111,7 +111,7 @@ The intent engine implements a market for AI labor:
   table(
     columns: (auto, auto),
     align: (left, left),
-    table.header([*Problem with APIs*], [*Pyana's Answer*]),
+    table.header([*Problem with APIs*], [*Dregg's Answer*]),
     [Ambient authority (have key = have access)], [Capabilities: scoped, attenuated, revocable],
     [No atomic multi-party transactions], [Call forest composition with journal rollback],
     [Binary trust (have key or don't)], [Graduated: ZK verify to trusted mode],
@@ -120,7 +120,7 @@ The intent engine implements a market for AI labor:
     [Revocation is "rotate the key"], [CDT-style revocation, epoch, channels],
     [No economic model beyond pay-per-call], [Notes, budgets, conditional turns, bonds],
   ),
-  caption: [API-key systems implement authentication ("who are you?"). Pyana implements authorization ("what can you do, who gave you that authority, and can they take it back?").],
+  caption: [API-key systems implement authentication ("who are you?"). Dregg implements authorization ("what can you do, who gave you that authority, and can they take it back?").],
 )
 
 == Capability Patterns for AI

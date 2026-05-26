@@ -1,4 +1,4 @@
-//! pyana-wire: Network wire protocol for cross-silo token presentation and
+//! dregg-wire: Network wire protocol for cross-silo token presentation and
 //! federation synchronization.
 //!
 //! # Trust Model
@@ -26,7 +26,7 @@
 //! 4. DoS resistance: MAX_MESSAGE_SIZE bounds memory consumption.
 //!
 //! This crate implements the binary wire protocol used between organizational silos
-//! in the Pyana federation. It handles:
+//! in the Dregg federation. It handles:
 //!
 //! - **Token presentation**: Transmitting STARK proofs (~24 KiB) over TCP for
 //!   cross-silo authorization verification.
@@ -61,7 +61,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use pyana_wire::prelude::*;
+//! use dregg_wire::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() {

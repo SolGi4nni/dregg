@@ -6,18 +6,18 @@
 //!   1. `apply_encrypted_turn` with the correct sealer key → committed,
 //!      `was_encrypted = true`.
 //!   2. The sealer secret is derived from the cipherclerk the same way the
-//!      node handler does it (domain `"pyana-turn-unsealer-v1"`).
+//!      node handler does it (domain `"dregg-turn-unsealer-v1"`).
 //!   3. Forged sealer secret → rejected.
 //!   4. Malformed postcard body (simulating a bad HTTP body) → deserialization
 //!      error, not panic.
 
-use pyana_cell::{CellId, Ledger};
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::{CallForest, ComputronCosts, Turn, TurnExecutor};
+use dregg_cell::{CellId, Ledger};
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::{CallForest, ComputronCosts, Turn, TurnExecutor};
 use zeroize::Zeroizing;
 
 /// The same domain string used by the node handler to derive the unsealer.
-const TURN_UNSEALER_DOMAIN: &str = "pyana-turn-unsealer-v1";
+const TURN_UNSEALER_DOMAIN: &str = "dregg-turn-unsealer-v1";
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -58,7 +58,7 @@ fn empty_turn(agent: CellId, nonce: u64) -> Turn {
 // ---------------------------------------------------------------------------
 
 /// Derive the executor X25519 unsealer secret from the node's cipherclerk
-/// via `derive_symmetric_key("pyana-turn-unsealer-v1")` — exactly what the
+/// via `derive_symmetric_key("dregg-turn-unsealer-v1")` — exactly what the
 /// production handler does — and verify that the encrypted-turn roundtrip
 /// succeeds with `was_encrypted = true`.
 #[test]
@@ -75,7 +75,7 @@ fn encrypted_turn_with_node_derived_sealer_commits() {
     // The sender (using their own cipherclerk) encrypts to the executor's public key.
     let sender_cclerk = make_cclerk("sender");
     let agent = {
-        let raw = pyana_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
+        let raw = dregg_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
         CellId(raw.0)
     };
     let turn = empty_turn(agent, 0);
@@ -128,7 +128,7 @@ fn encrypted_turn_with_forged_sealer_is_rejected() {
     // Sender encrypts to the attacker's public key instead of the executor's.
     let sender_cclerk = make_cclerk("sender-forged");
     let agent = {
-        let raw = pyana_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
+        let raw = dregg_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
         CellId(raw.0)
     };
     let turn = empty_turn(agent, 0);
@@ -157,7 +157,7 @@ fn encrypted_turn_with_forged_sealer_is_rejected() {
 #[test]
 fn malformed_postcard_body_deserialize_fails_gracefully() {
     let garbage = b"this is not a valid postcard-encoded EncryptedTurn";
-    let result: Result<pyana_turn::EncryptedTurn, _> = postcard::from_bytes(garbage);
+    let result: Result<dregg_turn::EncryptedTurn, _> = postcard::from_bytes(garbage);
     assert!(
         result.is_err(),
         "postcard::from_bytes must return Err on garbage input"
@@ -182,7 +182,7 @@ fn was_encrypted_flag_is_bound_into_receipt_hash() {
 
     let sender_cclerk = make_cclerk("hash-binding-sender");
     let agent = {
-        let raw = pyana_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
+        let raw = dregg_cell::CellId::derive_raw(&sender_cclerk.public_key().0, &[0u8; 32]);
         CellId(raw.0)
     };
     let turn = empty_turn(agent, 0);

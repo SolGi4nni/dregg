@@ -1164,7 +1164,7 @@ mod tests {
     ///         +2 * col[3] * col[1]   (2 * direction * transfer_amount)
     fn sovereign_transfer_descriptor() -> CircuitDescriptor {
         CircuitDescriptor {
-            name: "pyana-sovereign-transition-v1".to_string(),
+            name: "dregg-sovereign-transition-v1".to_string(),
             trace_width: 6,
             max_degree: 2,
             columns: vec![
@@ -1352,7 +1352,7 @@ mod tests {
         // Retrieve
         let retrieved = registry.get(&vk_hash).unwrap();
         assert_eq!(retrieved.version, 1);
-        assert_eq!(retrieved.descriptor.name, "pyana-sovereign-transition-v1");
+        assert_eq!(retrieved.descriptor.name, "dregg-sovereign-transition-v1");
     }
 
     #[test]

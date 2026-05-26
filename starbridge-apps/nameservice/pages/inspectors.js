@@ -2,24 +2,24 @@
 //
 // Web components for the nameservice starbridge-app's three UI surfaces.
 //
-//   <pyana-name uri="pyana://cell/..."/>
+//   <dregg-name uri="dregg://cell/..."/>
 //     Live-binding view of a single name cell — owner, expiry, target,
 //     revocation status, transfer/revoke action buttons.
 //
-//   <pyana-name-registry uri="pyana://cell/..." child-inspector="name"/>
+//   <dregg-name-registry uri="dregg://cell/..." child-inspector="name"/>
 //     Filterable + paginated list of registered names. Polls the
 //     runtime's nameservice.listEntries(uri) helper.
 //
-//   <pyana-name-register-form registry-uri="pyana://cell/..."/>
+//   <dregg-name-register-form registry-uri="dregg://cell/..."/>
 //     Mutation surface — register / renew / transfer / revoke /
-//     set-target — wired to window.pyana.builders.nameservice.* (the
+//     set-target — wired to window.dregg.builders.nameservice.* (the
 //     "cipherclerk-named" Action presets in ./turn-builders.js, all of
-//     which terminate in window.pyana.signTurn for cclerk-side signing).
+//     which terminate in window.dregg.signTurn for cclerk-side signing).
 //
 // All policy lives in Rust (starbridge-apps/nameservice/src/lib.rs); the
 // JS is the thinnest possible UX layer.
 //
-// CSS classes are namespaced under `.pyana-nameservice-*` so they don't
+// CSS classes are namespaced under `.dregg-nameservice-*` so they don't
 // collide with peer apps when multiple inspectors mount in the same DOM.
 
 // Slot indices — mirror constants in src/lib.rs.
@@ -32,9 +32,9 @@ const RESOLVE_TARGET_SLOT  = 6;
 const POLL_INTERVAL_MS = 5_000;
 
 const TAGS = [
-  'pyana-name',
-  'pyana-name-registry',
-  'pyana-name-register-form',
+  'dregg-name',
+  'dregg-name-registry',
+  'dregg-name-register-form',
 ];
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -86,8 +86,8 @@ function isZero32(bytes) {
 async function previewNameHash(name) {
   if (!name) return '';
   try {
-    if (typeof window !== 'undefined' && window.pyana?.blake3) {
-      const out = await window.pyana.blake3(new TextEncoder().encode(String(name)));
+    if (typeof window !== 'undefined' && window.dregg?.blake3) {
+      const out = await window.dregg.blake3(new TextEncoder().encode(String(name)));
       return hexFull(out);
     }
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(name)));
@@ -111,21 +111,21 @@ function fmtExpiry(expiryBlock, tipBlock) {
 
 async function tipHeight() {
   if (typeof window === 'undefined') return null;
-  if (window.pyana?.blockHeight) {
-    try { return Number(await window.pyana.blockHeight()); } catch { return null; }
+  if (window.dregg?.blockHeight) {
+    try { return Number(await window.dregg.blockHeight()); } catch { return null; }
   }
-  if (window.pyana?.federationStatus) {
+  if (window.dregg?.federationStatus) {
     try {
-      const s = await window.pyana.federationStatus();
+      const s = await window.dregg.federationStatus();
       return Number(s?.height ?? null);
     } catch { return null; }
   }
   return null;
 }
 
-// ─── <pyana-name> ────────────────────────────────────────────────────────
+// ─── <dregg-name> ────────────────────────────────────────────────────────
 
-class PyanaNameElement extends HTMLElement {
+class DreggNameElement extends HTMLElement {
   static get observedAttributes() { return ['uri', 'name']; }
 
   constructor() {
@@ -158,24 +158,24 @@ class PyanaNameElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-nameservice-name-card {
+        .dregg-nameservice-name-card {
           border: 1px solid #ddd;
           border-radius: 6px;
           padding: 1rem;
           max-width: 480px;
           background: #fff;
         }
-        .pyana-nameservice-name-row {
+        .dregg-nameservice-name-row {
           display: flex;
           justify-content: space-between;
           gap: 0.5rem;
           padding: 0.25rem 0;
         }
-        .pyana-nameservice-name-label { color: #555; }
+        .dregg-nameservice-name-label { color: #555; }
         code { font-family: ui-monospace, monospace; }
-        .pyana-nameservice-name-status-ok  { color: #2a8a3e; font-weight: 600; }
-        .pyana-nameservice-name-status-bad { color: #c43030; font-weight: 600; }
-        .pyana-nameservice-name-actions {
+        .dregg-nameservice-name-status-ok  { color: #2a8a3e; font-weight: 600; }
+        .dregg-nameservice-name-status-bad { color: #c43030; font-weight: 600; }
+        .dregg-nameservice-name-actions {
           margin-top: 0.5rem;
           display: flex;
           gap: 0.4rem;
@@ -192,54 +192,54 @@ class PyanaNameElement extends HTMLElement {
         button[disabled] { opacity: 0.45; cursor: not-allowed; }
         button:hover:not([disabled]) { background: #dde; }
       </style>
-      <div class="pyana-nameservice-name-card">
+      <div class="dregg-nameservice-name-card">
         <h3>${escapeHtml(nameAttr || '(name)')}</h3>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">cell</span>
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">cell</span>
           <code>${escapeHtml(hex32(uri))}</code>
         </div>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">name-hash</span>
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">name-hash</span>
           <code>${escapeHtml(hex32(data.name_hash))}</code>
         </div>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">owner-hash</span>
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">owner-hash</span>
           <code>${escapeHtml(hex32(data.owner_hash))}</code>
         </div>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">expiry</span>
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">expiry</span>
           <code>${escapeHtml(expiryDisp)}</code>
         </div>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">target</span>
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">target</span>
           <code>${isZero32(data.target) ? '—' : escapeHtml(hex32(data.target))}</code>
         </div>
-        <div class="pyana-nameservice-name-row">
-          <span class="pyana-nameservice-name-label">status</span>
-          <span class="${revoked ? 'pyana-nameservice-name-status-bad' : 'pyana-nameservice-name-status-ok'}">
+        <div class="dregg-nameservice-name-row">
+          <span class="dregg-nameservice-name-label">status</span>
+          <span class="${revoked ? 'dregg-nameservice-name-status-bad' : 'dregg-nameservice-name-status-ok'}">
             ${revoked ? 'REVOKED' : 'ACTIVE'}
           </span>
         </div>
-        <div class="pyana-nameservice-name-actions">
+        <div class="dregg-nameservice-name-actions">
           <button data-action="renew"      ${revoked ? 'disabled' : ''}>Renew</button>
           <button data-action="transfer"   ${revoked ? 'disabled' : ''}>Transfer</button>
           <button data-action="set_target" ${revoked ? 'disabled' : ''}>Set target</button>
           <button data-action="revoke"     ${revoked ? 'disabled' : ''}>Revoke</button>
         </div>
-        <pyana-status-bar
+        <dregg-status-bar
           state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
           message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'submitted' : ''))}"
           receipt="${escapeHtml(this._lastReceipt?.id ?? '')}"
-        ></pyana-status-bar>
+        ></dregg-status-bar>
         ${this._lastReceipt ? `
           <div style="margin-top:0.5rem;">
-            <pyana-token-cap
+            <dregg-token-cap
               kind="receipt"
               label="${escapeHtml(this._lastReceipt.method ?? 'name-action')}"
               target="${escapeHtml(uri)}"
               action="${escapeHtml(this._lastReceipt.method ?? '')}"
               tag="${escapeHtml(this._lastReceipt.id ?? '')}"
-            ></pyana-token-cap>
+            ></dregg-token-cap>
           </div>
         ` : ''}
       </div>
@@ -261,7 +261,7 @@ class PyanaNameElement extends HTMLElement {
       }));
       return;
     }
-    const builders = (typeof window !== 'undefined') ? window.pyana?.builders?.nameservice : null;
+    const builders = (typeof window !== 'undefined') ? window.dregg?.builders?.nameservice : null;
     const fn = builders?.[action];
     if (!fn) {
       // Host has no builder wired — fall back to a CustomEvent so the
@@ -281,7 +281,7 @@ class PyanaNameElement extends HTMLElement {
       if (action === 'renew') {
         const currentExpiry = u64FromBE32(data?.expiry);
         // Default renew: bump by 100_000 blocks. Hosts wanting a custom
-        // expiry should use <pyana-name-register-form mode="renew"/>.
+        // expiry should use <dregg-name-register-form mode="renew"/>.
         const newExpiry = Number(currentExpiry + 100_000n);
         receipt = await fn(uri, { name, expiry: newExpiry });
       } else if (action === 'revoke') {
@@ -303,11 +303,11 @@ class PyanaNameElement extends HTMLElement {
       name_hash: null, owner_hash: null, expiry: null,
       revoked: null, target: null,
     });
-    if (typeof window === 'undefined' || !window.pyana?.cell?.readField) {
+    if (typeof window === 'undefined' || !window.dregg?.cell?.readField) {
       // Fallback: try readCell which returns full state.
-      if (typeof window !== 'undefined' && window.pyana?.readCell) {
+      if (typeof window !== 'undefined' && window.dregg?.readCell) {
         try {
-          const cell = await window.pyana.readCell(uri);
+          const cell = await window.dregg.readCell(uri);
           const f = cell?.state?.fields ?? [];
           return {
             name_hash: f[NAME_HASH_SLOT] ?? null,
@@ -322,11 +322,11 @@ class PyanaNameElement extends HTMLElement {
     }
     try {
       const [name_hash, owner_hash, expiry, revoked, target] = await Promise.all([
-        window.pyana.cell.readField(uri, NAME_HASH_SLOT),
-        window.pyana.cell.readField(uri, OWNER_HASH_SLOT),
-        window.pyana.cell.readField(uri, EXPIRY_SLOT),
-        window.pyana.cell.readField(uri, REVOKED_SLOT),
-        window.pyana.cell.readField(uri, RESOLVE_TARGET_SLOT),
+        window.dregg.cell.readField(uri, NAME_HASH_SLOT),
+        window.dregg.cell.readField(uri, OWNER_HASH_SLOT),
+        window.dregg.cell.readField(uri, EXPIRY_SLOT),
+        window.dregg.cell.readField(uri, REVOKED_SLOT),
+        window.dregg.cell.readField(uri, RESOLVE_TARGET_SLOT),
       ]);
       return { name_hash, owner_hash, expiry, revoked, target };
     } catch (_) {
@@ -335,9 +335,9 @@ class PyanaNameElement extends HTMLElement {
   }
 }
 
-// ─── <pyana-name-registry> ──────────────────────────────────────────────
+// ─── <dregg-name-registry> ──────────────────────────────────────────────
 
-class PyanaNameRegistryElement extends HTMLElement {
+class DreggNameRegistryElement extends HTMLElement {
   static get observedAttributes() { return ['uri', 'page-size']; }
 
   constructor() {
@@ -389,53 +389,53 @@ class PyanaNameRegistryElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-nameservice-registry-toolbar {
+        .dregg-nameservice-registry-toolbar {
           display: flex;
           gap: 0.5rem;
           align-items: center;
           margin-bottom: 0.5rem;
           flex-wrap: wrap;
         }
-        .pyana-nameservice-registry-toolbar input[type=search] {
+        .dregg-nameservice-registry-toolbar input[type=search] {
           padding: 0.4rem;
           min-width: 240px;
           font: inherit;
         }
-        .pyana-nameservice-registry-list {
+        .dregg-nameservice-registry-list {
           border-collapse: collapse;
           width: 100%;
           max-width: 760px;
         }
-        .pyana-nameservice-registry-list th,
-        .pyana-nameservice-registry-list td {
+        .dregg-nameservice-registry-list th,
+        .dregg-nameservice-registry-list td {
           border-bottom: 1px solid #eee;
           padding: 0.35rem 0.5rem;
           text-align: left;
         }
-        .pyana-nameservice-registry-list th { background: #fafafa; }
-        .pyana-nameservice-registry-list tr.revoked td {
+        .dregg-nameservice-registry-list th { background: #fafafa; }
+        .dregg-nameservice-registry-list tr.revoked td {
           color: #888;
           text-decoration: line-through;
         }
-        .pyana-nameservice-registry-list a {
+        .dregg-nameservice-registry-list a {
           color: #25439a;
           text-decoration: none;
         }
-        .pyana-nameservice-registry-list a:hover { text-decoration: underline; }
-        .pyana-nameservice-registry-pager {
+        .dregg-nameservice-registry-list a:hover { text-decoration: underline; }
+        .dregg-nameservice-registry-pager {
           margin-top: 0.5rem;
           display: flex;
           gap: 0.4rem;
           align-items: center;
         }
-        .pyana-nameservice-registry-empty {
+        .dregg-nameservice-registry-empty {
           color: #888;
           padding: 0.75rem;
           border: 1px dashed #ddd;
           border-radius: 4px;
           background: #fafbfc;
         }
-        .pyana-nameservice-registry-error {
+        .dregg-nameservice-registry-error {
           color: #a02020;
           padding: 0.5rem;
           background: #fff0f0;
@@ -451,18 +451,18 @@ class PyanaNameRegistryElement extends HTMLElement {
         }
         button[disabled] { opacity: 0.4; cursor: not-allowed; }
       </style>
-      <div class="pyana-nameservice-registry-toolbar">
+      <div class="dregg-nameservice-registry-toolbar">
         <input type="search" placeholder="Filter by name…" value="${escapeHtml(filter)}" />
         <span>${filtered.length} / ${this._entries.length}</span>
         <button data-action="register-new">Register new…</button>
         <button data-action="refresh">↻ Refresh</button>
       </div>
-      ${this._error ? `<div class="pyana-nameservice-registry-error">error: ${escapeHtml(this._error)}</div>` : ''}
-      ${this._loading ? `<pyana-status-bar state="loading" message="loading registry…"></pyana-status-bar>` : ''}
+      ${this._error ? `<div class="dregg-nameservice-registry-error">error: ${escapeHtml(this._error)}</div>` : ''}
+      ${this._loading ? `<dregg-status-bar state="loading" message="loading registry…"></dregg-status-bar>` : ''}
       ${slice.length === 0
-        ? `<div class="pyana-nameservice-registry-empty">No names registered${filter ? ' match the filter.' : '.'}</div>`
+        ? `<div class="dregg-nameservice-registry-empty">No names registered${filter ? ' match the filter.' : '.'}</div>`
         : `
-        <table class="pyana-nameservice-registry-list">
+        <table class="dregg-nameservice-registry-list">
           <thead>
             <tr><th>Name</th><th>Owner</th><th>Expiry (block)</th><th>Status</th></tr>
           </thead>
@@ -481,7 +481,7 @@ class PyanaNameRegistryElement extends HTMLElement {
             `).join('')}
           </tbody>
         </table>
-        <div class="pyana-nameservice-registry-pager">
+        <div class="dregg-nameservice-registry-pager">
           <button data-action="prev" ${this._page === 0 ? 'disabled' : ''}>‹ Prev</button>
           <span>Page ${this._page + 1} / ${pages}</span>
           <button data-action="next" ${this._page >= pages - 1 ? 'disabled' : ''}>Next ›</button>
@@ -525,20 +525,20 @@ class PyanaNameRegistryElement extends HTMLElement {
 
   async #load(uri) {
     if (typeof window === 'undefined') return [];
-    if (window.pyana?.nameservice?.listEntries) {
-      const entries = await window.pyana.nameservice.listEntries(uri);
+    if (window.dregg?.nameservice?.listEntries) {
+      const entries = await window.dregg.nameservice.listEntries(uri);
       return Array.isArray(entries) ? entries : [];
     }
     // No runtime-side enumerator: surface an empty list rather than
     // making up names. Hosts that want the registry view to populate
-    // must implement `window.pyana.nameservice.listEntries(cellUri)`.
+    // must implement `window.dregg.nameservice.listEntries(cellUri)`.
     return [];
   }
 }
 
-// ─── <pyana-name-register-form> ─────────────────────────────────────────
+// ─── <dregg-name-register-form> ─────────────────────────────────────────
 
-class PyanaNameRegisterFormElement extends HTMLElement {
+class DreggNameRegisterFormElement extends HTMLElement {
   static get observedAttributes() { return ['registry-uri', 'mode']; }
 
   constructor() {
@@ -569,24 +569,24 @@ class PyanaNameRegisterFormElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-nameservice-form {
+        .dregg-nameservice-form {
           display: grid;
           gap: 0.75rem;
           max-width: 420px;
         }
-        .pyana-nameservice-form label {
+        .dregg-nameservice-form label {
           display: grid;
           gap: 0.25rem;
         }
-        .pyana-nameservice-form input,
-        .pyana-nameservice-form select {
+        .dregg-nameservice-form input,
+        .dregg-nameservice-form select {
           padding: 0.4rem;
           font-size: 1rem;
           font-family: inherit;
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-nameservice-form button[type=submit] {
+        .dregg-nameservice-form button[type=submit] {
           padding: 0.55rem;
           font-weight: 600;
           background: #3956c8;
@@ -595,21 +595,21 @@ class PyanaNameRegisterFormElement extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-nameservice-form button[type=submit][disabled] {
+        .dregg-nameservice-form button[type=submit][disabled] {
           opacity: 0.5;
           cursor: wait;
         }
-        .pyana-nameservice-form-target {
+        .dregg-nameservice-form-target {
           font-size: 0.85rem;
           color: #666;
         }
-        .pyana-nameservice-form-nav {
+        .dregg-nameservice-form-nav {
           display: flex;
           gap: 0.4rem;
           margin-bottom: 0.5rem;
           flex-wrap: wrap;
         }
-        .pyana-nameservice-form-nav button {
+        .dregg-nameservice-form-nav button {
           padding: 0.3rem 0.6rem;
           font-weight: 400;
           background: #f4f4f8;
@@ -617,31 +617,31 @@ class PyanaNameRegisterFormElement extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-nameservice-form-nav button[aria-current=true] {
+        .dregg-nameservice-form-nav button[aria-current=true] {
           background: #d0d6f5;
           border-color: #889;
           font-weight: 600;
         }
-        .pyana-nameservice-form-hash-preview {
+        .dregg-nameservice-form-hash-preview {
           font-family: ui-monospace, monospace;
           font-size: 0.75rem;
           color: #557;
           word-break: break-all;
         }
       </style>
-      <nav class="pyana-nameservice-form-nav">
+      <nav class="dregg-nameservice-form-nav">
         ${['register', 'renew', 'transfer', 'revoke', 'set_target'].map((m) => `
           <button type="button" data-mode="${m}" aria-current="${m === mode}">${m}</button>
         `).join('')}
       </nav>
-      <form class="pyana-nameservice-form">
-        <div class="pyana-nameservice-form-target">
+      <form class="dregg-nameservice-form">
+        <div class="dregg-nameservice-form-target">
           Registry: <code>${escapeHtml(registryUri || '(none)')}</code>
         </div>
         ${showFields.includes('name') ? `
           <label>Name
-            <input name="name" required placeholder="alice.pyana" value="${escapeHtml(this._pendingName)}" />
-            <span class="pyana-nameservice-form-hash-preview">
+            <input name="name" required placeholder="alice.dregg" value="${escapeHtml(this._pendingName)}" />
+            <span class="dregg-nameservice-form-hash-preview">
               blake3 = ${this._namePreview
                 ? escapeHtml(this._namePreview.slice(0, 16) + '…' + this._namePreview.slice(-8))
                 : '—'}
@@ -670,27 +670,27 @@ class PyanaNameRegisterFormElement extends HTMLElement {
         ` : ''}
         ${showFields.includes('target') ? `
           <label>Target URI
-            <input name="target" placeholder="pyana://cell/…" />
+            <input name="target" placeholder="dregg://cell/…" />
           </label>
         ` : ''}
         <button type="submit" ${this._busy ? 'disabled' : ''}>
           ${this._busy ? `${mode}ing…` : mode}
         </button>
       </form>
-      <pyana-status-bar
+      <dregg-status-bar
         state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
         message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? `${this._lastMethod} submitted` : ''))}"
         receipt="${escapeHtml(this._lastReceipt?.id ?? '')}"
-      ></pyana-status-bar>
+      ></dregg-status-bar>
       ${this._lastReceipt ? `
         <div style="margin-top:0.5rem;">
-          <pyana-token-cap
+          <dregg-token-cap
             kind="receipt"
             label="${escapeHtml(this._lastMethod)}"
             target="${escapeHtml(registryUri)}"
             action="${escapeHtml(this._lastMethod)}"
             tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
-          ></pyana-token-cap>
+          ></dregg-token-cap>
         </div>
       ` : ''}
     `;
@@ -708,7 +708,7 @@ class PyanaNameRegisterFormElement extends HTMLElement {
       this._pendingName = e.target.value;
       this._namePreview = await previewNameHash(this._pendingName);
       // Re-render the preview span only — full re-render would lose focus.
-      const span = this.shadowRoot.querySelector('.pyana-nameservice-form-hash-preview');
+      const span = this.shadowRoot.querySelector('.dregg-nameservice-form-hash-preview');
       if (span) {
         span.textContent = this._namePreview
           ? `blake3 = ${this._namePreview.slice(0, 16)}…${this._namePreview.slice(-8)}`
@@ -731,7 +731,7 @@ class PyanaNameRegisterFormElement extends HTMLElement {
     this._lastMethod = mode;
     this.render();
 
-    const builders = (typeof window !== 'undefined') ? window.pyana?.builders?.nameservice : null;
+    const builders = (typeof window !== 'undefined') ? window.dregg?.builders?.nameservice : null;
     const builder = builders?.[`${mode}_name`] ?? builders?.[mode];
     if (!builder) {
       this._busy = null;
@@ -764,24 +764,24 @@ class PyanaNameRegisterFormElement extends HTMLElement {
 // ─── Registration ────────────────────────────────────────────────────────
 
 const COMPONENTS = {
-  'pyana-name':                   PyanaNameElement,
-  'pyana-name-registry':          PyanaNameRegistryElement,
-  'pyana-name-register-form':     PyanaNameRegisterFormElement,
+  'dregg-name':                   DreggNameElement,
+  'dregg-name-registry':          DreggNameRegistryElement,
+  'dregg-name-register-form':     DreggNameRegisterFormElement,
 };
 
 for (const [tag, ctor] of Object.entries(COMPONENTS)) {
   if (typeof customElements !== 'undefined' && !customElements.get(tag)) {
     customElements.define(tag, ctor);
   }
-  if (typeof window !== 'undefined' && window.pyana?.register) {
-    window.pyana.register(tag, ctor);
+  if (typeof window !== 'undefined' && window.dregg?.register) {
+    window.dregg.register(tag, ctor);
   }
 }
 
 export {
-  PyanaNameElement,
-  PyanaNameRegistryElement,
-  PyanaNameRegisterFormElement,
+  DreggNameElement,
+  DreggNameRegistryElement,
+  DreggNameRegisterFormElement,
   TAGS,
   NAME_HASH_SLOT,
   OWNER_HASH_SLOT,

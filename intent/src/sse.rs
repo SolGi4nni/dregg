@@ -13,12 +13,12 @@
 //! # Token derivation
 //!
 //! Tokens are deterministic from keywords + epoch:
-//!   `token = BLAKE3_derive_key("pyana-sse-token-v1", keyword_bytes || epoch_le_bytes)`
+//!   `token = BLAKE3_derive_key("dregg-sse-token-v1", keyword_bytes || epoch_le_bytes)`
 //!
 //! This is the "keyword-as-secret" approach: anyone who knows the keyword can
 //! generate the matching token. An observer who doesn't know the keyword space
 //! cannot enumerate all possible tokens. This is weaker than true SSE but practical
-//! for pyana's threat model.
+//! for dregg's threat model.
 //!
 //! # Epoch rotation
 //!
@@ -43,7 +43,7 @@ use crate::{CommitmentId, MatchSpec};
 
 /// Generate a search token for a keyword at a given epoch.
 ///
-/// Token = BLAKE3_derive_key("pyana-sse-token-v1", keyword || epoch_le_bytes)
+/// Token = BLAKE3_derive_key("dregg-sse-token-v1", keyword || epoch_le_bytes)
 ///
 /// The "secret" is the keyword itself: anyone who knows the keyword generates
 /// the same token. This provides set-membership hiding (observers who don't
@@ -53,7 +53,7 @@ pub fn generate_search_token(keyword: &str, epoch: u64) -> [u8; 32] {
     let mut input = Vec::with_capacity(keyword.len() + 8);
     input.extend_from_slice(keyword.as_bytes());
     input.extend_from_slice(&epoch.to_le_bytes());
-    blake3::derive_key("pyana-sse-token-v1", &input)
+    blake3::derive_key("dregg-sse-token-v1", &input)
 }
 
 /// Generate search tokens for all keywords extractable from a MatchSpec.
@@ -194,7 +194,7 @@ impl SealKeypair {
 /// Encryption: generate ephemeral sender keypair, DH with recipient public key,
 /// derive keystream from shared secret, XOR plaintext.
 ///
-/// For pyana's SSE use case, the "recipient" IS the poster themselves. They
+/// For dregg's SSE use case, the "recipient" IS the poster themselves. They
 /// encrypt to their own ephemeral key and later reveal the secret to matched
 /// fulfillers.
 pub fn seal_encrypt(plaintext: &[u8], recipient_public: &[u8; 32]) -> SealedBox {
@@ -210,7 +210,7 @@ pub fn seal_encrypt(plaintext: &[u8], recipient_public: &[u8; 32]) -> SealedBox 
 
     // Derive keystream from shared secret + sender public (for domain separation)
     let mut hasher = blake3::Hasher::new_keyed(shared.as_bytes());
-    hasher.update(b"pyana-sealed-box-v1");
+    hasher.update(b"dregg-sealed-box-v1");
     hasher.update(&sender_public_bytes);
     hasher.update(recipient_public);
     let mut keystream = vec![0u8; plaintext.len()];
@@ -241,7 +241,7 @@ pub fn seal_decrypt(sealed: &SealedBox, recipient_secret: &[u8; 32]) -> Vec<u8> 
     let recipient_public = x25519_dalek::PublicKey::from(&secret);
     let recipient_public_bytes = recipient_public.to_bytes();
     let mut hasher = blake3::Hasher::new_keyed(shared.as_bytes());
-    hasher.update(b"pyana-sealed-box-v1");
+    hasher.update(b"dregg-sealed-box-v1");
     hasher.update(&sealed.sender_public);
     hasher.update(&recipient_public_bytes);
     let mut keystream = vec![0u8; sealed.ciphertext.len()];
@@ -276,7 +276,7 @@ pub struct SealedBox {
 /// to their own secret key and later reveals it to matched fulfillers.
 fn encrypt_with_secret(plaintext: &[u8], secret: &[u8; 32]) -> Vec<u8> {
     let mut hasher = blake3::Hasher::new_keyed(secret);
-    hasher.update(b"pyana-intent-body-v1");
+    hasher.update(b"dregg-intent-body-v1");
     let mut keystream = vec![0u8; plaintext.len()];
     let mut output = hasher.finalize_xof();
     output.fill(&mut keystream);
@@ -413,7 +413,7 @@ impl EncryptedIntent {
 
     /// Compute the content-addressed ID.
     fn compute_id(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-intent-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-intent-id-v1");
         for token in &self.search_tokens {
             hasher.update(token);
         }

@@ -283,7 +283,7 @@ This is a significant research problem (encrypted mempool + ZK validity). Defer 
 
 ## 5. Relationship to Morpheus Integration
 
-The morpheus crate (`pyana-morpheus`) implements the full protocol from the paper:
+The morpheus crate (`dregg-morpheus`) implements the full protocol from the paper:
 
 - **DAG structure**: Transaction blocks (produced by all processes) + Leader blocks (produced by view leader).
 - **Three vote levels**: 0-QC, 1-QC, 2-QC with progressive commitment.

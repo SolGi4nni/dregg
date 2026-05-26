@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Joining a Federation — Pyana</title>
+<title>Joining a Federation — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -28,13 +28,13 @@
       of existing federation members:
     </p>
 
-    <pre><code>pyana-node run \
+    <pre><code>dregg-node run \
   --federation-peers "node1.fed.example:8420,node2.fed.example:8420,node3.fed.example:8420"</code></pre>
 
     <h2 id="keys">Key Exchange (Constitutional Consensus)</h2>
 
     <p>
-      Share your node's public key (printed during <code>pyana-node init</code>) with
+      Share your node's public key (printed during <code>dregg-node init</code>) with
       existing federation members. Under Constitutional Consensus, your node is admitted
       when <code>h</code> existing members reference your join-request block in the
       Blocklace (typically h = 2f+1). No separate "epoch reconfiguration" step is needed --
@@ -61,7 +61,7 @@
       Production federations run Blocklace consensus with Cordial Miners for total ordering:
     </p>
 
-    <pre><code>pyana-node run \
+    <pre><code>dregg-node run \
   --node-index 2 \
   --federation-peers "node1:8420,node2:8420,node3:8420"</code></pre>
 

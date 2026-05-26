@@ -1,4 +1,4 @@
-# Unlinkability Properties in Pyana
+# Unlinkability Properties in `dregg`
 
 ## 1. Multi-show Unlinkability (Credential Presentation)
 

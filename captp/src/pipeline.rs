@@ -34,7 +34,7 @@
 
 use std::collections::HashMap;
 
-use pyana_types::CellId;
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 // TODO(unified-lace): migrate FederationId to StrandId throughout this module.

@@ -27,13 +27,13 @@
 use std::collections::HashSet;
 
 use ed25519_dalek::Verifier;
-use pyana_sdk::cipherclerk::DelegatedToken;
-use pyana_types::PublicKey;
+use dregg_sdk::cipherclerk::DelegatedToken;
+use dregg_types::PublicKey;
 use thiserror::Error;
 
 /// Authority policy for accepting eligibility credentials.
 ///
-/// Mirrors [`pyana_sdk::DelegationAuthority`] but is restricted to the two
+/// Mirrors [`dregg_sdk::DelegationAuthority`] but is restricted to the two
 /// variants safe for this app:
 /// - `Single`: only credentials from one issuer are accepted.
 /// - `Federation`: credentials from any issuer in the set are accepted.
@@ -102,8 +102,8 @@ pub fn verify_eligibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_sdk::cipherclerk::AgentCipherclerk;
-    use pyana_token::Attenuation;
+    use dregg_sdk::cipherclerk::AgentCipherclerk;
+    use dregg_token::Attenuation;
 
     /// Helper: issuer mints a token, then delegates it to `voter_pk`.
     fn issue_credential(issuer: &mut AgentCipherclerk, voter_pk: PublicKey) -> DelegatedToken {
@@ -156,7 +156,7 @@ mod tests {
         let auth = EligibilityAuthority::Single(issuer_pk);
 
         let mut cred = issue_credential(&mut issuer, voter.public_key());
-        cred.delegator_signature = pyana_types::Signature([0xAB; 64]);
+        cred.delegator_signature = dregg_types::Signature([0xAB; 64]);
         let r = verify_eligibility(&auth, &cred);
         assert!(
             matches!(r, Err(EligibilityError::InvalidSignature(_))),

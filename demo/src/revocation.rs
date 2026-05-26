@@ -1,6 +1,6 @@
-//! Revocation accumulator — backed by the REAL `pyana_federation::RevocationTree`.
+//! Revocation accumulator — backed by the REAL `dregg_federation::RevocationTree`.
 //!
-//! The revocation system uses a Merkle-tree-based accumulator (from `pyana-commit`)
+//! The revocation system uses a Merkle-tree-based accumulator (from `dregg-commit`)
 //! to track revoked tokens. The key property is:
 //!
 //! - **Membership**: proving a token IS in the revoked set (it's been revoked)
@@ -13,33 +13,33 @@
 //! - If acme.corp revokes a token, the non-membership proof can no longer
 //!   be produced, causing verification to fail
 //!
-//! This module uses the REAL `pyana_federation::RevocationTree` (Merkle-backed)
+//! This module uses the REAL `dregg_federation::RevocationTree` (Merkle-backed)
 //! instead of a standalone hash-chain implementation.
 
 use std::cell::RefCell;
 
 use crate::authority::PublicKey;
 
-/// Re-export the real non-membership proof type from pyana-commit.
-pub use pyana_commit::NonMembershipProof;
+/// Re-export the real non-membership proof type from dregg-commit.
+pub use dregg_commit::NonMembershipProof;
 
 // =============================================================================
-// Revocation Tree Wrapper (backed by pyana_federation::RevocationTree)
+// Revocation Tree Wrapper (backed by dregg_federation::RevocationTree)
 // =============================================================================
 
-/// A revocation tree backed by the REAL `pyana_federation::RevocationTree`
-/// (which internally uses a 4-ary Merkle tree from `pyana-commit`).
+/// A revocation tree backed by the REAL `dregg_federation::RevocationTree`
+/// (which internally uses a 4-ary Merkle tree from `dregg-commit`).
 pub struct RevocationAccumulator {
     /// The real Merkle-backed revocation tree (RefCell for interior mutability
     /// of root caching).
-    tree: RefCell<pyana_federation::RevocationTree>,
+    tree: RefCell<dregg_federation::RevocationTree>,
 }
 
 impl RevocationAccumulator {
     /// Create a new empty accumulator for an authority.
     pub fn new(_authority: &PublicKey) -> Self {
         RevocationAccumulator {
-            tree: RefCell::new(pyana_federation::RevocationTree::new()),
+            tree: RefCell::new(dregg_federation::RevocationTree::new()),
         }
     }
 
@@ -65,7 +65,7 @@ impl RevocationAccumulator {
     /// Verify a non-membership proof against the current Merkle root.
     pub fn verify_non_membership(&self, proof: &NonMembershipProof) -> bool {
         let root = self.tree.borrow_mut().root();
-        pyana_commit::merkle::MerkleTree::verify_non_membership(&root, proof)
+        dregg_commit::merkle::MerkleTree::verify_non_membership(&root, proof)
     }
 }
 

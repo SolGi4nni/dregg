@@ -18,15 +18,15 @@
 //!   that Turn to a `TurnExecutor`, which verifies both signatures and
 //!   commits the `ValidateHandoff` effect. Tampering rejects.
 
-use pyana_captp::{
+use dregg_captp::{
     CrossFedPipelineBridge, FederationId, HandoffCertificate, HandoffPresentation, PipelinedAction,
     SwissTable, validate_handoff,
 };
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, generate_keypair};
-use pyana_wire::captp_routing;
-use pyana_wire::message::WireMessage;
-use pyana_wire::prelude::CapTpState;
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, generate_keypair};
+use dregg_wire::captp_routing;
+use dregg_wire::message::WireMessage;
+use dregg_wire::prelude::CapTpState;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -94,7 +94,7 @@ fn peer_disconnect_breaks_outstanding_promises() {
     // Establish a CapSession for the peer.
     let epoch = state.allocate_epoch();
     let peer = fed(0xBB);
-    let session = pyana_captp::CapSession::with_epoch(peer.0, epoch);
+    let session = dregg_captp::CapSession::with_epoch(peer.0, epoch);
     state.sessions.insert(peer, session);
 
     // Create a local promise the peer was supposed to resolve and queue
@@ -268,11 +268,11 @@ fn make_delivery_setup(
     target_cell: CellId,
     target_fed: FederationId,
 ) -> (
-    pyana_types::SigningKey,
-    pyana_types::PublicKey,
+    dregg_types::SigningKey,
+    dregg_types::PublicKey,
     FederationId,
-    pyana_types::SigningKey,
-    pyana_types::PublicKey,
+    dregg_types::SigningKey,
+    dregg_types::PublicKey,
     SwissTable,
     [u8; 32],
 ) {
@@ -294,9 +294,9 @@ fn make_delivery_setup(
 /// against a ledger with the target cell and the receipt commits.
 #[test]
 fn captp_delivered_loop_closes_executor_accepts_and_commits() {
-    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::action::Authorization;
-    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use dregg_turn::action::Authorization;
+    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
@@ -340,7 +340,7 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
         0,
         &effects,
     );
-    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+    let sig = dregg_types::sign(&bob_sk, &signing_msg);
 
     // Build the Turn with CapTpDelivered authorization.
     let turn = captp_routing::build_captp_turn_delivered_from_parts(
@@ -381,7 +381,7 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     let result = executor.execute(&turn, &mut ledger);
 
     match result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             // Seam 3 keystone: the executor accepted the CapTpDelivered Turn
             // (the introducer signature + sender signature both verified) and
             // emitted a receipt — the receipt-mirror loop is closed.
@@ -395,9 +395,9 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
 /// Tampering: if the sender_signature is wrong, the executor rejects.
 #[test]
 fn captp_delivered_rejects_wrong_sender_signature() {
-    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::action::Authorization;
-    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use dregg_turn::action::Authorization;
+    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
@@ -455,7 +455,7 @@ fn captp_delivered_rejects_wrong_sender_signature() {
 
     let _ = Authorization::Unchecked; // silence unused import lint if any
     match result {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("captp-delivered")
@@ -471,8 +471,8 @@ fn captp_delivered_rejects_wrong_sender_signature() {
 /// Tampering: if the introducer_pk doesn't match cert.introducer, reject.
 #[test]
 fn captp_delivered_rejects_wrong_introducer_pk() {
-    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
@@ -498,14 +498,14 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
     let effect = captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
 
     let effects = vec![effect.clone()];
-    let signing_msg = pyana_turn::action::Authorization::captp_delivered_signing_message(
+    let signing_msg = dregg_turn::action::Authorization::captp_delivered_signing_message(
         &cert.nonce,
         &target_cell,
         &target_cell,
         0,
         &effects,
     );
-    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+    let sig = dregg_types::sign(&bob_sk, &signing_msg);
 
     // Wrong introducer_pk (some other random key).
     let (_other_sk, other_pk) = generate_keypair();
@@ -538,7 +538,7 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let result = executor.execute(&turn, &mut ledger);
     match result {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("introducer_pk") || s.contains("InvalidAuthorization"),
@@ -564,9 +564,9 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 /// verification.
 #[test]
 fn captp_delivered_rejects_forged_effect_recipient_pk() {
-    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::action::Authorization;
-    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use dregg_turn::action::Authorization;
+    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
@@ -602,7 +602,7 @@ fn captp_delivered_rejects_forged_effect_recipient_pk() {
         0,
         &effects,
     );
-    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+    let sig = dregg_types::sign(&bob_sk, &signing_msg);
 
     let turn = captp_routing::build_captp_turn_delivered_from_parts(
         target_cell,
@@ -632,7 +632,7 @@ fn captp_delivered_rejects_forged_effect_recipient_pk() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let result = executor.execute(&turn, &mut ledger);
     match result {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("ValidateHandoff.recipient_pk") || s.contains("InvalidAuthorization"),
@@ -648,9 +648,9 @@ fn captp_delivered_rejects_forged_effect_recipient_pk() {
 /// recipient-mismatch test.
 #[test]
 fn captp_delivered_rejects_forged_effect_introducer_pk() {
-    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::action::Authorization;
-    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use dregg_turn::action::Authorization;
+    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
@@ -687,7 +687,7 @@ fn captp_delivered_rejects_forged_effect_introducer_pk() {
         0,
         &effects,
     );
-    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+    let sig = dregg_types::sign(&bob_sk, &signing_msg);
 
     let turn = captp_routing::build_captp_turn_delivered_from_parts(
         target_cell,
@@ -717,7 +717,7 @@ fn captp_delivered_rejects_forged_effect_introducer_pk() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let result = executor.execute(&turn, &mut ledger);
     match result {
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             let s = format!("{reason:?}");
             assert!(
                 s.contains("ValidateHandoff.introducer_pk") || s.contains("InvalidAuthorization"),
@@ -734,9 +734,9 @@ fn captp_delivered_rejects_forged_effect_introducer_pk() {
 /// actually called" requirement).
 #[tokio::test]
 async fn spawn_captp_drain_forwards_to_dispatcher() {
-    use pyana_turn::Turn;
-    use pyana_turn::action::{Authorization, Effect};
-    use pyana_wire::prelude::{SiloConfig, SiloServer};
+    use dregg_turn::Turn;
+    use dregg_turn::action::{Authorization, Effect};
+    use dregg_wire::prelude::{SiloConfig, SiloServer};
     use std::sync::Arc;
     use tokio::sync::oneshot;
 
@@ -744,7 +744,7 @@ async fn spawn_captp_drain_forwards_to_dispatcher() {
     let (tx, rx) = oneshot::channel::<Turn>();
     let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
-    let dispatcher: pyana_wire::prelude::CapTpTurnDispatcher = {
+    let dispatcher: dregg_wire::prelude::CapTpTurnDispatcher = {
         let tx = Arc::clone(&tx);
         Arc::new(move |turn: Turn| {
             let tx = Arc::clone(&tx);
@@ -764,10 +764,10 @@ async fn spawn_captp_drain_forwards_to_dispatcher() {
 
     // Push a Turn directly into the queue. We don't need a real CapTpDelivered
     // here — the drain task forwards whatever is queued.
-    let queued_turn = pyana_turn::turn::Turn {
+    let queued_turn = dregg_turn::turn::Turn {
         agent: cell(0x99),
         nonce: 7,
-        call_forest: pyana_turn::forest::CallForest::new(),
+        call_forest: dregg_turn::forest::CallForest::new(),
         fee: 0,
         memo: Some("drain-test".to_string()),
         valid_until: None,

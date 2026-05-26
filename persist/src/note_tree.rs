@@ -5,17 +5,17 @@
 //! providing a succinct commitment to the entire note history.
 //!
 //! This module integrates with the persistent store (redb) to durably record
-//! note commitments and nullifiers, and with the Merkle tree from `pyana-commit`
+//! note commitments and nullifiers, and with the Merkle tree from `dregg-commit`
 //! for proof generation.
 //!
 //! The tree maintains BOTH a BLAKE3 tree (for fast non-ZK verification) and a
 //! Poseidon2 tree (for ZK proof generation). When a commitment is appended,
 //! both trees get updated.
 
-use pyana_cell::note::{NoteCommitment, Nullifier};
-use pyana_circuit::field::BabyBear;
-use pyana_commit::merkle::{MerkleProof, MerkleTree};
-use pyana_commit::poseidon2_tree::{
+use dregg_cell::note::{NoteCommitment, Nullifier};
+use dregg_circuit::field::BabyBear;
+use dregg_commit::merkle::{MerkleProof, MerkleTree};
+use dregg_commit::poseidon2_tree::{
     Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field,
 };
 
@@ -31,7 +31,7 @@ use pyana_commit::poseidon2_tree::{
 pub struct NoteTree {
     /// All note commitments ever created (append-only).
     commitments: Vec<NoteCommitment>,
-    /// The BLAKE3 Merkle tree over commitments (from pyana-commit).
+    /// The BLAKE3 Merkle tree over commitments (from dregg-commit).
     tree: MerkleTree,
     /// The Poseidon2 Merkle tree over field-element commitments (ZK-friendly).
     poseidon2_tree: Poseidon2MerkleTree,
@@ -158,7 +158,7 @@ impl Default for NoteTree {
 /// A persistent nullifier set backed by the store.
 ///
 /// This is a thin wrapper that provides the same double-spend detection semantics
-/// as `pyana_cell::nullifier_set::NullifierSet` but delegates to the persistent
+/// as `dregg_cell::nullifier_set::NullifierSet` but delegates to the persistent
 /// store for durability.
 #[derive(Clone, Debug)]
 pub struct PersistentNullifierSet {
@@ -213,7 +213,7 @@ impl PersistentNullifierSet {
         if self.nullifiers.is_empty() {
             return [0u8; 32];
         }
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-nullifier-set root v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-nullifier-set root v1");
         for n in &self.nullifiers {
             hasher.update(&n.0);
         }
@@ -230,7 +230,7 @@ impl Default for PersistentNullifierSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_cell::note::Note;
+    use dregg_cell::note::Note;
 
     fn make_note(seed: u8) -> Note {
         let mut owner = [0u8; 32];

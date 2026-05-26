@@ -453,7 +453,7 @@ function sendDecision(authorized) {
   const level = getSelectedLevel();
   const decisions = level === 'selective' ? getFactDecisions() : [];
   const message = {
-    type: 'pyana:disclosureDecision',
+    type: 'dregg:disclosureDecision',
     authorized,
     level,
     // Legacy field for backward compat.

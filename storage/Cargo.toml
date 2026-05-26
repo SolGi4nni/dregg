@@ -1,5 +1,5 @@
 [package]
-name = "pyana-storage"
+name = "dregg-storage"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
@@ -12,18 +12,18 @@ kzg = ["poly-commitment", "ark-ec", "ark-ff", "ark-poly", "ark-bn254", "ark-std"
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 
-# Path dependency on pyana-circuit for Poseidon2 + BabyBear primitives.
+# Path dependency on dregg-circuit for Poseidon2 + BabyBear primitives.
 # storage is in the root Cargo.toml `exclude` list, so it builds as a
 # standalone crate — but we can still take a path dependency on a workspace
 # crate. We use only the public Poseidon2/BabyBear surface; no upstream
 # visibility changes were required (see STORAGE-POSEIDON2-AUDIT.md, "Notes
 # on the Poseidon2 source").
-pyana-circuit = { path = "../circuit" }
+dregg-circuit = { path = "../circuit" }
 # Re-export of the lifted slot-caveat enum lives in `cell::program`. Per
 # `SLOT-CAVEATS-DESIGN.md` §5 Option A the storage crate's
 # `QueueConstraint` continues to exist for back-compat, but the canonical
-# vocabulary now lives in pyana-cell.
-pyana-cell = { path = "../cell" }
+# vocabulary now lives in dregg-cell.
+dregg-cell = { path = "../cell" }
 
 # KZG polynomial commitment from o1-labs/proof-systems (same rev as circuit crate).
 # We use PairingSRS for SRS generation + commit_non_hiding for polynomial commitments.

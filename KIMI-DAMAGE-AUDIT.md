@@ -19,26 +19,26 @@ Workspace is **96.8% green**. The 380 skipped tests are nextest profile filters 
 
 | Crate                              | Fails | Note |
 |------------------------------------|-------|------|
-| pyana-teasting (integration)       | 43    | proving infra cascade |
-| pyana-circuit                      | 42    | bounded by 1 root bug |
-| pyana-wasm                         | 16    | **all false positives** (wasm-bindgen on native) |
-| pyana-bridge                       | 16    | Poseidon2 STARK failures |
-| pyana-tests (workspace integ)      | 11    | cascade |
-| pyana-sdk                          | 6     | Poseidon2 STARK |
-| pyana-gallery                      | 6     | Poseidon2 STARK |
+| dregg-teasting (integration)       | 43    | proving infra cascade |
+| dregg-circuit                      | 42    | bounded by 1 root bug |
+| dregg-wasm                         | 16    | **all false positives** (wasm-bindgen on native) |
+| dregg-bridge                       | 16    | Poseidon2 STARK failures |
+| dregg-tests (workspace integ)      | 11    | cascade |
+| dregg-sdk                          | 6     | Poseidon2 STARK |
+| dregg-gallery                      | 6     | Poseidon2 STARK |
 | starbridge-subscription::program   | 5     | program executor regression |
 | starbridge-identity::credential    | 5     | credential proving cascade |
-| pyana-turn                         | 5     | conditional cascade + 1 real |
-| pyana-credentials                  | 5     | rejecting valid roots |
+| dregg-turn                         | 5     | conditional cascade + 1 real |
+| dregg-credentials                  | 5     | rejecting valid roots |
 | starbridge-governed-namespace      | 3     | governance |
-| pyana-nameservice                  | 3     | register flow |
-| pyana-demo                         | 2     | stark membership |
-| pyana-verifier                     | 1     | aggregated bundle CLI |
-| pyana-storage-templates            | 1     | inbox method routing |
-| pyana-identity                     | 1     | revocation manager |
-| pyana-directory                    | 1     | hex-length assertion (test bug) |
-| pyana-cell                         | 1     | postcard all-zero edge case |
-| pyana-teasting::effect_vm_captp    | 1     | handoff proof |
+| dregg-nameservice                  | 3     | register flow |
+| dregg-demo                         | 2     | stark membership |
+| dregg-verifier                     | 1     | aggregated bundle CLI |
+| dregg-storage-templates            | 1     | inbox method routing |
+| dregg-identity                     | 1     | revocation manager |
+| dregg-directory                    | 1     | hex-length assertion (test bug) |
+| dregg-cell                         | 1     | postcard all-zero edge case |
+| dregg-teasting::effect_vm_captp    | 1     | handoff proof |
 
 **Net unique failing tests:** ≈ 173 (matches Summary).
 
@@ -46,39 +46,39 @@ Workspace is **96.8% green**. The 380 skipped tests are nextest profile filters 
 
 Three dominant root causes (NOT 173 independent bugs):
 
-1. **`circuit/src/dsl/circuit.rs:335:48` — `index out of bounds: len 3, index 3`** in `Poseidon24To1` constraint reconstruction. This single panic explains **at least 30** failures across `pyana-circuit::body_membership`, `cross_state_derivation`, `dsl::membership`, `ivc`, `predicate_program`, `presentation`, plus `pyana-bridge::verifier`, `pyana-demo::stark_proof`, `pyana-turn::conditional`, `pyana-turn::obligation`, and `pyana-teasting::proof_round_trip::test_stark_proof_bytes_round_trip`. The bug is in the prover's children-reconstruction loop that has 3 siblings + 1 current but iterates 0..4 against `siblings[sib_idx]` — when `position == 3`, `sib_idx` reaches 3 before the break.
+1. **`circuit/src/dsl/circuit.rs:335:48` — `index out of bounds: len 3, index 3`** in `Poseidon24To1` constraint reconstruction. This single panic explains **at least 30** failures across `dregg-circuit::body_membership`, `cross_state_derivation`, `dsl::membership`, `ivc`, `predicate_program`, `presentation`, plus `dregg-bridge::verifier`, `dregg-demo::stark_proof`, `dregg-turn::conditional`, `dregg-turn::obligation`, and `dregg-teasting::proof_round_trip::test_stark_proof_bytes_round_trip`. The bug is in the prover's children-reconstruction loop that has 3 siblings + 1 current but iterates 0..4 against `siblings[sib_idx]` — when `position == 3`, `sib_idx` reaches 3 before the break.
 
-2. **"Poseidon2 STARK proof generation failed" / "Bridge(Denied)"** — surfaces in `pyana-bridge::present`, `pyana-sdk::cipherclerk`, `pyana-credentials::roundtrip`, `pyana-identity::tests`, `pyana-gallery::private_vickrey`, `starbridge-identity::credential_lifecycle`, `pyana-teasting::token_lifecycle`. Likely the same underlying root cause as #1 (the prover crashes inside, then the call returns an error string).
+2. **"Poseidon2 STARK proof generation failed" / "Bridge(Denied)"** — surfaces in `dregg-bridge::present`, `dregg-sdk::cipherclerk`, `dregg-credentials::roundtrip`, `dregg-identity::tests`, `dregg-gallery::private_vickrey`, `starbridge-identity::credential_lifecycle`, `dregg-teasting::token_lifecycle`. Likely the same underlying root cause as #1 (the prover crashes inside, then the call returns an error string).
 
-3. **wasm-bindgen on native** — all 16 `pyana-wasm::audit_tests` failures. These tests **cannot run** outside wasm32. They show up because they don't `#[cfg(target_arch = "wasm32")]`-gate. **False damage** — these were never running here.
+3. **wasm-bindgen on native** — all 16 `dregg-wasm::audit_tests` failures. These tests **cannot run** outside wasm32. They show up because they don't `#[cfg(target_arch = "wasm32")]`-gate. **False damage** — these were never running here.
 
 After accounting for those three buckets, the remaining real failures (~30) split into:
 
 - **Test-data drift / hardening assertions** (real regressions):
-  - `pyana-turn::tests::test_program_none_backward_compat` — assertion `nonce()==1` fails (executor isn't incrementing nonce on CellProgram::None cells anymore)
-  - `pyana-teasting::storage_lifecycle` × 3 — queue allocation / dequeue producing different roots than expected
-  - `pyana-tests::sovereign_proof` × 2 — proof-carrying turn
-  - `pyana-tests::captp_effects_pipeline` × 3 — `aux[0]` / `effects_hash_lo` bind to wrong preimage (different BabyBear values; constraint shape changed)
-  - `pyana-teasting::consensus_liveness` × 4 — consensus tests
-  - `pyana-teasting::fault_partition` × 3, `fault_crash` × 1
-  - `pyana-teasting::cross_federation` × 2
-  - `pyana-teasting::revocation_propagation` × 5
-  - `pyana-teasting::escrow_lifecycle` × 5
-  - `pyana-teasting::defi_primitives` × 2
-  - `pyana-teasting::relay_operators` × 2
-  - `pyana-tests::slot_caveat_composition_stress` × 3
+  - `dregg-turn::tests::test_program_none_backward_compat` — assertion `nonce()==1` fails (executor isn't incrementing nonce on CellProgram::None cells anymore)
+  - `dregg-teasting::storage_lifecycle` × 3 — queue allocation / dequeue producing different roots than expected
+  - `dregg-tests::sovereign_proof` × 2 — proof-carrying turn
+  - `dregg-tests::captp_effects_pipeline` × 3 — `aux[0]` / `effects_hash_lo` bind to wrong preimage (different BabyBear values; constraint shape changed)
+  - `dregg-teasting::consensus_liveness` × 4 — consensus tests
+  - `dregg-teasting::fault_partition` × 3, `fault_crash` × 1
+  - `dregg-teasting::cross_federation` × 2
+  - `dregg-teasting::revocation_propagation` × 5
+  - `dregg-teasting::escrow_lifecycle` × 5
+  - `dregg-teasting::defi_primitives` × 2
+  - `dregg-teasting::relay_operators` × 2
+  - `dregg-tests::slot_caveat_composition_stress` × 3
   - `starbridge-subscription::program` × 5 — `expected Immutable on head, got Monotonic` — constraint enforcement regression
   - `starbridge-governed-namespace::governance` × 3
-  - `pyana-nameservice::register_*` × 3
-  - `pyana-verifier::aggregated_bundle::cli_verdict_happy_and_reject`
-  - `pyana-storage-templates::cap_inbox_tests::unknown_method_default_denied`
-  - `pyana-cell::preconditions::clause_tests::preconditions_roundtrip_postcard` — postcard now accepts an all-zero 16-byte buffer where it used to reject
+  - `dregg-nameservice::register_*` × 3
+  - `dregg-verifier::aggregated_bundle::cli_verdict_happy_and_reject`
+  - `dregg-storage-templates::cap_inbox_tests::unknown_method_default_denied`
+  - `dregg-cell::preconditions::clause_tests::preconditions_roundtrip_postcard` — postcard now accepts an all-zero 16-byte buffer where it used to reject
 
 - **Tests with stale/wrong assertions** (broken tests, not broken code):
-  - `pyana-directory::resource_handle_uri_contains_hex_fields` — assertion string is **68 hex chars** (34 `ab` pairs) but field is 32 bytes → 64 hex chars. The test was written wrong.
-  - `pyana-cell::preconditions_roundtrip_postcard` — possible (postcard library upgrade may have made certain all-zero buffers valid encodings)
+  - `dregg-directory::resource_handle_uri_contains_hex_fields` — assertion string is **68 hex chars** (34 `ab` pairs) but field is 32 bytes → 64 hex chars. The test was written wrong.
+  - `dregg-cell::preconditions_roundtrip_postcard` — possible (postcard library upgrade may have made certain all-zero buffers valid encodings)
 
-- **`pyana-credentials::roundtrip` × 5** — every credential test fails with `Bridge("Denied")` or `assertion false == true`. This is a real cascade from the same Poseidon2 issue, probably.
+- **`dregg-credentials::roundtrip` × 5** — every credential test fails with `Bridge("Denied")` or `assertion false == true`. This is a real cascade from the same Poseidon2 issue, probably.
 
 ---
 
@@ -124,9 +124,9 @@ After accounting for those three buckets, the remaining real failures (~30) spli
     ```
     — the legacy-alias documentation now says the new name is its own alias.
   - Similar damage at `sdk/src/cipherclerk.rs:14`:
-    > `"Wallet" was a poor fit: pyana cipherclerks mostly manage *capabilities*, not balances.`
+    > `"Wallet" was a poor fit: dregg cipherclerks mostly manage *capabilities*, not balances.`
     became
-    > `"Cipherclerk" was a poor fit: pyana cipherclerks mostly manage *capabilities*, not balances.`
+    > `"Cipherclerk" was a poor fit: dregg cipherclerks mostly manage *capabilities*, not balances.`
     — explanatory rationale now contradicts itself.
   - Many similar prose-meaning losses in `*.md` files in `audits/`, `plans/`, `docs/`.
   - **Did NOT cause any test compile or runtime failure** — none of the test failures in nextest.log can be traced to text in comments.
@@ -151,11 +151,11 @@ Ordered by severity / blast radius:
    - Root cause: in `Poseidon24To1` evaluator, the canonical-children reconstruction iterates `i in 0..4u8`, and when `i != position`, indexes `siblings[sib_idx]` where `siblings` has only 3 elements. If the prover ever stores `position` such that the *last* iteration is the non-position case, `sib_idx` reaches 3.
    - **Fix lane:** circuit team, one-file fix, high confidence.
 
-2. **`pyana-turn::tests::test_program_none_backward_compat` — nonce not incrementing**.
+2. **`dregg-turn::tests::test_program_none_backward_compat` — nonce not incrementing**.
    - Hardening-assertion form. The executor decomposition (commits `09290e50` and earlier — also NOT kimi) likely dropped a nonce-increment path on the CellProgram::None code path.
    - **Fix lane:** turn-executor team. Bisect against `09290e50 turn/executor: decompose 10547-line mod.rs`.
 
-3. **`pyana-tests::captp_effects_pipeline` × 3 — wrong preimage bound to aux/effects_hash**.
+3. **`dregg-tests::captp_effects_pipeline` × 3 — wrong preimage bound to aux/effects_hash**.
    - Assertions compare to *hardcoded* BabyBear values. Either the test values are stale OR the binding logic changed (e.g., the swiss→cell_id binding format).
    - **Fix lane:** captp / effect-vm team. Need to recompute expected values.
 
@@ -165,30 +165,30 @@ Ordered by severity / blast radius:
      - Constraint evaluation now prefers Monotonic when both could fire.
    - **Fix lane:** starbridge-apps + cell-program team. Reading `starbridge-apps/subscription/tests/program.rs:183,463,483` will tell quickly.
 
-5. **`pyana-teasting::token_lifecycle` × 5 + `pyana-credentials::roundtrip` × 5**.
+5. **`dregg-teasting::token_lifecycle` × 5 + `dregg-credentials::roundtrip` × 5**.
    - All "Bridge(Denied)" or root-token verification failing. Almost certainly the same Poseidon2 bug as #1 cascading through the bridge presenter.
 
-6. **`pyana-teasting::storage_*` × 5 (storage_faults + storage_lifecycle)**.
+6. **`dregg-teasting::storage_*` × 5 (storage_faults + storage_lifecycle)**.
    - Storage queue root mismatch / FIFO proof rejection. Real regression in commit `7d7b8814 storage, fault tests, nameservice...` — same commit also fixed BLINDED_QUEUE_SPEND_AIR_VK length, plausibly missed another constant.
 
-7. **`pyana-teasting::consensus_liveness` × 4, `fault_partition` × 3, `fault_crash` × 1**.
+7. **`dregg-teasting::consensus_liveness` × 4, `fault_partition` × 3, `fault_crash` × 1**.
    - The fault-injection consensus tests are nondeterministic by nature. May be flakes (rerun first), or may share a root cause with storage failures.
 
-8. **`pyana-teasting::escrow_lifecycle` × 5, `relay_operators` × 2, `revocation_propagation` × 5, `cross_federation` × 2, `defi_primitives` × 2**.
+8. **`dregg-teasting::escrow_lifecycle` × 5, `relay_operators` × 2, `revocation_propagation` × 5, `cross_federation` × 2, `defi_primitives` × 2**.
    - Almost all panic at the first `assert!` in their setup — strong signal that a common test helper or fixture changed shape. Worth bisecting against `7d7b8814`.
 
-9. **`pyana-cell::preconditions_roundtrip_postcard` — "all-zero buffer must fail to decode"**.
+9. **`dregg-cell::preconditions_roundtrip_postcard` — "all-zero buffer must fail to decode"**.
    - Real test bug or a postcard upgrade made `[0u8; 16]` parseable. The test asserts decoding fails; it now succeeds. Single-file fix: either tighten the rejection logic in `Preconditions::deserialize` or relax the test.
 
-10. **`pyana-storage-templates::cap_inbox_tests::unknown_method_default_denied`**, **`starbridge-subscription::program::unknown_method_default_denied`**, **`starbridge-governed-namespace::governance::unknown_method_default_denied`**.
+10. **`dregg-storage-templates::cap_inbox_tests::unknown_method_default_denied`**, **`starbridge-subscription::program::unknown_method_default_denied`**, **`starbridge-governed-namespace::governance::unknown_method_default_denied`**.
     - All three default-denied tests fail together → the cell-program "unknown method" routing returns the wrong rejection kind. One root cause across three apps.
 
 ---
 
 ## §4 False damage (tests broken in log but expected)
 
-1. **All 16 `pyana-wasm::audit_tests::*` failures** — `cannot call wasm-bindgen imported functions on non-wasm targets`. These tests exist for wasm32 builds and **must not be considered failing on native**. They need an `#[cfg(target_arch = "wasm32")]` gate or to move to a wasm-only test crate.
-2. **`pyana-directory::resource_handle_uri_contains_hex_fields`** — assertion string has 34 `ab` pairs (68 hex chars) but `[0xab; 32]` produces 64. The test was wrong from the start.
+1. **All 16 `dregg-wasm::audit_tests::*` failures** — `cannot call wasm-bindgen imported functions on non-wasm targets`. These tests exist for wasm32 builds and **must not be considered failing on native**. They need an `#[cfg(target_arch = "wasm32")]` gate or to move to a wasm-only test crate.
+2. **`dregg-directory::resource_handle_uri_contains_hex_fields`** — assertion string has 34 `ab` pairs (68 hex chars) but `[0xab; 32]` produces 64. The test was wrong from the start.
 3. The 380 `skipped` tests in the summary are the nextest default-filter and are not failures.
 
 ---
@@ -204,14 +204,14 @@ Ordered by severity / blast radius:
 - Storage queue root mismatch. Code-fix lane, cell-program + storage.
 
 ### Wave 3 (test/fixture updates → easy but mechanical)
-- `pyana-directory::resource_handle_uri_contains_hex_fields` assertion. Test-update lane, trivial.
-- `pyana-wasm` audit tests: gate behind `#[cfg(target_arch = "wasm32")]`. Test-update lane.
-- `pyana-tests::captp_effects_pipeline` — recompute expected hashes. Test-update lane.
-- `pyana-cell::preconditions_roundtrip_postcard` — clarify expected behavior. Test or code, needs investigation.
+- `dregg-directory::resource_handle_uri_contains_hex_fields` assertion. Test-update lane, trivial.
+- `dregg-wasm` audit tests: gate behind `#[cfg(target_arch = "wasm32")]`. Test-update lane.
+- `dregg-tests::captp_effects_pipeline` — recompute expected hashes. Test-update lane.
+- `dregg-cell::preconditions_roundtrip_postcard` — clarify expected behavior. Test or code, needs investigation.
 
 ### Wave 4 (verify-after-other-fixes)
-- All `pyana-teasting::*` cascade failures (escrow, token_lifecycle, fault_*, consensus_liveness, etc.) — most will recover once Waves 1–2 land. Re-run before opening individual tickets.
-- `pyana-credentials::roundtrip` × 5 — almost certainly Wave 1 cascade.
+- All `dregg-teasting::*` cascade failures (escrow, token_lifecycle, fault_*, consensus_liveness, etc.) — most will recover once Waves 1–2 land. Re-run before opening individual tickets.
+- `dregg-credentials::roundtrip` × 5 — almost certainly Wave 1 cascade.
 - `starbridge-identity::credential_lifecycle` × 5 — almost certainly Wave 1 cascade.
 
 ### Wave 5 (the proptest seed)
@@ -231,7 +231,7 @@ Ordered by severity / blast radius:
 
 3. **`62440596` also added `was_burn: false`** to the four `demo-agent/examples/*.rs` files (cipherclerk_lifecycle, cross_federation_nft_swap, payment_channel, payment_channel_burst). Without this those examples don't build.
 
-4. **`31722471` finished the `AgentWallet → AgentCipherclerk` rename in tests** (`tests/src/full_pipeline.rs`, `tests/src/fully_private_e2e.rs`, etc.). Those test files were still importing `pyana_sdk::wallet::AgentWallet` even after the type was renamed two months ago. They could not build. **This is essential cleanup that unblocks the `tests/` integration crate.**
+4. **`31722471` finished the `AgentWallet → AgentCipherclerk` rename in tests** (`tests/src/full_pipeline.rs`, `tests/src/fully_private_e2e.rs`, etc.). Those test files were still importing `dregg_sdk::wallet::AgentWallet` even after the type was renamed two months ago. They could not build. **This is essential cleanup that unblocks the `tests/` integration crate.**
 
 5. **`4b635096`** (checkpoint) is harmless cosmetic-only.
 

@@ -1,5 +1,5 @@
 /**
- * <pyana-bearer-cap uri="pyana://bearer-cap/<token-hex>" data="...">
+ * <dregg-bearer-cap uri="dregg://bearer-cap/<token-hex>" data="...">
  *
  * Bearer capability creator/verifier using canonical wasm privacy bindings.
  * Supports both legacy shim (create_bearer_cap/verify_bearer_cap for compat)
@@ -9,7 +9,7 @@
  * AuthRequired permissions, fed binding. Used in Authorization::Bearer.
  *
  * UI: auto-detects shape; shows "real" (SignedDelegation path) or "(shim)" badge.
- * Visible Placeholder note only if using shim path. Reuses <pyana-revocation-channel>
+ * Visible Placeholder note only if using shim path. Reuses <dregg-revocation-channel>
  * for linked channels (data=). No JS crypto reimpl — all via wasm.
  *
  * Demo create uses real fns with [0;32] sim fed_id (or runtime fed if exposed).
@@ -19,7 +19,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaBearerCap extends InspectorBase {
+class DreggBearerCap extends InspectorBase {
   _render() {
     const { h, render, html, effect, signal } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -61,8 +61,8 @@ class PyanaBearerCap extends InspectorBase {
       if (mode === 'compact') {
         const tok = (created && (created.bearer_token_hex || created.delegation_proof ? 'real' : '')) || (created && created.bearer_token_hex) || '';
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
-            <span class="pyana-inspector__kind">${kindLabel}</span>
+          <span class="dregg-inspector dregg-inspector--compact">
+            <span class="dregg-inspector__kind">${kindLabel}</span>
             <code>${shortHex(tok || (created && created.target ? shortHex(created.target,8) : ''), 10)}</code>
           </span>`;
       }
@@ -95,20 +95,20 @@ class PyanaBearerCap extends InspectorBase {
       ` : null;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--bearer">
+        <div class="dregg-inspector dregg-inspector--bearer">
           <header>
-            <span class="pyana-inspector__kind">${kindLabel}</span>
-            ${created ? html`<code class="pyana-inspector__id" title=${(created.bearer_token_hex || created.target || '')}>${shortHex((created.bearer_token_hex || (created.target ? created.target : '')), 16)}</code>` : ''}
+            <span class="dregg-inspector__kind">${kindLabel}</span>
+            ${created ? html`<code class="dregg-inspector__id" title=${(created.bearer_token_hex || created.target || '')}>${shortHex((created.bearer_token_hex || (created.target ? created.target : '')), 16)}</code>` : ''}
           </header>
           ${note}
           ${created ? html`
-            <dl class="pyana-inspector__kv">
+            <dl class="dregg-inspector__kv">
               ${isReal ? html`
                 <dt>target</dt><dd><code>${shortHex(created.target || '', 12)}</code></dd>
                 <dt>permissions</dt><dd>${created.permissions || 'n/a'}</dd>
                 <dt>delegation</dt><dd><code>${(created.delegation_proof && created.delegation_proof.SignedDelegation) ? 'SignedDelegation' : (created.delegation_proof ? 'StarkDelegation' : 'n/a')}</code></dd>
                 <dt>expires_at</dt><dd>${created.expires_at || 0}</dd>
-                <dt>revocation_channel</dt><dd>${created.revocation_channel ? html`<pyana-revocation-channel data=${JSON.stringify({channel_id: created.revocation_channel, active: true})} mode="compact"></pyana-revocation-channel>` : html`<em>none</em>`}</dd>
+                <dt>revocation_channel</dt><dd>${created.revocation_channel ? html`<dregg-revocation-channel data=${JSON.stringify({channel_id: created.revocation_channel, active: true})} mode="compact"></dregg-revocation-channel>` : html`<em>none</em>`}</dd>
                 <dt>allowed_effects</dt><dd><code>${created.allowed_effects ? JSON.stringify(created.allowed_effects) : 'unrestricted'}</code></dd>
               ` : html`
                 <dt>token (sig)</dt><dd><code title=${created.bearer_token_hex}>${shortHex(created.bearer_token_hex, 20)}</code></dd>
@@ -192,4 +192,4 @@ class PyanaBearerCap extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-bearer-cap')) customElements.define('pyana-bearer-cap', PyanaBearerCap);
+if (!customElements.get('dregg-bearer-cap')) customElements.define('dregg-bearer-cap', DreggBearerCap);

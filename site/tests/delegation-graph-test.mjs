@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-delegation-graph> inspector.
+ * Playwright ad-hoc test for <dregg-delegation-graph> inspector.
  *
  * Run with:
  *   node tests/delegation-graph-test.mjs
@@ -13,7 +13,7 @@
  *     SVG element is present and contains expected node count.
  *  2. Edge arrows rendered: SVG contains .pdg-edge groups matching expected
  *     delegation count.
- *  3. Click a node → pyana:navigate CustomEvent fires with correct URI.
+ *  3. Click a node → dregg:navigate CustomEvent fires with correct URI.
  *  4. Compact mode renders text summary and thumbnail SVG.
  *  5. No JS errors throughout.
  */
@@ -32,11 +32,11 @@ async function run() {
   console.log('[test] Navigating to studio...');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyana:ready (wasm + Preact signals loaded)
-  await page.waitForFunction(() => !!window.pyana, { timeout: 15000 });
-  console.log('[test] pyana:ready fired.');
+  // Wait for dregg:ready (wasm + Preact signals loaded)
+  await page.waitForFunction(() => !!window.dregg, { timeout: 15000 });
+  console.log('[test] dregg:ready fired.');
 
-  // Wait for the runtime to be attached to <pyana-app id="app">
+  // Wait for the runtime to be attached to <dregg-app id="app">
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime;
@@ -103,9 +103,9 @@ async function run() {
 
   // ─── Test 1: Default mode — mount element, wait for SVG ───────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-delegation-graph');
+    const el = document.createElement('dregg-delegation-graph');
     el.setAttribute('id', 'test-pdg-default');
-    // Wrap in a pyana-app so InspectorBase#findRuntime works
+    // Wrap in a dregg-app so InspectorBase#findRuntime works
     const app = document.getElementById('app');
     app.appendChild(el);
   });
@@ -140,11 +140,11 @@ async function run() {
   }
   console.log('[test 2] PASS: SVG contains expected edge groups.');
 
-  // ─── Test 3: Click node → pyana:navigate event ────────────────────────────
+  // ─── Test 3: Click node → dregg:navigate event ────────────────────────────
   const navigateDetail = await page.evaluate(async () => {
     return new Promise((resolve) => {
       const el = document.getElementById('test-pdg-default');
-      el.addEventListener('pyana:navigate', (e) => resolve(e.detail), { once: true });
+      el.addEventListener('dregg:navigate', (e) => resolve(e.detail), { once: true });
       // Find first .pdg-node circle and dispatch a click on it
       const nodeGroup = el.querySelector('.pdg-node');
       if (nodeGroup) nodeGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -154,14 +154,14 @@ async function run() {
   });
 
   console.log('[test 3] navigate event detail:', navigateDetail);
-  if (!navigateDetail || !navigateDetail.uri || !navigateDetail.uri.startsWith('pyana://cell/')) {
-    throw new Error(`TEST FAILED: pyana:navigate did not fire with expected URI. Got: ${JSON.stringify(navigateDetail)}`);
+  if (!navigateDetail || !navigateDetail.uri || !navigateDetail.uri.startsWith('dregg://cell/')) {
+    throw new Error(`TEST FAILED: dregg:navigate did not fire with expected URI. Got: ${JSON.stringify(navigateDetail)}`);
   }
-  console.log('[test 3] PASS: click dispatches pyana:navigate with pyana://cell/... URI.');
+  console.log('[test 3] PASS: click dispatches dregg:navigate with dregg://cell/... URI.');
 
   // ─── Test 4: Compact mode ─────────────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-delegation-graph');
+    const el = document.createElement('dregg-delegation-graph');
     el.setAttribute('id', 'test-pdg-compact');
     el.setAttribute('mode', 'compact');
     document.getElementById('app').appendChild(el);

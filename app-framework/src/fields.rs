@@ -15,11 +15,11 @@
 //! | [`hex_encode_32`] | Lowercase hex of a 32-byte array (64 ASCII chars) |
 //!
 //! `field_from_u64`'s big-endian, right-aligned layout matches the
-//! `field_from_u64_be` convention used in `pyana_cell::program` so that
+//! `field_from_u64_be` convention used in `dregg_cell::program` so that
 //! integer-typed `StateConstraint` operands compare correctly against
 //! field values produced here.
 
-use pyana_cell::state::FieldElement;
+use dregg_cell::state::FieldElement;
 
 /// Hash arbitrary bytes into a 32-byte [`FieldElement`] suitable for
 /// `SetField` effect data.
@@ -36,7 +36,7 @@ pub fn field_from_bytes(bytes: &[u8]) -> FieldElement {
 ///
 /// The value is stored in the trailing 8 bytes with the leading 24 bytes
 /// set to zero.  This matches the `field_from_u64_be` convention used in
-/// `pyana_cell::program` so that integer-typed constraint operands are
+/// `dregg_cell::program` so that integer-typed constraint operands are
 /// comparable to field values produced here.
 #[must_use]
 pub fn field_from_u64(value: u64) -> FieldElement {

@@ -1,15 +1,15 @@
-# pyana-observability
+# dregg-observability
 
-Studio-shape trace event emitter for the pyana turn substrate.
+Studio-shape trace event emitter for the dregg turn substrate.
 
 ## What it does
 
-`pyana-observability` is **two things** in one crate:
+`dregg-observability` is **two things** in one crate:
 
-1. **A library** (`pyana_observability`) exposing typed trace event types and
+1. **A library** (`dregg_observability`) exposing typed trace event types and
    an in-process emitter. Other crates can construct `TraceEvent` values and
    push them onto an `EventLog` without taking on a tracing dependency.
-2. **A binary** (`pyana-observability`) that runs a **tour**: constructs a
+2. **A binary** (`dregg-observability`) that runs a **tour**: constructs a
    scenario exercising every event variant the Studio inspector cares
    about, executes a real `TurnExecutor` against an in-memory `Ledger`,
    and emits a single JSON document on stdout containing the full event
@@ -18,19 +18,19 @@ Studio-shape trace event emitter for the pyana turn substrate.
 ## Run
 
 ```
-cargo run -p pyana-observability > /tmp/trace.json
-cargo run -p pyana-observability | jq '.events | length'
-cargo run -p pyana-observability | jq '.events[].kind' | sort | uniq -c
+cargo run -p dregg-observability > /tmp/trace.json
+cargo run -p dregg-observability | jq '.events | length'
+cargo run -p dregg-observability | jq '.events[].kind' | sort | uniq -c
 ```
 
-## JSON schema (v1 — `pyana-observability-event-stream-v1`)
+## JSON schema (v1 — `dregg-observability-event-stream-v1`)
 
 ### Top level
 
 ```json
 {
   "schema_version": 1,
-  "schema_name":    "pyana-observability-event-stream-v1",
+  "schema_name":    "dregg-observability-event-stream-v1",
   "event_count":    <usize>,
   "events":         [ <TraceEvent>, ... ]
 }
@@ -211,8 +211,8 @@ root for its direction), without consulting any other state.
 ## Library API
 
 ```rust
-use pyana_observability::{Emitter, TraceEvent, EventEnvelope};
-use pyana_observability::events::{EventBody, AuthorizationPayload};
+use dregg_observability::{Emitter, TraceEvent, EventEnvelope};
+use dregg_observability::events::{EventBody, AuthorizationPayload};
 
 let em = Emitter::new();
 let (seq, ts) = em.next_envelope_seed();

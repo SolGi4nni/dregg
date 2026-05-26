@@ -1,4 +1,4 @@
-//! Pyana Macaroon Library
+//! Dregg Macaroon Library
 //!
 //! Macaroons are HMAC-authenticated bearer tokens with cryptographically
 //! enforced caveat attenuation. Inspired by [Google's macaroons paper][paper]

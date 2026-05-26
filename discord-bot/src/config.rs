@@ -54,7 +54,7 @@ impl Config {
             .map_err(|_| "BOT_SECRET must be exactly 32 bytes (64 hex chars)".to_string())?;
 
         let devnet_url = env::var("DEVNET_URL")
-            .unwrap_or_else(|_| "https://devnet.pyana.fg-goose.online".to_string());
+            .unwrap_or_else(|_| "https://devnet.dregg.fg-goose.online".to_string());
 
         let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string());
 

@@ -11,17 +11,17 @@ use std::time::Instant;
 
 use tokio::sync::{RwLock, broadcast};
 
-use pyana_cell::{CellId, Ledger};
-use pyana_circuit::field::BabyBear;
-use pyana_commit::accumulator::PolynomialAccumulator;
-use pyana_coord::Coordinator;
-use pyana_coord::budget::{
+use dregg_cell::{CellId, Ledger};
+use dregg_circuit::field::BabyBear;
+use dregg_commit::accumulator::PolynomialAccumulator;
+use dregg_coord::Coordinator;
+use dregg_coord::budget::{
     BudgetError, FastUnlockManager, SiloId, SpendingCertificate, StingrayCounter,
     UnlockCertificate, UnlockRequest, UnlockVote,
 };
-use pyana_dsl_runtime::ProgramRegistry;
-use pyana_persist::{PersistentStore, Poseidon2NoteTree};
-use pyana_sdk::AgentCipherclerk;
+use dregg_dsl_runtime::ProgramRegistry;
+use dregg_persist::{PersistentStore, Poseidon2NoteTree};
+use dregg_sdk::AgentCipherclerk;
 
 use crate::gossip::GossipHandle;
 use crate::routing_table::RoutingTable;
@@ -78,19 +78,19 @@ pub struct NodeStateInner {
     /// Stored separately so the bearer token can be computed without re-hashing.
     pub bearer_seed: Option<[u8; 32]>,
     /// Local intent pool: content-addressed ID -> validated Intent.
-    pub intent_pool: HashMap<[u8; 32], pyana_intent::Intent>,
+    pub intent_pool: HashMap<[u8; 32], dregg_intent::Intent>,
     /// Queue of signed turns ready for consensus ordering.
     /// Turns are added here when they require multi-party agreement (e.g.,
     /// fulfillment turns, cross-cell operations). The blocklace sync driver
     /// drains this queue when assembling new blocks.
-    pub consensus_queue: Vec<pyana_sdk::SignedTurn>,
+    pub consensus_queue: Vec<dregg_sdk::SignedTurn>,
     /// Pending conditional turns awaiting proof resolution.
     /// Garbage-collected on access when timeout_height is exceeded.
-    pub pending_conditionals: Vec<pyana_turn::ConditionalTurn>,
+    pub pending_conditionals: Vec<dregg_turn::ConditionalTurn>,
     /// Registry of pending turns with distributed promise semantics.
     /// Tracks turns awaiting async resolution (cross-federation receipts, height
     /// conditions, etc.) and propagates broken promises to dependents.
-    pub pending_turns: pyana_turn::PendingTurnRegistry,
+    pub pending_turns: dregg_turn::PendingTurnRegistry,
     /// Set of proof hashes that have already been used (nullifiers).
     /// Prevents the same proof from satisfying multiple conditional turns.
     pub used_proof_hashes: HashSet<[u8; 32]>,
@@ -100,17 +100,17 @@ pub struct NodeStateInner {
     /// view over [`Self::known_federations`]; for backward compat with the
     /// ~30 call sites that read this Vec it stays as a real field, kept in
     /// sync by [`Self::set_federation_keys`] / [`Self::register_federation`].
-    pub known_federation_keys: Vec<pyana_types::PublicKey>,
+    pub known_federation_keys: Vec<dregg_types::PublicKey>,
     /// Registry of federations the local node knows about (both the local
     /// federation and any peer federations registered out-of-band).
     /// Replaces the disjoint pair of (known_federation_keys, federation_id)
     /// per the unification design §3.
-    pub known_federations: pyana_federation::KnownFederations,
+    pub known_federations: dregg_federation::KnownFederations,
     /// Whether federation keys have been configured. When `false`, the node operates
     /// in "discovery mode" and will not finalize attested roots (Issue 10).
     pub federation_configured: bool,
     /// Canonical federation_id — derived from `known_federation_keys` +
-    /// `committee_epoch` via [`pyana_federation::derive_federation_id_with_epoch`].
+    /// `committee_epoch` via [`dregg_federation::derive_federation_id_with_epoch`].
     /// Recomputed whenever the committee changes via [`Self::set_federation_keys`].
     /// Closes audit F1: this id is bound to the committee, not a random tag.
     pub federation_id: [u8; 32],
@@ -121,12 +121,12 @@ pub struct NodeStateInner {
     /// This validator's threshold decryption key share (Phase 2 turn privacy).
     /// Set during epoch initialization when the validator receives their share
     /// from the key generation ceremony.
-    pub threshold_key_share: Option<pyana_federation::KeyShare>,
+    pub threshold_key_share: Option<dregg_federation::KeyShare>,
     /// Threshold required for decryption (t in t-of-n).
     pub decryption_threshold: usize,
     /// Pending decryption shares for encrypted turns awaiting collaborative decryption.
     /// Key: ciphertext_id, Value: collected shares so far.
-    pub pending_decryption_shares: HashMap<[u8; 32], Vec<pyana_federation::DecryptionShare>>,
+    pub pending_decryption_shares: HashMap<[u8; 32], Vec<dregg_federation::DecryptionShare>>,
     /// Local routing table populated from RoutingDirectives in turn receipts.
     /// Maps CellId -> reachable peers, enabling three-party introductions to
     /// produce actual network-level connectivity.
@@ -143,13 +143,13 @@ pub struct NodeStateInner {
     pub prove_transitions: bool,
     /// Cached PIR intent index. Invalidated on intent pool mutations.
     /// Avoids O(n) rebuild on every PIR request (prevents CPU DoS).
-    pub pir_index_cache: Option<pyana_intent::pir::IntentIndex>,
+    pub pir_index_cache: Option<dregg_intent::pir::IntentIndex>,
 
     /// Persistent discharge gateway instance for replay prevention.
     /// SECURITY: This MUST persist across requests so the `issued` set actually
     /// tracks previously-discharged tickets. Creating a fresh gateway per request
     /// (the old behavior) made the replay set useless since it was dropped immediately.
-    pub discharge_gateway: Option<pyana_macaroon::DischargeGateway>,
+    pub discharge_gateway: Option<dregg_macaroon::DischargeGateway>,
 
     /// Program registry for the smart contract runtime (DSL circuit programs).
     /// Maps verification key hashes to deployed CellPrograms. Used by the executor
@@ -177,7 +177,7 @@ pub struct NodeStateInner {
     /// Cell lock table for the owned-cell fast path (LUTRIS-style).
     /// Maps (CellId, nonce) -> CellLockEntry. Used by the fast-path API endpoints
     /// and periodically expired by the federation sync background task.
-    pub cell_lock_table: pyana_turn::CellLockTable,
+    pub cell_lock_table: dregg_turn::CellLockTable,
 
     // ─── Atomic Multi-Party Turn Coordination ─────────────────────────────────
     /// Active 2PC coordinators keyed by proposal_id (hex string).
@@ -215,7 +215,7 @@ pub struct NodeStateInner {
     /// Encrypted intent pool: content-addressed ID -> EncryptedIntent.
     /// These are intents propagated via gossip with SSE search tokens for
     /// privacy-preserving matching (body hidden until a fulfiller matches tokens).
-    pub encrypted_intent_pool: HashMap<[u8; 32], pyana_intent::sse::EncryptedIntent>,
+    pub encrypted_intent_pool: HashMap<[u8; 32], dregg_intent::sse::EncryptedIntent>,
 
     /// Trustless intent engine: the production-wired path for
     /// threshold-encrypted intent submission, t-of-n decryption,
@@ -225,12 +225,12 @@ pub struct NodeStateInner {
     /// keyed trustless flow. The SSE pool above remains the
     /// single-recipient sealed-box pool (used by direct fulfiller match,
     /// not the batched auction).
-    pub trustless_intent_engine: pyana_intent::trustless::TrustlessIntentEngine,
+    pub trustless_intent_engine: dregg_intent::trustless::TrustlessIntentEngine,
 
     /// Delay pool for timing decorrelation of fulfillment reveals.
     /// Items are accumulated and released in batches at fixed intervals to prevent
     /// timing correlation between intent matching and fulfillment publication.
-    pub delay_pool: pyana_intent::delay_pool::DelayPool,
+    pub delay_pool: dregg_intent::delay_pool::DelayPool,
 
     // ─── Event Log (REST polling endpoint) ────────────────────────────────────
     /// Bounded ring buffer of recent committed events for the REST event stream
@@ -242,7 +242,7 @@ pub struct NodeStateInner {
     /// at startup. Per FEDERATION-UNIFICATION-DESIGN.md §5, "solo" is no
     /// longer a separate runtime mode enum — the presence of this state
     /// (and the inner `is_solo` flag) is the operational signal.
-    pub solo_consensus: Option<pyana_federation::solo::SoloConsensusState>,
+    pub solo_consensus: Option<dregg_federation::solo::SoloConsensusState>,
 }
 
 /// Maximum number of events retained in the ring buffer for REST polling.
@@ -273,7 +273,7 @@ pub struct ActiveProposal {
     /// When this proposal was created (wall-clock, for expiry).
     pub created_at: Instant,
     /// The atomic forest associated with this proposal (kept for status/commit).
-    pub forest: pyana_coord::AtomicForest,
+    pub forest: dregg_coord::AtomicForest,
 }
 
 /// Default proposal expiry: coordinators older than this are garbage-collected.
@@ -320,7 +320,7 @@ impl NodeState {
         peers: Vec<String>,
         key_file: &str,
     ) -> Result<Self, String> {
-        let db_path = data_dir.join("pyana.redb");
+        let db_path = data_dir.join("dregg.redb");
         let store =
             PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
 
@@ -441,10 +441,10 @@ impl NodeState {
                 intent_pool: HashMap::new(),
                 consensus_queue: Vec::new(),
                 pending_conditionals: Vec::new(),
-                pending_turns: pyana_turn::PendingTurnRegistry::new(),
+                pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
-                known_federations: pyana_federation::KnownFederations::new(),
+                known_federations: dregg_federation::KnownFederations::new(),
                 federation_configured: false,
                 federation_id: [0u8; 32],
                 committee_epoch: 0,
@@ -454,7 +454,7 @@ impl NodeState {
                 pending_decryption_shares: HashMap::new(),
                 routing_table: RoutingTable::new(),
                 pruning_enabled: false,
-                checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
+                checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 pir_index_cache: None,
                 discharge_gateway: None,
@@ -465,19 +465,19 @@ impl NodeState {
                 pending_spending_certificates: Vec::new(),
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
-                cell_lock_table: pyana_turn::CellLockTable::with_defaults(),
+                cell_lock_table: dregg_turn::CellLockTable::with_defaults(),
                 atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
                 note_tree: Poseidon2NoteTree::with_depth(16),
                 encrypted_intent_pool: HashMap::new(),
-                trustless_intent_engine: pyana_intent::trustless::TrustlessIntentEngine::new(
+                trustless_intent_engine: dregg_intent::trustless::TrustlessIntentEngine::new(
                     // Defaults: 1-of-1 (solo); upgraded when threshold_key_share
                     // is configured via the federation epoch ceremony.
                     1, 1,
                 ),
-                delay_pool: pyana_intent::delay_pool::DelayPool::new(
-                    pyana_intent::delay_pool::DelayPoolConfig::default(),
+                delay_pool: dregg_intent::delay_pool::DelayPool::new(
+                    dregg_intent::delay_pool::DelayPoolConfig::default(),
                 ),
                 event_log: VecDeque::new(),
                 solo_consensus: None,
@@ -494,7 +494,7 @@ impl NodeState {
         peers: Vec<String>,
         key_bytes: [u8; 32],
     ) -> Result<Self, String> {
-        let db_path = data_dir.join("pyana.redb");
+        let db_path = data_dir.join("dregg.redb");
         let store =
             PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
 
@@ -523,10 +523,10 @@ impl NodeState {
                 intent_pool: HashMap::new(),
                 consensus_queue: Vec::new(),
                 pending_conditionals: Vec::new(),
-                pending_turns: pyana_turn::PendingTurnRegistry::new(),
+                pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
-                known_federations: pyana_federation::KnownFederations::new(),
+                known_federations: dregg_federation::KnownFederations::new(),
                 federation_configured: false,
                 federation_id: [0u8; 32],
                 committee_epoch: 0,
@@ -536,7 +536,7 @@ impl NodeState {
                 pending_decryption_shares: HashMap::new(),
                 routing_table: RoutingTable::new(),
                 pruning_enabled: false,
-                checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
+                checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 pir_index_cache: None,
                 discharge_gateway: None,
@@ -547,19 +547,19 @@ impl NodeState {
                 pending_spending_certificates: Vec::new(),
                 pending_unlock_requests: Vec::new(),
                 budget_epoch: 0,
-                cell_lock_table: pyana_turn::CellLockTable::with_defaults(),
+                cell_lock_table: dregg_turn::CellLockTable::with_defaults(),
                 atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
                 note_tree: Poseidon2NoteTree::with_depth(16),
                 encrypted_intent_pool: HashMap::new(),
-                trustless_intent_engine: pyana_intent::trustless::TrustlessIntentEngine::new(
+                trustless_intent_engine: dregg_intent::trustless::TrustlessIntentEngine::new(
                     // Defaults: 1-of-1 (solo); upgraded when threshold_key_share
                     // is configured via the federation epoch ceremony.
                     1, 1,
                 ),
-                delay_pool: pyana_intent::delay_pool::DelayPool::new(
-                    pyana_intent::delay_pool::DelayPoolConfig::default(),
+                delay_pool: dregg_intent::delay_pool::DelayPool::new(
+                    dregg_intent::delay_pool::DelayPoolConfig::default(),
                 ),
                 event_log: VecDeque::new(),
                 solo_consensus: None,
@@ -914,29 +914,29 @@ impl NodeStateInner {
     ///
     /// Also recomputes [`Self::federation_id`] as
     /// `derive_federation_id(keys, committee_epoch)` — closes audit F1.
-    pub fn set_federation_keys(&mut self, keys: Vec<pyana_types::PublicKey>) {
+    pub fn set_federation_keys(&mut self, keys: Vec<dregg_types::PublicKey>) {
         if keys.is_empty() {
             tracing::warn!(
                 "set_federation_keys called with empty key set — remaining in discovery mode"
             );
             return;
         }
-        let id = pyana_federation::derive_federation_id_with_epoch(&keys, self.committee_epoch);
+        let id = dregg_federation::derive_federation_id_with_epoch(&keys, self.committee_epoch);
         tracing::info!(
             key_count = keys.len(),
             committee_epoch = self.committee_epoch,
-            federation_id = %pyana_types::hex_encode(&id),
+            federation_id = %dregg_types::hex_encode(&id),
             "federation keys loaded — exiting discovery mode; federation_id derived",
         );
         // Self-register the local federation in KnownFederations so receipt
         // verification can route through one lookup path for both own and
         // remote federations.
         let local_pk = self.cclerk.public_key();
-        let threshold = pyana_federation::quorum_threshold(keys.len()) as u32;
+        let threshold = dregg_federation::quorum_threshold(keys.len()) as u32;
         let local_seat = if keys.iter().any(|pk| pk.0 == local_pk.0) {
             let signing_key_bytes = self.cclerk.gossip_signing_key().to_bytes();
-            let signing_key = pyana_types::SigningKey::from_bytes(&signing_key_bytes);
-            Some(pyana_federation::LocalSeat {
+            let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
+            Some(dregg_federation::LocalSeat {
                 index: 0, // re-indexed by Federation::from_committee
                 signing_key,
                 bls_secret: None,
@@ -944,7 +944,7 @@ impl NodeStateInner {
         } else {
             None
         };
-        let fed = pyana_federation::Federation::from_committee(
+        let fed = dregg_federation::Federation::from_committee(
             keys.clone(),
             self.committee_epoch,
             threshold,
@@ -962,7 +962,7 @@ impl NodeStateInner {
     /// This is the canonical entry point for cross-federation receipt
     /// verification: once registered, `known_federations.verify_receipt(&r)`
     /// will succeed for any receipt carrying this federation's id.
-    pub fn register_federation(&mut self, fed: std::sync::Arc<pyana_federation::Federation>) {
+    pub fn register_federation(&mut self, fed: std::sync::Arc<dregg_federation::Federation>) {
         let id = fed.id();
         tracing::info!(
             federation_id = %id.hex(),
@@ -982,7 +982,7 @@ impl NodeStateInner {
     /// Schema-reconciliation note (P0 #87): writes the **canonical genesis
     /// descriptor schema** —
     /// `{federation_id, committee_epoch, threshold, validators: [{public_key}]}`
-    /// — matching what `pyana-node register-federation` and `genesis.json`
+    /// — matching what `dregg-node register-federation` and `genesis.json`
     /// produce. Prior to this fix, this writer emitted `{epoch, members}`
     /// while the loader expected `{committee_epoch, validators[].public_key}`,
     /// causing every cross-federation descriptor to be silently dropped
@@ -1039,7 +1039,7 @@ impl NodeStateInner {
             match parse_federation_descriptor(&v) {
                 Some((members, epoch, threshold)) => {
                     let fed =
-                        pyana_federation::Federation::verifier_only(members, epoch, threshold);
+                        dregg_federation::Federation::verifier_only(members, epoch, threshold);
                     self.known_federations.register(std::sync::Arc::new(fed));
                     loaded += 1;
                 }
@@ -1061,13 +1061,13 @@ impl NodeStateInner {
     pub fn set_committee_epoch(&mut self, epoch: u64) {
         self.committee_epoch = epoch;
         if !self.known_federation_keys.is_empty() {
-            self.federation_id = pyana_federation::derive_federation_id_with_epoch(
+            self.federation_id = dregg_federation::derive_federation_id_with_epoch(
                 &self.known_federation_keys,
                 epoch,
             );
             tracing::info!(
                 committee_epoch = epoch,
-                federation_id = %pyana_types::hex_encode(&self.federation_id),
+                federation_id = %dregg_types::hex_encode(&self.federation_id),
                 "committee epoch rotated — federation_id recomputed",
             );
         }
@@ -1087,7 +1087,7 @@ impl NodeStateInner {
     pub fn init_revocation_accumulator(&mut self, revocation_hashes: &[BabyBear]) {
         // Compute a set commitment from the revocation hashes (deterministic).
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-revocation-accumulator-set-commitment");
+        hasher.update(b"dregg-revocation-accumulator-set-commitment");
         for h in revocation_hashes {
             hasher.update(&h.as_u32().to_le_bytes());
         }
@@ -1144,7 +1144,7 @@ impl NodeStateInner {
     pub fn note_tree_prove_membership(
         &self,
         position: usize,
-    ) -> Option<pyana_commit::poseidon2_tree::Poseidon2MerkleProof> {
+    ) -> Option<dregg_commit::poseidon2_tree::Poseidon2MerkleProof> {
         self.note_tree.prove_membership(position)
     }
 }
@@ -1171,7 +1171,7 @@ mod hex {
 /// only caller.
 pub(crate) fn parse_federation_descriptor(
     v: &serde_json::Value,
-) -> Option<(Vec<pyana_types::PublicKey>, u64, u32)> {
+) -> Option<(Vec<dregg_types::PublicKey>, u64, u32)> {
     let epoch = v["committee_epoch"]
         .as_u64()
         .or_else(|| v["epoch"].as_u64())
@@ -1188,7 +1188,7 @@ pub(crate) fn parse_federation_descriptor(
     } else {
         Vec::new()
     };
-    let members: Vec<pyana_types::PublicKey> = members_hex
+    let members: Vec<dregg_types::PublicKey> = members_hex
         .iter()
         .filter_map(|h| {
             if h.len() != 64 {
@@ -1212,7 +1212,7 @@ pub(crate) fn parse_federation_descriptor(
                 }
             }
             if ok {
-                Some(pyana_types::PublicKey(out))
+                Some(dregg_types::PublicKey(out))
             } else {
                 None
             }
@@ -1304,7 +1304,7 @@ mod federation_descriptor_tests {
         // "loaded known_federations from disk count=0" warning from
         // MULTI-NODE-DEVNET-RUN.md becoming "count=2".
         let tmp =
-            std::env::temp_dir().join(format!("pyana-fed-descriptor-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dregg-fed-descriptor-test-{}", std::process::id()));
         let dir = tmp.join("known_federations");
         std::fs::create_dir_all(&dir).unwrap();
 

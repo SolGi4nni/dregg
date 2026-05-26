@@ -1,9 +1,9 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use pyana_bridge::present::{bytes_to_babybear, hash_index};
-use pyana_bridge::{BridgePresentationBuilder, authorize_with_trace, macaroon_to_factset};
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_bridge::present::{bytes_to_babybear, hash_index};
+use dregg_bridge::{BridgePresentationBuilder, authorize_with_trace, macaroon_to_factset};
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2;
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 // =============================================================================
 // Helpers
@@ -54,7 +54,7 @@ fn make_builder_and_request() -> (BridgePresentationBuilder, AuthRequest) {
     let (fed_root_bb, fed_root_bytes) = compute_matching_federation_root(&key);
 
     let mut builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
-    let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
     builder.set_root_token(token);
 
     let att = Attenuation {
@@ -105,7 +105,7 @@ fn bench_prove_ivc(c: &mut Criterion) {
 
 fn bench_macaroon_to_factset_bench(c: &mut Criterion) {
     let key = test_key();
-    let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
     c.bench_function("bridge_macaroon_to_factset", |b| {
         b.iter(|| {
@@ -118,7 +118,7 @@ fn bench_authorize_with_trace_bench(c: &mut Criterion) {
     let key = test_key();
     let (fed_root_bb, fed_root_bytes) = compute_matching_federation_root(&key);
     let mut builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
-    let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+    let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
     builder.set_root_token(token);
 
     let att = Attenuation {
@@ -149,7 +149,7 @@ fn bench_end_to_end_cycle(c: &mut Criterion) {
     c.bench_function("bridge_end_to_end_mint_attenuate_prove_verify", |b| {
         b.iter(|| {
             // Mint
-            let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+            let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
             // Attenuate
             let att = Attenuation {

@@ -1,10 +1,10 @@
 # rbg/ — Robigalia Design Heritage
 
-Exploring how Robigalia's capability-secure OS designs map to pyana's distributed runtime.
+Exploring how Robigalia's capability-secure OS designs map to dregg's distributed runtime.
 
 ## Key Mappings
 
-| Robigalia Concept | Pyana Equivalent | Gap/Opportunity |
+| Robigalia Concept | `dregg` Equivalent | Gap/Opportunity |
 |-------------------|-----------------|-----------------|
 | Transaction Protocol (Submit/Execute/Retrieve/Reap) | Turn (submit/execute/receipt/advance) | Our turns ARE this protocol. The generation counter fix maps to our nonce. |
 | Promise Pipelining (dependency bitmask, Consuming state) | CapTP pipeline.rs (just built) | We now have this! Cross-federation too. |
@@ -12,7 +12,7 @@ Exploring how Robigalia's capability-secure OS designs map to pyana's distribute
 | Nameless Writes (content-addressed storage) | Note commitments (hash = address) | Notes ARE nameless writes. Extend to general blob storage? |
 | Capability-Secure VFS (Volume/Blob/Directory) | Cell model (cells as objects, c-list as directory) | Missing: explicit Volume (resource accounting), blob abstraction |
 | DFA Message Routing | Gossip topic matching / intent MatchSpec | MatchSpec is already pattern matching. DFA formalization would make it faster + provable |
-| SturdyRefs (from VFS notes) | pyana:// URIs (just built in captp/) | Direct lineage. Swiss numbers = same concept. |
+| SturdyRefs (from VFS notes) | dregg:// URIs (just built in captp/) | Direct lineage. Swiss numbers = same concept. |
 | Automata-based packet classification | Could enhance wire protocol routing | Constant-space, linear-time filtering of blocklace messages |
 
 ## Papers to Read
@@ -43,7 +43,7 @@ maps to our cell nonce (monotonically incrementing on mutation).
 ## From DFA Message Routing
 
 The idea: use DFA-based pattern matching to route messages to handlers in constant space
-and linear time. Applied to pyana:
+and linear time. Applied to dregg:
 
 - Intent matching (MatchSpec) could compile to DFA for O(n) matching of intents against capabilities
 - Gossip topic filtering could use DFA for efficient multi-topic routing

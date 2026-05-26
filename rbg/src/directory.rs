@@ -1,4 +1,4 @@
-//! Scoped Intent Directories: capability-secure discovery zones for pyana.
+//! Scoped Intent Directories: capability-secure discovery zones for dregg.
 //!
 //! # Problem
 //!
@@ -26,35 +26,35 @@
 //! - Every mutation increments version (maps to: cell nonce)
 //! - Directories contain directories (recursive scoping)
 //!
-//! # Composition with Existing Pyana Pieces
+//! # Composition with Existing Dregg Pieces
 //!
 //! - **Constitution membership** -> directory ACL (who can list/get/post)
-//! - **SturdyRefs** (`pyana://` URIs) -> directory entries point to capabilities
+//! - **SturdyRefs** (`dregg://` URIs) -> directory entries point to capabilities
 //! - **Gossip topics** -> each directory has its own topic (scoped propagation)
 //! - **CapTP GC** -> when all refs to a directory are dropped, the scope is dead
 //! - **Factories** -> create directory cells with constrained properties
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use pyana_types::{CellId, FederationId};
+use dregg_types::{CellId, FederationId};
 
 // ---------------------------------------------------------------------------
 // Local types
 //
 // `CellId` and `FederationId` are the real workspace identifiers (from
-// `pyana-types`). `MemberId`, `GossipTopic`, `SturdyRef` and `CommitmentId`
+// `dregg-types`). `MemberId`, `GossipTopic`, `SturdyRef` and `CommitmentId`
 // are introduced here because no canonical home exists yet — see
 // `STORAGE-REFLECTIVITY-RBG-DFA-AUDIT.md` for the long-term plan to put
-// `SturdyRef` next to the captp `pyana://` URI machinery and `MemberId`
-// next to constitution membership in `pyana-federation`. They are kept
+// `SturdyRef` next to the captp `dregg://` URI machinery and `MemberId`
+// next to constitution membership in `dregg-federation`. They are kept
 // local rather than placeholder-stubbed so the `directory` module is
 // self-consistent and immediately usable.
 // ---------------------------------------------------------------------------
 
-/// A pyana:// URI (federation + cell + swiss number), the directory-entry
+/// A dregg:// URI (federation + cell + swiss number), the directory-entry
 /// payload that points at a remote capability.
 ///
-/// Mirrors the `pyana://` URI / SturdyRef pattern carried by `captp` for
+/// Mirrors the `dregg://` URI / SturdyRef pattern carried by `captp` for
 /// cross-federation enlivening. Stored explicitly here so directory
 /// listings carry both the location (federation + cell) and the bearer
 /// secret (swiss number) needed to enliven the capability.
@@ -73,8 +73,8 @@ pub struct SturdyRef {
 pub struct GossipTopic(pub [u8; 32]);
 
 /// Anonymous commitment ID for intent creators (matches
-/// `pyana_intent::CommitmentId`'s shape; kept local because adding a
-/// `pyana-intent` dependency here would create a layering cycle).
+/// `dregg_intent::CommitmentId`'s shape; kept local because adding a
+/// `dregg-intent` dependency here would create a layering cycle).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CommitmentId(pub [u8; 32]);
 
@@ -237,7 +237,7 @@ impl DirectoryCell {
         created_at: u64,
     ) -> Self {
         // Derive gossip topic from cell ID (deterministic: same directory = same topic)
-        let topic_bytes = blake3::derive_key("pyana-directory-gossip-topic-v1", &cell_id.0);
+        let topic_bytes = blake3::derive_key("dregg-directory-gossip-topic-v1", &cell_id.0);
         Self {
             cell_id,
             federation_id,
@@ -895,7 +895,7 @@ impl MetaDirectory {
 
 /// A factory that creates new directory cells with constrained properties.
 ///
-/// In pyana, factories create cells with guaranteed invariants. A DirectoryFactory
+/// In dregg, factories create cells with guaranteed invariants. A DirectoryFactory
 /// ensures that created directories:
 /// - Have a bounded membership set
 /// - Have a gossip topic derived from their cell ID (deterministic)
@@ -969,7 +969,7 @@ impl DirectoryFactory {
     /// Derive a cell ID for the next directory to be created.
     fn derive_cell_id(&self) -> CellId {
         let hash = blake3::derive_key(
-            "pyana-directory-factory-cell-id-v1",
+            "dregg-directory-factory-cell-id-v1",
             &[
                 &self.meta_directory_cell_id.0[..],
                 &self.federation_id.0[..],

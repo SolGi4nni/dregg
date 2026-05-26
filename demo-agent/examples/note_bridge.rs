@@ -13,24 +13,24 @@
 //! The key insight: notes are self-proving. The STARK proof carries all verification
 //! needed. No light client, no relay chain, no committee — just math.
 
-use pyana_cell::note::Note;
-use pyana_cell::note_bridge::{
+use dregg_cell::note::Note;
+use dregg_cell::note_bridge::{
     BridgedNullifierSet, PortableNoteProof, create_portable_note, verify_portable_note,
 };
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_types::AttestedRoot;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_types::AttestedRoot;
 
 /// Asset type constant for GOLD.
 const ASSET_GOLD: u64 = 0xABCD_0000_0000_0001;
 
 /// Helper: derive a spending key from a name (deterministic for demo).
 fn spending_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-note-bridge-demo-spending-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-note-bridge-demo-spending-key-v1", name.as_bytes())
 }
 
 /// Helper: derive an owner public key from a name (deterministic for demo).
 fn owner_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-note-bridge-demo-owner-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-note-bridge-demo-owner-key-v1", name.as_bytes())
 }
 
 /// Create a mock attested root for a federation.
@@ -56,7 +56,7 @@ fn mock_attested_root(fed_name: &str, height: u64) -> AttestedRoot {
         quorum_signatures: vec![],
         threshold_qc: None,
         threshold: 0,
-        federation_id: pyana_types::FederationId::PLACEHOLDER,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
     }
 }
@@ -70,7 +70,7 @@ fn mock_stark_verify(
     _asset_type: u64,
     proof_bytes: &[u8],
 ) -> Result<(), String> {
-    // In a real system, this would call verify_note_spend from pyana-circuit.
+    // In a real system, this would call verify_note_spend from dregg-circuit.
     // For the demo, we check if the proof starts with "valid-stark-proof".
     if proof_bytes.starts_with(b"valid-stark-proof") {
         Ok(())
@@ -80,7 +80,7 @@ fn mock_stark_verify(
 }
 
 fn main() {
-    println!("=== Pyana Note Bridge Demo (Cross-Federation Value Transfer) ===\n");
+    println!("=== Dregg Note Bridge Demo (Cross-Federation Value Transfer) ===\n");
     println!("The proof IS the bridge. No light client needed.\n");
 
     // =========================================================================

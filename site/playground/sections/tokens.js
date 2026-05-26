@@ -8,9 +8,9 @@ export function initTokens(wasm) {
     <div class="section-header">
       <h2>Tokens</h2>
       <!-- Tier 1 playground migration (§4.9 COMPLETE FOLLOWUP-05): deep-link to Starbridge (coexist during transition) -->
-      <a href="/starbridge.html?at=pyana://token/demo" target="_blank" style="font-size:0.8em;float:right;">Inspect tokens in Starbridge (pyana://token/... deep) →</a>
+      <a href="/starbridge.html?at=dregg://token/demo" target="_blank" style="font-size:0.8em;float:right;">Inspect tokens in Starbridge (dregg://token/... deep) →</a>
       <p>
-        Pyana tokens are macaroon-style bearer credentials. A root token is minted from a secret key,
+        Dregg tokens are macaroon-style bearer credentials. A root token is minted from a secret key,
         then attenuated by appending caveats that cryptographically restrict scope. Attenuation is
         one-way — you can narrow permissions but never widen them.
       </p>
@@ -28,7 +28,7 @@ export function initTokens(wasm) {
     <div class="controls-row">
       <div class="control-group">
         <label>Location</label>
-        <input type="text" id="tk-location" value="pyana.dev" spellcheck="false" style="width: 160px;">
+        <input type="text" id="tk-location" value="dregg.dev" spellcheck="false" style="width: 160px;">
       </div>
       <button class="btn btn-primary" id="tk-mint" disabled>Mint Token</button>
     </div>
@@ -135,7 +135,7 @@ export function initTokens(wasm) {
       return;
     }
     const keyBytes = hexToBytes(keyHex);
-    const location = container.querySelector('#tk-location').value.trim() || 'pyana.dev';
+    const location = container.querySelector('#tk-location').value.trim() || 'dregg.dev';
 
     const t0 = performance.now();
     try {

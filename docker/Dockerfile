@@ -1,11 +1,11 @@
 # =============================================================================
-# Multi-stage Dockerfile for all pyana service binaries.
+# Multi-stage Dockerfile for all dregg service binaries.
 #
-# Build:  docker build --target <stage> -t pyana-<service> ..
+# Build:  docker build --target <stage> -t dregg-<service> ..
 # Stages: node, gallery, discharge-gateway
 #
 # Multi-arch:
-#   docker buildx build --platform linux/amd64,linux/arm64 --target node -t pyana-node .
+#   docker buildx build --platform linux/amd64,linux/arm64 --target node -t dregg-node .
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -26,12 +26,12 @@ COPY . .
 
 # Build all deployable service binaries.
 RUN cargo build --release \
-    -p pyana-node \
-    -p pyana-gallery \
+    -p dregg-node \
+    -p dregg-gallery \
     -p discharge-gateway
 
 # ---------------------------------------------------------------------------
-# Stage 1: node — pyana federation node
+# Stage 1: node — dregg federation node
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS node
 
@@ -39,10 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/pyana-node /usr/local/bin/
+COPY --from=builder /build/target/release/dregg-node /usr/local/bin/
 
 EXPOSE 8420 9420
-ENTRYPOINT ["pyana-node"]
+ENTRYPOINT ["dregg-node"]
 
 # ---------------------------------------------------------------------------
 # Stage 2: gallery — federated art gallery backend
@@ -53,11 +53,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/pyana-gallery /usr/local/bin/
+COPY --from=builder /build/target/release/dregg-gallery /usr/local/bin/
 COPY apps/gallery/frontend /srv/gallery/frontend
 
 EXPOSE 3040
-ENTRYPOINT ["pyana-gallery"]
+ENTRYPOINT ["dregg-gallery"]
 
 # ---------------------------------------------------------------------------
 # Stage 3: discharge-gateway — third-party macaroon caveat discharge service

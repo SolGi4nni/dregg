@@ -1,9 +1,9 @@
-//! Error types for the pyana SDK.
+//! Error types for the dregg SDK.
 
-use pyana_bridge::AuthError;
-use pyana_dsl_runtime::ProgramError;
-use pyana_token::TokenError;
-use pyana_turn::TurnError;
+use dregg_bridge::AuthError;
+use dregg_dsl_runtime::ProgramError;
+use dregg_token::TokenError;
+use dregg_turn::TurnError;
 
 /// Unified error type for SDK operations.
 #[derive(Debug, thiserror::Error)]

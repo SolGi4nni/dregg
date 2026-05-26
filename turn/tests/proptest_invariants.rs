@@ -14,10 +14,10 @@
 
 use proptest::prelude::*;
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, Ledger, Permissions, capability::is_attenuation,
 };
-use pyana_turn::{
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     TurnReceipt, TurnResult, turn::Turn, verify::verify_receipt_chain,
 };

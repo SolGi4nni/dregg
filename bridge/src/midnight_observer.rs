@@ -11,13 +11,13 @@
 //! - Watch Midnight's Substrate chain via WebSocket RPC.
 //! - Subscribe to finalized block headers (GRANDPA finality).
 //! - For each finalized block, query events for the bridge contract.
-//! - Parse `BridgeLock` events into `MidnightToPyanaMessage`.
-//! - Submit to pyana federation consensus.
+//! - Parse `BridgeLock` events into `MidnightToDreggMessage`.
+//! - Submit to dregg federation consensus.
 //!
 //! # Integration
 //!
 //! This module defines the observer as a standalone async task (`run_observer`).
-//! It can be spawned from the pyana node binary or run as a sidecar process.
+//! It can be spawned from the dregg node binary or run as a sidecar process.
 //! The submission callback is generic to allow both direct integration and
 //! message-passing architectures.
 //!
@@ -29,8 +29,8 @@
 //! idempotent deduplication on the federation side.
 
 use crate::midnight::{
-    MidnightBridgeConfig, MidnightBridgeError, MidnightBridgeEvent, MidnightToPyanaMessage,
-    ObserverState, validate_midnight_to_pyana,
+    MidnightBridgeConfig, MidnightBridgeError, MidnightBridgeEvent, MidnightToDreggMessage,
+    ObserverState, validate_midnight_to_dregg,
 };
 
 use std::future::Future;
@@ -39,18 +39,18 @@ use std::future::Future;
 // Observer trait (submission callback)
 // ============================================================================
 
-/// Trait for submitting observed bridge events to the pyana federation.
+/// Trait for submitting observed bridge events to the dregg federation.
 ///
 /// Implementors handle the actual submission (e.g., direct consensus proposal,
 /// RPC to the local node, message queue).
 pub trait BridgeEventSubmitter: Send + Sync + 'static {
-    /// Submit a validated bridge message for minting on pyana.
+    /// Submit a validated bridge message for minting on dregg.
     ///
     /// Returns Ok(()) if the message was accepted for processing.
     /// The actual minting happens asynchronously through federation consensus.
     fn submit(
         &self,
-        message: MidnightToPyanaMessage,
+        message: MidnightToDreggMessage,
     ) -> impl Future<Output = Result<(), MidnightBridgeError>> + Send;
 }
 
@@ -111,7 +111,7 @@ pub trait SubstrateRpcClient: Send + Sync + 'static {
 
     /// Get the extrinsic hash for a given block and extrinsic index.
     ///
-    /// Used to compute the tx_hash for the `MidnightToPyanaMessage`.
+    /// Used to compute the tx_hash for the `MidnightToDreggMessage`.
     fn get_extrinsic_hash(
         &self,
         block_hash: [u8; 32],
@@ -169,7 +169,7 @@ pub fn parse_bridge_event(event: &SubstrateEvent) -> Option<MidnightBridgeEvent>
 ///
 /// Expected layout (packed, little-endian):
 /// - amount: u64 (8 bytes)
-/// - pyana_recipient: [u8; 32] (32 bytes)
+/// - dregg_recipient: [u8; 32] (32 bytes)
 /// - nonce: u64 (8 bytes)
 ///
 /// Total: 48 bytes minimum.
@@ -179,12 +179,12 @@ fn parse_lock_event(data: &[u8]) -> Option<MidnightBridgeEvent> {
     }
 
     let amount = u64::from_le_bytes(data[0..8].try_into().ok()?);
-    let pyana_recipient: [u8; 32] = data[8..40].try_into().ok()?;
+    let dregg_recipient: [u8; 32] = data[8..40].try_into().ok()?;
     let nonce = u64::from_le_bytes(data[40..48].try_into().ok()?);
 
     Some(MidnightBridgeEvent::Lock {
         amount,
-        pyana_recipient,
+        dregg_recipient,
         nonce,
     })
 }
@@ -229,7 +229,7 @@ fn parse_unlock_event(data: &[u8]) -> Option<MidnightBridgeEvent> {
 /// Run the Midnight bridge observer as an async task.
 ///
 /// This function subscribes to finalized Midnight blocks, parses bridge events,
-/// validates them, and submits valid `MidnightToPyanaMessage`s to the federation.
+/// validates them, and submits valid `MidnightToDreggMessage`s to the federation.
 ///
 /// # Arguments
 ///
@@ -269,10 +269,10 @@ where
                 continue;
             };
 
-            // We only care about Lock events (Midnight → pyana direction).
+            // We only care about Lock events (Midnight → dregg direction).
             let MidnightBridgeEvent::Lock {
                 amount,
-                pyana_recipient,
+                dregg_recipient,
                 nonce: _,
             } = bridge_event
             else {
@@ -287,16 +287,16 @@ where
                 header.hash
             };
 
-            let message = MidnightToPyanaMessage {
+            let message = MidnightToDreggMessage {
                 midnight_tx_hash: tx_hash,
                 amount,
-                pyana_recipient,
+                dregg_recipient,
                 midnight_height: header.number,
                 log_index: log_index as u32,
             };
 
             // Validate before submission.
-            if let Err(e) = validate_midnight_to_pyana(
+            if let Err(e) = validate_midnight_to_dregg(
                 &message,
                 &config,
                 state,
@@ -402,13 +402,13 @@ pub mod mock {
     /// A mock submitter that collects submitted messages.
     #[derive(Clone, Default)]
     pub struct MockSubmitter {
-        pub messages: Arc<Mutex<Vec<MidnightToPyanaMessage>>>,
+        pub messages: Arc<Mutex<Vec<MidnightToDreggMessage>>>,
     }
 
     impl BridgeEventSubmitter for MockSubmitter {
         fn submit(
             &self,
-            message: MidnightToPyanaMessage,
+            message: MidnightToDreggMessage,
         ) -> impl Future<Output = Result<(), MidnightBridgeError>> + Send {
             self.messages.lock().unwrap().push(message);
             async { Ok(()) }
@@ -416,10 +416,10 @@ pub mod mock {
     }
 
     /// Build a mock lock event (SCALE-like encoding matching our parser).
-    pub fn make_lock_event_data(amount: u64, pyana_recipient: [u8; 32], nonce: u64) -> Vec<u8> {
+    pub fn make_lock_event_data(amount: u64, dregg_recipient: [u8; 32], nonce: u64) -> Vec<u8> {
         let mut data = Vec::with_capacity(48);
         data.extend_from_slice(&amount.to_le_bytes());
-        data.extend_from_slice(&pyana_recipient);
+        data.extend_from_slice(&dregg_recipient);
         data.extend_from_slice(&nonce.to_le_bytes());
         data
     }
@@ -445,11 +445,11 @@ mod tests {
         match parsed {
             MidnightBridgeEvent::Lock {
                 amount,
-                pyana_recipient,
+                dregg_recipient,
                 nonce,
             } => {
                 assert_eq!(amount, 5_000_000);
-                assert_eq!(pyana_recipient, recipient);
+                assert_eq!(dregg_recipient, recipient);
                 assert_eq!(nonce, 42);
             }
             _ => panic!("expected Lock event"),
@@ -557,7 +557,7 @@ mod tests {
         let messages = submitter.messages.lock().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].amount, 5_000_000);
-        assert_eq!(messages[0].pyana_recipient, recipient);
+        assert_eq!(messages[0].dregg_recipient, recipient);
         assert_eq!(messages[0].midnight_height, 100);
         assert_eq!(state.last_processed_height, 100);
     }
@@ -730,9 +730,9 @@ mod tests {
 
         let messages = submitter.messages.lock().unwrap();
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].pyana_recipient, recipient1);
+        assert_eq!(messages[0].dregg_recipient, recipient1);
         assert_eq!(messages[0].amount, 3_000_000);
-        assert_eq!(messages[1].pyana_recipient, recipient2);
+        assert_eq!(messages[1].dregg_recipient, recipient2);
         assert_eq!(messages[1].amount, 7_000_000);
         assert_eq!(state.last_processed_height, 2);
     }

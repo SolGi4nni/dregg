@@ -1,8 +1,8 @@
-//! pyana Discord Bot — custodial-cclerk front-end to the pyana devnet.
+//! dregg Discord Bot — custodial-cclerk front-end to the dregg devnet.
 //!
 //! Lives at the workspace toplevel `/discord-bot` (peer of `node`, `sdk`,
 //! `app-framework`) rather than under `apps/`. Per-user cipherclerks are
-//! handles to `pyana_app_framework::AppCipherclerk` — the canonical narrow
+//! handles to `dregg_app_framework::AppCipherclerk` — the canonical narrow
 //! SDK surface — derived deterministically from the bot's secret and
 //! Discord user id.
 //!
@@ -11,7 +11,7 @@
 //! presence attestation (proof-of-online dischargeable caveats), CapTP
 //! (bot as a capability peer), programmable queues, governance
 //! (apps/governed-namespace), name service (apps/nameservice), and
-//! Discord<->pyana federation linking.
+//! Discord<->dregg federation linking.
 
 mod activity_feed;
 pub mod captp_client;
@@ -55,7 +55,7 @@ pub struct BotState {
     pub captp: CapTPClient,
     /// Registry of Discord capabilities exercisable via CapTP.
     pub discord_caps: DiscordCapRegistry,
-    /// Event bridge: Discord events → pyana turns.
+    /// Event bridge: Discord events → dregg turns.
     pub event_bridge: EventBridge,
     /// The federation id this bot binds cipherclerk signatures to. Threaded
     /// through every per-user `UserCipherclerk::derive(...)` call so the
@@ -125,7 +125,7 @@ impl EventHandler for Handler {
             commands::federation::register_unlink(),
             // ─── §4.7 intent/handoff slash flows (bot as soft-federation peer) ─
             // These complement existing captp/ names flows. Full orchestration
-            // (intent post → relay to #pyana-intents, handoff cert paste,
+            // (intent post → relay to #dregg-intents, handoff cert paste,
             // reaction-to-fulfill via TurnComposer) uses the CapTPClient +
             // AppCipherclerk already wired.
             commands::status::register_status(), // placeholder until dedicated intent/handoff modules land (reuses status surface for now)
@@ -221,7 +221,7 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, _ctx: Context, msg: Message) {
-        // Bridge messages to pyana queues if the channel is linked.
+        // Bridge messages to dregg queues if the channel is linked.
         self.state.event_bridge.on_message(&msg).await;
     }
 
@@ -266,7 +266,7 @@ async fn main() {
         )
         .init();
 
-    info!("Starting pyana Discord bot...");
+    info!("Starting dregg Discord bot...");
 
     // Load configuration. Graceful error (no panic) for operator UX.
     let config = match Config::from_env() {
@@ -307,17 +307,17 @@ async fn main() {
     let presence = Mutex::new(PresenceTracker::new(config.bot_secret));
     info!("Presence tracker initialized");
 
-    // Build CapTP client (the bot's own pyana identity).
+    // Build CapTP client (the bot's own dregg identity).
     //
     // The bot's own cclerk is the user_id == 0 derivation. We use the
     // canonical AppCipherclerk so the bot's identity (cell id, public key)
-    // is computed the same way as any other pyana agent.
+    // is computed the same way as any other dregg agent.
     let bot_cell_id = {
         let cclerk =
             cipherclerk::UserCipherclerk::derive(&config.bot_secret, 0, federation_id_bytes);
         cclerk.cell_id_hex().to_string()
     };
-    let federation_id = pyana_captp::FederationId(federation_id_bytes);
+    let federation_id = dregg_captp::FederationId(federation_id_bytes);
     let captp = CapTPClient::new(
         federation_id,
         bot_cell_id.clone(),
@@ -349,7 +349,7 @@ async fn main() {
     // Spawn the axum server (with body limits, tracing, graceful shutdown, SSE,
     // CellStateView-compatible responses for inspectors). Runs concurrently
     // with the Discord client. The CapTP + activity_feed + devnet + NullifierSet
-    // foundation is now fully surfaced as a reliable third-party pyana peer.
+    // foundation is now fully surfaced as a reliable third-party dregg peer.
     tokio::spawn(http_server::start(state.clone()));
     info!(
         "HTTP read surface scheduled on {}:{} (see /api/cells, /api/cell/<id>, /observability/stream etc.)",

@@ -1,6 +1,6 @@
 //! Federation setup commands: `/setup-federation`, `/link-cclerk`, `/unlink-cclerk`.
 //!
-//! Links a Discord guild to a pyana reference group and binds user identities.
+//! Links a Discord guild to a dregg reference group and binds user identities.
 
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
@@ -16,18 +16,18 @@ use crate::embeds;
 /// Register `/setup-federation`.
 pub fn register_setup() -> CreateCommand {
     CreateCommand::new("setup-federation")
-        .description("Register this guild as a pyana reference group (federation)")
+        .description("Register this guild as a dregg reference group (federation)")
 }
 
-/// Register `/link-cclerk <pyana-address>`.
+/// Register `/link-cclerk <dregg-address>`.
 pub fn register_link() -> CreateCommand {
     CreateCommand::new("link-cipherclerk")
-        .description("Link your Discord account to your pyana identity")
+        .description("Link your Discord account to your dregg identity")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "address",
-                "Your pyana cell address (hex)",
+                "Your dregg cell address (hex)",
             )
             .required(true),
         )
@@ -36,7 +36,7 @@ pub fn register_link() -> CreateCommand {
 /// Register `/unlink-cclerk`.
 pub fn register_unlink() -> CreateCommand {
     CreateCommand::new("unlink-cipherclerk")
-        .description("Unlink your Discord account from your pyana identity")
+        .description("Unlink your Discord account from your dregg identity")
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ pub async fn handle_setup(ctx: &Context, command: &CommandInteraction, state: &B
             };
 
             let embed = embeds::success_embed("Federation Registered")
-                .description("This guild is now a pyana reference group.")
+                .description("This guild is now a dregg reference group.")
                 .field("Federation ID", format!("`{}`", result.federation_id), true)
                 .field("Namespace", format!("`/discord/{guild_id}/`"), true)
                 .field(
@@ -164,7 +164,7 @@ pub async fn handle_link(ctx: &Context, command: &CommandInteraction, state: &Bo
     if address.len() != 64 || hex::decode(&address).is_err() {
         let embed = embeds::error_embed(
             "Invalid Address",
-            "Pyana cell address must be 64 hex characters (32 bytes).",
+            "Dregg cell address must be 64 hex characters (32 bytes).",
         );
         let _ = command
             .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -201,7 +201,7 @@ pub async fn handle_link(ctx: &Context, command: &CommandInteraction, state: &Bo
     match state.db.register_user(&discord_id, &address).await {
         Ok(()) => {
             let embed = embeds::success_embed("Cipherclerk Linked")
-                .description("Your Discord account is now linked to your pyana identity.")
+                .description("Your Discord account is now linked to your dregg identity.")
                 .field("Cell ID", format!("`{}...`", &address[..16]), true);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -226,7 +226,7 @@ pub async fn handle_unlink(ctx: &Context, command: &CommandInteraction, state: &
         Ok(Some(_)) => match state.db.unlink_user(&discord_id).await {
             Ok(()) => {
                 let embed = embeds::success_embed("Cipherclerk Unlinked").description(
-                    "Your Discord account has been unlinked from your pyana identity.",
+                    "Your Discord account has been unlinked from your dregg identity.",
                 );
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -242,7 +242,7 @@ pub async fn handle_unlink(ctx: &Context, command: &CommandInteraction, state: &
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "Not Linked",
-                "Your Discord account is not linked to any pyana identity.",
+                "Your Discord account is not linked to any dregg identity.",
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))

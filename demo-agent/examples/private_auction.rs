@@ -20,14 +20,14 @@
 //! They CANNOT determine: what any bidder bid, who the losing bidders are,
 //! or how close the bids were to each other.
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example private_auction
+//! Run with: cargo run --release -p dregg-demo-agent --example private_auction
 
 use std::time::Instant;
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::seal::SealPair;
-use pyana_circuit::{
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::seal::SealPair;
+use dregg_circuit::{
     BabyBear, PredicateProof, PredicateType, PredicateWitness,
     committed_threshold::{
         CommittedThresholdWitness, compute_threshold_commitment, generate_blinding,
@@ -39,7 +39,7 @@ use pyana_circuit::{
     stark::proof_to_bytes,
     verify_predicate,
 };
-use pyana_turn::{ConditionProof, ConditionalTurn, ProofCondition, compute_conditional_deposit};
+use dregg_turn::{ConditionProof, ConditionalTurn, ProofCondition, compute_conditional_deposit};
 
 /// A bidder's private state (known only to them).
 struct Bidder {
@@ -342,10 +342,10 @@ fn main() {
 
     // Seal the artwork to the winner
     let winner_seal = SealPair::generate();
-    let sealed_art = winner_seal.seal(&pyana_cell::capability::CapabilityRef {
-        target: pyana_cell::CellId::from_bytes(winner.pubkey),
+    let sealed_art = winner_seal.seal(&dregg_cell::capability::CapabilityRef {
+        target: dregg_cell::CellId::from_bytes(winner.pubkey),
         slot: 0,
-        permissions: pyana_cell::AuthRequired::Signature,
+        permissions: dregg_cell::AuthRequired::Signature,
         breadstuff: Some(artwork_hash),
         expires_at: None,
         allowed_effects: None,
@@ -378,8 +378,8 @@ fn main() {
     let deposit = compute_conditional_deposit(timeout_height, current_height);
 
     let _winner_conditional = ConditionalTurn {
-        turn: pyana_turn::Turn {
-            agent: pyana_cell::CellId::from_bytes(winner.pubkey),
+        turn: dregg_turn::Turn {
+            agent: dregg_cell::CellId::from_bytes(winner.pubkey),
             nonce: 0,
             fee: 0,
             conservation_proof: None,
@@ -395,7 +395,7 @@ fn main() {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
-            call_forest: pyana_turn::CallForest::new(),
+            call_forest: dregg_turn::CallForest::new(),
         },
         condition: ProofCondition::HashPreimage {
             hash: delivery_hash,
@@ -408,7 +408,7 @@ fn main() {
     // Resolve the condition (artist reveals delivery secret = proves delivery happened)
     let art_proof = ConditionProof::Preimage(delivery_secret);
     let mut null_set = std::collections::HashSet::new();
-    let result = pyana_turn::resolve_condition(
+    let result = dregg_turn::resolve_condition(
         &ProofCondition::HashPreimage {
             hash: delivery_hash,
         },
@@ -416,11 +416,11 @@ fn main() {
         current_height + 1,
         timeout_height,
         &[],
-        pyana_turn::DEFAULT_MAX_ROOT_AGE,
+        dregg_turn::DEFAULT_MAX_ROOT_AGE,
         &mut null_set,
         &[],
     );
-    assert_eq!(result, pyana_turn::ConditionalResult::Resolved);
+    assert_eq!(result, dregg_turn::ConditionalResult::Resolved);
 
     println!("  Step 4c: Atomic settlement via ConditionalTurn");
     println!("    Condition: hash preimage of sealed artwork delivery");

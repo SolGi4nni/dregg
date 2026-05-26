@@ -25,12 +25,12 @@
 
 #![allow(clippy::field_reassign_with_default)]
 
-use pyana_cell::predicate::WitnessedPredicate;
-use pyana_cell::program::{
+use dregg_cell::predicate::WitnessedPredicate;
+use dregg_cell::program::{
     AuthorizedSet, CustomDescriptor, DeltaRelation, HashKind, ReadSet, SimpleStateConstraint,
     TransitionCase, TransitionGuard,
 };
-use pyana_cell::{
+use dregg_cell::{
     CellProgram, CellState, EvalContext, FIELD_ZERO, FieldElement, InputRef, ProgramError,
     StateConstraint, field_from_u64,
 };
@@ -911,7 +911,7 @@ fn temporal_predicate_rejects_with_tampered_witness() {
 
 #[test]
 fn bound_delta_returns_sentinel_today() {
-    use pyana_cell::CellId;
+    use dregg_cell::CellId;
     let p = single_predicate(StateConstraint::BoundDelta {
         local_slot: 0,
         peer_cell: CellId([1u8; 32]),
@@ -1069,7 +1069,7 @@ fn renounced_returns_sentinel_without_registry() {
     // `SenderAuthorized` in the no-registry path. This is fail-closed:
     // a cell declaring `Renounced` is unreachable today (bricked) until
     // the caveat-correctness lane wires the NonMembership verifier.
-    use pyana_cell::program::RenouncedSet;
+    use dregg_cell::program::RenouncedSet;
     let p = single_predicate(StateConstraint::Renounced {
         set: RenouncedSet::BlindedSet {
             commitment: [0xABu8; 32],
@@ -1090,7 +1090,7 @@ fn renounced_returns_sentinel_without_registry() {
 #[test]
 fn renounced_public_root_returns_sentinel_without_registry() {
     // Same sentinel shape for the `PublicRoot` sub-variant of `RenouncedSet`.
-    use pyana_cell::program::RenouncedSet;
+    use dregg_cell::program::RenouncedSet;
     let p = single_predicate(StateConstraint::Renounced {
         set: RenouncedSet::PublicRoot { set_root_index: 0 },
     });
@@ -1110,8 +1110,8 @@ fn renounced_accepts_when_sender_not_in_set() {
     // Sender 0x05.. is strictly between lower=0x04.. and upper=0x06..;
     // the SortedNeighborNonMembershipVerifier (registered in default_builtins)
     // must accept the proof and the program must evaluate Ok(()).
-    use pyana_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
-    use pyana_cell::program::{
+    use dregg_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
+    use dregg_cell::program::{
         RenouncedSet, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
     };
 
@@ -1148,8 +1148,8 @@ fn renounced_accepts_when_sender_not_in_set() {
 fn renounced_rejects_when_sender_in_set() {
     // Adversarial: sender == lower neighbor — the prover IS in the set.
     // The neighbor invariant `lower < candidate` is violated; verifier rejects.
-    use pyana_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
-    use pyana_cell::program::{
+    use dregg_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
+    use dregg_cell::program::{
         RenouncedSet, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
     };
 

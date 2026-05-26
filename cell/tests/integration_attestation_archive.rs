@@ -10,7 +10,7 @@
 //! - archive is rejected when attestation fails structural validation (zero blob hash).
 //! - archived cell still accepts effects.
 
-use pyana_cell::{
+use dregg_cell::{
     Cell, CellId, Ledger,
     lifecycle::{
         ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason, LifecycleTransitionError,

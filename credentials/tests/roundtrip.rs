@@ -7,11 +7,11 @@
 //! identical apart from the `prove()` call; see `bridge/src/tests.rs`
 //! for the end-to-end STARK timings.
 
-use pyana_credentials::{
+use dregg_credentials::{
     AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, Predicate, PredicateRequest,
     PresentationOptions, RevocationRegistry, VerificationOptions, issue, present, revoke, verify,
 };
-use pyana_token::{AuthRequest, AuthToken};
+use dregg_token::{AuthRequest, AuthToken};
 
 fn fixture_issuer() -> IssuerKeys {
     IssuerKeys::new(

@@ -4,11 +4,11 @@
 //! the old AIR-based API (build_timeline_tree, TimelineEntry, etc.) are disabled
 //! until reimplemented against the DSL temporal_absence API.
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::non_membership::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::non_membership::{
     NonMembershipProver, SetIdentifier, verify_non_membership_proof,
 };
-use pyana_circuit::poseidon2::hash_many;
+use dregg_circuit::poseidon2::hash_many;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

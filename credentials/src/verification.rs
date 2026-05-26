@@ -17,7 +17,7 @@
 
 use thiserror::Error;
 
-use pyana_circuit::PresentationVerification;
+use dregg_circuit::PresentationVerification;
 
 use crate::presentation::Presentation;
 use crate::revocation::RevocationProof;
@@ -114,7 +114,7 @@ fn verify_inner(
     disclosed: &[(String, AttrValue)],
     predicate_proofs: &[crate::presentation::NamedPredicateProof],
     anonymous: bool,
-    proof: &pyana_bridge::present::BridgePresentationProof,
+    proof: &dregg_bridge::present::BridgePresentationProof,
     options: &VerificationOptions,
 ) -> Result<VerifiedPresentation, VerificationError> {
     // 1. Anonymity check.

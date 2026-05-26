@@ -4,7 +4,7 @@
  * Two entry points:
  *   - `render(container, data)` — legacy direct-render helper kept for
  *     historical callers (none currently in tree).
- *   - `defineVisualizer('merkle-tree', ...)` — `<pyana-vizzer>` registration
+ *   - `defineVisualizer('merkle-tree', ...)` — `<dregg-vizzer>` registration
  *     for static embedding in Learn pages.
  *
  * Dataset (JSON in `data-dataset` or kebab-cased data-attrs):

@@ -15,7 +15,7 @@
 #   * Bob's exercise of the Transfer effect produces alice-side and
 #     bob-side per-cell witness PIs that bilateral-pair-verify against
 #     each other under the γ.2 schedule; Charlie shells to
-#     `pyana-verifier bilateral-pair` to confirm.
+#     `dregg-verifier bilateral-pair` to confirm.
 #
 # Exit code 0 ⇔ every must_pass assertion in expected.json holds AND every
 # must_not_pass assertion was correctly rejected.
@@ -48,20 +48,20 @@ reset_state() {
 
 build_artifacts() {
     local log="$LOG_DIR/cargo-build.log"
-    echo "[demo] building pyana-node + pyana-verifier + silver-helper (log: $log)…"
+    echo "[demo] building dregg-node + dregg-verifier + silver-helper (log: $log)…"
     if ( cd "$REPO_ROOT" && cargo build \
-            -p pyana-node \
-            -p pyana-verifier \
-            -p pyana-demo --bin silver-helper ) > "$log" 2>&1; then
+            -p dregg-node \
+            -p dregg-verifier \
+            -p dregg-demo --bin silver-helper ) > "$log" 2>&1; then
         ok "cargo build ok"
         return 0
     fi
     echo "       cargo build failed; sleeping 60s and retrying once"
     sleep 60
     if ( cd "$REPO_ROOT" && cargo build \
-            -p pyana-node \
-            -p pyana-verifier \
-            -p pyana-demo --bin silver-helper ) > "$log" 2>&1; then
+            -p dregg-node \
+            -p dregg-verifier \
+            -p dregg-demo --bin silver-helper ) > "$log" 2>&1; then
         ok "cargo build ok (after retry)"
         return 0
     fi
@@ -73,14 +73,14 @@ cd "$HERE"
 reset_state
 
 # ── Step 1: setup ─────────────────────────────────────────────────────────
-step 1 "setup (build pyana-node, pyana-verifier, silver-helper)"
+step 1 "setup (build dregg-node, dregg-verifier, silver-helper)"
 if ! build_artifacts; then
     echo
     fail "demo failed at step 1 (build)"
     exit 1
 fi
-NODE_BIN="$REPO_ROOT/target/debug/pyana-node"
-VERIFIER_BIN="$REPO_ROOT/target/debug/pyana-verifier"
+NODE_BIN="$REPO_ROOT/target/debug/dregg-node"
+VERIFIER_BIN="$REPO_ROOT/target/debug/dregg-verifier"
 HELPER_BIN="$REPO_ROOT/target/debug/silver-helper"
 for bin in "$NODE_BIN" "$VERIFIER_BIN" "$HELPER_BIN"; do
     if [ ! -x "$bin" ]; then
@@ -188,7 +188,7 @@ BILAT_RC=$?
 # Wrap the CapTpDelivered Turn in a STARK-proved WitnessedReceipt chain entry.
 # This closes the meta-audit gap: charlie previously verified the cert off-band
 # via a standalone silver-helper call. Now the Turn is in the witnessed chain
-# as entry [2] so pyana-verifier replay-chain sees it alongside grant + exercise.
+# as entry [2] so dregg-verifier replay-chain sees it alongside grant + exercise.
 "$HELPER_BIN" make-captp-delivered-chain \
     --state-dir "$STATE_DIR" > "$LOG_DIR/silver.captp-chain.stdout" 2> "$LOG_DIR/silver.captp-chain.stderr"
 CAPTP_CHAIN_RC=$?
@@ -253,13 +253,13 @@ RECW_RC=$?
                  || fail "silver-helper make-recursive-witness failed ($RECW_RC)"
 
 # ── Step 5/6/7: bob exercises (existing MCP path; Authorization::Bearer) ──
-# STATUS: Bob's MCP exercise still uses Authorization::Bearer (pyana_exercise_bearer_cap).
+# STATUS: Bob's MCP exercise still uses Authorization::Bearer (dregg_exercise_bearer_cap).
 # The canonical Authorization::CapTpDelivered Turn is assembled by silver-helper
 # (make-captp-delivered) and is now in the witnessed chain as entry [2] via
 # make-captp-delivered-chain. Charlie cross-checks the turn_hash between the
 # Ed25519 verify verdict and the chain summary. The remaining gap: the executor's
 # verify_captp_delivered is not called for Bob's MCP exercise turn (that still
-# uses Bearer). Closing it requires a `pyana_exercise_handoff_cert` MCP tool.
+# uses Bearer). Closing it requires a `dregg_exercise_handoff_cert` MCP tool.
 # See: demo/two-ai-handoff/silver_helper.rs module comment (GAP notes).
 step 7 "bob exercises the cap (MCP exercise tool — legacy Authorization::Bearer path)"
 BOB_OUT=$("$PY" "$HERE/bob.py" \
@@ -279,7 +279,7 @@ else
 fi
 
 # ── Step 8: charlie verifies everything ──────────────────────────────────
-step 8 "charlie verifies (pyana-verifier + silver-helper, both independent)"
+step 8 "charlie verifies (dregg-verifier + silver-helper, both independent)"
 CHARLIE_OUT=$("$PY" "$HERE/charlie.py" \
     --state-dir "$STATE_DIR" \
     --verifier-bin "$VERIFIER_BIN" \
@@ -367,7 +367,7 @@ done
 [ "$INTRO_TAMPER_REJECTED" = "True" ]  && ok "Effect::Introduce γ.2 tampered bundle rejected (must_not_pass)" || warn "Effect::Introduce tampered bundle WRONGLY accepted"
 [ "$RECW_ATTACHED" = "True" ]          && ok "Golden Vision: RecursiveProofVariant attached (best-effort compression)" || warn "recursive compression did NOT attach"
 [ "$RECW_STRICT" = "True" ]            && ok "Golden Vision: strict-recursive constructor returned Ok" || warn "strict-recursive constructor FAILED"
-[ "$RECW_SCOPE_VERIFIED" = "True" ]    && ok "pyana-verifier scope-recursive verified the chain" || warn "scope-recursive chain NOT verified"
+[ "$RECW_SCOPE_VERIFIED" = "True" ]    && ok "dregg-verifier scope-recursive verified the chain" || warn "scope-recursive chain NOT verified"
 [ "$RECW_TAMPER_REJECTED" = "True" ]   && ok "scope-recursive rejected tampered recursive_vk_hash (must_not_pass)" || warn "scope-recursive WRONGLY accepted tampered vk_hash"
 
 # ─── balance checks ───

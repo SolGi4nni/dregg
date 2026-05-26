@@ -1,4 +1,4 @@
-//! CapTP: Capability Transport Protocol for the Pyana federation.
+//! CapTP: Capability Transport Protocol for the Dregg federation.
 //!
 //! # Trust Model
 //!
@@ -37,13 +37,13 @@
 //! - Store-and-forward integrity: recipient (via authenticated decryption).
 //!
 //! This crate implements sturdy references — durable, serializable capability URIs
-//! that survive disconnection and enable offline sharing. A sturdy ref is a `pyana://`
+//! that survive disconnection and enable offline sharing. A sturdy ref is a `dregg://`
 //! URI containing a federation ID, cell ID, and swiss number (a random secret that
 //! proves you were given access).
 //!
 //! # Architecture
 //!
-//! - **Sturdy references** (`uri::PyanaUri`) are the offline-shareable form of a capability.
+//! - **Sturdy references** (`uri::DreggUri`) are the offline-shareable form of a capability.
 //! - **Swiss table** (`sturdy::SwissTable`) maps swiss numbers to live capabilities.
 //! - **CapTP sessions** (`session::CapSession`) track import/export state between peers.
 //! - **Distributed GC** (`gc`) tracks reference counts across federations.
@@ -53,7 +53,7 @@
 //! # Protocol
 //!
 //! To enliven a sturdy ref:
-//! 1. Parse the `pyana://` URI
+//! 1. Parse the `dregg://` URI
 //! 2. Connect to the federation (identified by federation_id)
 //! 3. Present the swiss number
 //! 4. If valid: receive a live reference token
@@ -74,9 +74,9 @@
 //! 4. Recipient presents the certificate to the target.
 //! 5. Target validates and creates a routing entry.
 
-// Re-export the canonical FederationId from pyana-types so all crates agree
+// Re-export the canonical FederationId from dregg-types so all crates agree
 // on the identifier (see FEDERATION-UNIFICATION-DESIGN.md §2).
-pub use pyana_types::FederationId;
+pub use dregg_types::FederationId;
 
 pub mod gc;
 pub mod handoff;
@@ -100,7 +100,7 @@ pub use store_forward::{
     RelayInfo, SendResult, StoreForwardClient, generate_x25519_keypair,
 };
 pub use sturdy::{EnlivenError, SwissEntry, SwissTable};
-pub use uri::{PyanaUri, UriError};
+pub use uri::{DreggUri, UriError};
 
 // =============================================================================
 // Shared types
@@ -108,7 +108,7 @@ pub use uri::{PyanaUri, UriError};
 
 /// Type alias: in the unified lace model, a FederationId is equivalent to a GroupId.
 ///
-/// See `pyana_types::FederationId` for the canonical definition.
+/// See `dregg_types::FederationId` for the canonical definition.
 pub type GroupId = FederationId;
 
 /// Identifies a strand (a single participant's append-only log) in the blocklace.

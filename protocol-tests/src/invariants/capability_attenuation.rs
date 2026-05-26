@@ -18,15 +18,8 @@
 //! attenuation check.
 
 use crate::Invariant;
-use crate::generators::capability::arb_auth_required;
-use crate::generators::cell::{LedgerSpec, build_open_ledger};
 
 use proptest::prelude::*;
-use pyana_cell::{AuthRequired, CapabilityRef, is_attenuation};
-use pyana_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
-    TurnResult, turn::Turn,
-};
 
 pub struct CapabilityAttenuation;
 

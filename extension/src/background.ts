@@ -1,5 +1,5 @@
 /**
- * Pyana cipherclerk background service worker (TypeScript).
+ * Dregg cipherclerk background service worker (TypeScript).
  * Manages cipherclerk state (signing keys, capability tokens, receipt chain),
  * evaluates authorization, and generates proofs via WASM.
  */
@@ -30,7 +30,7 @@ import type {
   PageResponseMessage,
   PredicateFact,
   PredicateProofResult,
-  PyanaWasm,
+  DreggWasm,
   SignTurnResult,
   StealthMetaAddress,
   StealthNote,
@@ -43,32 +43,32 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-// Storage keys — "pyana_cipherclerk*" keys are the legacy names kept for migration.
-const STORAGE_KEY = "pyana_cipherclerk";
-const ENCRYPTED_STATE_KEY = "pyana_cipherclerk_encrypted";
-const MNEMONIC_KEY = "pyana_mnemonic_encrypted";
+// Storage keys — "dregg_cipherclerk*" keys are the legacy names kept for migration.
+const STORAGE_KEY = "dregg_cipherclerk";
+const ENCRYPTED_STATE_KEY = "dregg_cipherclerk_encrypted";
+const MNEMONIC_KEY = "dregg_mnemonic_encrypted";
 // Legacy key names; read-once migration copies them to the new keys on startup.
-const LEGACY_STORAGE_KEY = "pyana_cipherclerk";
-const LEGACY_ENCRYPTED_STATE_KEY = "pyana_wallet_encrypted";
-const STEALTH_KEYS_KEY = "pyana_stealth_keys_encrypted";
-const ALLOWED_ORIGINS_KEY = "pyana_allowed_origins";
-const NODE_CONFIG_KEY = "pyana_node_config";
-const DEFAULT_NODE_URL = "https://devnet.pyana.fg-goose.online";
-const DEFAULT_NODE_WSS_URL = "wss://devnet.pyana.fg-goose.online/ws";
+const LEGACY_STORAGE_KEY = "dregg_cipherclerk";
+const LEGACY_ENCRYPTED_STATE_KEY = "dregg_wallet_encrypted";
+const STEALTH_KEYS_KEY = "dregg_stealth_keys_encrypted";
+const ALLOWED_ORIGINS_KEY = "dregg_allowed_origins";
+const NODE_CONFIG_KEY = "dregg_node_config";
+const DEFAULT_NODE_URL = "https://devnet.dregg.fg-goose.online";
+const DEFAULT_NODE_WSS_URL = "wss://devnet.dregg.fg-goose.online/ws";
 const DEFAULT_NODE_WS_URL = "ws://localhost:8420/ws";
 const DISCOVERY_URL = "https://emberian.github.io/dregg/discovery.json";
 const DISCOVERY_POLL_INTERVAL = 5 * 60 * 1000;
 const PBKDF2_ITERATIONS = 600000;
-const DISCLOSURE_PREFS_KEY = "pyana_disclosure_prefs";
+const DISCLOSURE_PREFS_KEY = "dregg_disclosure_prefs";
 const LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const ORIGIN_PERMISSION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const RATE_LIMIT_MAX_CALLS = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const PRIVACY_STATE_KEY = "pyana_privacy_state";
+const PRIVACY_STATE_KEY = "dregg_privacy_state";
 const DEFAULT_INTENT_EXPIRY_MS = 5 * 60 * 1000;
 const INTENT_GC_INTERVAL = 60_000;
-const LIVE_REFS_KEY = "pyana_live_refs";
-const KNOWN_FEDERATIONS_KEY = "pyana_known_federations";
+const LIVE_REFS_KEY = "dregg_live_refs";
+const KNOWN_FEDERATIONS_KEY = "dregg_known_federations";
 const WS_MAX_RECONNECT_DELAY = 60000;
 const WS_AUTH_TIMEOUT_MS = 5000;
 
@@ -105,39 +105,39 @@ async function saveNodeConfig(config: Partial<NodeConfig>): Promise<void> {
 // WASM module
 // ---------------------------------------------------------------------------
 
-let wasm: PyanaWasm | null = null;
+let wasm: DreggWasm | null = null;
 let wasmLoaded = false;
 let wasmLoadError: string | null = null;
 
 declare function importScripts(...urls: string[]): void;
 declare const wasm_bindgen: ((url: string) => Promise<void>) & Record<string, unknown>;
-declare const __pyana_wasm_init: (() => Promise<PyanaWasm>) | undefined;
+declare const __dregg_wasm_init: (() => Promise<DreggWasm>) | undefined;
 
 const wasmReady = (async (): Promise<void> => {
   try {
     try {
-      importScripts("./pyana_wasm.js");
+      importScripts("./dregg_wasm.js");
     } catch (_importErr) {
       // importScripts failed -- dev mode, fall through.
     }
 
     if (typeof wasm_bindgen !== "undefined") {
-      const wasmUrl = chrome.runtime.getURL("pyana_wasm_bg.wasm");
+      const wasmUrl = chrome.runtime.getURL("dregg_wasm_bg.wasm");
       await wasm_bindgen(wasmUrl);
-      wasm = wasm_bindgen as unknown as PyanaWasm;
+      wasm = wasm_bindgen as unknown as DreggWasm;
       wasmLoaded = true;
-    } else if (typeof __pyana_wasm_init !== "undefined") {
-      wasm = await __pyana_wasm_init();
+    } else if (typeof __dregg_wasm_init !== "undefined") {
+      wasm = await __dregg_wasm_init();
       wasmLoaded = true;
     } else {
-      const wasmUrl = chrome.runtime.getURL("pyana_wasm_bg.wasm");
+      const wasmUrl = chrome.runtime.getURL("dregg_wasm_bg.wasm");
       const response = await fetch(wasmUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch WASM: HTTP ${response.status}`);
       }
       const wasmBytes = await response.arrayBuffer();
       const { instance } = await WebAssembly.instantiate(wasmBytes, {});
-      wasm = instance.exports as unknown as PyanaWasm;
+      wasm = instance.exports as unknown as DreggWasm;
       wasmLoaded = true;
     }
   } catch (e: unknown) {
@@ -227,7 +227,7 @@ function checkRateLimit(tabId: number | undefined, origin: string): boolean {
 //
 // Each user-approval popup is opened with a unique random nonce passed in the
 // URL hash (so it doesn't appear in `document.referrer` or `URLSearchParams`).
-// The popup retrieves its display payload via `pyana:getPendingDecision`
+// The popup retrieves its display payload via `dregg:getPendingDecision`
 // (which validates the caller is the popup we opened, by extension URL +
 // matching nonce) and sends decision messages including the nonce. Background
 // `validatePopupSender()` confirms:
@@ -390,7 +390,7 @@ async function getWordlist(): Promise<string[] | null> {
     if (_wordlistCache.length === 2048) return _wordlistCache;
   } catch (e: unknown) {
     const err = e as Error;
-    console.warn("[pyana] Failed to load wordlist from bundle:", err.message);
+    console.warn("[dregg] Failed to load wordlist from bundle:", err.message);
   }
   _wordlistCache = null;
   return null;
@@ -402,7 +402,7 @@ async function generateMnemonic(): Promise<string> {
       return wasm.generate_mnemonic();
     } catch (e: unknown) {
       const err = e as Error;
-      console.warn("[pyana] WASM generate_mnemonic failed, using JS fallback:", err.message);
+      console.warn("[dregg] WASM generate_mnemonic failed, using JS fallback:", err.message);
     }
   }
   const entropy = crypto.getRandomValues(new Uint8Array(32));
@@ -481,7 +481,7 @@ async function deriveKeypairFromMnemonic(
 ): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
   requireWasm("deriveKeypairFromMnemonic");
   const w = wasm!;
-  const result = w.derive_keypair_from_mnemonic(mnemonic, passphrase, "pyana/0");
+  const result = w.derive_keypair_from_mnemonic(mnemonic, passphrase, "dregg/0");
   return { publicKey: result.public_key, secretKey: result.secret_key };
 }
 
@@ -492,9 +492,9 @@ async function deriveKeypairFromMnemonic(
 const subscribers = new Map<number, Set<string>>();
 
 // --- Passive event-feed debugger support (Phase 1, §6, STARBRIDGE-FOLLOWUP-06) ---
-// In-memory trace feed in the exact shape expected by <pyana-activity> + getTraceEvents.
+// In-memory trace feed in the exact shape expected by <dregg-activity> + getTraceEvents.
 // Populated from node WS events (receipt/root/revocation/intent/note_announcement) +
-// cclerk actions. Exposed via "pyana:activity" notifications and "pyana:getActivityFeed".
+// cclerk actions. Exposed via "dregg:activity" notifications and "dregg:getActivityFeed".
 // This makes the live activity stream from the new observability wiring *usable* inside
 // the extension without requiring a full runtime shim in Phase 1.
 let activityFeed: { schema_version: number; event_count: number; events: Array<{ kind: string; envelope: any; payload: any }> } = {
@@ -520,7 +520,7 @@ function pushActivity(kind: string, payload: unknown, envelopeExtras: Record<str
 function notifySubscribers(event: string, payload: unknown): void {
   for (const [tabId, events] of subscribers) {
     if (events.has(event)) {
-      chrome.tabs.sendMessage(tabId, { type: "pyana:event", event, payload }).catch(() => {
+      chrome.tabs.sendMessage(tabId, { type: "dregg:event", event, payload }).catch(() => {
         subscribers.delete(tabId);
       });
     }
@@ -535,8 +535,8 @@ let state: InternalCipherclerkState | null = null;
 let cclerkPassphrase: string | null = null;
 
 /**
- * One-time migration: copy legacy "pyana_cipherclerk*" storage keys to the new
- * "pyana_cipherclerk*" names.  Runs at most once per installation (guarded by
+ * One-time migration: copy legacy "dregg_cipherclerk*" storage keys to the new
+ * "dregg_cipherclerk*" names.  Runs at most once per installation (guarded by
  * presence of the new key).  The old keys are removed after copying so the
  * migration is idempotent.
  */
@@ -563,7 +563,7 @@ async function migrateLegacyStorageKeys(): Promise<void> {
 async function loadState(): Promise<InternalCipherclerkState> {
   if (state) return state;
 
-  // One-time storage key migration: copy pyana_cipherclerk* → pyana_cipherclerk* on first run.
+  // One-time storage key migration: copy dregg_cipherclerk* → dregg_cipherclerk* on first run.
   // This preserves data for users upgrading from the old "cclerk" naming.
   await migrateLegacyStorageKeys();
 
@@ -1133,7 +1133,7 @@ function showDisclosurePicker(origin: string, request: AuthorizeRequest, tokenFa
     const requiredFacts = tokenFacts.filter(f => f.key === "action" || f.key === "resource");
     const siteRequested = request.requestedDisclosure || [];
     // P0-2: pass only opaque nonce in URL; PII (facts including email/userId/org)
-    // stays in background memory and is fetched via pyana:getPendingDecision.
+    // stays in background memory and is fetched via dregg:getPendingDecision.
     const nonce = registerPendingDecision("disclosure-picker.html", {
       origin,
       action: request.action,
@@ -1152,7 +1152,7 @@ function showDisclosurePicker(origin: string, request: AuthorizeRequest, tokenFa
       focused: true,
     }, (win) => {
       const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
-        if (message.type !== "pyana:disclosureDecision") return;
+        if (message.type !== "dregg:disclosureDecision") return;
         // P0-1: validate the sender is the popup we opened.
         if (!validatePopupSender(message, sender, nonce, "disclosure-picker.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
@@ -1278,7 +1278,7 @@ async function provisionToken(tokenData: Record<string, unknown>, _senderTabId?:
       focused: true,
     }, (win) => {
       const listener = async (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<void> => {
-        if (message.type !== "pyana:provisionDecision") return;
+        if (message.type !== "dregg:provisionDecision") return;
         // P0-1: validate the sender is the provision popup we opened.
         if (!validatePopupSender(message, sender, nonce, "provision.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
@@ -1339,7 +1339,7 @@ function showIntentConfirmation(action: string, matchSpec: MatchSpec | unknown, 
       focused: true,
     }, (win) => {
       const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
-        if (message.type !== "pyana:intentConfirmation") return;
+        if (message.type !== "dregg:intentConfirmation") return;
         // P0-1: validate the sender is the confirm-intent popup.
         if (!validatePopupSender(message, sender, nonce, "confirm-intent.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
@@ -1504,7 +1504,7 @@ async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?:
   if (!resp.ok) return { error: `Failed to export sturdy ref: ${resp.error}` };
   const nodeId = resp.data?.node_id || "local";
   const secret = resp.data?.secret || "";
-  const uri = `pyana://${nodeId}/${cellId}/${secret}`;
+  const uri = `dregg://${nodeId}/${cellId}/${secret}`;
   cc.log.push({ action: "shareCapability", resource: cellId, allowed: true, timestamp: Date.now(), mode: "captp" });
   await saveState();
   return { uri, cellId, nodeId };
@@ -1513,9 +1513,9 @@ async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?:
 async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: string; cellId?: string; nodeId?: string; permissions?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
-  if (!uri.startsWith("pyana://")) return { error: "Invalid URI: must start with pyana://" };
-  const parts = uri.replace("pyana://", "").split("/");
-  if (parts.length < 3) return { error: "Invalid URI format. Expected: pyana://<node>/<cell>/<secret>" };
+  if (!uri.startsWith("dregg://")) return { error: "Invalid URI: must start with dregg://" };
+  const parts = uri.replace("dregg://", "").split("/");
+  if (parts.length < 3) return { error: "Invalid URI format. Expected: dregg://<node>/<cell>/<secret>" };
   const [nodeId, cellId, secret] = parts;
   const resp = await nodeRequest<{ permissions?: string; cap_id?: string }>(nodeConfig, "/turns/peer-exchange", {
     method: "POST",
@@ -1760,7 +1760,7 @@ async function signTurn(turnSpec: TurnSpec): Promise<SignTurnResult> {
   if (!w.build_turn) {
     throw new Error("build_turn export required (v3 message format)");
   }
-  throw new Error("signTurn JSON fallback removed; v3 required. Use pyana.signTurnV3(turnBytes) for postcard-encoded turns from starbridge-apps turn-builders.");
+  throw new Error("signTurn JSON fallback removed; v3 required. Use dregg.signTurnV3(turnBytes) for postcard-encoded turns from starbridge-apps turn-builders.");
 }
 
 async function queryBalance(): Promise<{ balance?: number; error?: string }> {
@@ -1780,7 +1780,7 @@ async function queryBalance(): Promise<{ balance?: number; error?: string }> {
  * TODO(wasm): The wasm module does not yet export `sign_turn_v3`. When the
  * export lands, replace the stub error below with:
  *   w.sign_turn_v3(turnBytes)
- * and update the PyanaWasm interface in types.ts accordingly.
+ * and update the DreggWasm interface in types.ts accordingly.
  */
 async function signTurnV3(_turnBytes: Uint8Array): Promise<SignTurnResult> {
   // TODO: wire to w.sign_turn_v3 when the wasm export is available.
@@ -1814,7 +1814,7 @@ async function listKnownFederations(): Promise<KnownFederation[]> {
  *
  * TODO(wasm): The wasm module does not yet export `create_captp_delivered_auth`.
  * When the export lands, replace the stub below with the real wasm call and
- * update PyanaWasm in types.ts.
+ * update DreggWasm in types.ts.
  */
 function createCapTpDeliveredAuth(_handoffCertB58: string, _introducerPk: string, _senderPk: string): { authBytes: number[]; error?: string } {
   // TODO: wire to w.create_captp_delivered_auth when the wasm export is available.
@@ -1893,7 +1893,7 @@ function handleOriginPermissionRequest(origin: string, method: string): Promise<
       focused: true,
     }, (win) => {
       const listener = async (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<void> => {
-        if (message.type !== "pyana:originPermissionDecision") return;
+        if (message.type !== "dregg:originPermissionDecision") return;
         // P0-1: validate the sender is the origin-permission popup.
         if (!validatePopupSender(message, sender, nonce, "origin-permission.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
@@ -1924,32 +1924,32 @@ function handleOriginPermissionRequest(origin: string, method: string): Promise<
 // ---------------------------------------------------------------------------
 
 const PAGE_ALLOWED_METHODS = new Set<MessageType>([
-  "pyana:authorize", "pyana:isConnected", "pyana:canAuthorize", "pyana:subscribe",
-  "pyana:getActivityFeed",  // Phase 1: live activity feed for <pyana-activity> / debugger
-  "pyana:provision", "pyana:postIntent", "pyana:getStealthAddress",
-  "pyana:postEncryptedIntent", "pyana:privateTransfer",
-  "pyana:createBearerCap", "pyana:verifyBearerCap",
-  "pyana:createFromFactory", "pyana:verifyProvenance",
-  "pyana:makeCellSovereign", "pyana:peerExchange", "pyana:composeProofs",
-  "pyana:signTurn", "pyana:signTurnV3", "pyana:queryBalance",
-  "pyana:shareCapability", "pyana:acceptCapability", "pyana:createHandoff",
-  "pyana:mountService", "pyana:discoverServices", "pyana:resolvePath",
-  "pyana:storageWrite", "pyana:storageRead", "pyana:storageQuota",
-  "pyana:federationStatus", "pyana:proposeRoutes", "pyana:voteOnProposal",
-  "pyana:registerFederation", "pyana:listKnownFederations",
-  "pyana:createCapTpDeliveredAuth",
+  "dregg:authorize", "dregg:isConnected", "dregg:canAuthorize", "dregg:subscribe",
+  "dregg:getActivityFeed",  // Phase 1: live activity feed for <dregg-activity> / debugger
+  "dregg:provision", "dregg:postIntent", "dregg:getStealthAddress",
+  "dregg:postEncryptedIntent", "dregg:privateTransfer",
+  "dregg:createBearerCap", "dregg:verifyBearerCap",
+  "dregg:createFromFactory", "dregg:verifyProvenance",
+  "dregg:makeCellSovereign", "dregg:peerExchange", "dregg:composeProofs",
+  "dregg:signTurn", "dregg:signTurnV3", "dregg:queryBalance",
+  "dregg:shareCapability", "dregg:acceptCapability", "dregg:createHandoff",
+  "dregg:mountService", "dregg:discoverServices", "dregg:resolvePath",
+  "dregg:storageWrite", "dregg:storageRead", "dregg:storageQuota",
+  "dregg:federationStatus", "dregg:proposeRoutes", "dregg:voteOnProposal",
+  "dregg:registerFederation", "dregg:listKnownFederations",
+  "dregg:createCapTpDeliveredAuth",
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
-  "pyana:unlock", "pyana:lock", "pyana:getCapabilities", "pyana:listIntents",
-  "pyana:offerCapability", "pyana:fulfillIntent", "pyana:getFulfillableIntents",
-  "pyana:revoke", "pyana:getState", "pyana:getFederation", "pyana:refreshDiscovery",
-  "pyana:setPassphrase", "pyana:getMnemonic", "pyana:recover",
-  "pyana:getDisclosurePrefs", "pyana:clearDisclosurePref",
-  "pyana:getOriginPermissions", "pyana:revokeOriginPermission",
-  "pyana:getPrivacyState", "pyana:setCommittedTransferMode", "pyana:getStealthNotes",
-  "pyana:getNodeConfig", "pyana:setNodeConfig",
-  "pyana:getLiveRefs", "pyana:dropLiveRef",
+  "dregg:unlock", "dregg:lock", "dregg:getCapabilities", "dregg:listIntents",
+  "dregg:offerCapability", "dregg:fulfillIntent", "dregg:getFulfillableIntents",
+  "dregg:revoke", "dregg:getState", "dregg:getFederation", "dregg:refreshDiscovery",
+  "dregg:setPassphrase", "dregg:getMnemonic", "dregg:recover",
+  "dregg:getDisclosurePrefs", "dregg:clearDisclosurePref",
+  "dregg:getOriginPermissions", "dregg:revokeOriginPermission",
+  "dregg:getPrivacyState", "dregg:setCommittedTransferMode", "dregg:getStealthNotes",
+  "dregg:getNodeConfig", "dregg:setNodeConfig",
+  "dregg:getLiveRefs", "dregg:dropLiveRef",
 ]);
 
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
@@ -1961,7 +1961,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
   const msgType = message.type as MessageType;
 
   switch (msgType) {
-    case "pyana:authorize": {
+    case "dregg:authorize": {
       if (isContentScript(sender) && !(message.request as AuthorizeRequest)?._skipDisclosure) {
         const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || "unknown";
         // P1-5: rate-limit keyed off (tabId, origin) using in-memory map.
@@ -1976,24 +1976,24 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: await authorize(message.request as AuthorizeRequest) };
     }
 
-    case "pyana:isConnected":
+    case "dregg:isConnected":
       return { id: message.id, result: true };
 
-    case "pyana:canAuthorize":
+    case "dregg:canAuthorize":
       return { id: message.id, result: await canAuthorize(message.request as AuthorizeRequest) };
 
-    case "pyana:getCapabilities":
+    case "dregg:getCapabilities":
       return { id: message.id, result: await getCapabilities() };
 
-    case "pyana:getState":
+    case "dregg:getState":
       return { id: message.id, result: await getCipherclerkState() };
 
-    case "pyana:lock": {
+    case "dregg:lock": {
       await lockCipherclerk();
       return { id: message.id, result: true };
     }
 
-    case "pyana:unlock": {
+    case "dregg:unlock": {
       if (!isExtensionPopup(sender)) {
         return { id: message.id, error: "Unlock is only available from the extension popup." };
       }
@@ -2004,13 +2004,13 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result };
     }
 
-    case "pyana:setPassphrase": {
+    case "dregg:setPassphrase": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       await setPassphrase(message.passphrase as string);
       return { id: message.id, result: true };
     }
 
-    case "pyana:getMnemonic": {
+    case "dregg:getMnemonic": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const cc = await loadState();
       if (cc.locked) return { id: message.id, error: "Cipherclerk is locked" };
@@ -2025,24 +2025,24 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: mnemonic };
     }
 
-    case "pyana:recover": {
+    case "dregg:recover": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const result = await recoverFromMnemonic(message.mnemonic as string, (message.passphrase as string) || "");
       return { id: message.id, result };
     }
 
-    case "pyana:provision": {
+    case "dregg:provision": {
       const result = await provisionToken(message.tokenData as Record<string, unknown>, sender?.tab?.id);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:revoke": {
+    case "dregg:revoke": {
       const result = await revokeToken(message.tokenId as string);
       return { id: message.id, result };
     }
 
-    case "pyana:subscribe": {
+    case "dregg:subscribe": {
       const tabId = sender?.tab?.id;
       if (tabId != null) {
         if (!subscribers.has(tabId)) subscribers.set(tabId, new Set());
@@ -2052,14 +2052,14 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Phase 1 passive debugger: expose the synthesized activity feed (TraceEvent shape)
-    // consumable by <pyana-activity> (or direct .on('activity')) and for RemoteRuntime bridge.
-    case "pyana:getActivityFeed": {
+    // consumable by <dregg-activity> (or direct .on('activity')) and for RemoteRuntime bridge.
+    case "dregg:getActivityFeed": {
       return { id: message.id, result: activityFeed };
     }
 
-    case "pyana:provisionDecision":
-    case "pyana:intentConfirmation":
-    case "pyana:disclosureDecision": {
+    case "dregg:provisionDecision":
+    case "dregg:intentConfirmation":
+    case "dregg:disclosureDecision": {
       // P0-1: decision messages may only come from extension popup pages.
       // The actual resolution is handled by the per-popup listener registered
       // in show*() functions, which also validates the nonce. This main-router
@@ -2071,7 +2071,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: true };
     }
 
-    case "pyana:getPendingDecision": {
+    case "dregg:getPendingDecision": {
       // P0-2: popups fetch their display payload via this message rather than
       // receiving PII in the URL. Caller must be an extension page (not a tab
       // / content script), the nonce must match a registered pending decision,
@@ -2094,12 +2094,12 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: { payload: entry.payload } };
     }
 
-    case "pyana:getDisclosurePrefs": {
+    case "dregg:getDisclosurePrefs": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       return { id: message.id, result: await getDisclosurePrefs() };
     }
 
-    case "pyana:clearDisclosurePref": {
+    case "dregg:clearDisclosurePref": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const prefs = await getDisclosurePrefs();
       delete prefs[message.origin as string];
@@ -2107,24 +2107,24 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: true };
     }
 
-    case "pyana:getOriginPermissions": {
+    case "dregg:getOriginPermissions": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       return { id: message.id, result: await getAllOriginPermissions() };
     }
 
-    case "pyana:revokeOriginPermission": {
+    case "dregg:revokeOriginPermission": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       await revokeOriginPermissions(message.origin as string);
       return { id: message.id, result: true };
     }
 
-    case "pyana:postIntent": {
+    case "dregg:postIntent": {
       const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
       const result = await postIntent(message.matchSpec as MatchSpec, message.options as { expiry?: number } | undefined, origin);
       return { id: message.id, result };
     }
 
-    case "pyana:offerCapability": {
+    case "dregg:offerCapability": {
       const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
       const confirmed = await showIntentConfirmation("offerCapability", message.matchSpec, message.options, origin);
       if (!confirmed) return { id: message.id, result: { error: "User denied capability offer" } };
@@ -2138,15 +2138,15 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: { intentId, expiry } };
     }
 
-    case "pyana:listIntents":
+    case "dregg:listIntents":
       return { id: message.id, result: listIntents(message.filter as { kind?: string } | undefined) };
 
-    case "pyana:fulfillIntent": {
+    case "dregg:fulfillIntent": {
       // Simplified: delegate to postIntent-like pattern; full implementation in legacy
       return { id: message.id, result: { error: "Not yet migrated to TypeScript" } };
     }
 
-    case "pyana:getFulfillableIntents": {
+    case "dregg:getFulfillableIntents": {
       const cc = await loadState();
       if (cc.locked) return { id: message.id, result: [] };
       const now = Date.now();
@@ -2169,19 +2169,19 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: fulfillable };
     }
 
-    case "pyana:getFederation":
+    case "dregg:getFederation":
       return { id: message.id, result: federationState };
 
-    case "pyana:refreshDiscovery":
+    case "dregg:refreshDiscovery":
       await fetchDiscovery();
       return { id: message.id, result: federationState };
 
-    case "pyana:requestOriginPermission": {
+    case "dregg:requestOriginPermission": {
       const result = await handleOriginPermissionRequest(message.origin as string, message.method as string);
       return result;
     }
 
-    case "pyana:originPermissionDecision": {
+    case "dregg:originPermissionDecision": {
       // P0-1: same as above — only popups may send decision messages.
       if (isContentScript(sender) || !isExtensionPopup(sender)) {
         return { id: message.id, error: "Decision messages may only come from extension popups." };
@@ -2190,96 +2190,96 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // CapTP
-    case "pyana:shareCapability": {
+    case "dregg:shareCapability": {
       const result = await shareCapability(message.cellId as string);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:acceptCapability": {
+    case "dregg:acceptCapability": {
       const result = await acceptCapability(message.uri as string, sender?.tab?.id);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:createHandoff": {
+    case "dregg:createHandoff": {
       const result = await createHandoff(message.cellId as string, message.recipientPk as string);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:getLiveRefs":
+    case "dregg:getLiveRefs":
       return { id: message.id, result: getLiveRefs() };
 
-    case "pyana:dropLiveRef": {
+    case "dregg:dropLiveRef": {
       const result = await dropLiveRef(message.refId as string);
       return { id: message.id, result };
     }
 
     // Directory
-    case "pyana:mountService": {
+    case "dregg:mountService": {
       const result = await mountService(message.path as string, message.sturdyRef as string, message.kind as string | undefined, message.tags as string[] | undefined);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:discoverServices":
+    case "dregg:discoverServices":
       return { id: message.id, result: await discoverServices(message.tags as string[] | undefined) };
 
-    case "pyana:resolvePath":
+    case "dregg:resolvePath":
       return { id: message.id, result: await resolvePath(message.path as string) };
 
     // Storage
-    case "pyana:storageWrite": {
+    case "dregg:storageWrite": {
       const result = await storageWrite(message.data as string);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:storageRead":
+    case "dregg:storageRead":
       return { id: message.id, result: await storageRead(message.hash as string) };
 
-    case "pyana:storageQuota":
+    case "dregg:storageQuota":
       return { id: message.id, result: await storageQuota() };
 
     // Federation
-    case "pyana:federationStatus":
+    case "dregg:federationStatus":
       return { id: message.id, result: await getFederationStatus() };
 
-    case "pyana:proposeRoutes": {
+    case "dregg:proposeRoutes": {
       const result = await proposeRoutes(message.routes as unknown[]);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:voteOnProposal": {
+    case "dregg:voteOnProposal": {
       const result = await voteOnProposal(message.proposalId as string, message.approve as boolean);
       resetLockTimer();
       return { id: message.id, result };
     }
 
     // Turn / balance
-    case "pyana:signTurn": {
+    case "dregg:signTurn": {
       const result = await signTurn(message.turnSpec as TurnSpec);
       resetLockTimer();
       return { id: message.id, result };
     }
 
-    case "pyana:queryBalance":
+    case "dregg:queryBalance":
       return { id: message.id, result: await queryBalance() };
 
     // Node config
-    case "pyana:getNodeConfig":
+    case "dregg:getNodeConfig":
       return { id: message.id, result: { ...nodeConfig, devnetKey: nodeConfig.devnetKey ? "***" : "" } };
 
-    case "pyana:setNodeConfig": {
+    case "dregg:setNodeConfig": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from the extension popup or settings page." };
       await saveNodeConfig(message.config as Partial<NodeConfig>);
       return { id: message.id, result: { success: true, nodeUrl: nodeConfig.nodeUrl } };
     }
 
     // Bearer caps
-    case "pyana:createBearerCap": {
+    case "dregg:createBearerCap": {
       requireWasm("createBearerCap");
       const w = wasm!;
       const cc = await loadState();
@@ -2290,7 +2290,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result };
     }
 
-    case "pyana:verifyBearerCap": {
+    case "dregg:verifyBearerCap": {
       requireWasm("verifyBearerCap");
       const w = wasm!;
       const currentTime = Math.floor(Date.now() / 1000);
@@ -2311,7 +2311,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     // identity tuple to the caller. This replaces the prior shape that
     // only hash-derived (child_vk, param_hash) client-side and never
     // actually minted a cell.
-    case "pyana:createFromFactory": {
+    case "dregg:createFromFactory": {
       requireWasm("createFromFactory");
       const w = wasm!;
       const cc = await loadState();
@@ -2327,7 +2327,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // signing domain so the resulting cell shares the token namespace with
       // other extension-minted cells.
       const tokenIdHex = (message.tokenIdHex as string | undefined)
-        ?? w.blake3_hash("pyana-cipherclerk-default-token-domain");
+        ?? w.blake3_hash("dregg-cipherclerk-default-token-domain");
       const mode = (message.mode as string | undefined) ?? "Hosted";
       const initialFields = (message.initialFields as Array<[number, number]> | undefined) ?? [];
 
@@ -2410,7 +2410,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       };
     }
 
-    case "pyana:verifyProvenance": {
+    case "dregg:verifyProvenance": {
       requireWasm("verifyProvenance");
       const w = wasm!;
       const result = w.verify_provenance(message.cellVkHex as string, JSON.stringify(message.knownFactoryVks || []));
@@ -2418,7 +2418,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Sovereign cells
-    case "pyana:makeCellSovereign": {
+    case "dregg:makeCellSovereign": {
       requireWasm("makeCellSovereign");
       const w = wasm!;
       const cc = await loadState();
@@ -2428,7 +2428,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result };
     }
 
-    case "pyana:peerExchange": {
+    case "dregg:peerExchange": {
       requireWasm("peerExchange");
       const w = wasm!;
       const cc = await loadState();
@@ -2463,7 +2463,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Proof composition
-    case "pyana:composeProofs": {
+    case "dregg:composeProofs": {
       requireWasm("composeProofs");
       const w = wasm!;
       const proofsInput = ((message.proofs as Array<Record<string, unknown>>) || []).map(p => ({
@@ -2475,29 +2475,29 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Privacy
-    case "pyana:getStealthAddress":
+    case "dregg:getStealthAddress":
       return { id: message.id, result: state?.stealthMeta || null };
 
-    case "pyana:getPrivacyState": {
+    case "dregg:getPrivacyState": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const cc = await loadState();
       if (cc.locked) return { id: message.id, result: { active: false, locked: true } };
       return { id: message.id, result: { active: true, stealthMeta: cc.stealthMeta } };
     }
 
-    case "pyana:setCommittedTransferMode": {
+    case "dregg:setCommittedTransferMode": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       return { id: message.id, result: { success: true, committedTransfersActive: !!(message.enabled) } };
     }
 
-    case "pyana:getStealthNotes": {
+    case "dregg:getStealthNotes": {
       if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
       const cc = await loadState();
       if (cc.locked) return { id: message.id, error: "Cipherclerk is locked" };
       return { id: message.id, result: cc.stealthNotes || [] };
     }
 
-    case "pyana:postEncryptedIntent": {
+    case "dregg:postEncryptedIntent": {
       requireWasm("postEncryptedIntent");
       const w = wasm!;
       const cc = await loadState();
@@ -2552,7 +2552,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       }
     }
 
-    case "pyana:privateTransfer": {
+    case "dregg:privateTransfer": {
       requireWasm("privateTransfer");
       const w = wasm!;
       const cc = await loadState();
@@ -2620,7 +2620,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Turn v3: pre-built postcard-encoded Turn bytes signed by the cipherclerk.
-    case "pyana:signTurnV3": {
+    case "dregg:signTurnV3": {
       const turnBytes = new Uint8Array(message.turnBytes as number[]);
       const result = await signTurnV3(turnBytes);
       resetLockTimer();
@@ -2628,7 +2628,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     }
 
     // Federation registry
-    case "pyana:registerFederation": {
+    case "dregg:registerFederation": {
       const result = await registerFederation(
         message.federationId as string,
         message.name as string,
@@ -2637,13 +2637,13 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result };
     }
 
-    case "pyana:listKnownFederations": {
+    case "dregg:listKnownFederations": {
       const result = await listKnownFederations();
       return { id: message.id, result };
     }
 
     // CapTP delivered authorization
-    case "pyana:createCapTpDeliveredAuth": {
+    case "dregg:createCapTpDeliveredAuth": {
       const result = createCapTpDeliveredAuth(
         message.handoffCertB58 as string,
         message.introducerPk as string,
@@ -2664,11 +2664,11 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, sender: 
       return { id: message.id, error: `"${msgType}" is only available from the extension popup.` };
     }
     if (isContentScript(sender) && !PAGE_ALLOWED_METHODS.has(msgType) && !POPUP_ONLY_METHODS.has(msgType)) {
-      if (msgType !== "pyana:requestOriginPermission") {
+      if (msgType !== "dregg:requestOriginPermission") {
         return { id: message.id, error: `"${msgType}" is not available from page context.` };
       }
     }
-    if (message.type === "pyana:authorize" && !ready) {
+    if (message.type === "dregg:authorize" && !ready) {
       return new Promise((resolve) => {
         pendingQueue.push({ msg: message, sender, resolve });
       });
@@ -2937,14 +2937,14 @@ function startDiscoveryPolling(): void {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: "pyana-share-capability",
+    id: "dregg-share-capability",
     title: "Share capability...",
     contexts: ["page", "selection"],
   });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnClickData) => {
-  if (info.menuItemId === "pyana-share-capability") {
+  if (info.menuItemId === "dregg-share-capability") {
     const cellId = info.selectionText?.trim() || "";
     if (cellId && /^[0-9a-fA-F]{64}$/.test(cellId)) {
       const result = await shareCapability(cellId);
@@ -2964,7 +2964,7 @@ chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnCli
       }
     } else {
       // No pre-generated URI; popup will let user paste a cellId and call
-      // pyana:shareCapability itself.
+      // dregg:shareCapability itself.
       const nonce = registerPendingDecision("share-capability.html", {});
       chrome.windows.create({
         url: chrome.runtime.getURL("share-capability.html") + "#nonce=" + nonce,

@@ -1,4 +1,4 @@
-//! Configuration management for `~/.pyana/config.toml`.
+//! Configuration management for `~/.dregg/config.toml`.
 
 use std::path::PathBuf;
 
@@ -57,10 +57,10 @@ impl Default for Config {
     }
 }
 
-/// Returns the default config path: `~/.pyana/config.toml`.
+/// Returns the default config path: `~/.dregg/config.toml`.
 pub fn config_path() -> PathBuf {
     let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join(".pyana").join("config.toml")
+    base.join(".dregg").join("config.toml")
 }
 
 impl Config {
@@ -68,7 +68,7 @@ impl Config {
     ///
     /// On parse failure (corrupt or hand-edited TOML), logs a warning to stderr
     /// and falls back to safe built-in defaults rather than silently ignoring
-    /// the user's settings. This closes a bad-UX gap where `pyana config set`
+    /// the user's settings. This closes a bad-UX gap where `dregg config set`
     /// or manual edits could be lost without any indication.
     pub fn load(path: Option<&str>) -> Self {
         let file_path = match path {

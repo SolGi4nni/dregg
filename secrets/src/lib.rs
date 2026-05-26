@@ -1,8 +1,8 @@
-//! Pyana Secret Store
+//! Dregg Secret Store
 //!
 //! Pluggable secret storage with two backends:
 //!
-//! - **Encrypted file store**: AES-256-GCM encrypted files in `~/.pyana/secrets/`.
+//! - **Encrypted file store**: AES-256-GCM encrypted files in `~/.dregg/secrets/`.
 //!   Portable, works everywhere. 0600 permissions on Unix.
 //!
 //! - **OS keychain** (feature `keychain`): Uses the platform credential manager

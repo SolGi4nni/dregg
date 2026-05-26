@@ -27,14 +27,14 @@ pub struct ServiceConfig {
 impl ServiceConfig {
     /// Default socket path.
     pub fn default_socket_path() -> PathBuf {
-        PathBuf::from("/tmp/pyana-tokenizer.sock")
+        PathBuf::from("/tmp/dregg-tokenizer.sock")
     }
 
-    /// Default key store path (~/.pyana/tokenizer-keys).
+    /// Default key store path (~/.dregg/tokenizer-keys).
     pub fn default_key_store_path() -> PathBuf {
-        directories::ProjectDirs::from("dev", "pyana", "pyana")
+        directories::ProjectDirs::from("dev", "dregg", "dregg")
             .map(|d| d.data_dir().join("tokenizer-keys"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/pyana-tokenizer-keys"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/dregg-tokenizer-keys"))
     }
 }
 
@@ -309,7 +309,7 @@ async fn process_request(
 }
 
 // =============================================================================
-// Framing helpers (same format as pyana-wire: 4-byte LE length + postcard)
+// Framing helpers (same format as dregg-wire: 4-byte LE length + postcard)
 // =============================================================================
 
 /// Write a framed message.

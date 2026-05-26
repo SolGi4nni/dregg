@@ -24,11 +24,8 @@
 //! peers. We filter them out via `cell.public_key() != [0u8; 32]`.
 
 use crate::Invariant;
-use crate::generators::cell::{LedgerSpec, build_open_ledger};
-use crate::generators::turn::{build_no_op_turn, build_transfer_turn};
 
 use proptest::prelude::*;
-use pyana_turn::{ComputronCosts, Effect, TurnExecutor};
 
 pub struct SealedFieldIntegrity;
 
@@ -68,7 +65,7 @@ fn arb_ops(n_cells: usize, max_ops: usize) -> impl Strategy<Value = Vec<Op>> {
 }
 
 /// Assert the invariant on every real cell in the ledger.
-fn assert_all_ids_intact(ledger: &pyana_cell::Ledger) -> Result<(), TestCaseError> {
+fn assert_all_ids_intact(ledger: &dregg_cell::Ledger) -> Result<(), TestCaseError> {
     for (id, cell) in ledger.iter() {
         // Skip cross-federation stub rows — `remote_stub_with_id*`
         // deliberately constructs cells with public_key = [0; 32] whose
@@ -150,21 +147,21 @@ proptest! {
             let agent = ids[agent_idx];
             let nonce = ledger.get(&agent).unwrap().state.nonce();
             // Single-action turn that increments the agent's own nonce.
-            let action = pyana_turn::Action {
+            let action = dregg_turn::Action {
                 target: agent,
                 method: [0u8; 32],
                 args: vec![],
-                authorization: pyana_turn::Authorization::Unchecked,
+                authorization: dregg_turn::Authorization::Unchecked,
                 preconditions: Default::default(),
                 effects: vec![Effect::IncrementNonce { cell: agent }],
-                may_delegate: pyana_turn::DelegationMode::None,
+                may_delegate: dregg_turn::DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,
                 witness_blobs: vec![],
             };
-            let mut forest = pyana_turn::CallForest::new();
+            let mut forest = dregg_turn::CallForest::new();
             forest.add_root(action);
-            let turn = pyana_turn::turn::Turn {
+            let turn = dregg_turn::turn::Turn {
                 agent,
                 nonce,
                 call_forest: forest,

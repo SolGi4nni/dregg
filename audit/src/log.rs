@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use pyana_commit::hash::{HASH_ARITY, empty_hash_at_depth, hash_leaf, hash_node};
+use dregg_commit::hash::{HASH_ARITY, empty_hash_at_depth, hash_leaf, hash_node};
 use serde::{Deserialize, Serialize};
 
 use crate::event::{AuditReceipt, InclusionProof, UsageEvent};
@@ -537,7 +537,7 @@ impl AuditLog {
 
     /// Compute a commitment to a set of indices (for CountProof).
     fn commit_indices(&self, indices: &[u64]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-audit index-commit v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-audit index-commit v1");
         for &idx in indices {
             hasher.update(&idx.to_le_bytes());
         }

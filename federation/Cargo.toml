@@ -1,16 +1,16 @@
 [package]
-name = "pyana-federation"
+name = "dregg-federation"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pyana-captp = { path = "../captp" }
-pyana-cell = { path = "../cell" }
-pyana-commit = { path = "../commit" }
-pyana-turn = { path = "../turn" }
-pyana-types = { path = "../types" }
+dregg-captp = { path = "../captp" }
+dregg-cell = { path = "../cell" }
+dregg-commit = { path = "../commit" }
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
 serde_json = { workspace = true }
-hints = { path = "../hints", package = "pyana-hints" }
+hints = { path = "../hints", package = "dregg-hints" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 hex = "0.4"

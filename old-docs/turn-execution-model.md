@@ -72,7 +72,7 @@ The federation provides: ordering, canonical state, double-spend finality, and r
 
 ## 7. Comparison to Other Models
 
-| | Pyana | Rollups | State Channels | Anoma |
+| | `dregg` | Rollups | State Channels | Anoma |
 |---|---|---|---|---|
 | Execution location | Federation nodes (canonical) + local (optimistic) | Off-chain sequencer | Off-chain between parties | Solver network |
 | Settlement | Federation consensus (BFT) or fast-path (quorum locks) | L1 validity/fraud proof | L1 dispute resolution | L1 settlement |
@@ -80,4 +80,4 @@ The federation provides: ordering, canonical state, double-spend finality, and r
 | Dispute model | None needed -- fast path has quorum safety, consensus path has BFT finality | Fraud proof (optimistic) or validity proof (ZK) | On-chain dispute with state submission | None -- validity proofs |
 | Composability | Call forest with partial commitment; TurnComposer for multi-party | Limited cross-rollup | Only between channel parties | Intent solver composes |
 
-The closest analog is **Sui's owned-object fast path** (same LUTRIS lineage): single-owner objects skip consensus entirely. Pyana generalizes this to cells with the same ownership check. Multi-owner transitions require the consensus path, analogous to Sui's shared-object path through Narwhal/Bullshark.
+The closest analog is **Sui's owned-object fast path** (same LUTRIS lineage): single-owner objects skip consensus entirely. `dregg` generalizes this to cells with the same ownership check. Multi-owner transitions require the consensus path, analogous to Sui's shared-object path through Narwhal/Bullshark.

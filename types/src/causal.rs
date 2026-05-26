@@ -2,7 +2,7 @@
 //! happened-before ordering between turns.
 //!
 //! This module provides the foundational graph structure used by both the
-//! gossip network layer (`pyana-net`) and the coordination layer (`pyana-coord`).
+//! gossip network layer (`dregg-net`) and the coordination layer (`dregg-coord`).
 //! It stores only the graph topology (hashes and edges), leaving domain-specific
 //! entry storage to consumers.
 //!

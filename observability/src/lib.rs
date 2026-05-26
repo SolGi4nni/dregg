@@ -1,4 +1,4 @@
-//! `pyana-observability` — Studio-shape structured trace events for the pyana
+//! `dregg-observability` — Studio-shape structured trace events for the dregg
 //! turn substrate.
 //!
 //! # Scope

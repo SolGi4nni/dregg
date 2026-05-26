@@ -158,7 +158,7 @@ impl StarkAir for CommittedThresholdAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-committed-threshold-v1"
+        "dregg-committed-threshold-v1"
     }
 
     fn eval_constraints(

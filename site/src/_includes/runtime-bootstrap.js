@@ -1,7 +1,7 @@
 /**
- * Pyana runtime bootstrap.
+ * Dregg runtime bootstrap.
  *
- * Loads Preact + signals + htm from CDN, exposes `window.pyanaUi` for Studio
+ * Loads Preact + signals + htm from CDN, exposes `window.dreggUi` for Studio
  * use, and mounts every `<[data-vizzer]>` element on the page once
  * its visualizer module has registered.
  *
@@ -25,7 +25,7 @@ const registry = new Map();      // vizzer name → factory(host, dataset, api)
 const pending = new Map();       // vizzer name → [hosts waiting to mount]
 
 function failSoft(err) {
-  console.warn('[pyana] runtime unavailable:', err);
+  console.warn('[dregg] runtime unavailable:', err);
   const banner = document.createElement('div');
   banner.setAttribute('role', 'status');
   banner.style.cssText = [
@@ -78,14 +78,14 @@ function makeApi({ preact, signals, html }) {
   };
 
   function toast(message, kind = 'info', ttl = 3200) {
-    let host = document.querySelector('.pyana-toast-host');
+    let host = document.querySelector('.dregg-toast-host');
     if (!host) {
       host = document.createElement('div');
-      host.className = 'pyana-toast-host';
+      host.className = 'dregg-toast-host';
       document.body.appendChild(host);
     }
     const t = document.createElement('div');
-    t.className = 'pyana-toast';
+    t.className = 'dregg-toast';
     t.dataset.kind = kind;
     t.textContent = message;
     host.appendChild(t);
@@ -146,7 +146,7 @@ function makeApi({ preact, signals, html }) {
       }
       // else: factory took over rendering itself
     } catch (e) {
-      console.warn(`[pyana] vizzer ${name} failed`, e);
+      console.warn(`[dregg] vizzer ${name} failed`, e);
     }
   }
 
@@ -186,14 +186,14 @@ function makeApi({ preact, signals, html }) {
   try {
     const mods = await loadModules();
     const api = makeApi(mods);
-    window.pyanaUi = api;
+    window.dreggUi = api;
 
     // Dispatch an event so Studio modules can wait for readiness.
-    // NOTE: window.pyana is the canonical user-facing dapp API owned by the
-    // Cipherclerk browser extension. This bootstrap uses window.pyanaUi
-    // to avoid the silent-failure collision (the extension claims window.pyana
+    // NOTE: window.dregg is the canonical user-facing dapp API owned by the
+    // Cipherclerk browser extension. This bootstrap uses window.dreggUi
+    // to avoid the silent-failure collision (the extension claims window.dregg
     // via Object.defineProperty writable:false).
-    window.dispatchEvent(new CustomEvent('pyanaUi:ready', { detail: api }));
+    window.dispatchEvent(new CustomEvent('dreggUi:ready', { detail: api }));
 
     // Auto-mount any visualizers already in the document.
     if (document.readyState === 'loading') {

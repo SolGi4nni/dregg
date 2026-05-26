@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use pyana_bridge::present::Predicate;
+pub use dregg_bridge::present::Predicate;
 
 /// A credential schema description.
 ///
@@ -46,7 +46,7 @@ impl CredentialSchema {
 /// Unlike `apps/identity/AttributeValue`, this enum does *not* truncate
 /// strings to 4 bytes when hashing — text is hashed in full via blake3
 /// and the resulting 32-byte digest is what carries through the circuit
-/// as a fact term. (See G4 in `PYANA-FLAWS-FROM-APPS.md` — the 4-byte
+/// as a fact term. (See G4 in `DREGG-FLAWS-FROM-APPS.md` — the 4-byte
 /// truncation is one of the most-reproduced bugs in the codebase.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttrValue {
@@ -141,7 +141,7 @@ impl CredentialAttributes {
 /// satisfies this predicate, without revealing the value".
 ///
 /// The holder produces a `BridgePredicateProof` (re-exported from
-/// `pyana-bridge`) bound to the credential's state root.
+/// `dregg-bridge`) bound to the credential's state root.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredicateRequest {
     /// Attribute name the predicate applies to.

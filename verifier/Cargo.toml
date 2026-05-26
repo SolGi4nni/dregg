@@ -1,5 +1,5 @@
 [package]
-name = "pyana-verifier"
+name = "dregg-verifier"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,19 +10,19 @@ repository.workspace = true
 description = "Standalone Effect VM proof verifier — no shared state with the prover"
 
 [[bin]]
-name = "pyana-verifier"
+name = "dregg-verifier"
 path = "src/main.rs"
 
 [dependencies]
-pyana-circuit = { path = "../circuit" }
-pyana-types = { path = "../types" }
-pyana-commit = { path = "../commit" }
+dregg-circuit = { path = "../circuit" }
+dregg-types = { path = "../types" }
+dregg-commit = { path = "../commit" }
 # Federation primitives (cross-fed bundle, FederationReceipt verify path).
 # `default-features = false` so we do NOT pull tokio / crossbeam-channel — the
 # verifier binary stays a non-async, no-runtime, ledger-free process.
-pyana-federation = { path = "../federation", default-features = false }
-pyana-turn = { path = "../turn" }
-pyana-captp = { path = "../captp" }
+dregg-federation = { path = "../federation", default-features = false }
+dregg-turn = { path = "../turn" }
+dregg-captp = { path = "../captp" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = "0.4"
@@ -30,8 +30,8 @@ blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
 
 [dev-dependencies]
-pyana-circuit = { path = "../circuit" }
-pyana-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit" }
+dregg-cell = { path = "../cell" }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 hex = "0.4"

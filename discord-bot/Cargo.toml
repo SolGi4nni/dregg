@@ -1,8 +1,8 @@
 [package]
-name = "pyana-discord-bot"
+name = "dregg-discord-bot"
 version = "0.1.0"
 edition = "2024"
-description = "Discord bot for the pyana devnet — custodial AppCipherclerk handles, gallery, identity, presence attestation, CapTP, queues, governance, names"
+description = "Discord bot for the dregg devnet — custodial AppCipherclerk handles, gallery, identity, presence attestation, CapTP, queues, governance, names"
 
 [dependencies]
 blake3 = "1"
@@ -25,19 +25,19 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP read surface for Starbridge RemoteRuntime + /observability/stream SSE.
 # axum 0.8 to match node/api.rs patterns (sse via axum::response::sse submodule;
 # no "sse" feature flag to avoid the pre-existing workspace resolution conflict in
-# pyana-node's Cargo.toml). Production middlewares via tower-http.
+# dregg-node's Cargo.toml). Production middlewares via tower-http.
 axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.5", features = ["trace", "cors", "limit"] }
 futures-util = { version = "0.3" }
 
-# Canonical pyana surface — the bot is a peer of node/sdk, not a
+# Canonical dregg surface — the bot is a peer of node/sdk, not a
 # parallel implementation. AppCipherclerk (from app-framework) wraps the
 # SDK's AgentCipherclerk and gives us federation-bound action signing.
-pyana-app-framework = { path = "../app-framework" }
-pyana-sdk = { path = "../sdk" }
-# CapTP integration — the bot is a pyana capability peer.
-pyana-captp = { path = "../captp" }
-pyana-storage = { path = "../storage" }
+dregg-app-framework = { path = "../app-framework" }
+dregg-sdk = { path = "../sdk" }
+# CapTP integration — the bot is a dregg capability peer.
+dregg-captp = { path = "../captp" }
+dregg-storage = { path = "../storage" }
 zeroize = { workspace = true }
 
 [lints]

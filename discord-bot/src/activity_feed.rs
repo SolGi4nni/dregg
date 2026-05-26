@@ -130,7 +130,7 @@ fn batch_events(events: &[RecentEvent]) -> Vec<CreateEmbed> {
                 if let Some(hash) = &event.tx_hash {
                     let short = if hash.len() > 12 { &hash[..12] } else { hash };
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.pyana.fg-goose.online/explorer/tx/{hash})\n"
+                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{hash})\n"
                     ));
                 }
                 description.push('\n');
@@ -141,7 +141,7 @@ fn batch_events(events: &[RecentEvent]) -> Vec<CreateEmbed> {
                 .description(description)
                 .color(color)
                 .footer(serenity::all::CreateEmbedFooter::new(
-                    "pyana devnet explorer",
+                    "dregg devnet explorer",
                 ));
             embeds.push(embed);
         }
@@ -161,7 +161,7 @@ fn event_to_embed(event: &RecentEvent) -> CreateEmbed {
         .description(&event.summary)
         .color(color)
         .footer(serenity::all::CreateEmbedFooter::new(
-            "pyana devnet explorer",
+            "dregg devnet explorer",
         ));
 
     if !event.timestamp.is_empty() {
@@ -176,7 +176,7 @@ fn event_to_embed(event: &RecentEvent) -> CreateEmbed {
         };
         embed = embed.field(
             "Cell",
-            format!("[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/cell/{cell_id})"),
+            format!("[`{short}...`](https://devnet.dregg.fg-goose.online/explorer/cell/{cell_id})"),
             true,
         );
     }
@@ -189,7 +189,7 @@ fn event_to_embed(event: &RecentEvent) -> CreateEmbed {
         };
         embed = embed.field(
             "Transaction",
-            format!("[`{short}...`](https://devnet.pyana.fg-goose.online/explorer/tx/{tx_hash})"),
+            format!("[`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{tx_hash})"),
             true,
         );
     }

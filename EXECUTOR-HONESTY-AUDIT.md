@@ -28,7 +28,7 @@ Three layers, in order of strength:
    strongest layer because it does not depend on the executor's
    honesty: a dishonest executor cannot produce a passing proof.
 2. **Canonical-message signing** — the actor signs over a domain-
-   separated hash of the turn (`pyana-turn-v3:` ‖ canonical body).
+   separated hash of the turn (`dregg-turn-v3:` ‖ canonical body).
    The executor signs over a domain-separated receipt message
    (`executor-receipt-sig-v1:` ‖ turn_hash ‖ pre_state ‖ post_state ‖
    timestamp_le). Both signatures are checked by any verifier that
@@ -225,7 +225,7 @@ answers marked `[stage7-cont]` are pending the in-flight agent.
 - (T) Executor publishes a receipt with no proof, or a
   syntactically-invalid proof.
 - (D) Verifier: rejects receipts without valid proofs. Standalone
-  `pyana-verifier` binary in `verifier/` enforces this.
+  `dregg-verifier` binary in `verifier/` enforces this.
 - (C) `verifier/src/main.rs`.
 - (G) Confirm the *protocol* requires proof attachment — i.e., a
   receipt without a proof is invalid at the wire level, not

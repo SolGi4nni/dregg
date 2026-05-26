@@ -1,16 +1,16 @@
 /**
- * <pyana-note uri="pyana://note/<commitment-hex>"> — UTXO-style note (commitment + nullifier lifecycle).
+ * <dregg-note uri="dregg://note/<commitment-hex>"> — UTXO-style note (commitment + nullifier lifecycle).
  *
  * Replaces playground/sections/notes.js per Studio migration (Tier 2).
  *
- * URI form: pyana://note/<64-hex commitment>
+ * URI form: dregg://note/<64-hex commitment>
  * data= form: JSON { commitment, value, asset_type, spent? }
  *
  * Modes: compact | default
  *
  * Uses canonical wasm: create_note, spend_note, get_notes (stubbed for now).
  * No JS crypto reimplementation. Visible placeholders for gaps (get_notes tracking).
- * Composes <pyana-cell> for owner cell deeplinks when agent known (future).
+ * Composes <dregg-cell> for owner cell deeplinks when agent known (future).
  *
  * Trust tier: n/a (notes are pre-proof commitments; conservation proved at spend time via turn).
  */
@@ -18,7 +18,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaNote extends InspectorBase {
+class DreggNote extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -59,12 +59,12 @@ class PyanaNote extends InspectorBase {
       if (!note) {
         // Demo / empty state with create affordance
         if (mode === 'compact') {
-          return html`<span class="pyana-inspector pyana-inspector--compact">note (no data)</span>`;
+          return html`<span class="dregg-inspector dregg-inspector--compact">note (no data)</span>`;
         }
         return html`
-          <div class="pyana-inspector pyana-inspector--note">
+          <div class="dregg-inspector dregg-inspector--note">
             <header>
-              <span class="pyana-inspector__kind">note</span>
+              <span class="dregg-inspector__kind">note</span>
               <span style="color:var(--fg-dim);font-size:0.8rem;">(demo — use controls or data=)</span>
             </header>
             ${caps.mutate && wasm ? html`
@@ -72,7 +72,7 @@ class PyanaNote extends InspectorBase {
                 <button data-act="create" style="font-size:0.75rem;padding:2px 6px;">Create Note (demo)</button>
                 <button data-act="spend" style="font-size:0.75rem;padding:2px 6px;">Spend Last (demo)</button>
               </div>
-              <div class="pyana-inspector__note-demo" style="font-size:0.75rem;color:var(--fg-dim);">
+              <div class="dregg-inspector__note-demo" style="font-size:0.75rem;color:var(--fg-dim);">
                 Notes are commitments. Spend reveals nullifier (prevents double-spend). Full list tracking pending wasm get_notes impl.
               </div>
             ` : html`<div style="font-size:0.75rem;color:var(--fg-dim);">read-only runtime — no create/spend</div>`}
@@ -81,7 +81,7 @@ class PyanaNote extends InspectorBase {
 
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code title=${note.commitment}>${shortHex(note.commitment)}</code>
             · ${String(note.value)} (asset ${String(note.asset_type)})
             ${note.spent ? '· spent' : ''}
@@ -94,17 +94,17 @@ class PyanaNote extends InspectorBase {
           <button data-act="create" style="font-size:0.75rem;padding:3px 8px;">Create another</button>
         </div>
         <div style="font-size:0.7rem;color:var(--fg-dim);margin-top:4px;">
-          Note: create/spend here are demo calls; real flows use turns + <pyana-turn>.
+          Note: create/spend here are demo calls; real flows use turns + <dregg-turn>.
         </div>
       ` : null;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--note">
+        <div class="dregg-inspector dregg-inspector--note">
           <header>
-            <span class="pyana-inspector__kind">note</span>
-            <code class="pyana-inspector__id" title=${note.commitment}>${shortHex(note.commitment, 24)}</code>
+            <span class="dregg-inspector__kind">note</span>
+            <code class="dregg-inspector__id" title=${note.commitment}>${shortHex(note.commitment, 24)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>commitment</dt><dd><code title=${note.commitment}>${note.commitment}</code></dd>
             <dt>value</dt><dd>${String(note.value)}</dd>
             <dt>asset type</dt><dd>${String(note.asset_type)}</dd>
@@ -130,18 +130,18 @@ class PyanaNote extends InspectorBase {
       if (act === 'create') {
         try {
           const res = wasm.create_note(handle, 0, 100, 0); // agent 0, value 100, asset 0
-          console.log('[pyana-note] created demo note', res);
+          console.log('[dregg-note] created demo note', res);
           // trigger re-render via version bump if possible
           if (this._runtime?.version) this._runtime.version.value++;
-        } catch (err) { console.warn('[pyana-note] create failed', err); }
+        } catch (err) { console.warn('[dregg-note] create failed', err); }
       } else if (act === 'spend') {
         try {
           const res = wasm.spend_note(handle, 0, 100, 0);
-          console.log('[pyana-note] spent demo note', res);
+          console.log('[dregg-note] spent demo note', res);
           if (this._runtime?.version) this._runtime.version.value++;
-        } catch (err) { console.warn('[pyana-note] spend failed', err); }
+        } catch (err) { console.warn('[dregg-note] spend failed', err); }
       }
     });
   }
 }
-if (!customElements.get('pyana-note')) customElements.define('pyana-note', PyanaNote);
+if (!customElements.get('dregg-note')) customElements.define('dregg-note', DreggNote);

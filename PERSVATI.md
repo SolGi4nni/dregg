@@ -36,13 +36,13 @@ ssh persvati 'cd ~/dev/breadstuffs && cargo check --workspace 2>&1 | tail -50'
 
 ```bash
 git push persvati main
-ssh persvati 'cd ~/dev/breadstuffs && cargo test -p pyana-cell --lib 2>&1 | tail -30'
+ssh persvati 'cd ~/dev/breadstuffs && cargo test -p dregg-cell --lib 2>&1 | tail -30'
 ```
 
 ### Smoke test before running full workspace
 
 ```bash
-ssh persvati 'cd ~/dev/breadstuffs && cargo check -p pyana-types --quiet'
+ssh persvati 'cd ~/dev/breadstuffs && cargo check -p dregg-types --quiet'
 ```
 
 ## Discipline for agents

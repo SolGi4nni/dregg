@@ -19,9 +19,9 @@ The existing app at `apps/bounty-board/` (1727 LOC across 5 files) establishes t
 |-------|---------------|
 | HTTP API | axum with typed JSON handlers |
 | State | `tokio::sync::RwLock<HashMap>` (in-memory, persistence-ready) |
-| Auth | Token verification via `pyana-sdk` + qualification proofs via `pyana-circuit` |
+| Auth | Token verification via `dregg-sdk` + qualification proofs via `dregg-circuit` |
 | Domain | Separate modules: `state.rs`, `payment.rs`, `qualification.rs` |
-| Dependencies | `pyana-types`, `pyana-cell`, `pyana-turn`, `pyana-sdk`, `pyana-intent`, `token`, `pyana-circuit`, `pyana-store` |
+| Dependencies | `dregg-types`, `dregg-cell`, `dregg-turn`, `dregg-sdk`, `dregg-intent`, `token`, `dregg-circuit`, `dregg-store` |
 | Frontend | None yet (API-first; frontend would live in a `site/` sibling) |
 
 **Pattern summary:** axum REST API + in-memory state + domain logic split into modules + circuit proofs for privacy-sensitive operations.
@@ -36,7 +36,7 @@ The existing app at `apps/bounty-board/` (1727 LOC across 5 files) establishes t
 An HTTP policy decision point. Services POST authorization requests; the gateway evaluates Datalog, returns allow/deny, optionally attaches a STARK proof for audit. Supports three disclosure modes per request.
 
 - **LOC:** ~1200 (gateway logic exists in the two demos; add axum routes + policy storage)
-- **Crates:** `pyana-trace`, `pyana-circuit`, `pyana-sdk`, `token`
+- **Crates:** `dregg-trace`, `dregg-circuit`, `dregg-sdk`, `token`
 - **ZK:** Yes (Fully Private mode proves decisions without revealing policy internals)
 - **Demo:** CLI (`curl` against local server) + optional web dashboard showing policy graph
 
@@ -48,7 +48,7 @@ An HTTP policy decision point. Services POST authorization requests; the gateway
 An MCP-compatible server that provisions capability tokens to AI agents, tracks delegation chains, enforces budget gates, and handles sub-agent spawning with attenuated authority.
 
 - **LOC:** ~1500 (MCP JSON-RPC handler + cclerk registry + delegation tracker)
-- **Crates:** `pyana-sdk`, `pyana-turn`, `pyana-cell`, `token`, `pyana-bridge`
+- **Crates:** `dregg-sdk`, `dregg-turn`, `dregg-cell`, `token`, `dregg-bridge`
 - **ZK:** No (delegation + budget enforcement works with just token attenuation)
 - **Demo:** Both (CLI agent driver + web UI showing live delegation tree)
 
@@ -60,7 +60,7 @@ An MCP-compatible server that provisions capability tokens to AI agents, tracks 
 A verification endpoint where users prove predicates (age >= 18, credit >= 720) without revealing values. Supports committed thresholds (verifier's threshold also stays hidden) and ring membership (unlinkable presentations).
 
 - **LOC:** ~1000 (proof generation is already built; add HTTP presentation endpoint + verifier)
-- **Crates:** `pyana-circuit` (committed_threshold, ring membership), `pyana-bridge`, `token`
+- **Crates:** `dregg-circuit` (committed_threshold, ring membership), `dregg-bridge`, `token`
 - **ZK:** Yes (core value proposition; STARK proofs for every verification)
 - **Demo:** Web (browser submits proof, gets pass/fail badge; zero server-side PII)
 
@@ -72,7 +72,7 @@ A verification endpoint where users prove predicates (age >= 18, credit >= 720) 
 Sealed-bid compute auctions with atomic multi-party settlement. Providers stake via note commitments, clients escrow via cell programs, settlement is a single atomic turn across 6+ cells.
 
 - **LOC:** ~1800 (the 817-line demo has most logic; add HTTP layer, bid storage, reveal scheduler)
-- **Crates:** `pyana-cell`, `pyana-turn`, `pyana-intent`, `pyana-commit`, `pyana-circuit`, `token`
+- **Crates:** `dregg-cell`, `dregg-turn`, `dregg-intent`, `dregg-commit`, `dregg-circuit`, `token`
 - **ZK:** Yes (sealed bids use nullifier commitments; settlement proofs for disputes)
 - **Demo:** CLI (provider/client binaries) + web dashboard showing auction state
 
@@ -84,7 +84,7 @@ Sealed-bid compute auctions with atomic multi-party settlement. Providers stake 
 Companies post job intents with predicate requirements. Candidates prove qualifications (experience, skills, salary range) via ZK predicates without revealing exact values. Match happens through the intent pool with commit-reveal anti-frontrunning.
 
 - **LOC:** ~1400 (private_hiring is 662 LOC of pure logic; add intent pool HTTP layer + match notifications)
-- **Crates:** `pyana-intent`, `pyana-circuit`, `pyana-sdk`, `pyana-turn`, `token`
+- **Crates:** `dregg-intent`, `dregg-circuit`, `dregg-sdk`, `dregg-turn`, `token`
 - **ZK:** Yes (predicate proofs for every qualification check)
 - **Demo:** Web (two-sided UI: company posts requirements, candidate proves qualifications)
 

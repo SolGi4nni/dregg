@@ -28,7 +28,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use pyana_circuit::quantified_absence::*;
+//! use dregg_circuit::quantified_absence::*;
 //!
 //! // Approach A: IVC-chained per-chunk absence
 //! let proof = prove_quantified_absence_ivc(&elements, &predicate, chunk_size);
@@ -100,7 +100,7 @@ impl StarkAir for ChunkAbsenceAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-chunk-absence-v1"
+        "dregg-chunk-absence-v1"
     }
 
     fn eval_constraints(
@@ -451,7 +451,7 @@ impl StarkAir for QuotientAccumulatorAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-quotient-accumulator-v1"
+        "dregg-quotient-accumulator-v1"
     }
 
     fn eval_constraints(

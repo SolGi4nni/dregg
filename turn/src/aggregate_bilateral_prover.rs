@@ -2,7 +2,7 @@
 //!
 //! Given N `WitnessedReceipt`s sharing one `Turn`, this module produces a
 //! single outer proof attesting bilateral cross-cell consistency. The outer
-//! AIR is `pyana_circuit::bilateral_aggregation_air::BilateralAggregationAir`
+//! AIR is `dregg_circuit::bilateral_aggregation_air::BilateralAggregationAir`
 //! (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`).
 //!
 //! Two consumer surfaces:
@@ -24,13 +24,13 @@ use crate::bilateral_schedule::{BilateralCounts, BilateralRoots, ExpectedBilater
 use crate::error::TurnError;
 use crate::turn::Turn;
 use crate::witnessed_receipt::WitnessedReceipt;
-use pyana_circuit::bilateral_aggregation_air::{
+use dregg_circuit::bilateral_aggregation_air::{
     AggregationInnerRow, AggregationOuterPi, BilateralAggregationAir, OUTER_BASE_COUNT,
     build_aggregation_trace,
 };
-use pyana_circuit::effect_vm::pi as inner_pi;
-use pyana_circuit::field::BabyBear;
-use pyana_types::CellId;
+use dregg_circuit::effect_vm::pi as inner_pi;
+use dregg_circuit::field::BabyBear;
+use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ pub(crate) fn cell_id_to_felts_8(c: &CellId) -> [BabyBear; 8] {
 ///   3. Builds the outer AIR trace (one row per WR, padded to power of two).
 ///   4. Computes the outer public-input vector from the canonical Turn.
 ///   5. Runs the outer STARK prover (via `EffectVmAir`'s
-///      `pyana_circuit::stark` family — the outer AIR is *currently*
+///      `dregg_circuit::stark` family — the outer AIR is *currently*
 ///      wrapped as a generic StarkAir; the recursion-mode wrapping is the
 ///      follow-up commit).
 ///
@@ -238,8 +238,8 @@ pub fn prove_aggregated_bundle(
     debug_assert_eq!(outer_pi_bb.len(), OUTER_BASE_COUNT);
 
     // Run the outer STARK prover. We use the local `stark::prove` adapter
-    // through `pyana_circuit::stark::prove_with_air`. The aggregation AIR
-    // implements `p3-air::Air` (gated by `plonky3`); the `pyana-circuit`
+    // through `dregg_circuit::stark::prove_with_air`. The aggregation AIR
+    // implements `p3-air::Air` (gated by `plonky3`); the `dregg-circuit`
     // crate provides a generic prove path via `effect_vm_p3_air` /
     // `plonky3_recursion_impl::prove_inner_for_air` for any
     // `RecursableAir`.
@@ -330,7 +330,7 @@ fn decode_aggregation_witness(bytes: &[u8]) -> Result<AggregationWitness, TurnEr
 ///   constraint; rejecting `outer_pi[OUTER_BILATERAL_CONSISTENT] != 1`
 ///   short-circuits before AIR replay.
 pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnError> {
-    use pyana_circuit::bilateral_aggregation_air as ag;
+    use dregg_circuit::bilateral_aggregation_air as ag;
 
     // Step 1: outer PI sanity.
     if bundle.outer_pi.len() != OUTER_BASE_COUNT {
@@ -479,7 +479,7 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
 
 /// Re-evaluate the [`BilateralAggregationAir`] symbolic constraints against
 /// the decoded trace + outer PI. This is the "scope-2 replay" pattern the
-/// per-cell verifier uses (`pyana_verifier::replay_chain`) but for the outer
+/// per-cell verifier uses (`dregg_verifier::replay_chain`) but for the outer
 /// AIR: we walk every row, recompute the constraint expressions over local
 /// + next + public values, and require every expression to evaluate to
 /// zero.
@@ -487,7 +487,7 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
 /// The replay covers every constraint in `Air::eval` exactly once per row;
 /// see `bilateral_aggregation_air::eval` for the source of truth.
 fn replay_aggregation_air(trace: &[Vec<BabyBear>], pi: &[BabyBear]) -> Result<(), TurnError> {
-    use pyana_circuit::bilateral_aggregation_air as ag;
+    use dregg_circuit::bilateral_aggregation_air as ag;
 
     if trace.is_empty() {
         return Err(TurnError::InvalidExecutionProof(
@@ -739,7 +739,7 @@ mod tests {
     use super::*;
     use crate::builder::{ActionBuilder, TurnBuilder};
     use crate::turn::TurnReceipt;
-    use pyana_cell::AuthRequired;
+    use dregg_cell::AuthRequired;
 
     fn cid(b: u8) -> CellId {
         CellId::from_bytes([b; 32])
@@ -771,10 +771,10 @@ mod tests {
 
     /// Build a per-cell WitnessedReceipt whose PI is fabricated from the
     /// canonical Turn's bilateral schedule. Mirrors
-    /// `pyana_verifier::bilateral_pair::fabricate_witnessed_receipt`.
+    /// `dregg_verifier::bilateral_pair::fabricate_witnessed_receipt`.
     fn fabricate_wr(turn: &Turn, cell_id: &CellId) -> WitnessedReceipt {
         use crate::bilateral_schedule::{ExpectedBilateral, project_into_pi};
-        use pyana_circuit::effect_vm::pi as p;
+        use dregg_circuit::effect_vm::pi as p;
 
         let sched = ExpectedBilateral::from_turn(turn);
         let counts = sched.counts_for(cell_id);
@@ -843,7 +843,7 @@ mod tests {
             .effect_grant_capability(
                 bob,
                 carol,
-                pyana_cell::CapabilityRef {
+                dregg_cell::CapabilityRef {
                     target: alice,
                     slot: 0,
                     permissions: AuthRequired::Signature,
@@ -869,7 +869,7 @@ mod tests {
         // The bundle epoch reflects the actor nonce.
         assert_eq!(bundle.bundle_epoch, 7);
         // outer PI's N_CELLS slot reflects the active count.
-        use pyana_circuit::bilateral_aggregation_air as ag;
+        use dregg_circuit::bilateral_aggregation_air as ag;
         assert_eq!(bundle.outer_pi[ag::OUTER_N_CELLS], 3);
     }
 
@@ -982,7 +982,7 @@ mod tests {
         let mut bundle = prove_aggregated_bundle(&turn, &entries).expect("prove");
 
         // Tamper.
-        use pyana_circuit::bilateral_aggregation_air as ag;
+        use dregg_circuit::bilateral_aggregation_air as ag;
         bundle.outer_pi[ag::OUTER_BILATERAL_CONSISTENT] = 0;
 
         let res = verify_aggregated_bundle(&bundle);
@@ -1008,7 +1008,7 @@ mod tests {
         let mut w = decode_aggregation_witness(&bundle.outer_proof_bytes)
             .expect("decode aggregation witness");
         // Flip the first row's IS_AGENT_CELL slot.
-        use pyana_circuit::bilateral_aggregation_air as ag;
+        use dregg_circuit::bilateral_aggregation_air as ag;
         let slot = ag::PI_BUFFER_BASE + inner_pi::IS_AGENT_CELL;
         w.trace_rows[0][slot] = w.trace_rows[0][slot].wrapping_add(1) & 0x7FFF_FFFF;
         bundle.outer_proof_bytes = postcard::to_allocvec(&w).expect("re-encode");

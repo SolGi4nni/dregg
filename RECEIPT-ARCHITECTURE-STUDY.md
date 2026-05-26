@@ -1,13 +1,13 @@
 # RECEIPT-ARCHITECTURE-STUDY
 
-A whole-system audit of pyana's receipt machinery: every shape, every
+A whole-system audit of dregg's receipt machinery: every shape, every
 construction site, every verifier, every consumer, every drift, and a
 prioritized plan for what has to land for Silver-Vision-completeness.
 
 The framing follows the houyhnhnm reframe (see
 `HOUYHNHNM-COMPARISON.md §3.1`, `HOUYHNHNM-DEEP-CRITIQUE.md §4.2`):
 the `WitnessedReceipt` chain is not an *auxiliary observability log*;
-it IS pyana's persistence layer — state on disk is *derivable* from
+it IS dregg's persistence layer — state on disk is *derivable* from
 the witness stream. That reframe is generous (the system was not
 *designed* that way) but it correctly names what the code, taken
 seriously, is reaching toward. This document audits the gap between
@@ -23,20 +23,20 @@ Read-only audit; no code touched.
 
 From `HOUYHNHNM-COMPARISON.md` §3.1 (verbatim):
 
-> Pyana: `WitnessedReceipt` is exactly this. The turn — the *event* —
+> `dregg`: `WitnessedReceipt` is exactly this. The turn — the *event* —
 > plus the proof that the transition was determined by the witness,
 > is the persisted unit. The state on disk is *derivable* from the
 > witness stream; the witness stream is the source of truth. Scope-2
 > WitnessedReceipts contain the inline witness data so *any* verifier
 > can re-execute the AIR.
 >
-> This is the central conceptual convergence. Pyana arrived at this
+> This is the central conceptual convergence. `dregg` arrived at this
 > from cryptographic necessity (you can't prove a transition you can't
 > replay); houyhnhnm arrived at it from "we want infinite undo and we
 > hate flushing buffers." Same answer, very different motivation.
 >
-> The houyhnhnm framing *clarifies pyana's existing meaning*: the
-> WitnessedReceipt chain is not "a log of proofs" — it is **pyana's
+> The houyhnhnm framing *clarifies dregg's existing meaning*: the
+> WitnessedReceipt chain is not "a log of proofs" — it is **dregg's
 > persistence layer**.
 
 If that is read as load-bearing rather than as a fortunate parallel,
@@ -71,7 +71,7 @@ The minimum operational test:
 > *currently authoritative* — and the reconstruction is identical
 > bit-for-bit on every honest node that performs it.
 
-§8 audits whether pyana passes this test today. Spoiler: partially.
+§8 audits whether dregg passes this test today. Spoiler: partially.
 
 ### 1.3 The codebase has a receipt-shaped hole, not a single receipt
 
@@ -95,7 +95,7 @@ discipline says "this is the canonical receipt shape." See §2 and §9.
 | 2 | `WitnessedReceipt` | `turn/src/witnessed_receipt.rs:243` | prove-site (today `node/src/mcp.rs::generate_effect_vm_proof`) | `verifier::replay_chain` / `replay_chain_recursive` | wraps (1) + STARK proof bytes + public_inputs + optional `WitnessBundle` (inline trace, optional `RecursiveProofVariant`) + `witness_hash` + `aggregate_membership` (always `None` in v1) |
 | 3 | `FederationReceipt` (+ `FederationReceiptBody`) | `federation/src/receipt.rs:42`, `federation/src/receipt.rs:123` | federation aggregator (`node/src/blocklace_sync.rs:2043`) | `FederationReceipt::verify` | turn_hash, block_height, block_hash, agent, nonce, pre_state, post_state, effects_hash, prev_hash + BLS/Ed25519 QC over the body hash, federation_id, committee_epoch |
 | 4 | `BridgeReceipt` | `cell/src/note_bridge.rs:361` (per `DESIGN-receipts.md §1.1`) | destination federation on a bridge mint | `verify_bridge_receipt` against caller-supplied keys | nullifier, dest_federation, mint_height, Ed25519 sig |
-| 5 | `BlocklaceTurnReceipt` | `blocklace/src/pyana_bridge.rs:119` | local blocklace bridge | (no verifier) | block_id, submitter, seq, turn_data, tier, finality_height — *not signed; local bookkeeping only* |
+| 5 | `BlocklaceTurnReceipt` | `blocklace/src/dregg_bridge.rs:119` | local blocklace bridge | (no verifier) | block_id, submitter, seq, turn_data, tier, finality_height — *not signed; local bookkeeping only* |
 
 There are also: `AuditReceipt` (`audit/src/event.rs:76`) for Merkle
 inclusion in a log; application-layer receipts (`WriteReceipt`,
@@ -135,7 +135,7 @@ pub struct TurnReceipt {
 
 Two hash views are computed:
 
-- `receipt_hash()` at `turn.rs:586` — versioned `pyana-receipt-v2`,
+- `receipt_hash()` at `turn.rs:586` — versioned `dregg-receipt-v2`,
   covers *every* field above except `executor_signature` (it would
   be circular).
 - `canonical_executor_signed_message()` at `turn.rs:686` — versioned
@@ -192,7 +192,7 @@ rather than a fourth builder.
 ### 2.4 What `receipt_hash()` binds (verbatim from `turn.rs:586-655`)
 
 ```text
-pyana-receipt-v2
+dregg-receipt-v2
   turn_hash                                  (32)
   forest_hash                                (32)
   pre_state_hash                             (32)
@@ -285,7 +285,7 @@ aggregator runs out-of-band, see the comment at
 Verifier: `FederationReceipt::verify` (`federation/src/receipt.rs:197`)
 checks version, epoch match, federation_id derivation, and either
 the BLS or per-voter QC over `body.body_hash()`. The `body_hash` is
-domain-separated `"pyana-fed-receipt-body-v1"`.
+domain-separated `"dregg-fed-receipt-body-v1"`.
 
 ### 2.7 The receipt verifiers — every consumer
 
@@ -332,7 +332,7 @@ Neither checks `federation_id` consistency, even though
 ### 2.9 The third hash view: `FederationReceiptBody::body_hash`
 
 ```text
-new_derive_key("pyana-fed-receipt-body-v1")
+new_derive_key("dregg-fed-receipt-body-v1")
   turn_hash || block_height || block_hash || agent || nonce
   || pre_state_hash || post_state_hash || effects_hash
   || prev_hash (presence + value)
@@ -715,7 +715,7 @@ inline trace can additionally produce a recursive STARK proof
 attesting that the inline trace satisfied the AIR. The two replay
 modes are equivalent in soundness *for the same trace*.
 
-(b) **Chain-IVC** via `pyana_circuit::ivc` and the
+(b) **Chain-IVC** via `dregg_circuit::ivc` and the
 `IvcBuilder`-driven `append_receipt` hook in
 `sdk/src/cipherclerk.rs:1800` (cclerk-local; not federation-side).
 This folds successive receipts' state transitions into a single
@@ -907,7 +907,7 @@ Neither verdict path exists today.
 
 ---
 
-## §8. The reconstruction question — can pyana actually rebuild state from receipts alone?
+## §8. The reconstruction question — can dregg actually rebuild state from receipts alone?
 
 ### 8.1 What's covered by the receipt stream
 
@@ -1003,7 +1003,7 @@ A receipt stream + genesis lets you reconstruct:
 - the `ArchivalAttestation` enforcement gap (§7) is closed so
   archived prefixes link cleanly to live tails
 
-...the WitnessedReceipt chain *is* pyana's persistence layer for
+...the WitnessedReceipt chain *is* dregg's persistence layer for
 hosted-cell state. For sovereign-cell internal state and for the
 atomic-path commitments, it is not yet.
 
@@ -1061,12 +1061,12 @@ form *strictly different trust assumptions*.
 
 | Object | Hash encoding |
 |---|---|
-| `Turn::hash` | hand-rolled BLAKE3 absorb, version `pyana-turn-v3` |
-| `TurnReceipt::receipt_hash` | hand-rolled BLAKE3 absorb, version `pyana-receipt-v2` |
-| `FederationReceiptBody::body_hash` | hand-rolled BLAKE3 via `new_derive_key("pyana-fed-receipt-body-v1")` |
+| `Turn::hash` | hand-rolled BLAKE3 absorb, version `dregg-turn-v3` |
+| `TurnReceipt::receipt_hash` | hand-rolled BLAKE3 absorb, version `dregg-receipt-v2` |
+| `FederationReceiptBody::body_hash` | hand-rolled BLAKE3 via `new_derive_key("dregg-fed-receipt-body-v1")` |
 | `WitnessBundle::witness_hash` | **postcard** + BLAKE3 |
-| `ArchivalAttestation::checkpoint_hash` | hand-rolled BLAKE3 via `new_derive_key("pyana-cell:archival-attestation v1")` |
-| `DeathCertificate::certificate_hash` | hand-rolled BLAKE3 via `new_derive_key("pyana-cell:death-certificate v1")` |
+| `ArchivalAttestation::checkpoint_hash` | hand-rolled BLAKE3 via `new_derive_key("dregg-cell:archival-attestation v1")` |
+| `DeathCertificate::certificate_hash` | hand-rolled BLAKE3 via `new_derive_key("dregg-cell:death-certificate v1")` |
 | `AttestedRoot::signing_message` | hand-rolled `Vec<u8>` build (no BLAKE3 — the signature scheme hashes) |
 
 Two patterns mixed: `Hasher::new()` + manual domain tag (Turn, Receipt)
@@ -1219,7 +1219,7 @@ the proof attested, regardless of path. **Effort: small.** ~10 LOC.
 
 **P1-5. `WitnessedReceipt` has its own canonical hash.** (This study
 §2.5.) Currently a WR's identity collapses to its inner receipt.
-Add `WitnessedReceipt::witnessed_receipt_hash() = H("pyana-wr-v1"
+Add `WitnessedReceipt::witnessed_receipt_hash() = H("dregg-wr-v1"
 || receipt_hash || H(proof_bytes) || witness_hash)`. This makes
 "this WR with that proof" a content-addressable artifact. **Effort:
 small.** ~15 LOC.
@@ -1246,7 +1246,7 @@ archive effect. **Effort: medium.** ~80 LOC including aggregator
 plumbing.
 
 **P2-4. Reconstructor-facing crate.** (Per `HOUYHNHNM-COMPARISON.md
-§8.9`'s suggestion.) Land `pyana-receipts-archive` micro-crate with
+§8.9`'s suggestion.) Land `dregg-receipts-archive` micro-crate with
 `ReceiptArchive { covering_root: AttestedRoot, receipts:
 Vec<WitnessedReceipt> }` as a *type* and an
 `Archive::reconstruct_state()` function that exercises the §8 path

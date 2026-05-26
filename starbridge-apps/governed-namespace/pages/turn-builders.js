@@ -2,7 +2,7 @@
 //
 // Cipherclerk-named turn-builder presets for the governed-namespace app.
 // Each builder produces the canonical turnSpec shape that
-// `window.pyana.signTurn(turnSpec)` (the extension cclerk API — see
+// `window.dregg.signTurn(turnSpec)` (the extension cclerk API — see
 // extension/src/page.ts) consumes. The builders never touch raw private
 // keys; signing always crosses the cclerk boundary.
 //
@@ -16,12 +16,12 @@
 //   register_service({ target, path, target_uri })
 //
 // Registers under both:
-//   window.pyana.builders['governed-namespace'].<method>
-//   window.pyanaTurnBuilders['governed-namespace'].<method>
+//   window.dregg.builders['governed-namespace'].<method>
+//   window.dreggTurnBuilders['governed-namespace'].<method>
 //
 // The dual registration is for back-compat with the inspector module
-// which imported from `window.pyanaTurnBuilders`. New code should prefer
-// `window.pyana.builders['governed-namespace']` for consistency with
+// which imported from `window.dreggTurnBuilders`. New code should prefer
+// `window.dregg.builders['governed-namespace']` for consistency with
 // nameservice / identity / subscription.
 
 // Slot indices — mirror constants in src/lib.rs.
@@ -76,13 +76,13 @@ function u64BE(n) {
 }
 
 async function blake3(bytes) {
-  if (typeof window !== 'undefined' && window.pyana?.blake3) {
-    const out = await window.pyana.blake3(bytes);
+  if (typeof window !== 'undefined' && window.dregg?.blake3) {
+    const out = await window.dregg.blake3(bytes);
     return Array.from(asUint8(out));
   }
   // Fallback to SubtleCrypto SHA-256 — NOT the same hash the executor
   // uses, but deterministic enough for demo/dev environments where
-  // pyana.blake3 isn't wired.
+  // dregg.blake3 isn't wired.
   const buf = await crypto.subtle.digest('SHA-256', asUint8(bytes));
   return Array.from(new Uint8Array(buf));
 }
@@ -92,9 +92,9 @@ async function routesCommitment(routes) {
   // canonical JSON serialization. The Rust side computes the same
   // commitment via blake3 over the canonical encoding; a fully-faithful
   // implementation would route through wasm. Hosts wanting exact byte
-  // agreement should expose `window.pyana.governedNamespace.commitRoutes(...)`.
-  if (typeof window !== 'undefined' && window.pyana?.governedNamespace?.commitRoutes) {
-    return Array.from(asUint8(await window.pyana.governedNamespace.commitRoutes(routes)));
+  // agreement should expose `window.dregg.governedNamespace.commitRoutes(...)`.
+  if (typeof window !== 'undefined' && window.dregg?.governedNamespace?.commitRoutes) {
+    return Array.from(asUint8(await window.dregg.governedNamespace.commitRoutes(routes)));
   }
   const canonical = JSON.stringify(routes);
   return blake3(canonical);
@@ -200,17 +200,17 @@ const BUILDERS = {
 };
 
 if (typeof window !== 'undefined') {
-  window.pyana ??= {};
-  window.pyana.builders ??= {};
-  window.pyana.builders['governed-namespace'] = {
-    ...(window.pyana.builders['governed-namespace'] ?? {}),
+  window.dregg ??= {};
+  window.dregg.builders ??= {};
+  window.dregg.builders['governed-namespace'] = {
+    ...(window.dregg.builders['governed-namespace'] ?? {}),
     ...BUILDERS,
   };
   // Legacy alias — the inspector module imports this name. Keep both
   // surfaces so older host pages don't break.
-  window.pyanaTurnBuilders ??= {};
-  window.pyanaTurnBuilders['governed-namespace'] = {
-    ...(window.pyanaTurnBuilders['governed-namespace'] ?? {}),
+  window.dreggTurnBuilders ??= {};
+  window.dreggTurnBuilders['governed-namespace'] = {
+    ...(window.dreggTurnBuilders['governed-namespace'] ?? {}),
     ...BUILDERS,
   };
 }

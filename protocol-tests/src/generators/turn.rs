@@ -1,4 +1,4 @@
-//! Strategies for generating fully-formed [`pyana_turn::Turn`] values that
+//! Strategies for generating fully-formed [`dregg_turn::Turn`] values that
 //! the executor will accept.
 //!
 //! A "valid-shaped" turn is one where:
@@ -19,8 +19,8 @@
 use std::collections::HashMap;
 
 use proptest::prelude::*;
-use pyana_cell::CellId;
-use pyana_turn::{Action, Authorization, CallForest, DelegationMode, Effect, turn::Turn};
+use dregg_cell::CellId;
+use dregg_turn::{Action, Authorization, CallForest, DelegationMode, Effect, turn::Turn};
 
 /// A single transfer operation described abstractly, before being projected
 /// into a `Turn`.

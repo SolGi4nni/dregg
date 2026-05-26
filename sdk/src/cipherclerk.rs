@@ -11,7 +11,7 @@
 //! The name traces to Greg Egan's *Polis* and its descendants, where a
 //! citizen's cipherclerk is the autonomous component that holds keys,
 //! attests credentials, and brokers capabilities on the citizen's
-//! behalf. "Wallet" was a poor fit: pyana wallets mostly manage
+//! behalf. "Wallet" was a poor fit: dregg wallets mostly manage
 //! *capabilities*, not balances.
 
 use std::collections::HashMap;
@@ -19,22 +19,22 @@ use std::collections::HashMap;
 use ed25519_dalek::Signer;
 use zeroize::{Zeroize, Zeroizing};
 
-use pyana_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
-use pyana_cell::note::NoteCommitment;
-use pyana_cell::stealth::{StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress};
-use pyana_cell::{Cell, CellId};
-use pyana_circuit::BabyBear;
-use pyana_circuit::IvcProof;
-use pyana_circuit::PredicateType;
-use pyana_circuit::ivc::IvcBuilder;
-use pyana_circuit::merkle_air::compute_parent_poseidon2;
-use pyana_circuit::poseidon2;
-use pyana_intent::sse::EncryptedIntent;
-use pyana_intent::{CommitmentId, IntentKind, MatchSpec};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken, TokenClearance};
-use pyana_trace::{AuthorizationTrace, Fact as TraceFact};
-use pyana_turn::{Effect, SovereignCellWitness, Turn};
-use pyana_types::{PublicKey, Signature};
+use dregg_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
+use dregg_cell::note::NoteCommitment;
+use dregg_cell::stealth::{StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress};
+use dregg_cell::{Cell, CellId};
+use dregg_circuit::BabyBear;
+use dregg_circuit::IvcProof;
+use dregg_circuit::PredicateType;
+use dregg_circuit::ivc::IvcBuilder;
+use dregg_circuit::merkle_air::compute_parent_poseidon2;
+use dregg_circuit::poseidon2;
+use dregg_intent::sse::EncryptedIntent;
+use dregg_intent::{CommitmentId, IntentKind, MatchSpec};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken, TokenClearance};
+use dregg_trace::{AuthorizationTrace, Fact as TraceFact};
+use dregg_turn::{Effect, SovereignCellWitness, Turn};
+use dregg_types::{PublicKey, Signature};
 
 use crate::error::SdkError;
 use crate::mnemonic;
@@ -82,7 +82,7 @@ pub struct FactIndex(pub usize);
 
 /// Verification mode selector for authorization presentation.
 ///
-/// Pyana supports three verification modes with progressive privacy guarantees:
+/// Dregg supports three verification modes with progressive privacy guarantees:
 ///
 /// - **Trusted**: Local Datalog evaluation, full visibility, ~8us.
 /// - **SelectiveDisclosure**: STARK proof with chosen facts revealed, ~200ms.
@@ -150,9 +150,9 @@ pub enum FactDisclosure {
         /// Indices into the token state's fact set that serve as inputs to the expression.
         input_indices: Vec<usize>,
         /// The arithmetic expression to evaluate over the inputs.
-        expression: pyana_circuit::ArithExpr,
+        expression: dregg_circuit::ArithExpr,
         /// The predicate to prove about the expression result.
-        predicate: pyana_circuit::ArithPredicate,
+        predicate: dregg_circuit::ArithPredicate,
     },
     /// Do not reveal anything about this fact.
     Hidden,
@@ -265,9 +265,9 @@ pub enum AuthorizationPresentation {
         ///
         /// This value is embedded as a public input in the STARK proof. The verifier
         /// recomputes it from `revealed_facts` using
-        /// [`pyana_bridge::compute_revealed_facts_commitment`] and confirms it matches.
+        /// [`dregg_bridge::compute_revealed_facts_commitment`] and confirms it matches.
         /// A mismatch means the prover lied about which facts were part of the derivation.
-        revealed_facts_commitment: pyana_circuit::binding::WideHash,
+        revealed_facts_commitment: dregg_circuit::binding::WideHash,
         /// Predicate proofs for facts disclosed via predicate mode.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         predicate_proofs: Vec<(usize, BridgePredicateProof)>,
@@ -372,7 +372,7 @@ pub struct HeldToken {
     /// A derived proof-only key for federation membership proofs.
     ///
     /// This is a BLAKE3 key derivation of the issuer's root HMAC key:
-    /// `blake3::derive_key("pyana-proof-key-v1", &root_key)`.
+    /// `blake3::derive_key("dregg-proof-key-v1", &root_key)`.
     /// It is NEVER the raw root key itself.
     ///
     /// For root tokens, this is derived at construction time from `root_key`.
@@ -413,7 +413,7 @@ pub struct HeldToken {
     ///
     /// `None` for tokens minted locally (they can generate fresh proofs on the fly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+    membership_proof: Option<dregg_commit::merkle::MerkleProof>,
     /// BLAKE3 hash of the serialized caveat chain, computed by the delegator at
     /// delegation time from the HMAC-verified token.
     ///
@@ -467,7 +467,7 @@ impl HeldToken {
         // key leakage through attenuation or delegation paths.
         // Uses the same context string as AgentCipherclerk::derive_proof_key().
         let issuer_key = if root_key != [0u8; 32] {
-            blake3::derive_key("pyana-proof-key-v1", &root_key)
+            blake3::derive_key("dregg-proof-key-v1", &root_key)
         } else {
             [0u8; 32]
         };
@@ -546,7 +546,7 @@ impl HeldToken {
     }
 
     /// Pre-generated federation membership proof (for delegated tokens).
-    pub fn membership_proof(&self) -> Option<&pyana_commit::merkle::MerkleProof> {
+    pub fn membership_proof(&self) -> Option<&dregg_commit::merkle::MerkleProof> {
         self.membership_proof.as_ref()
     }
 
@@ -598,7 +598,7 @@ impl HeldToken {
     }
 
     /// Decode this held token into a [`MacaroonToken`] for operations.
-    pub fn decode(&self) -> Result<MacaroonToken, pyana_token::TokenError> {
+    pub fn decode(&self) -> Result<MacaroonToken, dregg_token::TokenError> {
         MacaroonToken::from_encoded(&self.encoded, self.root_key)
     }
 
@@ -734,7 +734,7 @@ pub struct DelegatedToken {
     ///
     /// This is the token's `issuer_key`, which is already a one-way BLAKE3
     /// derivation of the issuer's root HMAC key via
-    /// `blake3::derive_key("pyana-proof-key-v1", &root_key)`. It grants the
+    /// `blake3::derive_key("dregg-proof-key-v1", &root_key)`. It grants the
     /// delegatee the ability to generate federation membership proofs (ZK) but
     /// NOT the ability to mint or forge tokens (one-way derivation).
     ///
@@ -758,7 +758,7 @@ pub struct DelegatedToken {
     /// this pre-generated proof becomes invalid and the delegatee can no longer prove
     /// membership.
     #[serde(default)]
-    pub membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+    pub membership_proof: Option<dregg_commit::merkle::MerkleProof>,
     /// BLAKE3 hash of the serialized caveat chain, computed by the delegator from
     /// the HMAC-verified token. The delegatee uses this to verify caveat integrity
     /// before generating ZK proofs.
@@ -842,7 +842,7 @@ pub enum DelegationAuthority {
     ///
     /// This variant is only compiled when the `unsafe-test-utils` cargo
     /// feature is enabled (or in `cfg(test)` builds of this crate). Production
-    /// callers depending on `pyana-sdk` without the feature cannot construct
+    /// callers depending on `dregg-sdk` without the feature cannot construct
     /// it, by design — this prevents the well-known footgun of
     /// `DelegationAuthority::Open { warn: false }` accidentally landing in a
     /// production codepath that consumes untrusted envelopes.
@@ -861,7 +861,7 @@ pub enum DelegationAuthority {
 /// externally-sourced bytes.
 ///
 /// Even local delegations are signed (so authority binding is uniform across all
-/// code paths). The envelope tag is `"pyana-delegation-local-v1"`, which is
+/// code paths). The envelope tag is `"dregg-delegation-local-v1"`, which is
 /// distinct from the external envelope tag and therefore non-confusable.
 #[derive(Clone, Debug)]
 pub struct LocalDelegation {
@@ -872,7 +872,7 @@ pub struct LocalDelegation {
     pub(crate) delegatee: PublicKey,
     pub(crate) restrictions: Attenuation,
     pub(crate) proof_key: Option<[u8; 32]>,
-    pub(crate) membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+    pub(crate) membership_proof: Option<dregg_commit::merkle::MerkleProof>,
     pub(crate) caveat_chain_hash: Option<[u8; 32]>,
     pub(crate) delegator_signature: Signature,
     pub(crate) delegator_public_key: PublicKey,
@@ -912,7 +912,7 @@ pub struct AgentCipherclerk {
     /// the complete history of state transitions from genesis. This is the
     /// proof-carrying state representation — anyone can verify the chain
     /// without contacting a federation.
-    receipt_chain: Vec<pyana_turn::TurnReceipt>,
+    receipt_chain: Vec<dregg_turn::TurnReceipt>,
     /// Optional IVC builder for incrementally accumulating state transition proofs.
     /// When enabled, each appended receipt extends the IVC chain, producing a
     /// constant-size proof of the entire state transition history.
@@ -924,7 +924,7 @@ pub struct AgentCipherclerk {
     /// The mnemonic phrase used to create this cipherclerk (if created from mnemonic).
     /// Stored encrypted at rest; zeroized on drop.
     mnemonic_phrase: Option<String>,
-    /// The derivation path used for this cipherclerk's key (e.g., "pyana/0").
+    /// The derivation path used for this cipherclerk's key (e.g., "dregg/0").
     derivation_path: Option<String>,
     /// Stealth keypair for receiving private notes via one-time addresses.
     /// Derived deterministically from the cipherclerk's signing key.
@@ -958,7 +958,7 @@ impl AgentCipherclerk {
     ///
     /// # Example
     /// ```
-    /// use pyana_sdk::AgentCipherclerk;
+    /// use dregg_sdk::AgentCipherclerk;
     /// let cipherclerk = AgentCipherclerk::new();
     /// println!("Agent identity: {}", cipherclerk.public_key());
     /// ```
@@ -1008,7 +1008,7 @@ impl AgentCipherclerk {
 
     /// Create a cipherclerk from a BIP39 mnemonic phrase.
     ///
-    /// Derives the main agent identity at path `pyana/0`. The mnemonic and seed
+    /// Derives the main agent identity at path `dregg/0`. The mnemonic and seed
     /// are retained in memory (encrypted at rest) for sub-agent derivation and
     /// backup export.
     ///
@@ -1019,16 +1019,16 @@ impl AgentCipherclerk {
     pub fn from_mnemonic(mnemonic_str: &str, passphrase: &str) -> Result<Self, SdkError> {
         let seed = mnemonic::mnemonic_to_seed(mnemonic_str, passphrase)
             .map_err(|e| SdkError::MissingKey(e.to_string()))?;
-        let mut cclerk = Self::from_seed_at_path(seed, "pyana/0");
+        let mut cclerk = Self::from_seed_at_path(seed, "dregg/0");
         cclerk.mnemonic_phrase = Some(mnemonic_str.to_string());
         Ok(cclerk)
     }
 
-    /// Create a cipherclerk from a raw 64-byte seed, deriving the main identity at `pyana/0`.
+    /// Create a cipherclerk from a raw 64-byte seed, deriving the main identity at `dregg/0`.
     ///
     /// Use this when the seed was obtained externally (e.g., from an encrypted backup).
     pub fn from_seed(seed: [u8; 64]) -> Self {
-        Self::from_seed_at_path(seed, "pyana/0")
+        Self::from_seed_at_path(seed, "dregg/0")
     }
 
     /// Create a cipherclerk from a seed at a specific derivation path.
@@ -1060,7 +1060,7 @@ impl AgentCipherclerk {
 
     /// Derive a sub-agent cipherclerk at the given index.
     ///
-    /// The sub-agent's key is derived from the same seed at path `pyana/{index}`.
+    /// The sub-agent's key is derived from the same seed at path `dregg/{index}`.
     /// Requires that this cipherclerk was created from a mnemonic or seed.
     ///
     /// # Arguments
@@ -1070,7 +1070,7 @@ impl AgentCipherclerk {
         let seed = self
             .seed
             .ok_or_else(|| SdkError::MissingKey("cipherclerk has no seed for derivation".into()))?;
-        let path = format!("pyana/{}", index);
+        let path = format!("dregg/{}", index);
         Ok(Self::from_seed_at_path(seed, &path))
     }
 
@@ -1140,12 +1140,12 @@ impl AgentCipherclerk {
         blake3::derive_key(context, &self.signing_key.to_bytes())
     }
 
-    /// Get the node's Ed25519 signing key as a `pyana_types::SigningKey`.
+    /// Get the node's Ed25519 signing key as a `dregg_types::SigningKey`.
     ///
     /// Used by the gossip layer for asymmetric envelope signing. Each node
     /// signs with its own key; peers verify using this node's public key.
-    pub fn gossip_signing_key(&self) -> pyana_types::SigningKey {
-        pyana_types::SigningKey::from_bytes(&self.signing_key.to_bytes())
+    pub fn gossip_signing_key(&self) -> dregg_types::SigningKey {
+        dregg_types::SigningKey::from_bytes(&self.signing_key.to_bytes())
     }
 
     /// Derive a [`CellId`] for this agent in a given domain.
@@ -1374,7 +1374,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         to: &PublicKey,
         restrictions: &Attenuation,
-        federation_tree: &pyana_commit::merkle::MerkleTree,
+        federation_tree: &dregg_commit::merkle::MerkleTree,
     ) -> Result<DelegatedToken, SdkError> {
         self.delegate_with_tree_and_parent(token, to, restrictions, federation_tree, [0u8; 32])
     }
@@ -1385,7 +1385,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         to: &PublicKey,
         restrictions: &Attenuation,
-        federation_tree: &pyana_commit::merkle::MerkleTree,
+        federation_tree: &dregg_commit::merkle::MerkleTree,
         parent_delegation_hash: [u8; 32],
     ) -> Result<DelegatedToken, SdkError> {
         let attenuated = self.attenuate(token, restrictions)?;
@@ -1848,7 +1848,7 @@ impl AgentCipherclerk {
     /// Call this after `TurnExecutor::execute()` returns a committed result.
     pub fn append_receipt(
         &mut self,
-        mut receipt: pyana_turn::TurnReceipt,
+        mut receipt: dregg_turn::TurnReceipt,
     ) -> Result<(), ChainAppendError> {
         let expected_prev = self.receipt_chain.last().map(|r| r.receipt_hash());
 
@@ -1873,8 +1873,8 @@ impl AgentCipherclerk {
 
         // Extend the IVC chain if enabled.
         if let Some(ref mut builder) = self.ivc_builder {
-            use pyana_circuit::fold_types::{FoldWitness, RemovedFact};
-            use pyana_circuit::ivc::FoldDelta;
+            use dregg_circuit::fold_types::{FoldWitness, RemovedFact};
+            use dregg_circuit::ivc::FoldDelta;
 
             // Encode the state transition as a fold step: the pre_state transitions
             // to post_state. We model this as a removal of the pre-state fact and
@@ -1896,7 +1896,7 @@ impl AgentCipherclerk {
                     membership_proof: None,
                 }],
                 num_added_checks: 1,
-                added_checks_commitment: pyana_circuit::fold_air::compute_test_checks_commitment(1),
+                added_checks_commitment: dregg_circuit::fold_air::compute_test_checks_commitment(1),
             };
             // Best-effort: if the fold fails (e.g., root mismatch on first step),
             // we still append the receipt but skip IVC extension.
@@ -1914,7 +1914,7 @@ impl AgentCipherclerk {
     /// Get the head (most recent) receipt in this cipherclerk's chain.
     ///
     /// Returns `None` if no turns have been executed yet (empty chain).
-    pub fn receipt_head(&self) -> Option<&pyana_turn::TurnReceipt> {
+    pub fn receipt_head(&self) -> Option<&dregg_turn::TurnReceipt> {
         self.receipt_chain.last()
     }
 
@@ -1928,8 +1928,8 @@ impl AgentCipherclerk {
     /// Get the full receipt chain for verification or export.
     ///
     /// The chain can be presented to any verifier who can check its integrity
-    /// using [`pyana_turn::verify_receipt_chain`] without contacting a federation.
-    pub fn receipt_chain(&self) -> &[pyana_turn::TurnReceipt] {
+    /// using [`dregg_turn::verify_receipt_chain`] without contacting a federation.
+    pub fn receipt_chain(&self) -> &[dregg_turn::TurnReceipt] {
         &self.receipt_chain
     }
 
@@ -1945,11 +1945,11 @@ impl AgentCipherclerk {
     ///
     /// Returns `Ok(())` if the chain is valid, or an error describing the break.
     /// An empty chain is considered valid (no receipts to verify).
-    pub fn verify_own_chain(&self) -> Result<(), pyana_turn::VerifyError> {
+    pub fn verify_own_chain(&self) -> Result<(), dregg_turn::VerifyError> {
         if self.receipt_chain.is_empty() {
             return Ok(());
         }
-        pyana_turn::verify_receipt_chain(&self.receipt_chain)
+        dregg_turn::verify_receipt_chain(&self.receipt_chain)
     }
 
     // =========================================================================
@@ -1994,7 +1994,7 @@ impl AgentCipherclerk {
     /// This is the unified entry point for all three verification modes:
     ///
     /// - [`VerificationMode::Trusted`]: Runs Datalog locally via
-    ///   [`verify_token_datalog`](pyana_token::datalog_verify::verify_token_datalog),
+    ///   [`verify_token_datalog`](dregg_token::datalog_verify::verify_token_datalog),
     ///   returns full clearance and trace (~8us).
     ///
     /// - [`VerificationMode::SelectiveDisclosure`]: Runs Datalog locally, then
@@ -2014,8 +2014,8 @@ impl AgentCipherclerk {
     /// # Example
     ///
     /// ```no_run
-    /// use pyana_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
-    /// use pyana_token::AuthRequest;
+    /// use dregg_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation};
+    /// use dregg_token::AuthRequest;
     ///
     /// let cipherclerk = AgentCipherclerk::new();
     /// # let token = todo!();
@@ -2056,7 +2056,7 @@ impl AgentCipherclerk {
         token.reverify_delegation_binding()?;
 
         let caveat_set = Self::extract_caveat_set(token)?;
-        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+        let result = dregg_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
 
         Ok(AuthorizationPresentation::Trusted {
             clearance: result.clearance,
@@ -2079,11 +2079,11 @@ impl AgentCipherclerk {
         // Step 1: Run Datalog locally to get the trace.
         // For attenuated tokens, use structural extraction (ZK proof replaces HMAC).
         let caveat_set = Self::extract_caveat_set_for_proof(token)?;
-        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+        let result = dregg_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
 
         let conclusion = matches!(
             result.trace.conclusion,
-            pyana_trace::Conclusion::Allow { .. }
+            dregg_trace::Conclusion::Allow { .. }
         );
 
         // Step 2: Extract the facts at the requested indices.
@@ -2101,7 +2101,7 @@ impl AgentCipherclerk {
 
         // Step 3: Compute the Poseidon2 commitment over the revealed facts.
         // This cryptographically binds the revealed facts to the STARK proof.
-        let commitment = pyana_bridge::compute_revealed_facts_commitment(&revealed_facts);
+        let commitment = dregg_bridge::compute_revealed_facts_commitment(&revealed_facts);
 
         // Step 4: Generate STARK proof via the bridge with the commitment as a public input.
         // For attenuated tokens, use the issuer key path.
@@ -2136,11 +2136,11 @@ impl AgentCipherclerk {
         // For attenuated tokens, use structural extraction (no HMAC verification needed —
         // the ZK proof replaces the HMAC chain as the integrity guarantee).
         let caveat_set = Self::extract_caveat_set_for_proof(token)?;
-        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+        let result = dregg_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
 
         let conclusion = matches!(
             result.trace.conclusion,
-            pyana_trace::Conclusion::Allow { .. }
+            dregg_trace::Conclusion::Allow { .. }
         );
 
         // Step 2: Generate full STARK proof via the bridge.
@@ -2174,11 +2174,11 @@ impl AgentCipherclerk {
         // Step 1: Run Datalog locally to get the full trace.
         // For attenuated tokens, use structural extraction (ZK proof replaces HMAC).
         let caveat_set = Self::extract_caveat_set_for_proof(token)?;
-        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+        let result = dregg_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
 
         let conclusion = matches!(
             result.trace.conclusion,
-            pyana_trace::Conclusion::Allow { .. }
+            dregg_trace::Conclusion::Allow { .. }
         );
 
         // Step 2: Extract all derived facts from the trace.
@@ -2219,14 +2219,14 @@ impl AgentCipherclerk {
                     let bridge_predicate =
                         Self::predicate_type_to_bridge(*predicate_type, threshold.as_u32());
 
-                    let proof = pyana_bridge::prove_predicate_for_fact(
+                    let proof = dregg_bridge::prove_predicate_for_fact(
                         value,
                         fact_hash,
                         state_root,
                         &bridge_predicate,
                     )
                     .ok_or_else(|| {
-                        SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                        SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                             "predicate proof generation failed for fact[{}]:                              {:?} not satisfiable for value {}",
                             fact_index, predicate_type, value
                         )))
@@ -2245,7 +2245,7 @@ impl AgentCipherclerk {
                     let term_bbs = Self::trace_fact_terms_bb(fact);
                     let fact_hash = poseidon2::hash_fact(pred_bb, &term_bbs);
 
-                    let committed_proof = pyana_bridge::prove_committed_threshold(
+                    let committed_proof = dregg_bridge::prove_committed_threshold(
                         value,
                         threshold.as_u32(),
                         blinding.as_u32(),
@@ -2253,7 +2253,7 @@ impl AgentCipherclerk {
                         state_root,
                     )
                     .ok_or_else(|| {
-                        SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                        SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                             "committed-threshold proof generation failed for fact[{}]: \
                              value {} does not satisfy committed threshold",
                             fact_index, value
@@ -2265,7 +2265,7 @@ impl AgentCipherclerk {
                     // are Poseidon2 hashes that hide the actual values).
                     let bridge_proof = BridgePredicateProof {
                         predicate: Predicate::Gte(0), // Threshold hidden; predicate label is nominal
-                        proof: pyana_bridge::BridgePredicateProofInner::CommittedThreshold(
+                        proof: dregg_bridge::BridgePredicateProofInner::CommittedThreshold(
                             committed_proof.proof,
                         ),
                         fact_commitment: committed_proof.fact_commitment,
@@ -2281,7 +2281,7 @@ impl AgentCipherclerk {
         }
 
         // Step 4: Compute Poseidon2 commitment over revealed facts.
-        let commitment = pyana_bridge::compute_revealed_facts_commitment(&revealed_facts);
+        let commitment = dregg_bridge::compute_revealed_facts_commitment(&revealed_facts);
 
         // Step 5: Generate STARK proof with the commitment as public input.
         // For attenuated tokens, use the issuer key path.
@@ -2314,12 +2314,12 @@ impl AgentCipherclerk {
     fn extract_fact_value(fact: &TraceFact) -> Result<u32, SdkError> {
         if let Some(term) = fact.terms.first() {
             match term {
-                pyana_trace::Term::Int(v) => Ok((*v).max(0).min(u32::MAX as i64) as u32),
-                pyana_trace::Term::Const(sym) => {
+                dregg_trace::Term::Int(v) => Ok((*v).max(0).min(u32::MAX as i64) as u32),
+                dregg_trace::Term::Const(sym) => {
                     Ok(u32::from_le_bytes([sym[0], sym[1], sym[2], sym[3]])
-                        % pyana_circuit::field::BABYBEAR_P)
+                        % dregg_circuit::field::BABYBEAR_P)
                 }
-                pyana_trace::Term::Var(_) => Err(SdkError::InvalidWitness(
+                dregg_trace::Term::Var(_) => Err(SdkError::InvalidWitness(
                     "cannot prove predicates on unground variables".into(),
                 )),
             }
@@ -2338,9 +2338,9 @@ impl AgentCipherclerk {
         let mut term_bbs = [BabyBear::ZERO; 3];
         for (i, term) in fact.terms.iter().take(3).enumerate() {
             term_bbs[i] = match term {
-                pyana_trace::Term::Const(sym) => Self::bytes_to_babybear(sym),
-                pyana_trace::Term::Int(v) => BabyBear::from_u64(*v as u64),
-                pyana_trace::Term::Var(_) => BabyBear::ZERO,
+                dregg_trace::Term::Const(sym) => Self::bytes_to_babybear(sym),
+                dregg_trace::Term::Int(v) => BabyBear::from_u64(*v as u64),
+                dregg_trace::Term::Var(_) => BabyBear::ZERO,
             };
         }
         term_bbs
@@ -2363,13 +2363,13 @@ impl AgentCipherclerk {
     /// Extract the CaveatSet from a held token by decoding and verifying the HMAC chain.
     fn extract_caveat_set(
         token: &HeldToken,
-    ) -> Result<pyana_token::pyana_macaroon::caveat::CaveatSet, SdkError> {
+    ) -> Result<dregg_token::dregg_macaroon::caveat::CaveatSet, SdkError> {
         let decoded = token.decode()?;
         let caveat_set = decoded
             .inner()
             .verify(token.root_key(), decoded.discharges())
             .map_err(|e| {
-                SdkError::Token(pyana_token::TokenError::VerificationFailed(e.to_string()))
+                SdkError::Token(dregg_token::TokenError::VerificationFailed(e.to_string()))
             })?;
         Ok(caveat_set)
     }
@@ -2391,7 +2391,7 @@ impl AgentCipherclerk {
     /// HMAC verification but need to extract caveats for proof generation.
     fn extract_caveat_set_structural(
         token: &HeldToken,
-    ) -> Result<pyana_token::pyana_macaroon::caveat::CaveatSet, SdkError> {
+    ) -> Result<dregg_token::dregg_macaroon::caveat::CaveatSet, SdkError> {
         // Decode the macaroon structure (this doesn't require the root key — it just
         // parses the MsgPack encoding). We use a zeroed key since from_encoded only
         // stores the key, it doesn't verify during decode.
@@ -2408,7 +2408,7 @@ impl AgentCipherclerk {
     /// (i.e., tokens that can prove but can't mint).
     fn extract_caveat_set_for_proof(
         token: &HeldToken,
-    ) -> Result<pyana_token::pyana_macaroon::caveat::CaveatSet, SdkError> {
+    ) -> Result<dregg_token::dregg_macaroon::caveat::CaveatSet, SdkError> {
         // Authority invariant: any caveat extraction path that produces facts
         // ultimately fed into a STARK proof must re-verify the delegation
         // binding so post-receive tampering of `encoded` is detected here too.
@@ -2433,7 +2433,7 @@ impl AgentCipherclerk {
     /// Serialize a bridge presentation proof to bytes for wire transmission.
     ///
     /// Converts to a `WirePresentationProof` (stripping the private trace) and
-    /// serializes via postcard. This matches what `PyanaEngine::verify_presentation_against`
+    /// serializes via postcard. This matches what `DreggEngine::verify_presentation_against`
     /// expects: `postcard::from_bytes::<WirePresentationProof>`.
     fn serialize_proof(bridge_proof: BridgePresentationProof) -> Result<Vec<u8>, SdkError> {
         let wire_proof = bridge_proof.into_wire_proof();
@@ -2472,13 +2472,13 @@ impl AgentCipherclerk {
         Signature(sig.to_bytes())
     }
 
-    /// Build an [`EncryptedTurn`](pyana_turn::EncryptedTurn) envelope for
+    /// Build an [`EncryptedTurn`](dregg_turn::EncryptedTurn) envelope for
     /// the given `Turn`, encrypted to `executor_x25519_public` (the X25519
     /// public key the recipient executor exposes via
     /// `GET /turns/encryption-key`).
     ///
     /// This is the sender-side counterpart of
-    /// [`pyana_turn::TurnExecutor::apply_encrypted_turn`]. The resulting
+    /// [`dregg_turn::TurnExecutor::apply_encrypted_turn`]. The resulting
     /// envelope can be postcard-encoded and POSTed to
     /// `/turns/submit-encrypted`.
     ///
@@ -2503,8 +2503,8 @@ impl AgentCipherclerk {
         turn: &Turn,
         executor_x25519_public: &[u8; 32],
         submitted_at: i64,
-    ) -> Result<pyana_turn::EncryptedTurn, pyana_turn::EncryptedTurnError> {
-        use pyana_turn::{ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs};
+    ) -> Result<dregg_turn::EncryptedTurn, dregg_turn::EncryptedTurnError> {
+        use dregg_turn::{ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs};
 
         // Build an empty Bloom conflict set. A real sender would populate
         // this from the turn's access set so the federation can detect
@@ -2516,9 +2516,9 @@ impl AgentCipherclerk {
         // (`serde_json`) that `encrypt_for_executor` uses, so
         // `verify_metadata` succeeds at the executor.
         let plaintext = serde_json::to_vec(turn)
-            .map_err(|e| pyana_turn::EncryptedTurnError::SerializationFailed(e.to_string()))?;
+            .map_err(|e| dregg_turn::EncryptedTurnError::SerializationFailed(e.to_string()))?;
         let turn_commitment = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-turn-commitment v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-commitment v1");
             hasher.update(&plaintext);
             *hasher.finalize().as_bytes()
         };
@@ -2546,15 +2546,15 @@ impl AgentCipherclerk {
         )
     }
 
-    /// Sign an [`Action`](pyana_turn::action::Action) by replacing its
-    /// authorization with a real [`Signature`](pyana_turn::action::Authorization)
+    /// Sign an [`Action`](dregg_turn::action::Action) by replacing its
+    /// authorization with a real [`Signature`](dregg_turn::action::Authorization)
     /// over the canonical signing message.
     ///
     /// This is the SDK-side wrapper for the "ed25519 sign-an-action" dance
     /// that today is replicated across `apps/nameservice` (with a `[0u8; 64]`
     /// placeholder) and `runtime::AgentRuntime::execute` (with manual
     /// `TurnExecutor::compute_signing_message` calls). It uses the
-    /// `pyana-action-sig-v2` domain that `TurnExecutor` requires.
+    /// `dregg-action-sig-v2` domain that `TurnExecutor` requires.
     ///
     /// # Arguments
     ///
@@ -2562,7 +2562,7 @@ impl AgentCipherclerk {
     ///   overwritten.
     /// * `federation_id` - The 32-byte federation identifier this action
     ///   is being authorized against. Must match what the executor will
-    ///   use during verification (`pyana-action-sig-v2` binds the
+    ///   use during verification (`dregg-action-sig-v2` binds the
     ///   federation into the signing message to prevent cross-federation
     ///   replay).
     ///
@@ -2572,11 +2572,11 @@ impl AgentCipherclerk {
     /// `Authorization::Signature(sig)` over the canonical message bytes.
     pub fn sign_action(
         &self,
-        action: pyana_turn::action::Action,
+        action: dregg_turn::action::Action,
         federation_id: &[u8; 32],
-    ) -> pyana_turn::action::Action {
-        use pyana_turn::action::{Action, Authorization};
-        use pyana_turn::executor::TurnExecutor;
+    ) -> dregg_turn::action::Action {
+        use dregg_turn::action::{Action, Authorization};
+        use dregg_turn::executor::TurnExecutor;
         let unsigned = Action {
             authorization: Authorization::Unchecked,
             ..action
@@ -2589,7 +2589,7 @@ impl AgentCipherclerk {
         }
     }
 
-    /// Build a self-signed single-effect [`Action`](pyana_turn::action::Action)
+    /// Build a self-signed single-effect [`Action`](dregg_turn::action::Action)
     /// targeting one cell.
     ///
     /// Equivalent to the `ActionBuilder::new(target, method, caller).signed_by(sig)`
@@ -2598,7 +2598,7 @@ impl AgentCipherclerk {
     /// placeholders. The `caller` field is set to the cipherclerk's default cell.
     ///
     /// For multi-effect actions, prefer building an [`Action`] directly (e.g.
-    /// through `pyana_turn::builder::ActionBuilder`) and then calling
+    /// through `dregg_turn::builder::ActionBuilder`) and then calling
     /// [`sign_action`](Self::sign_action).
     ///
     /// # Arguments
@@ -2613,11 +2613,11 @@ impl AgentCipherclerk {
         method: &str,
         effects: Vec<Effect>,
         federation_id: &[u8; 32],
-    ) -> pyana_turn::action::Action {
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
+    ) -> dregg_turn::action::Action {
+        use dregg_turn::action::{Action, Authorization, DelegationMode};
         let unsigned = Action {
             target,
-            method: pyana_turn::action::symbol(method),
+            method: dregg_turn::action::symbol(method),
             args: Vec::new(),
             authorization: Authorization::Unchecked,
             preconditions: Default::default(),
@@ -2643,16 +2643,16 @@ impl AgentCipherclerk {
     ///
     /// The action is *not* re-signed here — callers should produce it via
     /// [`make_action`](Self::make_action) or [`sign_action`](Self::sign_action).
-    pub fn make_turn(&self, action: pyana_turn::action::Action) -> Turn {
+    pub fn make_turn(&self, action: dregg_turn::action::Action) -> Turn {
         self.make_turn_for("default", action)
     }
 
     /// Like [`make_turn`](Self::make_turn) but with an explicit agent domain.
-    pub fn make_turn_for(&self, domain: &str, action: pyana_turn::action::Action) -> Turn {
+    pub fn make_turn_for(&self, domain: &str, action: dregg_turn::action::Action) -> Turn {
         self.make_turn_with_actions_for(domain, vec![action])
     }
 
-    /// Wrap multiple already-signed [`Action`](pyana_turn::action::Action)s in
+    /// Wrap multiple already-signed [`Action`](dregg_turn::action::Action)s in
     /// one [`Turn`] (an atomic group). All actions appear as roots in the
     /// same call forest — they commit or roll back together.
     ///
@@ -2666,7 +2666,7 @@ impl AgentCipherclerk {
     /// Defaults match [`make_turn`](Self::make_turn): agent =
     /// `cell_id("default")`, fee = 0, `previous_receipt_hash` taken from the
     /// cipherclerk's chain head.
-    pub fn make_turn_with_actions(&self, actions: Vec<pyana_turn::action::Action>) -> Turn {
+    pub fn make_turn_with_actions(&self, actions: Vec<dregg_turn::action::Action>) -> Turn {
         self.make_turn_with_actions_for("default", actions)
     }
 
@@ -2675,9 +2675,9 @@ impl AgentCipherclerk {
     pub fn make_turn_with_actions_for(
         &self,
         domain: &str,
-        actions: Vec<pyana_turn::action::Action>,
+        actions: Vec<dregg_turn::action::Action>,
     ) -> Turn {
-        use pyana_turn::forest::{CallForest, CallTree};
+        use dregg_turn::forest::{CallForest, CallTree};
         let roots = actions
             .into_iter()
             .map(|action| CallTree {
@@ -2735,9 +2735,9 @@ impl AgentCipherclerk {
     /// # Example
     ///
     /// ```no_run
-    /// # use pyana_sdk::AgentCipherclerk;
-    /// # use pyana_cell::CellId;
-    /// # use pyana_turn::Effect;
+    /// # use dregg_sdk::AgentCipherclerk;
+    /// # use dregg_cell::CellId;
+    /// # use dregg_turn::Effect;
     /// # let cipherclerk = AgentCipherclerk::new();
     /// # let token = todo!();
     /// # let target = CellId::derive_raw(&[0; 32], &[0; 32]);
@@ -2759,9 +2759,9 @@ impl AgentCipherclerk {
         resource_name: &str,
         fee: u64,
     ) -> Result<SignedTurn, SdkError> {
-        use pyana_token::AuthRequest;
-        use pyana_turn::action::{Action, Authorization, DelegationMode};
-        use pyana_turn::forest::{CallForest, CallTree};
+        use dregg_token::AuthRequest;
+        use dregg_turn::action::{Action, Authorization, DelegationMode};
+        use dregg_turn::forest::{CallForest, CallTree};
 
         // 1. Generate authorization STARK proof.
         let request = AuthRequest {
@@ -2784,7 +2784,7 @@ impl AgentCipherclerk {
         // 2. Build the turn with proof authorization.
         let action = Action {
             target,
-            method: pyana_turn::action::symbol(action_name),
+            method: dregg_turn::action::symbol(action_name),
             args: Vec::new(),
             authorization: Authorization::Proof {
                 proof_bytes,
@@ -2846,7 +2846,7 @@ impl AgentCipherclerk {
     //   / Open). The signature MUST verify under the asserted delegator key, AND
     //   the asserted delegator key MUST be accepted by the policy.
     //
-    //   We do not chain to a root issuer because pyana cipherclerks are sovereign:
+    //   We do not chain to a root issuer because dregg cipherclerks are sovereign:
     //   there is no global registry of "who is allowed to mint a token". Trust
     //   is established explicitly by the receiver — either by hard-coding an
     //   expected key, or by linking to a previously-accepted parent envelope.
@@ -2869,10 +2869,10 @@ impl AgentCipherclerk {
     // =========================================================================
 
     /// Domain key for the external delegation envelope (v2).
-    const DELEGATION_ENVELOPE_V2_CONTEXT: &'static str = "pyana-delegation-envelope-v2";
+    const DELEGATION_ENVELOPE_V2_CONTEXT: &'static str = "dregg-delegation-envelope-v2";
 
     /// Domain key for the local (in-process) delegation envelope.
-    const DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT: &'static str = "pyana-delegation-local-v1";
+    const DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT: &'static str = "dregg-delegation-local-v1";
 
     /// Compute the canonical v2 signing message for an external delegation envelope.
     ///
@@ -3030,7 +3030,7 @@ impl AgentCipherclerk {
         delegatee: PublicKey,
         restrictions: Attenuation,
         proof_key: Option<[u8; 32]>,
-        membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+        membership_proof: Option<dregg_commit::merkle::MerkleProof>,
         caveat_chain_hash: Option<[u8; 32]>,
     ) -> LocalDelegation {
         let membership_leaf = membership_proof.as_ref().map(|p| p.leaf_hash);
@@ -3112,7 +3112,7 @@ impl AgentCipherclerk {
         let federation_root_bb = Self::compute_federation_root_bb(&proof_key);
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
-        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+        let mut builder = dregg_bridge::BridgePresentationBuilder::new_with_root_bb(
             proof_key,
             federation_root,
             federation_root_bb,
@@ -3202,7 +3202,7 @@ impl AgentCipherclerk {
         };
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
-        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+        let mut builder = dregg_bridge::BridgePresentationBuilder::new_with_root_bb(
             *issuer_key,
             federation_root,
             federation_root_bb,
@@ -3234,7 +3234,7 @@ impl AgentCipherclerk {
         &self,
         token: &HeldToken,
         request: &AuthRequest,
-        commitment: pyana_circuit::binding::WideHash,
+        commitment: dregg_circuit::binding::WideHash,
     ) -> Result<BridgePresentationProof, SdkError> {
         if !token.can_mint() {
             return Err(SdkError::MissingKey(
@@ -3254,7 +3254,7 @@ impl AgentCipherclerk {
         let federation_root_bb = Self::compute_federation_root_bb(&proof_key);
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
-        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+        let mut builder = dregg_bridge::BridgePresentationBuilder::new_with_root_bb(
             proof_key,
             federation_root,
             federation_root_bb,
@@ -3281,7 +3281,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         issuer_key: &[u8; 32],
         request: &AuthRequest,
-        commitment: pyana_circuit::binding::WideHash,
+        commitment: dregg_circuit::binding::WideHash,
     ) -> Result<BridgePresentationProof, SdkError> {
         if *issuer_key == [0u8; 32] {
             return Err(SdkError::MissingKey(
@@ -3311,7 +3311,7 @@ impl AgentCipherclerk {
         };
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
-        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+        let mut builder = dregg_bridge::BridgePresentationBuilder::new_with_root_bb(
             *issuer_key,
             federation_root,
             federation_root_bb,
@@ -3377,7 +3377,7 @@ impl AgentCipherclerk {
         let federation_root_bb = Self::compute_federation_root_bb(&proof_key);
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
-        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+        let mut builder = dregg_bridge::BridgePresentationBuilder::new_with_root_bb(
             proof_key,
             federation_root,
             federation_root_bb,
@@ -3440,8 +3440,8 @@ impl AgentCipherclerk {
     /// # Example
     ///
     /// ```no_run
-    /// use pyana_sdk::AgentCipherclerk;
-    /// use pyana_bridge::Predicate;
+    /// use dregg_sdk::AgentCipherclerk;
+    /// use dregg_bridge::Predicate;
     ///
     /// let cipherclerk = AgentCipherclerk::new();
     /// # let token = todo!();
@@ -3458,8 +3458,8 @@ impl AgentCipherclerk {
         token: &HeldToken,
         attribute: &str,
         attribute_value: u32,
-        predicate: pyana_bridge::Predicate,
-    ) -> Result<pyana_bridge::BridgePredicateProof, SdkError> {
+        predicate: dregg_bridge::Predicate,
+    ) -> Result<dregg_bridge::BridgePredicateProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -3476,14 +3476,14 @@ impl AgentCipherclerk {
         let state_root = Self::bytes_to_babybear(&proof_key);
 
         // Generate the predicate proof via the bridge.
-        let proof = pyana_bridge::prove_predicate_for_fact(
+        let proof = dregg_bridge::prove_predicate_for_fact(
             attribute_value,
             fact_hash,
             state_root,
             &predicate,
         )
         .ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
                 format!(
                     "predicate proof generation failed: the statement '{attribute}' {:?} is not satisfiable for value {attribute_value}",
                     predicate
@@ -3516,15 +3516,15 @@ impl AgentCipherclerk {
     /// A proof that can be verified by anyone knowing the fact commitments.
     ///
     /// Note: Arithmetic predicate bridge integration is not yet complete.
-    /// This method will return an error until `pyana_bridge::prove_arithmetic_for_facts`
+    /// This method will return an error until `dregg_bridge::prove_arithmetic_for_facts`
     /// is implemented.
     pub fn prove_arithmetic(
         &self,
         token: &HeldToken,
         inputs: &[(String, u64)],
-        expression: pyana_circuit::ArithExpr,
-        predicate: pyana_circuit::ArithPredicate,
-    ) -> Result<pyana_circuit::ArithmeticPredicateProof, SdkError> {
+        expression: dregg_circuit::ArithExpr,
+        predicate: dregg_circuit::ArithPredicate,
+    ) -> Result<dregg_circuit::ArithmeticPredicateProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -3543,7 +3543,7 @@ impl AgentCipherclerk {
                 let value_bb = BabyBear::new(*value as u32);
                 let fact_hash =
                     poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
-                pyana_circuit::compute_arithmetic_fact_commitment(fact_hash, state_root)
+                dregg_circuit::compute_arithmetic_fact_commitment(fact_hash, state_root)
             })
             .collect();
 
@@ -3552,34 +3552,34 @@ impl AgentCipherclerk {
 
         // Construct the predicate with the expression embedded.
         let full_predicate = match predicate {
-            pyana_circuit::ArithPredicate::ExprGte(_, threshold) => {
-                pyana_circuit::ArithPredicate::ExprGte(expression, threshold)
+            dregg_circuit::ArithPredicate::ExprGte(_, threshold) => {
+                dregg_circuit::ArithPredicate::ExprGte(expression, threshold)
             }
-            pyana_circuit::ArithPredicate::ExprLte(_, threshold) => {
-                pyana_circuit::ArithPredicate::ExprLte(expression, threshold)
+            dregg_circuit::ArithPredicate::ExprLte(_, threshold) => {
+                dregg_circuit::ArithPredicate::ExprLte(expression, threshold)
             }
-            pyana_circuit::ArithPredicate::ExprEq(_, value) => {
-                pyana_circuit::ArithPredicate::ExprEq(expression, value)
+            dregg_circuit::ArithPredicate::ExprEq(_, value) => {
+                dregg_circuit::ArithPredicate::ExprEq(expression, value)
             }
-            pyana_circuit::ArithPredicate::ExprInRange(_, low, high) => {
-                pyana_circuit::ArithPredicate::ExprInRange(expression, low, high)
+            dregg_circuit::ArithPredicate::ExprInRange(_, low, high) => {
+                dregg_circuit::ArithPredicate::ExprInRange(expression, low, high)
             }
-            pyana_circuit::ArithPredicate::ExprCompare(_, expr_b, op) => {
-                pyana_circuit::ArithPredicate::ExprCompare(expression, expr_b, op)
+            dregg_circuit::ArithPredicate::ExprCompare(_, expr_b, op) => {
+                dregg_circuit::ArithPredicate::ExprCompare(expression, expr_b, op)
             }
-            pyana_circuit::ArithPredicate::ExprNeq(_, value) => {
-                pyana_circuit::ArithPredicate::ExprNeq(expression, value)
+            dregg_circuit::ArithPredicate::ExprNeq(_, value) => {
+                dregg_circuit::ArithPredicate::ExprNeq(expression, value)
             }
         };
 
-        let witness = pyana_circuit::ArithmeticPredicateWitness {
+        let witness = dregg_circuit::ArithmeticPredicateWitness {
             inputs: input_values,
             predicate: full_predicate,
             fact_commitment: aggregate_commitment,
         };
 
-        pyana_circuit::prove_arithmetic_predicate(witness).ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+        dregg_circuit::prove_arithmetic_predicate(witness).ok_or_else(|| {
+            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
                 "arithmetic predicate is not satisfiable for the given inputs".into(),
             ))
         })
@@ -3621,12 +3621,12 @@ impl AgentCipherclerk {
         my_blinding: BabyBear,
         their_value: u64,
         their_blinding: BabyBear,
-        relation: pyana_circuit::RelationType,
-    ) -> Result<pyana_circuit::RelationalPredicateProof, SdkError> {
+        relation: dregg_circuit::RelationType,
+    ) -> Result<dregg_circuit::RelationalPredicateProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
-        let proof = pyana_circuit::prove_value_comparison(
+        let proof = dregg_circuit::prove_value_comparison(
             BabyBear::new(my_value as u32),
             my_blinding,
             BabyBear::new(their_value as u32),
@@ -3634,7 +3634,7 @@ impl AgentCipherclerk {
             relation,
         )
         .ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                 "relational predicate proof failed: '{}' {:?} is not satisfiable \
                  (my_value={}, their_value={})",
                 my_attribute, relation, my_value, their_value
@@ -3673,7 +3673,7 @@ impl AgentCipherclerk {
         attribute_value: u64,
         threshold: u64,
         blinding: BabyBear,
-    ) -> Result<pyana_circuit::CommittedThresholdProof, SdkError> {
+    ) -> Result<dregg_circuit::CommittedThresholdProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -3685,17 +3685,17 @@ impl AgentCipherclerk {
 
         let proof_key = Self::derive_proof_key(token.root_key());
         let state_root = Self::bytes_to_babybear(&proof_key);
-        let fact_commitment = pyana_circuit::compute_fact_commitment(fact_hash, state_root);
+        let fact_commitment = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
 
-        let witness = pyana_circuit::CommittedThresholdWitness {
+        let witness = dregg_circuit::CommittedThresholdWitness {
             private_value: value_bb,
             threshold: BabyBear::new(threshold as u32),
             blinding,
             fact_commitment,
         };
 
-        let proof = pyana_circuit::prove_committed_threshold(witness).ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+        let proof = dregg_circuit::prove_committed_threshold(witness).ok_or_else(|| {
+            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                 "committed-threshold proof failed: '{}' value {} does not satisfy threshold {}",
                 attribute, attribute_value, threshold
             )))
@@ -3730,9 +3730,9 @@ impl AgentCipherclerk {
     pub fn prove_program(
         &self,
         token: &HeldToken,
-        program: &pyana_circuit::predicate_program::PredicateProgram,
+        program: &dregg_circuit::predicate_program::PredicateProgram,
         attribute_values: &std::collections::HashMap<String, u64>,
-    ) -> Result<pyana_circuit::predicate_program::ProgramProof, SdkError> {
+    ) -> Result<dregg_circuit::predicate_program::ProgramProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -3741,9 +3741,9 @@ impl AgentCipherclerk {
         let state_root = Self::bytes_to_babybear(&proof_key);
 
         // Prove via the bridge layer.
-        let proof = pyana_bridge::prove_predicate_program(program, attribute_values, state_root)
+        let proof = dregg_bridge::prove_predicate_program(program, attribute_values, state_root)
             .map_err(|e| {
-                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                     "predicate program proof failed: {e}"
                 )))
             })?;
@@ -3773,9 +3773,9 @@ impl AgentCipherclerk {
     pub fn prove_program_full(
         &self,
         token: &HeldToken,
-        program: &pyana_circuit::predicate_program::PredicateProgram,
-        private_state: &pyana_circuit::predicate_program::PrivateState,
-    ) -> Result<pyana_circuit::predicate_program::ProgramProof, SdkError> {
+        program: &dregg_circuit::predicate_program::PredicateProgram,
+        private_state: &dregg_circuit::predicate_program::PrivateState,
+    ) -> Result<dregg_circuit::predicate_program::ProgramProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -3784,9 +3784,9 @@ impl AgentCipherclerk {
         let state_root = Self::bytes_to_babybear(&proof_key);
 
         // Prove via the bridge layer (full private state path).
-        let proof = pyana_bridge::prove_predicate_program_full(program, private_state, state_root)
+        let proof = dregg_bridge::prove_predicate_program_full(program, private_state, state_root)
             .map_err(|e| {
-                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                     "predicate program proof failed: {e}"
                 )))
             })?;
@@ -3823,8 +3823,8 @@ impl AgentCipherclerk {
     /// # Example
     ///
     /// ```no_run
-    /// use pyana_sdk::AgentCipherclerk;
-    /// use pyana_circuit::BabyBear;
+    /// use dregg_sdk::AgentCipherclerk;
+    /// use dregg_circuit::BabyBear;
     /// use std::collections::HashMap;
     ///
     /// let cipherclerk = AgentCipherclerk::new();
@@ -3839,13 +3839,13 @@ impl AgentCipherclerk {
     /// ```
     pub fn prove_for_intent_predicates(
         &self,
-        intent: &pyana_intent::Intent,
+        intent: &dregg_intent::Intent,
         my_values: &std::collections::HashMap<String, u64>,
         state_root: BabyBear,
-    ) -> Result<Vec<(usize, pyana_circuit::PredicateProof)>, SdkError> {
-        use pyana_bridge::Predicate;
-        use pyana_circuit::poseidon2;
-        use pyana_intent::fulfillment::parse_predicate_type;
+    ) -> Result<Vec<(usize, dregg_circuit::PredicateProof)>, SdkError> {
+        use dregg_bridge::Predicate;
+        use dregg_circuit::poseidon2;
+        use dregg_intent::fulfillment::parse_predicate_type;
 
         let requirements = &intent.matcher.predicate_requirements;
         let mut proofs = Vec::with_capacity(requirements.len());
@@ -3886,14 +3886,14 @@ impl AgentCipherclerk {
                 poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
 
             // Generate the predicate proof.
-            let bridge_proof = pyana_bridge::prove_predicate_for_fact(
+            let bridge_proof = dregg_bridge::prove_predicate_for_fact(
                 *value as u32,
                 fact_hash,
                 state_root,
                 &predicate,
             )
             .ok_or_else(|| {
-                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
                     "predicate proof failed for '{}': value {} does not satisfy {:?}",
                     req.attribute, value, predicate
                 )))
@@ -3906,17 +3906,17 @@ impl AgentCipherclerk {
             // against the lower threshold).
             let _ = parse_predicate_type; // ensure import is used
             let circuit_proof = match bridge_proof.proof {
-                pyana_bridge::BridgePredicateProofInner::Single(p) => p,
-                pyana_bridge::BridgePredicateProofInner::Range(low_proof, _high_proof) => {
+                dregg_bridge::BridgePredicateProofInner::Single(p) => p,
+                dregg_bridge::BridgePredicateProofInner::Range(low_proof, _high_proof) => {
                     // For in_range, the lower bound proof demonstrates value >= threshold.
                     low_proof
                 }
-                pyana_bridge::BridgePredicateProofInner::CommittedThreshold(p) => {
+                dregg_bridge::BridgePredicateProofInner::CommittedThreshold(p) => {
                     // CommittedThreshold uses a committed comparison proof.
                     // Convert to PredicateProof with Gte semantics (committed threshold
                     // proves value >= threshold).
-                    pyana_circuit::PredicateProof {
-                        op: pyana_circuit::PredicateType::Gte,
+                    dregg_circuit::PredicateProof {
+                        op: dregg_circuit::PredicateType::Gte,
                         threshold: p.threshold_commitment,
                         fact_commitment: p.fact_commitment,
                         stark_proof: p.stark_proof,
@@ -3958,12 +3958,12 @@ impl AgentCipherclerk {
     /// A `TurnReceipt` proving payment was transferred, or an error.
     pub fn fulfill_and_collect(
         &self,
-        intent: &pyana_intent::Intent,
-        base_fulfillment: &pyana_intent::fulfillment::Fulfillment,
+        intent: &dregg_intent::Intent,
+        base_fulfillment: &dregg_intent::fulfillment::Fulfillment,
         my_values: &std::collections::HashMap<String, u64>,
         runtime: &crate::runtime::AgentRuntime,
         current_height: u64,
-    ) -> Result<pyana_turn::TurnReceipt, SdkError> {
+    ) -> Result<dregg_turn::TurnReceipt, SdkError> {
         // Step 1: Generate predicate proofs for the intent's requirements.
         // Derive the state root from this cipherclerk's receipt chain head. The receipt
         // chain's post_state_hash is the committed state that verifiers can check.
@@ -3980,7 +3980,7 @@ impl AgentCipherclerk {
         let predicate_proofs = self.prove_for_intent_predicates(intent, my_values, state_root)?;
 
         // Step 3: Construct the FulfillmentWithPredicates.
-        let fulfillment_with_preds = pyana_intent::fulfillment::FulfillmentWithPredicates {
+        let fulfillment_with_preds = dregg_intent::fulfillment::FulfillmentWithPredicates {
             base: base_fulfillment.clone(),
             predicate_proofs,
             state_root,
@@ -3992,9 +3992,9 @@ impl AgentCipherclerk {
         let recipient_cell = runtime.cell_id(); // We (the fulfiller) receive.
 
         let mut ledger = runtime.ledger().lock().unwrap();
-        let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+        let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
-        pyana_intent::fulfillment::execute_fulfillment_flow(
+        dregg_intent::fulfillment::execute_fulfillment_flow(
             intent,
             &fulfillment_with_preds,
             &executor,
@@ -4004,7 +4004,7 @@ impl AgentCipherclerk {
             current_height,
             current_height,
         )
-        .map_err(|e| SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(e.to_string())))
+        .map_err(|e| SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(e.to_string())))
     }
 
     // =========================================================================
@@ -4026,7 +4026,7 @@ impl AgentCipherclerk {
     /// do not need length prefixes since their boundaries are unambiguous.
     fn compute_turn_bytes(&self, turn: &Turn) -> [u8; 32] {
         // P2-10 closure (v1 → v3): the cipherclerk's signing message is now the
-        // canonical `Turn::hash()` (domain `pyana-turn-v3:`), which covers
+        // canonical `Turn::hash()` (domain `dregg-turn-v3:`), which covers
         // every semantically load-bearing field on the Turn: agent, nonce,
         // call_forest, fee, memo, valid_until, depends_on,
         // previous_receipt_hash, execution_proof,
@@ -4105,11 +4105,11 @@ impl AgentCipherclerk {
     /// - Computing the federation Merkle leaf hash (proving issuer membership)
     /// - Generating ZK proofs bound to this issuer's identity
     ///
-    /// The context string "pyana-proof-key-v1" is used for domain separation.
+    /// The context string "dregg-proof-key-v1" is used for domain separation.
     /// This MUST match the derivation in [`HeldToken::new()`], [`delegate()`], and
     /// any external delegation protocol implementations.
     pub(crate) fn derive_proof_key(root_key: &[u8; 32]) -> [u8; 32] {
-        blake3::derive_key("pyana-proof-key-v1", root_key)
+        blake3::derive_key("dregg-proof-key-v1", root_key)
     }
 
     /// Compute a BLAKE3 commitment to a token's caveat chain.
@@ -4153,7 +4153,7 @@ impl AgentCipherclerk {
     /// [`Self::MAX_MEMBERSHIP_PROOF_DEPTH`] or carries mismatched
     /// `siblings.len()` / `path_indices.len()` (P1-6).
     pub(crate) fn compute_root_from_membership_proof(
-        proof: &pyana_commit::merkle::MerkleProof,
+        proof: &dregg_commit::merkle::MerkleProof,
     ) -> Result<BabyBear, SdkError> {
         if proof.siblings.len() > Self::MAX_MEMBERSHIP_PROOF_DEPTH
             || proof.path_indices.len() > Self::MAX_MEMBERSHIP_PROOF_DEPTH
@@ -4198,7 +4198,7 @@ impl AgentCipherclerk {
         let hash = hasher.finalize();
         let bytes = hash.as_bytes();
         u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-            % pyana_circuit::field::BABYBEAR_P
+            % dregg_circuit::field::BABYBEAR_P
     }
 
     // =========================================================================
@@ -4212,11 +4212,11 @@ impl AgentCipherclerk {
     /// may still succeed (partial pipeline success).
     pub fn submit_pipeline(
         &mut self,
-        pipeline: pyana_turn::Pipeline,
-        executor: &pyana_turn::TurnExecutor,
-        ledger: &mut pyana_cell::Ledger,
-    ) -> Vec<Result<pyana_turn::TurnReceipt, pyana_turn::PipelineError>> {
-        let results = pyana_turn::execute_pipeline(pipeline, ledger, executor);
+        pipeline: dregg_turn::Pipeline,
+        executor: &dregg_turn::TurnExecutor,
+        ledger: &mut dregg_cell::Ledger,
+    ) -> Vec<Result<dregg_turn::TurnReceipt, dregg_turn::PipelineError>> {
+        let results = dregg_turn::execute_pipeline(pipeline, ledger, executor);
 
         // Append successful receipts to this cipherclerk's chain.
         // Strict mode: a fork between the executor and the cipherclerk is
@@ -4247,9 +4247,9 @@ impl AgentCipherclerk {
     /// This is a helper for constructing pipelines: you hash a turn and then
     /// create a reference that downstream turns can use to target outputs of
     /// this turn.
-    pub fn eventual_ref(turn: &pyana_turn::Turn, slot: u32) -> pyana_turn::EventualRef {
+    pub fn eventual_ref(turn: &dregg_turn::Turn, slot: u32) -> dregg_turn::EventualRef {
         let turn_hash = turn.hash();
-        pyana_turn::EventualRef::new(turn_hash, slot)
+        dregg_turn::EventualRef::new(turn_hash, slot)
     }
 
     // =========================================================================
@@ -4443,16 +4443,16 @@ impl AgentCipherclerk {
         let agent_cell = *cell_id;
         let nonce = self.receipt_chain.len() as u64;
 
-        let mut forest = pyana_turn::forest::CallForest::new();
-        let action = pyana_turn::Action {
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action = dregg_turn::Action {
             target: agent_cell,
-            method: pyana_turn::action::symbol("make_sovereign"),
+            method: dregg_turn::action::symbol("make_sovereign"),
             args: Vec::new(),
-            authorization: pyana_turn::Authorization::Unchecked,
+            authorization: dregg_turn::Authorization::Unchecked,
             effects: vec![Effect::MakeSovereign { cell: agent_cell }],
-            preconditions: pyana_cell::Preconditions::default(),
-            may_delegate: pyana_turn::DelegationMode::None,
-            commitment_mode: pyana_turn::CommitmentMode::Full,
+            preconditions: dregg_cell::Preconditions::default(),
+            may_delegate: dregg_turn::DelegationMode::None,
+            commitment_mode: dregg_turn::CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };
@@ -4575,16 +4575,16 @@ impl AgentCipherclerk {
         let agent_cell = *cell_id;
         let nonce = self.receipt_chain.len() as u64;
 
-        let mut forest = pyana_turn::forest::CallForest::new();
-        let action = pyana_turn::Action {
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action = dregg_turn::Action {
             target: agent_cell,
-            method: pyana_turn::action::symbol("sovereign_execute"),
+            method: dregg_turn::action::symbol("sovereign_execute"),
             args: Vec::new(),
-            authorization: pyana_turn::Authorization::Unchecked,
+            authorization: dregg_turn::Authorization::Unchecked,
             effects,
-            preconditions: pyana_cell::Preconditions::default(),
-            may_delegate: pyana_turn::DelegationMode::None,
-            commitment_mode: pyana_turn::CommitmentMode::Full,
+            preconditions: dregg_cell::Preconditions::default(),
+            may_delegate: dregg_turn::DelegationMode::None,
+            commitment_mode: dregg_turn::CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };
@@ -4695,12 +4695,12 @@ impl AgentCipherclerk {
 
         // 5. Generate the STARK proof using EffectVmAir (DSL cutover).
         let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
-        let initial_vm_state = pyana_circuit::CellState::new(
+        let initial_vm_state = dregg_circuit::CellState::new(
             cell_state.state.balance(),
             cell_state.state.nonce() as u32,
         );
         let (trace, public_inputs) =
-            pyana_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
+            dregg_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
 
         // 6. Extract new commitment from the proof's public inputs (PI[NEW_COMMIT_BASE..+4]).
         // Pack all 4 felts into 32 bytes using commitment_4bb_to_bytes — the executor's
@@ -4709,16 +4709,16 @@ impl AgentCipherclerk {
         // mismatch (GitHub #99): the verifier would see all-zero felts[1..3] while the proof
         // carried compute_commitment_4's salted positions 1..3.
         let new_commit_4 = [
-            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE],
-            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 1],
-            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 2],
-            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 3],
+            public_inputs[dregg_circuit::effect_vm::pi::NEW_COMMIT_BASE],
+            public_inputs[dregg_circuit::effect_vm::pi::NEW_COMMIT_BASE + 1],
+            public_inputs[dregg_circuit::effect_vm::pi::NEW_COMMIT_BASE + 2],
+            public_inputs[dregg_circuit::effect_vm::pi::NEW_COMMIT_BASE + 3],
         ];
-        let new_commitment = pyana_turn::TurnExecutor::commitment_4bb_to_bytes(new_commit_4);
+        let new_commitment = dregg_turn::TurnExecutor::commitment_4bb_to_bytes(new_commit_4);
 
-        let air = pyana_circuit::EffectVmAir::new(trace.len());
-        let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
-        let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
+        let air = dregg_circuit::EffectVmAir::new(trace.len());
+        let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
+        let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
 
         // 9. Update local sovereign state.
         self.sovereign_cells.insert(*cell_id, new_cell_state);
@@ -4727,16 +4727,16 @@ impl AgentCipherclerk {
         let agent_cell = *cell_id;
         let nonce = self.receipt_chain.len() as u64;
 
-        let mut forest = pyana_turn::forest::CallForest::new();
-        let action = pyana_turn::Action {
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action = dregg_turn::Action {
             target: agent_cell,
-            method: pyana_turn::action::symbol("sovereign_execute_proven"),
+            method: dregg_turn::action::symbol("sovereign_execute_proven"),
             args: Vec::new(),
-            authorization: pyana_turn::Authorization::Unchecked,
+            authorization: dregg_turn::Authorization::Unchecked,
             effects,
-            preconditions: pyana_cell::Preconditions::default(),
-            may_delegate: pyana_turn::DelegationMode::None,
-            commitment_mode: pyana_turn::CommitmentMode::Full,
+            preconditions: dregg_cell::Preconditions::default(),
+            may_delegate: dregg_turn::DelegationMode::None,
+            commitment_mode: dregg_turn::CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };
@@ -4806,22 +4806,22 @@ impl AgentCipherclerk {
     pub fn convert_effects_to_vm(
         cell_id: &CellId,
         effects: &[Effect],
-    ) -> Vec<pyana_circuit::effect_vm::Effect> {
-        use pyana_circuit::effect_vm::Effect as VmEffect;
-        use pyana_circuit::field::BabyBear;
+    ) -> Vec<dregg_circuit::effect_vm::Effect> {
+        use dregg_circuit::effect_vm::Effect as VmEffect;
+        use dregg_circuit::field::BabyBear;
 
         // AUDIT[P1-1]: 4-byte truncation. See trait-level audit note above.
         // Stage 1 widens commitment slots only; per-effect parameter slots
         // remain 31-bit until the per-variant AIR rewrites in Stages 3–6.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
-            BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            BabyBear::new(val_u32 % dregg_circuit::field::BABYBEAR_P)
         }
 
         // AUDIT[P1-1]: 4-byte truncation.
         fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
             let val_u32 = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
-            BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            BabyBear::new(val_u32 % dregg_circuit::field::BABYBEAR_P)
         }
 
         // #110: full 32-byte → 8-felt projection (4 bytes per felt,
@@ -4832,7 +4832,7 @@ impl AgentCipherclerk {
             for i in 0..8 {
                 let off = i * 4;
                 let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-                out[i] = BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                out[i] = BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
             }
             out
         }
@@ -5083,11 +5083,11 @@ impl AgentCipherclerk {
                     hasher.update(&checkpoint.archive_blob_hash);
                     let archive_hash_bytes = *hasher.finalize().as_bytes();
                     // #110: ReceiptArchive borrows the EmitEvent shape; use
-                    // a stable synthetic topic ("pyana-receipt-archive-v1")
+                    // a stable synthetic topic ("dregg-receipt-archive-v1")
                     // and treat archive_hash as the payload so the (topic,
                     // payload) PI slots distinguish ReceiptArchive from a
                     // genuine event emission.
-                    let topic_bytes = *blake3::hash(b"pyana-receipt-archive-v1").as_bytes();
+                    let topic_bytes = *blake3::hash(b"dregg-receipt-archive-v1").as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
                         topic_hash: bytes32_to_8_felts(&topic_bytes),
                         payload_hash: bytes32_to_8_felts(&archive_hash_bytes),
@@ -5231,15 +5231,15 @@ impl AgentCipherclerk {
                     hasher.update(recipient.as_bytes());
                     hasher.update(target.as_bytes());
                     let perm_byte: u8 = match permissions {
-                        pyana_cell::AuthRequired::None => 0,
-                        pyana_cell::AuthRequired::Signature => 1,
-                        pyana_cell::AuthRequired::Proof => 2,
-                        pyana_cell::AuthRequired::Either => 3,
-                        pyana_cell::AuthRequired::Impossible => 4,
-                        pyana_cell::AuthRequired::Custom { .. } => 5,
+                        dregg_cell::AuthRequired::None => 0,
+                        dregg_cell::AuthRequired::Signature => 1,
+                        dregg_cell::AuthRequired::Proof => 2,
+                        dregg_cell::AuthRequired::Either => 3,
+                        dregg_cell::AuthRequired::Impossible => 4,
+                        dregg_cell::AuthRequired::Custom { .. } => 5,
                     };
                     hasher.update(&[perm_byte]);
-                    if let pyana_cell::AuthRequired::Custom { vk_hash } = permissions {
+                    if let dregg_cell::AuthRequired::Custom { vk_hash } = permissions {
                         hasher.update(vk_hash);
                     }
                     let intro_hash_bytes = hasher.finalize();
@@ -5375,7 +5375,7 @@ impl AgentCipherclerk {
                     // Sentinel head hash tagged with queue identity so two
                     // dequeues on different queues produce distinct projections.
                     let mut hasher = blake3::Hasher::new();
-                    hasher.update(b"PYANA_DEQUEUE_HEAD/v1");
+                    hasher.update(b"DREGG_DEQUEUE_HEAD/v1");
                     hasher.update(queue.as_bytes());
                     // queue_len unknown without ledger; use 0.
                     hasher.update(&0u64.to_le_bytes());
@@ -5401,20 +5401,20 @@ impl AgentCipherclerk {
                     let mut net_deposit: u64 = 0;
                     for op in operations {
                         match op {
-                            pyana_turn::QueueTxOp::Enqueue { deposit, .. } => {
+                            dregg_turn::QueueTxOp::Enqueue { deposit, .. } => {
                                 net_deposit += deposit;
                             }
-                            pyana_turn::QueueTxOp::Dequeue { .. } => {}
+                            dregg_turn::QueueTxOp::Dequeue { .. } => {}
                         }
                     }
                     let op_count = operations.len() as u32;
                     let tx_hash_input: Vec<u8> = operations
                         .iter()
                         .flat_map(|op| match op {
-                            pyana_turn::QueueTxOp::Enqueue { message_hash, .. } => {
+                            dregg_turn::QueueTxOp::Enqueue { message_hash, .. } => {
                                 message_hash.to_vec()
                             }
-                            pyana_turn::QueueTxOp::Dequeue { queue } => queue.as_bytes().to_vec(),
+                            dregg_turn::QueueTxOp::Dequeue { queue } => queue.as_bytes().to_vec(),
                         })
                         .collect();
                     let tx_hash_bytes = blake3::hash(&tx_hash_input);
@@ -5422,7 +5422,7 @@ impl AgentCipherclerk {
                     // combined_old_root unknown without ledger; use cell_id sentinel.
                     let combined_old_root = hash_to_bb(cell_id.as_bytes());
                     let combined_new_root =
-                        pyana_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
+                        dregg_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
                     vm_effects.push(VmEffect::AtomicQueueTx {
                         op_count,
                         tx_hash,
@@ -5439,13 +5439,13 @@ impl AgentCipherclerk {
                     let pipeline_bb = hash_to_bb(pipeline_id);
                     let source_root = hash_to_bb(source.as_bytes());
                     let msg_hash = hash_to_bb(pipeline_id);
-                    let source_new = pyana_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
+                    let source_new = dregg_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
                     let sink_root = if let Some(sink) = sinks.first() {
                         hash_to_bb(sink.as_bytes())
                     } else {
                         BabyBear::ZERO
                     };
-                    let sink_new = pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
+                    let sink_new = dregg_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
                     vm_effects.push(VmEffect::PipelineStep {
                         pipeline_id: pipeline_bb,
                         source_old_root: source_root,
@@ -5467,12 +5467,12 @@ impl AgentCipherclerk {
                     let cell_id_bb = hash_to_bb(target.as_bytes());
                     let random_seed_bb = hash_to_bb(swiss_number);
                     let permissions_bb = match permissions {
-                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
                             let mut h = blake3::Hasher::new();
                             h.update(&[5u8]);
                             h.update(vk_hash);
@@ -5496,12 +5496,12 @@ impl AgentCipherclerk {
                     let presenter_bb = hash_to_bb(bearer.as_bytes());
                     let expected_cell_id_bb = hash_to_bb(expected_cell_id.as_bytes());
                     let permissions_bb = match expected_permissions {
-                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
                             let mut h = blake3::Hasher::new();
                             h.update(&[5u8]);
                             h.update(vk_hash);
@@ -5549,9 +5549,9 @@ impl AgentCipherclerk {
                 } if cell == cell_id => {
                     // #110: bind the offered_action_commitment as the
                     // event payload, with a stable synthetic topic
-                    // ("pyana-refusal-v1") so the (topic, payload) PI
+                    // ("dregg-refusal-v1") so the (topic, payload) PI
                     // distinguish Refusals from genuine events.
-                    let topic_bytes = *blake3::hash(b"pyana-refusal-v1").as_bytes();
+                    let topic_bytes = *blake3::hash(b"dregg-refusal-v1").as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
                         topic_hash: bytes32_to_8_felts(&topic_bytes),
                         payload_hash: bytes32_to_8_felts(offered_action_commitment),
@@ -5695,7 +5695,7 @@ impl AgentCipherclerk {
         // Collect the state commitments from the receipt chain for this cell.
         // Each receipt has pre_state_hash and post_state_hash — we build the
         // chain of BabyBear commitments.
-        let cell_receipts: Vec<&pyana_turn::TurnReceipt> = self
+        let cell_receipts: Vec<&dregg_turn::TurnReceipt> = self
             .receipt_chain
             .iter()
             .filter(|r| {
@@ -5713,14 +5713,14 @@ impl AgentCipherclerk {
 
         // Build the hash chain: genesis_root -> post_state[0] -> post_state[1] -> ...
         let genesis_root = Self::bytes_to_babybear(&cell_receipts[0].pre_state_hash);
-        let transitions: Vec<pyana_circuit::BabyBear> = cell_receipts
+        let transitions: Vec<dregg_circuit::BabyBear> = cell_receipts
             .iter()
             .map(|r| Self::bytes_to_babybear(&r.post_state_hash))
             .collect();
 
         // Generate the IVC STARK proof over the hash chain.
-        let (proof, _public_inputs) = pyana_circuit::prove_ivc_stark(genesis_root, &transitions);
-        Ok(pyana_circuit::stark::proof_to_bytes(&proof))
+        let (proof, _public_inputs) = dregg_circuit::prove_ivc_stark(genesis_root, &transitions);
+        Ok(dregg_circuit::stark::proof_to_bytes(&proof))
     }
 
     /// Verify a compressed history proof.
@@ -5749,7 +5749,7 @@ impl AgentCipherclerk {
         _current: [u8; 32],
         step_count: u64,
     ) -> Result<bool, SdkError> {
-        let proof = pyana_circuit::stark::proof_from_bytes(proof_bytes)
+        let proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)
             .map_err(|e| SdkError::IvcError(format!("failed to deserialize IVC proof: {}", e)))?;
 
         // Reconstruct the public inputs expected by verify_ivc_stark.
@@ -5766,16 +5766,16 @@ impl AgentCipherclerk {
         //
         // For now, reconstruct with step_count transitions of zeros (the verifier
         // only needs the proof and PI to check FRI consistency).
-        let transitions: Vec<pyana_circuit::BabyBear> = (0..step_count)
-            .map(|i| pyana_circuit::BabyBear::new(i as u32))
+        let transitions: Vec<dregg_circuit::BabyBear> = (0..step_count)
+            .map(|i| dregg_circuit::BabyBear::new(i as u32))
             .collect();
         let (_regenerated_proof, public_inputs) =
-            pyana_circuit::prove_ivc_stark(genesis_bb, &transitions);
+            dregg_circuit::prove_ivc_stark(genesis_bb, &transitions);
 
         // Verify using the actual proof bytes against the reconstructed PIs.
         // NOTE: In production, the public inputs would be transmitted alongside
         // the proof. For now we verify the proof we were given against its own PIs.
-        match pyana_circuit::verify_ivc_stark(&proof, &public_inputs) {
+        match dregg_circuit::verify_ivc_stark(&proof, &public_inputs) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -5783,12 +5783,12 @@ impl AgentCipherclerk {
 
     /// Get a peer exchange session for direct sovereign interactions.
     ///
-    /// Returns a [`PeerExchange`](pyana_cell::PeerExchange) initialized with
+    /// Returns a [`PeerExchange`](dregg_cell::PeerExchange) initialized with
     /// this cipherclerk's cell ID and signing key, suitable for direct peer-to-peer
     /// state exchange between sovereign cell owners.
     ///
     /// This is a convenience alias for [`peer_exchange`](Self::peer_exchange).
-    pub fn peer_exchange_session(&self, domain: &str) -> pyana_cell::PeerExchange {
+    pub fn peer_exchange_session(&self, domain: &str) -> dregg_cell::PeerExchange {
         self.peer_exchange(domain)
     }
 
@@ -5804,7 +5804,7 @@ impl AgentCipherclerk {
     ///
     /// Anyone can inspect the descriptor to understand exactly what the factory
     /// creates — this is constructor transparency.
-    pub fn deploy_factory(&self, descriptor: pyana_cell::FactoryDescriptor) -> [u8; 32] {
+    pub fn deploy_factory(&self, descriptor: dregg_cell::FactoryDescriptor) -> [u8; 32] {
         descriptor.factory_vk
     }
 
@@ -5834,10 +5834,10 @@ impl AgentCipherclerk {
         factory_vk: [u8; 32],
         owner_pubkey: [u8; 32],
         token_id: [u8; 32],
-        params: pyana_cell::FactoryCreationParams,
+        params: dregg_cell::FactoryCreationParams,
         federation_id: &[u8; 32],
     ) -> Turn {
-        use pyana_turn::action::Effect;
+        use dregg_turn::action::Effect;
 
         let effect = Effect::CreateCellFromFactory {
             factory_vk,
@@ -5846,7 +5846,7 @@ impl AgentCipherclerk {
             params,
         };
         // Build and sign the action using the standard helper (closes the
-        // Authorization::Unchecked regression flagged in SDK-PYANASCRIPT-AUDIT.md §9).
+        // Authorization::Unchecked regression flagged in SDK-DREGGSCRIPT-AUDIT.md §9).
         let action = self.make_action(issuer_cell, "factory_create", vec![effect], federation_id);
         let mut turn = self.make_turn(action);
         // Override the agent to the issuer_cell (make_turn defaults to cell_id("default")).
@@ -5862,12 +5862,12 @@ impl AgentCipherclerk {
     pub fn verify_provenance(
         &self,
         cell: &Cell,
-        known_factories: &[pyana_cell::FactoryDescriptor],
-    ) -> Option<pyana_cell::Provenance> {
+        known_factories: &[dregg_cell::FactoryDescriptor],
+    ) -> Option<dregg_cell::Provenance> {
         if let Some(vk) = &cell.verification_key {
             for factory in known_factories {
                 if factory.child_program_vk == Some(vk.hash) {
-                    return Some(pyana_cell::Provenance::from_factory(
+                    return Some(dregg_cell::Provenance::from_factory(
                         factory.factory_vk,
                         None,
                         0,
@@ -5923,8 +5923,8 @@ impl AgentCipherclerk {
     /// independent view and spend keys.
     fn derive_stealth_keys(signing_key: &ed25519_dalek::SigningKey) -> StealthKeys {
         let sk_bytes = signing_key.to_bytes();
-        let view_private_key = blake3::derive_key("pyana-stealth-view-key-v1", &sk_bytes);
-        let spend_private_key = blake3::derive_key("pyana-stealth-spend-key-v1", &sk_bytes);
+        let view_private_key = blake3::derive_key("dregg-stealth-view-key-v1", &sk_bytes);
+        let spend_private_key = blake3::derive_key("dregg-stealth-spend-key-v1", &sk_bytes);
         StealthKeys::from_keys(view_private_key, spend_private_key)
     }
 
@@ -5936,10 +5936,10 @@ impl AgentCipherclerk {
     ///
     /// The exchange session is keyed to a specific domain (cell identity) and uses
     /// this cipherclerk's Ed25519 signing key for transition signatures.
-    pub fn peer_exchange(&self, domain: &str) -> pyana_cell::PeerExchange {
+    pub fn peer_exchange(&self, domain: &str) -> dregg_cell::PeerExchange {
         let cell_id = self.cell_id(domain);
         let signing_key_bytes = self.signing_key.to_bytes();
-        pyana_cell::PeerExchange::new(cell_id, signing_key_bytes)
+        dregg_cell::PeerExchange::new(cell_id, signing_key_bytes)
     }
 
     /// Send a sovereign state transition to a peer (sign + package).
@@ -5954,11 +5954,11 @@ impl AgentCipherclerk {
     /// * `effects` - The effects that produced the state change.
     pub fn send_peer_transition(
         &self,
-        exchange: &mut pyana_cell::PeerExchange,
+        exchange: &mut dregg_cell::PeerExchange,
         old_commitment: [u8; 32],
         new_commitment: [u8; 32],
-        effects: &[pyana_turn::Effect],
-    ) -> pyana_cell::PeerStateTransition {
+        effects: &[dregg_turn::Effect],
+    ) -> dregg_cell::PeerStateTransition {
         let effects_bytes = postcard::to_stdvec(effects).unwrap_or_default();
         let effects_hash = *blake3::hash(&effects_bytes).as_bytes();
         exchange.create_transition(old_commitment, new_commitment, effects_hash)
@@ -6119,7 +6119,7 @@ impl AgentCipherclerk {
     pub async fn deploy_program(
         &self,
         node_url: &str,
-        descriptor: &pyana_dsl_runtime::CircuitDescriptor,
+        descriptor: &dregg_dsl_runtime::CircuitDescriptor,
         version: u32,
     ) -> Result<[u8; 32], SdkError> {
         let serialized = postcard::to_allocvec(descriptor)
@@ -6197,7 +6197,7 @@ impl AgentCipherclerk {
     pub fn execute_with_program(
         &self,
         cell_id: &CellId,
-        program: &pyana_dsl_runtime::CellProgram,
+        program: &dregg_dsl_runtime::CellProgram,
         witness: &HashMap<String, Vec<BabyBear>>,
         num_rows: usize,
         public_inputs: &[BabyBear],
@@ -6216,7 +6216,7 @@ impl AgentCipherclerk {
             agent: agent_id,
             nonce,
             fee,
-            call_forest: pyana_turn::CallForest {
+            call_forest: dregg_turn::CallForest {
                 roots: vec![],
                 forest_hash: [0u8; 32],
             },
@@ -6242,7 +6242,7 @@ impl AgentCipherclerk {
     // CapTP Convenience Methods (entire block gated on `captp` feature)
     // =========================================================================
 
-    /// Share a cell as a `pyana://` URI (sturdy reference).
+    /// Share a cell as a `dregg://` URI (sturdy reference).
     ///
     /// Requires that a [`CapTpClient`](crate::captp_client::CapTpClient) has been
     /// configured via [`set_captp_client`](Self::set_captp_client).
@@ -6256,17 +6256,17 @@ impl AgentCipherclerk {
     ///
     /// # Returns
     ///
-    /// A `pyana://` URI string that can be shared out-of-band.
+    /// A `dregg://` URI string that can be shared out-of-band.
     #[cfg(feature = "captp")]
     pub fn share_capability(
         &mut self,
         cell_id: CellId,
-    ) -> Result<pyana_captp::uri::PyanaUri, SdkError> {
+    ) -> Result<dregg_captp::uri::DreggUri, SdkError> {
         let client = self.captp_mut()?;
-        Ok(client.export_sturdy_ref(cell_id, pyana_cell::AuthRequired::Signature, None))
+        Ok(client.export_sturdy_ref(cell_id, dregg_cell::AuthRequired::Signature, None))
     }
 
-    /// Accept (enliven) a `pyana://` URI, returning a live reference.
+    /// Accept (enliven) a `dregg://` URI, returning a live reference.
     ///
     /// Requires that a [`CapTpClient`](crate::captp_client::CapTpClient) has been
     /// configured via [`set_captp_client`](Self::set_captp_client).
@@ -6276,14 +6276,14 @@ impl AgentCipherclerk {
     ///
     /// # Arguments
     ///
-    /// * `uri` - A `pyana://` URI string.
+    /// * `uri` - A `dregg://` URI string.
     #[cfg(feature = "captp")]
     pub fn accept_capability(
         &mut self,
         uri: &str,
     ) -> Result<crate::captp_client::LiveRef, SdkError> {
         let client = self.captp_mut()?;
-        client.enliven_uri(uri, pyana_cell::AuthRequired::Signature)
+        client.enliven_uri(uri, dregg_cell::AuthRequired::Signature)
     }
 
     /// Create a handoff certificate for offline delegation of a cell to a recipient.
@@ -6303,14 +6303,14 @@ impl AgentCipherclerk {
         &mut self,
         cell_id: CellId,
         recipient_pk: [u8; 32],
-    ) -> Result<pyana_captp::handoff::HandoffCertificate, SdkError> {
-        let signing_key = pyana_types::SigningKey::from_bytes(&self.signing_key.to_bytes());
+    ) -> Result<dregg_captp::handoff::HandoffCertificate, SdkError> {
+        let signing_key = dregg_types::SigningKey::from_bytes(&self.signing_key.to_bytes());
         let client = self.captp_mut()?;
         Ok(client.create_handoff(
             &signing_key,
             cell_id,
             recipient_pk,
-            pyana_cell::AuthRequired::Signature,
+            dregg_cell::AuthRequired::Signature,
             None,
             None,
         ))
@@ -6363,7 +6363,7 @@ impl AgentCipherclerk {
     /// * `program_vk` - Optional program verification key hash (for programmable queues).
     /// * `federation_id` - Federation binding for the canonical signing message.
     ///   The signed action is rejected by any executor running under a different
-    ///   federation_id; see `pyana_turn::executor::TurnExecutor::compute_signing_message`.
+    ///   federation_id; see `dregg_turn::executor::TurnExecutor::compute_signing_message`.
     ///
     /// # Returns
     ///
@@ -6470,7 +6470,7 @@ impl AgentCipherclerk {
     /// for submission, or an error.
     pub fn atomic_queue_tx(
         &self,
-        operations: Vec<pyana_turn::QueueTxOp>,
+        operations: Vec<dregg_turn::QueueTxOp>,
         federation_id: &[u8; 32],
     ) -> Result<Turn, SdkError> {
         if operations.is_empty() {
@@ -6561,7 +6561,7 @@ impl std::fmt::Debug for AgentCipherclerk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_turn::TurnReceipt;
+    use dregg_turn::TurnReceipt;
 
     /// Helper: create a mock receipt with given state hashes.
     fn mock_receipt(agent: CellId, pre_state: [u8; 32], post_state: [u8; 32]) -> TurnReceipt {
@@ -6660,7 +6660,7 @@ mod tests {
 
         // Verify using the standalone function too.
         let chain = cclerk.receipt_chain();
-        assert!(pyana_turn::verify_receipt_chain(chain).is_ok());
+        assert!(dregg_turn::verify_receipt_chain(chain).is_ok());
     }
 
     #[test]
@@ -6678,7 +6678,7 @@ mod tests {
         cclerk.append_receipt(r3).unwrap();
 
         // External verification.
-        let head = pyana_turn::verify_receipt_chain_head(cclerk.receipt_chain()).unwrap();
+        let head = dregg_turn::verify_receipt_chain_head(cclerk.receipt_chain()).unwrap();
         assert_eq!(head, [4u8; 32]);
     }
 
@@ -6779,7 +6779,7 @@ mod tests {
         assert!(cclerk.export_mnemonic().is_some());
         assert_eq!(cclerk.export_mnemonic().unwrap(), mnemonic);
         assert!(cclerk.export_seed().is_some());
-        assert_eq!(cclerk.derivation_path(), Some("pyana/0"));
+        assert_eq!(cclerk.derivation_path(), Some("dregg/0"));
     }
 
     #[test]
@@ -6856,7 +6856,7 @@ mod tests {
         // But it CAN prove (has derived issuer_key for federation membership).
         assert!(attenuated.can_prove());
         // The issuer_key is a one-way derivation of the root key, never the raw key.
-        let expected_proof_key = blake3::derive_key("pyana-proof-key-v1", &root_key);
+        let expected_proof_key = blake3::derive_key("dregg-proof-key-v1", &root_key);
         assert_eq!(attenuated.issuer_key(), &expected_proof_key);
         assert_ne!(
             attenuated.issuer_key(),
@@ -6866,7 +6866,7 @@ mod tests {
 
         // The attenuated token cannot be used to mint new tokens (prove_authorization
         // with the direct method still fails — it requires can_mint()).
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("compute".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7010,7 +7010,7 @@ mod tests {
         assert!(attenuated.can_prove(), "must be able to generate ZK proofs");
 
         // Step 2: Authorize in FullyPrivate mode (generates a STARK proof).
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("compute".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7057,7 +7057,7 @@ mod tests {
         // The doubly-attenuated token should still be able to prove.
         assert!(!att2.can_mint());
         assert!(att2.can_prove());
-        let expected_proof_key = blake3::derive_key("pyana-proof-key-v1", &root_key);
+        let expected_proof_key = blake3::derive_key("dregg-proof-key-v1", &root_key);
         assert_eq!(att2.issuer_key(), &expected_proof_key);
         assert_ne!(
             att2.issuer_key(),
@@ -7066,7 +7066,7 @@ mod tests {
         );
 
         // Authorize in Private mode.
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("storage".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7128,7 +7128,7 @@ mod tests {
         );
 
         // Private authorization should succeed.
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("api".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7167,7 +7167,7 @@ mod tests {
         assert!(!held.can_prove());
 
         // Private authorization should fail with MissingKey.
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("api".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7184,7 +7184,7 @@ mod tests {
     /// `WirePresentationProof`. Both sides now use the same format.
     #[test]
     fn test_cclerk_authorize_engine_verify_roundtrip() {
-        use crate::embed::{EngineConfig, PyanaEngine};
+        use crate::embed::{EngineConfig, DreggEngine};
 
         let mut cclerk = AgentCipherclerk::new();
         let root_key = [0xEE; 32];
@@ -7199,7 +7199,7 @@ mod tests {
         assert!(attenuated.can_prove());
 
         // Generate the proof via cipherclerk.authorize(FullyPrivate).
-        let request = pyana_token::AuthRequest {
+        let request = dregg_token::AuthRequest {
             service: Some("data".into()),
             action: Some("r".into()),
             ..Default::default()
@@ -7221,7 +7221,7 @@ mod tests {
         let federation_root = AgentCipherclerk::bb_to_bytes(federation_root_bb);
 
         // Create an engine and set the federation root to match.
-        let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
         engine.set_federation_root(federation_root);
 
         // The key assertion: verify_presentation_against must successfully decode the proof.
@@ -7278,7 +7278,7 @@ mod tests {
         let mut cclerk = AgentCipherclerk::new();
         let pk = cclerk.public_key().0;
         let token_id = *blake3::hash(b"test").as_bytes();
-        let cell = pyana_cell::Cell::with_balance(pk, token_id, 1000);
+        let cell = dregg_cell::Cell::with_balance(pk, token_id, 1000);
         let cell_id = cell.id();
 
         // Store sovereign state.
@@ -7310,7 +7310,7 @@ mod tests {
         let mut cclerk = AgentCipherclerk::new();
         let pk = cclerk.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
-        let cell = pyana_cell::Cell::with_balance(pk, token_id, 500);
+        let cell = dregg_cell::Cell::with_balance(pk, token_id, 500);
         let cell_id = cell.id();
 
         // Initially empty.
@@ -7332,7 +7332,7 @@ mod tests {
         let mut cclerk = AgentCipherclerk::new();
         let pk = cclerk.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
-        let cell = pyana_cell::Cell::with_balance(pk, token_id, 1000);
+        let cell = dregg_cell::Cell::with_balance(pk, token_id, 1000);
         let cell_id = cell.id();
 
         cclerk.store_sovereign_state(cell);
@@ -7360,7 +7360,7 @@ mod tests {
         let mut cclerk = AgentCipherclerk::new();
         let pk = cclerk.public_key().0;
         let token_id = *blake3::hash(b"domain").as_bytes();
-        let cell = pyana_cell::Cell::with_balance(pk, token_id, 100);
+        let cell = dregg_cell::Cell::with_balance(pk, token_id, 100);
         let cell_id = cell.id();
 
         cclerk.store_sovereign_state(cell);
@@ -7393,12 +7393,12 @@ mod tests {
 
         // Store two sovereign cells.
         let token_id_a = *blake3::hash(b"domain-a").as_bytes();
-        let cell_a = pyana_cell::Cell::with_balance(pk, token_id_a, 100);
+        let cell_a = dregg_cell::Cell::with_balance(pk, token_id_a, 100);
         let id_a = cell_a.id();
         cclerk.store_sovereign_state(cell_a);
 
         let token_id_b = *blake3::hash(b"domain-b").as_bytes();
-        let cell_b = pyana_cell::Cell::with_balance(pk, token_id_b, 200);
+        let cell_b = dregg_cell::Cell::with_balance(pk, token_id_b, 200);
         let id_b = cell_b.id();
         cclerk.store_sovereign_state(cell_b);
 
@@ -7796,7 +7796,7 @@ mod tests {
     ) -> DelegatedToken {
         let root_token = delegator.mint_token(&root_key, service);
         let proof_key = AgentCipherclerk::derive_proof_key(&root_key);
-        let mut tree = pyana_commit::merkle::MerkleTree::new();
+        let mut tree = dregg_commit::merkle::MerkleTree::new();
         tree.insert_hash(proof_key);
         let restrictions = Attenuation {
             services: vec![(service.to_string(), "r".to_string())],
@@ -7964,7 +7964,7 @@ mod tests {
     /// depth exceeds [`AgentCipherclerk::MAX_MEMBERSHIP_PROOF_DEPTH`].
     #[test]
     fn test_membership_proof_depth_bound() {
-        use pyana_commit::merkle::MerkleProof;
+        use dregg_commit::merkle::MerkleProof;
         let depth = AgentCipherclerk::MAX_MEMBERSHIP_PROOF_DEPTH + 1;
         let proof = MerkleProof {
             siblings: vec![[[0u8; 32]; 3]; depth],
@@ -7985,7 +7985,7 @@ mod tests {
     /// `siblings` / `path_indices` arrays have mismatched lengths.
     #[test]
     fn test_membership_proof_mismatched_lengths() {
-        use pyana_commit::merkle::MerkleProof;
+        use dregg_commit::merkle::MerkleProof;
         let proof = MerkleProof {
             siblings: vec![[[0u8; 32]; 3]; 4],
             path_indices: vec![0; 3], // shorter on purpose
@@ -8006,8 +8006,8 @@ mod tests {
     /// proof inside our cipherclerk for later detonation.
     #[test]
     fn test_receive_rejects_oversized_membership_proof() {
-        use pyana_commit::merkle::MerkleProof;
-        use pyana_token::Attenuation;
+        use dregg_commit::merkle::MerkleProof;
+        use dregg_token::Attenuation;
 
         // Build a small token using a generated cipherclerk.
         let mut alice = AgentCipherclerk::new();
@@ -8080,8 +8080,8 @@ mod tests {
     /// "lazy sign" path produced `Signature([0;32], [0;32])` we want to catch
     /// it too. (See `app-framework/tests/cipherclerk_sign_action.rs` for the
     /// matching pin on the AppCipherclerk path.)
-    fn assert_real_signature(action: &pyana_turn::action::Action) {
-        use pyana_turn::action::Authorization;
+    fn assert_real_signature(action: &dregg_turn::action::Action) {
+        use dregg_turn::action::Authorization;
         match &action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(
@@ -8096,7 +8096,7 @@ mod tests {
         }
     }
 
-    fn root_action(turn: &Turn) -> &pyana_turn::action::Action {
+    fn root_action(turn: &Turn) -> &dregg_turn::action::Action {
         &turn.call_forest.roots[0].action
     }
 
@@ -8168,7 +8168,7 @@ mod tests {
 
     #[test]
     fn atomic_queue_tx_produces_real_signature() {
-        use pyana_turn::QueueTxOp;
+        use dregg_turn::QueueTxOp;
         let cclerk = AgentCipherclerk::new();
         let fed = [5u8; 32];
         let q1 = cclerk.cell_id("q1");
@@ -8207,7 +8207,7 @@ mod tests {
     /// replay" property of `compute_signing_message`.
     #[test]
     fn queue_signature_binds_to_federation_id() {
-        use pyana_turn::action::Authorization;
+        use dregg_turn::action::Authorization;
         let cclerk = AgentCipherclerk::new();
         let fed_a = [1u8; 32];
         let fed_b = [2u8; 32];
@@ -8230,7 +8230,7 @@ mod tests {
     // -----------------------------------------------------------------
     // create_from_factory authorization tests.
     //
-    // SDK-PYANASCRIPT-AUDIT.md §9 flagged that `create_from_factory`
+    // SDK-DREGGSCRIPT-AUDIT.md §9 flagged that `create_from_factory`
     // was a sibling of the queue-method C-3 regression: it built its
     // action by struct literal with Authorization::Unchecked.
     // These tests pin the post-fix invariant.
@@ -8246,9 +8246,9 @@ mod tests {
             [0xAA; 32],
             [0xBB; 32],
             [0xCC; 32],
-            pyana_cell::FactoryCreationParams {
+            dregg_cell::FactoryCreationParams {
                 owner_pubkey: [0xBB; 32],
-                mode: pyana_cell::CellMode::default(),
+                mode: dregg_cell::CellMode::default(),
                 program_vk: None,
                 initial_fields: vec![],
                 initial_caps: vec![],
@@ -8260,14 +8260,14 @@ mod tests {
 
     #[test]
     fn create_from_factory_signature_binds_to_federation_id() {
-        use pyana_turn::action::Authorization;
+        use dregg_turn::action::Authorization;
         let cclerk = AgentCipherclerk::new();
         let issuer = cclerk.cell_id("default");
         let fed_a = [0x11u8; 32];
         let fed_b = [0x22u8; 32];
-        let params_a = pyana_cell::FactoryCreationParams {
+        let params_a = dregg_cell::FactoryCreationParams {
             owner_pubkey: [0xBB; 32],
-            mode: pyana_cell::CellMode::default(),
+            mode: dregg_cell::CellMode::default(),
             program_vk: None,
             initial_fields: vec![],
             initial_caps: vec![],
@@ -8298,8 +8298,8 @@ mod tests {
     #[test]
     fn queue_signature_verifies_against_cclerk_pubkey() {
         use ed25519_dalek::{Signature, VerifyingKey};
-        use pyana_turn::action::{Action, Authorization};
-        use pyana_turn::executor::TurnExecutor;
+        use dregg_turn::action::{Action, Authorization};
+        use dregg_turn::executor::TurnExecutor;
 
         let cclerk = AgentCipherclerk::new();
         let fed = [13u8; 32];
@@ -8340,7 +8340,7 @@ mod doctest_compile_fail {
     /// broken.
     ///
     /// ```compile_fail
-    /// use pyana_sdk::AgentCipherclerk;
+    /// use dregg_sdk::AgentCipherclerk;
     /// let mut w = AgentCipherclerk::new();
     /// let held = w.mint_token(&[0u8; 32], "svc");
     /// // The `encoded` field is private; this must NOT compile.
@@ -8348,7 +8348,7 @@ mod doctest_compile_fail {
     /// ```
     ///
     /// ```compile_fail
-    /// use pyana_sdk::AgentCipherclerk;
+    /// use dregg_sdk::AgentCipherclerk;
     /// let mut w = AgentCipherclerk::new();
     /// let mut held = w.mint_token(&[0u8; 32], "svc");
     /// // Direct mutation of `encoded` must NOT compile.
@@ -8356,7 +8356,7 @@ mod doctest_compile_fail {
     /// ```
     ///
     /// ```compile_fail
-    /// use pyana_sdk::AgentCipherclerk;
+    /// use dregg_sdk::AgentCipherclerk;
     /// let mut w = AgentCipherclerk::new();
     /// let mut held = w.mint_token(&[0u8; 32], "svc");
     /// // Direct mutation of `caveat_chain_hash` must NOT compile.

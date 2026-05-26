@@ -1,16 +1,16 @@
-//! # pyana-chain: EVM On-Chain Verification via SP1
+//! # dregg-chain: EVM On-Chain Verification via SP1
 //!
 //! **STATUS: In Development. The guest program's STARK verifier is incompatible with the
 //! current circuit crate (which uses Plonky3). Do not use for real proofs until the guest
 //! is regenerated against the Plonky3 backend. See chain/README.md for details.**
 //!
-//! This crate wraps pyana STARK proofs in SP1's zkVM to produce Groth16 proofs
+//! This crate wraps dregg STARK proofs in SP1's zkVM to produce Groth16 proofs
 //! that are cheaply verifiable on Ethereum/Base (~200k gas).
 //!
 //! ## Architecture
 //!
 //! ```text
-//! pyana STARK proof (large, not EVM-friendly)
+//! dregg STARK proof (large, not EVM-friendly)
 //!        |
 //!        v
 //! SP1 Guest Program (verifies STARK inside RISC-V zkVM)
@@ -38,7 +38,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use pyana_chain::{wrap_for_evm, verify_on_chain, EvmProof};
+//! use dregg_chain::{wrap_for_evm, verify_on_chain, EvmProof};
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Generate a STARK proof with the circuit crate, then wrap it:
@@ -92,7 +92,7 @@ pub use verify::verify_on_chain;
 /// The typical flow is: attest a root via federation consensus (`AttestedRoot`),
 /// generate a STARK proof of Merkle inclusion/exclusion (circuit crate), then wrap
 /// that proof for EVM verification via this crate.
-pub use pyana_types::AttestedRoot;
+pub use dregg_types::AttestedRoot;
 
 /// The SP1 program verification key (vkey).
 /// This is computed from the guest program ELF and identifies what program was proven.

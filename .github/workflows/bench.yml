@@ -22,19 +22,19 @@ jobs:
       # NOTE: hints benchmarks are excluded — they require large fixture files
       # (committee*.json, *.bincode) that are gitignored and not available in CI.
       - name: Bench circuit (mock backend)
-        run: cargo bench -p pyana-circuit
+        run: cargo bench -p dregg-circuit
 
       - name: Bench bridge
-        run: cargo bench -p pyana-bridge
+        run: cargo bench -p dregg-bridge
 
       - name: Bench token
         run: cargo bench -p token
 
       - name: Bench federation
-        run: cargo bench -p pyana-federation
+        run: cargo bench -p dregg-federation
 
       - name: Bench wire
-        run: cargo bench -p pyana-wire
+        run: cargo bench -p dregg-wire
 
       - name: Bench macaroon
         run: cargo bench -p macaroon

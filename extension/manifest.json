@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pyana Cipherclerk",
+  "name": "Dregg Cipherclerk",
   "version": "0.1.0",
-  "description": "Capability-based cipherclerk for pyana: manages signing keys, authorization tokens, and capability handles with zero-knowledge proofs",
+  "description": "Capability-based cipherclerk for dregg: manages signing keys, authorization tokens, and capability handles with zero-knowledge proofs",
   "permissions": ["storage", "activeTab", "contextMenus"],
   "background": {
     "service_worker": "dist/background.js"
@@ -13,7 +13,7 @@
     "run_at": "document_start"
   }],
   "web_accessible_resources": [{
-    "resources": ["dist/page.js", "bip39_english.txt", "pyana_wasm.js", "pyana_wasm_bg.wasm"],
+    "resources": ["dist/page.js", "bip39_english.txt", "dregg_wasm.js", "dregg_wasm_bg.wasm"],
     "matches": ["<all_urls>"]
   }],
   "action": {

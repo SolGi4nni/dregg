@@ -2,7 +2,7 @@
 
 **Status:** design + inventory. Written 2026-05-24, branch `main`. Lane parallel to
 the Plonky3 recursion lane (`circuit/src/plonky3_recursion_impl.rs`); this lane
-treats Kimchi/Pickles as the *outer* recursive layer that consumes pyana's
+treats Kimchi/Pickles as the *outer* recursive layer that consumes dregg's
 per-cell BabyBear STARKs.
 
 Companion to `KIMCHI-SURVEY.md` (the read-only inventory + verdict),
@@ -87,7 +87,7 @@ What's actually operational today (verified by reading the code):
 
 ### 1.2 `circuit/src/backends/stark_in_pickles.rs` — the bridge — 728 LOC
 
-The piece that makes Pickles a viable outer layer for pyana's STARKs.
+The piece that makes Pickles a viable outer layer for dregg's STARKs.
 Reading top-to-bottom:
 
 - Type definitions (lines 76-178): `PicklesWrappedStark`,
@@ -197,7 +197,7 @@ PoC. Not a bottleneck.**
 - `circuit/src/backends/kimchi_native/` (~9700 LOC) — the
   *circuit-author surface*, not the recursive layer. Same upstream
   crates, same audit caveats (P0-2 copy constraints), but it's not the
-  outer layer; it's a pyana-DSL-to-Kimchi-gates compiler. Out of scope
+  outer layer; it's a dregg-DSL-to-Kimchi-gates compiler. Out of scope
   for this plan except as a source of patterns (`link_wires`,
   `verify_canonical_circuit_hash`) that the verifier circuit should
   adopt.
@@ -211,7 +211,7 @@ PoC. Not a bottleneck.**
 ## 2. The integration story — how Pickles serves as the outer layer
 
 ```
-                      pyana's per-cell Effect VM trace
+                      dregg's per-cell Effect VM trace
                                    │
                                    ▼
                     Plonky3 STARK proof over BabyBear + FRI
@@ -385,7 +385,7 @@ expression in trace columns; the generator walks it to emit muls/adds.
 **Estimate:** the *biggest* item in this section. ~1500-2500 LOC.
 
 But it's also the most **bounded** task: the AIR's constraints are
-already enumerated in pyana's source; we're not inventing a new IR,
+already enumerated in dregg's source; we're not inventing a new IR,
 we're consuming an existing one. Effect VM's width is 105; constraint
 count is well-defined per Stage-7 (see `STAGE-7-PLUS-DESIGN.md`).
 
@@ -498,7 +498,7 @@ to "production-ready substrate for γ.2 Phase 2."
 
 ## 5. Pickles vs. plonky3-recursion comparison
 
-The decision is **not** either-or for pyana long-term. Both have
+The decision is **not** either-or for dregg long-term. Both have
 distinct roles. Below: a comparison of when each wins.
 
 | dimension | Pickles outer | plonky3-recursion outer |
@@ -516,7 +516,7 @@ distinct roles. Below: a comparison of when each wins.
 ### When Pickles wins
 
 1. **Cross-chain settlement.** A Pickles proof is what Mina (and curve-based
-   L1s in general) can verify. If pyana ever needs to anchor a commit
+   L1s in general) can verify. If dregg ever needs to anchor a commit
    on Mina, Cardano, or another curve-based chain, Pickles is the
    substrate. This is the "production-proven, smaller proofs"
    regime — same shape RISC Zero ships with their Groth16-wrap for
@@ -563,7 +563,7 @@ distinct roles:
 - **Internal aggregation** (cross-cell turn-level proofs,
   witnessed-receipt-chain folding): plonky3-recursion.
   *Tree-shaped, PQ, transparent end-to-end.*
-- **External anchoring** (settle a pyana commit on Mina; export a
+- **External anchoring** (settle a dregg commit on Mina; export a
   compressed proof of a months-long turn history to a thin verifier):
   Pickles wrap of the final aggregated STARK. *5 KiB constant size,
   cross-chain compatible.*

@@ -2,14 +2,14 @@
  * Theme toggle — light / dark.
  *
  * Reads + writes the SAME `localStorage` key Builder A's playground uses
- * (`pyana_theme`), so a user who toggles in the playground sees the same
+ * (`dregg_theme`), so a user who toggles in the playground sees the same
  * theme in the explorer.
  *
  * The initial theme is also applied inline in index.html's <head> to avoid
  * a flash; this module just owns the toggle button + storage event sync.
  */
 
-const KEY = 'pyana_theme';
+const KEY = 'dregg_theme';
 
 function currentTheme() {
   const root = document.documentElement;
@@ -24,7 +24,7 @@ function setTheme(t) {
     document.documentElement.dataset.theme = 'light';
   }
   try { localStorage.setItem(KEY, next); } catch {}
-  window.dispatchEvent(new CustomEvent('pyana:theme-changed', { detail: { theme: next } }));
+  window.dispatchEvent(new CustomEvent('dregg:theme-changed', { detail: { theme: next } }));
 }
 
 export function init() {

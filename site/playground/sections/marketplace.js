@@ -9,7 +9,7 @@ export function initMarketplace(wasm) {
       <h2>Compute Marketplace</h2>
       <p>
         An interactive sealed-bid compute marketplace. Post jobs, submit hidden bids via note
-        commitments, reveal and settle atomically. Demonstrates pyana's privacy-preserving
+        commitments, reveal and settle atomically. Demonstrates dregg's privacy-preserving
         auction mechanics, escrow, and dispute resolution — all running in WASM.
       </p>
       <span class="next-hint" data-next="sandbox">Next: code sandbox &rarr;</span>
@@ -403,7 +403,7 @@ export function initMarketplace(wasm) {
       centerLabel: 'Settlement',
       center: `Single atomic turn:\n1. Verify result\n2. Transfer escrow -> provider\n3. Refund remainder -> client\n4. Update reputation\n5. Log receipt\n\nAll or nothing — partial settlement impossible`,
       rightLabel: 'Atomicity',
-      right: `This is a single pyana turn.\n\nIf ANY step fails, ALL steps revert.\n\nThe escrow cannot be drained without verified result.\nThe provider cannot be paid without delivering.\nThe receipt cannot exist without settlement.\n\nThis is the power of single-turn atomicity.`,
+      right: `This is a single dregg turn.\n\nIf ANY step fails, ALL steps revert.\n\nThe escrow cannot be drained without verified result.\nThe provider cannot be paid without delivering.\nThe receipt cannot exist without settlement.\n\nThis is the power of single-turn atomicity.`,
       footer: `Settlement complete. Receipt #${mktState.receiptCount} logged.`,
     });
 

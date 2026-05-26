@@ -8,13 +8,13 @@
 //! - Multi-effect turns mixing CapTP + Transfer effects produce a single valid proof
 //! - Tampering with the swiss number in a proof causes verification FAILURE
 
-use pyana_circuit::effect_vm::{AUX_BASE, STATE_AFTER_BASE, state};
-use pyana_circuit::stark::{StarkAir, prove, verify};
-use pyana_circuit::{
+use dregg_circuit::effect_vm::{AUX_BASE, STATE_AFTER_BASE, state};
+use dregg_circuit::stark::{StarkAir, prove, verify};
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir, compute_effects_hash, extract_net_delta,
     generate_effect_vm_trace,
 };
-use pyana_teasting::federation::quick_federation;
+use dregg_teasting::federation::quick_federation;
 
 // =============================================================================
 // Test 1: ExportSturdyRef -> verify STARK proof is valid

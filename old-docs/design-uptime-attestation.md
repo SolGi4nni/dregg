@@ -2,7 +2,7 @@
 
 ## Architecture: Hybrid VDF + Attestor Swarm
 
-Two layers, each mapped to existing pyana primitives:
+Two layers, each mapped to existing dregg primitives:
 
 **Layer 1 (Liveness):** Worker produces a sequential Poseidon2 hash chain via `prove_ivc_stark`. Each step: `h_n = Poseidon2(h_{n-1} || block_height || worker_nonce)`. Gaps in the chain are provable downtime. No trust assumptions -- missing a link requires finding a Poseidon2 preimage (infeasible).
 
@@ -10,7 +10,7 @@ Two layers, each mapped to existing pyana primitives:
 
 ## Primitive Mapping
 
-| Component | Pyana Primitive |
+| Component | `dregg` Primitive |
 |-----------|----------------|
 | Worker registration | Sovereign cell + `CreateObligation` (worker stake) |
 | Attestor registration | Sovereign cell + `CreateObligation` (attestor stake) |
@@ -34,7 +34,7 @@ Worker produces one IVC step. The `extend_accumulated_hash_wide` function chains
 
 ### 3. Each Block: Attestor Swarm Probes
 
-**Commit phase:** Each attestor in the active set (selected by `hash(block_height || attestor_id) mod N < K`) probes the worker over the wire protocol. They commit `blake3("pyana-wire attestation-commit-v1" || measurement || attestor_secret)` on-chain.
+**Commit phase:** Each attestor in the active set (selected by `hash(block_height || attestor_id) mod N < K`) probes the worker over the wire protocol. They commit `blake3("dregg-wire attestation-commit-v1" || measurement || attestor_secret)` on-chain.
 
 **Reveal phase (next block):** Attestors reveal their measurement. The temporal accumulator ingests external measurements: the `value` column receives attested latency, not self-reported.
 
@@ -48,7 +48,7 @@ Two conflict types:
 
 **Type B -- Attestor disagreement:** Attestor A says "down at block B" but attestors B,C say "up at block B" AND the worker's VDF chain includes block B's step. Resolution algorithm:
 
-1. Worker produces signed challenge-response: wire protocol response with timestamp in the disputed window (domain key `"pyana-wire challenge-response-v1"`).
+1. Worker produces signed challenge-response: wire protocol response with timestamp in the disputed window (domain key `"dregg-wire challenge-response-v1"`).
 2. If worker produces valid response AND VDF chain is unbroken: attestor A is lying.
 3. If worker cannot produce response AND VDF chain is broken: worker was down, honest attestors (B,C) who said "up" are lying.
 4. If VDF chain is intact but no challenge-response exists: ambiguous (network partition). No slash; record as "contested" in the accumulator.

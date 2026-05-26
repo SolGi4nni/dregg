@@ -1,18 +1,18 @@
-# Pyana as Agent Substrate: The Networked Capability Kernel for AI
+# `dregg` as Agent Substrate: The Networked Capability Kernel for AI
 
 ## Thesis
 
-seL4 provides hardware-enforced capability isolation for processes on a single machine. Robigalia proposed building a full operating system on seL4's guarantees. Pyana provides cryptographically-enforced capability isolation for agents across a network, using ZK proofs where seL4 uses hardware rings. The thesis: **build a full AI coordination substrate on pyana's guarantees, in the same way Robigalia built an OS on seL4's.**
+seL4 provides hardware-enforced capability isolation for processes on a single machine. Robigalia proposed building a full operating system on seL4's guarantees. `dregg` provides cryptographically-enforced capability isolation for agents across a network, using ZK proofs where seL4 uses hardware rings. The thesis: **build a full AI coordination substrate on dregg's guarantees, in the same way Robigalia built an OS on seL4's.**
 
 The result is a "home for AI" -- not a chatbot wrapper, not an API gateway, but the runtime environment in which AI agents exist as first-class entities with identity, memory, authority, economic relationships, and auditable histories.
 
 ---
 
-## 1. The seL4/Robigalia to Pyana Mapping
+## 1. The seL4/Robigalia to `dregg` Mapping
 
 ### Structural Correspondence
 
-| seL4 Concept | Pyana Concept | AI Agent Meaning |
+| seL4 Concept | `dregg` Concept | AI Agent Meaning |
 |---|---|---|
 | Process (TCB) | Cell | An agent's identity + isolated state + authority boundary |
 | CNode (capability list) | CapabilitySet (c-list) | The exhaustive set of actions the agent may perform |
@@ -37,13 +37,13 @@ The result is a "home for AI" -- not a chatbot wrapper, not an API gateway, but 
 
 This is not a surface-level metaphor. The structural isomorphism runs deep:
 
-**Confinement.** In seL4, a process can only name capabilities in its CNode. It cannot forge references to objects it was never granted access to. In pyana, a cell can only exercise capabilities in its c-list. The `GrantCapability` action checks that the granting cell actually holds authority over the source. A cell cannot delegate what it does not have. Both systems enforce the principle: *authority is held, never ambient*.
+**Confinement.** In seL4, a process can only name capabilities in its CNode. It cannot forge references to objects it was never granted access to. In dregg, a cell can only exercise capabilities in its c-list. The `GrantCapability` action checks that the granting cell actually holds authority over the source. A cell cannot delegate what it does not have. Both systems enforce the principle: *authority is held, never ambient*.
 
-**Monotonic attenuation.** In seL4, derived capabilities can only be weaker than their parents. A mint-right can produce read-only copies, never the reverse. In pyana, each delegation step produces a `FoldDelta` that removes facts, never adds them. The fold AIR constraint enforces monotonicity at the proof level. Both systems ensure: *delegation can only narrow, never amplify*.
+**Monotonic attenuation.** In seL4, derived capabilities can only be weaker than their parents. A mint-right can produce read-only copies, never the reverse. In dregg, each delegation step produces a `FoldDelta` that removes facts, never adds them. The fold AIR constraint enforces monotonicity at the proof level. Both systems ensure: *delegation can only narrow, never amplify*.
 
-**Revocation via derivation tree.** seL4's kernel can walk the CDT to revoke all descendants of a capability. Pyana's federation attests to epoch boundaries; bumping an epoch invalidates all snapshots issued before it. The `RevocationChannel` provides push-based instant revocation analogous to the kernel's synchronous CDT walk, but bounded by consensus rounds rather than being instantaneous. The tradeoff: distribution buys fault tolerance at the cost of synchrony.
+**Revocation via derivation tree.** seL4's kernel can walk the CDT to revoke all descendants of a capability. `dregg`'s federation attests to epoch boundaries; bumping an epoch invalidates all snapshots issued before it. The `RevocationChannel` provides push-based instant revocation analogous to the kernel's synchronous CDT walk, but bounded by consensus rounds rather than being instantaneous. The tradeoff: distribution buys fault tolerance at the cost of synchrony.
 
-**No ambient authority.** seL4 has no global namespace -- you cannot "look up" a capability by name. Pyana has no global directory -- communication paths form only through three-party introduction. Both systems reject the pattern of "if you know the name, you can access it" that plagues API-key systems.
+**No ambient authority.** seL4 has no global namespace -- you cannot "look up" a capability by name. `dregg` has no global directory -- communication paths form only through three-party introduction. Both systems reject the pattern of "if you know the name, you can access it" that plagues API-key systems.
 
 ---
 
@@ -70,7 +70,7 @@ Agents find each other through two mechanisms:
 
 **Three-party introduction.** Alice holds capabilities to both Bob and Carol. Alice introduces them by emitting an `Effect::Introduce` during a turn, producing a `RoutingDirective`. Bob gains a capability to Carol, bounded by what Alice herself holds. This is how seL4 processes gain access to new endpoints -- via a mediating process that holds both capabilities.
 
-**Intent marketplace.** An agent broadcasts "I need X done" as a public intent. Wallets privately evaluate whether they can satisfy it using local Datalog. No capability information leaves the cclerk. If a match exists, the satisfier generates a STARK proof of capability satisfaction without revealing which token or delegation chain. This is pyana's answer to service discovery without a global directory -- a privacy-preserving market where needs meet capabilities.
+**Intent marketplace.** An agent broadcasts "I need X done" as a public intent. Wallets privately evaluate whether they can satisfy it using local Datalog. No capability information leaves the cclerk. If a match exists, the satisfier generates a STARK proof of capability satisfaction without revealing which token or delegation chain. This is dregg's answer to service discovery without a global directory -- a privacy-preserving market where needs meet capabilities.
 
 The combination means: direct peer relationships form through introduction (high-trust, targeted), while marketplace relationships form through intents (low-trust, emergent). An agent swarm might have a coordinator that introduces specialists to each other, while simultaneously posting open intents for capabilities outside the swarm's expertise.
 
@@ -157,7 +157,7 @@ The intent engine implements a market for AI labor:
 
 ### 3.2 What Makes This Better Than "AI Agents Calling APIs"
 
-| Problem with APIs | How Pyana Solves It |
+| Problem with APIs | How `dregg` Solves It |
 |---|---|
 | API keys grant ambient authority | Capabilities are scoped, attenuated, revocable |
 | No atomic multi-party transactions | Multi-party turns with journal rollback |
@@ -169,7 +169,7 @@ The intent engine implements a market for AI labor:
 | Revocation is "rotate the key" | CDT-style revocation, epoch invalidation, RevocationChannels |
 | No delegation hierarchy | Attenuation chains with monotonic narrowing, provable authority depth |
 
-The fundamental difference: API-key systems implement **access control** (can you talk to this endpoint?). Pyana implements **capability-based authority** (what specific things can you do, who gave you that authority, and can they take it back?). For AI agents that autonomously decompose tasks, delegate to sub-agents, and operate without human supervision, the distinction is critical -- you need the full expressiveness of authority management, not just binary access.
+The fundamental difference: API-key systems implement **access control** (can you talk to this endpoint?). `dregg` implements **capability-based authority** (what specific things can you do, who gave you that authority, and can they take it back?). For AI agents that autonomously decompose tasks, delegate to sub-agents, and operate without human supervision, the distinction is critical -- you need the full expressiveness of authority management, not just binary access.
 
 ### 3.3 Economic Bootstrapping
 
@@ -197,7 +197,7 @@ When two agents have never interacted:
 
 ### 3.5 Preventing Race to the Bottom
 
-Without quality controls, a marketplace for AI labor devolves into cheapest-wins garbage. Pyana's answer:
+Without quality controls, a marketplace for AI labor devolves into cheapest-wins garbage. `dregg`'s answer:
 
 **ProofObligation.** An intent can require that the fulfiller post a bond (notes committed to a conditional turn). The bond is released on verified quality delivery; slashed on failure. The quality check itself can be a STARK proof (for deterministic quality metrics) or a multi-party adjudication turn (for subjective quality).
 
@@ -290,7 +290,7 @@ Downstream agents can USE the model (via inference capability) but cannot EXTRAC
 The sealed weights never leave the agent's cell. The capability boundary enforces it.
 ```
 
-This is the distributed analog of seL4's page-table isolation: the model weights are "pages" that the owning process can map but not export. In pyana, the sealing is cryptographic rather than hardware-enforced, but the abstraction is identical.
+This is the distributed analog of seL4's page-table isolation: the model weights are "pages" that the owning process can map but not export. In dregg, the sealing is cryptographic rather than hardware-enforced, but the abstraction is identical.
 
 ### 4.5 Supervision Pattern
 
@@ -313,7 +313,7 @@ This is the "root server" pattern from seL4/Robigalia -- a privileged process th
 
 ### 5.1 The Runtime Environment
 
-An AI agent running on pyana has:
+An AI agent running on dregg has:
 
 - **Identity**: Ed25519 keypair, deterministic CellId, BIP39 HD derivation for stable identity across restarts
 - **Isolation**: Cell state is private unless explicitly shared. No agent can read another's state without a capability.
@@ -325,7 +325,7 @@ An AI agent running on pyana has:
 
 ### 5.2 The Social Contract
 
-Agents in pyana's ecosystem agree to (or rather, are constrained by) these invariants:
+Agents in dregg's ecosystem agree to (or rather, are constrained by) these invariants:
 
 - **No forgery.** You cannot exercise a capability you were not granted. (STARK proof or CDT membership proof required.)
 - **No escalation.** You cannot amplify a capability beyond what you received. (Fold chain is monotonically narrowing.)
@@ -353,7 +353,7 @@ The economic layer provides:
 
 ### 6.1 Why Not Just API Keys + Databases?
 
-| Property | API Keys + DB | Pyana |
+| Property | API Keys + DB | `dregg` |
 |---|---|---|
 | Authority model | Ambient (have key = have access) | Capability (held, attenuated, revocable) |
 | Audit | Application-level logging (fakeable) | Cryptographic receipt chains (unforgeable) |
@@ -368,7 +368,7 @@ The fundamental problem: API keys implement authentication ("who are you?"), not
 
 ### 6.2 Why Not Blockchain Smart Contracts?
 
-| Property | Smart Contracts (EVM) | Pyana |
+| Property | Smart Contracts (EVM) | `dregg` |
 |---|---|---|
 | Privacy | Transparent by default (all state public) | Private by default (ZK proofs for verification) |
 | Latency | Block time (seconds to minutes) | Turn execution (sub-second local, consensus-bounded for ordering) |
@@ -380,11 +380,11 @@ The fundamental problem: API keys implement authentication ("who are you?"), not
 | Offline operation | Impossible (must submit to chain) | Full (verify with proof + attested root) |
 | Trust model | Trust the validator set absolutely | Proof-carrying state (verify without trusting anyone) |
 
-Smart contracts solve a different problem: global consensus over shared state. Pyana solves: local autonomy with federated coordination and privacy-preserving verification. An AI agent does not need the entire world to agree on its state -- it needs to prove its state to specific counterparties, privately, at the time of interaction.
+Smart contracts solve a different problem: global consensus over shared state. `dregg` solves: local autonomy with federated coordination and privacy-preserving verification. An AI agent does not need the entire world to agree on its state -- it needs to prove its state to specific counterparties, privately, at the time of interaction.
 
 ### 6.3 Why Not Plain Message Queues (Kafka, NATS, etc.)?
 
-| Property | Message Queues | Pyana |
+| Property | Message Queues | `dregg` |
 |---|---|---|
 | Authority | None (if you can connect, you can publish) | Capability-gated (must hold authority to act) |
 | Atomicity | At-most-once or at-least-once delivery | Call forest atomicity (all or nothing, with rollback) |
@@ -394,11 +394,11 @@ Smart contracts solve a different problem: global consensus over shared state. P
 | Economic model | None | Metered execution, conditional payment, quality bonds |
 | State | Stateless messages | Stateful cells with proof-carrying state transitions |
 
-Message queues are transport. Pyana is a runtime. The queue tells you "a message arrived." Pyana tells you "this agent, holding these capabilities, delegated by this chain, performed this action atomically, proved it in zero knowledge, and here is the receipt."
+Message queues are transport. `dregg` is a runtime. The queue tells you "a message arrived." `dregg` tells you "this agent, holding these capabilities, delegated by this chain, performed this action atomically, proved it in zero knowledge, and here is the receipt."
 
 ### 6.4 Why Not Existing Agent Frameworks (LangChain, AutoGPT, CrewAI)?
 
-| Property | Agent Frameworks | Pyana |
+| Property | Agent Frameworks | `dregg` |
 |---|---|---|
 | Isolation | None (agents share process memory) | Cell-level isolation (own state, own capabilities) |
 | Authority | Whatever the LLM decides to do | Formal capability model (cannot exceed granted authority) |
@@ -408,7 +408,7 @@ Message queues are transport. Pyana is a runtime. The queue tells you "a message
 | Trust | Trust the orchestrator | Trustless verification (any agent verifies any other offline) |
 | Scalability | Single process / single machine | Federated, multi-silo, distributed |
 
-Existing agent frameworks treat agents as functions within an application. Pyana treats agents as sovereign entities in a shared environment -- closer to processes in an OS than to functions in a program.
+Existing agent frameworks treat agents as functions within an application. `dregg` treats agents as sovereign entities in a shared environment -- closer to processes in an OS than to functions in a program.
 
 ---
 
@@ -434,7 +434,7 @@ What common patterns should be protocol-level rather than application-level?
 
 ### 7.3 The Process Manager Problem
 
-In seL4, the root task and initial servers manage process lifecycles. In pyana:
+In seL4, the root task and initial servers manage process lifecycles. In dregg:
 - Who decides when an agent should be stopped? (Budget exhaustion is one answer; supervisor revocation is another)
 - How do agent "crashes" propagate? (Receipt chain discontinuity signals failure)
 - What is the equivalent of process restart? (Cell re-initialization with receipt chain checkpoint)
@@ -442,7 +442,7 @@ In seL4, the root task and initial servers manage process lifecycles. In pyana:
 
 ### 7.4 Shared State (The "Filesystem" Problem)
 
-In seL4, shared memory requires explicit capability grants. In pyana:
+In seL4, shared memory requires explicit capability grants. In dregg:
 - How do agents share state that multiple parties can read/write?
 - Multi-writer cells with ordering constraints (federation-mediated)
 - Read capabilities vs. write capabilities on shared cells
@@ -472,7 +472,7 @@ Targets for agent-scale operation:
 
 ### 7.7 Liveness and Availability
 
-seL4 has a scheduler that ensures progress. Pyana's federated model introduces liveness questions:
+seL4 has a scheduler that ensures progress. `dregg`'s federated model introduces liveness questions:
 - What if a sub-agent goes offline mid-task? (EventualRef timeout, fallback to alternative fulfiller)
 - What if the federation is partitioned? (Offline operation with bounded staleness, reconciliation on rejoin)
 - What if an intent has no fulfiller? (Timeout, escalation, decomposition into simpler sub-intents)
@@ -480,7 +480,7 @@ seL4 has a scheduler that ensures progress. Pyana's federated model introduces l
 
 ### 7.8 Formal Verification Path
 
-seL4's claim to fame is its formal verification. Can pyana achieve something similar?
+seL4's claim to fame is its formal verification. Can dregg achieve something similar?
 - The STARK proof system provides computational soundness (cheating is exponentially unlikely)
 - The capability model is formally expressible (Datalog policies are decidable)
 - The conservation invariant (sum of balance changes = 0) is checked by the executor
@@ -489,7 +489,7 @@ seL4's claim to fame is its formal verification. Can pyana achieve something sim
 
 ### 7.9 The "Kernel" Boundary
 
-In seL4, the kernel is minimal and formally verified. In pyana, what is the minimal trusted base?
+In seL4, the kernel is minimal and formally verified. In dregg, what is the minimal trusted base?
 - **Must trust**: STARK verification (soundness assumption), federation consensus (liveness assumption), executor correctness (conservation invariant)
 - **Need not trust**: other agents (verify their proofs), the network (proofs are self-contained), storage (proof chains are self-validating)
 - **Open question**: can the executor be made into a "microkernel" -- minimal code that checks conservation, hash-chain continuity, and capability confinement, with everything else in "userspace" (agent-side logic)?
@@ -506,10 +506,10 @@ Practical adoption requires bridging:
 
 ## Summary
 
-Pyana is to AI agents what seL4 is to processes: the enforcement layer that ensures agents operate within their granted authority, cannot escalate privileges, maintain auditable histories, and coordinate through well-defined protocols rather than ad hoc trust.
+`dregg` is to AI agents what seL4 is to processes: the enforcement layer that ensures agents operate within their granted authority, cannot escalate privileges, maintain auditable histories, and coordinate through well-defined protocols rather than ad hoc trust.
 
 The key insight is that zero-knowledge proofs fill the role that hardware isolation fills in seL4. Both provide the same property -- "you cannot fake authority you weren't granted" -- through different mechanisms. Hardware is faster but limited to a single machine. Proofs are slower but work across any network, offline, without trusting the verifier, and with post-quantum security.
 
-The "home for AI" is not a physical location or a cloud platform. It is the set of invariants, protocols, and economic structures that allow autonomous agents to coexist productively without requiring blind trust. Pyana provides these invariants at the protocol level, making them as inescapable for networked agents as seL4's capability checks are for local processes.
+The "home for AI" is not a physical location or a cloud platform. It is the set of invariants, protocols, and economic structures that allow autonomous agents to coexist productively without requiring blind trust. `dregg` provides these invariants at the protocol level, making them as inescapable for networked agents as seL4's capability checks are for local processes.
 
 Building the full "operating system" on this substrate -- the standard patterns, the lifecycle management, the economic conventions, the userspace libraries -- is the research program ahead. The kernel exists. The question is what Robigalia we build on top of it.

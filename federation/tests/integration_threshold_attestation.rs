@@ -8,10 +8,10 @@
 //! - QC bytes serialization round-trip preserves validity
 //! - Cross-committee confusion: QC from committee A rejected by committee B
 
-use pyana_federation::identity::derive_federation_id;
-use pyana_federation::threshold::{FederationCommittee, MemberSecret, generate_test_committee};
-use pyana_federation::{FederationReceipt, FederationReceiptBody};
-use pyana_types::{CellId, generate_keypair};
+use dregg_federation::identity::derive_federation_id;
+use dregg_federation::threshold::{FederationCommittee, MemberSecret, generate_test_committee};
+use dregg_federation::{FederationReceipt, FederationReceiptBody};
+use dregg_types::{CellId, generate_keypair};
 
 // =============================================================================
 // Helpers
@@ -36,7 +36,7 @@ fn quorum_sign(
     members: &[MemberSecret],
     threshold: usize,
     body_hash: &[u8],
-) -> pyana_federation::ThresholdQC {
+) -> dregg_federation::ThresholdQC {
     let shares: Vec<_> = members[..threshold]
         .iter()
         .map(|m| (m.index, committee.sign_share(m, body_hash)))
@@ -155,7 +155,7 @@ fn qc_bytes_round_trip_verifies() {
 
     let qc = quorum_sign(&committee, &members, 3, &hash);
     let qc_bytes = qc.to_bytes();
-    let qc2 = pyana_federation::ThresholdQC::from_bytes(&qc_bytes)
+    let qc2 = dregg_federation::ThresholdQC::from_bytes(&qc_bytes)
         .expect("deserialized QC must be valid");
 
     let receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body, &qc2);
@@ -192,7 +192,7 @@ fn federation_id_mismatch_rejected() {
 
 #[test]
 fn votes_qc_threshold_and_unknown_signer_rejection() {
-    use pyana_types::sign;
+    use dregg_types::sign;
 
     let kps: Vec<_> = (0..4).map(|_| generate_keypair()).collect();
     let known: Vec<_> = kps.iter().map(|(_, pk)| pk.clone()).collect();

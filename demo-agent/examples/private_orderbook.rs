@@ -12,13 +12,13 @@
 #![allow(dead_code)]
 
 use ed25519_dalek::{Signer, SigningKey};
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_cell::{CellId, Preconditions};
-use pyana_turn::CallForest;
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::composer::{SignedFragment, TurnComposer};
-use pyana_turn::executor::TurnExecutor;
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_cell::{CellId, Preconditions};
+use dregg_turn::CallForest;
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::composer::{SignedFragment, TurnComposer};
+use dregg_turn::executor::TurnExecutor;
 
 /// A sealed bid: the commitment is public, the details are private.
 #[derive(Clone, Debug)]
@@ -26,7 +26,7 @@ struct SealedBid {
     /// The note containing the bid details (private to the trader).
     note: Note,
     /// The public commitment (published to the order book).
-    commitment: pyana_cell::NoteCommitment,
+    commitment: dregg_cell::NoteCommitment,
     /// Direction: true = buy, false = sell.
     is_buy: bool,
     /// The asset being traded.
@@ -49,12 +49,12 @@ struct RevealedBid {
 
 /// Helper to create an Ed25519 signing key from seed bytes.
 fn make_signing_key(seed: &[u8]) -> SigningKey {
-    let hash = blake3::derive_key("pyana-orderbook-signing-key-v1", seed);
+    let hash = blake3::derive_key("dregg-orderbook-signing-key-v1", seed);
     SigningKey::from_bytes(&hash)
 }
 
 fn main() {
-    println!("=== Pyana Private Order Book Demo (Sealed-Bid Matching) ===\n");
+    println!("=== Dregg Private Order Book Demo (Sealed-Bid Matching) ===\n");
 
     // --- Setup: Create traders ---
     let alice_sk = make_signing_key(b"alice-orderbook-secret");

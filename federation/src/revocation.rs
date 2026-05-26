@@ -1,6 +1,6 @@
 //! Revocation Merkle tree management.
 //!
-//! This module wraps the `pyana-commit` Merkle tree to maintain a set of
+//! This module wraps the `dregg-commit` Merkle tree to maintain a set of
 //! revoked token IDs. Each revoked token is represented as a leaf in the
 //! 4-ary Merkle tree, where the leaf data is the BLAKE3 hash of the token ID.
 //!
@@ -10,8 +10,8 @@
 //! - Proving a token is NOT revoked (non-membership proof)
 //! - Getting the current Merkle root
 
-use pyana_commit::merkle::MerkleTree;
-use pyana_commit::{NonMembershipProof, hash_leaf};
+use dregg_commit::merkle::MerkleTree;
+use dregg_commit::{NonMembershipProof, hash_leaf};
 use std::collections::HashSet;
 
 use crate::types::{AttestedRoot, RevocationProof, hex_encode};
@@ -20,7 +20,7 @@ use crate::types::{AttestedRoot, RevocationProof, hex_encode};
 // Revocation Tree
 // =============================================================================
 
-/// A revocation tree backed by a 4-ary Merkle tree from `pyana-commit`.
+/// A revocation tree backed by a 4-ary Merkle tree from `dregg-commit`.
 ///
 /// Each leaf represents a revoked token: leaf_hash = H_leaf(token_id_bytes).
 /// The tree root commits to the entire revocation set.
@@ -218,7 +218,7 @@ pub struct RevocationVerification {
 /// We hash the token ID string to get a fixed-size leaf.
 fn token_id_to_leaf_data(token_id: &str) -> Vec<u8> {
     // Use domain-separated hashing for the token ID.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-federation revoked-token v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-federation revoked-token v1");
     hasher.update(token_id.as_bytes());
     hasher.finalize().as_bytes().to_vec()
 }

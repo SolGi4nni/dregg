@@ -269,7 +269,7 @@ fn test_pickles_malformed_public_inputs_rejected() {
 
 #[test]
 fn test_poseidon_hash_bytes() {
-    let data = b"hello pyana";
+    let data = b"hello dregg";
     let h1 = poseidon_hash_bytes(data);
     let h2 = poseidon_hash_bytes(data);
     assert_eq!(h1, h2, "Poseidon hash should be deterministic");

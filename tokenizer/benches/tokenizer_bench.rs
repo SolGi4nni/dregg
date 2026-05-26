@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use pyana_tokenizer::{SealedSecret, TokenizerKeypair};
+use dregg_tokenizer::{SealedSecret, TokenizerKeypair};
 
 fn bench_keypair_generate(c: &mut Criterion) {
     c.bench_function("tokenizer_keypair_generate", |b| {

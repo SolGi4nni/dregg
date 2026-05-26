@@ -1,19 +1,19 @@
-# Level 2 Bridge: Proof-Carrying Pyana-to-Midnight
+# Level 2 Bridge: Proof-Carrying `dregg`-to-Midnight
 
 ## Status: Design / Prototype
 
 ## Problem Statement
 
 Level 1 bridge (current): Federation members sign attestations ("this state
-transition happened on pyana"). Midnight trusts N-of-M signatures. Safety
+transition happened on dregg"). Midnight trusts N-of-M signatures. Safety
 depends entirely on federation honesty.
 
-Level 2 goal: Pyana submits a cryptographic PROOF of the state transition.
+Level 2 goal: `dregg` submits a cryptographic PROOF of the state transition.
 Midnight VERIFIES the proof in-circuit. Safety depends only on the math.
 
 ## Proof System Mismatch
 
-| Property | Pyana | Midnight |
+| Property | `dregg` | Midnight |
 |----------|-------|----------|
 | Field | BabyBear (p = 2^31 - 2^27 + 1) | BLS12-381 scalar (Fq, 255-bit) |
 | Proof system | STARK (FRI-based) | PLONK + KZG |
@@ -22,14 +22,14 @@ Midnight VERIFIES the proof in-circuit. Safety depends only on the math.
 | Proof size | ~24-48 KB | ~1-2 KB |
 
 These are fundamentally incompatible. There is no direct path where Midnight's
-native verifier accepts a pyana STARK proof.
+native verifier accepts a dregg STARK proof.
 
 ## Path Analysis
 
 ### Path A: FRI Verifier in ZkStdLib Circuit (FEASIBLE but EXPENSIVE)
 
 **Idea:** Write a Midnight `Relation` (ZkStdLib circuit) that implements the
-entire FRI verification protocol. Deploy it as a Midnight contract. Pyana
+entire FRI verification protocol. Deploy it as a Midnight contract. `dregg`
 submits STARK proofs; the contract verifies them.
 
 **What FRI verification requires:**
@@ -38,9 +38,9 @@ submits STARK proofs; the contract verifies them.
 3. Folding consistency checks between FRI layers
 
 **Critical blocker: Hash mismatch.**
-- Pyana's FRI Merkle trees use Poseidon2 over BabyBear
+- `dregg`'s FRI Merkle trees use Poseidon2 over BabyBear
 - Midnight's available hash is Poseidon over BLS12-381 Fq (width=3, rate=2)
-- To verify pyana's Merkle paths in Midnight, we'd need Poseidon2-over-BabyBear
+- To verify dregg's Merkle paths in Midnight, we'd need Poseidon2-over-BabyBear
   computed inside BLS12-381 arithmetic
 - BabyBear arithmetic in BLS12-381: trivial (BabyBear fits in a single Fq element)
 - Poseidon2-over-BabyBear in Plonk: doable but the round constants and MDS matrix
@@ -64,7 +64,7 @@ comfortably.
 - Implement Poseidon2-over-BabyBear as a custom chip or via native arithmetic
 - Implement FRI query verification logic in ZkStdLib
 - Implement polynomial evaluation check
-- Serialize/deserialize pyana STARK proofs into Midnight witness format
+- Serialize/deserialize dregg STARK proofs into Midnight witness format
 - Deploy as a Midnight contract via ZKIR or direct Relation
 
 **Verdict: Feasible but high effort. Highest security guarantee.**
@@ -124,8 +124,8 @@ inside a BLS12-381 circuit.
 
 ### Path C: Shared Commitment Interop (PRAGMATIC, IMMEDIATE)
 
-**Idea:** Both chains commit to the same state root. The pyana proof proves
-"old_root -> new_root is valid." A relay verifies the pyana proof off-chain,
+**Idea:** Both chains commit to the same state root. The dregg proof proves
+"old_root -> new_root is valid." A relay verifies the dregg proof off-chain,
 then submits new_root to Midnight with an attestation.
 
 **Trust model:** Weaker than full verification. Safety = "at least one honest
@@ -135,7 +135,7 @@ trust) if the relay set is permissionless.
 **Variant C+: Optimistic bridge with fraud proofs**
 - Relay posts new_root with a bond
 - Challenge period (e.g., 24h)
-- Anyone can challenge by submitting the FULL pyana STARK proof to an off-chain
+- Anyone can challenge by submitting the FULL dregg STARK proof to an off-chain
   arbitration committee (or by re-running verification)
 - If fraud proven: relay loses bond
 - This gives economic security without in-circuit verification
@@ -175,7 +175,7 @@ BLS12-381 PLONK proof. Two emerging options:
 
 When any of these become available, the flow becomes:
 ```
-Pyana STARK (BabyBear/FRI) -> Compression Service -> BLS12-381 PLONK proof
+Dregg STARK (BabyBear/FRI) -> Compression Service -> BLS12-381 PLONK proof
 -> Midnight VerifierGadget<BlstrsEmulation> verifies in-circuit
 ```
 
@@ -191,7 +191,7 @@ trust-minimized path but requires significant engineering.
 
 ## Prototype: FRI Verifier DSL Circuit
 
-File: `pyana-dsl-tests/src/fri_verifier_dsl.rs`
+File: `dregg-dsl-tests/src/fri_verifier_dsl.rs`
 
 This prototype expresses the core FRI query verification logic as a
 `CircuitDescriptor` targeting our DSL format. While not directly compilable to
@@ -215,7 +215,7 @@ ZKIR v3 (which lacks the hash primitives needed), it demonstrates:
 
 ## What We Need to Build (Phase 1)
 
-1. **State commitment format**: Define how pyana's Poseidon2 state root maps to
+1. **State commitment format**: Define how dregg's Poseidon2 state root maps to
    a Midnight-compatible field element (BLS12-381 Fq). Since BabyBear elements
    fit in Fq, the commitment can be a direct embedding.
 
@@ -226,7 +226,7 @@ ZKIR v3 (which lacks the hash primitives needed), it demonstrates:
    - Emits a "bridge update" event
 
 3. **Relay service**: An off-chain process that:
-   - Monitors pyana for finalized state transitions
+   - Monitors dregg for finalized state transitions
    - Verifies the STARK proof locally
    - Submits the new root to the Midnight contract
    - Posts bond (optimistic variant)

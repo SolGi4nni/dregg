@@ -28,7 +28,7 @@ Replace `ConservationProof` with `FullConservationProof` in the deserialization.
 
 The existing `NoteTree` stores `NoteCommitment` values (32-byte hashes). For committed notes, the leaf is `CommittedNote::note_commitment` -- same 32-byte type, same append-only semantics. Therefore:
 
-- **No separate tree required.** The `note_commitment` field of `CommittedNote` is computed as `BLAKE3("pyana-committed-note v1", owner || vc_bytes || asset_type || nonce || rcm)`, which is already a 32-byte value compatible with the existing `NoteCommitment` type.
+- **No separate tree required.** The `note_commitment` field of `CommittedNote` is computed as `BLAKE3("dregg-committed-note v1", owner || vc_bytes || asset_type || nonce || rcm)`, which is already a 32-byte value compatible with the existing `NoteCommitment` type.
 - The dual BLAKE3/Poseidon2 tree continues to work unchanged: committed note commitments are appended exactly like cleartext note commitments.
 - The nullifier derivation path is identical: `nullifier = H(spending_key || position)`.
 

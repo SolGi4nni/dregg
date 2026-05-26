@@ -1,4 +1,4 @@
-//! Multi-asset fee configuration for pyana apps.
+//! Multi-asset fee configuration for dregg apps.
 //!
 //! `FeePolicy` lets an app declare which assets it accepts as fee payment and
 //! at what rate relative to a base fee denominated in the native computron
@@ -22,7 +22,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::fee_policy::{FeePolicy};
+//! use dregg_app_framework::fee_policy::{FeePolicy};
 //!
 //! let policy = FeePolicy::computrons_only()
 //!     .with_asset(some_stablecoin_id, 11000, 500); // 10% premium, 500 minimum
@@ -35,7 +35,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Asset identifier re-exported from the intent crate so apps have a single import.
-pub type AssetId = pyana_intent::exchange::AssetId;
+pub type AssetId = dregg_intent::exchange::AssetId;
 
 /// The native platform asset sentinel: all-zero bytes.
 pub const NATIVE_ASSET: AssetId = [0u8; 32];

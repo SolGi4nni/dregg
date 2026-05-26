@@ -18,12 +18,12 @@
 //! trust root.
 //!
 //! NOTE: The trace verification here uses Ed25519 signature checks (real crypto).
-//! The STARK proof of issuer membership in `stark_proof.rs` uses `pyana_circuit::stark`
+//! The STARK proof of issuer membership in `stark_proof.rs` uses `dregg_circuit::stark`
 //! to generate a real zero-knowledge proof. A full integration would prove the
 //! entire derivation trace in zero-knowledge using the circuit's `fold_air` and
 //! `derivation_air` components.
 //!
-//! // TODO: integrate with real pyana_circuit::fold_air to prove each attenuation
+//! // TODO: integrate with real dregg_circuit::fold_air to prove each attenuation
 //! // step in zero-knowledge (currently trace verification is done via direct
 //! // Ed25519 signature checks, which is correct but not zero-knowledge).
 

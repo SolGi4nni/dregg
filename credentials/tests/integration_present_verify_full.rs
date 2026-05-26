@@ -11,12 +11,12 @@
 //! 7. Anonymous presentation (blinded membership): verifier accepts with `require_anonymous = true`.
 //! 8. Schema mismatch on disclose: presenting an attribute name not in schema → `PresentationError`.
 
-use pyana_credentials::{
+use dregg_credentials::{
     AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, Predicate, PredicateRequest,
     PresentationOptions, RevocationRegistry, VerificationOptions, issue, present,
     present_anonymous, revoke, verify, verify_anonymous,
 };
-use pyana_token::AuthRequest;
+use dregg_token::AuthRequest;
 
 // ── fixture helpers ──────────────────────────────────────────────────────────
 
@@ -192,7 +192,7 @@ fn missing_expected_disclosure_rejected() {
         "missing expected disclosure must cause verification to fail"
     );
     match result.unwrap_err() {
-        pyana_credentials::VerificationError::MissingDisclosure(attr) => {
+        dregg_credentials::VerificationError::MissingDisclosure(attr) => {
             assert_eq!(attr, "department");
         }
         other => panic!("expected MissingDisclosure(department), got {other:?}"),
@@ -246,7 +246,7 @@ fn predicate_on_text_attribute_fails_at_presentation_time() {
         "predicate on a Text attribute must fail at presentation time"
     );
     match result.unwrap_err() {
-        pyana_credentials::PresentationError::NonPredicateAttribute(name) => {
+        dregg_credentials::PresentationError::NonPredicateAttribute(name) => {
             assert_eq!(name, "department");
         }
         other => panic!("expected NonPredicateAttribute(department), got {other:?}"),
@@ -308,7 +308,7 @@ fn non_anonymous_presentation_rejected_when_anonymous_required() {
         "non-anonymous presentation must be rejected when anonymous required"
     );
     match result.unwrap_err() {
-        pyana_credentials::VerificationError::AnonymityMismatch => {}
+        dregg_credentials::VerificationError::AnonymityMismatch => {}
         other => panic!("expected AnonymityMismatch, got {other:?}"),
     }
 }
@@ -342,7 +342,7 @@ fn revoked_credential_presentation_rejected() {
     let result = verify(&pre_presentation, &post_verify);
     assert!(result.is_err(), "post-revocation verification must fail");
     match result.unwrap_err() {
-        pyana_credentials::VerificationError::Revoked => {}
+        dregg_credentials::VerificationError::Revoked => {}
         other => panic!("expected Revoked, got {other:?}"),
     }
 }

@@ -216,11 +216,11 @@ impl PersistentStore {
 }
 
 // =============================================================================
-// Audit Log Bridge (pyana-audit <-> pyana-persist)
+// Audit Log Bridge (dregg-audit <-> dregg-persist)
 // =============================================================================
 
-/// Bridge between the in-memory `pyana-audit` `AuditLog` (with Merkle proofs)
-/// and the persistent `pyana-persist` audit storage.
+/// Bridge between the in-memory `dregg-audit` `AuditLog` (with Merkle proofs)
+/// and the persistent `dregg-persist` audit storage.
 ///
 /// The in-memory `AuditLog` is the **canonical** audit system: it maintains a
 /// 4-ary Merkle tree over events and can produce inclusion proofs, count proofs,
@@ -245,7 +245,7 @@ impl PersistentStore {
     /// Returns the number of events persisted.
     pub fn persist_audit_events(
         &self,
-        log: &pyana_audit::AuditLog,
+        log: &dregg_audit::AuditLog,
         from_index: u64,
         to_index: u64,
     ) -> Result<u64> {
@@ -275,7 +275,7 @@ impl PersistentStore {
     /// persisted yet (based on comparing sizes).
     ///
     /// Returns the number of newly persisted events.
-    pub fn persist_audit_log(&self, log: &pyana_audit::AuditLog) -> Result<u64> {
+    pub fn persist_audit_log(&self, log: &dregg_audit::AuditLog) -> Result<u64> {
         let persisted_count = self.audit_count()?;
         let log_size = log.len() as u64;
 

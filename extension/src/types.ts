@@ -1,5 +1,5 @@
 /**
- * Shared type definitions for the Pyana extension message protocol.
+ * Shared type definitions for the Dregg extension message protocol.
  *
  * These types ensure end-to-end type safety between page.ts <-> content.ts <-> background.ts.
  * Where possible, types are imported from/aligned with the ts-sdk definitions.
@@ -104,92 +104,92 @@ export interface CapabilityToken {
 /** All message types in the extension protocol. */
 export type MessageType =
   // Core cipherclerk operations
-  | "pyana:authorize"
-  | "pyana:isConnected"
-  | "pyana:canAuthorize"
-  | "pyana:provision"
-  | "pyana:subscribe"
+  | "dregg:authorize"
+  | "dregg:isConnected"
+  | "dregg:canAuthorize"
+  | "dregg:provision"
+  | "dregg:subscribe"
   // Popup-only cipherclerk operations
-  | "pyana:getState"
-  | "pyana:lock"
-  | "pyana:unlock"
-  | "pyana:getCapabilities"
-  | "pyana:revoke"
-  | "pyana:setPassphrase"
-  | "pyana:getMnemonic"
-  | "pyana:recover"
+  | "dregg:getState"
+  | "dregg:lock"
+  | "dregg:unlock"
+  | "dregg:getCapabilities"
+  | "dregg:revoke"
+  | "dregg:setPassphrase"
+  | "dregg:getMnemonic"
+  | "dregg:recover"
   // Intent operations
-  | "pyana:postIntent"
-  | "pyana:offerCapability"
-  | "pyana:listIntents"
-  | "pyana:fulfillIntent"
-  | "pyana:getFulfillableIntents"
+  | "dregg:postIntent"
+  | "dregg:offerCapability"
+  | "dregg:listIntents"
+  | "dregg:fulfillIntent"
+  | "dregg:getFulfillableIntents"
   // Privacy operations
-  | "pyana:getStealthAddress"
-  | "pyana:postEncryptedIntent"
-  | "pyana:privateTransfer"
-  | "pyana:getPrivacyState"
-  | "pyana:setCommittedTransferMode"
-  | "pyana:getStealthNotes"
+  | "dregg:getStealthAddress"
+  | "dregg:postEncryptedIntent"
+  | "dregg:privateTransfer"
+  | "dregg:getPrivacyState"
+  | "dregg:setCommittedTransferMode"
+  | "dregg:getStealthNotes"
   // Bearer capabilities
-  | "pyana:createBearerCap"
-  | "pyana:verifyBearerCap"
+  | "dregg:createBearerCap"
+  | "dregg:verifyBearerCap"
   // Factory operations
-  | "pyana:createFromFactory"
-  | "pyana:verifyProvenance"
+  | "dregg:createFromFactory"
+  | "dregg:verifyProvenance"
   // Sovereign cell operations
-  | "pyana:makeCellSovereign"
-  | "pyana:peerExchange"
+  | "dregg:makeCellSovereign"
+  | "dregg:peerExchange"
   // Proof composition
-  | "pyana:composeProofs"
+  | "dregg:composeProofs"
   // Turn submission
-  | "pyana:signTurn"
-  | "pyana:queryBalance"
+  | "dregg:signTurn"
+  | "dregg:queryBalance"
   // Node configuration
-  | "pyana:getNodeConfig"
-  | "pyana:setNodeConfig"
+  | "dregg:getNodeConfig"
+  | "dregg:setNodeConfig"
   // CapTP operations
-  | "pyana:shareCapability"
-  | "pyana:acceptCapability"
-  | "pyana:createHandoff"
-  | "pyana:getLiveRefs"
-  | "pyana:dropLiveRef"
+  | "dregg:shareCapability"
+  | "dregg:acceptCapability"
+  | "dregg:createHandoff"
+  | "dregg:getLiveRefs"
+  | "dregg:dropLiveRef"
   // Directory operations
-  | "pyana:mountService"
-  | "pyana:discoverServices"
-  | "pyana:resolvePath"
+  | "dregg:mountService"
+  | "dregg:discoverServices"
+  | "dregg:resolvePath"
   // Storage operations
-  | "pyana:storageWrite"
-  | "pyana:storageRead"
-  | "pyana:storageQuota"
+  | "dregg:storageWrite"
+  | "dregg:storageRead"
+  | "dregg:storageQuota"
   // Federation operations
-  | "pyana:federationStatus"
-  | "pyana:proposeRoutes"
-  | "pyana:voteOnProposal"
+  | "dregg:federationStatus"
+  | "dregg:proposeRoutes"
+  | "dregg:voteOnProposal"
   // Discovery
-  | "pyana:getFederation"
-  | "pyana:refreshDiscovery"
+  | "dregg:getFederation"
+  | "dregg:refreshDiscovery"
   // Origin permission
-  | "pyana:requestOriginPermission"
-  | "pyana:originPermissionDecision"
-  | "pyana:getOriginPermissions"
-  | "pyana:revokeOriginPermission"
-  | "pyana:getDisclosurePrefs"
-  | "pyana:clearDisclosurePref"
+  | "dregg:requestOriginPermission"
+  | "dregg:originPermissionDecision"
+  | "dregg:getOriginPermissions"
+  | "dregg:revokeOriginPermission"
+  | "dregg:getDisclosurePrefs"
+  | "dregg:clearDisclosurePref"
   // Turn v3 (pre-built postcard bytes)
-  | "pyana:signTurnV3"
+  | "dregg:signTurnV3"
   // Federation registry
-  | "pyana:registerFederation"
-  | "pyana:listKnownFederations"
+  | "dregg:registerFederation"
+  | "dregg:listKnownFederations"
   // CapTP delivered authorization
-  | "pyana:createCapTpDeliveredAuth"
-  | "pyana:getActivityFeed"  // Phase 1 debugger: activity feed for <pyana-activity>
+  | "dregg:createCapTpDeliveredAuth"
+  | "dregg:getActivityFeed"  // Phase 1 debugger: activity feed for <dregg-activity>
   // Internal decision messages
-  | "pyana:provisionDecision"
-  | "pyana:intentConfirmation"
-  | "pyana:disclosureDecision"
+  | "dregg:provisionDecision"
+  | "dregg:intentConfirmation"
+  | "dregg:disclosureDecision"
   // Popup-to-background: fetch the display payload registered when the popup was opened.
-  | "pyana:getPendingDecision";
+  | "dregg:getPendingDecision";
 
 // ---------------------------------------------------------------------------
 // Known federation types
@@ -464,10 +464,10 @@ export interface EncryptedEnvelope {
 // ---------------------------------------------------------------------------
 
 /**
- * Interface for the pyana WASM module exports.
+ * Interface for the dregg WASM module exports.
  * Only the functions actually called from JS are typed here.
  */
-export interface PyanaWasm {
+export interface DreggWasm {
   // Mnemonic / key derivation
   generate_mnemonic(): string;
   validate_mnemonic(mnemonic: string): boolean;

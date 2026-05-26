@@ -312,7 +312,7 @@ impl StarkAir for EffectVmAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-effect-vm-v1"
+        "dregg-effect-vm-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {

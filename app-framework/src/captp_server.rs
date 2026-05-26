@@ -1,14 +1,14 @@
 //! CapTP server wrapper around [`SwissTable`].
 //!
 //! `CapTpServer` wraps a `SwissTable` to register cells as sturdy references and build
-//! shareable `PyanaUri` values. It is stored as an axum [`Extension`] so handlers can
+//! shareable `DreggUri` values. It is stored as an axum [`Extension`] so handlers can
 //! extract it and export capabilities to incoming connections.
 //!
 //! # Triage (post-Lane B wire changes — 2026-05-24)
 //!
 //! Verified still useful and correct. The `SwissTable` API surface
 //! used here (`SwissTable::export -> [u8; 32]`, `SwissTable::make_uri
-//! -> Option<PyanaUri>`) matches `captp/src/sturdy.rs` as of Lane B
+//! -> Option<DreggUri>`) matches `captp/src/sturdy.rs` as of Lane B
 //! (`captp/src/sturdy.rs:85, 143`). Lane B's wire changes
 //! restructured `wire/src/{captp_server, hardening}.rs` (the QUIC
 //! transport layer); the app-side `CapTpServer` wrapper here is the
@@ -18,7 +18,7 @@
 //! Verdict: **(a) still useful for app-side CapTP serving**.
 //! Apps that mount this carry a `CapTpServer` Extension on their
 //! Router so HTTP handlers can call `server.export(cell, perms, ...)`
-//! and return the resulting `PyanaUri` to the requesting client. No
+//! and return the resulting `DreggUri` to the requesting client. No
 //! changes needed for the current wire surface; if a future wire
 //! change forces `SwissTable::export` to return a `Result` (rather
 //! than infallibly returning a swiss number), the change is local —
@@ -26,10 +26,10 @@
 //!
 //! # Signature note (disagreement with brief)
 //!
-//! The brief stated that `SwissTable::export` returns a `PyanaUri` directly. Reality:
-//! `SwissTable::export` returns `[u8; 32]` (the raw swiss number). The `PyanaUri` is
+//! The brief stated that `SwissTable::export` returns a `DreggUri` directly. Reality:
+//! `SwissTable::export` returns `[u8; 32]` (the raw swiss number). The `DreggUri` is
 //! constructed separately via `SwissTable::make_uri`. `CapTpServer::export` wraps both
-//! calls so callers receive the `PyanaUri` as the brief expected.
+//! calls so callers receive the `DreggUri` as the brief expected.
 //!
 //! `SwissTable::export` actual signature:
 //! ```text
@@ -45,8 +45,8 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::captp_server::CapTpServer;
-//! use pyana_captp::FederationId;
+//! use dregg_app_framework::captp_server::CapTpServer;
+//! use dregg_captp::FederationId;
 //!
 //! let server = CapTpServer::new(FederationId([0xAB; 32]));
 //! let uri = server.export(my_cell, AuthRequired::Signature, 100, None).await;
@@ -56,8 +56,8 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use pyana_captp::{FederationId, PyanaUri, SwissTable};
-use pyana_cell::{AuthRequired, CellId};
+use dregg_captp::{FederationId, DreggUri, SwissTable};
+use dregg_cell::{AuthRequired, CellId};
 
 /// CapTP server: wraps a `SwissTable` to export cells as sturdy refs.
 ///
@@ -88,7 +88,7 @@ impl CapTpServer {
     /// Export a cell as a sturdy reference.
     ///
     /// Internally calls `SwissTable::export` (returns swiss number `[u8; 32]`),
-    /// then `SwissTable::make_uri` to build the full `PyanaUri`.
+    /// then `SwissTable::make_uri` to build the full `DreggUri`.
     ///
     /// # Arguments
     ///
@@ -105,7 +105,7 @@ impl CapTpServer {
         permissions: AuthRequired,
         current_height: u64,
         expires_at: Option<u64>,
-    ) -> Option<PyanaUri> {
+    ) -> Option<DreggUri> {
         let mut swiss = self.swiss.lock().await;
         let swiss_num = swiss.export(cell, permissions, current_height, expires_at);
         swiss.make_uri(self.federation_id.0, &swiss_num)
@@ -154,10 +154,10 @@ mod tests {
         // URI string should be parseable.
         let uri_str = uri.to_uri_string();
         assert!(
-            uri_str.starts_with("pyana://"),
-            "URI starts with pyana://: {uri_str}"
+            uri_str.starts_with("dregg://"),
+            "URI starts with dregg://: {uri_str}"
         );
-        let parsed = PyanaUri::parse(&uri_str).unwrap();
+        let parsed = DreggUri::parse(&uri_str).unwrap();
         assert_eq!(parsed.federation_id, fed.0);
         assert_eq!(parsed.cell_id, cell.0);
     }

@@ -1,14 +1,14 @@
 # Garbled Circuits and Oblivious Transfer for Two-Party Private Computation
 
 Research document exploring how Yao's garbled circuits and oblivious transfer (OT)
-can integrate with pyana to enable two-party private computation where neither
+can integrate with dregg to enable two-party private computation where neither
 party reveals their input but both learn the result.
 
 ---
 
-## 1. Motivation: The Gap in Pyana's Privacy Stack
+## 1. Motivation: The Gap in `dregg`'s Privacy Stack
 
-Pyana's current privacy primitives cover single-party proving:
+`dregg`'s current privacy primitives cover single-party proving:
 
 | Primitive | What it does | Limitation |
 |-----------|-------------|-----------|
@@ -91,7 +91,7 @@ Receiver:
 - Sender sees `R` which is uniformly random regardless of `b` (information-theoretically
   hiding the choice bit under DDH).
 
-### 2.3 Integration with Pyana's X25519 Infrastructure
+### 2.3 Integration with `dregg`'s X25519 Infrastructure
 
 The `TokenizerKeypair` in `tokenizer/src/encrypt.rs` already wraps `x25519_dalek`:
 
@@ -342,7 +342,7 @@ The final STARK proof attests:
 
 ---
 
-## 5. Integration Points with Pyana
+## 5. Integration Points with `dregg`
 
 ### 5.1 Where This Lives in the Codebase
 
@@ -597,7 +597,7 @@ Alice decrypts to learn pass/fail.
 - Not post-quantum without lattice-based FHE (which we'd need anyway for PQ OT)
 
 **When to use**: When neither party should learn anything (not even a 1-bit output)
-until a trusted decryptor reveals it. Overkill for pyana's current use cases.
+until a trusted decryptor reveals it. Overkill for dregg's current use cases.
 
 ### 7.4 Decision Tree: "I Want Private Two-Party Computation"
 
@@ -639,7 +639,7 @@ Garbled circuits are inherently one-time-use. The security of Yao's protocol rel
 on each garbled table entry being decryptable only once. If the same garbled circuit
 is reused with different inputs, the evaluator can learn the garbler's input.
 
-**Impact on pyana**: For repeated interactions (same threshold, many different values),
+**Impact on dregg**: For repeated interactions (same threshold, many different values),
 Alice must generate a fresh garbled circuit each time.
 
 **Mitigation strategies**:
@@ -658,7 +658,7 @@ Alice must generate a fresh garbled circuit each time.
 
 4. **Garbled RAM / ORAM**: For repeated evaluations of the same function with
    different inputs, garbled RAM constructions exist but are ~100x more expensive.
-   Not recommended for pyana.
+   Not recommended for dregg.
 
 ### 8.2 Malicious Security
 
@@ -682,7 +682,7 @@ underlying computation is wrong.
 3. **Authenticated garbling** (Wang-Ranellucci-Katz 2017): Information-theoretic
    MACs on wire labels detect cheating. Adds ~50% communication overhead.
 
-For pyana's use cases (where Alice's circuit commitment is public and the circuit
+For dregg's use cases (where Alice's circuit commitment is public and the circuit
 topology is a well-known comparison), option (1) suffices and is cheap.
 
 ### 8.3 Communication Overhead vs. Local Proofs
@@ -714,7 +714,7 @@ so the standard circuit handles values in `[0, 2^31 - 2^27]`. For larger values
 | 128 | 256 | ~8 KB | 128 | ~1.2 s |
 | 256 | 512 | ~16 KB | 256 | ~2.5 s |
 
-For pyana, 31-bit (BabyBear native) is the natural choice. Values larger than
+For dregg, 31-bit (BabyBear native) is the natural choice. Values larger than
 `p = 2013265921` (~2 billion) would need multi-limb representation, which the
 existing `PredicateAir` bit-decomposition already handles via `PREDICATE_DIFF_BITS = 31`.
 
@@ -907,7 +907,7 @@ This prevents a malicious garbler from encoding a different function.
 
 ## 12. Summary
 
-| Aspect | Garbled Circuits in Pyana |
+| Aspect | Garbled Circuits in `dregg` |
 |--------|--------------------------|
 | **What it enables** | Two-party private computation (neither reveals input) |
 | **Primary use case** | Class B predicates (private threshold comparison) |
@@ -922,7 +922,7 @@ This prevents a malicious garbler from encoding a different function.
 | **Implementation effort** | ~10-14 weeks for full stack (OT + garbling + AIR + intent) |
 | **Dependencies** | x25519_dalek (have it), poseidon2 (have it), new AIR (build it) |
 
-The garbled circuit approach fills a specific gap in pyana's privacy stack: cases
+The garbled circuit approach fills a specific gap in dregg's privacy stack: cases
 where the committed-threshold approach leaks too much (the prover would learn the
 threshold) but full MPC-in-the-head is too expensive. It is the natural next step
 after the existing `PredicateAir` and `CompoundPredicateAir` for two-party private

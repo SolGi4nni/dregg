@@ -4,7 +4,7 @@
 
 Both apps reimplemented qualification/proof verification from scratch (bounty-board `qualification.rs` ~280 LOC, compute-exchange `qualification.rs` ~300 LOC). The logic is structurally identical: parse proof header bytes, check attribute hash binding, validate threshold, verify predicate type byte, then stub out the actual STARK call.
 
-**Proposed:** `pyana-sdk::verify` should expose:
+**Proposed:** `dregg-sdk::verify` should expose:
 ```rust
 pub fn verify_predicate_proof(proof: &[u8], attribute: &str, threshold: u64, predicate_type: PredicateType, federation_root: [u8; 32]) -> Result<bool, ProofError>
 pub fn verify_membership_proof(proof: &[u8], federation_root: [u8; 32]) -> Result<bool, ProofError>
@@ -26,13 +26,13 @@ impl<T: Clone> ContentStore<T> {
     pub async fn filter<F: Fn(&T) -> bool>(&self, f: F) -> Vec<T>;
 }
 ```
-**Where:** New `pyana-app-framework` crate. ~80 LOC.
+**Where:** New `dregg-app-framework` crate. ~80 LOC.
 
 ## 3. Hex Encode/Decode Utilities Copied Verbatim
 
 Both apps have identical `hex_encode`, `hex_decode`, `hex_decode_32`, `hex_nibble`, `bounty_id_hex`, `bounty_id_from_hex` functions (~50 LOC each).
 
-**Proposed:** `pyana-types` should export `hex::encode(&[u8]) -> String` and `hex::decode_32(&str) -> Option<[u8;32]>`. ~30 LOC.
+**Proposed:** `dregg-types` should export `hex::encode(&[u8]) -> String` and `hex::decode_32(&str) -> Option<[u8;32]>`. ~30 LOC.
 
 ## 4. Escrow Construction Built from Raw Primitives
 
@@ -40,7 +40,7 @@ bounty-board `payment.rs` (300 LOC) manually assembles `Action`, `Effect::Transf
 
 **Proposed SDK methods:**
 ```rust
-impl PyanaEngine {
+impl DreggEngine {
     pub fn create_escrow(&mut self, from: CellId, to: CellId, amount: u64, condition: EscrowCondition, timeout: u64) -> Result<[u8;32], EmbedError>;
     pub fn release_escrow(&mut self, escrow_id: [u8;32], proof: &[u8]) -> Result<TurnReceipt, EmbedError>;
     pub fn refund_escrow(&mut self, escrow_id: [u8;32]) -> Result<TurnReceipt, EmbedError>;
@@ -50,7 +50,7 @@ impl PyanaEngine {
 
 ## 5. Commit-Reveal Protocol Wiring
 
-compute-exchange wraps `pyana_intent::commit_reveal_fulfillment::FulfillmentRegistry` but has to manually thread it through state, map error types, and coordinate the two-phase flow. This should be a managed flow.
+compute-exchange wraps `dregg_intent::commit_reveal_fulfillment::FulfillmentRegistry` but has to manually thread it through state, map error types, and coordinate the two-phase flow. This should be a managed flow.
 
 **Proposed:**
 ```rust
@@ -69,30 +69,30 @@ Both apps verify proofs inline in handlers. The SDK's embed doc even shows a cod
 
 **Proposed:**
 ```rust
-pub struct PyanaProofLayer { engine: Arc<RwLock<PyanaEngine>> }
+pub struct DreggProofLayer { engine: Arc<RwLock<DreggEngine>> }
 pub struct VerifiedProof { pub federation_root: [u8;32] }
-// axum::FromRequestParts impl that extracts X-Pyana-Proof header, verifies, rejects 403
+// axum::FromRequestParts impl that extracts X-Dregg-Proof header, verifies, rejects 403
 ```
-**Where:** New `pyana-app-framework` crate (feature-gated behind `axum`). ~80 LOC.
+**Where:** New `dregg-app-framework` crate (feature-gated behind `axum`). ~80 LOC.
 
 ## 7. Direct Imports Below SDK Abstraction
 
-- bounty-board imports `pyana_circuit::PredicateType` directly
-- bounty-board imports `pyana_turn::action::{Action, Authorization, Effect, ...}` directly
-- compute-exchange imports `pyana_intent::FillConstraints`, `pyana_intent::partial_fill::*`
-- compute-exchange imports `pyana_turn::escrow::EscrowRecord`
+- bounty-board imports `dregg_circuit::PredicateType` directly
+- bounty-board imports `dregg_turn::action::{Action, Authorization, Effect, ...}` directly
+- compute-exchange imports `dregg_intent::FillConstraints`, `dregg_intent::partial_fill::*`
+- compute-exchange imports `dregg_turn::escrow::EscrowRecord`
 
-**Fix:** Re-export `PredicateType`, `FillConstraints`, `EscrowCondition`, `EscrowRecord` from `pyana-sdk` root. ~10 LOC of `pub use` lines.
+**Fix:** Re-export `PredicateType`, `FillConstraints`, `EscrowCondition`, `EscrowRecord` from `dregg-sdk` root. ~10 LOC of `pub use` lines.
 
 ## Summary Table
 
 | Gap | Location | Est. LOC |
 |-----|----------|----------|
 | Unified proof verification helpers | `sdk/src/verify.rs` | 120 |
-| Generic async ContentStore | `pyana-app-framework` | 80 |
-| Hex utilities | `pyana-types` | 30 |
-| Escrow lifecycle on PyanaEngine | `sdk/src/embed.rs` | 100 |
+| Generic async ContentStore | `dregg-app-framework` | 80 |
+| Hex utilities | `dregg-types` | 30 |
+| Escrow lifecycle on DreggEngine | `sdk/src/embed.rs` | 100 |
 | CommitRevealFlow managed wrapper | `sdk/src/flows.rs` | 60 |
-| Axum proof middleware | `pyana-app-framework` | 80 |
+| Axum proof middleware | `dregg-app-framework` | 80 |
 | Re-exports of sub-crate types | `sdk/src/lib.rs` | 10 |
 | **Total** | | **~480** |

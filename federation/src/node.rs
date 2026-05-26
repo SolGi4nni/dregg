@@ -142,7 +142,7 @@ impl ReconfigurationProposal {
     /// Compute the canonical message to sign for a reconfiguration proposal.
     pub fn signing_message(epoch: u64, new_members: &[PublicKey]) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-reconfig-proposal-v1");
+        msg.extend_from_slice(b"dregg-reconfig-proposal-v1");
         msg.extend_from_slice(&epoch.to_le_bytes());
         for member in new_members {
             msg.extend_from_slice(&member.0);
@@ -152,7 +152,7 @@ impl ReconfigurationProposal {
 
     /// Compute a hash of this proposal (for vote tracking).
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-reconfig-proposal-hash-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-reconfig-proposal-hash-v1");
         hasher.update(&self.epoch.to_le_bytes());
         for member in &self.new_members {
             hasher.update(&member.0);
@@ -738,7 +738,7 @@ impl ConsensusOrchestrator {
 
 /// Compute the genesis block hash (deterministic for a given config).
 fn compute_genesis_hash(config: &ConsensusConfig) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-federation genesis v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-federation genesis v1");
     hasher.update(&(config.num_nodes as u64).to_le_bytes());
     hasher.update(&(config.threshold as u64).to_le_bytes());
     *hasher.finalize().as_bytes()
@@ -835,7 +835,7 @@ impl FederationNode {
     /// `qc.votes` (signed over the `vote_message`: block_hash + height + view).
     /// Those signatures are NOT verifiable by `AttestedRoot::is_valid`, which
     /// re-derives a different canonical signing message
-    /// (`AttestedRoot::signing_message`: `pyana-attested-root-v1 || merkle_root
+    /// (`AttestedRoot::signing_message`: `dregg-attested-root-v1 || merkle_root
     /// || note_tree_root_tag || nullifier_set_root_tag || height || timestamp`).
     ///
     /// To make `is_valid` actually verify, callers now pass `quorum_signatures`
@@ -862,10 +862,10 @@ impl FederationNode {
             threshold_qc: qc
                 .aggregate_qc
                 .as_ref()
-                .map(|q| pyana_types::ThresholdQC(q.to_bytes())),
+                .map(|q| dregg_types::ThresholdQC(q.to_bytes())),
             quorum_signatures,
             threshold: qc.threshold,
-            federation_id: pyana_types::FederationId::PLACEHOLDER,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
             // v4 (#80): not yet bound here — v3-legacy compatible.
             receipt_stream_root: None,
         });
@@ -957,7 +957,7 @@ impl Federation {
     ///
     /// These are the signatures that `AttestedRoot::is_valid` actually verifies.
     /// The consensus QC's per-voter signatures sign a different message
-    /// (`pyana-federation-vote-v1 || block_hash || height || view`) and are
+    /// (`dregg-federation-vote-v1 || block_hash || height || view`) and are
     /// retained on the QC itself; we re-sign here so that downstream verifiers
     /// who only have an `AttestedRoot` (and not the QC's block_hash/view) can
     /// authenticate it.
@@ -981,7 +981,7 @@ impl Federation {
             threshold_qc: None,
             quorum_signatures: Vec::new(),
             threshold: 0,
-            federation_id: pyana_types::FederationId::PLACEHOLDER,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
             // v4 (#80): probe matches the stand-in shape above (v3-legacy).
             receipt_stream_root: None,
         };
@@ -1306,7 +1306,7 @@ mod tests {
         // AttestedRoot::is_valid using the federation's published keys.
         //
         // Before the fix, update_attested_root copied consensus vote-message
-        // signatures (over `pyana-federation-vote-v1 || block_hash || height
+        // signatures (over `dregg-federation-vote-v1 || block_hash || height
         // || view`) into AttestedRoot.quorum_signatures, but is_valid checks
         // signatures over a different message (signing_message: merkle_root +
         // height + timestamp). The signatures were authentic but on the wrong

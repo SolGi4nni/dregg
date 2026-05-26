@@ -1,13 +1,13 @@
-//! MCP (Model Context Protocol) server for the pyana node.
+//! MCP (Model Context Protocol) server for the dregg node.
 //!
 //! Exposes node capabilities as MCP tools over JSON-RPC 2.0 (stdio transport).
 //! AI assistants (Claude, GPT, etc.) can discover and invoke tools to interact
-//! with the pyana federation: authorize actions, submit turns, manage capabilities,
+//! with the dregg federation: authorize actions, submit turns, manage capabilities,
 //! post intents, and more.
 //!
 //! ## Transport
 //!
-//! - **Stdio**: `pyana-node mcp` reads JSON-RPC from stdin and writes to stdout.
+//! - **Stdio**: `dregg-node mcp` reads JSON-RPC from stdin and writes to stdout.
 //!   This is the standard MCP transport for local tool-calling.
 //!
 //! ## Protocol
@@ -23,12 +23,12 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{error, info};
 
-use pyana_sdk::{Attenuation, CellId};
-use pyana_turn::{CallForest, Turn};
-use pyana_types::PublicKey;
+use dregg_sdk::{Attenuation, CellId};
+use dregg_turn::{CallForest, Turn};
+use dregg_types::PublicKey;
 
-use pyana_app_framework::AppCipherclerk;
-use pyana_sdk::AgentCipherclerk;
+use dregg_app_framework::AppCipherclerk;
+use dregg_sdk::AgentCipherclerk;
 use starbridge_governed_namespace::build_register_service_action as sb_build_register_service_action;
 use starbridge_identity::{
     Credential as SbCredential, CredentialAttributes as SbCredentialAttributes,
@@ -56,7 +56,7 @@ use crate::state::NodeState;
 /// Returns a human-readable error string when the descriptor is malformed.
 /// MCP-first: this is the canonical effect-parsing surface; the HTTP API
 /// would derive from it if/when it gains an effects body.
-fn parse_effect_json(value: &Value) -> Result<pyana_turn::Effect, String> {
+fn parse_effect_json(value: &Value) -> Result<dregg_turn::Effect, String> {
     let ty = value
         .get("type")
         .and_then(|v| v.as_str())
@@ -78,16 +78,16 @@ fn parse_effect_json(value: &Value) -> Result<pyana_turn::Effect, String> {
                 .get("amount")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| "effect.transfer missing 'amount'".to_string())?;
-            Ok(pyana_turn::Effect::Transfer {
-                from: pyana_cell::CellId(from),
-                to: pyana_cell::CellId(to),
+            Ok(dregg_turn::Effect::Transfer {
+                from: dregg_cell::CellId(from),
+                to: dregg_cell::CellId(to),
                 amount,
             })
         }
         "increment_nonce" => {
             let cell = get_hex_32(value, "cell")?;
-            Ok(pyana_turn::Effect::IncrementNonce {
-                cell: pyana_cell::CellId(cell),
+            Ok(dregg_turn::Effect::IncrementNonce {
+                cell: dregg_cell::CellId(cell),
             })
         }
         "set_field" => {
@@ -104,8 +104,8 @@ fn parse_effect_json(value: &Value) -> Result<pyana_turn::Effect, String> {
                 as u32;
             let mut value_bytes = [0u8; 32];
             value_bytes[..4].copy_from_slice(&value_u32.to_le_bytes());
-            Ok(pyana_turn::Effect::SetField {
-                cell: pyana_cell::CellId(cell),
+            Ok(dregg_turn::Effect::SetField {
+                cell: dregg_cell::CellId(cell),
                 index,
                 value: value_bytes,
             })
@@ -117,16 +117,16 @@ fn parse_effect_json(value: &Value) -> Result<pyana_turn::Effect, String> {
 }
 
 /// Build a CallForest with a single root action containing the given effects.
-fn build_forest_with_effects(target: CellId, effects: Vec<pyana_turn::Effect>) -> CallForest {
-    let action = pyana_turn::Action {
+fn build_forest_with_effects(target: CellId, effects: Vec<dregg_turn::Effect>) -> CallForest {
+    let action = dregg_turn::Action {
         target,
-        method: pyana_turn::action::symbol("execute"),
+        method: dregg_turn::action::symbol("execute"),
         args: vec![],
-        authorization: pyana_turn::Authorization::Unchecked,
-        preconditions: pyana_cell::Preconditions::default(),
+        authorization: dregg_turn::Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
         effects,
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -142,18 +142,18 @@ fn build_forest_with_effects(target: CellId, effects: Vec<pyana_turn::Effect>) -
 /// (`[0u8; 32]`) — which matches `TurnExecutor::new(...).local_federation_id`.
 fn build_signed_forest(
     target: CellId,
-    effects: Vec<pyana_turn::Effect>,
-    cclerk: &pyana_sdk::AgentCipherclerk,
+    effects: Vec<dregg_turn::Effect>,
+    cclerk: &dregg_sdk::AgentCipherclerk,
 ) -> CallForest {
-    let mut action = pyana_turn::Action {
+    let mut action = dregg_turn::Action {
         target,
-        method: pyana_turn::action::symbol("execute"),
+        method: dregg_turn::action::symbol("execute"),
         args: vec![],
-        authorization: pyana_turn::Authorization::Unchecked,
-        preconditions: pyana_cell::Preconditions::default(),
+        authorization: dregg_turn::Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
         effects,
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -161,13 +161,13 @@ fn build_signed_forest(
     // Authorization::Signature so cells with `delegate: Signature` accept
     // the action.
     let federation_id = [0u8; 32];
-    let msg = pyana_turn::TurnExecutor::compute_signing_message(&action, &federation_id);
+    let msg = dregg_turn::TurnExecutor::compute_signing_message(&action, &federation_id);
     let sig = cclerk.sign_bytes(&msg);
     let mut r = [0u8; 32];
     let mut s = [0u8; 32];
     r.copy_from_slice(&sig.0[..32]);
     s.copy_from_slice(&sig.0[32..]);
-    action.authorization = pyana_turn::Authorization::Signature(r, s);
+    action.authorization = dregg_turn::Authorization::Signature(r, s);
 
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -198,16 +198,16 @@ fn build_signed_forest(
 fn generate_effect_vm_proof(
     initial_balance: u64,
     initial_nonce: u64,
-    vm_effects: &[pyana_circuit::effect_vm::Effect],
+    vm_effects: &[dregg_circuit::effect_vm::Effect],
 ) -> (String, Vec<u64>, Vec<Vec<u32>>, String) {
     if vm_effects.is_empty() {
         return (String::new(), Vec::new(), Vec::new(), String::new());
     }
 
     let initial_state =
-        pyana_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
+        dregg_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
     let (trace, mut public_inputs) =
-        pyana_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
+        dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
 
     // Issue #72: the verifier's `check_receipt_pi_binding` requires
     // `PI[IS_AGENT_CELL] == 1` for the v1 single-proof-per-WR shape (see
@@ -223,26 +223,26 @@ fn generate_effect_vm_proof(
     // `turn/src/executor/proof_verify.rs::populate_pi` does for the
     // executor-driven path and what `silver_helper.rs::cmd_make_recursive_witness`
     // does for the demo's witness fabrication path. Without this, the
-    // standalone `pyana-verifier replay-chain` rejects the chain with
+    // standalone `dregg-verifier replay-chain` rejects the chain with
     // "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
-    public_inputs[pyana_circuit::effect_vm::pi::IS_AGENT_CELL] = pyana_circuit::BabyBear::ONE;
+    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
     // The trace generator pads to the next power of two ≥ 2; the AIR must be
     // sized to the actual trace height, not the raw effect count (passing
     // `vm_effects.len()` panics when it's less than 2 or not a power of two).
-    let air = pyana_circuit::effect_vm::EffectVmAir::new(trace.len());
-    let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
+    let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
+    let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
     // Use the canonical PYNA-prefixed byte format that the standalone
-    // pyana-verifier binary deserializes via stark::proof_from_bytes.
+    // dregg-verifier binary deserializes via stark::proof_from_bytes.
     // postcard's encoding lacks the magic-header and is not what the
     // verifier accepts on the wire.
-    let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
+    let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
     let proof_hex = hex_encode(&proof_bytes);
     let public_inputs_u64: Vec<u64> = public_inputs.iter().map(|f| f.as_u32() as u64).collect();
     // Build the canonical WitnessBundle::Inline so we can both ship the
     // trace shape and compute its BLAKE3 hash via the canonical
     // postcard-serialised form. The demo writes both to disk; the verifier
     // re-derives the hash to enforce binding.
-    let bundle = pyana_turn::WitnessBundle::inline_from_trace(&trace);
+    let bundle = dregg_turn::WitnessBundle::inline_from_trace(&trace);
     let trace_rows = bundle.trace_rows.clone();
     let witness_hash_hex = hex_encode(&bundle.witness_hash());
     (proof_hex, public_inputs_u64, trace_rows, witness_hash_hex)
@@ -405,7 +405,7 @@ impl McpToolResult {
 fn tool_definitions() -> Vec<McpToolDef> {
     vec![
         McpToolDef {
-            name: "pyana_get_status",
+            name: "dregg_get_status",
             description: "Get node status (height, peers, health)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -414,7 +414,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_create_agent",
+            name: "dregg_create_agent",
             description: "Register this node's cipherclerk as a cell in the local ledger (idempotent). Returns the content-addressed cell_id.",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -426,7 +426,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_authorize",
+            name: "dregg_authorize",
             description: "Prove authorization for an action using ZK proof",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -439,7 +439,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_submit_turn",
+            name: "dregg_submit_turn",
             description: "Submit an atomic turn (set of actions) for execution. Pass an `effects` array to actually perform work (transfers, set_field, etc.); omit it for a no-op turn that just chains a receipt.",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -458,7 +458,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_grant_capability",
+            name: "dregg_grant_capability",
             description: "Grant a capability to another agent",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -471,7 +471,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_revoke_capability",
+            name: "dregg_revoke_capability",
             description: "Revoke a previously granted capability",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -482,7 +482,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_post_intent",
+            name: "dregg_post_intent",
             description: "Post an intent to the marketplace (request a capability/service)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -496,7 +496,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_fulfill_intent",
+            name: "dregg_fulfill_intent",
             description: "Fulfill a matching intent from the marketplace",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -507,7 +507,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_delegate",
+            name: "dregg_delegate",
             description: "Delegate a bounded sub-capability to another agent",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -521,7 +521,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_check_capabilities",
+            name: "dregg_check_capabilities",
             description: "List all capabilities held by the current agent",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -530,7 +530,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_read_cell",
+            name: "dregg_read_cell",
             description: "Read a cell's state (balance, fields, permissions)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -541,7 +541,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_get_receipt_chain",
+            name: "dregg_get_receipt_chain",
             description: "Get the agent's auditable receipt chain (action history)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -552,7 +552,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_seal_data",
+            name: "dregg_seal_data",
             description: "Encrypt data that only a specific agent can decrypt",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -564,7 +564,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_unseal_data",
+            name: "dregg_unseal_data",
             description: "Decrypt sealed data addressed to this agent",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -575,7 +575,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_bridge_note",
+            name: "dregg_bridge_note",
             description: "Bridge a note to another federation",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -588,7 +588,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Sovereign Cells ───────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_make_sovereign",
+            name: "dregg_make_sovereign",
             description: "Transition a cell to sovereign mode (cell stores its own state, federation only holds commitment)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -599,7 +599,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_peer_exchange",
+            name: "dregg_peer_exchange",
             description: "Initiate P2P state exchange with another sovereign cell, producing a STARK proof of the transition",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -612,7 +612,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_compress_history",
+            name: "dregg_compress_history",
             description: "IVC-compress a sovereign cell's turn history into a single constant-size proof",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -626,7 +626,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Bearer Capabilities ───────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_create_bearer_cap",
+            name: "dregg_create_bearer_cap",
             description: "Create a bearer capability proof (immediate grant, no c-list storage required)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -640,7 +640,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_exercise_bearer_cap",
+            name: "dregg_exercise_bearer_cap",
             description: "Exercise a bearer capability to perform an action without c-list storage. Pass an `effects` array to actually perform work (e.g. transfer from the target cell).",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -662,7 +662,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Factories ─────────────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_deploy_factory",
+            name: "dregg_deploy_factory",
             description: "Deploy a factory descriptor to the ProgramRegistry (defines what new cells can be created)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -676,7 +676,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_create_from_factory",
+            name: "dregg_create_from_factory",
             description: "Create a new cell from a deployed factory (with provenance tracking)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -689,7 +689,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_verify_provenance",
+            name: "dregg_verify_provenance",
             description: "Verify a cell's factory provenance (check its creation lineage)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -702,7 +702,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Effect VM ─────────────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_prove_sovereign_turn",
+            name: "dregg_prove_sovereign_turn",
             description: "Generate a STARK proof for a sovereign cell's multi-effect turn via the Effect VM",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -728,7 +728,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_verify_sovereign_proof",
+            name: "dregg_verify_sovereign_proof",
             description: "Verify a STARK proof generated by the Effect VM for a sovereign turn",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -745,7 +745,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Privacy ───────────────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_create_stealth_address",
+            name: "dregg_create_stealth_address",
             description: "Generate a one-time stealth address for a recipient (unlinkable receive address)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -757,7 +757,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_private_transfer",
+            name: "dregg_private_transfer",
             description: "Perform a private value transfer using Pedersen commitments (hides amount)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -771,7 +771,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_encrypt_intent",
+            name: "dregg_encrypt_intent",
             description: "Post an SSE-encrypted intent (body hidden, matchable via search tokens)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -784,7 +784,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_prove_predicate",
+            name: "dregg_prove_predicate",
             description: "Prove a predicate over private data (e.g. balance >= threshold) without revealing the value",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -800,7 +800,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Proof Composition ─────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_compose_proofs",
+            name: "dregg_compose_proofs",
             description: "Compose multiple proofs using logical operators (and/or/chain/aggregate)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -825,7 +825,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Blocklace ─────────────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_get_blocklace_status",
+            name: "dregg_get_blocklace_status",
             description: "Get blocklace consensus status (tip, finality level, participants, wave)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -834,7 +834,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_get_constitution",
+            name: "dregg_get_constitution",
             description: "Get the current federation constitution (membership set, threshold, version)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -843,7 +843,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_propose_membership",
+            name: "dregg_propose_membership",
             description: "Propose a membership change (join/leave/threshold change) to the federation",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -857,7 +857,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Shared Resources ──────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_check_resource_budget",
+            name: "dregg_check_resource_budget",
             description: "Query remaining budget allowance for a shared resource (bounded-counter coordination)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -868,7 +868,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_debit_shared_resource",
+            name: "dregg_debit_shared_resource",
             description: "Optimistic debit from a shared resource (Tier 2: consensus-free if within local budget slice)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -882,7 +882,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Gallery ───────────────────────────────────────────────────────────────
         McpToolDef {
-            name: "pyana_list_auctions",
+            name: "dregg_list_auctions",
             description: "List active gallery auctions (commit-reveal sealed-bid)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -893,7 +893,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_place_bid",
+            name: "dregg_place_bid",
             description: "Place a sealed bid on a gallery auction (commit phase: bid amount hidden behind commitment)",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -907,7 +907,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── CapTP Delivery (γ.1 / Seam 3) ─────────────────────────────────────────
         McpToolDef {
-            name: "pyana_captp_deliver",
+            name: "dregg_captp_deliver",
             description: "Construct and submit a Turn whose root action is authorized by `Authorization::CapTpDelivered` (introducer-signed HandoffCertificate + sender Ed25519 sig over the canonical delivery message). The node cipherclerk plays the recipient/sender; the introducer key is constructed in-process for testing. Returns the turn hash and the cert nonce.",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -930,9 +930,9 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── CapTP Handoff Cert Exercise (γ.1 extension) ────────────────────────────
         McpToolDef {
-            name: "pyana_exercise_handoff_cert",
+            name: "dregg_exercise_handoff_cert",
             description: "Exercise a CapTP HandoffCertificate: constructs a Turn authorized by \
-                `Authorization::CapTpDelivered` (mirroring `pyana_captp_deliver`) and attaches a \
+                `Authorization::CapTpDelivered` (mirroring `dregg_captp_deliver`) and attaches a \
                 `Effect::ValidateHandoff { cert_hash, recipient_pk, introducer_pk }` so the \
                 executor's `verify_captp_delivered` block1-bind closure fires. \
                 The node cipherclerk is the recipient/sender; the introducer key is supplied \
@@ -962,12 +962,12 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Sovereign Cell Witness (reshaped) ─────────────────────────────────────
         McpToolDef {
-            name: "pyana_sign_sovereign_witness",
+            name: "dregg_sign_sovereign_witness",
             description: "Build a properly-signed `SovereignCellWitness` for a sovereign cell currently in the local ledger. Signs the canonical message (cell_id || old_commitment || new_commitment || effects_hash || timestamp || sequence) with the node cipherclerk's Ed25519 key. Pass `attach_proof=true` to also generate an Effect-VM STARK proof binding the transition. Returns the witness postcard-encoded as hex plus structured fields.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "cell_id": { "type": "string", "description": "Hex-encoded 32-byte sovereign cell ID. Must be registered via `pyana_make_sovereign` first." },
+                    "cell_id": { "type": "string", "description": "Hex-encoded 32-byte sovereign cell ID. Must be registered via `dregg_make_sovereign` first." },
                     "new_commitment": { "type": "string", "description": "Hex-encoded 32-byte post-state commitment claimed by the witness. If omitted, derived as BLAKE3(cell_id || old_commitment || effects_hash || sequence)." },
                     "effects_hash": { "type": "string", "description": "Hex-encoded 32-byte BLAKE3 over the effects applied. If omitted, set to zero." },
                     "attach_proof": { "type": "boolean", "description": "If true, also generate a STARK transition_proof binding (old, new, effects_hash) via EffectVmAir. Default: false." },
@@ -977,13 +977,13 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         // ─── Slot caveats / StateConstraint surface ───────────────────────────────
-        // (Note: extends pyana_read_cell to include the cell program's
+        // (Note: extends dregg_read_cell to include the cell program's
         // declared `StateConstraint` set — no new tool needed for the read
-        // path; clients invoking pyana_read_cell will see `program.kind` and
+        // path; clients invoking dregg_read_cell will see `program.kind` and
         // `program.state_constraints` in the JSON response.)
         // ─── γ.2 bilateral binding receipts ────────────────────────────────────────
         McpToolDef {
-            name: "pyana_bilateral_action",
+            name: "dregg_bilateral_action",
             description: "Submit a Turn with a single bilateral effect (Transfer / GrantCapability / Introduce) and return the WitnessedReceipts for BOTH cells involved. The executor's bilateral schedule binds the from-side and to-side accumulator roots; this tool surfaces the per-side trace + proof bytes so callers can verify the bilateral identity end-to-end.",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -1007,7 +1007,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
         // and we project those same `SetField`s into VM Effects to anchor
         // the proof.
         McpToolDef {
-            name: "pyana_register_name",
+            name: "dregg_register_name",
             description: "Register a name in a starbridge-nameservice registry cell via the canonical credential-attested builder. Wraps `starbridge_nameservice::build_register_with_credential_action` (the attested-tier variant). Receipt carries STARK proof binding the three SetField updates (name_hash, owner_hash, expiry).",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -1024,7 +1024,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_publish_subscription",
+            name: "dregg_publish_subscription",
             description: "Publish a bounty-state notification to a starbridge-subscription cell via the canonical bounty-lifecycle builder. Wraps `starbridge_subscription::build_bounty_state_publish_action`. Receipt carries STARK proof binding the three SetField updates (seq_head, message_root, latest_payload).",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -1041,8 +1041,8 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_issue_credential",
-            description: "Issue a credential and anchor the issuance on a starbridge-identity issuer cell via the canonical builder. Wraps `pyana_credentials::issue` + `starbridge_identity::build_issue_credential_action`. Receipt carries STARK proof binding the two SetField updates (issuance_counter, revocation_root) and the credential id is returned for downstream binding.",
+            name: "dregg_issue_credential",
+            description: "Issue a credential and anchor the issuance on a starbridge-identity issuer cell via the canonical builder. Wraps `dregg_credentials::issue` + `starbridge_identity::build_issue_credential_action`. Receipt carries STARK proof binding the two SetField updates (issuance_counter, revocation_root) and the credential id is returned for downstream binding.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1059,7 +1059,7 @@ fn tool_definitions() -> Vec<McpToolDef> {
             }),
         },
         McpToolDef {
-            name: "pyana_register_service",
+            name: "dregg_register_service",
             description: "Register a service entry at a named path on a starbridge-governed-namespace cell via the canonical builder. Wraps `starbridge_governed_namespace::build_register_service_action`. The underlying action is event-only (EmitEvent('service-registered', [path_hash, target])); the EffectVmAir carries a canonical EmitEvent row variant (#110) so the STARK proof binds the actual (topic_hash, payload_hash) of the emitted event into PI[EMIT_EVENT_TOPIC_HASH] / PI[EMIT_EVENT_PAYLOAD_HASH]. No synthesised state mutation is required.",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -1073,14 +1073,14 @@ fn tool_definitions() -> Vec<McpToolDef> {
         },
         // ─── Factory creation via canonical Effect::CreateCellFromFactory ──────────
         McpToolDef {
-            name: "pyana_create_cell_from_factory_effect",
+            name: "dregg_create_cell_from_factory_effect",
             description: "Emit a canonical `Effect::CreateCellFromFactory` inside a Turn so the new cell is created through the factory descriptor's validate_creation path (instead of the legacy direct insertion). Use this from the wasm/extension surface when a factory has been deployed and you want all child-cell creations to flow through the descriptor's constraints.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "factory_vk": { "type": "string", "description": "Hex-encoded 32-byte factory VK." },
                     "owner_pubkey": { "type": "string", "description": "Hex-encoded 32-byte owner pubkey for the new cell. Defaults to this node's cipherclerk pubkey." },
-                    "token_id": { "type": "string", "description": "Hex-encoded 32-byte token-domain id (default: BLAKE3(\"pyana-mcp-factory-token\"))." },
+                    "token_id": { "type": "string", "description": "Hex-encoded 32-byte token-domain id (default: BLAKE3(\"dregg-mcp-factory-token\"))." },
                     "sovereign": { "type": "boolean", "description": "Whether the new cell is sovereign (default: false)." },
                     "program_vk": { "type": "string", "description": "Hex-encoded 32-byte child program VK (must match the factory's Fixed strategy when set)." },
                     "initial_fields": {
@@ -1108,69 +1108,69 @@ fn tool_definitions() -> Vec<McpToolDef> {
 
 async fn dispatch_tool(name: &str, params: Value, state: &NodeState) -> McpToolResult {
     match name {
-        "pyana_get_status" => tool_get_status(state).await,
-        "pyana_create_agent" => tool_create_agent(&params, state).await,
-        "pyana_authorize" => tool_authorize(&params, state).await,
-        "pyana_submit_turn" => tool_submit_turn(&params, state).await,
-        "pyana_grant_capability" => tool_grant_capability(&params, state).await,
-        "pyana_revoke_capability" => tool_revoke_capability(&params, state).await,
-        "pyana_post_intent" => tool_post_intent(&params, state).await,
-        "pyana_fulfill_intent" => tool_fulfill_intent(&params, state).await,
-        "pyana_delegate" => tool_delegate(&params, state).await,
-        "pyana_check_capabilities" => tool_check_capabilities(state).await,
-        "pyana_read_cell" => tool_read_cell(&params, state).await,
-        "pyana_get_receipt_chain" => tool_get_receipt_chain(&params, state).await,
-        "pyana_seal_data" => tool_seal_data(&params, state).await,
-        "pyana_unseal_data" => tool_unseal_data(&params, state).await,
-        "pyana_bridge_note" => tool_bridge_note(&params, state).await,
+        "dregg_get_status" => tool_get_status(state).await,
+        "dregg_create_agent" => tool_create_agent(&params, state).await,
+        "dregg_authorize" => tool_authorize(&params, state).await,
+        "dregg_submit_turn" => tool_submit_turn(&params, state).await,
+        "dregg_grant_capability" => tool_grant_capability(&params, state).await,
+        "dregg_revoke_capability" => tool_revoke_capability(&params, state).await,
+        "dregg_post_intent" => tool_post_intent(&params, state).await,
+        "dregg_fulfill_intent" => tool_fulfill_intent(&params, state).await,
+        "dregg_delegate" => tool_delegate(&params, state).await,
+        "dregg_check_capabilities" => tool_check_capabilities(state).await,
+        "dregg_read_cell" => tool_read_cell(&params, state).await,
+        "dregg_get_receipt_chain" => tool_get_receipt_chain(&params, state).await,
+        "dregg_seal_data" => tool_seal_data(&params, state).await,
+        "dregg_unseal_data" => tool_unseal_data(&params, state).await,
+        "dregg_bridge_note" => tool_bridge_note(&params, state).await,
         // Sovereign Cells
-        "pyana_make_sovereign" => tool_make_sovereign(&params, state).await,
-        "pyana_peer_exchange" => tool_peer_exchange(&params, state).await,
-        "pyana_compress_history" => tool_compress_history(&params, state).await,
+        "dregg_make_sovereign" => tool_make_sovereign(&params, state).await,
+        "dregg_peer_exchange" => tool_peer_exchange(&params, state).await,
+        "dregg_compress_history" => tool_compress_history(&params, state).await,
         // Bearer Capabilities
-        "pyana_create_bearer_cap" => tool_create_bearer_cap(&params, state).await,
-        "pyana_exercise_bearer_cap" => tool_exercise_bearer_cap(&params, state).await,
+        "dregg_create_bearer_cap" => tool_create_bearer_cap(&params, state).await,
+        "dregg_exercise_bearer_cap" => tool_exercise_bearer_cap(&params, state).await,
         // Factories
-        "pyana_deploy_factory" => tool_deploy_factory(&params, state).await,
-        "pyana_create_from_factory" => tool_create_from_factory(&params, state).await,
-        "pyana_verify_provenance" => tool_verify_provenance(&params, state).await,
+        "dregg_deploy_factory" => tool_deploy_factory(&params, state).await,
+        "dregg_create_from_factory" => tool_create_from_factory(&params, state).await,
+        "dregg_verify_provenance" => tool_verify_provenance(&params, state).await,
         // Effect VM
-        "pyana_prove_sovereign_turn" => tool_prove_sovereign_turn(&params, state).await,
-        "pyana_verify_sovereign_proof" => tool_verify_sovereign_proof(&params, state).await,
+        "dregg_prove_sovereign_turn" => tool_prove_sovereign_turn(&params, state).await,
+        "dregg_verify_sovereign_proof" => tool_verify_sovereign_proof(&params, state).await,
         // Privacy
-        "pyana_create_stealth_address" => tool_create_stealth_address(&params, state).await,
-        "pyana_private_transfer" => tool_private_transfer(&params, state).await,
-        "pyana_encrypt_intent" => tool_encrypt_intent(&params, state).await,
-        "pyana_prove_predicate" => tool_prove_predicate(&params, state).await,
+        "dregg_create_stealth_address" => tool_create_stealth_address(&params, state).await,
+        "dregg_private_transfer" => tool_private_transfer(&params, state).await,
+        "dregg_encrypt_intent" => tool_encrypt_intent(&params, state).await,
+        "dregg_prove_predicate" => tool_prove_predicate(&params, state).await,
         // Proof Composition
-        "pyana_compose_proofs" => tool_compose_proofs(&params, state).await,
+        "dregg_compose_proofs" => tool_compose_proofs(&params, state).await,
         // Blocklace
-        "pyana_get_blocklace_status" => tool_get_blocklace_status(state).await,
-        "pyana_get_constitution" => tool_get_constitution(state).await,
-        "pyana_propose_membership" => tool_propose_membership(&params, state).await,
+        "dregg_get_blocklace_status" => tool_get_blocklace_status(state).await,
+        "dregg_get_constitution" => tool_get_constitution(state).await,
+        "dregg_propose_membership" => tool_propose_membership(&params, state).await,
         // Shared Resources
-        "pyana_check_resource_budget" => tool_check_resource_budget(&params, state).await,
-        "pyana_debit_shared_resource" => tool_debit_shared_resource(&params, state).await,
+        "dregg_check_resource_budget" => tool_check_resource_budget(&params, state).await,
+        "dregg_debit_shared_resource" => tool_debit_shared_resource(&params, state).await,
         // Gallery
-        "pyana_list_auctions" => tool_list_auctions(&params, state).await,
-        "pyana_place_bid" => tool_place_bid(&params, state).await,
+        "dregg_list_auctions" => tool_list_auctions(&params, state).await,
+        "dregg_place_bid" => tool_place_bid(&params, state).await,
         // CapTP delivery
-        "pyana_captp_deliver" => tool_captp_deliver(&params, state).await,
+        "dregg_captp_deliver" => tool_captp_deliver(&params, state).await,
         // CapTP handoff cert exercise (ValidateHandoff block1-bind)
-        "pyana_exercise_handoff_cert" => tool_exercise_handoff_cert(&params, state).await,
+        "dregg_exercise_handoff_cert" => tool_exercise_handoff_cert(&params, state).await,
         // Sovereign witness (reshaped)
-        "pyana_sign_sovereign_witness" => tool_sign_sovereign_witness(&params, state).await,
+        "dregg_sign_sovereign_witness" => tool_sign_sovereign_witness(&params, state).await,
         // γ.2 bilateral binding
-        "pyana_bilateral_action" => tool_bilateral_action(&params, state).await,
+        "dregg_bilateral_action" => tool_bilateral_action(&params, state).await,
         // Canonical factory-driven cell creation
-        "pyana_create_cell_from_factory_effect" => {
+        "dregg_create_cell_from_factory_effect" => {
             tool_create_cell_from_factory_effect(&params, state).await
         }
         // Starbridge-app builders (cross-app-e2e closure)
-        "pyana_register_name" => tool_register_name(&params, state).await,
-        "pyana_publish_subscription" => tool_publish_subscription(&params, state).await,
-        "pyana_issue_credential" => tool_issue_credential(&params, state).await,
-        "pyana_register_service" => tool_register_service(&params, state).await,
+        "dregg_register_name" => tool_register_name(&params, state).await,
+        "dregg_publish_subscription" => tool_publish_subscription(&params, state).await,
+        "dregg_issue_credential" => tool_issue_credential(&params, state).await,
+        "dregg_register_service" => tool_register_service(&params, state).await,
         _ => McpToolResult::error(format!("unknown tool: {name}")),
     }
 }
@@ -1239,14 +1239,14 @@ async fn tool_create_agent(params: &Value, state: &NodeState) -> McpToolResult {
     // pubkey failed because no Cell existed in the ledger.
     let pk = s.cclerk.public_key();
     let pk_bytes = pk.0;
-    let cell_id = pyana_cell::CellId::derive_raw(&pk_bytes, &[0u8; 32]);
+    let cell_id = dregg_cell::CellId::derive_raw(&pk_bytes, &[0u8; 32]);
     let pk_hex: String = pk_bytes.iter().map(|b| format!("{b:02x}")).collect();
     let cell_id_hex = hex_encode(&cell_id.0);
 
     let already_existed = s.ledger.get(&cell_id).is_some();
 
     if !already_existed {
-        let cell = pyana_cell::Cell::with_balance(pk_bytes, [0u8; 32], initial_balance);
+        let cell = dregg_cell::Cell::with_balance(pk_bytes, [0u8; 32], initial_balance);
         if let Err(e) = s.ledger.insert_cell(cell) {
             return McpToolResult::error(format!("ledger insert failed: {e}"));
         }
@@ -1293,7 +1293,7 @@ async fn tool_authorize(params: &Value, state: &NodeState) -> McpToolResult {
     }
 
     // Find a token that grants the requested action on the resource.
-    let auth_req = pyana_sdk::AuthRequest {
+    let auth_req = dregg_sdk::AuthRequest {
         service: Some(resource.clone()),
         action: Some(action.clone()),
         ..Default::default()
@@ -1348,19 +1348,19 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
 
     // SECURITY: Use the cipherclerk's own cell ID as the turn agent (not caller-supplied).
     // The target_cell identifies which cell the action targets, not who is submitting.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
-    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let target_cell_id = dregg_cell::CellId(target_cell_bytes);
 
     // Build an action targeting the specified cell with the given method.
-    let action = pyana_turn::Action {
+    let action = dregg_turn::Action {
         target: target_cell_id,
-        method: pyana_turn::action::symbol(method),
+        method: dregg_turn::action::symbol(method),
         args: vec![],
-        authorization: pyana_turn::Authorization::Unchecked,
-        preconditions: pyana_cell::Preconditions::default(),
+        authorization: dregg_turn::Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
         effects: vec![],
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -1393,11 +1393,11 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
     let turn_hash = hex_encode(&turn_hash_bytes);
 
     // Execute the turn locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -1426,7 +1426,7 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
                 "signer": hex_encode(&signed.signer.0),
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "accepted": false,
@@ -1476,16 +1476,16 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     }
 
     // Build a turn with Effect::GrantCapability.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
-    let to_cell_id = pyana_cell::CellId(to_agent_bytes);
-    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let to_cell_id = dregg_cell::CellId(to_agent_bytes);
+    let target_cell_id = dregg_cell::CellId(target_cell_bytes);
 
     // Parse permissions string into AuthRequired level.
     let perm_level = match permissions {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permission type: '{}'. Valid: none, signature, proof, either",
@@ -1494,7 +1494,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         }
     };
 
-    let cap = pyana_cell::CapabilityRef {
+    let cap = dregg_cell::CapabilityRef {
         target: target_cell_id,
         slot: 0,
         permissions: perm_level,
@@ -1511,13 +1511,13 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     // content-addressed id the peer would derive; its pk and balance are
     // placeholders since the canonical state lives on the peer.
     if s.ledger.get(&to_cell_id).is_none() {
-        let stub = pyana_cell::Cell::remote_stub_with_id(to_cell_id);
+        let stub = dregg_cell::Cell::remote_stub_with_id(to_cell_id);
         if let Err(e) = s.ledger.insert_cell(stub) {
-            eprintln!("[pyana_grant_capability] stub recipient insert failed: {e}");
+            eprintln!("[dregg_grant_capability] stub recipient insert failed: {e}");
         }
     }
 
-    let effect = pyana_turn::Effect::GrantCapability {
+    let effect = dregg_turn::Effect::GrantCapability {
         from: agent_cell_id,
         to: to_cell_id,
         cap,
@@ -1561,11 +1561,11 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         .map(|c| (c.state.balance(), c.state.nonce()));
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -1589,8 +1589,8 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
             // deterministic projection from (target, slot) — the AIR doesn't
             // examine its semantic contents. Slot is fixed at 0 in the turn
             // construction above; we still encode it for forward-compatibility.
-            let vm_effects = vec![pyana_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: pyana_circuit::BabyBear::new(cap_slot.wrapping_add(1)),
+            let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
+                cap_entry: dregg_circuit::BabyBear::new(cap_slot.wrapping_add(1)),
             }];
 
             let (proof_hex, public_inputs, trace_rows, witness_hash_hex) = match pre_state {
@@ -1636,7 +1636,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
                 "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "granted": false,
@@ -1662,9 +1662,9 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
     }
 
     // Build a turn with Effect::RevokeCapability targeting the agent's own cell.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
 
-    let effect = pyana_turn::Effect::RevokeCapability {
+    let effect = dregg_turn::Effect::RevokeCapability {
         cell: agent_cell_id,
         slot: cap_slot,
     };
@@ -1694,11 +1694,11 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
     let turn_hash = hex_encode(&turn.hash());
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -1723,7 +1723,7 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
                 "turn_hash": turn_hash,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "revoked": false,
@@ -1770,8 +1770,8 @@ async fn tool_post_intent(params: &Value, state: &NodeState) -> McpToolResult {
     drop(s);
 
     // Build the intent.
-    let spec = pyana_intent::MatchSpec {
-        actions: vec![pyana_intent::ActionPattern {
+    let spec = dregg_intent::MatchSpec {
+        actions: vec![dregg_intent::ActionPattern {
             action: Some(action.clone()),
             resource: Some(resource.clone()),
         }],
@@ -1783,9 +1783,9 @@ async fn tool_post_intent(params: &Value, state: &NodeState) -> McpToolResult {
         strict_resource_matching: false,
     };
 
-    let creator = pyana_intent::CommitmentId::random();
-    let intent = pyana_intent::Intent::new(
-        pyana_intent::IntentKind::Need,
+    let creator = dregg_intent::CommitmentId::random();
+    let intent = dregg_intent::Intent::new(
+        dregg_intent::IntentKind::Need,
         spec,
         creator,
         expiry,
@@ -1839,8 +1839,8 @@ async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> McpToolResult
     };
 
     // Derive payer (intent creator) and recipient (this agent) cell IDs.
-    let payer_cell = pyana_sdk::CellId(intent.creator.0);
-    let recipient_cell = pyana_sdk::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let payer_cell = dregg_sdk::CellId(intent.creator.0);
+    let recipient_cell = dregg_sdk::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
 
     // Get current height.
     let current_height = s
@@ -1852,11 +1852,11 @@ async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> McpToolResult
         .unwrap_or(0);
 
     // Build a minimal fulfillment for the execution flow.
-    let state_root = pyana_circuit::BabyBear::new(0);
-    let base_fulfillment = pyana_intent::fulfillment::Fulfillment {
+    let state_root = dregg_circuit::BabyBear::new(0);
+    let base_fulfillment = dregg_intent::fulfillment::Fulfillment {
         intent_id,
-        fulfiller: pyana_intent::CommitmentId(recipient_cell.0),
-        mode: pyana_intent::VerificationMode::Trusted,
+        fulfiller: dregg_intent::CommitmentId(recipient_cell.0),
+        mode: dregg_intent::VerificationMode::Trusted,
         token_data: Some(vec![0x01; 4]),
         proof: None,
         granted_actions: intent
@@ -1893,9 +1893,9 @@ async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> McpToolResult
         ));
     }
 
-    let predicate_proofs: Vec<(usize, pyana_circuit::PredicateProof)> = vec![];
+    let predicate_proofs: Vec<(usize, dregg_circuit::PredicateProof)> = vec![];
 
-    let fulfillment_with_preds = pyana_intent::fulfillment::FulfillmentWithPredicates {
+    let fulfillment_with_preds = dregg_intent::fulfillment::FulfillmentWithPredicates {
         base: base_fulfillment,
         predicate_proofs,
         state_root,
@@ -1903,8 +1903,8 @@ async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> McpToolResult
     };
 
     // Execute the fulfillment payment flow.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
-    let result = pyana_intent::fulfillment::execute_fulfillment_flow(
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    let result = dregg_intent::fulfillment::execute_fulfillment_flow(
         &intent,
         &fulfillment_with_preds,
         &executor,
@@ -1991,19 +1991,19 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
     };
 
     // Build a turn with Effect::GrantCapability to record the delegation on-ledger.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
-    let to_cell_id = pyana_cell::CellId(to_agent_bytes);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let to_cell_id = dregg_cell::CellId(to_agent_bytes);
 
-    let cap = pyana_cell::CapabilityRef {
+    let cap = dregg_cell::CapabilityRef {
         target: agent_cell_id,
         slot: capability as u32,
-        permissions: pyana_cell::AuthRequired::Signature,
+        permissions: dregg_cell::AuthRequired::Signature,
         breadstuff: None,
         expires_at: restrictions.not_after.map(|t| t as u64),
         allowed_effects: None,
     };
 
-    let effect = pyana_turn::Effect::GrantCapability {
+    let effect = dregg_turn::Effect::GrantCapability {
         from: agent_cell_id,
         to: to_cell_id,
         cap,
@@ -2037,11 +2037,11 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
     let turn_hash = hex_encode(&turn.hash());
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -2069,7 +2069,7 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
                 "token_bytes": delegated.token_bytes,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "delegated": false,
@@ -2145,7 +2145,7 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
     let cell_opt = s.ledger.get(&cell_id);
     let is_sovereign = s.ledger.is_sovereign(&cell_id);
     let (found, balance, nonce, capability_count, program_json) = match cell_opt {
@@ -2170,7 +2170,7 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
         // serialized so MCP callers can see what's perpetually enforced on
         // every state-modifying turn. `kind` is "None" / "Predicate" /
         // "Circuit"; `state_constraints` (when present) is the structured
-        // constraint vocabulary defined by `pyana_cell::program::StateConstraint`.
+        // constraint vocabulary defined by `dregg_cell::program::StateConstraint`.
         "program": program_json,
     }))
 }
@@ -2181,14 +2181,14 @@ async fn tool_read_cell(params: &Value, state: &NodeState) -> McpToolResult {
 /// This is the slot-caveat surface on the MCP read path: callers can
 /// discover what invariants the cell's program enforces on every turn
 /// without having to peek into postcard bytes.
-fn describe_cell_program(program: &pyana_cell::CellProgram) -> serde_json::Value {
+fn describe_cell_program(program: &dregg_cell::CellProgram) -> serde_json::Value {
     match program {
-        pyana_cell::CellProgram::None => serde_json::json!({
+        dregg_cell::CellProgram::None => serde_json::json!({
             "kind": "None",
             "state_constraints": [],
             "note": "no slot caveats declared; any authorized state change is valid",
         }),
-        pyana_cell::CellProgram::Predicate(constraints) => {
+        dregg_cell::CellProgram::Predicate(constraints) => {
             // Serialize via serde so the full structured vocabulary
             // (FieldEquals, WriteOnce, Monotonic, BoundDelta, …) is
             // exposed verbatim — callers can match on the discriminants
@@ -2201,13 +2201,13 @@ fn describe_cell_program(program: &pyana_cell::CellProgram) -> serde_json::Value
                 "constraint_count": constraints.len(),
             })
         }
-        pyana_cell::CellProgram::Circuit { circuit_hash } => serde_json::json!({
+        dregg_cell::CellProgram::Circuit { circuit_hash } => serde_json::json!({
             "kind": "Circuit",
             "circuit_hash": hex_encode(circuit_hash),
             "state_constraints": [],
             "note": "circuit-program: post-state validity is enforced by the AIR proof in the action authorization",
         }),
-        pyana_cell::CellProgram::Cases(cases) => {
+        dregg_cell::CellProgram::Cases(cases) => {
             // Cav-Codex Block 4: operation-scoped cases. Each case has a
             // `TransitionGuard` naming which transitions it applies to and
             // a constraint list that must hold when the guard matches.
@@ -2291,7 +2291,7 @@ async fn tool_seal_data(params: &Value, state: &NodeState) -> McpToolResult {
     let shared = ephemeral_secret.diffie_hellman(&recipient_public);
 
     // Derive encryption key via BLAKE3 KDF (don't use raw DH output directly).
-    let enc_key = blake3::derive_key("pyana-mcp-seal-data-v1", shared.as_bytes());
+    let enc_key = blake3::derive_key("dregg-mcp-seal-data-v1", shared.as_bytes());
 
     // Generate random nonce.
     let mut nonce_bytes = [0u8; 12];
@@ -2353,13 +2353,13 @@ async fn tool_unseal_data(params: &Value, state: &NodeState) -> McpToolResult {
     // Derive the cipherclerk's X25519 secret from its Ed25519 signing key (private material).
     // SECURITY: Must use private key material here — deriving from the public key would
     // allow anyone to compute the same secret and decrypt sealed data.
-    let cclerk_secret_bytes = s.cclerk.derive_symmetric_key("pyana-mcp-seal-x25519-v1");
+    let cclerk_secret_bytes = s.cclerk.derive_symmetric_key("dregg-mcp-seal-x25519-v1");
     let cclerk_secret = x25519_dalek::StaticSecret::from(cclerk_secret_bytes);
     let ephemeral_public = x25519_dalek::PublicKey::from(ephemeral_public_bytes);
     let shared = cclerk_secret.diffie_hellman(&ephemeral_public);
 
     // Derive decryption key the same way as sealing.
-    let dec_key = blake3::derive_key("pyana-mcp-seal-data-v1", shared.as_bytes());
+    let dec_key = blake3::derive_key("dregg-mcp-seal-data-v1", shared.as_bytes());
 
     // Decrypt with ChaCha20-Poly1305.
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::Aead};
@@ -2428,9 +2428,9 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         .unwrap_or(0);
 
     // Build a turn with Effect::BridgeLock to initiate the two-phase bridge protocol.
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
 
-    let effect = pyana_turn::Effect::BridgeLock {
+    let effect = dregg_turn::Effect::BridgeLock {
         nullifier,
         destination,
         value: 0, // Value determined by the note being bridged.
@@ -2464,11 +2464,11 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
     let turn_hash = hex_encode(&turn.hash());
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -2495,7 +2495,7 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
                 "timeout_height": current_height + 1000,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "bridged": false,
@@ -2529,7 +2529,7 @@ async fn tool_make_sovereign(params: &Value, state: &NodeState) -> McpToolResult
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     // Compute the initial state commitment from the cell's current state.
     let initial_commitment: [u8; 32] = *blake3::hash(&cell_id_bytes).as_bytes();
@@ -2583,12 +2583,12 @@ async fn tool_peer_exchange(params: &Value, state: &NodeState) -> McpToolResult 
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
-    let peer_cell_id = pyana_cell::CellId(peer_cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
+    let peer_cell_id = dregg_cell::CellId(peer_cell_id_bytes);
 
     // Create a peer exchange instance and generate a state transition.
     let signing_key = s.cclerk.gossip_signing_key().to_bytes();
-    let mut exchange = pyana_cell::PeerExchange::new(cell_id, signing_key);
+    let mut exchange = dregg_cell::PeerExchange::new(cell_id, signing_key);
     exchange.register_peer(peer_cell_id, [0u8; 32]); // Initial peer commitment.
 
     // Use a zero old_commitment (first exchange) and a zero effects_hash.
@@ -2639,18 +2639,18 @@ async fn tool_compress_history(params: &Value, state: &NodeState) -> McpToolResu
     }
 
     // Build state root sequence from receipts for IVC.
-    let initial_root = pyana_circuit::BabyBear::new(initial_root_u32);
-    let new_roots: Vec<pyana_circuit::BabyBear> = receipts_to_compress
+    let initial_root = dregg_circuit::BabyBear::new(initial_root_u32);
+    let new_roots: Vec<dregg_circuit::BabyBear> = receipts_to_compress
         .iter()
         .enumerate()
-        .map(|(i, _)| pyana_circuit::BabyBear::new(initial_root_u32.wrapping_add((i + 1) as u32)))
+        .map(|(i, _)| dregg_circuit::BabyBear::new(initial_root_u32.wrapping_add((i + 1) as u32)))
         .collect();
 
     // Run IVC-STARK compression.
-    let (proof, public_inputs) = pyana_circuit::prove_ivc_stark(initial_root, &new_roots);
+    let (proof, public_inputs) = dregg_circuit::prove_ivc_stark(initial_root, &new_roots);
 
     // Verify the compressed proof.
-    let verification = pyana_circuit::verify_ivc_stark(&proof, &public_inputs);
+    let verification = dregg_circuit::verify_ivc_stark(&proof, &public_inputs);
 
     McpToolResult::json(&serde_json::json!({
         "compressed": verification.is_ok(),
@@ -2699,10 +2699,10 @@ async fn tool_create_bearer_cap(params: &Value, state: &NodeState) -> McpToolRes
     }
 
     let perm_level = match permissions_str {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permission type: '{}'. Valid: none, signature, proof, either",
@@ -2716,10 +2716,10 @@ async fn tool_create_bearer_cap(params: &Value, state: &NodeState) -> McpToolRes
     // the resulting signature did not commit to which permission level was
     // delegated — a downstream exerciser could claim any permission level.
     let perm_tag: u8 = match perm_level {
-        pyana_cell::AuthRequired::None => 0,
-        pyana_cell::AuthRequired::Signature => 1,
-        pyana_cell::AuthRequired::Proof => 2,
-        pyana_cell::AuthRequired::Either => 3,
+        dregg_cell::AuthRequired::None => 0,
+        dregg_cell::AuthRequired::Signature => 1,
+        dregg_cell::AuthRequired::Proof => 2,
+        dregg_cell::AuthRequired::Either => 3,
         // Future-proof: any other variant is rejected with a tag the verifier
         // will not accept.
         _ => 0xff,
@@ -2735,22 +2735,22 @@ async fn tool_create_bearer_cap(params: &Value, state: &NodeState) -> McpToolRes
     let target_cell_arr: [u8; 32] = target_cell_bytes.try_into().expect("32-byte cell id");
     let bearer_pk_arr: [u8; 32] = bearer_pk_bytes.try_into().expect("32-byte bearer pk");
     let perm_auth_required = match perm_tag {
-        0 => pyana_cell::AuthRequired::None,
-        1 => pyana_cell::AuthRequired::Signature,
-        2 => pyana_cell::AuthRequired::Proof,
-        3 => pyana_cell::AuthRequired::Either,
-        _ => pyana_cell::AuthRequired::Impossible,
+        0 => dregg_cell::AuthRequired::None,
+        1 => dregg_cell::AuthRequired::Signature,
+        2 => dregg_cell::AuthRequired::Proof,
+        3 => dregg_cell::AuthRequired::Either,
+        _ => dregg_cell::AuthRequired::Impossible,
     };
     let federation_id = [0u8; 32];
-    let msg = pyana_turn::TurnExecutor::compute_bearer_delegation_message(
-        &pyana_cell::CellId(target_cell_arr),
+    let msg = dregg_turn::TurnExecutor::compute_bearer_delegation_message(
+        &dregg_cell::CellId(target_cell_arr),
         &perm_auth_required,
         &bearer_pk_arr,
         expires_at,
         &federation_id,
     );
     let signing_key = s.cclerk.gossip_signing_key();
-    let signature = pyana_types::sign(&signing_key, &msg);
+    let signature = dregg_types::sign(&signing_key, &msg);
 
     let bearer_cap_id = blake3::hash(&signature.0);
 
@@ -2795,10 +2795,10 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         .and_then(|v| v.as_str())
         .unwrap_or("signature");
     let permissions = match permissions_str {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permission type: '{}'. Valid: none, signature, proof, either",
@@ -2824,7 +2824,7 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     // should be able to carry effects so the bearer can actually act through
     // the delegation. Empty / missing falls back to the prior empty-effects
     // behavior so existing callers aren't broken.
-    let parsed_effects: Vec<pyana_turn::Effect> =
+    let parsed_effects: Vec<dregg_turn::Effect> =
         match params.get("effects").and_then(|v| v.as_array()) {
             Some(arr) => {
                 let mut out = Vec::with_capacity(arr.len());
@@ -2861,8 +2861,8 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     }
 
     // Build a turn using Bearer authorization.
-    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let target_cell_id = dregg_cell::CellId(target_cell_bytes);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
 
     // The delegator_pk is the introducer (the cell owner who signed the
     // bearer cap), NOT this node's cipherclerk. Accept it as a parameter; fall
@@ -2893,13 +2893,13 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     // delegator stub *must* carry the delegator_pk so the bearer-cap
     // verify path can find it; downstream cells (Bob, intermediaries) just
     // need balances.
-    let mut cells_to_stub: Vec<(pyana_cell::CellId, u64, [u8; 32])> = Vec::new();
+    let mut cells_to_stub: Vec<(dregg_cell::CellId, u64, [u8; 32])> = Vec::new();
     if s.ledger.get(&target_cell_id).is_none() {
         cells_to_stub.push((target_cell_id, 1_000_000, delegator_pk));
     }
     for effect in &parsed_effects {
         match effect {
-            pyana_turn::Effect::Transfer { from, to, amount } => {
+            dregg_turn::Effect::Transfer { from, to, amount } => {
                 if s.ledger.get(from).is_none() {
                     // The 'from' cell of a Transfer is the same as the
                     // bearer-cap target in the demo flow; tag with delegator_pk.
@@ -2914,8 +2914,8 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
                     cells_to_stub.push((*to, 0, [0u8; 32]));
                 }
             }
-            pyana_turn::Effect::SetField { cell, .. }
-            | pyana_turn::Effect::IncrementNonce { cell } => {
+            dregg_turn::Effect::SetField { cell, .. }
+            | dregg_turn::Effect::IncrementNonce { cell } => {
                 if s.ledger.get(cell).is_none() {
                     cells_to_stub.push((*cell, 0, [0u8; 32]));
                 }
@@ -2924,7 +2924,7 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         }
     }
     for (id, bal, pk) in cells_to_stub {
-        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(id, pk, bal);
+        let stub = dregg_cell::Cell::remote_stub_with_id_pk_balance(id, pk, bal);
         if let Err(e) = s.ledger.insert_cell(stub) {
             let _ = e;
         }
@@ -2936,11 +2936,11 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     let copy_len = delegation_chain_bytes.len().min(64);
     sig_array[..copy_len].copy_from_slice(&delegation_chain_bytes[..copy_len]);
 
-    let bearer_proof = pyana_turn::BearerCapProof {
+    let bearer_proof = dregg_turn::BearerCapProof {
         target: target_cell_id,
         // F-P1-8: use the caller-supplied permission level (or Signature default).
         permissions,
-        delegation_proof: pyana_turn::DelegationProofData::SignedDelegation {
+        delegation_proof: dregg_turn::DelegationProofData::SignedDelegation {
             delegator_pk,
             signature: sig_array,
             bearer_pk: bearer_pk_bytes,
@@ -2950,15 +2950,15 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         allowed_effects: None,
     };
 
-    let action = pyana_turn::Action {
+    let action = dregg_turn::Action {
         target: target_cell_id,
-        method: pyana_turn::action::symbol(method),
+        method: dregg_turn::action::symbol(method),
         args: vec![],
-        authorization: pyana_turn::Authorization::Bearer(bearer_proof),
-        preconditions: pyana_cell::Preconditions::default(),
+        authorization: dregg_turn::Authorization::Bearer(bearer_proof),
+        preconditions: dregg_cell::Preconditions::default(),
         effects: parsed_effects.clone(),
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -2998,11 +2998,11 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         .map(|c| (c.state.balance(), c.state.nonce()));
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -3020,25 +3020,25 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
             //   value-bytes interpreted as a little-endian u32 → BabyBear.
             // Other turn effects (capability grants, notes, etc.) are skipped:
             // the demo's two flows (grant + transfer/setfield) don't need them.
-            let mut vm_effects: Vec<pyana_circuit::effect_vm::Effect> = Vec::new();
+            let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> = Vec::new();
             for e in &parsed_effects {
                 match e {
-                    pyana_turn::Effect::Transfer { amount, .. } => {
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::Transfer {
+                    dregg_turn::Effect::Transfer { amount, .. } => {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::Transfer {
                             amount: *amount,
                             direction: 1,
                         });
                     }
-                    pyana_turn::Effect::SetField { index, value, .. } => {
+                    dregg_turn::Effect::SetField { index, value, .. } => {
                         let mut le4 = [0u8; 4];
                         le4.copy_from_slice(&value[..4]);
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::SetField {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
                             field_idx: *index as u32,
-                            value: pyana_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                            value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
                         });
                     }
-                    pyana_turn::Effect::IncrementNonce { .. } => {
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
+                    dregg_turn::Effect::IncrementNonce { .. } => {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
                     }
                     _ => {}
                 }
@@ -3086,7 +3086,7 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
                 "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "exercised": false,
@@ -3139,15 +3139,15 @@ async fn tool_deploy_factory(params: &Value, state: &NodeState) -> McpToolResult
 
     // Build a factory descriptor.
     let default_mode = if sovereign {
-        pyana_cell::CellMode::Sovereign
+        dregg_cell::CellMode::Sovereign
     } else {
-        pyana_cell::CellMode::Hosted
+        dregg_cell::CellMode::Hosted
     };
 
-    let descriptor = pyana_cell::factory::FactoryDescriptor {
+    let descriptor = dregg_cell::factory::FactoryDescriptor {
         factory_vk,
         child_program_vk: Some(factory_vk),
-        child_vk_strategy: Some(pyana_cell::factory::ChildVkStrategy::Fixed(Some(
+        child_vk_strategy: Some(dregg_cell::factory::ChildVkStrategy::Fixed(Some(
             factory_vk,
         ))),
         allowed_cap_templates: vec![],
@@ -3207,8 +3207,8 @@ async fn tool_create_from_factory(params: &Value, state: &NodeState) -> McpToolR
     derive_input.extend_from_slice(cell_name.as_bytes());
     derive_input.extend_from_slice(&(s.cclerk.receipt_chain_length() as u64).to_le_bytes());
     let child_cell_id_bytes: [u8; 32] =
-        blake3::derive_key("pyana-factory-child-cell-v1", &derive_input);
-    let child_cell_id = pyana_cell::CellId(child_cell_id_bytes);
+        blake3::derive_key("dregg-factory-child-cell-v1", &derive_input);
+    let child_cell_id = dregg_cell::CellId(child_cell_id_bytes);
 
     // Get current height for provenance.
     let current_height = s
@@ -3220,7 +3220,7 @@ async fn tool_create_from_factory(params: &Value, state: &NodeState) -> McpToolR
         .unwrap_or(0);
 
     let provenance =
-        pyana_cell::factory::Provenance::from_factory(factory_vk, None, current_height);
+        dregg_cell::factory::Provenance::from_factory(factory_vk, None, current_height);
 
     if sovereign {
         let commitment: [u8; 32] = *blake3::hash(&child_cell_id_bytes).as_bytes();
@@ -3258,7 +3258,7 @@ async fn tool_verify_provenance(params: &Value, state: &NodeState) -> McpToolRes
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     // Check if the cell is sovereign (has a commitment registered).
     let is_sovereign = s.ledger.get_sovereign_commitment(&cell_id).is_some();
@@ -3272,7 +3272,7 @@ async fn tool_verify_provenance(params: &Value, state: &NodeState) -> McpToolRes
                 Ok(expected_vk) => {
                     // Verify derivation: was this cell_id possibly derived from this factory?
                     let provenance =
-                        pyana_cell::factory::Provenance::from_factory(expected_vk, None, 0);
+                        dregg_cell::factory::Provenance::from_factory(expected_vk, None, 0);
                     provenance.verify_derivation(&cell_id_bytes)
                 }
                 Err(_) => false,
@@ -3342,20 +3342,20 @@ async fn tool_prove_sovereign_turn(params: &Value, state: &NodeState) -> McpTool
             .unwrap_or(0);
 
         let effect = match effect_type {
-            "credit" => pyana_circuit::effect_vm::Effect::Transfer {
+            "credit" => dregg_circuit::effect_vm::Effect::Transfer {
                 amount,
                 direction: 0, // 0 = incoming (credit)
             },
-            "debit" => pyana_circuit::effect_vm::Effect::Transfer {
+            "debit" => dregg_circuit::effect_vm::Effect::Transfer {
                 amount,
                 direction: 1, // 1 = outgoing (debit)
             },
-            "set_field" => pyana_circuit::effect_vm::Effect::SetField {
+            "set_field" => dregg_circuit::effect_vm::Effect::SetField {
                 field_idx: 0,
-                value: pyana_circuit::BabyBear::new(amount as u32),
+                value: dregg_circuit::BabyBear::new(amount as u32),
             },
-            "grant_cap" => pyana_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: pyana_circuit::BabyBear::new(amount as u32),
+            "grant_cap" => dregg_circuit::effect_vm::Effect::GrantCapability {
+                cap_entry: dregg_circuit::BabyBear::new(amount as u32),
             },
             other => {
                 return McpToolResult::error(format!("unknown effect type: '{other}'"));
@@ -3369,13 +3369,13 @@ async fn tool_prove_sovereign_turn(params: &Value, state: &NodeState) -> McpTool
     }
 
     // Generate the Effect VM trace and STARK proof.
-    let initial_state = pyana_circuit::effect_vm::CellState::new(1000, 0); // Placeholder initial state.
+    let initial_state = dregg_circuit::effect_vm::CellState::new(1000, 0); // Placeholder initial state.
     let (trace, public_inputs) =
-        pyana_circuit::effect_vm::generate_effect_vm_trace(&initial_state, &vm_effects);
+        dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, &vm_effects);
 
     // Use the STARK prover (always available, serializable).
-    let air = pyana_circuit::effect_vm::EffectVmAir::new(vm_effects.len());
-    let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
+    let air = dregg_circuit::effect_vm::EffectVmAir::new(vm_effects.len());
+    let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
     let proof_hash = blake3::hash(&postcard::to_stdvec(&proof).unwrap_or_default());
 
     McpToolResult::json(&serde_json::json!({
@@ -3410,21 +3410,21 @@ async fn tool_verify_sovereign_proof(params: &Value, state: &NodeState) -> McpTo
     drop(s);
 
     // Deserialize the STARK proof.
-    let proof: pyana_circuit::stark::StarkProof = match postcard::from_bytes(&proof_bytes) {
+    let proof: dregg_circuit::stark::StarkProof = match postcard::from_bytes(&proof_bytes) {
         Ok(p) => p,
         Err(e) => return McpToolResult::error(format!("failed to deserialize proof: {e}")),
     };
 
     // Parse public inputs as BabyBear field elements.
-    let public_inputs: Vec<pyana_circuit::BabyBear> = public_inputs_val
+    let public_inputs: Vec<dregg_circuit::BabyBear> = public_inputs_val
         .iter()
-        .filter_map(|v| v.as_u64().map(|n| pyana_circuit::BabyBear::new(n as u32)))
+        .filter_map(|v| v.as_u64().map(|n| dregg_circuit::BabyBear::new(n as u32)))
         .collect();
 
     // Verify the STARK proof using the Effect VM AIR.
     let effect_count = proof.num_cols; // Approximate from proof metadata.
-    let air = pyana_circuit::effect_vm::EffectVmAir::new(effect_count.max(1));
-    let result = pyana_circuit::stark::verify(&air, &proof, &public_inputs);
+    let air = dregg_circuit::effect_vm::EffectVmAir::new(effect_count.max(1));
+    let result = dregg_circuit::stark::verify(&air, &proof, &public_inputs);
 
     McpToolResult::json(&serde_json::json!({
         "valid": result.is_ok(),
@@ -3477,8 +3477,8 @@ async fn tool_create_stealth_address(params: &Value, state: &NodeState) -> McpTo
     let view_public = x25519_dalek::PublicKey::from(view_pk_bytes);
     let shared_secret = ephemeral_secret.diffie_hellman(&view_public);
 
-    // Derive one-time address: scalar = BLAKE3(shared_secret || "pyana-stealth-derive")
-    let scalar = blake3::derive_key("pyana-stealth-derive", shared_secret.as_bytes());
+    // Derive one-time address: scalar = BLAKE3(shared_secret || "dregg-stealth-derive")
+    let scalar = blake3::derive_key("dregg-stealth-derive", shared_secret.as_bytes());
 
     // One-time address = spend_pk XOR scalar (simplified; full impl uses curve addition)
     let mut one_time_address = [0u8; 32];
@@ -3536,21 +3536,21 @@ async fn tool_private_transfer(params: &Value, state: &NodeState) -> McpToolResu
         }
     };
 
-    // Compute Pedersen-style commitment: BLAKE3("pyana-pedersen-v1", amount || blinding)
+    // Compute Pedersen-style commitment: BLAKE3("dregg-pedersen-v1", amount || blinding)
     let mut input = Vec::with_capacity(40);
     input.extend_from_slice(&amount.to_le_bytes());
     input.extend_from_slice(&blinding);
-    let commitment = blake3::derive_key("pyana-pedersen-v1", &input);
+    let commitment = blake3::derive_key("dregg-pedersen-v1", &input);
 
     // Build a turn with committed note effects.
-    let from_cell_id = pyana_cell::CellId(from_cell_bytes);
-    let _to_cell_id = pyana_cell::CellId(to_cell_bytes);
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let from_cell_id = dregg_cell::CellId(from_cell_bytes);
+    let _to_cell_id = dregg_cell::CellId(to_cell_bytes);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
 
     // Build a note commitment from the Pedersen commitment.
-    let note_commitment = pyana_cell::NoteCommitment(commitment);
+    let note_commitment = dregg_cell::NoteCommitment(commitment);
 
-    let effects = vec![pyana_turn::Effect::NoteCreate {
+    let effects = vec![dregg_turn::Effect::NoteCreate {
         commitment: note_commitment,
         value: 0, // Hidden in commitment.
         asset_type: 0,
@@ -3582,11 +3582,11 @@ async fn tool_private_transfer(params: &Value, state: &NodeState) -> McpToolResu
 
     let turn_hash = hex_encode(&turn.hash());
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -3603,7 +3603,7 @@ async fn tool_private_transfer(params: &Value, state: &NodeState) -> McpToolResu
                 "note": "Amount hidden behind Pedersen commitment. Recipient can verify with blinding factor."
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "transferred": false,
@@ -3649,8 +3649,8 @@ async fn tool_encrypt_intent(params: &Value, state: &NodeState) -> McpToolResult
     let expiry = current_height + expiry_blocks;
 
     // Build the match spec for SSE encryption.
-    let spec = pyana_intent::MatchSpec {
-        actions: vec![pyana_intent::ActionPattern {
+    let spec = dregg_intent::MatchSpec {
+        actions: vec![dregg_intent::ActionPattern {
             action: Some(action.clone()),
             resource: Some(resource.clone()),
         }],
@@ -3662,11 +3662,11 @@ async fn tool_encrypt_intent(params: &Value, state: &NodeState) -> McpToolResult
         strict_resource_matching: false,
     };
 
-    let creator = pyana_intent::CommitmentId::random();
+    let creator = dregg_intent::CommitmentId::random();
 
     // Create the encrypted intent using SSE.
     let (encrypted_intent, _keypair) =
-        pyana_intent::sse::EncryptedIntent::create(&spec, creator, 0, Some(expiry));
+        dregg_intent::sse::EncryptedIntent::create(&spec, creator, 0, Some(expiry));
 
     let intent_id = encrypted_intent.id;
     let intent_id_hex = hex_encode(&intent_id);
@@ -3717,11 +3717,11 @@ async fn tool_prove_predicate(params: &Value, state: &NodeState) -> McpToolResul
 
     // Map string to PredicateType.
     let predicate_type = match predicate_type_str {
-        "gte" => pyana_circuit::PredicateType::Gte,
-        "lte" => pyana_circuit::PredicateType::Lte,
-        "gt" => pyana_circuit::PredicateType::Gt,
-        "lt" => pyana_circuit::PredicateType::Lt,
-        "neq" => pyana_circuit::PredicateType::Neq,
+        "gte" => dregg_circuit::PredicateType::Gte,
+        "lte" => dregg_circuit::PredicateType::Lte,
+        "gt" => dregg_circuit::PredicateType::Gt,
+        "lt" => dregg_circuit::PredicateType::Lt,
+        "neq" => dregg_circuit::PredicateType::Neq,
         other => {
             return McpToolResult::error(format!(
                 "unknown predicate_type: '{other}'. Valid: gte, lte, gt, lt, neq"
@@ -3729,30 +3729,30 @@ async fn tool_prove_predicate(params: &Value, state: &NodeState) -> McpToolResul
         }
     };
 
-    let state_root = pyana_circuit::BabyBear::new(state_root_u32);
-    let fact_value = pyana_circuit::BabyBear::new(private_value);
-    let threshold_field = pyana_circuit::BabyBear::new(threshold);
+    let state_root = dregg_circuit::BabyBear::new(state_root_u32);
+    let fact_value = dregg_circuit::BabyBear::new(private_value);
+    let threshold_field = dregg_circuit::BabyBear::new(threshold);
 
     // Compute the fact commitment used by the proof.
-    let fact_hash = pyana_circuit::BabyBear::new(
+    let fact_hash = dregg_circuit::BabyBear::new(
         blake3::hash(attribute.as_bytes()).as_bytes()[0] as u32
             | ((blake3::hash(attribute.as_bytes()).as_bytes()[1] as u32) << 8),
     );
-    let fact_commitment = pyana_circuit::compute_fact_commitment(fact_hash, state_root);
+    let fact_commitment = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
 
     // Build the witness.
-    let witness = pyana_circuit::PredicateWitness {
+    let witness = dregg_circuit::PredicateWitness {
         private_value: fact_value,
         threshold: threshold_field,
         predicate_type,
         fact_commitment,
-        blinding: Some(pyana_circuit::BabyBear::new(42)), // Random blinding for commitment hiding.
+        blinding: Some(dregg_circuit::BabyBear::new(42)), // Random blinding for commitment hiding.
         fact_hash: Some(fact_hash),
         state_root: Some(state_root),
     };
 
     // Generate the STARK predicate proof.
-    match pyana_circuit::prove_predicate(witness) {
+    match dregg_circuit::prove_predicate(witness) {
         Some(proof) => McpToolResult::json(&serde_json::json!({
             "proved": true,
             "predicate_type": predicate_type_str,
@@ -3809,7 +3809,7 @@ async fn tool_compose_proofs(params: &Value, state: &NodeState) -> McpToolResult
 
     // Compose based on mode.
     // For now, compute a composition hash that binds all proofs together.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-composition-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-composition-v1");
     hasher.update(mode.as_bytes());
     for proof_bytes in &proof_bytes_list {
         hasher.update(&(proof_bytes.len() as u64).to_le_bytes());
@@ -3868,7 +3868,7 @@ async fn tool_get_blocklace_status(state: &NodeState) -> McpToolResult {
         "participant_count": participant_count,
         "federation_mode": federation_mode,
         "federation_configured": federation_configured,
-        "note": "Use pyana_get_constitution for detailed membership info."
+        "note": "Use dregg_get_constitution for detailed membership info."
     }))
 }
 
@@ -3928,13 +3928,13 @@ async fn tool_propose_membership(params: &Value, state: &NodeState) -> McpToolRe
     }
 
     let _proposal = match action {
-        "join" => pyana_blocklace::constitution::MembershipProposal::Join {
+        "join" => dregg_blocklace::constitution::MembershipProposal::Join {
             node_key: participant_bytes,
             justification: reason.as_bytes().to_vec(),
         },
-        "leave" => pyana_blocklace::constitution::MembershipProposal::Leave {
+        "leave" => dregg_blocklace::constitution::MembershipProposal::Leave {
             node_key: participant_bytes,
-            reason: pyana_blocklace::constitution::LeaveReason::Voluntary,
+            reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
         },
         other => {
             return McpToolResult::error(format!(
@@ -3944,7 +3944,7 @@ async fn tool_propose_membership(params: &Value, state: &NodeState) -> McpToolRe
     };
 
     // Compute a proposal ID for tracking.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-membership-proposal-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-membership-proposal-v1");
     hasher.update(action.as_bytes());
     hasher.update(&participant_bytes);
     let proposal_id: [u8; 32] = *hasher.finalize().as_bytes();
@@ -3979,7 +3979,7 @@ async fn tool_check_resource_budget(params: &Value, state: &NodeState) -> McpToo
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     match s.budget_coordinators.get(&cell_id) {
         Some(coordinator) => {
@@ -4029,10 +4029,10 @@ async fn tool_debit_shared_resource(params: &Value, state: &NodeState) -> McpToo
         return McpToolResult::error("cipherclerk is locked; unlock first");
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     // Compute a digest for the debit operation (for auditing).
-    let digest = blake3::derive_key("pyana-budget-debit-v1", memo.as_bytes());
+    let digest = blake3::derive_key("dregg-budget-debit-v1", memo.as_bytes());
 
     match s.try_budget_debit(&cell_id, amount, digest) {
         Ok(()) => McpToolResult::json(&serde_json::json!({
@@ -4087,7 +4087,7 @@ async fn tool_list_auctions(_params: &Value, state: &NodeState) -> McpToolResult
     McpToolResult::json(&serde_json::json!({
         "auction_count": gallery_intents.len(),
         "auctions": gallery_intents,
-        "note": "Gallery auctions are tracked via the intent pool. Use pyana_place_bid to participate."
+        "note": "Gallery auctions are tracked via the intent pool. Use dregg_place_bid to participate."
     }))
 }
 
@@ -4135,8 +4135,8 @@ async fn tool_place_bid(params: &Value, state: &NodeState) -> McpToolResult {
     let commitment: [u8; 32] = *blake3::hash(&input).as_bytes();
 
     // Post the bid as an intent.
-    let spec = pyana_intent::MatchSpec {
-        actions: vec![pyana_intent::ActionPattern {
+    let spec = dregg_intent::MatchSpec {
+        actions: vec![dregg_intent::ActionPattern {
             action: Some("bid".to_string()),
             resource: Some(format!("gallery/auction/{}", auction_id_hex)),
         }],
@@ -4148,7 +4148,7 @@ async fn tool_place_bid(params: &Value, state: &NodeState) -> McpToolResult {
         strict_resource_matching: false,
     };
 
-    let creator = pyana_intent::CommitmentId(bidder_pk);
+    let creator = dregg_intent::CommitmentId(bidder_pk);
     let current_height = s
         .store
         .latest_attested_root()
@@ -4159,7 +4159,7 @@ async fn tool_place_bid(params: &Value, state: &NodeState) -> McpToolResult {
     let expiry = current_height + 100;
 
     let intent =
-        pyana_intent::Intent::new(pyana_intent::IntentKind::Need, spec, creator, expiry, None);
+        dregg_intent::Intent::new(dregg_intent::IntentKind::Need, spec, creator, expiry, None);
     let intent_id_hex = hex_encode(&intent.id);
 
     if s.intent_pool.len() >= crate::api::MAX_NODE_INTENT_POOL {
@@ -4187,7 +4187,7 @@ async fn tool_place_bid(params: &Value, state: &NodeState) -> McpToolResult {
 /// MCP-side glue for the same primitive the wire layer uses
 /// (`wire::captp_routing::build_captp_turn_delivered`). Because the node crate
 /// does not depend on `wire`, this tool re-implements the small construction
-/// directly against `pyana-turn` + `pyana-captp` primitives. The introducer
+/// directly against `dregg-turn` + `dregg-captp` primitives. The introducer
 /// signs the `HandoffCertificate`, the cipherclerk (acting as recipient) signs the
 /// canonical `captp_delivered_signing_message`, and the resulting Turn carries
 /// both signatures inside the authorization.
@@ -4206,10 +4206,10 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
         .and_then(|v| v.as_str())
         .unwrap_or("signature");
     let permissions = match permissions_str {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permissions: '{other}' (none|signature|proof|either)"
@@ -4241,11 +4241,11 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
             },
             None => [0u8; 32],
         };
-    let target_federation = pyana_types::FederationId(target_federation_bytes);
+    let target_federation = dregg_types::FederationId(target_federation_bytes);
 
     let introducer_sk = match params.get("introducer_sk").and_then(|v| v.as_str()) {
         Some(h) => match hex_decode(h) {
-            Ok(b) => pyana_types::SigningKey::from_bytes(&b),
+            Ok(b) => dregg_types::SigningKey::from_bytes(&b),
             Err(_) => return McpToolResult::error("invalid hex for introducer_sk"),
         },
         None => {
@@ -4253,7 +4253,7 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
             if getrandom::fill(&mut seed).is_err() {
                 return McpToolResult::error("failed to generate introducer seed");
             }
-            pyana_types::SigningKey::from_bytes(&seed)
+            dregg_types::SigningKey::from_bytes(&seed)
         }
     };
     let introducer_pk_bytes = *introducer_sk.public_key().as_bytes();
@@ -4266,9 +4266,9 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
             },
             None => *blake3::hash(&introducer_pk_bytes).as_bytes(),
         };
-    let introducer_federation = pyana_types::FederationId(introducer_federation_bytes);
+    let introducer_federation = dregg_types::FederationId(introducer_federation_bytes);
 
-    let parsed_effects: Vec<pyana_turn::Effect> =
+    let parsed_effects: Vec<dregg_turn::Effect> =
         match params.get("effects").and_then(|v| v.as_array()) {
             Some(arr) => {
                 let mut out = Vec::with_capacity(arr.len());
@@ -4289,10 +4289,10 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
     }
 
     let recipient_pk = s.cclerk.public_key().0;
-    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
-    let target_cell_captp = pyana_types::CellId(target_cell_bytes);
+    let target_cell_id = dregg_cell::CellId(target_cell_bytes);
+    let target_cell_captp = dregg_types::CellId(target_cell_bytes);
 
-    let cert = pyana_captp::HandoffCertificate::create(
+    let cert = dregg_captp::HandoffCertificate::create(
         &introducer_sk,
         introducer_federation,
         target_federation,
@@ -4308,17 +4308,17 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
     let agent_cell_id = target_cell_id;
 
     let turn_nonce = s.cclerk.receipt_chain_length() as u64;
-    let signing_msg = pyana_turn::Authorization::captp_delivered_signing_message(
+    let signing_msg = dregg_turn::Authorization::captp_delivered_signing_message(
         &cert.nonce,
         &agent_cell_id,
         &target_cell_id,
         turn_nonce,
         &parsed_effects,
     );
-    let recipient_signature = pyana_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
+    let recipient_signature = dregg_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
 
     if s.ledger.get(&target_cell_id).is_none() {
-        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(
+        let stub = dregg_cell::Cell::remote_stub_with_id_pk_balance(
             target_cell_id,
             recipient_pk,
             1_000_000,
@@ -4327,20 +4327,20 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
     }
 
     let cert_nonce_hex = hex_encode(&cert.nonce);
-    let action = pyana_turn::Action {
+    let action = dregg_turn::Action {
         target: target_cell_id,
-        method: pyana_turn::action::symbol("captp.route"),
+        method: dregg_turn::action::symbol("captp.route"),
         args: vec![],
-        authorization: pyana_turn::Authorization::CapTpDelivered {
+        authorization: dregg_turn::Authorization::CapTpDelivered {
             handoff_cert: cert,
             introducer_pk: introducer_pk_bytes,
             sender_pk: recipient_pk,
             sender_signature: recipient_signature.0,
         },
-        preconditions: pyana_cell::Preconditions::default(),
+        preconditions: dregg_cell::Preconditions::default(),
         effects: parsed_effects,
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -4368,11 +4368,11 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
     };
     let turn_hash = hex_encode(&turn.hash());
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -4392,7 +4392,7 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
                 "swiss": hex_encode(&swiss),
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "delivered": false,
@@ -4412,7 +4412,7 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
 }
 
 // =============================================================================
-// CapTP HandoffCertificate exercise (pyana_exercise_handoff_cert)
+// CapTP HandoffCertificate exercise (dregg_exercise_handoff_cert)
 // =============================================================================
 
 /// Exercise a CapTP HandoffCertificate via `Authorization::CapTpDelivered`.
@@ -4442,10 +4442,10 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
         .and_then(|v| v.as_str())
         .unwrap_or("signature");
     let permissions = match permissions_str {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permissions: '{other}' (none|signature|proof|either)"
@@ -4480,7 +4480,7 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
             },
             None => [0u8; 32],
         };
-    let target_federation = pyana_types::FederationId(target_federation_bytes);
+    let target_federation = dregg_types::FederationId(target_federation_bytes);
 
     // ── Introducer key ───────────────────────────────────────────────────────
     // If introducer_sk is supplied, derive pk from it (testing path).
@@ -4491,7 +4491,7 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     // Simplest contract: if sk supplied → use it; else generate fresh ephemeral.
     let introducer_sk = match params.get("introducer_sk").and_then(|v| v.as_str()) {
         Some(h) => match hex_decode(h) {
-            Ok(b) => pyana_types::SigningKey::from_bytes(&b),
+            Ok(b) => dregg_types::SigningKey::from_bytes(&b),
             Err(_) => return McpToolResult::error("invalid hex for introducer_sk"),
         },
         None => {
@@ -4503,7 +4503,7 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
             if getrandom::fill(&mut seed).is_err() {
                 return McpToolResult::error("failed to generate introducer seed");
             }
-            pyana_types::SigningKey::from_bytes(&seed)
+            dregg_types::SigningKey::from_bytes(&seed)
         }
     };
     let introducer_pk_bytes: [u8; 32] = *introducer_sk.public_key().as_bytes();
@@ -4535,10 +4535,10 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
             },
             None => introducer_pk_bytes, // FederationId = raw pk bytes (canonical convention)
         };
-    let introducer_federation = pyana_types::FederationId(introducer_federation_bytes);
+    let introducer_federation = dregg_types::FederationId(introducer_federation_bytes);
 
     // ── Optional downstream effects ──────────────────────────────────────────
-    let downstream_effects: Vec<pyana_turn::Effect> =
+    let downstream_effects: Vec<dregg_turn::Effect> =
         match params.get("effects").and_then(|v| v.as_array()) {
             Some(arr) => {
                 let mut out = Vec::with_capacity(arr.len());
@@ -4566,11 +4566,11 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
         },
         None => s.cclerk.public_key().0,
     };
-    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
-    let target_cell_captp = pyana_types::CellId(target_cell_bytes);
+    let target_cell_id = dregg_cell::CellId(target_cell_bytes);
+    let target_cell_captp = dregg_types::CellId(target_cell_bytes);
 
     // ── Create HandoffCertificate ─────────────────────────────────────────────
-    let cert = pyana_captp::HandoffCertificate::create(
+    let cert = dregg_captp::HandoffCertificate::create(
         &introducer_sk,
         introducer_federation,
         target_federation,
@@ -4592,7 +4592,7 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     // ── Build effects list: ValidateHandoff first, then downstream ────────────
     // The block1-bind closure in `verify_captp_delivered` checks every
     // `Effect::ValidateHandoff` in the action against the cert's keys.
-    let validate_effect = pyana_turn::Effect::ValidateHandoff {
+    let validate_effect = dregg_turn::Effect::ValidateHandoff {
         cert_hash,
         recipient_pk,
         introducer_pk: action_introducer_pk_bytes,
@@ -4603,18 +4603,18 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     // ── Sender signature (recipient signs the canonical delivery message) ─────
     let agent_cell_id = target_cell_id;
     let turn_nonce = s.cclerk.receipt_chain_length() as u64;
-    let signing_msg = pyana_turn::Authorization::captp_delivered_signing_message(
+    let signing_msg = dregg_turn::Authorization::captp_delivered_signing_message(
         &cert.nonce,
         &agent_cell_id,
         &target_cell_id,
         turn_nonce,
         &all_effects,
     );
-    let recipient_signature = pyana_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
+    let recipient_signature = dregg_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
 
     // ── Stub target cell if absent ────────────────────────────────────────────
     if s.ledger.get(&target_cell_id).is_none() {
-        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(
+        let stub = dregg_cell::Cell::remote_stub_with_id_pk_balance(
             target_cell_id,
             recipient_pk,
             1_000_000,
@@ -4624,22 +4624,22 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     // Stub any effect-referenced cells.
     for effect in &downstream_effects {
         match effect {
-            pyana_turn::Effect::Transfer { from, to, amount } => {
+            dregg_turn::Effect::Transfer { from, to, amount } => {
                 if s.ledger.get(from).is_none() {
                     let bal = (*amount).saturating_mul(10).max(1_000_000);
                     let stub =
-                        pyana_cell::Cell::remote_stub_with_id_pk_balance(*from, recipient_pk, bal);
+                        dregg_cell::Cell::remote_stub_with_id_pk_balance(*from, recipient_pk, bal);
                     let _ = s.ledger.insert_cell(stub);
                 }
                 if s.ledger.get(to).is_none() {
-                    let stub = pyana_cell::Cell::remote_stub_with_id(*to);
+                    let stub = dregg_cell::Cell::remote_stub_with_id(*to);
                     let _ = s.ledger.insert_cell(stub);
                 }
             }
-            pyana_turn::Effect::SetField { cell, .. }
-            | pyana_turn::Effect::IncrementNonce { cell } => {
+            dregg_turn::Effect::SetField { cell, .. }
+            | dregg_turn::Effect::IncrementNonce { cell } => {
                 if s.ledger.get(cell).is_none() {
-                    let stub = pyana_cell::Cell::remote_stub_with_id(*cell);
+                    let stub = dregg_cell::Cell::remote_stub_with_id(*cell);
                     let _ = s.ledger.insert_cell(stub);
                 }
             }
@@ -4654,20 +4654,20 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
         .map(|c| (c.state.balance(), c.state.nonce()));
 
     // ── Build and execute the Turn ────────────────────────────────────────────
-    let action = pyana_turn::Action {
+    let action = dregg_turn::Action {
         target: target_cell_id,
-        method: pyana_turn::action::symbol("captp.route"),
+        method: dregg_turn::action::symbol("captp.route"),
         args: vec![],
-        authorization: pyana_turn::Authorization::CapTpDelivered {
+        authorization: dregg_turn::Authorization::CapTpDelivered {
             handoff_cert: cert,
             introducer_pk: action_introducer_pk_bytes,
             sender_pk: recipient_pk,
             sender_signature: recipient_signature.0,
         },
-        preconditions: pyana_cell::Preconditions::default(),
+        preconditions: dregg_cell::Preconditions::default(),
         effects: all_effects.clone(),
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -4695,11 +4695,11 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     };
     let turn_hash = hex_encode(&turn.hash());
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree");
@@ -4712,26 +4712,26 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
             // ValidateHandoff has no VM-domain analogue; emit a NoOp so the
             // trace length stays at ≥ 2. Downstream effects are projected
             // the same way as tool_exercise_bearer_cap.
-            let mut vm_effects: Vec<pyana_circuit::effect_vm::Effect> =
-                vec![pyana_circuit::effect_vm::Effect::NoOp]; // ValidateHandoff → NoOp
+            let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> =
+                vec![dregg_circuit::effect_vm::Effect::NoOp]; // ValidateHandoff → NoOp
             for e in &downstream_effects {
                 match e {
-                    pyana_turn::Effect::Transfer { amount, .. } => {
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::Transfer {
+                    dregg_turn::Effect::Transfer { amount, .. } => {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::Transfer {
                             amount: *amount,
                             direction: 1,
                         });
                     }
-                    pyana_turn::Effect::SetField { index, value, .. } => {
+                    dregg_turn::Effect::SetField { index, value, .. } => {
                         let mut le4 = [0u8; 4];
                         le4.copy_from_slice(&value[..4]);
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::SetField {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
                             field_idx: *index as u32,
-                            value: pyana_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                            value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
                         });
                     }
-                    pyana_turn::Effect::IncrementNonce { .. } => {
-                        vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
+                    dregg_turn::Effect::IncrementNonce { .. } => {
+                        vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
                     }
                     _ => {}
                 }
@@ -4783,7 +4783,7 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
                 "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "exercised": false,
@@ -4825,7 +4825,7 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
         Ok(b) => b,
         Err(_) => return McpToolResult::error("invalid hex for cell_id"),
     };
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     let effects_hash: [u8; 32] = match params.get("effects_hash").and_then(|v| v.as_str()) {
         Some(h) => match hex_decode(h) {
@@ -4876,7 +4876,7 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
             Err(_) => return McpToolResult::error("invalid hex for new_commitment"),
         },
         None => {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-mcp-witness-new-commit-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-mcp-witness-new-commit-v1");
             hasher.update(&cell_id.0);
             hasher.update(&old_commitment);
             hasher.update(&effects_hash);
@@ -4885,7 +4885,7 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
         }
     };
 
-    let signing_msg = pyana_turn::SovereignCellWitness::signing_message(
+    let signing_msg = dregg_turn::SovereignCellWitness::signing_message(
         &cell_id,
         &old_commitment,
         &new_commitment,
@@ -4893,10 +4893,10 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
         timestamp,
         sequence,
     );
-    let sig = pyana_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
+    let sig = dregg_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
 
     let transition_proof_hex = if attach_proof {
-        let vm_effects = vec![pyana_circuit::effect_vm::Effect::Transfer {
+        let vm_effects = vec![dregg_circuit::effect_vm::Effect::Transfer {
             amount: vm_effect_amount,
             direction: 1,
         }];
@@ -4917,7 +4917,7 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
     } else {
         hex_decode_var(&transition_proof_hex).ok()
     };
-    let witness = pyana_turn::SovereignCellWitness {
+    let witness = dregg_turn::SovereignCellWitness {
         cell_id,
         old_commitment,
         new_commitment,
@@ -4979,18 +4979,18 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         Ok(b) => b,
         Err(_) => return McpToolResult::error("invalid hex for to"),
     };
-    let from_cell = pyana_cell::CellId(from_bytes);
-    let to_cell = pyana_cell::CellId(to_bytes);
+    let from_cell = dregg_cell::CellId(from_bytes);
+    let to_cell = dregg_cell::CellId(to_bytes);
 
     let permissions_str = params
         .get("permissions")
         .and_then(|v| v.as_str())
         .unwrap_or("signature");
     let permissions = match permissions_str {
-        "none" | "None" => pyana_cell::AuthRequired::None,
-        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
-        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
-        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        "none" | "None" => dregg_cell::AuthRequired::None,
+        "signature" | "Signature" => dregg_cell::AuthRequired::Signature,
+        "proof" | "Proof" => dregg_cell::AuthRequired::Proof,
+        "either" | "Either" => dregg_cell::AuthRequired::Either,
         other => {
             return McpToolResult::error(format!(
                 "invalid permissions: '{other}' (none|signature|proof|either)"
@@ -5004,14 +5004,14 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
                 Some(a) => a,
                 None => return McpToolResult::error("missing required parameter: amount"),
             };
-            pyana_turn::Effect::Transfer {
+            dregg_turn::Effect::Transfer {
                 from: from_cell,
                 to: to_cell,
                 amount,
             }
         }
         "grant" => {
-            let cap = pyana_cell::CapabilityRef {
+            let cap = dregg_cell::CapabilityRef {
                 target: from_cell,
                 slot: 0,
                 permissions,
@@ -5019,7 +5019,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
                 expires_at: None,
                 allowed_effects: None,
             };
-            pyana_turn::Effect::GrantCapability {
+            dregg_turn::Effect::GrantCapability {
                 from: from_cell,
                 to: to_cell,
                 cap,
@@ -5034,10 +5034,10 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
                 Ok(b) => b,
                 Err(_) => return McpToolResult::error("invalid hex for target"),
             };
-            pyana_turn::Effect::Introduce {
+            dregg_turn::Effect::Introduce {
                 introducer: from_cell,
                 recipient: to_cell,
-                target: pyana_cell::CellId(target_bytes),
+                target: dregg_cell::CellId(target_bytes),
                 permissions,
             }
         }
@@ -5054,7 +5054,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
     }
 
     if s.ledger.get(&from_cell).is_none() {
-        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(
+        let stub = dregg_cell::Cell::remote_stub_with_id_pk_balance(
             from_cell,
             s.cclerk.public_key().0,
             10_000_000,
@@ -5062,21 +5062,21 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         let _ = s.ledger.insert_cell(stub);
     }
     if s.ledger.get(&to_cell).is_none() {
-        let stub = pyana_cell::Cell::remote_stub_with_id(to_cell);
+        let stub = dregg_cell::Cell::remote_stub_with_id(to_cell);
         let _ = s.ledger.insert_cell(stub);
     }
 
     let agent_cell_id = from_cell;
 
-    let action = pyana_turn::Action {
+    let action = dregg_turn::Action {
         target: from_cell,
-        method: pyana_turn::action::symbol("bilateral"),
+        method: dregg_turn::action::symbol("bilateral"),
         args: vec![],
-        authorization: pyana_turn::Authorization::Unchecked,
-        preconditions: pyana_cell::Preconditions::default(),
+        authorization: dregg_turn::Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
         effects: vec![effect.clone()],
-        may_delegate: pyana_turn::DelegationMode::None,
-        commitment_mode: pyana_turn::CommitmentMode::Full,
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
         balance_change: None,
         witness_blobs: vec![],
     };
@@ -5114,17 +5114,17 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         .get(&to_cell)
         .map(|c| (c.state.balance(), c.state.nonce()));
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     let (committed_receipt_opt, error_str) = match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
             (Some(receipt), None)
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             (None, Some(format!("turn rejected: {reason}")))
         }
         _ => (None, Some("bilateral turn did not commit".to_string())),
@@ -5142,35 +5142,35 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         }
     };
 
-    let sched = pyana_turn::bilateral_schedule::ExpectedBilateral::from_turn(&turn);
+    let sched = dregg_turn::bilateral_schedule::ExpectedBilateral::from_turn(&turn);
     let from_counts = sched.counts_for(&from_cell);
     let to_counts = sched.counts_for(&to_cell);
 
     let (from_vm, to_vm): (
-        Vec<pyana_circuit::effect_vm::Effect>,
-        Vec<pyana_circuit::effect_vm::Effect>,
+        Vec<dregg_circuit::effect_vm::Effect>,
+        Vec<dregg_circuit::effect_vm::Effect>,
     ) = match &effect {
-        pyana_turn::Effect::Transfer { amount, .. } => (
-            vec![pyana_circuit::effect_vm::Effect::Transfer {
+        dregg_turn::Effect::Transfer { amount, .. } => (
+            vec![dregg_circuit::effect_vm::Effect::Transfer {
                 amount: *amount,
                 direction: 1,
             }],
-            vec![pyana_circuit::effect_vm::Effect::Transfer {
+            vec![dregg_circuit::effect_vm::Effect::Transfer {
                 amount: *amount,
                 direction: 0,
             }],
         ),
-        pyana_turn::Effect::GrantCapability { cap, .. } => (
-            vec![pyana_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: pyana_circuit::BabyBear::new(cap.slot.wrapping_add(1)),
+        dregg_turn::Effect::GrantCapability { cap, .. } => (
+            vec![dregg_circuit::effect_vm::Effect::GrantCapability {
+                cap_entry: dregg_circuit::BabyBear::new(cap.slot.wrapping_add(1)),
             }],
-            vec![pyana_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: pyana_circuit::BabyBear::new(cap.slot.wrapping_add(1)),
+            vec![dregg_circuit::effect_vm::Effect::GrantCapability {
+                cap_entry: dregg_circuit::BabyBear::new(cap.slot.wrapping_add(1)),
             }],
         ),
-        pyana_turn::Effect::Introduce { .. } => (
-            vec![pyana_circuit::effect_vm::Effect::NoOp],
-            vec![pyana_circuit::effect_vm::Effect::NoOp],
+        dregg_turn::Effect::Introduce { .. } => (
+            vec![dregg_circuit::effect_vm::Effect::NoOp],
+            vec![dregg_circuit::effect_vm::Effect::NoOp],
         ),
         _ => (Vec::new(), Vec::new()),
     };
@@ -5188,11 +5188,11 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         if proof_hex.is_empty() {
             return serde_json::Value::Null;
         }
-        let trace_bb: Vec<Vec<pyana_circuit::BabyBear>> = trace_rows
+        let trace_bb: Vec<Vec<dregg_circuit::BabyBear>> = trace_rows
             .iter()
             .map(|row| {
                 row.iter()
-                    .map(|&v| pyana_circuit::BabyBear::new(v))
+                    .map(|&v| dregg_circuit::BabyBear::new(v))
                     .collect()
             })
             .collect();
@@ -5201,7 +5201,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
             Err(_) => return serde_json::Value::Null,
         };
         let pi_u32: Vec<u32> = pi.iter().map(|x| *x as u32).collect();
-        let wr = pyana_turn::WitnessedReceipt::from_components(
+        let wr = dregg_turn::WitnessedReceipt::from_components(
             receipt.clone(),
             proof_bytes,
             pi_u32,
@@ -5254,7 +5254,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
 
 /// Emit an `Effect::CreateCellFromFactory` so the new cell is created
 /// through the factory descriptor's validate_creation path. This is the
-/// canonical replacement for the legacy `pyana_create_from_factory` tool,
+/// canonical replacement for the legacy `dregg_create_from_factory` tool,
 /// which inserted cells via direct ledger manipulation; the new tool routes
 /// through the executor and the factory descriptor's invariants.
 async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState) -> McpToolResult {
@@ -5318,16 +5318,16 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
             Ok(b) => b,
             Err(_) => return McpToolResult::error("invalid hex for token_id"),
         },
-        None => blake3::derive_key("pyana-mcp-factory-token-v1", &factory_vk),
+        None => blake3::derive_key("dregg-mcp-factory-token-v1", &factory_vk),
     };
 
     let mode = if sovereign {
-        pyana_cell::CellMode::Sovereign
+        dregg_cell::CellMode::Sovereign
     } else {
-        pyana_cell::CellMode::Hosted
+        dregg_cell::CellMode::Hosted
     };
 
-    let params_struct = pyana_cell::factory::FactoryCreationParams {
+    let params_struct = dregg_cell::factory::FactoryCreationParams {
         mode,
         program_vk,
         initial_fields,
@@ -5335,14 +5335,14 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
         owner_pubkey,
     };
 
-    let effect = pyana_turn::Effect::CreateCellFromFactory {
+    let effect = dregg_turn::Effect::CreateCellFromFactory {
         factory_vk,
         owner_pubkey,
         token_id,
         params: params_struct,
     };
 
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
     let nonce = s.cclerk.receipt_chain_length() as u64;
     let turn = Turn {
         agent: agent_cell_id,
@@ -5365,14 +5365,14 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
     };
     let turn_hash = hex_encode(&turn.hash());
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
-    let new_cell_id = pyana_cell::CellId::derive_raw(&owner_pubkey, &token_id);
+    let new_cell_id = dregg_cell::CellId::derive_raw(&owner_pubkey, &token_id);
     let new_cell_hex = hex_encode(&new_cell_id.0);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             s.cclerk
                 .append_receipt(receipt)
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
@@ -5391,7 +5391,7 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
                 "note": "Created via Effect::CreateCellFromFactory; the executor ran the factory descriptor's validate_creation path before insertion.",
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "created": false,
@@ -5447,23 +5447,23 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
 /// - `EmitEvent` → `VmEffect::EmitEvent` (BLAKE3 topic + payload, per #110)
 /// Returns `None` for variants without an AIR-side analog (IncrementNonce,
 /// GrantCapability, RevokeCapability, CreateCell, etc.).
-fn project_setfield_to_vm(effect: &pyana_turn::Effect) -> Option<pyana_circuit::effect_vm::Effect> {
+fn project_setfield_to_vm(effect: &dregg_turn::Effect) -> Option<dregg_circuit::effect_vm::Effect> {
     match effect {
-        pyana_turn::Effect::SetField { index, value, .. } => {
+        dregg_turn::Effect::SetField { index, value, .. } => {
             let mut le4 = [0u8; 4];
             le4.copy_from_slice(&value[..4]);
-            Some(pyana_circuit::effect_vm::Effect::SetField {
+            Some(dregg_circuit::effect_vm::Effect::SetField {
                 field_idx: *index as u32,
-                value: pyana_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
             })
         }
-        pyana_turn::Effect::Transfer { amount, .. } => {
-            Some(pyana_circuit::effect_vm::Effect::Transfer {
+        dregg_turn::Effect::Transfer { amount, .. } => {
+            Some(dregg_circuit::effect_vm::Effect::Transfer {
                 amount: *amount,
                 direction: 1,
             })
         }
-        pyana_turn::Effect::EmitEvent { event, .. } => {
+        dregg_turn::Effect::EmitEvent { event, .. } => {
             // Canonical (topic_hash, payload_hash) projection — mirrors
             // `turn/src/executor/effect_vm_bridge.rs` EmitEvent arm (#110).
             // topic_hash  = BLAKE3(event.topic)
@@ -5475,17 +5475,17 @@ fn project_setfield_to_vm(effect: &pyana_turn::Effect) -> Option<pyana_circuit::
             }
             let payload_bytes = *payload_hasher.finalize().as_bytes();
 
-            fn bytes32_to_8_felts(b: &[u8; 32]) -> [pyana_circuit::BabyBear; 8] {
-                let mut out = [pyana_circuit::BabyBear::ZERO; 8];
+            fn bytes32_to_8_felts(b: &[u8; 32]) -> [dregg_circuit::BabyBear; 8] {
+                let mut out = [dregg_circuit::BabyBear::ZERO; 8];
                 for i in 0..8 {
                     let off = i * 4;
                     let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-                    out[i] = pyana_circuit::BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                    out[i] = dregg_circuit::BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
                 }
                 out
             }
 
-            Some(pyana_circuit::effect_vm::Effect::EmitEvent {
+            Some(dregg_circuit::effect_vm::Effect::EmitEvent {
                 topic_hash: bytes32_to_8_felts(&topic_bytes),
                 payload_hash: bytes32_to_8_felts(&payload_bytes),
             })
@@ -5506,7 +5506,7 @@ fn project_setfield_to_vm(effect: &pyana_turn::Effect) -> Option<pyana_circuit::
 fn ensure_cell_in_ledger(
     cell_id: CellId,
     pk_bytes: [u8; 32],
-    ledger: &mut pyana_cell::Ledger,
+    ledger: &mut dregg_cell::Ledger,
 ) -> (u64, u64) {
     if ledger.get(&cell_id).is_none() {
         // `Cell::with_balance` derives the cell id from
@@ -5516,7 +5516,7 @@ fn ensure_cell_in_ledger(
         // `remote_stub_with_id_pk_balance` constructor that records the
         // cell at the *specified* id while still attaching the node's
         // pubkey so signature-mode auth resolves correctly.
-        let cell = pyana_cell::Cell::remote_stub_with_id_pk_balance(cell_id, pk_bytes, 0);
+        let cell = dregg_cell::Cell::remote_stub_with_id_pk_balance(cell_id, pk_bytes, 0);
         // Best-effort: if insert fails we surface a zero state; the
         // executor will reject the turn downstream and the tool returns
         // the Rejected receipt.
@@ -5536,9 +5536,9 @@ fn ensure_cell_in_ledger(
 /// starbridge tools.
 async fn run_starbridge_action(
     state: &NodeState,
-    action: pyana_turn::Action,
+    action: dregg_turn::Action,
     memo: String,
-    extra_vm_effects: Vec<pyana_circuit::effect_vm::Effect>,
+    extra_vm_effects: Vec<dregg_circuit::effect_vm::Effect>,
     extra_links: serde_json::Map<String, Value>,
 ) -> McpToolResult {
     let mut s = state.write().await;
@@ -5548,7 +5548,7 @@ async fn run_starbridge_action(
 
     // Node identity + agent cell.
     let pk_bytes = s.cclerk.public_key().0;
-    let agent_cell_id = pyana_cell::CellId::derive_raw(&pk_bytes, &[0u8; 32]);
+    let agent_cell_id = dregg_cell::CellId::derive_raw(&pk_bytes, &[0u8; 32]);
     let federation_id = [0u8; 32];
 
     // Re-sign the action with the node's cipherclerk (overwrites the temp
@@ -5562,7 +5562,7 @@ async fn run_starbridge_action(
     let _ = ensure_cell_in_ledger(agent_cell_id, pk_bytes, &mut s.ledger);
 
     // Project SetField (and any other supported) effects into VM domain.
-    let mut vm_effects: Vec<pyana_circuit::effect_vm::Effect> = signed_action
+    let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> = signed_action
         .effects
         .iter()
         .filter_map(project_setfield_to_vm)
@@ -5598,11 +5598,11 @@ async fn run_starbridge_action(
     let turn_hash = hex_encode(&turn.hash());
 
     // Execute locally.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash_hex = hex_encode(&receipt.receipt_hash());
             let receipt_bytes =
                 postcard::to_allocvec(&receipt).expect("TurnReceipt serializes via postcard");
@@ -5669,7 +5669,7 @@ async fn run_starbridge_action(
             }
             McpToolResult::json(&Value::Object(out))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "committed": false,
@@ -5696,7 +5696,7 @@ fn temp_app_cclerk() -> AppCipherclerk {
 /// Common helper: read the agent's own cell id from state. The caller
 /// holds the lock; we just compute the derivation.
 fn agent_cell_of(cclerk: &AgentCipherclerk) -> CellId {
-    pyana_cell::CellId::derive_raw(&cclerk.public_key().0, &[0u8; 32])
+    dregg_cell::CellId::derive_raw(&cclerk.public_key().0, &[0u8; 32])
 }
 
 /// Default registry/issuer/etc. cell when the caller omits it: the
@@ -5706,7 +5706,7 @@ fn parse_or_default_cell(value: Option<&str>, default: CellId) -> Result<CellId,
     match value {
         None => Ok(default),
         Some(h) => match hex_decode(h) {
-            Ok(b) => Ok(pyana_cell::CellId(b)),
+            Ok(b) => Ok(dregg_cell::CellId(b)),
             Err(_) => Err(format!(
                 "invalid hex for cell id '{h}' (expected 64 hex chars)"
             )),
@@ -5715,7 +5715,7 @@ fn parse_or_default_cell(value: Option<&str>, default: CellId) -> Result<CellId,
 }
 
 // =============================================================================
-// Tool: pyana_register_name
+// Tool: dregg_register_name
 // =============================================================================
 
 async fn tool_register_name(params: &Value, state: &NodeState) -> McpToolResult {
@@ -5781,7 +5781,7 @@ async fn tool_register_name(params: &Value, state: &NodeState) -> McpToolResult 
         .get("credential_presentation_proof_hex")
         .and_then(|v| v.as_str())
     {
-        None => b"pyana-mcp-credential-stub-v1".to_vec(),
+        None => b"dregg-mcp-credential-stub-v1".to_vec(),
         Some(h) => match hex_decode_var(h) {
             Ok(b) => b,
             Err(_) => {
@@ -5837,7 +5837,7 @@ async fn tool_register_name(params: &Value, state: &NodeState) -> McpToolResult 
 }
 
 // =============================================================================
-// Tool: pyana_publish_subscription
+// Tool: dregg_publish_subscription
 // =============================================================================
 
 fn parse_bounty_state(s: &str) -> Option<SbBountyState> {
@@ -5972,7 +5972,7 @@ async fn tool_publish_subscription(params: &Value, state: &NodeState) -> McpTool
 }
 
 // =============================================================================
-// Tool: pyana_issue_credential
+// Tool: dregg_issue_credential
 // =============================================================================
 
 fn parse_schema_name(name: &str) -> Option<SbCredentialSchema> {
@@ -6072,10 +6072,10 @@ async fn tool_issue_credential(params: &Value, state: &NodeState) -> McpToolResu
     // Mint the credential.  Use a deterministic IssuerKeys derived from
     // the node's pubkey so the issuance is reproducible across replays.
     let issuer_keys = SbIssuerKeys::new(
-        blake3::derive_key("pyana-mcp-issuer-root-v1", &node_pk),
-        blake3::derive_key("pyana-mcp-issuer-federation-v1", &node_pk),
+        blake3::derive_key("dregg-mcp-issuer-root-v1", &node_pk),
+        blake3::derive_key("dregg-mcp-issuer-federation-v1", &node_pk),
         node_pk.to_vec(),
-        "pyana-node-mcp",
+        "dregg-node-mcp",
     );
 
     let credential: SbCredential = match sb_issue(
@@ -6139,7 +6139,7 @@ async fn tool_issue_credential(params: &Value, state: &NodeState) -> McpToolResu
 }
 
 // =============================================================================
-// Tool: pyana_register_service
+// Tool: dregg_register_service
 // =============================================================================
 
 async fn tool_register_service(params: &Value, state: &NodeState) -> McpToolResult {
@@ -6183,7 +6183,7 @@ async fn tool_register_service(params: &Value, state: &NodeState) -> McpToolResu
     // PI surface (EMIT_EVENT_TOPIC_HASH / EMIT_EVENT_PAYLOAD_HASH) ties
     // the STARK to the actual emitted event.
     let path_hash = *blake3::hash(path.as_bytes()).as_bytes();
-    let extra_vm: Vec<pyana_circuit::effect_vm::Effect> = Vec::new();
+    let extra_vm: Vec<dregg_circuit::effect_vm::Effect> = Vec::new();
 
     let mut links = serde_json::Map::new();
     links.insert(
@@ -6273,7 +6273,7 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
             },
         },
         server_info: McpServerInfo {
-            name: "pyana-node",
+            name: "dregg-node",
             version: env!("CARGO_PKG_VERSION"),
         },
     };
@@ -6371,10 +6371,10 @@ mod tests {
     /// `PI[IS_AGENT_CELL] == 1` for the v1 single-proof-per-WR replay
     /// shape, since mcp's path produces a single per-cell proof for the
     /// actor's own state transition (the cell IS the agent here). The
-    /// underlying `pyana_circuit::effect_vm::generate_effect_vm_trace`
+    /// underlying `dregg_circuit::effect_vm::generate_effect_vm_trace`
     /// does not constrain this slot — it is an executor-asserted bundle
     /// tag — so mcp must set it explicitly before proving. Without this,
-    /// the standalone `pyana-verifier replay-chain` rejects the chain
+    /// the standalone `dregg-verifier replay-chain` rejects the chain
     /// with "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
     ///
     /// See also `turn/src/executor/proof_verify.rs::populate_pi` (line
@@ -6382,10 +6382,10 @@ mod tests {
     /// (line 1275), which set the same slot on their own paths.
     #[test]
     fn generate_effect_vm_proof_pins_is_agent_cell_to_one() {
-        use pyana_circuit::effect_vm::pi as evm_pi;
+        use dregg_circuit::effect_vm::pi as evm_pi;
 
-        let vm_effects = vec![pyana_circuit::effect_vm::Effect::GrantCapability {
-            cap_entry: pyana_circuit::BabyBear::new(1),
+        let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
+            cap_entry: dregg_circuit::BabyBear::new(1),
         }];
 
         let (proof_hex, public_inputs, _trace, _witness_hash) =
@@ -6417,13 +6417,13 @@ mod tests {
     /// and the explicit set can be removed.
     #[test]
     fn generate_effect_vm_trace_leaves_is_agent_cell_unset() {
-        use pyana_circuit::effect_vm::pi as evm_pi;
-        let state = pyana_circuit::effect_vm::CellState::new(100, 0);
-        let effects = vec![pyana_circuit::effect_vm::Effect::GrantCapability {
-            cap_entry: pyana_circuit::BabyBear::new(1),
+        use dregg_circuit::effect_vm::pi as evm_pi;
+        let state = dregg_circuit::effect_vm::CellState::new(100, 0);
+        let effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
+            cap_entry: dregg_circuit::BabyBear::new(1),
         }];
         let (_trace, public_inputs) =
-            pyana_circuit::effect_vm::generate_effect_vm_trace(&state, &effects);
+            dregg_circuit::effect_vm::generate_effect_vm_trace(&state, &effects);
         assert_eq!(
             public_inputs[evm_pi::IS_AGENT_CELL].as_u32(),
             0,
@@ -6435,9 +6435,9 @@ mod tests {
     // =====================================================================
     // Cross-app starbridge-tool integration tests (Issue #106 closure).
     //
-    // These tests drive the four new tools (pyana_register_name,
-    // pyana_publish_subscription, pyana_issue_credential,
-    // pyana_register_service) through `dispatch_tool` against a real
+    // These tests drive the four new tools (dregg_register_name,
+    // dregg_publish_subscription, dregg_issue_credential,
+    // dregg_register_service) through `dispatch_tool` against a real
     // NodeState (a fresh ledger + cipherclerk in a tempdir) and assert each
     // produces a receipt with a non-empty `effect_vm_proof_hex` plus
     // populated `effect_vm_public_inputs` / `effect_vm_trace_rows` /
@@ -6528,13 +6528,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pyana_register_name_produces_proof_carrying_receipt() {
+    async fn dregg_register_name_produces_proof_carrying_receipt() {
         let (state, _tmp) = fresh_unlocked_state().await;
         let params = serde_json::json!({
             "name": "alice.dev",
             "expiry_height": 2_000_000_000u64,
         });
-        let result = dispatch_tool("pyana_register_name", params, &state).await;
+        let result = dispatch_tool("dregg_register_name", params, &state).await;
         let j = extract_json(&result);
         assert_proof_populated("register_name", &j);
         // Confirm cross-app link metadata is surfaced.
@@ -6550,7 +6550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pyana_publish_subscription_produces_proof_carrying_receipt() {
+    async fn dregg_publish_subscription_produces_proof_carrying_receipt() {
         let (state, _tmp) = fresh_unlocked_state().await;
         let bounty_id = "abcd".repeat(16);
         let msg_root = "1234".repeat(16);
@@ -6563,7 +6563,7 @@ mod tests {
             "new_state": "claimed",
             "actor_pk_hash": actor_pk_hash,
         });
-        let result = dispatch_tool("pyana_publish_subscription", params, &state).await;
+        let result = dispatch_tool("dregg_publish_subscription", params, &state).await;
         let j = extract_json(&result);
         assert_proof_populated("publish_subscription", &j);
         assert_eq!(
@@ -6575,7 +6575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pyana_issue_credential_produces_proof_carrying_receipt() {
+    async fn dregg_issue_credential_produces_proof_carrying_receipt() {
         let (state, _tmp) = fresh_unlocked_state().await;
         let params = serde_json::json!({
             "schema": "kyc",
@@ -6584,7 +6584,7 @@ mod tests {
                 "verification_level": 2,
             },
         });
-        let result = dispatch_tool("pyana_issue_credential", params, &state).await;
+        let result = dispatch_tool("dregg_issue_credential", params, &state).await;
         let j = extract_json(&result);
         assert_proof_populated("issue_credential", &j);
         assert!(j.get("credential_id").and_then(|v| v.as_str()).is_some());
@@ -6597,12 +6597,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pyana_register_service_produces_proof_carrying_receipt() {
+    async fn dregg_register_service_produces_proof_carrying_receipt() {
         let (state, _tmp) = fresh_unlocked_state().await;
         let params = serde_json::json!({
             "path": "/alice.dev",
         });
-        let result = dispatch_tool("pyana_register_service", params, &state).await;
+        let result = dispatch_tool("dregg_register_service", params, &state).await;
         let j = extract_json(&result);
         assert_proof_populated("register_service", &j);
         assert_eq!(j.get("path").and_then(|v| v.as_str()), Some("/alice.dev"));
@@ -6618,11 +6618,11 @@ mod tests {
     }
 
     // =====================================================================
-    // pyana_exercise_handoff_cert unit tests
+    // dregg_exercise_handoff_cert unit tests
     // =====================================================================
 
     /// Honest path: exercise_handoff_cert with a valid introducer key commits
-    /// and emits a STARK proof. Mirrors the existing `pyana_captp_deliver`
+    /// and emits a STARK proof. Mirrors the existing `dregg_captp_deliver`
     /// integration but confirms the ValidateHandoff block1-bind fires.
     #[tokio::test]
     async fn exercise_handoff_cert_honest_path_commits() {
@@ -6635,7 +6635,7 @@ mod tests {
 
         // Create an agent cell so pre_state is non-None and the proof fires.
         let create_res = dispatch_tool(
-            "pyana_create_agent",
+            "dregg_create_agent",
             serde_json::json!({ "name": "honest-bob", "initial_balance": 1_000_000 }),
             &state,
         )
@@ -6648,7 +6648,7 @@ mod tests {
             "introducer_sk": introducer_sk_hex,
             "permissions": "signature",
         });
-        let result = dispatch_tool("pyana_exercise_handoff_cert", params, &state).await;
+        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
         let j = extract_json(&result);
 
         assert_eq!(
@@ -6699,7 +6699,7 @@ mod tests {
 
         // Create a target cell so the ledger has something to act on.
         let create_res = dispatch_tool(
-            "pyana_create_agent",
+            "dregg_create_agent",
             serde_json::json!({ "name": "adversarial-bob", "initial_balance": 1_000_000 }),
             &state,
         )
@@ -6720,7 +6720,7 @@ mod tests {
             "introducer_pk": forged_pk_hex,
             "permissions": "signature",
         });
-        let result = dispatch_tool("pyana_exercise_handoff_cert", params, &state).await;
+        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
         let j = extract_json(&result);
 
         assert_eq!(
@@ -6740,10 +6740,10 @@ mod tests {
 
     /// Adversarial test: a receipt with a forged Effect-VM proof bytes
     /// must still parse out of the tool response, but the standalone
-    /// verifier would reject it. We cannot drive `pyana-verifier
+    /// verifier would reject it. We cannot drive `dregg-verifier
     /// replay-chain` from in-process tests (no cargo / no spawning
     /// the verifier binary in this lane), so we test the in-process
-    /// `pyana_circuit::stark::proof_from_bytes` gate: forged bytes
+    /// `dregg_circuit::stark::proof_from_bytes` gate: forged bytes
     /// fail to deserialize as a valid proof.
     #[tokio::test]
     async fn forged_proof_bytes_fail_to_deserialize() {
@@ -6752,7 +6752,7 @@ mod tests {
             "name": "carol.dev",
             "expiry_height": 2_000_000_000u64,
         });
-        let result = dispatch_tool("pyana_register_name", params, &state).await;
+        let result = dispatch_tool("dregg_register_name", params, &state).await;
         let j = extract_json(&result);
         let proof_hex = j
             .get("effect_vm_proof_hex")
@@ -6761,7 +6761,7 @@ mod tests {
         // Sanity check: the real bytes deserialize.
         let proof_bytes = hex_decode_var(proof_hex).expect("hex decode");
         assert!(
-            pyana_circuit::stark::proof_from_bytes(&proof_bytes).is_ok(),
+            dregg_circuit::stark::proof_from_bytes(&proof_bytes).is_ok(),
             "real proof must deserialize"
         );
         // Forge: flip every byte. The PYNA magic header check rejects.
@@ -6770,7 +6770,7 @@ mod tests {
             *b ^= 0xFF;
         }
         assert!(
-            pyana_circuit::stark::proof_from_bytes(&forged).is_err(),
+            dregg_circuit::stark::proof_from_bytes(&forged).is_err(),
             "forged proof bytes must NOT deserialize as a valid proof"
         );
     }

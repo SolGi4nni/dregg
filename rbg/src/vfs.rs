@@ -1,10 +1,10 @@
-//! Userspace VFS/storage layer built from pyana primitives.
+//! Userspace VFS/storage layer built from dregg primitives.
 //!
 //! # Design Heritage
 //!
-//! This maps Robigalia's VFS design into pyana's distributed runtime:
+//! This maps Robigalia's VFS design into dregg's distributed runtime:
 //!
-//! | Robigalia | Pyana Equivalent | This Module |
+//! | Robigalia | Dregg Equivalent | This Module |
 //! |-----------|-----------------|-------------|
 //! | Volume | Computron budget / staked note value | [`Volume`] |
 //! | Blob | Cell state / content-addressed note | [`Blob`] |
@@ -15,7 +15,7 @@
 //! # Nameless Writes (Zhang et al.)
 //!
 //! The key insight from the nameless writes paper: clients write data, the storage
-//! device picks the location, and returns the address. In pyana, notes ARE nameless
+//! device picks the location, and returns the address. In dregg, notes ARE nameless
 //! writes: you commit a value and get back the commitment hash as its address. This
 //! eliminates the indirection overhead of traditional file systems (inode -> block
 //! mapping) because the address IS the content.
@@ -37,10 +37,10 @@
 use std::collections::HashMap;
 use std::fmt;
 
-pub use pyana_types::CellId;
+pub use dregg_types::CellId;
 
 // =============================================================================
-// VFS-local primitives (composes the real `pyana_types::CellId`)
+// VFS-local primitives (composes the real `dregg_types::CellId`)
 // =============================================================================
 
 /// Monotonically increasing version counter on a cell.
@@ -160,7 +160,7 @@ impl EffectTrace {
 
 /// A Volume is a resource container that tracks allocation budget.
 ///
-/// In Robigalia, volumes are the unit of resource accounting. In pyana, this maps
+/// In Robigalia, volumes are the unit of resource accounting. In dregg, this maps
 /// to a cell's balance (computrons) which bounds how much storage/computation it
 /// can allocate.
 ///
@@ -244,7 +244,7 @@ impl Volume {
 /// the address (commitment hash). No indirection table, no inode-to-block map.
 /// The commitment IS the address.
 ///
-/// In pyana terms, each Blob is a note:
+/// In dregg terms, each Blob is a note:
 /// - Creating a blob = creating a note commitment (NoteCreate effect)
 /// - Reading a blob = proving membership in the note tree (Merkle proof)
 /// - Deleting a blob = spending the note (reveal nullifier, NoteSpend effect)
@@ -278,7 +278,7 @@ impl Blob {
     /// Compute the commitment for arbitrary data.
     /// This is the "nameless write" -- the address is derived from content.
     fn compute_commitment(data: &[u8], volume: &CellId) -> NoteCommitment {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-vfs blob commitment v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-vfs blob commitment v1");
         hasher.update(data);
         hasher.update(&volume.0);
         NoteCommitment(*hasher.finalize().as_bytes())
@@ -287,7 +287,7 @@ impl Blob {
     /// Compute the nullifier for this blob.
     /// Only the volume owner can produce this (requires spending key).
     fn compute_nullifier(commitment: &NoteCommitment, spending_key: &[u8; 32]) -> Nullifier {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-vfs blob nullifier v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-vfs blob nullifier v1");
         hasher.update(&commitment.0);
         hasher.update(spending_key);
         Nullifier(*hasher.finalize().as_bytes())
@@ -301,7 +301,7 @@ impl Blob {
     pub fn create(
         data: Vec<u8>,
         volume: &mut Volume,
-        spending_key: &[u8; 32],
+        _spending_key: &[u8; 32],
         trace: &mut EffectTrace,
     ) -> Result<Self, VolumeError> {
         let size = data.len() as u64;
@@ -433,7 +433,7 @@ impl From<VolumeError> for SpliceError {
 /// A directory entry. Names are arbitrary byte arrays (no path separator convention).
 /// Each entry is versioned independently, enabling fine-grained conflict detection.
 ///
-/// In pyana terms, each entry is stored in a cell's fields (or as a Merkle tree
+/// In dregg terms, each entry is stored in a cell's fields (or as a Merkle tree
 /// of entries for large directories). The version maps to the directory cell's nonce
 /// at the time of last modification.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -465,7 +465,7 @@ pub enum EntryTarget {
 /// - `swap()` is the fundamental mutation primitive (compare-and-swap)
 /// - Stateless interaction: no cursors, no implicit seek position
 ///
-/// Properties (from pyana):
+/// Properties (from dregg):
 /// - Directory cell has a c-list: entries ARE capabilities
 /// - Factory provenance: who created this directory is tracked
 /// - Distributed GC: when all references to a blob are removed from all
@@ -668,7 +668,7 @@ impl Directory {
     /// Hash an entry for storage in the cell's field array.
     /// In production this would be a Poseidon2 hash over BabyBear; here BLAKE3.
     fn entry_hash(&self, entry: &DirEntry) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-vfs dir entry v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-vfs dir entry v1");
         hasher.update(&entry.name);
         match &entry.target {
             EntryTarget::Blob(c) => {
@@ -949,7 +949,7 @@ impl VfsAirConstraints for VfsConstraints {}
 // =============================================================================
 
 /// When the underlying storage moves a blob (e.g., during compaction or
-/// replication), it notifies the VFS of the new address. In pyana terms,
+/// replication), it notifies the VFS of the new address. In dregg terms,
 /// this is a "migration turn": spend the old note, create a new note with
 /// the same content but different tree position.
 ///
@@ -1129,15 +1129,15 @@ mod tests {
         let mut blob = Blob::create(b"hello world".to_vec(), &mut vol, &key, &mut trace).unwrap();
         let old_commitment = blob.commitment;
 
-        // Splice: replace "world" with "pyana"
+        // Splice: replace "world" with "dregg"
         let new_blob = blob
-            .splice(6, 5, b"pyana", &mut vol, &key, &mut trace)
+            .splice(6, 5, b"dregg", &mut vol, &key, &mut trace)
             .unwrap();
 
         // Old blob is spent.
         assert!(blob.spent);
         // New blob has updated content.
-        assert_eq!(new_blob.data, b"hello pyana");
+        assert_eq!(new_blob.data, b"hello dregg");
         // New commitment differs from old.
         assert_ne!(new_blob.commitment, old_commitment);
         // New blob is not spent.

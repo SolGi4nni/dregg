@@ -1,4 +1,4 @@
-//! `pyana-observability` — Studio-shape trace event tour.
+//! `dregg-observability` — Studio-shape trace event tour.
 //!
 //! Constructs and executes a tour scenario that exercises every event
 //! variant the Studio inspector cares about: every `Authorization` kind,
@@ -13,26 +13,26 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pyana_captp::{HandoffCertificate, HandoffPresentation};
-use pyana_cell::program::field_from_u64_be;
-use pyana_cell::program::{ReadSet, StateConstraint};
-use pyana_cell::state::{CellState, FIELD_ZERO, FieldElement};
-use pyana_cell::{AuthRequired, Cell, CellProgram, EffectMask, Ledger, Permissions};
-use pyana_circuit::field::BabyBear;
-use pyana_federation::{Federation, LocalSeat};
-use pyana_observability::Emitter;
-use pyana_observability::events::{
+use dregg_captp::{HandoffCertificate, HandoffPresentation};
+use dregg_cell::program::field_from_u64_be;
+use dregg_cell::program::{ReadSet, StateConstraint};
+use dregg_cell::state::{CellState, FIELD_ZERO, FieldElement};
+use dregg_cell::{AuthRequired, Cell, CellProgram, EffectMask, Ledger, Permissions};
+use dregg_circuit::field::BabyBear;
+use dregg_federation::{Federation, LocalSeat};
+use dregg_observability::Emitter;
+use dregg_observability::events::{
     AuthorizationPayload, BearerDelegationSummary, BilateralReceiptPayload, BilateralRollupPayload,
     EventBody, EventEnvelope, FederationPayload, SovereignWitnessPayload, StateConstraintPayload,
     TraceEvent, TurnLifecyclePayload,
 };
-use pyana_turn::action::{Authorization, BearerCapProof, DelegationProofData};
-use pyana_turn::bilateral_schedule::{
+use dregg_turn::action::{Authorization, BearerCapProof, DelegationProofData};
+use dregg_turn::bilateral_schedule::{
     BilateralCounts, BilateralRoots, ExpectedBilateral, GrantEntry, IntroduceEntry, TransferEntry,
 };
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, TurnBuilder, TurnExecutor, TurnResult};
-use pyana_types::{FederationId, SigningKey, generate_keypair, sign};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_types::{FederationId, SigningKey, generate_keypair, sign};
 
 fn unix_millis_now() -> i64 {
     SystemTime::now()
@@ -346,7 +346,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::transfer_entry_outbound(
+                    dregg_observability::events::transfer_entry_outbound(
                         entry,
                         actor_nonce,
                         &roots.outgoing_transfer,
@@ -358,7 +358,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::transfer_entry_inbound(
+                    dregg_observability::events::transfer_entry_inbound(
                         entry,
                         actor_nonce,
                         &roots.incoming_transfer,
@@ -372,7 +372,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::grant_entry_outbound(
+                    dregg_observability::events::grant_entry_outbound(
                         entry,
                         actor_nonce,
                         &roots.outgoing_grant,
@@ -384,7 +384,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::grant_entry_inbound(
+                    dregg_observability::events::grant_entry_inbound(
                         entry,
                         actor_nonce,
                         &roots.incoming_grant,
@@ -398,7 +398,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::intro_entry_introducer(
+                    dregg_observability::events::intro_entry_introducer(
                         entry,
                         actor_nonce,
                         &roots.intro_as_introducer,
@@ -410,7 +410,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::intro_entry_recipient(
+                    dregg_observability::events::intro_entry_recipient(
                         entry,
                         actor_nonce,
                         &roots.intro_as_recipient,
@@ -422,7 +422,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
                     em,
                     cell_id,
                     &turn_hash,
-                    pyana_observability::events::intro_entry_target(
+                    dregg_observability::events::intro_entry_target(
                         entry,
                         actor_nonce,
                         &roots.intro_as_target,
@@ -449,7 +449,7 @@ fn emit_turn_lifecycle(em: &Emitter) -> [u8; 32] {
 
 fn emit_bilateral(
     em: &Emitter,
-    cell_id: &pyana_cell::CellId,
+    cell_id: &dregg_cell::CellId,
     turn_hash: &[u8; 32],
     payload: BilateralReceiptPayload,
 ) {
@@ -487,7 +487,7 @@ fn emit_authorization_tour(em: &Emitter, turn_hash: &[u8; 32]) {
     // 4. Bearer (signed delegation)
     let mut target_bytes = [0u8; 32];
     target_bytes[0] = 9;
-    let target_cell = pyana_cell::CellId(target_bytes);
+    let target_cell = dregg_cell::CellId(target_bytes);
     let mut delegator_pk = [0u8; 32];
     delegator_pk[0] = 7;
     let mut bearer_pk = [0u8; 32];
@@ -545,7 +545,7 @@ fn build_captp_authorization() -> Authorization {
     let target_fed = FederationId(blake3::hash(b"target-federation").into());
     let mut target_cell_bytes = [0u8; 32];
     target_cell_bytes[0] = 0xAB;
-    let target_cell = pyana_cell::CellId(target_cell_bytes);
+    let target_cell = dregg_cell::CellId(target_cell_bytes);
     let swiss: [u8; 32] = blake3::hash(b"observability-tour-swiss").into();
 
     let cert = HandoffCertificate::create(
@@ -566,7 +566,7 @@ fn build_captp_authorization() -> Authorization {
     // production the wire layer fills these in.
     let mut agent_bytes = [0u8; 32];
     agent_bytes[0] = 0xCD;
-    let agent_cell = pyana_cell::CellId(agent_bytes);
+    let agent_cell = dregg_cell::CellId(agent_bytes);
     let msg = Authorization::captp_delivered_signing_message(
         &cert.nonce,
         &agent_cell,
@@ -595,7 +595,7 @@ fn emit_sovereign_witness_tour(em: &Emitter, turn_hash: &[u8; 32]) {
     let old_commit = sov_cell.state_commitment();
 
     // Witness 1: no STARK proof (the executor would re-execute).
-    let witness_no_stark = pyana_turn::SovereignCellWitness {
+    let witness_no_stark = dregg_turn::SovereignCellWitness {
         cell_id,
         old_commitment: old_commit,
         new_commitment: [0xAA; 32],
@@ -609,7 +609,7 @@ fn emit_sovereign_witness_tour(em: &Emitter, turn_hash: &[u8; 32]) {
     emit_witness_event(em, turn_hash, &witness_no_stark);
 
     // Witness 2: with STARK proof.
-    let witness_with_stark = pyana_turn::SovereignCellWitness {
+    let witness_with_stark = dregg_turn::SovereignCellWitness {
         cell_id,
         old_commitment: [0xAA; 32],
         new_commitment: [0xCC; 32],
@@ -626,7 +626,7 @@ fn emit_sovereign_witness_tour(em: &Emitter, turn_hash: &[u8; 32]) {
 fn emit_witness_event(
     em: &Emitter,
     turn_hash: &[u8; 32],
-    witness: &pyana_turn::SovereignCellWitness,
+    witness: &dregg_turn::SovereignCellWitness,
 ) {
     let (seq, ts) = em.next_envelope_seed();
     em.emit(TraceEvent::SovereignWitnessVerified(EventBody {
@@ -713,7 +713,7 @@ fn hex32(bytes: &[u8; 32]) -> String {
 #[allow(dead_code)]
 fn _api_surface_anchor() {
     let _ = HandoffPresentation::presentation_message;
-    // `LocalSeat::bls_secret` is gated on `pyana-federation/runtime`,
+    // `LocalSeat::bls_secret` is gated on `dregg-federation/runtime`,
     // a feature observability does not enable. We anchor the type but
     // do not construct it here (the constructor shape differs between
     // feature configurations). The type reference suffices to keep

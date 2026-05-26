@@ -5,10 +5,10 @@
 //!   2. Turn carries the proof (no sovereign_witnesses needed)
 //!   3. Executor verifies the proof and updates commitment (no re-execution)
 
-use pyana_cell::{Cell, CellId, CellMode, Ledger};
-use pyana_circuit::CellState as VmCellState;
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
+use dregg_cell::{Cell, CellId, CellMode, Ledger};
+use dregg_circuit::CellState as VmCellState;
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
 
 /// Create a sovereign cell in a ledger and return the cell + ledger.
 ///
@@ -164,7 +164,7 @@ fn test_backward_compat_witness_path_still_works() {
     // Set permissive send permission — this test verifies the witness injection
     // mechanism, not authorization. Default permissions require Signature which
     // would need a separate authorization test path.
-    cell.permissions.send = pyana_cell::AuthRequired::None;
+    cell.permissions.send = dregg_cell::AuthRequired::None;
     let cell_id = cell.id();
     let commitment = cell.state_commitment();
 

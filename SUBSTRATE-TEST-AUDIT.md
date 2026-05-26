@@ -1,10 +1,10 @@
 # Substrate Test Audit
 
-Audit date: 2026-05-25. Covers `pyana-storage-templates/`, `credentials/` (pyana-credentials), and `app-framework/`.
+Audit date: 2026-05-25. Covers `dregg-storage-templates/`, `credentials/` (dregg-credentials), and `app-framework/`.
 
 ---
 
-## pyana-storage-templates
+## dregg-storage-templates
 
 ### Existing coverage (24 adversarial tests in `tests/adversarial.rs`)
 
@@ -35,7 +35,7 @@ assert_eq!(canonical_program_vk(&xxx_program()), xxx_child_program_vk());
 
 ---
 
-## credentials (pyana-credentials)
+## credentials (dregg-credentials)
 
 ### Existing coverage (6 tests in `tests/roundtrip.rs`)
 

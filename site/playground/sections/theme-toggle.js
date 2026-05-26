@@ -2,7 +2,7 @@
 // `<head>` honors that choice on first paint (preventing flash). Default is
 // `prefers-color-scheme`.
 
-const KEY = 'pyana_theme';
+const KEY = 'dregg_theme';
 
 function currentTheme() {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';

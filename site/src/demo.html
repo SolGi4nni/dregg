@@ -1,11 +1,11 @@
 <layout src="_layouts/default.html">
-<title>Demonstrations — Pyana</title>
+<title>Demonstrations — <code>dregg</code></title>
 
 <main class="wrap main--compact">
   <div class="page-header">
     <h1>Demonstrations</h1>
     <p>
-      Interactive ways to explore Pyana. Generate real STARK proofs in your browser,
+      Interactive ways to explore <code>dregg</code>. Generate real STARK proofs in your browser,
       try the cipherclerk extension, run examples locally, or write code against the WASM API.
     </p>
   </div>
@@ -13,7 +13,7 @@
   <div class="demo-card" style="border-color: var(--accent); border-width: 2px; margin-bottom: var(--s6); padding: var(--s6);">
     <h2 class="demo-card__title" style="font-size: 1.5rem;">Interactive Playground</h2>
     <p class="demo-card__desc" style="font-size: 1rem;">
-      The unified playground is the best way to see everything Pyana can do in one place.
+      The unified playground is the best way to see everything <code>dregg</code> can do in one place.
       Mint tokens, generate STARK proofs, build Merkle trees, evaluate Datalog policies,
       transfer private notes, delegate capabilities, and bridge across federations —
       all running client-side in WebAssembly. No server required.
@@ -28,7 +28,7 @@
       <h2 class="demo-card__title">Chain Explorer</h2>
       <p class="demo-card__desc">
         Browse federation state: blocks, turns, receipts, cells, capabilities, proofs,
-        intents, federation membership, notes, and apps. Connects to any pyana-node JSON-RPC
+        intents, federation membership, notes, and apps. Connects to any dregg-node JSON-RPC
         endpoint and renders live state with embedded visualizers.
       </p>
       <ul class="demo-card__features">
@@ -43,8 +43,8 @@
     <div class="demo-card">
       <h2 class="demo-card__title">Browser Extension Cipherclerk</h2>
       <p class="demo-card__desc">
-        With the Pyana cipherclerk extension installed, web pages request capability-based
-        authorization via <code>window.pyana</code>. The cipherclerk evaluates Datalog policies
+        With the <code>dregg</code> cipherclerk extension installed, web pages request capability-based
+        authorization via <code>window.dregg</code>. The cipherclerk evaluates Datalog policies
         and generates STARK proofs locally.
       </p>
       <ul class="demo-card__features">
@@ -60,11 +60,11 @@
     <div class="demo-card">
       <h2 class="demo-card__title">Code Sandbox</h2>
       <p class="demo-card__desc">
-        Write and execute JavaScript that calls the Pyana WASM API directly.
+        Write and execute JavaScript that calls the <code>dregg</code> WASM API directly.
         Pre-built scenarios, live console output, and federation status.
       </p>
       <ul class="demo-card__features">
-        <li>Full pyana API available as <code>pyana.*</code></li>
+        <li>Full dregg API available as <code>dregg.*</code></li>
         <li>Pre-built scenarios: mint, attenuate, proofs, Merkle trees</li>
         <li>Live federation status panel</li>
         <li>Real-time output console with timing</li>
@@ -80,8 +80,8 @@
         <code>demo-agent</code> crates demonstrate minting, attenuation, proving,
         and multi-agent cross-silo authorization.
       </p>
-      <pre><code class="language-bash">git clone https://github.com/emberian/pyana
-cd pyana
+      <pre><code class="language-bash">git clone https://github.com/emberian/dregg
+cd dregg
 cargo build --release -p demo -p demo-agent
 
 # Single-agent flow
@@ -89,7 +89,7 @@ cargo run --release -p demo
 
 # Multi-agent cross-silo
 cargo run --release -p demo-agent</code></pre>
-      <a class="demo-card__link" href="https://github.com/emberian/pyana" style="margin-top: var(--s4);">View Source &rarr;</a>
+      <a class="demo-card__link" href="https://github.com/emberian/dregg" style="margin-top: var(--s4);">View Source &rarr;</a>
     </div>
   </div>
 </main>

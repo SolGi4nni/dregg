@@ -8,7 +8,7 @@
 //!
 //! All tests in this file currently `#[ignore]` on either:
 //!   - CapTP cross-federation transport (no live wire today — exposure
-//!     is via `pyana_captp::SwissTable` + `validate_handoff`, but the
+//!     is via `dregg_captp::SwissTable` + `validate_handoff`, but the
 //!     end-to-end CapTP→Turn pipeline is not yet wired through the
 //!     teasting harness),
 //!   - `Authorization::CapTpDelivered` executor dispatch with

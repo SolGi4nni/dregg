@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use pyana_app_framework::store::ContentStore;
-use pyana_app_framework::{CellId, PyanaEngine};
+use dregg_app_framework::store::ContentStore;
+use dregg_app_framework::{CellId, DreggEngine};
 
 use crate::bidding::{BiddingError, CommitRevealBidding};
 use crate::settlement::{AtomicSettlement, SettlementError};
@@ -340,7 +340,7 @@ impl AuctionEngine {
     pub async fn settle(
         &self,
         auction_id: &AuctionId,
-        engine: &mut PyanaEngine,
+        engine: &mut DreggEngine,
     ) -> Result<AuctionPhase, AuctionError> {
         let auction = self
             .auctions

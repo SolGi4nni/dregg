@@ -7,7 +7,7 @@ hints/benches/committee.json
 hints/benches/committee_128.json
 
 site/dist
-site/assets/pyana.pdf
+site/assets/dregg.pdf
 site/paper/
 paper/*.pdf
 pdfs/

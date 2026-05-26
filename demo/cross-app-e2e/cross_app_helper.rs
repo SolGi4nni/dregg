@@ -6,24 +6,24 @@
 //!
 //! Issue #109 closed this binary's EmbeddedExecutor gap by adding
 //! `cross_app_mcp.py` (path c from the issue), which spawns
-//! `pyana-node mcp` as a subprocess and drives the four new MCP tools:
+//! `dregg-node mcp` as a subprocess and drives the four new MCP tools:
 //!
-//!   - `pyana_issue_credential`    → alice.issue receipt
-//!   - `pyana_register_name`       → bob.register receipt
-//!   - `pyana_register_service`    → bob.mount receipt
-//!   - `pyana_publish_subscription` → carol/dan bounty-lifecycle receipts
+//!   - `dregg_issue_credential`    → alice.issue receipt
+//!   - `dregg_register_name`       → bob.register receipt
+//!   - `dregg_register_service`    → bob.mount receipt
+//!   - `dregg_publish_subscription` → carol/dan bounty-lifecycle receipts
 //!
 //! Each receipt now carries `effect_vm_proof_hex` (a real STARK proof
 //! from `generate_effect_vm_proof`).  `verify_real.py` detects the MCP
 //! path and upgrades the assertion from "no Rejected" to "all Verified".
 //!
 //! `run.sh` step 11 now prefers `cross_app_mcp.py` (no cargo required;
-//! only needs `pyana-node` to be built) and falls back to this binary.
+//! only needs `dregg-node` to be built) and falls back to this binary.
 //!
 //! # MCP subprocess pattern
 //!
 //! ```text
-//! pyana-node mcp --data-dir ~/.pyana
+//! dregg-node mcp --data-dir ~/.dregg
 //!   stdin  ← JSON-RPC 2.0 (one message per line)
 //!   stdout → JSON-RPC 2.0 responses (one per line)
 //!   stderr → tracing log (RUST_LOG=error for quiet mode)
@@ -34,7 +34,7 @@
 //! 2. Receive `{"jsonrpc":"2.0","id":0,"result":{...}}`
 //! 3. Send `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
 //!    (no response — notification)
-//! 4. Send `tools/call` requests: `{"method":"tools/call","params":{"name":"pyana_issue_credential","arguments":{...}}}`
+//! 4. Send `tools/call` requests: `{"method":"tools/call","params":{"name":"dregg_issue_credential","arguments":{...}}}`
 //! 5. Parse `result.content[0].text` (JSON string) for the tool output.
 //!
 //! The node starts `unlocked = true` in MCP mode so no separate
@@ -63,7 +63,7 @@
 //! 2. **bob.register** — Bob registers `bob.dev` in nameservice's
 //!    identity-attested tier, carrying the credential proof.
 //! 3. **bob.mount** — Bob registers a service entry under
-//!    `governed-namespace` so `pyana://bob.dev → bob_cell`.
+//!    `governed-namespace` so `dregg://bob.dev → bob_cell`.
 //! 4. **carol.post / carol.grant-publisher / carol.grant-consumer** —
 //!    Carol creates a subscription cell, grants Bob consumer rights,
 //!    grants her own bounty cell publisher rights.
@@ -83,10 +83,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
-use pyana_cell::program::AuthorizedSet;
-use pyana_credentials::{AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, issue};
-use pyana_turn::TurnReceipt;
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use dregg_cell::program::AuthorizedSet;
+use dregg_credentials::{AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, issue};
+use dregg_turn::TurnReceipt;
 use starbridge_governed_namespace::build_register_service_action;
 use starbridge_identity::{
     build_issue_credential_action, kyc_schema, schema_commitment as identity_schema_commitment,
@@ -163,11 +163,11 @@ fn fixture_executor(cipherclerk: &AppCipherclerk) -> (EmbeddedExecutor, CellId) 
 }
 
 /// Recognise a known event topic by its BLAKE3 hash. Returns the
-/// canonical name if known, else the hex hash. `pyana_turn::action::symbol`
+/// canonical name if known, else the hex hash. `dregg_turn::action::symbol`
 /// is `*blake3::hash(name.as_bytes()).as_bytes()` so we can recover the
 /// name only by lookup. The list of names that this helper produces is
 /// small and finite — the four apps' emitted-event topics.
-fn topic_name(sym: &pyana_turn::action::Symbol) -> String {
+fn topic_name(sym: &dregg_turn::action::Symbol) -> String {
     const KNOWN: &[&str] = &[
         // identity
         "credential-issued",
@@ -195,7 +195,7 @@ fn topic_name(sym: &pyana_turn::action::Symbol) -> String {
         "subscription-consumer-granted",
     ];
     for name in KNOWN.iter().copied() {
-        if pyana_turn::action::symbol(name) == *sym {
+        if dregg_turn::action::symbol(name) == *sym {
             return name.into();
         }
     }
@@ -342,7 +342,7 @@ fn run_story(state_dir: &PathBuf) {
         AuthorizedSet::credential_set_commitment(alice_cell.as_bytes(), &schema_commitment);
 
     // Postcard-serialize the credential as a stand-in proof blob.
-    // Real version: a `pyana_credentials::Presentation` with its
+    // Real version: a `dregg_credentials::Presentation` with its
     // non-revocation STARK. For the executor-acceptance layer the
     // blob just needs to be non-empty and well-formed; the witness-
     // predicate registry dispatches it. We use the credential bytes
@@ -436,7 +436,7 @@ fn run_story(state_dir: &PathBuf) {
     let art = artifact_from_receipt("bob.register", &register_receipt, links);
     write_artifact(state_dir, "bob.register", &art);
 
-    // === Step 3: bob mounts pyana://bob.dev under governed-namespace ======
+    // === Step 3: bob mounts dregg://bob.dev under governed-namespace ======
     eprintln!("[cross-app-helper] step 3: bob mounts namespace route");
     let mount_action = build_register_service_action(
         &bob_cclerk,
@@ -509,7 +509,7 @@ fn run_story(state_dir: &PathBuf) {
     // carol submits the publishes on dan's behalf, with the actor_pk
     // distinguishing whose claim it is. Dan's receipt-chain head
     // doesn't advance in this demo lane — closing that requires
-    // `pyana-node`-mediated cross-cell submission, which is the next
+    // `dregg-node`-mediated cross-cell submission, which is the next
     // lane.
     eprintln!("[cross-app-helper] step 5: dan claims bounty (publish Posted->Claimed)");
     let bounty_id = blake3_field(b"cross-app:cve-2025-1234");

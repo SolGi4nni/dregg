@@ -213,12 +213,12 @@ fn compute_circuit_commitment(gates: &[GarbledGate]) -> crate::binding::WideHash
             }
         }
     }
-    crate::binding::WideHash::from_poseidon2("pyana-garbled-circuit-v1", &elements)
+    crate::binding::WideHash::from_poseidon2("dregg-garbled-circuit-v1", &elements)
 }
 
 /// Hash a wire label to a WideHash (124-bit, for output comparison).
 pub fn hash_label(label: &WireLabel) -> crate::binding::WideHash {
-    crate::binding::WideHash::from_poseidon2("pyana-garbled-label-v1", label)
+    crate::binding::WideHash::from_poseidon2("dregg-garbled-label-v1", label)
 }
 
 // ============================================================================
@@ -475,7 +475,7 @@ pub fn prepare_private_threshold_check(threshold: u32) -> (GarbledCircuit, Garbl
 ///
 /// # Deprecation
 ///
-/// Use `pyana_dsl_runtime::garbled::prove_private_threshold_dsl()` for new code.
+/// Use `dregg_dsl_runtime::garbled::prove_private_threshold_dsl()` for new code.
 /// This function remains for backward compatibility with existing proofs.
 #[allow(deprecated)]
 pub fn prove_private_threshold(
@@ -518,7 +518,7 @@ pub fn prove_private_threshold(
 ///
 /// # Deprecation
 ///
-/// Use `pyana_dsl_runtime::garbled::verify_garbled_evaluation_dsl()` for new code.
+/// Use `dregg_dsl_runtime::garbled::verify_garbled_evaluation_dsl()` for new code.
 ///
 /// Checks that:
 /// 1. The circuit commitment matches the garbled circuit the verifier sent.

@@ -2,9 +2,9 @@
 //!
 //! Greenfield rebuild of the nameservice as a **starbridge-app**: a thin
 //! library of `FactoryDescriptor`s plus turn-builder helpers that compose
-//! pyana-native primitives only. No `Effect::RegisterName`, no
+//! dregg-native primitives only. No `Effect::RegisterName`, no
 //! `Authorization::Unchecked`, no `[0u8; 64]` placeholder signatures, no
-//! reaching past the framework into `pyana_turn::builder::*`.
+//! reaching past the framework into `dregg_turn::builder::*`.
 //!
 //! Companion docs:
 //! - `../../../STARBRIDGE-APPS-PLAN.md` §3.1 ("nameservice — recommended
@@ -13,7 +13,7 @@
 //!   slot-level caveats; the `register_name` flow below has a TODO on
 //!   the `WriteOnce` constraint that lives there.
 //! - `../../../APPS-AS-USERSPACE-AUDIT.md` §1.3 — the userspace audit
-//!   that motivated rebuilding nameservice as pyana-native.
+//!   that motivated rebuilding nameservice as dregg-native.
 //!
 //! ## What this crate exports
 //!
@@ -25,7 +25,7 @@
 //!
 //! 2. [`FACTORY_DESCRIPTORS`] — a slice of all factory descriptors this
 //!    starbridge-app contributes. The wasm runtime preloads these at
-//!    startup so `window.pyana.createFromFactory(factory_vk, ..)` can
+//!    startup so `window.dregg.createFromFactory(factory_vk, ..)` can
 //!    resolve string VKs into real descriptors. (Today the slice has
 //!    one entry; the dispute-resolution factory and the registry
 //!    factory follow once Tier-2 paired escrow lands — see
@@ -52,7 +52,7 @@
 //!
 //! ## The userspace stance
 //!
-//! "Register a name" is *userspace policy*, not a pyana primitive. The
+//! "Register a name" is *userspace policy*, not a dregg primitive. The
 //! ledger only needs to see:
 //!
 //! 1. **A name binding** — `SetField(NAME_HASH_SLOT, name_hash)` —
@@ -67,18 +67,18 @@
 //! zero"), that's a **cell program caveat** (`WriteOnce`), not a new
 //! `Effect` variant — see the TODO on [`build_register_action`].
 //!
-//! ## Compatibility with the in-browser PyanaRuntime + extension cclerk
+//! ## Compatibility with the in-browser DreggRuntime + extension cclerk
 //!
 //! `build_register_action` returns an [`Action`] carrying a real
 //! `Authorization::Signature(..)` produced by the cclerk. That action
 //! is what `cclerk::signTurn(turnSpec)` (the extension API
 //! surface — see `../../../extension/src/page.ts`) expects to wrap in
-//! a `Turn` for submission. The in-browser `PyanaRuntime`
+//! a `Turn` for submission. The in-browser `DreggRuntime`
 //! (`../../../wasm/src/runtime.rs`) executes the resulting turn
-//! against the same `pyana_turn::TurnExecutor` code-path that native
+//! against the same `dregg_turn::TurnExecutor` code-path that native
 //! CLIs use.
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
     CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InputRef, InspectorDescriptor, StarbridgeAppContext, StateConstraint, WitnessedPredicate,
@@ -92,7 +92,7 @@ use pyana_app_framework::{
 
 /// State field slot at which a registered name's hash is anchored.
 ///
-/// Slot indices are 0..8 (per [`pyana_cell::STATE_SLOTS`]); `nonce` and
+/// Slot indices are 0..8 (per [`dregg_cell::STATE_SLOTS`]); `nonce` and
 /// `balance` are *not* in `fields[]` (they live on separate `CellState`
 /// accessors), so all 8 slots are addressable. The constants here pin a
 /// stable schema so:
@@ -124,7 +124,7 @@ pub const REVOKED_SLOT: usize = 5;
 /// State field slot at which the name's resolve target is recorded.
 ///
 /// Free-form 32 bytes; conventionally the BLAKE3 hash of a
-/// `pyana://cell/...` URI that the name resolves to. The owner may
+/// `dregg://cell/...` URI that the name resolves to. The owner may
 /// update this slot at will to point the name at different targets
 /// (changing your website's cell, redirecting to a new owner's
 /// document, etc.); no `Monotonic` or `WriteOnce` constraint applies.
@@ -475,7 +475,7 @@ pub fn build_revoke_action(
 ///
 /// Updates [`RESOLVE_TARGET_SLOT`] to a new 32-byte target (conventionally
 /// `field_from_bytes(target_uri.as_bytes())` where `target_uri` is the
-/// `pyana://cell/<id>` URI the name should resolve to) and emits a
+/// `dregg://cell/<id>` URI the name should resolve to) and emits a
 /// `name-target-set` event.
 ///
 /// The resolve-target slot carries no `Monotonic` or `WriteOnce`
@@ -510,7 +510,7 @@ pub fn build_set_target_action(
 /// Compute the canonical revocation tombstone for a name.
 ///
 /// Public so off-chain indexers / cross-app code can reproduce it.
-/// The tombstone is `field_from_bytes(b"pyana-nameservice-revoked:" || name_bytes)`,
+/// The tombstone is `field_from_bytes(b"dregg-nameservice-revoked:" || name_bytes)`,
 /// which is content-addressed to the name being revoked. This means:
 ///
 /// - A replay attacker cannot move one name's tombstone into another
@@ -520,8 +520,8 @@ pub fn build_set_target_action(
 ///   can confirm "this slot value is the canonical tombstone for
 ///   *this* name".
 pub fn revoked_tombstone(name: &str) -> FieldElement {
-    let mut input = Vec::with_capacity(b"pyana-nameservice-revoked:".len() + name.len());
-    input.extend_from_slice(b"pyana-nameservice-revoked:");
+    let mut input = Vec::with_capacity(b"dregg-nameservice-revoked:".len() + name.len());
+    input.extend_from_slice(b"dregg-nameservice-revoked:");
     input.extend_from_slice(name.as_bytes());
     field_from_bytes(&input)
 }
@@ -558,14 +558,14 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 /// context. After this call:
 ///
 /// - `ctx.factory_registry().get(&NAME_FACTORY_VK)` returns the
-///   [`name_factory_descriptor`]. The in-browser PyanaRuntime can
-///   resolve `window.pyana.createFromFactory(NAME_FACTORY_VK, ..)`
+///   [`name_factory_descriptor`]. The in-browser DreggRuntime can
+///   resolve `window.dregg.createFromFactory(NAME_FACTORY_VK, ..)`
 ///   against the host's HTTP descriptor service backed by this
 ///   registry.
 /// - `ctx.inspector_registry().get("name")` returns the
 ///   [`InspectorDescriptor`] pointing the Studio at
 ///   `/starbridge-apps/nameservice/inspectors.js` for any
-///   `<pyana-name uri="..."/>` mount.
+///   `<dregg-name uri="..."/>` mount.
 /// - `ctx.inspector_registry().get("name-registry")` returns the
 ///   parent-list inspector (the registry-cell view that links
 ///   into individual name cells).
@@ -576,7 +576,7 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 /// ## Typical host wiring
 ///
 /// ```ignore
-/// use pyana_app_framework::{
+/// use dregg_app_framework::{
 ///     AgentCipherclerk, AppServer, AppConfig, AppCipherclerk, EmbeddedExecutor,
 ///     StarbridgeAppContext,
 /// };
@@ -617,14 +617,14 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 
     // 2. Register the per-name inspector. The descriptor points the
     // Studio runtime at this app's `inspectors.js` module under the
-    // `<pyana-name uri="..."/>` webcomponent name. The shape matches
+    // `<dregg-name uri="..."/>` webcomponent name. The shape matches
     // `site/_includes/studio/inspectors.js`'s registration grammar.
     ctx.register_inspector(InspectorDescriptor {
         kind: "name".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-name",
+            "component": "dregg-name",
             "module": "/starbridge-apps/nameservice/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "summary_fields": ["name_hash", "owner_hash", "expiry", "revoked", "target"],
             "slot_layout": {
                 "name_hash":   NAME_HASH_SLOT,
@@ -644,24 +644,24 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // surface.
     ctx.register_inspector_with("name-registry", || {
         serde_json::json!({
-            "component": "pyana-name-registry",
+            "component": "dregg-name-registry",
             "module": "/starbridge-apps/nameservice/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "child_inspector": "name",
         })
     });
 
     // 4. Register the register-form inspector — the mutation surface
-    // that wraps `window.pyana.signTurn` with the nameservice's
+    // that wraps `window.dregg.signTurn` with the nameservice's
     // `register_name` / `renew_name` / `transfer_name` / `revoke_name`
     // / `set_name_target` preset builders. The Studio renders this as
     // a side-pane editor when the user is looking at a registry cell
     // and wants to author a turn against it.
     ctx.register_inspector_with("name-register-form", || {
         serde_json::json!({
-            "component": "pyana-name-register-form",
+            "component": "dregg-name-register-form",
             "module": "/starbridge-apps/nameservice/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "builders_module": "/starbridge-apps/nameservice/turn-builders.js",
             "methods": [
                 "register_name",
@@ -709,7 +709,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///
 /// The constraint's `AuthorizedSet::CredentialSet { issuer_cell,
 /// credential_schema_id }` resolves on the executor side to
-/// `blake3_derive_key("pyana-credential-set-v1") || issuer_cell ||
+/// `blake3_derive_key("dregg-credential-set-v1") || issuer_cell ||
 /// credential_schema_id` (per
 /// [`AuthorizedSet::credential_set_commitment`]); the matching
 /// witness predicate this crate emits names the same commitment so
@@ -757,7 +757,7 @@ pub fn identity_attested_witness_predicate(
 ///
 /// 1. Attaches `credential_presentation_proof_bytes` as
 ///    `witness_blobs[0]` (kind `ProofBytes`). The bytes are typically
-///    the postcard-serialized `pyana_credentials::Presentation` whose
+///    the postcard-serialized `dregg_credentials::Presentation` whose
 ///    `WitnessedPredicateKind::BlindedSet` verifier accepts against
 ///    the issuer cell's revocation root + schema commitment.
 /// 2. Emits an additional `name-registered-attested` event whose data
@@ -817,7 +817,7 @@ pub fn build_register_with_credential_action(
     ];
 
     let mut action = cipherclerk.make_action(registry_cell, "register_name_attested", effects);
-    action.witness_blobs = vec![pyana_turn::action::WitnessBlob::proof(
+    action.witness_blobs = vec![dregg_turn::action::WitnessBlob::proof(
         credential_presentation_proof_bytes,
     )];
     action
@@ -830,7 +830,7 @@ pub fn build_register_with_credential_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
+    use dregg_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
     fn test_cipherclerk() -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
@@ -869,7 +869,7 @@ mod tests {
         // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1, the child program VK is
         // the canonical hash of the program. A validator with both in
         // hand must be able to confirm the binding.
-        let expected = pyana_app_framework::canonical_program_vk(&name_cell_program());
+        let expected = dregg_app_framework::canonical_program_vk(&name_cell_program());
         assert_eq!(
             name_child_program_vk(),
             expected,
@@ -878,7 +878,7 @@ mod tests {
         // The descriptor's child_program_vk binds to the canonical program.
         let d = name_factory_descriptor();
         let program = name_cell_program();
-        let canonical = pyana_app_framework::canonical_program_vk(&program);
+        let canonical = dregg_app_framework::canonical_program_vk(&program);
         assert_eq!(d.child_program_vk, Some(canonical));
     }
 
@@ -904,7 +904,7 @@ mod tests {
         // from the v1 program-bytes-only hash.
         let program = name_cell_program();
         let v2 = name_child_program_vk();
-        let v1 = pyana_app_framework::canonical_program_bytes_hash(&program);
+        let v1 = dregg_app_framework::canonical_program_bytes_hash(&program);
         assert_ne!(
             v2, v1,
             "v2 layered hash must differ from v1 program-bytes-only hash"
@@ -918,7 +918,7 @@ mod tests {
         // Plonky3 proving system).
         let d = name_factory_descriptor();
         let program = name_cell_program();
-        pyana_app_framework::validate_child_vk_canonical(&d, &program)
+        dregg_app_framework::validate_child_vk_canonical(&d, &program)
             .expect("descriptor's child_program_vk must bind to name_cell_program() under v2");
     }
 
@@ -1027,15 +1027,15 @@ mod tests {
     // registration on the same cell is rejected with `WriteOnceViolation`
     // and an expiry decrement is rejected with `MonotonicViolation`.
 
-    fn build_name_program() -> pyana_cell::CellProgram {
-        pyana_cell::CellProgram::Predicate(name_factory_descriptor().state_constraints.clone())
+    fn build_name_program() -> dregg_cell::CellProgram {
+        dregg_cell::CellProgram::Predicate(name_factory_descriptor().state_constraints.clone())
     }
 
-    fn empty_state() -> pyana_cell::state::CellState {
-        pyana_cell::state::CellState::new(0)
+    fn empty_state() -> dregg_cell::state::CellState {
+        dregg_cell::state::CellState::new(0)
     }
 
-    fn state_with(name_hash: FieldElement, expiry: u64) -> pyana_cell::state::CellState {
+    fn state_with(name_hash: FieldElement, expiry: u64) -> dregg_cell::state::CellState {
         let mut s = empty_state();
         s.fields[NAME_HASH_SLOT] = name_hash;
         s.fields[EXPIRY_SLOT] = field_from_u64(expiry);
@@ -1045,11 +1045,11 @@ mod tests {
     #[test]
     fn slot_caveats_legal_registration_succeeds() {
         // Initial registration: old slot is FIELD_ZERO (fresh cell), new
-        // slot is `blake3("alice.pyana")`. WriteOnce permits this because
+        // slot is `blake3("alice.dregg")`. WriteOnce permits this because
         // the prior value is zero; Monotonic permits any expiry on init.
         let program = build_name_program();
         let old = empty_state();
-        let new = state_with(field_from_bytes(b"alice.pyana"), 1_000);
+        let new = state_with(field_from_bytes(b"alice.dregg"), 1_000);
         let result = program.evaluate(&new, Some(&old), None);
         assert!(
             result.is_ok(),
@@ -1060,8 +1060,8 @@ mod tests {
     #[test]
     fn slot_caveats_reregister_taken_name_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
-        let bob_hash = field_from_bytes(b"bob.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
+        let bob_hash = field_from_bytes(b"bob.dregg");
         let mut old = state_with(alice_hash, 1_000);
         old.set_nonce(1); // not a fresh cell
         // Attempt: overwrite NAME_HASH_SLOT with a different value.
@@ -1070,7 +1070,7 @@ mod tests {
             .evaluate(&new, Some(&old), None)
             .expect_err("re-registration must be rejected");
         match err {
-            pyana_cell::ProgramError::ConstraintViolated {
+            dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::WriteOnce { index },
                 ..
             } => assert_eq!(index, NAME_HASH_SLOT as u8),
@@ -1081,7 +1081,7 @@ mod tests {
     #[test]
     fn slot_caveats_expiry_decrease_is_monotonic_violation() {
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         // Attempt: shorten expiry from 5000 → 4000.
@@ -1090,7 +1090,7 @@ mod tests {
             .evaluate(&new, Some(&old), None)
             .expect_err("expiry decrement must be rejected");
         match err {
-            pyana_cell::ProgramError::ConstraintViolated {
+            dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::Monotonic { index },
                 ..
             } => assert_eq!(index, EXPIRY_SLOT as u8),
@@ -1102,7 +1102,7 @@ mod tests {
     fn slot_caveats_legal_renewal_succeeds() {
         // Renewal extends expiry — Monotonic permits new >= old.
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         let new = state_with(alice_hash, 10_000);
@@ -1121,7 +1121,7 @@ mod tests {
     fn register_action_writes_three_slots_and_emits_event() {
         let cipherclerk = test_cipherclerk();
         let action =
-            build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
+            build_register_action(&cipherclerk, test_cell(), "alice.dregg", [3u8; 32], 1_000);
 
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
@@ -1145,7 +1145,7 @@ mod tests {
         // framework-issued signature, not a `[0u8; 64]` placeholder.
         let cipherclerk = test_cipherclerk();
         let action =
-            build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
+            build_register_action(&cipherclerk, test_cell(), "alice.dregg", [3u8; 32], 1_000);
         match action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(
@@ -1164,15 +1164,15 @@ mod tests {
             Effect::SetField { value, .. } => *value,
             _ => panic!("first effect is not SetField"),
         };
-        let a = build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
-        let b = build_register_action(&cipherclerk, test_cell(), "bob.pyana", [3u8; 32], 1_000);
+        let a = build_register_action(&cipherclerk, test_cell(), "alice.dregg", [3u8; 32], 1_000);
+        let b = build_register_action(&cipherclerk, test_cell(), "bob.dregg", [3u8; 32], 1_000);
         assert_ne!(pick(&a), pick(&b));
     }
 
     #[test]
     fn renew_action_updates_expiry_slot_and_emits_event() {
         let cipherclerk = test_cipherclerk();
-        let action = build_renew_action(&cipherclerk, test_cell(), "alice.pyana", 2_000);
+        let action = build_renew_action(&cipherclerk, test_cell(), "alice.dregg", 2_000);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1189,7 +1189,7 @@ mod tests {
         let cipherclerk = test_cipherclerk();
         let old = [3u8; 32];
         let new = [4u8; 32];
-        let action = build_transfer_action(&cipherclerk, test_cell(), "alice.pyana", old, new);
+        let action = build_transfer_action(&cipherclerk, test_cell(), "alice.dregg", old, new);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1227,7 +1227,7 @@ mod tests {
             .inspector_registry()
             .get("name")
             .expect("name inspector registered");
-        assert_eq!(name_insp.descriptor["component"], "pyana-name");
+        assert_eq!(name_insp.descriptor["component"], "dregg-name");
         assert_eq!(
             name_insp.descriptor["module"],
             "/starbridge-apps/nameservice/inspectors.js"
@@ -1236,7 +1236,7 @@ mod tests {
             .inspector_registry()
             .get("name-registry")
             .expect("name-registry inspector registered");
-        assert_eq!(registry_insp.descriptor["component"], "pyana-name-registry");
+        assert_eq!(registry_insp.descriptor["component"], "dregg-name-registry");
         assert_eq!(registry_insp.descriptor["child_inspector"], "name");
 
         // The register-form inspector binds the JS turn-builders module.
@@ -1246,7 +1246,7 @@ mod tests {
             .expect("name-register-form inspector registered");
         assert_eq!(
             form_insp.descriptor["component"],
-            "pyana-name-register-form"
+            "dregg-name-register-form"
         );
         assert_eq!(
             form_insp.descriptor["builders_module"],
@@ -1312,12 +1312,12 @@ mod tests {
     #[test]
     fn revoke_action_writes_revoked_slot_and_emits_event() {
         let cipherclerk = test_cipherclerk();
-        let action = build_revoke_action(&cipherclerk, test_cell(), "alice.pyana");
+        let action = build_revoke_action(&cipherclerk, test_cell(), "alice.dregg");
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
                 assert_eq!(*index, REVOKED_SLOT);
-                assert_eq!(*value, revoked_tombstone("alice.pyana"));
+                assert_eq!(*value, revoked_tombstone("alice.dregg"));
                 assert_ne!(*value, [0u8; 32], "tombstone must be non-zero");
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -1329,19 +1329,19 @@ mod tests {
     fn revoke_action_tombstone_is_name_bound() {
         // Two different names produce two different tombstones — defeats
         // "move tombstone from cell A to cell B to revoke a different name".
-        let t1 = revoked_tombstone("alice.pyana");
-        let t2 = revoked_tombstone("bob.pyana");
+        let t1 = revoked_tombstone("alice.dregg");
+        let t2 = revoked_tombstone("bob.dregg");
         assert_ne!(t1, t2);
         // Same name = same tombstone (replay-safe verifier).
-        let t1_again = revoked_tombstone("alice.pyana");
+        let t1_again = revoked_tombstone("alice.dregg");
         assert_eq!(t1, t1_again);
     }
 
     #[test]
     fn set_target_action_writes_resolve_slot_and_emits_event() {
         let cipherclerk = test_cipherclerk();
-        let target = resolve_target("pyana://cell/abc123");
-        let action = build_set_target_action(&cipherclerk, test_cell(), "alice.pyana", target);
+        let target = resolve_target("dregg://cell/abc123");
+        let action = build_set_target_action(&cipherclerk, test_cell(), "alice.dregg", target);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1357,8 +1357,8 @@ mod tests {
     fn name_hash_is_blake3_of_name_bytes() {
         // Public helper must match the value the executor sees in
         // NAME_HASH_SLOT.
-        let direct = field_from_bytes(b"alice.pyana");
-        let helper = name_hash("alice.pyana");
+        let direct = field_from_bytes(b"alice.dregg");
+        let helper = name_hash("alice.dregg");
         assert_eq!(direct, helper);
     }
 
@@ -1376,19 +1376,19 @@ mod tests {
     #[test]
     fn slot_caveats_double_revoke_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
-        old.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
+        old.fields[REVOKED_SLOT] = revoked_tombstone("alice.dregg");
         // Attempt: overwrite the tombstone (e.g., with zero, to "un-revoke",
         // or with a different tombstone).
         let mut new = state_with(alice_hash, 5_000);
-        new.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana-different");
+        new.fields[REVOKED_SLOT] = revoked_tombstone("alice.dregg-different");
         let err = program
             .evaluate(&new, Some(&old), None)
             .expect_err("double revoke must be rejected");
         match err {
-            pyana_cell::ProgramError::ConstraintViolated {
+            dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::WriteOnce { index },
                 ..
             } => assert_eq!(index, REVOKED_SLOT as u8),
@@ -1399,17 +1399,17 @@ mod tests {
     #[test]
     fn slot_caveats_un_revoke_clearing_to_zero_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
-        old.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
+        old.fields[REVOKED_SLOT] = revoked_tombstone("alice.dregg");
         // Attempt: clear the tombstone back to FIELD_ZERO.
         let new = state_with(alice_hash, 5_000); // REVOKED_SLOT == FIELD_ZERO
         let err = program
             .evaluate(&new, Some(&old), None)
             .expect_err("un-revocation must be rejected");
         match err {
-            pyana_cell::ProgramError::ConstraintViolated {
+            dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::WriteOnce { index },
                 ..
             } => assert_eq!(index, REVOKED_SLOT as u8),
@@ -1422,11 +1422,11 @@ mod tests {
         // First revocation on an active name: REVOKED_SLOT transitions
         // FIELD_ZERO → tombstone. WriteOnce permits.
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         let mut new = state_with(alice_hash, 5_000);
-        new.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
+        new.fields[REVOKED_SLOT] = revoked_tombstone("alice.dregg");
         let result = program.evaluate(&new, Some(&old), None);
         assert!(
             result.is_ok(),
@@ -1439,12 +1439,12 @@ mod tests {
         // RESOLVE_TARGET_SLOT carries no slot caveats — the owner may
         // freely set, change, and re-clear the slot.
         let program = build_name_program();
-        let alice_hash = field_from_bytes(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.dregg");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
-        old.fields[RESOLVE_TARGET_SLOT] = resolve_target("pyana://cell/first");
+        old.fields[RESOLVE_TARGET_SLOT] = resolve_target("dregg://cell/first");
         let mut new = state_with(alice_hash, 5_000);
-        new.fields[RESOLVE_TARGET_SLOT] = resolve_target("pyana://cell/second");
+        new.fields[RESOLVE_TARGET_SLOT] = resolve_target("dregg://cell/second");
         let result = program.evaluate(&new, Some(&old), None);
         assert!(
             result.is_ok(),
@@ -1517,7 +1517,7 @@ mod tests {
         assert_eq!(action.witness_blobs[0].bytes, presentation_bytes);
         assert_eq!(
             action.witness_blobs[0].kind,
-            pyana_turn::action::WitnessKind::ProofBytes
+            dregg_turn::action::WitnessKind::ProofBytes
         );
     }
 

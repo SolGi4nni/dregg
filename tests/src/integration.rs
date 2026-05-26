@@ -3,21 +3,21 @@
 //! This test exercises the full end-to-end pipeline connecting the token/bridge
 //! system (System B) to the turn execution system (System A) via STARK proofs.
 
-use pyana_bridge::StarkProofVerifier;
-use pyana_bridge::present::{bytes_to_babybear, hash_index};
-use pyana_cell::{AuthRequired, Ledger, Permissions, VerificationKey, cell::Cell};
-use pyana_circuit::BabyBear;
-use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_bridge::StarkProofVerifier;
+use dregg_bridge::present::{bytes_to_babybear, hash_index};
+use dregg_cell::{AuthRequired, Ledger, Permissions, VerificationKey, cell::Cell};
+use dregg_circuit::BabyBear;
+use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 fn test_key(name: &str) -> [u8; 32] {
-    *blake3::hash(format!("pyana-integration-test:{name}").as_bytes()).as_bytes()
+    *blake3::hash(format!("dregg-integration-test:{name}").as_bytes()).as_bytes()
 }
 
 fn test_token_id() -> [u8; 32] {
-    *blake3::hash(b"pyana-integration-test:domain").as_bytes()
+    *blake3::hash(b"dregg-integration-test:domain").as_bytes()
 }
 
 /// Generate a STARK proof of federation membership for a given issuer key.
@@ -48,7 +48,7 @@ fn generate_membership_proof(issuer_key: &[u8; 32]) -> (Vec<u8>, BabyBear) {
 fn test_mint_attenuate_prove_execute_verify() {
     // --- Phase 1: Token minting and attenuation ---
     let issuer_key = test_key("issuer");
-    let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"test-kid", "test.dregg.dev");
 
     let attenuation = Attenuation {
         services: vec![("compute".into(), "rw".into())],

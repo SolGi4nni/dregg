@@ -9,11 +9,11 @@
 //! Destroy with DeathCertificate → terminal permanence, double-destroy rejection,
 //! Seal-then-destroy (terminal from sealed), Destroy-then-seal rejection.
 
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Permissions,
     lifecycle::{CellLifecycle, DeathCertificate, DeathReason},
 };
-use pyana_turn::{
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
 };

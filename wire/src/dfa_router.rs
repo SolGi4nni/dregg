@@ -1,13 +1,13 @@
-//! Wire-side adapter over the canonical [`pyana_dfa`] DFA router.
+//! Wire-side adapter over the canonical [`dregg_dfa`] DFA router.
 //!
 //! Historically this module hosted its own DFA implementation (255-state cap,
 //! trie-only patterns, `proof_data: Vec<u8>` governance stub). That code has
-//! been promoted into the dedicated [`pyana_dfa`] crate so it can be a
+//! been promoted into the dedicated [`dregg_dfa`] crate so it can be a
 //! userspace primitive for starbridge-apps rather than a wire-only concern.
 //!
 //! What lives here now:
 //!
-//! * Type re-exports from [`pyana_dfa`] so existing `pyana_wire::dfa_router`
+//! * Type re-exports from [`dregg_dfa`] so existing `dregg_wire::dfa_router`
 //!   importers keep compiling.
 //! * Convenience helpers for the wire-specific accept types
 //!   (`Cell(CellId)`, `Federation(FederationId)`) that the legacy `RouteTarget`
@@ -17,15 +17,15 @@
 //!   [`federation_target`] below.
 //! * Light wrappers ([`compile_routes`], [`dispatch_path`],
 //!   [`dispatch_message`], [`DispatchDecision`]) that reproduce the old wire
-//!   API on top of the new [`pyana_dfa::RouteTableBuilder`].
+//!   API on top of the new [`dregg_dfa::RouteTableBuilder`].
 //!
-//! New code should use [`pyana_dfa`] directly.
+//! New code should use [`dregg_dfa`] directly.
 
-use pyana_captp::FederationId;
-use pyana_types::CellId;
+use dregg_captp::FederationId;
+use dregg_types::CellId;
 
-pub use pyana_dfa::air;
-pub use pyana_dfa::{
+pub use dregg_dfa::air;
+pub use dregg_dfa::{
     Classification, Dfa, FilterTree, GovernanceProof, GovernedRouter, KindRegistry, Pattern,
     RouteTable, RouteTableBuilder, RouteTarget, RouteUpdateError, Router, ThresholdVerifier,
     TopicFilter, UserspaceTarget,
@@ -99,7 +99,7 @@ pub fn compile_routes(routes: &[(&str, RouteTarget)]) -> RouteTable {
 
 /// Higher-level dispatch decision, retained at the wire layer for callers
 /// that don't want to match the [`RouteTarget`] enum directly. The new
-/// canonical analog is [`pyana_dfa::DispatchDecision`]; this enum keeps the
+/// canonical analog is [`dregg_dfa::DispatchDecision`]; this enum keeps the
 /// wire-specific `DeliverToCell` / `ForwardToFederation` shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DispatchDecision {

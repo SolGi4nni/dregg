@@ -1,5 +1,5 @@
 /**
- * Content script: bridges page.js (window.pyana) <-> background service worker.
+ * Content script: bridges page.js (window.dregg) <-> background service worker.
  * Validates origins, checks allowlists, uses nonce-based event channels.
  */
 
@@ -10,40 +10,40 @@ const SESSION_NONCE = crypto.randomUUID();
 
 // Methods that any page origin can call without prior approval.
 const UNRESTRICTED_METHODS = new Set<MessageType>([
-  "pyana:isConnected",
-  "pyana:canAuthorize",
-  "pyana:subscribe",
-  "pyana:discoverServices",
-  "pyana:resolvePath",
-  "pyana:storageQuota",
-  "pyana:federationStatus",
-  "pyana:listKnownFederations",
+  "dregg:isConnected",
+  "dregg:canAuthorize",
+  "dregg:subscribe",
+  "dregg:discoverServices",
+  "dregg:resolvePath",
+  "dregg:storageQuota",
+  "dregg:federationStatus",
+  "dregg:listKnownFederations",
 ]);
 
 // Methods that require the origin to be in the user-approved allowlist.
 const RESTRICTED_METHODS = new Set<MessageType>([
-  "pyana:authorize",
-  "pyana:provision",
-  "pyana:postIntent",
-  "pyana:signTurn",
-  "pyana:signTurnV3",
-  "pyana:queryBalance",
-  "pyana:shareCapability",
-  "pyana:acceptCapability",
-  "pyana:createHandoff",
-  "pyana:mountService",
-  "pyana:storageWrite",
-  "pyana:storageRead",
-  "pyana:proposeRoutes",
-  "pyana:voteOnProposal",
-  "pyana:registerFederation",
-  "pyana:createCapTpDeliveredAuth",
+  "dregg:authorize",
+  "dregg:provision",
+  "dregg:postIntent",
+  "dregg:signTurn",
+  "dregg:signTurnV3",
+  "dregg:queryBalance",
+  "dregg:shareCapability",
+  "dregg:acceptCapability",
+  "dregg:createHandoff",
+  "dregg:mountService",
+  "dregg:storageWrite",
+  "dregg:storageRead",
+  "dregg:proposeRoutes",
+  "dregg:voteOnProposal",
+  "dregg:registerFederation",
+  "dregg:createCapTpDeliveredAuth",
 ]);
 
 // Inject page.js with the session nonce as a data attribute.
 const script = document.createElement("script");
 script.src = chrome.runtime.getURL("dist/page.js");
-script.dataset.pyanaNonce = SESSION_NONCE;
+script.dataset.dreggNonce = SESSION_NONCE;
 (document.head || document.documentElement).appendChild(script);
 script.onload = (): void => { script.remove(); };
 
@@ -52,8 +52,8 @@ script.onload = (): void => { script.remove(); };
  */
 async function isOriginAllowed(origin: string, method: string): Promise<boolean> {
   try {
-    const stored = await chrome.storage.local.get("pyana_allowed_origins");
-    const allowlist = stored.pyana_allowed_origins || {};
+    const stored = await chrome.storage.local.get("dregg_allowed_origins");
+    const allowlist = stored.dregg_allowed_origins || {};
     // P1-2: legacy array form is treated as no permission; user must re-prompt.
     if (Array.isArray(allowlist)) return false;
     const entry = allowlist[origin] as { methods: string[]; expires: number } | undefined;
@@ -71,7 +71,7 @@ async function isOriginAllowed(origin: string, method: string): Promise<boolean>
  */
 async function requestOriginPermission(origin: string, method: string): Promise<boolean> {
   const response = await chrome.runtime.sendMessage({
-    type: "pyana:requestOriginPermission",
+    type: "dregg:requestOriginPermission",
     origin,
     method,
   });
@@ -79,7 +79,7 @@ async function requestOriginPermission(origin: string, method: string): Promise<
 }
 
 // Forward requests from page -> background (with security checks).
-window.addEventListener(`pyana:request:${SESSION_NONCE}`, (async (event: Event): Promise<void> => {
+window.addEventListener(`dregg:request:${SESSION_NONCE}`, (async (event: Event): Promise<void> => {
   const customEvent = event as CustomEvent;
   // Only accept trusted events (not synthetically dispatched).
   if (!customEvent.isTrusted) return;
@@ -96,7 +96,7 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, (async (event: Event):
     if (!allowed) {
       const granted = await requestOriginPermission(origin, messageType);
       if (!granted) {
-        window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+        window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
           detail: { id: detail.id, error: "Origin not authorized for this method. User denied permission." },
         }));
         return;
@@ -104,7 +104,7 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, (async (event: Event):
     }
   } else if (!UNRESTRICTED_METHODS.has(messageType)) {
     // Unknown or removed method -- reject.
-    window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+    window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
       detail: { id: detail.id, error: `Method "${messageType}" is not available from page context.` },
     }));
     return;
@@ -115,22 +115,22 @@ window.addEventListener(`pyana:request:${SESSION_NONCE}`, (async (event: Event):
     ...detail,
     _origin: origin,
   });
-  window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, { detail: response }));
+  window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, { detail: response }));
 }) as EventListener);
 
 // Forward event notifications from background -> page.
 // Also the entry point for a future content-script shadow-DOM passive debugger panel
-// (Phase 1 §6): the listener already receives all "pyana:event" (incl. new "activity",
+// (Phase 1 §6): the listener already receives all "dregg:event" (incl. new "activity",
 // "receipt", "root", "intent", "note_announcement", "federation" from STARBRIDGE-FOLLOWUP-06).
 // A shadow panel can read chrome.runtime messages directly here (before or instead of
-// forwarding) and mount <pyana-activity> using a shim runtime exposing getTraceEvents().
+// forwarding) and mount <dregg-activity> using a shim runtime exposing getTraceEvents().
 chrome.runtime.onMessage.addListener((
   message: { type: string; event?: string; payload?: unknown },
   _sender: chrome.runtime.MessageSender,
   sendResponse: (response: { ok: boolean }) => void,
 ): boolean => {
-  if (message.type === "pyana:event") {
-    window.dispatchEvent(new CustomEvent(`pyana:event:${SESSION_NONCE}`, {
+  if (message.type === "dregg:event") {
+    window.dispatchEvent(new CustomEvent(`dregg:event:${SESSION_NONCE}`, {
       detail: { eventName: message.event, payload: message.payload },
     }));
     sendResponse({ ok: true });

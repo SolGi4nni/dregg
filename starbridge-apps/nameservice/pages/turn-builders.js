@@ -1,6 +1,6 @@
 // starbridge-apps/nameservice/pages/turn-builders.js
 //
-// JS shim wrapping `window.pyana.signTurn(turnSpec)` (the extension
+// JS shim wrapping `window.dregg.signTurn(turnSpec)` (the extension
 // cclerk API — see extension/src/page.ts) with name-domain
 // conveniences that mirror the Rust turn-builders in src/lib.rs:
 //
@@ -11,14 +11,14 @@
 //   set_target_name(registryUri, { name, target })
 //
 // Each builder is async and resolves to whatever `signTurn` returns
-// (typically a turn receipt). When `window.pyana.signTurn` is absent
+// (typically a turn receipt). When `window.dregg.signTurn` is absent
 // (no extension installed, no in-page bridge wired) the builder
 // surfaces the prepared turnSpec via `console.warn` and rethrows.
 //
 // All hashing matches the Rust convention:
 //   - name_hash    = blake3(name_bytes)
 //   - owner_hash   = blake3(owner_pubkey_bytes)
-//   - tombstone    = blake3(b"pyana-nameservice-revoked:" || name_bytes)
+//   - tombstone    = blake3(b"dregg-nameservice-revoked:" || name_bytes)
 //   - expiry_field = u64 big-endian-padded to 32 bytes
 //   - target_field = blake3(target_uri_bytes) (when given as a URI)
 
@@ -36,7 +36,7 @@ const TOPIC_TRANSFERRED  = 'name-transferred';
 const TOPIC_REVOKED      = 'name-revoked';
 const TOPIC_TARGET_SET   = 'name-target-set';
 
-const REVOKED_TOMBSTONE_PREFIX = new TextEncoder().encode('pyana-nameservice-revoked:');
+const REVOKED_TOMBSTONE_PREFIX = new TextEncoder().encode('dregg-nameservice-revoked:');
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
@@ -67,15 +67,15 @@ function concatBytes(...parts) {
 }
 
 async function blake3Field(bytes) {
-  // Prefer pyana's wasm-backed blake3 (matches the Rust executor exactly).
-  if (typeof window !== 'undefined' && window.pyana?.blake3) {
-    const out = await window.pyana.blake3(bytes);
+  // Prefer dregg's wasm-backed blake3 (matches the Rust executor exactly).
+  if (typeof window !== 'undefined' && window.dregg?.blake3) {
+    const out = await window.dregg.blake3(bytes);
     return Array.from(asUint8(out));
   }
   // Fallback: SubtleCrypto SHA-256. NOTE: this is *not* the same hash
   // the executor computes; it is a deterministic-enough placeholder for
-  // demo / preview environments where pyana.blake3 isn't wired. Hosts
-  // running against a real ledger MUST provide window.pyana.blake3.
+  // demo / preview environments where dregg.blake3 isn't wired. Hosts
+  // running against a real ledger MUST provide window.dregg.blake3.
   const buf = await crypto.subtle.digest('SHA-256', asUint8(bytes));
   return Array.from(new Uint8Array(buf));
 }
@@ -113,11 +113,11 @@ async function resolveTarget(uriOrBytes) {
 }
 
 async function submit(turnSpec) {
-  if (typeof window === 'undefined' || !window.pyana?.signTurn) {
-    console.warn('[nameservice] window.pyana.signTurn not available; turnSpec was', turnSpec);
-    throw new Error('nameservice: window.pyana.signTurn is not available');
+  if (typeof window === 'undefined' || !window.dregg?.signTurn) {
+    console.warn('[nameservice] window.dregg.signTurn not available; turnSpec was', turnSpec);
+    throw new Error('nameservice: window.dregg.signTurn is not available');
   }
-  return window.pyana.signTurn(turnSpec);
+  return window.dregg.signTurn(turnSpec);
 }
 
 // ─── builders ────────────────────────────────────────────────────────────
@@ -208,10 +208,10 @@ const BUILDERS = {
 };
 
 if (typeof window !== 'undefined') {
-  window.pyana ??= {};
-  window.pyana.builders ??= {};
-  window.pyana.builders.nameservice = {
-    ...(window.pyana.builders.nameservice ?? {}),
+  window.dregg ??= {};
+  window.dregg.builders ??= {};
+  window.dregg.builders.nameservice = {
+    ...(window.dregg.builders.nameservice ?? {}),
     ...BUILDERS,
   };
 }

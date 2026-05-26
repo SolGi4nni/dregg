@@ -1,7 +1,7 @@
-//! `pyana-persist`: Persistent storage for the pyana token system.
+//! `dregg-persist`: Persistent storage for the dregg token system.
 //!
-//! (Renamed from `pyana-store` to disambiguate from the user-facing
-//! `pyana-storage` programmable queues crate.)
+//! (Renamed from `dregg-store` to disambiguate from the user-facing
+//! `dregg-storage` programmable queues crate.)
 //!
 //! This crate provides durable storage for token chains, federation state
 //! (revocation trees, attested roots), key management, and audit logs using
@@ -9,8 +9,8 @@
 //!
 //! # Design
 //!
-//! All state that was previously in-memory (in `pyana-commit`, `pyana-federation`,
-//! and `pyana-audit`) can be persisted and recovered across restarts. The store
+//! All state that was previously in-memory (in `dregg-commit`, `dregg-federation`,
+//! and `dregg-audit`) can be persisted and recovered across restarts. The store
 //! is designed to be crash-safe: `redb` uses write-ahead logging to ensure
 //! atomicity.
 //!
@@ -142,7 +142,7 @@ impl From<postcard::Error> for StoreError {
 /// Result type alias for store operations.
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-/// The persistent store for all pyana state.
+/// The persistent store for all dregg state.
 ///
 /// Backed by `redb`, an embedded ACID key-value store. All operations are
 /// crash-safe through redb's write-ahead logging.
@@ -224,7 +224,7 @@ impl PersistentStore {
     /// will recompute from the updated tree.
     pub fn store_note_commitment(
         &self,
-        commitment: &pyana_cell::note::NoteCommitment,
+        commitment: &dregg_cell::note::NoteCommitment,
     ) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
         let position;
@@ -253,7 +253,7 @@ impl PersistentStore {
     ///
     /// Returns Ok(()) if the nullifier was newly added, or an integrity error
     /// if it was already present (double-spend).
-    pub fn store_nullifier(&self, nullifier: &pyana_cell::note::Nullifier) -> Result<()> {
+    pub fn store_nullifier(&self, nullifier: &dregg_cell::note::Nullifier) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(tables::NULLIFIERS)?;
@@ -269,7 +269,7 @@ impl PersistentStore {
     }
 
     /// Check whether a nullifier has been spent (is in the set).
-    pub fn is_nullifier_spent(&self, nullifier: &pyana_cell::note::Nullifier) -> Result<bool> {
+    pub fn is_nullifier_spent(&self, nullifier: &dregg_cell::note::Nullifier) -> Result<bool> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::NULLIFIERS)?;
         Ok(table.get(&nullifier.0)?.is_some())
@@ -344,7 +344,7 @@ impl PersistentStore {
             for pos in 0..count {
                 match commitment_table.get(pos)? {
                     Some(guard) => {
-                        commitments.push(pyana_cell::note::NoteCommitment(*guard.value()));
+                        commitments.push(dregg_cell::note::NoteCommitment(*guard.value()));
                     }
                     None => {
                         return Err(StoreError::Integrity(format!(
@@ -379,7 +379,7 @@ impl PersistentStore {
     }
 
     /// Load all note commitments in order (for tree reconstruction).
-    pub fn load_all_note_commitments(&self) -> Result<Vec<pyana_cell::note::NoteCommitment>> {
+    pub fn load_all_note_commitments(&self) -> Result<Vec<dregg_cell::note::NoteCommitment>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::NOTE_COMMITMENTS)?;
         let meta = read_txn.open_table(tables::METADATA)?;
@@ -393,7 +393,7 @@ impl PersistentStore {
         for pos in 0..count {
             match table.get(pos)? {
                 Some(guard) => {
-                    commitments.push(pyana_cell::note::NoteCommitment(*guard.value()));
+                    commitments.push(dregg_cell::note::NoteCommitment(*guard.value()));
                 }
                 None => {
                     return Err(StoreError::Integrity(format!(
@@ -406,7 +406,7 @@ impl PersistentStore {
     }
 
     /// Load all nullifiers from persistent storage.
-    pub fn load_all_nullifiers(&self) -> Result<Vec<pyana_cell::note::Nullifier>> {
+    pub fn load_all_nullifiers(&self) -> Result<Vec<dregg_cell::note::Nullifier>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::NULLIFIERS)?;
 
@@ -415,7 +415,7 @@ impl PersistentStore {
         for entry in iter {
             let entry =
                 entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
-            nullifiers.push(pyana_cell::note::Nullifier(*entry.0.value()));
+            nullifiers.push(dregg_cell::note::Nullifier(*entry.0.value()));
         }
         Ok(nullifiers)
     }
@@ -580,8 +580,8 @@ impl PersistentStore {
     /// Returns an integrity error if the nullifier was already spent (double-spend).
     pub fn spend_note_atomic(
         &self,
-        nullifier: &pyana_cell::note::Nullifier,
-        new_commitment: &pyana_cell::note::NoteCommitment,
+        nullifier: &dregg_cell::note::Nullifier,
+        new_commitment: &dregg_cell::note::NoteCommitment,
     ) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
         let position;

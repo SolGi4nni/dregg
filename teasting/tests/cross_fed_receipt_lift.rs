@@ -62,14 +62,14 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_federation::{FederationReceipt, FederationReceiptBody, KnownFederations};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_federation::{FederationReceipt, FederationReceiptBody, KnownFederations};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_turn::{
     ActionBuilder, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect, Turn,
     TurnExecutor, TurnResult,
 };
-use pyana_types::merkle_root_of_receipt_hashes;
+use dregg_types::merkle_root_of_receipt_hashes;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -142,7 +142,7 @@ fn execute_or_panic(
     ledger: &mut Ledger,
     turn: &Turn,
     label: &str,
-) -> pyana_turn::TurnReceipt {
+) -> dregg_turn::TurnReceipt {
     match executor.execute(turn, ledger) {
         TurnResult::Committed { receipt, .. } => receipt,
         TurnResult::Rejected { reason, at_action } => {
@@ -263,7 +263,7 @@ fn cross_fed_receipt_lift_seam6() {
     );
 
     // ── 4. t2: B (F1) registers a name, consuming A's credential ─────────
-    let name_value = *blake3::hash(b"alice.pyana").as_bytes();
+    let name_value = *blake3::hash(b"alice.dregg").as_bytes();
     let t2 = build_turn(
         id_b,
         0,
@@ -444,14 +444,14 @@ fn cross_fed_receipt_lift_seam6() {
         use ed25519_dalek::Signer as _;
         let dalek_sk = ed25519_dalek::SigningKey::from_bytes(&seat.signing_key.to_bytes());
         let sig_bytes = dalek_sk.sign(&msg).to_bytes();
-        let pk = pyana_types::PublicKey(dalek_sk.verifying_key().to_bytes());
+        let pk = dregg_types::PublicKey(dalek_sk.verifying_key().to_bytes());
         ar.quorum_signatures
-            .push((pk, pyana_types::Signature(sig_bytes)));
+            .push((pk, dregg_types::Signature(sig_bytes)));
         ar
     };
 
     // F1's AttestedRoot must self-verify.
-    let f1_committee_keys: Vec<pyana_types::PublicKey> =
+    let f1_committee_keys: Vec<dregg_types::PublicKey> =
         harness.federations[0].canonical.members().to_vec();
     assert!(
         f1_ar.is_valid(&f1_committee_keys),
@@ -487,13 +487,13 @@ fn cross_fed_receipt_lift_seam6() {
         use ed25519_dalek::Signer as _;
         let dalek_sk = ed25519_dalek::SigningKey::from_bytes(&seat.signing_key.to_bytes());
         let sig_bytes = dalek_sk.sign(&msg).to_bytes();
-        let pk = pyana_types::PublicKey(dalek_sk.verifying_key().to_bytes());
+        let pk = dregg_types::PublicKey(dalek_sk.verifying_key().to_bytes());
         ar.quorum_signatures
-            .push((pk, pyana_types::Signature(sig_bytes)));
+            .push((pk, dregg_types::Signature(sig_bytes)));
         ar
     };
 
-    let f2_committee_keys: Vec<pyana_types::PublicKey> =
+    let f2_committee_keys: Vec<dregg_types::PublicKey> =
         harness.federations[1].canonical.members().to_vec();
     assert!(
         f2_ar.is_valid(&f2_committee_keys),
@@ -565,7 +565,7 @@ fn cross_fed_receipt_lift_seam6() {
         // Sign with F1's key but claim F2's federation_id — a category error.
         let f2_fed_id = harness.federations[1].canonical.id_bytes();
         let seat = harness.federations[0].canonical.local_seat().unwrap();
-        let sig = pyana_types::sign(&seat.signing_key, &body_hash);
+        let sig = dregg_types::sign(&seat.signing_key, &body_hash);
         let pk = seat.signing_key.public_key();
         FederationReceipt::with_vote_signatures(
             f2_fed_id, // wrong id

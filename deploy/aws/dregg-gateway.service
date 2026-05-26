@@ -1,0 +1,40 @@
+[Unit]
+Description=Dregg Gateway Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dregg
+Group=dregg
+WorkingDirectory=/opt/dregg
+ExecStart=/opt/dregg/target/release/dregg-node run \
+    --data-dir /opt/dregg-data \
+    --port 8420 \
+    --morpheus \
+    --node-index 0 \
+    --federation-size 4 \
+    --prove-transitions \
+    --enable-pruning \
+    --enable-faucet
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=DREGG_GATEWAY=true
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/dregg-data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

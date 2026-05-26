@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteCommitment, Nullifier};
-use pyana_types::AttestedRoot;
+use dregg_types::AttestedRoot;
 
 // ============================================================================
 // Bridge Destination (multi-chain routing)
@@ -359,13 +359,13 @@ impl BridgeReceipt {
     /// Compute the message that the destination federation signs.
     ///
     /// Uses domain-separated BLAKE3 to prevent cross-protocol signature confusion.
-    /// The signed message is: BLAKE3_derive_key("pyana-bridge-receipt-v1", nullifier || destination_federation || mint_height_le_bytes).
+    /// The signed message is: BLAKE3_derive_key("dregg-bridge-receipt-v1", nullifier || destination_federation || mint_height_le_bytes).
     pub fn signing_message(
         nullifier: &[u8; 32],
         destination_federation: &[u8; 32],
         mint_height: u64,
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-bridge-receipt-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-bridge-receipt-v1");
         hasher.update(nullifier);
         hasher.update(destination_federation);
         hasher.update(&mint_height.to_le_bytes());
@@ -547,7 +547,7 @@ impl BridgePhasePayload {
 /// Compute the deterministic `bridge_id` that identifies a bridge instance
 /// across phases and federations.
 ///
-/// `BLAKE3_derive_key("pyana-bridge-id-v1", lock_nullifier || src_fed ||
+/// `BLAKE3_derive_key("dregg-bridge-id-v1", lock_nullifier || src_fed ||
 /// dst_fed || initiating_nonce_le)`. The Phase-1 lock nullifier (source-side)
 /// ensures uniqueness — under the source's nullifier-uniqueness invariant
 /// no two locks reuse the same nullifier — and `initiating_nonce` provides
@@ -559,7 +559,7 @@ pub fn compute_bridge_id(
     dst_fed: &[u8; 32],
     initiating_nonce: u64,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bridge-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-bridge-id-v1");
     hasher.update(lock_nullifier);
     hasher.update(src_fed);
     hasher.update(dst_fed);
@@ -576,12 +576,12 @@ pub fn compute_bridge_id(
 /// Phase 1. A [`BridgePhaseLog`] enforces this on entry.
 ///
 /// The cross-federation QC (BLS or Ed25519 votes) lives on the next layer up
-/// (`FederationReceipt` from `pyana-federation`). This envelope is the
+/// (`FederationReceipt` from `dregg-federation`). This envelope is the
 /// *body* the QC commits to; serialize and pass through `body_hash` to
 /// get the signing message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeReceiptEnvelope {
-    /// Version tag: `1` corresponds to `pyana-bridge-envelope-v1`.
+    /// Version tag: `1` corresponds to `dregg-bridge-envelope-v1`.
     pub version: u32,
     /// Which phase this receipt represents.
     pub phase: BridgePhase,
@@ -606,9 +606,9 @@ impl BridgeReceiptEnvelope {
 
     /// Compute the canonical body hash — the message a federation's
     /// quorum certificate (BLS or Ed25519) signs over. Domain-separated
-    /// via BLAKE3 derive_key; cannot collide with any other pyana hash.
+    /// via BLAKE3 derive_key; cannot collide with any other dregg hash.
     pub fn body_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-bridge-envelope-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-bridge-envelope-v1");
         hasher.update(&self.version.to_le_bytes());
         hasher.update(&[self.phase.tag()]);
         hasher.update(&self.bridge_id);
@@ -1295,7 +1295,7 @@ mod tests {
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
-            federation_id: pyana_types::FederationId::PLACEHOLDER,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
             receipt_stream_root: None,
         }
     }
@@ -1705,7 +1705,7 @@ mod tests {
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
-            federation_id: pyana_types::FederationId::PLACEHOLDER,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
             receipt_stream_root: None,
         };
 

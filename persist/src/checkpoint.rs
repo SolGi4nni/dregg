@@ -30,7 +30,7 @@ impl PersistentStore {
     /// Store a checkpoint at its height.
     ///
     /// Also updates the metadata to track the latest checkpoint height.
-    pub fn store_checkpoint(&self, checkpoint: &pyana_federation::Checkpoint) -> Result<()> {
+    pub fn store_checkpoint(&self, checkpoint: &dregg_federation::Checkpoint) -> Result<()> {
         let serialized = postcard::to_stdvec(checkpoint)
             .map_err(|e| StoreError::Serialization(e.to_string()))?;
 
@@ -54,7 +54,7 @@ impl PersistentStore {
     }
 
     /// Load the latest (highest-height) checkpoint.
-    pub fn latest_checkpoint(&self) -> Result<Option<pyana_federation::Checkpoint>> {
+    pub fn latest_checkpoint(&self) -> Result<Option<dregg_federation::Checkpoint>> {
         let read_txn = self.db.begin_read()?;
         let meta = read_txn.open_table(tables::METADATA)?;
 
@@ -66,7 +66,7 @@ impl PersistentStore {
         let table = read_txn.open_table(tables::CHECKPOINTS)?;
         match table.get(height)? {
             Some(value) => {
-                let checkpoint: pyana_federation::Checkpoint = postcard::from_bytes(value.value())?;
+                let checkpoint: dregg_federation::Checkpoint = postcard::from_bytes(value.value())?;
                 Ok(Some(checkpoint))
             }
             None => Ok(None),
@@ -77,13 +77,13 @@ impl PersistentStore {
     pub fn checkpoint_at_height(
         &self,
         height: u64,
-    ) -> Result<Option<pyana_federation::Checkpoint>> {
+    ) -> Result<Option<dregg_federation::Checkpoint>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::CHECKPOINTS)?;
 
         match table.get(height)? {
             Some(value) => {
-                let checkpoint: pyana_federation::Checkpoint = postcard::from_bytes(value.value())?;
+                let checkpoint: dregg_federation::Checkpoint = postcard::from_bytes(value.value())?;
                 Ok(Some(checkpoint))
             }
             None => Ok(None),

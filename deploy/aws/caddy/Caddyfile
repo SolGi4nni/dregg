@@ -1,4 +1,4 @@
-devnet.pyana.fg-goose.online {
+devnet.dregg.fg-goose.online {
     # HTTP API
     handle /api/* {
         reverse_proxy localhost:8420
@@ -44,25 +44,25 @@ devnet.pyana.fg-goose.online {
         reverse_proxy localhost:3003
     }
     handle /app/namespace/* {
-        root * /opt/pyana/apps/governed-namespace/frontend
+        root * /opt/dregg/apps/governed-namespace/frontend
         file_server
     }
 
     # Chain explorer (static files)
     handle /explorer/* {
-        root * /opt/pyana/site
+        root * /opt/dregg/site
         file_server
     }
 
     # Playground (static files)
     handle /playground/* {
-        root * /opt/pyana/site
+        root * /opt/dregg/site
         file_server
     }
 
     # Root serves explorer by default
     handle {
-        root * /opt/pyana/site/explorer
+        root * /opt/dregg/site/explorer
         file_server
     }
 

@@ -6,21 +6,21 @@ import { renderNameserviceSvg } from '../visualizers/nameservice-registration.js
 const DEMO_ADMIN_TOKEN = 'em2_admin_demo_xyz';
 
 export function initNameservice(_wasm) {
-  // §4.9 retire outright (FOLLOWUP-05): replaced by starbridge-apps/nameservice + <pyana-app-list> demo
+  // §4.9 retire outright (FOLLOWUP-05): replaced by starbridge-apps/nameservice + <dregg-app-list> demo
   mountSection('nameservice', (api) => {
     const { html, signal } = api;
 
     // §4.9: retired; interactive kept for history but banner directs to real starbridge-app demo
     const retireBanner = html`<div style="background:#ffeeee;border:1px solid #c00;padding:0.25rem;font-size:0.75rem;margin:0.3rem 0;">
-      <strong>§4.9 Retire:</strong> Replaced by starbridge-apps/nameservice (first e2e + additional demos in Apps tab). Use <code>&lt;pyana-name-registry&gt;</code> etc.
-      <a href="/starbridge.html?at=pyana://app/nameservice" target="_blank">Starbridge Apps tab demo →</a>
+      <strong>§4.9 Retire:</strong> Replaced by starbridge-apps/nameservice (first e2e + additional demos in Apps tab). Use <code>&lt;dregg-name-registry&gt;</code> etc.
+      <a href="/starbridge.html?at=dregg://app/nameservice" target="_blank">Starbridge Apps tab demo →</a>
     </div>`;
 
     const names = signal([]);   // { name, serviceId, owner }
     const adminToken = signal('');
     const adminOk = signal(false);
-    const newName = signal('alice.pyana');
-    const resolveQuery = signal('alice.pyana');
+    const newName = signal('alice.dregg');
+    const resolveQuery = signal('alice.dregg');
     const reverseQuery = signal('');
     const log = signal([]);
 
@@ -73,7 +73,7 @@ export function initNameservice(_wasm) {
         <div class="vizzer__body" style="display:flex;flex-direction:column;gap:12px;">
 
           ${!adminOk.value ? html`
-            <div class="pyana-card" data-tone="warm" style="padding:12px;">
+            <div class="dregg-card" data-tone="warm" style="padding:12px;">
               <p style="font-family:var(--font-mono);font-size:11px;color:var(--fg-dim);">
                 Registration is gated by an admin token. Demo token:
                 <span class="hex">${DEMO_ADMIN_TOKEN}</span>

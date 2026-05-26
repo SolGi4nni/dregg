@@ -1,6 +1,6 @@
 # Proof-Carrying State: Design Direction
 
-A design direction for collapsing pyana's dual-model architecture into a single
+A design direction for collapsing dregg's dual-model architecture into a single
 proof-centric model, where agent state IS a proof chain and federations shrink to
 ordering/nullifier services.
 
@@ -8,7 +8,7 @@ ordering/nullifier services.
 
 ## 1. Current Architecture: The Tension
 
-Pyana currently has two models fighting each other:
+`dregg` currently has two models fighting each other:
 
 ### Model A: Federated Ledger
 
@@ -413,7 +413,7 @@ Options:
 - **Directory service**: A public index of agent capabilities (opt-in)
 - **Direct negotiation**: Agents exchange proof excerpts during interaction setup
 
-This is unsolved but not unique to pyana -- Anoma and Zcash face the same problem.
+This is unsolved but not unique to dregg -- Anoma and Zcash face the same problem.
 
 ### Trusted mode / cloud API
 

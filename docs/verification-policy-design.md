@@ -87,4 +87,4 @@ async fn handler(verified: StrictPresentation) -> impl IntoResponse {
 }
 ```
 
-They never import `pyana_circuit`. They never see `ProofTier`. They get a `StrictPresentation` or they get a 403. That is the entire API surface.
+They never import `dregg_circuit`. They never see `ProofTier`. They get a `StrictPresentation` or they get a 403. That is the entire API surface.

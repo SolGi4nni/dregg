@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 
-use pyana_cell::facet::{FacetBuilder, describe_mask};
-use pyana_cell::factory::FactoryCreationParams;
-use pyana_intent::sse::{SealedBox, generate_search_token, seal_decrypt, seal_encrypt};
+use dregg_cell::facet::{FacetBuilder, describe_mask};
+use dregg_cell::factory::FactoryCreationParams;
+use dregg_intent::sse::{SealedBox, generate_search_token, seal_decrypt, seal_encrypt};
 
 // ============================================================================
 // Stealth Addresses
@@ -30,12 +30,12 @@ pub fn derive_stealth_keys(mnemonic: &str, passphrase: &str) -> Result<JsValue, 
     let entropy = entropy_hash.as_bytes();
 
     // Derive seed (same path as derive_keypair_from_mnemonic in lib.rs)
-    let context_a = format!("pyana mnemonic seed v1 {}", passphrase);
+    let context_a = format!("dregg mnemonic seed v1 {}", passphrase);
     let first_half = blake3::derive_key(&context_a, entropy);
     let mut seed = [0u8; 64];
     seed[..32].copy_from_slice(&first_half);
     seed[32..].copy_from_slice(&blake3::derive_key(
-        &format!("pyana mnemonic seed v1 extend {}", passphrase),
+        &format!("dregg mnemonic seed v1 extend {}", passphrase),
         entropy,
     ));
 
@@ -47,13 +47,13 @@ pub fn derive_stealth_keys(mnemonic: &str, passphrase: &str) -> Result<JsValue, 
     // SAFETY: The Zeroizing guard scrubs the array on drop; do not extract the
     // raw 32-byte slices into longer-lived owners.
     let signing_key_bytes: Zeroizing<[u8; 32]> =
-        Zeroizing::new(blake3::derive_key("pyana/0", &seed));
+        Zeroizing::new(blake3::derive_key("dregg/0", &seed));
     let view_private_key: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key(
-        "pyana-stealth-view-key-v1",
+        "dregg-stealth-view-key-v1",
         &signing_key_bytes[..],
     ));
     let spend_private_key: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key(
-        "pyana-stealth-spend-key-v1",
+        "dregg-stealth-spend-key-v1",
         &signing_key_bytes[..],
     ));
 
@@ -89,7 +89,7 @@ pub fn derive_stealth_keys(mnemonic: &str, passphrase: &str) -> Result<JsValue, 
 /// Implements the stealth address protocol using X25519 DH:
 /// 1. Generate ephemeral X25519 keypair
 /// 2. Compute shared_secret = X25519(ephemeral_priv, recipient_view_pubkey)
-/// 3. Derive scalar = BLAKE3(shared_secret, "pyana-stealth-derive")
+/// 3. Derive scalar = BLAKE3(shared_secret, "dregg-stealth-derive")
 /// 4. one_time_pubkey = H(scalar || spend_pubkey) (simplified for WASM)
 ///
 /// Returns JSON: { one_time_pubkey, ephemeral_pubkey }
@@ -114,8 +114,8 @@ pub fn create_stealth_address(
     let recipient_view = x25519_dalek::PublicKey::from(view_pub);
     let shared_secret = ephemeral_secret.diffie_hellman(&recipient_view);
 
-    // Derive one-time address: scalar = BLAKE3(shared_secret || "pyana-stealth-derive")
-    let scalar = blake3::derive_key("pyana-stealth-derive", shared_secret.as_bytes());
+    // Derive one-time address: scalar = BLAKE3(shared_secret || "dregg-stealth-derive")
+    let scalar = blake3::derive_key("dregg-stealth-derive", shared_secret.as_bytes());
 
     // One-time pubkey = H(scalar || spend_pubkey) — simplified additive derivation.
     // Full Ed25519 point addition is done by the extension using its Ed25519 library.
@@ -177,7 +177,7 @@ pub fn check_stealth_ownership(
     let shared_secret = view_secret.diffie_hellman(&eph_public);
 
     // Derive expected one-time pubkey.
-    let scalar = blake3::derive_key("pyana-stealth-derive", shared_secret.as_bytes());
+    let scalar = blake3::derive_key("dregg-stealth-derive", shared_secret.as_bytes());
     let mut otp_input = Vec::with_capacity(64);
     otp_input.extend_from_slice(&scalar);
     otp_input.extend_from_slice(spend_pubkey);
@@ -249,7 +249,7 @@ pub fn scan_stealth_announcements(
         }
 
         // Full ownership check.
-        let scalar = blake3::derive_key("pyana-stealth-derive", shared.as_bytes());
+        let scalar = blake3::derive_key("dregg-stealth-derive", shared.as_bytes());
         let mut otp_input = Vec::with_capacity(64);
         otp_input.extend_from_slice(&scalar);
         otp_input.extend_from_slice(spend_pubkey);
@@ -277,11 +277,11 @@ pub fn create_value_commitment(amount: u64, blinding: &[u8]) -> Result<JsValue, 
         return Err(JsError::new("blinding must be 32 bytes"));
     }
 
-    // Construct commitment: blake3_derive_key("pyana-pedersen-v1", amount_le || blinding)
+    // Construct commitment: blake3_derive_key("dregg-pedersen-v1", amount_le || blinding)
     let mut input = Vec::with_capacity(40);
     input.extend_from_slice(&amount.to_le_bytes());
     input.extend_from_slice(blinding);
-    let commitment = blake3::derive_key("pyana-pedersen-v1", &input);
+    let commitment = blake3::derive_key("dregg-pedersen-v1", &input);
 
     #[derive(Serialize)]
     struct CommitmentResult {
@@ -361,7 +361,7 @@ pub fn build_committed_turn(params_json: &str) -> Result<JsValue, JsError> {
         serde_json::from_str(params_json).map_err(|e| JsError::new(&e.to_string()))?;
 
     // Build a turn ID from the commitment + recipient.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-committed-turn-id");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-committed-turn-id");
     hasher.update(&params.value_commitment);
     hasher.update(&params.recipient_one_time_pubkey);
     hasher.update(&params.ephemeral_pubkey);
@@ -402,7 +402,7 @@ pub fn generate_range_proof(
 
     // Generate a STARK-based range proof that amount is in [0, 2^64).
     // Uses a simplified BabyBear decomposition proof.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-range-proof-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-range-proof-v1");
     hasher.update(&amount.to_le_bytes());
     hasher.update(blinding);
     let proof_hash = hasher.finalize();
@@ -543,7 +543,7 @@ pub fn unseal_intent_body(
 /// Create a bearer capability proof.
 ///
 /// P1 audit fix: the previous version produced
-/// `BLAKE3("pyana-bearer-cap-v1", delegator_pubkey || target || action || expiry)`,
+/// `BLAKE3("dregg-bearer-cap-v1", delegator_pubkey || target || action || expiry)`,
 /// which used **public** material only — anyone could forge a "bearer token"
 /// by recomputing the same hash. This was not a bearer capability; it was a
 /// content-addressable label.
@@ -579,7 +579,7 @@ pub fn create_bearer_cap(
     let delegator_pubkey = signing_key.verifying_key().to_bytes();
 
     // Build the canonical binding over (pubkey, target, action, expiry).
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-bearer-cap-v2");
     hasher.update(&delegator_pubkey);
     hasher.update(&target_cell);
     hasher.update(action_name.as_bytes());
@@ -651,7 +651,7 @@ pub fn verify_bearer_cap(
         .map_err(|e| JsError::new(&format!("invalid delegator pubkey: {e}")))?;
 
     // Recompute binding.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-bearer-cap-v2");
     hasher.update(&delegator_pubkey);
     hasher.update(&target_cell);
     hasher.update(action_name.as_bytes());
@@ -682,8 +682,8 @@ pub fn verify_bearer_cap(
 // ============================================================================
 //
 // The legacy `create_bearer_cap` / `verify_bearer_cap` above are a
-// standalone shim (blake3 derive "pyana-bearer-cap-v2" over action string).
-// The canonical shape is `pyana_turn::action::BearerCapProof` consumed by
+// standalone shim (blake3 derive "dregg-bearer-cap-v2" over action string).
+// The canonical shape is `dregg_turn::action::BearerCapProof` consumed by
 // `Authorization::Bearer` and `TurnExecutor` (authorize.rs + execute_tree.rs).
 // It binds federation_id, uses `AuthRequired` (not raw action str), supports
 // `SignedDelegation` / `StarkDelegation`, revocation channels, facet masks,
@@ -697,7 +697,7 @@ pub fn verify_bearer_cap(
 // handles the two delegation_proof variants) and fed to action builders
 // that accept `BearerCapProof`.
 //
-// After this, `<pyana-bearer-cap>` inspector can render pasteable real proofs
+// After this, `<dregg-bearer-cap>` inspector can render pasteable real proofs
 // that work in sovereign tab handoffs without shim divergence.
 //
 // See: turn/src/action.rs:342 (BearerCapProof + DelegationProofData),
@@ -711,7 +711,7 @@ pub fn verify_bearer_cap(
 ///
 /// Extended (FOLLOWUP-14 inspector cluster): supports optional revocation_channel
 /// and allowed_effects facet mask for full capability model integration with
-/// <pyana-revocation-channel> and facet attenuation. Empty rev hex or mask=0 means absent.
+/// <dregg-revocation-channel> and facet attenuation. Empty rev hex or mask=0 means absent.
 ///
 /// Returns JSON-serialized BearerCapProof (matches the shape already
 /// surfaced in AuthorizationView and TurnReceipt actions).
@@ -727,9 +727,9 @@ pub fn create_bearer_cap_proof(
     allowed_effects_mask: u32,    // 0 for None, else Some(mask) per cell::facet::EffectMask
 ) -> Result<JsValue, JsError> {
     use ed25519_dalek::{Signer, SigningKey};
-    use pyana_cell::{AuthRequired, CellId};
-    use pyana_turn::action::{BearerCapProof, DelegationProofData};
-    use pyana_turn::executor::TurnExecutor;
+    use dregg_cell::{AuthRequired, CellId};
+    use dregg_turn::action::{BearerCapProof, DelegationProofData};
+    use dregg_turn::executor::TurnExecutor;
 
     let signing_seed: Zeroizing<[u8; 32]> =
         Zeroizing::new(hex_decode_32(delegator_signing_key_hex)?);
@@ -759,7 +759,7 @@ pub fn create_bearer_cap_proof(
     } else {
         Some(hex_decode_32(revocation_channel_hex)?)
     };
-    let allowed: Option<pyana_cell::EffectMask> = if allowed_effects_mask == 0 {
+    let allowed: Option<dregg_cell::EffectMask> = if allowed_effects_mask == 0 {
         None
     } else {
         Some(allowed_effects_mask)
@@ -794,10 +794,10 @@ pub fn verify_bearer_cap_proof_sig(
     federation_id_hex: &str,
 ) -> Result<JsValue, JsError> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    use pyana_cell::AuthRequired;
-    use pyana_cell::CellId;
-    use pyana_turn::action::{BearerCapProof, DelegationProofData};
-    use pyana_turn::executor::TurnExecutor;
+    use dregg_cell::AuthRequired;
+    use dregg_cell::CellId;
+    use dregg_turn::action::{BearerCapProof, DelegationProofData};
+    use dregg_turn::executor::TurnExecutor;
 
     // Deserialize the real type (it derives Deserialize). For minimal
     // shim-compat we also accept a flat form, but prefer canonical.
@@ -923,13 +923,13 @@ pub fn create_from_factory(
     // Compute parameter hash for child VK derivation.
     let params = FactoryCreationParams {
         owner_pubkey,
-        mode: pyana_cell::CellMode::default(),
+        mode: dregg_cell::CellMode::default(),
         program_vk: None,
         initial_fields: vec![],
         initial_caps: vec![],
     };
-    let param_hash = pyana_cell::factory::ChildVkStrategy::compute_param_hash(&params);
-    let child_vk = pyana_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
+    let param_hash = dregg_cell::factory::ChildVkStrategy::compute_param_hash(&params);
+    let child_vk = dregg_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
 
     #[derive(Serialize)]
     struct FactoryCreateResult {
@@ -961,7 +961,7 @@ pub fn verify_provenance(cell_vk_hex: &str, factory_vks_json: &str) -> Result<Js
     let mut matched_factory: Option<String> = None;
     for fvk_hex in &factory_vks {
         if let Ok(fvk) = hex_decode_32(fvk_hex) {
-            if pyana_cell::factory::ChildVkStrategy::is_in_approved_set(&[fvk], &cell_vk) {
+            if dregg_cell::factory::ChildVkStrategy::is_in_approved_set(&[fvk], &cell_vk) {
                 matched_factory = Some(fvk_hex.clone());
                 break;
             }
@@ -993,7 +993,7 @@ pub fn make_cell_sovereign(cell_id_hex: &str, current_balance: u64) -> Result<Js
     let cell_id_bytes = hex_decode_32(cell_id_hex)?;
 
     // Compute the state commitment (blake3 of cell state).
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-sovereign-commitment-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-sovereign-commitment-v1");
     hasher.update(&cell_id_bytes);
     hasher.update(&current_balance.to_le_bytes());
     let commitment = *hasher.finalize().as_bytes();
@@ -1029,7 +1029,7 @@ pub fn peer_exchange_with_proof(
     let receiver = hex_decode_32(receiver_cell_hex)?;
 
     // Generate exchange ID.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-peer-exchange-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-peer-exchange-v1");
     hasher.update(&sender);
     hasher.update(&receiver);
     hasher.update(&amount.to_le_bytes());
@@ -1039,7 +1039,7 @@ pub fn peer_exchange_with_proof(
     let exchange_id = *hasher.finalize().as_bytes();
 
     // Proof commitment (binding for the STARK).
-    let mut proof_hasher = blake3::Hasher::new_derive_key("pyana-peer-exchange-proof-v1");
+    let mut proof_hasher = blake3::Hasher::new_derive_key("dregg-peer-exchange-proof-v1");
     proof_hasher.update(&exchange_id);
     proof_hasher.update(&amount.to_le_bytes());
     let proof_commitment = *proof_hasher.finalize().as_bytes();
@@ -1098,7 +1098,7 @@ pub fn compose_proofs(proofs_json: &str, mode: &str) -> Result<JsValue, JsError>
     };
 
     // Compute a composed proof commitment binding all inputs.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-composition-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-composition-v1");
     hasher.update(composition_mode.as_bytes());
     for (i, proof) in proofs.iter().enumerate() {
         hasher.update(&(i as u32).to_le_bytes());
@@ -1299,7 +1299,7 @@ mod audit_tests {
         let target = [7u8; 32];
 
         // Forge the OLD style token (BLAKE3 of public params).
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-bearer-cap-v2");
         hasher.update(&delegator_pubkey);
         hasher.update(&target);
         hasher.update(b"transfer");

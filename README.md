@@ -1,6 +1,6 @@
 # `dregg` - Dragon's Egg
 
-\[fka. Pyana, working on the rename!\]
+\[fka. `dregg`, working on the rename!\]
 
 Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a direct expression of my original impetus to build <https://rbg.systems>. Maybe Dragon's Egg will be a Robigalia userspace. In the meantime, here's what the LLMs have to say about it:
 
@@ -8,7 +8,7 @@ Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a
 
 ## The Model
 
-Pyana is a **unified fabric**: a shared blocklace (DAG) where groups form emergently through mutual acknowledgment. There are no fixed federations to join or leave. Nodes participate in strands; reference groups crystallize from repeated interaction. Your phone is a node. A cloud cluster is a node. The sovereignty spectrum is continuous.
+`dregg` is a **unified fabric**: a shared blocklace (DAG) where groups form emergently through mutual acknowledgment. There are no fixed federations to join or leave. Nodes participate in strands; reference groups crystallize from repeated interaction. Your phone is a node. A cloud cluster is a node. The sovereignty spectrum is continuous.
 
 Cells are isolated objects. Turns are atomic state transitions. The Effect VM proves each turn in a single STARK. CapTP sessions carry capability references across the fabric. Intents broadcast needs; ring trades solve them trustlessly.
 
@@ -29,18 +29,18 @@ git clone https://github.com/emberian/dregg && cd dregg
 cargo build
 
 # Run a node
-cargo run -p pyana-node run
+cargo run -p dregg-node run
 
 # CLI interaction
-pyana cell list
-pyana cell create --name my-agent
-pyana cap grant <cell-id> --service storage --actions read,write
-pyana turn submit <turn-file>
-pyana namespace register alice --target <cell-id>
-pyana intent post --spec '{"service": "compute", "action": "execute"}'
+dregg cell list
+dregg cell create --name my-agent
+dregg cap grant <cell-id> --service storage --actions read,write
+dregg turn submit <turn-file>
+dregg namespace register alice --target <cell-id>
+dregg intent post --spec '{"service": "compute", "action": "execute"}'
 
 # Run the demo agent (full pipeline: token + STARK + turn)
-cargo run -p pyana-demo-agent
+cargo run -p dregg-demo-agent
 
 # 4-node devnet
 cd docker && docker compose up
@@ -71,7 +71,7 @@ cd docker && docker compose up
 | `hints` | BLS12-381 threshold sigs via KZG + SNARK aggregate verification |
 | `store` | redb ACID persistence, note commitment tree, nullifier set |
 | `wasm` | Browser WASM bindings (43 exports, full simulation) |
-| `pyana-dsl` | Constraint DSL: `#[pyana_caveat]`, `#[pyana_effect]`, multi-backend |
+| `dregg-dsl` | Constraint DSL: `#[dregg_caveat]`, `#[dregg_effect]`, multi-backend |
 | `verification` | Typed composition checker for proof soundness |
 | `app-framework` | Shared patterns for building apps on the runtime |
 | `apps/*` | Stablecoin, AMM, orderbook, lending, identity, gallery, compute exchange, bounty board, nameservice, governed-namespace |
@@ -90,10 +90,10 @@ All modes work offline. Proofs are post-quantum secure (BabyBear STARK + FRI).
 
 ## Links
 
-- [Paper](https://pyana.dev/paper.html)
-- [Documentation](https://pyana.dev/docs/)
-- [Playground](https://pyana.dev/playground/)
-- [Explorer](https://pyana.dev/explorer/)
+- [Paper](https://dregg.dev/paper.html)
+- [Documentation](https://dregg.dev/docs/)
+- [Playground](https://dregg.dev/playground/)
+- [Explorer](https://dregg.dev/explorer/)
 
 ## Status: Experimental
 

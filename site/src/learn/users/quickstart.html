@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Quickstart — Pyana</title>
+<title>Quickstart — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Quickstart</h1>
 
     <p>
-      Get the <code>pyana</code> CLI installed, connect to a running node, and
+      Get the <code>dregg</code> CLI installed, connect to a running node, and
       perform your first operations. This takes under five minutes.
     </p>
 
@@ -27,10 +27,10 @@
     <pre><code class="language-rust">cargo install --path cli</code></pre>
 
     <p>
-      This gives you the <code>pyana</code> command. Verify it works:
+      This gives you the <code>dregg</code> command. Verify it works:
     </p>
 
-    <pre><code>pyana --version</code></pre>
+    <pre><code>dregg --version</code></pre>
 
     <h2 id="connect">Connect to a Node</h2>
 
@@ -38,15 +38,15 @@
       Initialize your local config and point it at a running node:
     </p>
 
-    <pre><code># Create ~/.pyana/config.toml with defaults
-pyana config init
+    <pre><code># Create ~/.dregg/config.toml with defaults
+dregg config init
 
 # Check the node is reachable
-pyana node status</code></pre>
+dregg node status</code></pre>
 
     <p>
       By default the CLI connects to <code>http://127.0.0.1:8420</code>. If
-      your node is elsewhere, edit <code>~/.pyana/config.toml</code> or pass
+      your node is elsewhere, edit <code>~/.dregg/config.toml</code> or pass
       <code>--node-url</code>.
     </p>
 
@@ -55,13 +55,13 @@ pyana node status</code></pre>
     <p>Check your computron balance and export a capability:</p>
 
     <pre><code class="language-rust"># Show balances for cells you own
-pyana cclerk balance
+dregg cclerk balance
 
 # Export a capability as a portable sturdy ref
-pyana cap export &lt;cell-id&gt;</code></pre>
+dregg cap export &lt;cell-id&gt;</code></pre>
 
     <p>
-      The exported capability is a <code>pyana://</code> URI containing a swiss
+      The exported capability is a <code>dregg://</code> URI containing a swiss
       number. Anyone who receives it can enliven the reference to get a live
       handle to that cell.
     </p>

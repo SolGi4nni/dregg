@@ -11,12 +11,12 @@
 
 use curve25519_dalek::scalar::Scalar;
 
-use pyana_cell::CellId;
-use pyana_cell::note::{NoteCommitment, Nullifier};
-use pyana_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation_with_range};
-use pyana_turn::Turn;
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::forest::CallForest;
+use dregg_cell::CellId;
+use dregg_cell::note::{NoteCommitment, Nullifier};
+use dregg_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation_with_range};
+use dregg_turn::Turn;
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::forest::CallForest;
 
 use crate::error::SdkError;
 
@@ -306,7 +306,7 @@ impl Default for CommittedTurnBuilder {
 /// Compute the note commitment for a committed note.
 ///
 /// ```text
-/// H("pyana-committed-note v1", owner || vc_bytes || asset_type_le || creation_nonce || rcm)
+/// H("dregg-committed-note v1", owner || vc_bytes || asset_type_le || creation_nonce || rcm)
 /// ```
 fn compute_committed_note_commitment(
     owner: &[u8; 32],
@@ -315,7 +315,7 @@ fn compute_committed_note_commitment(
     creation_nonce: &[u8; 32],
     note_randomness: &[u8; 32],
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-committed-note v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-committed-note v1");
     hasher.update(owner);
     hasher.update(&value_commitment.to_bytes().0);
     hasher.update(&asset_type.to_le_bytes());
@@ -367,7 +367,7 @@ impl From<&OwnedNote> for CommittedNoteInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_cell::{FullConservationProof, ValueCommitment, verify_conservation_with_range};
+    use dregg_cell::{FullConservationProof, ValueCommitment, verify_conservation_with_range};
 
     /// Deterministic scalar for testing.
     fn test_scalar(seed: u8) -> Scalar {
@@ -482,7 +482,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     input_vcs.push(vc);
                 }
@@ -491,7 +491,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     output_vcs.push(vc);
                 }
@@ -551,7 +551,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     input_vcs.push(vc);
                 }
@@ -560,7 +560,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     output_vcs.push(vc);
                 }
@@ -643,7 +643,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     input_vcs.push(vc);
                 }
@@ -652,7 +652,7 @@ mod tests {
                     ..
                 } => {
                     let vc =
-                        ValueCommitment::from_bytes(&pyana_cell::ValueCommitmentBytes(*vc_bytes))
+                        ValueCommitment::from_bytes(&dregg_cell::ValueCommitmentBytes(*vc_bytes))
                             .unwrap();
                     output_vcs.push(vc);
                 }

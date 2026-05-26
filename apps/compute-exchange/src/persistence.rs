@@ -21,7 +21,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-use pyana_app_framework::EscrowRecord;
+use dregg_app_framework::EscrowRecord;
 
 use crate::orderbook::{Offering, Order};
 use crate::settlement::{Dispute, Settlement};

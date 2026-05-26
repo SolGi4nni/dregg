@@ -1,6 +1,6 @@
 //! Canonical Datalog-based token verification.
 //!
-//! This module provides the SOLE ground-truth verification semantics for pyana
+//! This module provides the SOLE ground-truth verification semantics for dregg
 //! tokens. The flow is:
 //!
 //! ```text
@@ -14,8 +14,8 @@
 //! This replaces the imperative `verify_caveats` function as the canonical
 //! authorization evaluator.
 
-use pyana_commit::{FieldElement, SymbolTable, TokenState};
-use pyana_trace::{
+use dregg_commit::{FieldElement, SymbolTable, TokenState};
+use dregg_trace::{
     AuthorizationRequest as TraceRequest, AuthorizationTrace, Conclusion, Evaluator,
     Fact as TraceFact, Rule, Term, symbol_from_str,
 };
@@ -23,10 +23,10 @@ use pyana_trace::{
 use crate::error::TokenError;
 use crate::factset::caveat_set_to_factset;
 use crate::format::TokenFormat;
-use crate::pyana_caveats;
+use crate::dregg_caveats;
 use crate::traits::{AuthRequest, Capability, TokenClearance};
 
-use pyana_macaroon::caveat::CaveatSet;
+use dregg_macaroon::caveat::CaveatSet;
 
 /// Result of Datalog verification, including the derivation trace for
 /// potential STARK proving in trustless mode.
@@ -259,7 +259,7 @@ pub mod rule_ids {
     pub const UNRESTRICTED_FULL_WINDOW: u32 = 18;
 }
 
-/// Returns the full pyana authorization policy rule set.
+/// Returns the full dregg authorization policy rule set.
 ///
 /// This extends the standard policy with rules for every caveat dimension.
 /// The Datalog rules handle POSITIVE authorization only:
@@ -273,7 +273,7 @@ pub mod rule_ids {
 /// only runs when we already know the request targets a dimension the token
 /// explicitly grants.
 fn full_policy() -> Vec<Rule> {
-    use pyana_trace::{Atom, Check};
+    use dregg_trace::{Atom, Check};
 
     let mut rules = Vec::new();
 
@@ -816,7 +816,7 @@ const RESERVED_PREDICATES: &[&str] = &[
 ///
 /// Facts with reserved predicate names are rejected to prevent policy injection attacks.
 fn committed_facts_to_trace(state: &TokenState, symbols: &SymbolTable) -> Vec<TraceFact> {
-    use pyana_macaroon::action::Action;
+    use dregg_macaroon::action::Action;
 
     let mut trace_facts = Vec::new();
 
@@ -958,36 +958,36 @@ fn extract_capabilities(caveat_set: &CaveatSet) -> Vec<Capability> {
     let mut capabilities = Vec::new();
 
     for wc in caveat_set.first_party_caveats() {
-        match pyana_caveats::decode_grant(&wc) {
-            Ok(pyana_caveats::PyanaGrant::App { id, actions }) => {
+        match dregg_caveats::decode_grant(&wc) {
+            Ok(dregg_caveats::DreggGrant::App { id, actions }) => {
                 capabilities.push(Capability {
                     resource_type: "app".into(),
                     resource_id: id,
                     actions: actions.to_string(),
                 });
             }
-            Ok(pyana_caveats::PyanaGrant::Service { name, actions }) => {
+            Ok(dregg_caveats::DreggGrant::Service { name, actions }) => {
                 capabilities.push(Capability {
                     resource_type: "service".into(),
                     resource_id: name,
                     actions: actions.to_string(),
                 });
             }
-            Ok(pyana_caveats::PyanaGrant::Feature(name)) => {
+            Ok(dregg_caveats::DreggGrant::Feature(name)) => {
                 capabilities.push(Capability {
                     resource_type: "feature".into(),
                     resource_id: name,
                     actions: "*".into(),
                 });
             }
-            Ok(pyana_caveats::PyanaGrant::OAuthProvider(p)) => {
+            Ok(dregg_caveats::DreggGrant::OAuthProvider(p)) => {
                 capabilities.push(Capability {
                     resource_type: "oauth_provider".into(),
                     resource_id: p,
                     actions: "*".into(),
                 });
             }
-            Ok(pyana_caveats::PyanaGrant::OAuthScope(s)) => {
+            Ok(dregg_caveats::DreggGrant::OAuthScope(s)) => {
                 capabilities.push(Capability {
                     resource_type: "oauth_scope".into(),
                     resource_id: s,
@@ -1007,8 +1007,8 @@ fn extract_metadata(caveat_set: &CaveatSet) -> (Option<i64>, Option<String>) {
     let mut subject: Option<String> = None;
 
     for wc in caveat_set.first_party_caveats() {
-        match pyana_caveats::decode_grant(&wc) {
-            Ok(pyana_caveats::PyanaGrant::ValidityWindow { not_after, .. }) => {
+        match dregg_caveats::decode_grant(&wc) {
+            Ok(dregg_caveats::DreggGrant::ValidityWindow { not_after, .. }) => {
                 if let Some(na) = not_after {
                     expires_at = Some(match expires_at {
                         Some(existing) => existing.min(na),
@@ -1016,7 +1016,7 @@ fn extract_metadata(caveat_set: &CaveatSet) -> (Option<i64>, Option<String>) {
                     });
                 }
             }
-            Ok(pyana_caveats::PyanaGrant::ConfineUser(uid)) => {
+            Ok(dregg_caveats::DreggGrant::ConfineUser(uid)) => {
                 if subject.is_none() {
                     subject = Some(uid);
                 }
@@ -1033,7 +1033,7 @@ fn extract_metadata(caveat_set: &CaveatSet) -> (Option<i64>, Option<String>) {
 /// This performs a lightweight analysis of the caveats vs the request to
 /// produce specific error messages (matching the old `verify_caveats` behavior).
 fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
-    use pyana_macaroon::action::Action;
+    use dregg_macaroon::action::Action;
 
     let mut apps: Vec<(String, Action)> = Vec::new();
     let mut services: Vec<(String, Action)> = Vec::new();
@@ -1044,16 +1044,16 @@ fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
     let mut validity_windows: Vec<(Option<i64>, Option<i64>)> = Vec::new();
 
     for wc in caveat_set.first_party_caveats() {
-        match pyana_caveats::decode_grant(&wc) {
-            Ok(pyana_caveats::PyanaGrant::App { id, actions }) => apps.push((id, actions)),
-            Ok(pyana_caveats::PyanaGrant::Service { name, actions }) => {
+        match dregg_caveats::decode_grant(&wc) {
+            Ok(dregg_caveats::DreggGrant::App { id, actions }) => apps.push((id, actions)),
+            Ok(dregg_caveats::DreggGrant::Service { name, actions }) => {
                 services.push((name, actions))
             }
-            Ok(pyana_caveats::PyanaGrant::Feature(name)) => features.push(name),
-            Ok(pyana_caveats::PyanaGrant::ConfineUser(uid)) => confined_users.push(uid),
-            Ok(pyana_caveats::PyanaGrant::OAuthProvider(p)) => oauth_providers.push(p),
-            Ok(pyana_caveats::PyanaGrant::OAuthScope(s)) => oauth_scopes.push(s),
-            Ok(pyana_caveats::PyanaGrant::ValidityWindow {
+            Ok(dregg_caveats::DreggGrant::Feature(name)) => features.push(name),
+            Ok(dregg_caveats::DreggGrant::ConfineUser(uid)) => confined_users.push(uid),
+            Ok(dregg_caveats::DreggGrant::OAuthProvider(p)) => oauth_providers.push(p),
+            Ok(dregg_caveats::DreggGrant::OAuthScope(s)) => oauth_scopes.push(s),
+            Ok(dregg_caveats::DreggGrant::ValidityWindow {
                 not_before,
                 not_after,
             }) => validity_windows.push((not_before, not_after)),
@@ -1188,23 +1188,23 @@ pub fn pre_evaluation_deny_checks(
     let mut budgets: Vec<(String, u64)> = Vec::new(); // (budget_id, limit)
 
     for wc in caveat_set.first_party_caveats() {
-        match pyana_caveats::decode_grant(&wc) {
-            Ok(pyana_caveats::PyanaGrant::ConfineUser(uid)) => confined_users.push(uid),
-            Ok(pyana_caveats::PyanaGrant::OAuthProvider(p)) => oauth_providers.push(p),
-            Ok(pyana_caveats::PyanaGrant::OAuthScope(s)) => oauth_scopes.push(s),
-            Ok(pyana_caveats::PyanaGrant::Feature(name)) => features.push(name),
-            Ok(pyana_caveats::PyanaGrant::ValidityWindow {
+        match dregg_caveats::decode_grant(&wc) {
+            Ok(dregg_caveats::DreggGrant::ConfineUser(uid)) => confined_users.push(uid),
+            Ok(dregg_caveats::DreggGrant::OAuthProvider(p)) => oauth_providers.push(p),
+            Ok(dregg_caveats::DreggGrant::OAuthScope(s)) => oauth_scopes.push(s),
+            Ok(dregg_caveats::DreggGrant::Feature(name)) => features.push(name),
+            Ok(dregg_caveats::DreggGrant::ValidityWindow {
                 not_before,
                 not_after,
             }) => validity_windows.push((not_before, not_after)),
-            Ok(pyana_caveats::PyanaGrant::FeatureGlob { include, exclude }) => {
+            Ok(dregg_caveats::DreggGrant::FeatureGlob { include, exclude }) => {
                 feature_globs.push((include, exclude))
             }
             // Issue #1: Budget MUST be checked here.
-            Ok(pyana_caveats::PyanaGrant::Budget { id, limit, .. }) => {
+            Ok(dregg_caveats::DreggGrant::Budget { id, limit, .. }) => {
                 budgets.push((id, limit));
             }
-            Ok(pyana_caveats::PyanaGrant::Unknown(type_id, _)) => {
+            Ok(dregg_caveats::DreggGrant::Unknown(type_id, _)) => {
                 // Fail-closed: unknown caveat types MUST deny authorization.
                 return Err(TokenError::Denied(format!(
                     "unknown caveat type {} cannot be verified (fail-closed)",
@@ -1424,10 +1424,10 @@ pub fn verify_token_datalog_full(
 
     let has_app_caveats = caveats
         .iter()
-        .any(|wc| wc.caveat_type == crate::pyana_caveats::CAV_APP);
+        .any(|wc| wc.caveat_type == crate::dregg_caveats::CAV_APP);
     let has_service_caveats = caveats
         .iter()
-        .any(|wc| wc.caveat_type == crate::pyana_caveats::CAV_SERVICE);
+        .any(|wc| wc.caveat_type == crate::dregg_caveats::CAV_SERVICE);
     let is_empty = caveats.is_empty(); // unrestricted root token
 
     // Phase 2b: Least-privilege dimension enforcement.
@@ -1491,9 +1491,9 @@ pub fn verify_token_datalog_full(
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::pyana_caveats::*;
-    use pyana_macaroon::caveat::CaveatSet;
-    use pyana_macaroon::caveat::WireCaveat;
+    use crate::dregg_caveats::*;
+    use dregg_macaroon::caveat::CaveatSet;
+    use dregg_macaroon::caveat::WireCaveat;
 
     // --- Comparison tests: verify BOTH paths give the same answer ---
 
@@ -1502,10 +1502,10 @@ mod tests {
         caveat_set: &CaveatSet,
         request: &AuthRequest,
     ) -> (
-        Result<crate::pyana_caveats::CaveatVerifyResult, TokenError>,
+        Result<crate::dregg_caveats::CaveatVerifyResult, TokenError>,
         Result<TokenClearance, TokenError>,
     ) {
-        let old_result = crate::pyana_caveats::verify_caveats(caveat_set, request);
+        let old_result = crate::dregg_caveats::verify_caveats(caveat_set, request);
         let new_result = verify_token_datalog_full(caveat_set, request);
         (old_result, new_result)
     }
@@ -2102,7 +2102,7 @@ mod tests {
             now: Some(1700000000),
             ..Default::default()
         };
-        let old_result = crate::pyana_caveats::verify_caveats(&set, &request);
+        let old_result = crate::dregg_caveats::verify_caveats(&set, &request);
         let new_result = verify_token_datalog_full(&set, &request);
         assert!(
             old_result.is_err(),
@@ -2350,7 +2350,7 @@ mod tests {
             ..Default::default()
         };
 
-        let old_result = crate::pyana_caveats::verify_caveats(&set, &request);
+        let old_result = crate::dregg_caveats::verify_caveats(&set, &request);
         assert!(
             old_result.is_err(),
             "old path must also deny when request omits oauth_scopes"

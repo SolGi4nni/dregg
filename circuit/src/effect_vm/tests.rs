@@ -2705,7 +2705,7 @@ fn test_soundness_p1_5_pipeline_id_zero_rejected() {
 /// This test exercises the AIR-side behaviour: the proof verifies for
 /// the values the prover declared (no algebraic violation). The
 /// executor's recomputation catches the divergence; we test that in
-/// `pyana-turn` integration tests.
+/// `dregg-turn` integration tests.
 #[test]
 fn test_stage1_widened_pi_commitments_are_consistent() {
     let state = make_initial_state(1000);

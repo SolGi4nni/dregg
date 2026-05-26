@@ -65,11 +65,11 @@
 //! ## VK hash — VK v2 layered encoding
 //!
 //! The `recursive_vk_hash` field of a [`RecursiveProofVariant`] follows
-//! the VK v2 layered encoding from `pyana_cell::vk_v2`:
+//! the VK v2 layered encoding from `dregg_cell::vk_v2`:
 //!
 //! ```text
 //! recursive_vk_hash = canonical_vk_v2({
-//!     program_bytes:       b"pyana-effect-vm-recursive-v1",
+//!     program_bytes:       b"dregg-effect-vm-recursive-v1",
 //!     air_fingerprint:     fingerprint(EFFECT_VM_AIR_DESCRIPTOR),
 //!     verifier_fingerprint: SourceHash(verifier_source_hash),
 //!     proving_system_id:   Plonky3BabyBearFri { p3_rev },
@@ -102,7 +102,7 @@ use crate::field::BabyBear;
 /// Used as the `program_bytes` component of the VK v2 layered hash for
 /// recursive proofs. Disjoint from cell-program VK hashes (which use
 /// `postcard(CellProgram)` bytes) and from custom-predicate VK hashes.
-pub const RECURSIVE_VK_PROGRAM_BYTES: &[u8] = b"pyana-effect-vm-recursive-v1";
+pub const RECURSIVE_VK_PROGRAM_BYTES: &[u8] = b"dregg-effect-vm-recursive-v1";
 
 /// Plonky3 git revision the recursion config was built against.
 ///
@@ -118,29 +118,29 @@ pub const RECURSION_P3_REV: &str = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4";
 ///
 /// In a fuller VK v2 rollout this would be the git-blob-hash of this
 /// source file pinned at registration time; we use a stable canonical-
-/// bytes derivation under "pyana-recursive-witness-bundle-verifier-v1"
+/// bytes derivation under "dregg-recursive-witness-bundle-verifier-v1"
 /// so the hash is deterministic without a build-time hook. When this
 /// module's verifier surface changes meaningfully, bump the suffix to
 /// invalidate old VK hashes.
 pub fn recursive_verifier_source_hash() -> [u8; 32] {
-    *blake3::hash(b"pyana-recursive-witness-bundle-verifier-v1").as_bytes()
+    *blake3::hash(b"dregg-recursive-witness-bundle-verifier-v1").as_bytes()
 }
 
 /// Compute the canonical VK v2 layered hash for the recursive Effect VM
 /// verifier.
 ///
-/// Mirrors `pyana_cell::vk_v2::canonical_vk_v2`'s encoding inline so this
-/// crate does not depend on `pyana-cell` (which would create a cycle:
-/// `pyana-cell` depends on `pyana-circuit`). The encoding is byte-identical
-/// to a call through `pyana_cell::vk_v2::canonical_vk_v2` with the
+/// Mirrors `dregg_cell::vk_v2::canonical_vk_v2`'s encoding inline so this
+/// crate does not depend on `dregg-cell` (which would create a cycle:
+/// `dregg-cell` depends on `dregg-circuit`). The encoding is byte-identical
+/// to a call through `dregg_cell::vk_v2::canonical_vk_v2` with the
 /// equivalent `VkComponents`.
 pub fn compute_recursive_vk_hash() -> [u8; 32] {
     let air_fp = crate::air_descriptor::fingerprint(&crate::effect_vm::AIR_DESCRIPTOR);
     let verifier_fp = recursive_verifier_source_hash();
 
-    // BLAKE3 keyed under "pyana-vk-v2" — same domain as
-    // `pyana_cell::vk_v2::canonical_vk_v2`.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vk-v2");
+    // BLAKE3 keyed under "dregg-vk-v2" — same domain as
+    // `dregg_cell::vk_v2::canonical_vk_v2`.
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vk-v2");
 
     // program_bytes (length-prefixed)
     hasher.update(&(RECURSIVE_VK_PROGRAM_BYTES.len() as u64).to_le_bytes());
@@ -150,10 +150,10 @@ pub fn compute_recursive_vk_hash() -> [u8; 32] {
     hasher.update(&air_fp);
 
     // verifier_fingerprint: hash of (variant_tag=0 [SourceHash] || verifier_fp)
-    // under the "pyana-verifier-fingerprint-v1" domain, mirroring
+    // under the "dregg-verifier-fingerprint-v1" domain, mirroring
     // VerifierFingerprint::SourceHash.canonical_bytes().
     let vf_canonical = {
-        let mut hh = blake3::Hasher::new_derive_key("pyana-verifier-fingerprint-v1");
+        let mut hh = blake3::Hasher::new_derive_key("dregg-verifier-fingerprint-v1");
         hh.update(&[0u8]); // tag = SourceHash
         hh.update(&verifier_fp);
         *hh.finalize().as_bytes()
@@ -192,14 +192,14 @@ pub fn lookup_recursive_vk(hash: &[u8; 32]) -> Option<()> {
 
 /// The output of [`RecursiveProofProducer::produce`].
 ///
-/// Three pieces, mirroring the wire-shape on `pyana_turn::RecursiveProofVariant`:
+/// Three pieces, mirroring the wire-shape on `dregg_turn::RecursiveProofVariant`:
 /// the recursive proof bytes, the public-input vector the proof commits
 /// to (as canonical `u32` cells — same encoding as `WitnessedReceipt.public_inputs`),
 /// and the VK v2 layered hash identifying which recursive verifier
 /// adjudicates this proof.
 #[derive(Clone, Debug)]
 pub struct RecursiveProofOutput {
-    /// Postcard-encoded `BatchStarkProof<PyanaRecursionConfig>` bytes.
+    /// Postcard-encoded `BatchStarkProof<DreggRecursionConfig>` bytes.
     pub proof_bytes: Vec<u8>,
     /// Public inputs as canonical-BabyBear `u32` cells.
     pub public_inputs_u32: Vec<u32>,
@@ -333,7 +333,7 @@ impl RecursiveVariantVerdict {
     }
 }
 
-/// Verify a [`pyana_turn::RecursiveProofVariant`]-shaped payload.
+/// Verify a [`dregg_turn::RecursiveProofVariant`]-shaped payload.
 ///
 /// Steps:
 /// 1. **Registry lookup.** `recursive_vk_hash` must be a known entry; an

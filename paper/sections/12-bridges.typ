@@ -6,7 +6,7 @@
 
 == Bridge Architecture
 
-Pyana connects to external chains via _proof translation_---not consensus bridging. Each bridge converts a Pyana STARK proof into a format the remote chain can verify natively. No relay committee, no multi-sig, no trusted oracle. The remote chain verifies a mathematical proof of Pyana state validity.
+Dregg connects to external chains via _proof translation_---not consensus bridging. Each bridge converts a Dregg STARK proof into a format the remote chain can verify natively. No relay committee, no multi-sig, no trusted oracle. The remote chain verifies a mathematical proof of Dregg state validity.
 
 The bridge's portable note proof `PortableNoteProof` has public inputs `(nullifier, attested_source_root, destination_federation, value, asset_type)`. The `destination_federation` field is now both surfaced in PI *and algebraically bound* by the AIR (closes threat T6 from the executor-honesty audit and `AUDIT-nullifiers.md §5`). A proof addressed to federation A cannot be replayed at federation B.
 
@@ -19,7 +19,7 @@ Bridges are classified by trust level:
     columns: (auto, auto, auto),
     align: (left, left, left),
     table.header([*Level*], [*Property*], [*Mechanism*]),
-    [Level 1 (observational)], [Remote chain observes Pyana state roots], [Attestation posting],
+    [Level 1 (observational)], [Remote chain observes Dregg state roots], [Attestation posting],
     [Level 1.5 (optimistic)], [State accepted with dispute window], [Bond + fraud proof],
     [Level 2 (proof-verified)], [Remote chain verifies STARK natively], [Proof translation],
   ),
@@ -30,7 +30,7 @@ Bridges are classified by trust level:
 
 === Architecture
 
-The EVM bridge achieves Level 2 trust by wrapping Pyana STARK proofs in Groth16---the only proof system with mature EVM verification contracts at reasonable gas cost ($approx 200"K"$ gas).
+The EVM bridge achieves Level 2 trust by wrapping Dregg STARK proofs in Groth16---the only proof system with mature EVM verification contracts at reasonable gas cost ($approx 200"K"$ gas).
 
 The pipeline:
 
@@ -38,7 +38,7 @@ The pipeline:
 + *SP1 guest program* (off-chain): A RISC-V zkVM program verifies the STARK inside SP1. The guest reads the STARK proof, runs the FRI verifier, checks Poseidon2 commitments, and outputs a boolean verdict plus the state commitment.
 + *Groth16 extraction* (off-chain): SP1's prover converts the RISC-V execution trace into a Groth16 proof (BN254 curve, compatible with EVM precompiles).
 + *On-chain verification* (EVM): The Groth16 proof is verified by Succinct's deployed SP1 Verifier Gateway contract on Ethereum/Base.
-+ *State update* (EVM): The Pyana bridge contract updates the sovereign cell's commitment on-chain.
++ *State update* (EVM): The Dregg bridge contract updates the sovereign cell's commitment on-chain.
 
 === On-Chain Components
 
@@ -46,7 +46,7 @@ The EVM deployment consists of:
 
 - *Bridge contract*: Stores cell state commitments (32 bytes each), accepts verified state updates, manages deposit/withdrawal logic.
 - *VK registry*: Stores verification keys for different circuit versions. Governance-controlled updates via multisig.
-- *Incremental Merkle tree*: For EVM-to-Pyana deposits. $O(log n)$ insertions, provable membership for withdrawal on Pyana side.
+- *Incremental Merkle tree*: For EVM-to-Dregg deposits. $O(log n)$ insertions, provable membership for withdrawal on Dregg side.
 - *Commit-reveal frontrunning protection*: Deposits use commit-reveal to prevent sandwich attacks.
 
 === Gas Analysis
@@ -67,26 +67,26 @@ The EVM deployment consists of:
 
 === Sovereign Cells on EVM
 
-A Pyana sovereign cell can exist as an on-chain entity:
+A Dregg sovereign cell can exist as an on-chain entity:
 
 - The bridge contract stores the cell's 32-byte state commitment.
 - The cell operates off-chain (generating turns, proofs).
 - Periodically (or on demand), the cell posts a state update with a Groth16 proof.
-- EVM contracts can condition execution on the cell's proven state (e.g., "execute this DeFi operation only if Pyana cell X has authorized it").
+- EVM contracts can condition execution on the cell's proven state (e.g., "execute this DeFi operation only if Dregg cell X has authorized it").
 
-This enables hybrid applications: Pyana for privacy and authorization, EVM for DeFi composability.
+This enables hybrid applications: Dregg for privacy and authorization, EVM for DeFi composability.
 
 == Mina Bridge (Level 2, Pickles Recursion) <sec-mina-bridge>
 
 === Architecture
 
-The Mina bridge achieves Level 2 trust natively: Mina's proof system and Pyana's Kimchi backend share the same Pasta curve cycle (Pallas/Vesta). No wrapping tax beyond the Kimchi circuit overhead.
+The Mina bridge achieves Level 2 trust natively: Mina's proof system and Dregg's Kimchi backend share the same Pasta curve cycle (Pallas/Vesta). No wrapping tax beyond the Kimchi circuit overhead.
 
 The pipeline:
 
-+ *STARK generation* (Pyana): BabyBear/FRI proof of the state transition.
-+ *Kimchi wrapping* (Pyana): The STARK verifier is encoded as a Kimchi circuit ($approx 30"K"$ gates) over Pasta curves. The Kimchi circuit takes the STARK proof as witness and outputs accept/reject.
-+ *Pickles recursion* (Pyana): The Kimchi proof is accumulated into a Pickles recursive proof---constant size ($approx 10$ KiB), independent of the underlying STARK complexity.
++ *STARK generation* (Dregg): BabyBear/FRI proof of the state transition.
++ *Kimchi wrapping* (Dregg): The STARK verifier is encoded as a Kimchi circuit ($approx 30"K"$ gates) over Pasta curves. The Kimchi circuit takes the STARK proof as witness and outputs accept/reject.
++ *Pickles recursion* (Dregg): The Kimchi proof is accumulated into a Pickles recursive proof---constant size ($approx 10$ KiB), independent of the underlying STARK complexity.
 + *Mina verification* (Mina): The Pickles proof is natively verifiable by Mina validators and zkApps. No custom verifier needed---standard Mina infrastructure.
 
 === STARK-in-Pickles Pipeline
@@ -102,16 +102,16 @@ The critical component is the Kimchi circuit that verifies a BabyBear STARK:
 - Poseidon2 evaluation: Recompute hash commitments for proof binding ($approx 8"K"$ gates).
 - Constraint check: Verify AIR constraints at evaluation points ($approx 7"K"$ gates).
 
-The Kimchi proof over Pallas is then accumulated into the Pickles IPA recursive structure. This is _assisted recursion_: the Pyana prover does the expensive work (STARK generation + Kimchi wrapping), and the Mina side simply verifies a standard Pickles proof.
+The Kimchi proof over Pallas is then accumulated into the Pickles IPA recursive structure. This is _assisted recursion_: the Dregg prover does the expensive work (STARK generation + Kimchi wrapping), and the Mina side simply verifies a standard Pickles proof.
 
 === Integration with Mina zkApps
 
-A Pyana cell can appear as a Mina zkApp account:
+A Dregg cell can appear as a Mina zkApp account:
 
 - The cell's state commitment maps to the zkApp's on-chain state field.
-- State updates are authorized by Pickles proofs (generated by the Pyana STARK-in-Pickles pipeline).
+- State updates are authorized by Pickles proofs (generated by the Dregg STARK-in-Pickles pipeline).
 - Mina validators verify the Pickles proof as part of normal block validation.
-- No special infrastructure on Mina---just a standard zkApp with a Pyana-generated proof method.
+- No special infrastructure on Mina---just a standard zkApp with a Dregg-generated proof method.
 
 === Curve Compatibility
 
@@ -125,19 +125,19 @@ The Midnight bridge uses optimistic acceptance with dispute: state transitions a
 
 === Level 1 (Implemented): Attestation Bridge
 
-Pyana state roots are attested on Midnight as observation-based data, following the same pattern as Midnight's Cardano bridge:
+Dregg state roots are attested on Midnight as observation-based data, following the same pattern as Midnight's Cardano bridge:
 
-+ A relay posts Pyana's latest attested root (from the reference group's $tau_"unified"$).
++ A relay posts Dregg's latest attested root (from the reference group's $tau_"unified"$).
 + Midnight validators record the attestation.
 + Any Midnight contract can read the attested root and condition logic on it.
 
-This provides read-only observation: "Pyana state $S$ existed at height $H$." No proof of _validity_---just existence.
+This provides read-only observation: "Dregg state $S$ existed at height $H$." No proof of _validity_---just existence.
 
 === Level 1.5 (Implemented): Optimistic Acceptance
 
 A stronger guarantee with economic backing:
 
-+ A Pyana state transition is posted to Midnight with a bond ($B_"submit"$).
++ A Dregg state transition is posted to Midnight with a bond ($B_"submit"$).
 + During the dispute window ($W_"dispute"$, default 24 hours):
   - Any party can challenge by presenting evidence of invalidity.
   - Challenge requires a counter-bond ($B_"challenge" >= B_"submit" \/ 2$).
@@ -147,22 +147,22 @@ A stronger guarantee with economic backing:
 
 === Level 2 (Designed): ZKIR Native Verification
 
-The DSL's ZKIR v3 backend compiles Pyana constraint programs directly into Midnight-compatible contracts:
+The DSL's ZKIR v3 backend compiles Dregg constraint programs directly into Midnight-compatible contracts:
 
-+ Pyana's circuit descriptors compile to ZKIR v3 bytecode.
++ Dregg's circuit descriptors compile to ZKIR v3 bytecode.
 + A FRI verifier written in ZKIR executes on Midnight's proof system.
-+ The verifier checks the Pyana STARK proof natively within Midnight's execution environment.
++ The verifier checks the Dregg STARK proof natively within Midnight's execution environment.
 + Result: Level 2 trust without optimistic assumptions.
 
-Implementation awaits ZKIR v3 stabilization on Midnight's side. The Pyana DSL backend is complete; the integration requires Midnight's runtime to expose the necessary primitives.
+Implementation awaits ZKIR v3 stabilization on Midnight's side. The Dregg DSL backend is complete; the integration requires Midnight's runtime to expose the necessary primitives.
 
 === Midnight-Cardano Synergy
 
-Since Midnight itself bridges to Cardano, the Pyana-Midnight bridge transitively provides Pyana-Cardano connectivity:
+Since Midnight itself bridges to Cardano, the Dregg-Midnight bridge transitively provides Dregg-Cardano connectivity:
 
-$ "Pyana" arrow.r^("L1.5") "Midnight" arrow.r^("native") "Cardano" $
+$ "Dregg" arrow.r^("L1.5") "Midnight" arrow.r^("native") "Cardano" $
 
-A Pyana cell's state can influence Cardano smart contracts (via Midnight as intermediary) without Pyana directly interacting with Cardano's UTXO model.
+A Dregg cell's state can influence Cardano smart contracts (via Midnight as intermediary) without Dregg directly interacting with Cardano's UTXO model.
 
 == Bridge Comparison
 
@@ -187,14 +187,14 @@ The EVM bridge is safe if:
 - The Groth16 proof system is sound (BN254 discrete log is hard).
 - The bridge contract correctly checks the verification result.
 
-An invalid Pyana state transition cannot produce a valid Groth16 proof (with overwhelming probability). The on-chain verifier rejects all invalid proofs.
+An invalid Dregg state transition cannot produce a valid Groth16 proof (with overwhelming probability). The on-chain verifier rejects all invalid proofs.
 
 === Mina Bridge Safety
 
 The Mina bridge is safe if:
 - Kimchi/IPA over Pasta curves is sound.
 - Pickles recursion is sound.
-- The Pyana STARK is sound (BabyBear/FRI).
+- The Dregg STARK is sound (BabyBear/FRI).
 
 The proof chain (STARK $->$ Kimchi $->$ Pickles) composes soundness: each layer is independently sound, and the composition preserves soundness.
 

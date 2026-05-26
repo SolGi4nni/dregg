@@ -8,7 +8,7 @@
 #[cfg(feature = "plonky3")]
 pub mod p3_temporal {
     use crate::field::BabyBear;
-    use crate::plonky3_prover::PyanaProof;
+    use crate::plonky3_prover::DreggProof;
 
     pub const P3_TEMPORAL_WIDTH: usize = 36;
 
@@ -33,13 +33,13 @@ pub mod p3_temporal {
     }
 
     pub struct P3TemporalPredicateProof {
-        pub proof: PyanaProof,
+        pub proof: DreggProof,
         pub num_steps: usize,
     }
 
     impl Clone for P3TemporalPredicateProof {
         fn clone(&self) -> Self {
-            // PyanaProof doesn't derive Clone; this is only used in stubs
+            // DreggProof doesn't derive Clone; this is only used in stubs
             unimplemented!("P3TemporalPredicateProof::clone not available")
         }
     }

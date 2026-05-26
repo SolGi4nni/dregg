@@ -7,11 +7,11 @@
 //! - GC state converges after partition heal
 //! - Constitution membership changes freeze during partitions
 
-use pyana_cell::CellId;
-use pyana_teasting::fault::{FaultConfig, FaultyNetwork, MessageBuffer};
-use pyana_teasting::federation::{drive_to_finalization, dual_federation};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_wire::message::WireMessage;
+use dregg_cell::CellId;
+use dregg_teasting::fault::{FaultConfig, FaultyNetwork, MessageBuffer};
+use dregg_teasting::federation::{drive_to_finalization, dual_federation};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Helpers
@@ -180,7 +180,7 @@ fn test_partition_during_cell_migration() {
     // Source sends the migration message
     let migration_msg = WireMessage::PresentToken {
         proof: vec![0x01, 0x02, 0x03], // simulated migration proof
-        request: pyana_wire::message::AuthorizationRequest {
+        request: dregg_wire::message::AuthorizationRequest {
             resource: "/cells/migrate".to_string(),
             action: "migrate".to_string(),
             principal: "migrator-agent".to_string(),

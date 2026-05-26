@@ -3,7 +3,7 @@
 Per audit task 3 of the 2026-05-25 lane-honesty sweep. Classifies every
 module under `storage/src/` as:
 
-- **template-candidate** — should migrate into `pyana-storage-templates`
+- **template-candidate** — should migrate into `dregg-storage-templates`
   as a `FactoryDescriptor` with executor-enforced `CellProgram::Cases`,
   matching the existing 5 templates (`cap_inbox`, `programmable_queue`,
   `pubsub_topic`, `blinded_queue`, `relay_operator`). The legacy
@@ -41,7 +41,7 @@ trust path.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::atomic_queue_group`.
+- Template: `dregg_storage_templates::atomic_queue_group`.
 - Factory descriptor: `atomic_queue_group_factory_descriptor()` taking
   the participating queue ids as factory args.
 - Slot shape: `participants: [CellId; N]`, `pending_ops_root: [u8; 32]`,
@@ -61,7 +61,7 @@ trust path.
 **Classification:** template-candidate (in flight, already deprecated).
 
 **Justification.** Already documented as deprecated in favor of
-`pyana_storage_templates::blinded_queue`. The migration table in
+`dregg_storage_templates::blinded_queue`. The migration table in
 `storage/src/lib.rs` commits this row. No further triage needed.
 
 ## commitment.rs — typed Blake3/Poseidon2 commitment framework
@@ -100,7 +100,7 @@ trusting the operator-side `Pipeline::run` loop.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::dataflow_pipeline`.
+- Template: `dregg_storage_templates::dataflow_pipeline`.
 - Factory descriptor: `dataflow_pipeline_factory_descriptor()` taking
   `(source_queue_id, sink_queue_ids[N], stage_descriptions: Vec<StageSpec>)`.
 - Slot shape: `source_cursor: u64`, `sink_cursors: [u64; N]`,
@@ -119,15 +119,15 @@ trusting the operator-side `Pipeline::run` loop.
 **Classification:** retire (after migration sweep).
 
 **Justification.** The `pubsub_topic` template already folds this into
-slot 7 (per `pyana-storage-templates/src/pubsub_topic.rs:34`). The only
+slot 7 (per `dregg-storage-templates/src/pubsub_topic.rs:34`). The only
 non-template, non-template-doc consumer is
 `preflight/src/checks/storage.rs:4`. Once preflight is updated to
 either read the slot directly or to drop its dedup smoke-check (it is
 a one-off integration sanity test), this file can be removed.
 
 ```
-$ grep -rn 'use pyana_storage::dedup' --include='*.rs'
-  pyana-storage-templates/src/pubsub_topic.rs (doc only)
+$ grep -rn 'use dregg_storage::dedup' --include='*.rs'
+  dregg-storage-templates/src/pubsub_topic.rs (doc only)
   preflight/src/checks/storage.rs:4
 ```
 
@@ -176,7 +176,7 @@ oracle's slot holds.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::rate_oracle`.
+- Template: `dregg_storage_templates::rate_oracle`.
 - Factory descriptor: `rate_oracle_factory_descriptor()` taking
   the trusted publisher signature set + a denominator asset id.
 - Slot shape: `current_rates: BlindedSet<AssetId, ExchangeRate>`,
@@ -198,7 +198,7 @@ surface.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::namespace_mount`.
+- Template: `dregg_storage_templates::namespace_mount`.
 - Factory descriptor: `namespace_mount_factory_descriptor()` taking
   `(parent_namespace_cell, path, kind: StorageMountKind, fee_policy_oracle_cell)`.
 - Slot shape: `path_canonical: [u8; 32]`, `target_cell: CellId`,
@@ -213,7 +213,7 @@ surface.
 ## operator.rs — `RelayOperator`
 
 **Classification:** template-candidate (already migrated and
-deprecated). Covered by `pyana_storage_templates::relay_operator`.
+deprecated). Covered by `dregg_storage_templates::relay_operator`.
 
 ## poly_queue.rs — `PolyQueue` (KZG10-committed queue)
 
@@ -229,12 +229,12 @@ by future Plonky3/Kimchi recursion work.
 ## programmable.rs — `ProgrammableQueue`
 
 **Classification:** template-candidate (already migrated and
-deprecated). Covered by `pyana_storage_templates::programmable_queue`.
+deprecated). Covered by `dregg_storage_templates::programmable_queue`.
 
 ## pubsub.rs — `PubSubTopic`
 
 **Classification:** template-candidate (already migrated and
-deprecated). Covered by `pyana_storage_templates::pubsub_topic`.
+deprecated). Covered by `dregg_storage_templates::pubsub_topic`.
 
 ## queue.rs — `MerkleQueue`
 
@@ -257,14 +257,14 @@ state for a simple append.
 **Justification.** `QuotaCell` is conceptually a cell-program already
 ("bounded counter that decrements on write, refunds on delete"), but
 it sits in `storage/` without a `FactoryDescriptor`. Promoting it to
-`pyana_storage_templates::quota_cell` would let storage clients
+`dregg_storage_templates::quota_cell` would let storage clients
 register quota cells through the factory machinery the rest of the
 templates use, and would let the executor enforce the byte-cap and
 refund-rate invariants declaratively.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::quota_cell`.
+- Template: `dregg_storage_templates::quota_cell`.
 - Factory descriptor: `quota_cell_factory_descriptor()` taking
   `(owner: CellId, initial_quota: u64, byte_cap: u64, refund_rate: u8)`.
 - Slot shape: `quota_remaining: u64`, `bytes_used: u64`,
@@ -295,7 +295,7 @@ across shards is `Sum(shard_lens) == logical_len`.
 
 **Sketch.**
 
-- Template: `pyana_storage_templates::sharded_queue`.
+- Template: `dregg_storage_templates::sharded_queue`.
 - Factory descriptor: `sharded_queue_factory_descriptor(num_shards: u8, shard_cells: [CellId; N])`.
 - Slot shape: `shard_cells: [CellId; N]`, `total_enqueued: u64`,
   `total_dequeued: u64`, `routing_alg_tag: u32`.

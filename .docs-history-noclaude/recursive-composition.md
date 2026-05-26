@@ -1,4 +1,4 @@
-# Recursive STARK Composition for Pyana
+# Recursive STARK Composition for `dregg`
 
 Design for O(1) history verification: proving "the entire history from genesis
 to now is valid" in a single proof.
@@ -23,7 +23,7 @@ Proof_N: "Proof_{N-1} is valid AND State_{N-1} -> State_N is valid"
 `Proof_N` proves the ENTIRE history. A new node only needs `Proof_N` + current
 state to bootstrap with full state transition assurance.
 
-### What Pyana Already Has
+### What `dregg` Already Has
 
 The recursive infrastructure is partially built:
 
@@ -152,7 +152,7 @@ Production requires:
 
 ### The Problem
 
-Each pyana block has a `QuorumCertificate` — a threshold BLS12-381 signature
+Each dregg block has a `QuorumCertificate` — a threshold BLS12-381 signature
 proving supermajority agreement. Full Mina-equivalent succinctness requires
 verifying this signature inside the recursive STARK.
 
@@ -261,7 +261,7 @@ The `sp1_zkvm::lib::verify::verify_sp1_proof()` call inside the guest triggers
 SP1's deferred proof mechanism — the recursive verification is handled
 natively by the proving infrastructure.
 
-### SP1 v4+ Features Relevant to Pyana
+### SP1 v4+ Features Relevant to `dregg`
 
 | Feature | Benefit |
 |---------|---------|
@@ -271,7 +271,7 @@ natively by the proving infrastructure.
 | On-chain verifier | Deployed on all major EVM chains |
 | Network proving | Outsource to GPU clusters (10-100x faster) |
 
-### Integration with Pyana's Existing `chain/` Crate
+### Integration with `dregg`'s Existing `chain/` Crate
 
 The `chain/` crate already has:
 - `wrap_for_evm()` — wraps a STARK proof via SP1
@@ -365,7 +365,7 @@ The critical distinction: **folding works for the STEP RELATION, not for proof
 verification**. We can fold the state transition computation itself, but the
 final accumulator still needs one STARK/SNARK verification at the end.
 
-### How Pyana Could Use Folding
+### How `dregg` Could Use Folding
 
 ```
 Block 1: Fold state_transition_1 into accumulator → A_1
@@ -398,7 +398,7 @@ It commits to ALL prior transitions without proving them individually.
 | Proof size | ~10-20 KiB | ~100-200 KiB | ~260 bytes |
 | Post-quantum | No (EC-based) | Yes (hash-based) | Yes (via STARK layer) |
 | EVM-verifiable | With BN254 + MicroSpartan | No (need wrapping) | Yes (native) |
-| Existing infra in pyana | Nova backend in circuit/ | RecursiveVerifierAir | chain/ crate |
+| Existing infra in dregg | Nova backend in circuit/ | RecursiveVerifierAir | chain/ crate |
 | Complexity | Medium | High | Low (SP1 handles it) |
 
 ### Recommendation on Folding
@@ -441,43 +441,43 @@ Key properties:
 - **Constant size**: SNARK proofs are ~1 KiB regardless of circuit size.
 - **No FRI**: Polynomial commitment via IPA on groups, not FRI on hash trees.
 
-### What Transfers to Pyana
+### What Transfers to `dregg`
 
-| Mina Component | Pyana Equivalent | Gap |
+| Mina Component | `dregg` Equivalent | Gap |
 |---------------|-----------------|-----|
 | Pickles recursion (prove proof valid) | `RecursiveVerifierAir` (prove STARK valid) | Width: Plonky3 trace 12 cols vs Pickles 15 wires |
-| Step circuit (transition logic) | `StateTransitionAir` / `NullifierInsertionAir` | Pyana's is simpler (no arbitrary zkApp logic) |
+| Step circuit (transition logic) | `StateTransitionAir` / `NullifierInsertionAir` | `dregg`'s is simpler (no arbitrary zkApp logic) |
 | Wrap circuit (curve change) | Not needed (same field) | BabyBear is self-recursive |
-| IPA deferred verification | Hash-chain accumulation | Pyana's is weaker but field-native |
+| IPA deferred verification | Hash-chain accumulation | `dregg`'s is weaker but field-native |
 | Snarked ledger | State snapshot (note tree + nullifier set) | Direct mapping |
 | Bootstrap controller | `LightClientProof` + state download | Already works |
-| Transition frontier (forks) | **Not needed** (BFT = instant finality) | Pyana advantage |
-| Scan state (parallel snarking) | **Not needed** (simpler transition) | Pyana advantage |
+| Transition frontier (forks) | **Not needed** (BFT = instant finality) | `dregg` advantage |
+| Scan state (parallel snarking) | **Not needed** (simpler transition) | `dregg` advantage |
 | SNARK workers / proof market | Federation members prove (or SP1 network) | Different economic model |
 
 ### Key Differences
 
-1. **BFT vs. probabilistic finality**: Pyana has NO forks. This eliminates the
+1. **BFT vs. probabilistic finality**: `dregg` has NO forks. This eliminates the
    transition frontier, fork choice, and staged ledger — massive simplification
    over Mina.
 
-2. **BabyBear vs. Pasta**: Pyana uses BabyBear (2^31 - 2^27 + 1) with FRI.
+2. **BabyBear vs. Pasta**: `dregg` uses BabyBear (2^31 - 2^27 + 1) with FRI.
    Mina uses Pallas/Vesta with IPA. BabyBear is faster for proving (smaller
    field, hardware-friendly) but produces larger proofs (STARK = O(log N) vs
    SNARK = O(1)).
 
-3. **Post-quantum**: Pyana's STARK path is post-quantum secure (hash-based).
+3. **Post-quantum**: `dregg`'s STARK path is post-quantum secure (hash-based).
    Mina's Pickles relies on discrete log hardness (broken by quantum computers).
 
-4. **EVM compatibility**: Pyana wraps via SP1 → Groth16 (~260 bytes, ~200k gas).
+4. **EVM compatibility**: `dregg` wraps via SP1 → Groth16 (~260 bytes, ~200k gas).
    Mina wraps via Kimchi → Groth16 (similar size, similar cost, less mature
    tooling for EVM).
 
 5. **Transition complexity**: Mina proves arbitrary zkApp execution (15-wire
-   Plonkish circuit per account update). Pyana proves nullifier insertion +
+   Plonkish circuit per account update). `dregg` proves nullifier insertion +
    note tree update + state root computation — fundamentally simpler.
 
-### What Pyana Gets for Free (vs. Mina)
+### What `dregg` Gets for Free (vs. Mina)
 
 - **No transition frontier maintenance**: BFT finality means one canonical chain always.
 - **No scan state scheduling**: No need to parallelize proving across workers.
@@ -485,18 +485,18 @@ Key properties:
 - **Simpler bootstrap**: `Proof + state_snapshot` — no fork resolution needed.
 - **Faster per-block**: Simpler transition logic = smaller circuit = faster proving.
 
-### What Pyana Must Build That Mina Already Has
+### What `dregg` Must Build That Mina Already Has
 
 - **In-circuit signature verification**: Mina's curve cycle makes Schnorr/ECDSA cheap.
-  Pyana needs BLS-in-BabyBear (expensive) or a scheme change.
-- **Deferred verification accumulation**: Mina's IPA trick is elegant. Pyana must use
+  `dregg` needs BLS-in-BabyBear (expensive) or a scheme change.
+- **Deferred verification accumulation**: Mina's IPA trick is elegant. `dregg` must use
   hash-chain or folding (less algebraically elegant, but works).
-- **Proven history from genesis**: Mina has shipped this since 2021. Pyana's recursive
+- **Proven history from genesis**: Mina has shipped this since 2021. `dregg`'s recursive
   STARK is still in prototype.
 
 ---
 
-## 7. Recommendation: Pyana's Path
+## 7. Recommendation: `dregg`'s Path
 
 ### Decision Framework
 
@@ -514,7 +514,7 @@ Key properties:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    Pyana Recursive Proof Architecture                     │
+│                    Dregg Recursive Proof Architecture                     │
 │                                                                         │
 │  Per-Block (real-time):                                                 │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
@@ -604,7 +604,7 @@ history. EVM-verifiable via Groth16.
 3. **Chain of epochs** — Each epoch proof recursively verifies the previous epoch
    proof. After N epochs, one proof covers genesis → now.
 
-4. **EVM contract deployment** — Deploy SP1 verifier on Base. The pyana bridge
+4. **EVM contract deployment** — Deploy SP1 verifier on Base. The dregg bridge
    contract calls `ISP1Verifier.verifyProof(vkey, publicValues, proofBytes)` to
    accept state root updates.
 
@@ -671,7 +671,7 @@ The `p3-recursion` crate is not on crates.io and is under active development.
 API changes could require significant rework.
 
 **Mitigation**: Phase 2 uses SP1 (production-grade, stable API). Phase 3
-custom recursion only starts after `p3-recursion` stabilizes or pyana builds
+custom recursion only starts after `p3-recursion` stabilizes or dregg builds
 its own (our `RecursiveVerifierAir` is a start).
 
 ### Risk: SP1 Proving Cost
@@ -735,7 +735,7 @@ Who pays for the expensive proving work?
 
 ### The Key Insight
 
-Pyana's BFT finality is a massive advantage over Mina. It eliminates fork
+`dregg`'s BFT finality is a massive advantage over Mina. It eliminates fork
 handling, staged ledgers, and transition frontiers. The recursive proof system
 only needs to handle a single canonical chain, which simplifies everything.
 

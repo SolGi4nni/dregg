@@ -3,7 +3,7 @@
 //! Generates random governance proposals (join, leave, amend threshold, amend routes),
 //! applies random voting patterns, and verifies constitution invariants after each round.
 
-use pyana_teasting::assertions::assert_constitution_valid;
+use dregg_teasting::assertions::assert_constitution_valid;
 
 // =============================================================================
 // Deterministic PRNG (xorshift64)

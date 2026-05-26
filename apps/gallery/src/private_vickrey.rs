@@ -29,9 +29,9 @@
 //! - For N bidders: N-1 comparisons to find winner, then check runner-up candidates
 //! - Each comparison: 31-bit subtraction-borrow chain (same as garbled.rs)
 
-use pyana_circuit::binding::WideHash;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::garbled::{GarbledGate, GateEvalRecord, WireLabel, garbling_hash};
+use dregg_circuit::binding::WideHash;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::garbled::{GarbledGate, GateEvalRecord, WireLabel, garbling_hash};
 
 /// Number of bits per bid value (BabyBear field: 31 bits).
 pub const BID_BITS: usize = 31;
@@ -588,7 +588,7 @@ pub fn garble_vickrey_circuit(num_bidders: usize) -> (VickreyCircuit, VickreyGar
 
 /// Compute a BLAKE3 commitment to the garbled tables.
 fn compute_vickrey_commitment(gates: &[GarbledGate]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-circuit-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-circuit-v1");
     for gate in gates {
         for entry in &gate.table {
             for elem in entry {
@@ -637,7 +637,7 @@ pub fn bidder_obtain_labels_ot(
     bidder_index: usize,
     bid_value: u32,
 ) -> Result<Vec<WireLabel>, String> {
-    use pyana_cell::oblivious_transfer::{OtReceiver, OtSender};
+    use dregg_cell::oblivious_transfer::{OtReceiver, OtSender};
 
     let pairs = &secrets.bidder_labels[bidder_index];
     let mut labels = Vec::with_capacity(BID_BITS);
@@ -880,11 +880,11 @@ pub fn prove_vickrey_evaluation(
     circuit: &VickreyCircuit,
     evaluation: &VickreyEvaluation,
 ) -> Vec<u8> {
-    use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
+    use dregg_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
     // Convert circuit commitment to WideHash for the AIR.
     let commitment_wide = WideHash::from_poseidon2(
-        "pyana-vickrey-circuit-v1",
+        "dregg-vickrey-circuit-v1",
         &circuit
             .circuit_commitment
             .iter()
@@ -897,12 +897,12 @@ pub fn prove_vickrey_evaluation(
     for &wire_idx in &evaluation.comparison_output_wires {
         output_elements.push(BabyBear::new(wire_idx as u32));
     }
-    let output_hash = WideHash::from_poseidon2("pyana-vickrey-output-v1", &output_elements);
+    let output_hash = WideHash::from_poseidon2("dregg-vickrey-output-v1", &output_elements);
 
     let dsl_proof =
         prove_garbled_evaluation_dsl(&evaluation.gate_trace, &commitment_wide, &output_hash);
 
-    pyana_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
+    dregg_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
 }
 
 // ============================================================================
@@ -1193,7 +1193,7 @@ impl FederatedVickreyAuction {
         // Derive output decode seeds for each node (for threshold decoding).
         for node_id in 0..self.node_count {
             let share = self.garbling_shares[node_id].as_ref().unwrap();
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-output-decode-seed-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-output-decode-seed-v1");
             hasher.update(&self.auction_id);
             hasher.update(&(node_id as u32).to_le_bytes());
             hasher.update(&share.internal_seed);
@@ -1209,7 +1209,7 @@ impl FederatedVickreyAuction {
         // In a production implementation, the label derivation would use
         // XOR-combining of per-node label shares. For this implementation,
         // we derive a master seed by combining all internal seeds via BLAKE3.
-        let mut master_hasher = blake3::Hasher::new_derive_key("pyana-vickrey-master-seed-v1");
+        let mut master_hasher = blake3::Hasher::new_derive_key("dregg-vickrey-master-seed-v1");
         master_hasher.update(&self.auction_id);
         for node_id in 0..self.node_count {
             let share = self.garbling_shares[node_id].as_ref().unwrap();
@@ -1341,7 +1341,7 @@ impl FederatedVickreyAuction {
         let mut comparison_key_shares = Vec::with_capacity(num_comparisons);
 
         for cmp_idx in 0..num_comparisons {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-output-share-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-output-share-v1");
             hasher.update(&self.output_decode_seeds[node_id]);
             hasher.update(&(cmp_idx as u32).to_le_bytes());
             hasher.update(&self.auction_id);
@@ -1691,7 +1691,7 @@ impl VickreySettlementCircuit {
         let second_price = sorted[1].1;
 
         // Compute winner commitment as BLAKE3 of their index (simplified).
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-winner-commitment-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-winner-commitment-v1");
         hasher.update(&(winner_index as u32).to_le_bytes());
         hasher.update(&sorted[0].1.to_le_bytes());
         let winner_commitment = *hasher.finalize().as_bytes();
@@ -1738,8 +1738,8 @@ impl VickreySettlementCircuit {
     ///
     /// Uses the garbled AIR infrastructure to prove the sorted trace is valid.
     pub fn prove_settlement(&self) -> Vec<u8> {
-        use pyana_circuit::binding::WideHash;
-        use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
+        use dregg_circuit::binding::WideHash;
+        use dregg_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
         // Build a synthetic gate trace that encodes the settlement verification.
         // Each "gate" represents a comparison between adjacent rows.
@@ -1781,17 +1781,17 @@ impl VickreySettlementCircuit {
             commit_elems.push(BabyBear::new(byte as u32));
         }
         let commitment_wide =
-            WideHash::from_poseidon2("pyana-vickrey-settlement-v1", &commit_elems);
+            WideHash::from_poseidon2("dregg-vickrey-settlement-v1", &commit_elems);
 
         let mut output_elems: Vec<BabyBear> = Vec::new();
         output_elems.push(BabyBear::new(self.second_price as u32));
         output_elems.push(BabyBear::new(self.num_bids as u32));
         let output_hash =
-            WideHash::from_poseidon2("pyana-vickrey-settlement-output-v1", &output_elems);
+            WideHash::from_poseidon2("dregg-vickrey-settlement-output-v1", &output_elems);
 
         let dsl_proof = prove_garbled_evaluation_dsl(&gate_trace, &commitment_wide, &output_hash);
 
-        pyana_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
+        dregg_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
     }
 }
 
@@ -1802,7 +1802,7 @@ impl VickreySettlementCircuit {
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::Aead};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
-use pyana_cell::value_commitment::{
+use dregg_cell::value_commitment::{
     BulletproofRangeProof, ValueCommitment, randomness_generator, value_generator,
 };
 
@@ -1872,11 +1872,11 @@ fn derive_winner_encryption_key(winner_key: &[u8; 32], context: &str) -> [u8; 32
 /// The nonce is derived deterministically from the key + a purpose tag
 /// (safe because each key is used at most once per purpose).
 fn encrypt_to_winner(winner_key: &[u8; 32], purpose: &str, plaintext: &[u8]) -> Vec<u8> {
-    let enc_key = derive_winner_encryption_key(winner_key, "pyana-vickrey-phase3-enc-v1");
+    let enc_key = derive_winner_encryption_key(winner_key, "dregg-vickrey-phase3-enc-v1");
     let cipher = ChaCha20Poly1305::new(enc_key.as_ref().into());
 
     // Derive a 12-byte nonce from purpose.
-    let mut nonce_hasher = blake3::Hasher::new_derive_key("pyana-vickrey-phase3-nonce-v1");
+    let mut nonce_hasher = blake3::Hasher::new_derive_key("dregg-vickrey-phase3-nonce-v1");
     nonce_hasher.update(winner_key);
     nonce_hasher.update(purpose.as_bytes());
     let nonce_full = nonce_hasher.finalize();
@@ -1893,10 +1893,10 @@ fn decrypt_from_winner(
     purpose: &str,
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let enc_key = derive_winner_encryption_key(winner_key, "pyana-vickrey-phase3-enc-v1");
+    let enc_key = derive_winner_encryption_key(winner_key, "dregg-vickrey-phase3-enc-v1");
     let cipher = ChaCha20Poly1305::new(enc_key.as_ref().into());
 
-    let mut nonce_hasher = blake3::Hasher::new_derive_key("pyana-vickrey-phase3-nonce-v1");
+    let mut nonce_hasher = blake3::Hasher::new_derive_key("dregg-vickrey-phase3-nonce-v1");
     nonce_hasher.update(winner_key);
     nonce_hasher.update(purpose.as_bytes());
     let nonce_full = nonce_hasher.finalize();
@@ -1911,14 +1911,14 @@ fn decrypt_from_winner(
 
 /// Compute the Fiat-Shamir challenge for the equality proof.
 ///
-/// e = H("pyana-vickrey-equality-challenge-v1",
+/// e = H("dregg-vickrey-equality-challenge-v1",
 ///       price_commitment || payment_commitment || nonce_commitment)
 fn equality_challenge(
     price_commitment: &[u8; 32],
     payment_commitment: &[u8; 32],
     nonce_commitment: &[u8; 32],
 ) -> Scalar {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-equality-challenge-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-equality-challenge-v1");
     hasher.update(price_commitment);
     hasher.update(payment_commitment);
     hasher.update(nonce_commitment);
@@ -2173,8 +2173,8 @@ pub fn verify_vickrey_payment(
 // Phase 4: Anonymous Winner Settlement (Ring Proof + Stealth)
 // ============================================================================
 
-use pyana_cell::stealth::{StealthAddress, StealthMetaAddress};
-use pyana_circuit::poseidon2::hash_fact;
+use dregg_cell::stealth::{StealthAddress, StealthMetaAddress};
+use dregg_circuit::poseidon2::hash_fact;
 
 /// Phase 4: Anonymous winner settlement.
 ///
@@ -2376,12 +2376,12 @@ fn compute_leaf_path(
 
 /// Convert a 32-byte commitment to a BabyBear field element.
 fn commitment_to_field(commitment: &[u8; 32]) -> BabyBear {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-ring-leaf-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-ring-leaf-v1");
     hasher.update(commitment);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();
     let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    BabyBear::new(val % pyana_circuit::field::BABYBEAR_P)
+    BabyBear::new(val % dregg_circuit::field::BABYBEAR_P)
 }
 
 /// Compute next power of 4 >= n.
@@ -2418,9 +2418,9 @@ fn prove_ring_membership(
     blinding: BabyBear,
     ring_root: BabyBear,
 ) -> Result<Vec<u8>, String> {
-    use pyana_circuit::binding::WideHash;
-    use pyana_circuit::stark;
-    use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
+    use dregg_circuit::binding::WideHash;
+    use dregg_circuit::stark;
+    use dregg_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
     // Compute blinded leaf
     let blinded_leaf_val = hash_fact(leaf, &[blinding]);
@@ -2488,10 +2488,10 @@ fn prove_ring_membership(
 
     // Commitment encodes ring_root and blinded_leaf
     let commit_elems = vec![ring_root, blinded_leaf_val];
-    let commitment_wide = WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
+    let commitment_wide = WideHash::from_poseidon2("dregg-vickrey-ring-proof-v1", &commit_elems);
 
     let output_elems = vec![blinded_leaf_val, ring_root];
-    let output_hash = WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
+    let output_hash = WideHash::from_poseidon2("dregg-vickrey-ring-output-v1", &output_elems);
 
     let dsl_proof = prove_garbled_evaluation_dsl(&gate_trace, &commitment_wide, &output_hash);
 
@@ -2500,16 +2500,16 @@ fn prove_ring_membership(
 
 /// Verify a STARK ring membership proof.
 fn verify_ring_membership(proof_bytes: &[u8], blinded_leaf: BabyBear, ring_root: BabyBear) -> bool {
-    use pyana_circuit::binding::WideHash;
-    use pyana_circuit::stark;
-    use pyana_dsl_runtime::garbled::garbled_dsl_circuit;
+    use dregg_circuit::binding::WideHash;
+    use dregg_circuit::stark;
+    use dregg_dsl_runtime::garbled::garbled_dsl_circuit;
 
     // Reconstruct the commitment and output hashes
     let commit_elems = vec![ring_root, blinded_leaf];
-    let commitment_wide = WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
+    let commitment_wide = WideHash::from_poseidon2("dregg-vickrey-ring-proof-v1", &commit_elems);
 
     let output_elems = vec![blinded_leaf, ring_root];
-    let output_hash = WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
+    let output_hash = WideHash::from_poseidon2("dregg-vickrey-ring-output-v1", &output_elems);
 
     // Reconstruct public inputs for the DSL circuit
     let mut public_inputs = Vec::with_capacity(8);
@@ -2630,7 +2630,7 @@ fn winner_knowledge_challenge(
     nonce_commitment: &[u8; 32],
     context: &[u8],
 ) -> Scalar {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-vickrey-winner-knowledge-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-vickrey-winner-knowledge-v1");
     hasher.update(commitment);
     hasher.update(nonce_commitment);
     hasher.update(context);
@@ -2660,7 +2660,7 @@ impl PrivateVickreyAuction {
         let mut blinding_bytes = [0u8; 4];
         getrandom::fill(&mut blinding_bytes).expect("getrandom failed");
         let blinding =
-            BabyBear::new(u32::from_le_bytes(blinding_bytes) % pyana_circuit::field::BABYBEAR_P);
+            BabyBear::new(u32::from_le_bytes(blinding_bytes) % dregg_circuit::field::BABYBEAR_P);
 
         // 3. Get the prover's leaf
         let my_leaf = commitment_to_field(&bidder_commitments[winner_index]);
@@ -3900,7 +3900,7 @@ mod tests {
 
     #[test]
     fn test_phase4_stealth_address_artist_can_scan() {
-        use pyana_cell::stealth::StealthKeys;
+        use dregg_cell::stealth::StealthKeys;
 
         // Artist generates stealth keys
         let artist_keys = StealthKeys::from_keys([0xA0; 32], [0xA1; 32]);
@@ -3964,7 +3964,7 @@ mod tests {
 
     #[test]
     fn test_phase4_stealth_unlinkability_across_auctions() {
-        use pyana_cell::stealth::StealthKeys;
+        use dregg_cell::stealth::StealthKeys;
 
         let artist_keys = StealthKeys::from_keys([0xC0; 32], [0xC1; 32]);
         let artist_meta = artist_keys.meta_address();
@@ -3992,7 +3992,7 @@ mod tests {
 
     #[test]
     fn test_phase4_full_flow_bid_garble_evaluate_committed_anonymous_settle_verify() {
-        use pyana_cell::stealth::StealthKeys;
+        use dregg_cell::stealth::StealthKeys;
 
         let auction_id = [0xE4; 32];
         let winner_key = test_winner_key(10);
@@ -4065,7 +4065,7 @@ mod tests {
 
     #[test]
     fn test_phase4_verify_rejects_tampered_ring_root() {
-        use pyana_cell::stealth::StealthKeys;
+        use dregg_cell::stealth::StealthKeys;
 
         let auction_id = [0xE5; 32];
         let winner_key = test_winner_key(11);

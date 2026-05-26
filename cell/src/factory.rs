@@ -1,4 +1,4 @@
-//! EROS-style Object Factories for pyana.
+//! EROS-style Object Factories for dregg.
 //!
 //! A Factory is a CellProgram that constrains what new cells it can create.
 //! The factory's [`FactoryDescriptor`] IS the constructor transparency — anyone
@@ -54,7 +54,7 @@ use crate::vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical
 pub fn canonical_program_vk(program: &CellProgram) -> [u8; 32] {
     let serialized = postcard::to_allocvec(program)
         .expect("CellProgram postcard serialization is infallible for v1 encoding");
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-cellprogram-vk-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-cellprogram-vk-v1");
     hasher.update(&(serialized.len() as u64).to_le_bytes());
     hasher.update(&serialized);
     *hasher.finalize().as_bytes()
@@ -63,8 +63,8 @@ pub fn canonical_program_vk(program: &CellProgram) -> [u8; 32] {
 /// Canonically serialize a `CellProgram` to its postcard bytes — the
 /// `program_bytes` component of [`canonical_program_vk_v2`].
 ///
-/// Exposed so v2 callers in higher layers (`pyana-app-framework` and
-/// app crates that depend on both `pyana-cell` and `pyana-circuit`)
+/// Exposed so v2 callers in higher layers (`dregg-app-framework` and
+/// app crates that depend on both `dregg-cell` and `dregg-circuit`)
 /// can feed the program directly into a [`VkComponents`] without
 /// re-encoding.
 pub fn canonical_program_bytes(program: &CellProgram) -> Vec<u8> {
@@ -79,7 +79,7 @@ pub fn canonical_program_bytes(program: &CellProgram) -> Vec<u8> {
 ///
 /// 1. The program's canonical postcard bytes (the spec).
 /// 2. The AIR-shape fingerprint (which AIR runs the spec). Computed by
-///    `pyana_circuit::air_descriptor::fingerprint(&AIR_DESCRIPTOR)`.
+///    `dregg_circuit::air_descriptor::fingerprint(&AIR_DESCRIPTOR)`.
 /// 3. The verifier-impl fingerprint (which code/wasm/compiled-VK
 ///    runs the verifier).
 /// 4. The proving-system identifier (Plonky3-FRI, Kimchi, SP1, …).
@@ -93,7 +93,7 @@ pub fn canonical_program_bytes(program: &CellProgram) -> Vec<u8> {
 /// v1 callers (`canonical_program_vk(program)`) committed only to
 /// component 1. Their vk_hashes are *not* equivalent to v2 vk_hashes
 /// computed over the same program — domain separation under the v2
-/// domain string `"pyana-vk-v2"` ensures the two never collide.
+/// domain string `"dregg-vk-v2"` ensures the two never collide.
 /// Greenfield migration: starbridge-apps and other VK authors bump all
 /// their vk_hash constants to v2 in one move; receivers (factory
 /// registries, custom-predicate / custom-effect registries) accept the
@@ -139,7 +139,7 @@ pub enum ChildVkStrategy {
 impl ChildVkStrategy {
     /// Compute the BLAKE3 hash of this strategy for descriptor hashing.
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-child-vk-strategy-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-child-vk-strategy-v1");
         match self {
             ChildVkStrategy::Fixed(None) => {
                 hasher.update(&[0u8]);
@@ -165,10 +165,10 @@ impl ChildVkStrategy {
 
     /// Derive a child VK from creation parameters (for `Derived` strategy).
     ///
-    /// Uses BLAKE3 keyed derivation: `child_vk = BLAKE3("pyana-derived-child-vk" || factory_vk || param_hash)`.
+    /// Uses BLAKE3 keyed derivation: `child_vk = BLAKE3("dregg-derived-child-vk" || factory_vk || param_hash)`.
     /// This is the off-circuit computation; the circuit version uses Poseidon2 over BabyBear elements.
     pub fn derive_child_vk(factory_vk: &[u8; 32], param_hash: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-derived-child-vk-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-derived-child-vk-v1");
         hasher.update(factory_vk);
         hasher.update(param_hash);
         *hasher.finalize().as_bytes()
@@ -176,9 +176,9 @@ impl ChildVkStrategy {
 
     /// Compute the param_hash for a set of creation parameters.
     ///
-    /// `param_hash = BLAKE3("pyana-factory-params" || mode || fields || caps_hash)`.
+    /// `param_hash = BLAKE3("dregg-factory-params" || mode || fields || caps_hash)`.
     pub fn compute_param_hash(params: &FactoryCreationParams) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-factory-params-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-factory-params-v1");
         let mode_byte = match params.mode {
             CellMode::Hosted => 0u8,
             CellMode::Sovereign => 1u8,
@@ -305,7 +305,7 @@ pub struct FactoryDescriptor {
 impl FactoryDescriptor {
     /// Compute the BLAKE3 hash of this descriptor (content-addressed identity).
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-factory-descriptor-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-factory-descriptor-v1");
         hasher.update(&self.factory_vk);
         match &self.child_program_vk {
             Some(vk) => {
@@ -491,7 +491,7 @@ impl CapTemplate {
     /// Compute a hash of this template for descriptor hashing.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-cap-template:");
+        hasher.update(b"dregg-cap-template:");
         match &self.target {
             CapTarget::SelfCell => {
                 hasher.update(&[0u8]);
@@ -554,7 +554,7 @@ impl FieldConstraint {
     /// Compute a hash of this constraint for descriptor hashing.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-field-constraint:");
+        hasher.update(b"dregg-field-constraint:");
         match self {
             FieldConstraint::Equality { field_index, value } => {
                 hasher.update(&[0u8]);

@@ -3,9 +3,9 @@
 //! the live chain head. An attestation that lies about its terminal
 //! hash must be rejected at apply.
 
-use pyana_cell::lifecycle::ArchivalAttestation;
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::{
+use dregg_cell::lifecycle::ArchivalAttestation;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
 };

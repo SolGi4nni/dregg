@@ -6,10 +6,10 @@
 //! γ.2 canonical id preimage shape; failure indicates a regression in
 //! `cell/src/program.rs` or the γ.2 design.
 
-use pyana_cell::id::CellId;
-use pyana_cell::predicate::WitnessedPredicate;
-use pyana_cell::program::{CustomDescriptor, DeltaRelation, ReadSet};
-use pyana_cell::{CellProgram, CellState, InputRef, ProgramError, StateConstraint, field_from_u64};
+use dregg_cell::id::CellId;
+use dregg_cell::predicate::WitnessedPredicate;
+use dregg_cell::program::{CustomDescriptor, DeltaRelation, ReadSet};
+use dregg_cell::{CellProgram, CellState, InputRef, ProgramError, StateConstraint, field_from_u64};
 
 use crate::report::{CheckResult, run_check};
 
@@ -144,7 +144,7 @@ fn check_bound_delta_sentinel() -> Result<(), String> {
 
 fn transfer_pre(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> Vec<u8> {
     let mut v = Vec::with_capacity(128);
-    v.extend_from_slice(b"pyana-transfer-id-v1");
+    v.extend_from_slice(b"dregg-transfer-id-v1");
     v.extend_from_slice(&from.0);
     v.extend_from_slice(&to.0);
     v.extend_from_slice(&amount.to_be_bytes());
@@ -160,7 +160,7 @@ fn intro_pre(
     nonce: u64,
 ) -> Vec<u8> {
     let mut v = Vec::with_capacity(160);
-    v.extend_from_slice(b"pyana-intro-id-v1");
+    v.extend_from_slice(b"dregg-intro-id-v1");
     v.extend_from_slice(&introducer.0);
     v.extend_from_slice(&recipient.0);
     v.extend_from_slice(&target.0);

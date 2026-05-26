@@ -26,9 +26,9 @@
 //! JSON / postcard / on-disk artifact formats without losing any
 //! verification material.
 
-use pyana_captp::handoff::HandoffCertificate;
-use pyana_turn::WitnessedReceipt;
-use pyana_types::AttestedRoot;
+use dregg_captp::handoff::HandoffCertificate;
+use dregg_turn::WitnessedReceipt;
+use dregg_types::AttestedRoot;
 use serde::{Deserialize, Serialize};
 
 use crate::receipt::FederationReceipt;
@@ -36,7 +36,7 @@ use crate::receipt::FederationReceipt;
 /// The Silver-Vision cross-federation evidence bundle.
 ///
 /// Constructed by the recipient's cclerk (Bob's, in the canonical demo)
-/// at chain-export time. Consumed by `pyana-verifier verify-cross-fed-bundle`
+/// at chain-export time. Consumed by `dregg-verifier verify-cross-fed-bundle`
 /// (or any compatible standalone verifier) to issue an end-to-end verdict.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CrossFedReceiptBundle {
@@ -110,10 +110,10 @@ impl CrossFedReceiptBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_captp::FederationId;
-    use pyana_cell::AuthRequired;
-    use pyana_turn::turn::TurnReceipt;
-    use pyana_types::{AttestedRoot, CellId, PublicKey, generate_keypair};
+    use dregg_captp::FederationId;
+    use dregg_cell::AuthRequired;
+    use dregg_turn::turn::TurnReceipt;
+    use dregg_types::{AttestedRoot, CellId, PublicKey, generate_keypair};
 
     fn dummy_receipt() -> TurnReceipt {
         TurnReceipt {

@@ -1,6 +1,6 @@
 //! Canonical intent lifecycle state machine.
 //!
-//! Intent lifecycle in pyana flows through five states:
+//! Intent lifecycle in dregg flows through five states:
 //!
 //! ```text
 //!   Pending ──submit──▶ Matched ──seal──▶ Sealed ──fulfill──▶ Fulfilled ──settle──▶ Settled
@@ -62,7 +62,7 @@ pub enum IntentLifecycleState {
 impl IntentLifecycleState {
     /// The canonical 32-byte slot encoding for this state.
     ///
-    /// The encoding is BLAKE3-derive("pyana-intent-state-v1", &[byte]).
+    /// The encoding is BLAKE3-derive("dregg-intent-state-v1", &[byte]).
     /// The byte is the variant index. The derivation gives every state
     /// a high-entropy value distinguishable from "uninitialized
     /// zeroed" and from arbitrary attacker-chosen values.
@@ -75,7 +75,7 @@ impl IntentLifecycleState {
             Self::Settled => 0x04,
             Self::Expired => 0xFF,
         };
-        blake3::derive_key("pyana-intent-state-v1", &[idx])
+        blake3::derive_key("dregg-intent-state-v1", &[idx])
     }
 
     /// Recover a state from its slot encoding. Returns `None` if the

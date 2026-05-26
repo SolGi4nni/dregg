@@ -324,7 +324,7 @@ becomes a regular action in a dependent turn.
 **8. "Eventual" Terminology Throughout**
 
 The word "eventual" in E means "message send that returns a promise, resolved
-asynchronously by the event loop." In pyana, turns are synchronous and
+asynchronously by the event loop." In dregg, turns are synchronous and
 deterministic. Using "eventual" is misleading.
 
 Verdict: **Replace "eventual" with "deferred" or "output-dependent" in all
@@ -551,7 +551,7 @@ public input and verify it's consistent with the derived authorization.
 
 ## Summary Table
 
-| E-language feature | Pyana implementation | Verdict | Action |
+| E-language feature | `dregg` implementation | Verdict | Action |
 |---|---|---|---|
 | Vat isolation | Cell model | Correct, essential | Keep |
 | Capability confinement | Facets + attenuation | Under-enforced | Fix via unified model |

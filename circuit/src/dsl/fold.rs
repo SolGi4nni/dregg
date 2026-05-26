@@ -430,7 +430,7 @@ pub fn compute_test_checks_commitment(num_checks: usize) -> crate::binding::Wide
             )
         })
         .collect();
-    crate::binding::WideHash::from_poseidon2("pyana-checks-v1", &check_hashes)
+    crate::binding::WideHash::from_poseidon2("dregg-checks-v1", &check_hashes)
 }
 
 pub fn create_test_fold(num_removals: usize, num_checks: usize) -> FoldWitness {
@@ -715,7 +715,7 @@ pub fn fold_circuit_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-fold-dsl-v2".into(),
+        name: "dregg-fold-dsl-v2".into(),
         trace_width: FOLD_DSL_WIDTH,
         max_degree: 3, // InvertedGated(Hash) or InvertedGated(InvertedGated(...)) reaches degree 3
         columns,

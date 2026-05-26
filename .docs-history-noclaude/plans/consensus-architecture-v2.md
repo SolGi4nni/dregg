@@ -6,7 +6,7 @@ Every device is a participant. Phones, laptops, cloud nodes — all produce bloc
 
 ## Theoretical Foundation
 
-| Paper | Insight | Pyana Application |
+| Paper | Insight | `dregg` Application |
 |-------|---------|-------------------|
 | Blocklace (2402.08068) | CRDT DAG with equivocation detection | Universal data structure replacing linear peer chains |
 | Cordial Miners (2205.09174) | 3-round total ordering from DAG, O(n) good case | Ordering for shared-resource conflicts only |
@@ -111,9 +111,9 @@ If the federation is compromised:
 
 Users' existing proofs, state commitments, and capability chains remain valid forever.
 
-## What Pyana Adds Over Shapiro
+## What `dregg` Adds Over Shapiro
 
-Shapiro's program has ZERO privacy and NO proof-carrying data. Pyana adds:
+Shapiro's program has ZERO privacy and NO proof-carrying data. `dregg` adds:
 
 1. **ZK proofs on every block** — state transitions are PROVEN correct, not just signed
 2. **Privacy** — amounts, identities, predicates all hideable (Pedersen, stealth, garbled)

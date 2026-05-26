@@ -22,9 +22,9 @@ description = "Starbridge userspace subscription — CapInbox-as-cell-program. T
 name = "starbridge_subscription"
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-cell = { path = "../../cell", default-features = false }
-pyana-types = { path = "../../types" }
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-types = { path = "../../types" }
 
 blake3 = "1"
 serde = { workspace = true }

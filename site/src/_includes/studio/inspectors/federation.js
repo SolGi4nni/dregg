@@ -1,5 +1,5 @@
 /**
- * <pyana-federation uri="pyana://federation/<fed_index>"> — federation summary.
+ * <dregg-federation uri="dregg://federation/<fed_index>"> — federation summary.
  *
  * Reads `get_federation_state(handle, fed_idx)`. Federations are addressed
  * by numeric index in the sim (no stable handle by name yet).
@@ -11,7 +11,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaFederation extends InspectorBase {
+class DreggFederation extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -31,22 +31,22 @@ class PyanaFederation extends InspectorBase {
 
     const Component = () => {
       const f = sig.value;
-      if (!f) return html`<div class="pyana-inspector pyana-inspector--empty">federation #${fedIdx} not found</div>`;
+      if (!f) return html`<div class="dregg-inspector dregg-inspector--empty">federation #${fedIdx} not found</div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code>${f.name}</code>
             · h=${String(f.height)}
             · ${String(f.num_nodes)} nodes
           </span>`;
       }
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">federation</span>
-            <code class="pyana-inspector__id">${f.name} (#${String(f.fed_index)})</code>
+            <span class="dregg-inspector__kind">federation</span>
+            <code class="dregg-inspector__id">${f.name} (#${String(f.fed_index)})</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>name</dt><dd>${f.name}</dd>
             <dt>height</dt><dd>${String(f.height)}</dd>
             <dt>nodes</dt><dd>${String(f.num_nodes)}</dd>
@@ -61,4 +61,4 @@ class PyanaFederation extends InspectorBase {
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-federation')) customElements.define('pyana-federation', PyanaFederation);
+if (!customElements.get('dregg-federation')) customElements.define('dregg-federation', DreggFederation);

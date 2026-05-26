@@ -270,7 +270,7 @@ impl StarkAir for BridgeActionAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-bridge-action-v1"
+        "dregg-bridge-action-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {

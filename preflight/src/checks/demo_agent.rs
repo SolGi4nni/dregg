@@ -1,6 +1,6 @@
 //! Demo-agent example runner: exercises every binary under demo-agent/examples/.
 //!
-//! Each example is compiled and run via `cargo run --example <name> -p pyana-demo-agent`.
+//! Each example is compiled and run via `cargo run --example <name> -p dregg-demo-agent`.
 //! The check reports PASS or FAIL with a human-readable reason for each example, then
 //! returns aggregate success only if ALL examples pass.
 //!
@@ -32,7 +32,7 @@ const SKIP_MARKERS: &[&str] = &[
     "SKIP: node not running",
     "SKIP: missing env",
     "SKIP: no network",
-    "PYANA_SKIP",
+    "DREGG_SKIP",
 ];
 
 /// The full, ordered list of demo-agent examples.
@@ -107,7 +107,7 @@ fn run_example(name: &str) -> Result<(), String> {
             "--example",
             name,
             "-p",
-            "pyana-demo-agent",
+            "dregg-demo-agent",
             "--message-format=short",
         ])
         .stdout(Stdio::piped())

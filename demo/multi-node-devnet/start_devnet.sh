@@ -13,7 +13,7 @@
 #
 # After boot the two federations cross-register: each federation
 # ingests the other's federation_descriptor (a copy of genesis.json) via
-# `pyana-node register-federation`, populating
+# `dregg-node register-federation`, populating
 # known_federations/<other_fed_id>.json on every node in the local
 # federation. This is the SILVER-VISION §0.2 out-of-band trust step.
 #
@@ -36,7 +36,7 @@ devnet_step "step 1 — generate genesis for each federation"
 for fed in "${FEDERATIONS[@]}"; do
     gdir=$(fed_genesis_dir "$fed")
     # Robust reuse check (P0 for clean reset+start flows): only reuse if the
-    # *complete* expected outputs from `pyana-node genesis` exist (genesis.json
+    # *complete* expected outputs from `dregg-node genesis` exist (genesis.json
     # + all per-node keys). Partial dirs (e.g. post-reset races, interrupted
     # prior runs) force a fresh generation. This makes devnet bringup reliable
     # and "correct by default" after ./reset_devnet.sh.

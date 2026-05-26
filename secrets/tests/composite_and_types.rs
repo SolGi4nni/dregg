@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyana_secrets::{
+use dregg_secrets::{
     CompositeStore, EncryptedFileStore, SecretId, SecretStore, SecretStoreError, SecretValue,
 };
 
@@ -12,7 +12,7 @@ fn temp_dir_path() -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "pyana-secrets-composite-test-{}-{}",
+        "dregg-secrets-composite-test-{}-{}",
         std::process::id(),
         id
     ))

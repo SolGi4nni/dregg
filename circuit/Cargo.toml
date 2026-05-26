@@ -1,11 +1,11 @@
 [package]
-name = "pyana-circuit"
+name = "dregg-circuit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Zero-knowledge proof circuits for pyana authorization token chains"
+description = "Zero-knowledge proof circuits for dregg authorization token chains"
 
 [dependencies]
 # Plonky3 core (workspace-pinned)
@@ -33,10 +33,10 @@ p3-batch-stark = { workspace = true, optional = true }
 p3-lookup = { workspace = true, optional = true }
 p3-poseidon2-circuit-air = { workspace = true, optional = true }
 
-# Pyana DSL proc-macro — the temporal_predicate_dsl module is the manually-expanded
-# equivalent of the #[pyana_circuit] macro output (the macro cannot self-reference
+# Dregg DSL proc-macro — the temporal_predicate_dsl module is the manually-expanded
+# equivalent of the #[dregg_circuit] macro output (the macro cannot self-reference
 # within its own crate, so we expand it manually).
-pyana-dsl = { path = "../pyana-dsl" }
+dregg-dsl = { path = "../dregg-dsl" }
 
 postcard = { version = "1", features = ["alloc"] }
 
@@ -103,15 +103,15 @@ recursion = [
 
 [dev-dependencies]
 criterion = { workspace = true }
-pyana-bridge = { path = "../bridge", features = ["test-utils"] }
-pyana-cell = { path = "../cell" }
-pyana-trace = { path = "../trace" }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
-pyana-turn = { path = "../turn" }
-# Used by benches (proof_benchmarks, practical_benchmarks). pyana-dsl-runtime is a
-# thin re-export over pyana-circuit::dsl; this is a dev-dep cycle that Cargo permits
-# (dev-deps are not used when building pyana-circuit as a library dependency).
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
+dregg-cell = { path = "../cell" }
+dregg-trace = { path = "../trace" }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-turn = { path = "../turn" }
+# Used by benches (proof_benchmarks, practical_benchmarks). dregg-dsl-runtime is a
+# thin re-export over dregg-circuit::dsl; this is a dev-dep cycle that Cargo permits
+# (dev-deps are not used when building dregg-circuit as a library dependency).
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 getrandom = { workspace = true }
 blake3 = "1"
 rmp-serde = { workspace = true }

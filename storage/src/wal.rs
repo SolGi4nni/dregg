@@ -356,7 +356,7 @@ mod tests {
     use std::path::Path;
 
     fn temp_wal_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("pyana_wal_tests");
+        let dir = std::env::temp_dir().join("dregg_wal_tests");
         fs::create_dir_all(&dir).unwrap();
         dir.join(format!("{}.wal", name))
     }

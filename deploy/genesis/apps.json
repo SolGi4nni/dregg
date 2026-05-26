@@ -93,7 +93,7 @@
           "cell_id": "ce11000000000000000000000000000000000000000000000000000000000007",
           "program": "name_registry_v1",
           "owner": "nameservice",
-          "description": "Human-readable name to pyana:// URI mapping. Supports TTL and renewal.",
+          "description": "Human-readable name to dregg:// URI mapping. Supports TTL and renewal.",
           "parameters": {
             "ttl_waves": 10000,
             "registration_fee": 100,

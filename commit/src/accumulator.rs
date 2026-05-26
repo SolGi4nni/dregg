@@ -34,7 +34,7 @@
 //! where remainder != 0 proves x is NOT in S.
 //! If x IS in S, (alpha - x) | Acc exactly, so remainder = 0.
 
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 // ============================================================================
 // BabyBear^4: Quartic extension field
@@ -394,7 +394,7 @@ impl PolynomialAccumulator {
     /// Uses BLAKE3 in XOF mode to produce 4 independent coordinates with full
     /// entropy per coordinate (no correlation between h0..h3).
     pub fn derive_alpha(domain: &[BabyBear], set_commitment: &[u8; 32]) -> BabyBear4 {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-commit accumulator alpha v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-commit accumulator alpha v2");
         // Include domain elements.
         for elem in domain {
             hasher.update(&elem.as_u32().to_le_bytes());

@@ -8,12 +8,12 @@
 //! 5. Present in Fully Private mode: verifier sees only allow/deny + STARK proof
 //! 6. For each mode, show exactly what the verifier learns and what remains hidden
 
-use pyana_sdk::{AgentCipherclerk, AuthorizationPresentation, FactIndex, VerificationMode};
-use pyana_sdk::{Attenuation, AuthRequest};
-use pyana_trace::Conclusion;
+use dregg_sdk::{AgentCipherclerk, AuthorizationPresentation, FactIndex, VerificationMode};
+use dregg_sdk::{Attenuation, AuthRequest};
+use dregg_trace::Conclusion;
 
 fn main() {
-    println!("=== Pyana Progressive Disclosure Demo ===\n");
+    println!("=== Dregg Progressive Disclosure Demo ===\n");
     println!("This demo shows the SAME authorization evaluated three different ways,");
     println!("with progressively less information revealed to the verifier.\n");
 

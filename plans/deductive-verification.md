@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-Pyana composes multiple zero-knowledge proofs to form a complete authorization
+`dregg` composes multiple zero-knowledge proofs to form a complete authorization
 proof. Each proof (IVC fold chain, Merkle membership, Datalog derivation, effect
 VM execution) proves one piece of the puzzle, and they are composed together in
 the PresentationProof. But **how do we know the composition is sound?**
@@ -116,7 +116,7 @@ no source are either:
   timestamp from verifier, action from the authorization request)
 - **Gaps** that indicate missing composition rules
 
-## Findings from Pyana Analysis
+## Findings from `dregg` Analysis
 
 ### Cryptographically Enforced (11 guarantees)
 
@@ -191,7 +191,7 @@ The gap analysis helps distinguish "external input" from "missing binding."
 3. **Formal extraction**: The ProofStatement model could be exported to Lean4 or
    Coq for machine-checked verification of the composition properties.
 
-4. **CI integration**: Run `cargo run -p pyana-verification` in CI to catch
+4. **CI integration**: Run `cargo run -p dregg-verification` in CI to catch
    composition regressions when proof interfaces change.
 
 ## Usage

@@ -338,8 +338,8 @@ impl PeerExchange {
         new_commitment: &[u8; 32],
         _effects_hash: &[u8; 32],
     ) -> Result<(), PeerExchangeError> {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark;
 
         // Deserialize proof.
         let proof = stark::proof_from_bytes(proof_bytes)
@@ -350,7 +350,7 @@ impl PeerExchange {
         let new_commit_4 = Self::commitment_to_4bb(new_commitment);
 
         // Validate minimum PI count.
-        use pyana_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
         let min_pi_count = pi::BASE_COUNT;
         if proof.public_inputs.len() < min_pi_count {
             return Err(PeerExchangeError::InvalidTransitionProof(format!(
@@ -409,7 +409,7 @@ impl PeerExchange {
         }
 
         // Verify the STARK proof using EffectVmAir.
-        let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+        let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
         stark::verify(&air, &proof, &public_inputs)
             .map_err(|e| PeerExchangeError::InvalidTransitionProof(e))?;
 
@@ -427,8 +427,8 @@ impl PeerExchange {
     /// that function hashed the stored bytes, producing values unrelated to
     /// `compute_commitment_4`'s output, causing proof verification to always fail.
     #[cfg(feature = "zkvm")]
-    fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
-        use pyana_circuit::field::BabyBear;
+    fn commitment_to_4bb(bytes: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 4] {
+        use dregg_circuit::field::BabyBear;
         [
             BabyBear::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
             BabyBear::new(u32::from_le_bytes(bytes[4..8].try_into().unwrap())),

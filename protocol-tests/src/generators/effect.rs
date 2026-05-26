@@ -6,8 +6,8 @@
 //! `permission_enforcement`) will widen this once they're implemented.
 
 use proptest::prelude::*;
-use pyana_cell::CellId;
-use pyana_turn::Effect;
+use dregg_cell::CellId;
+use dregg_turn::Effect;
 
 /// Strategy: a `Transfer` effect between two cells in `ids`. Self-transfers
 /// are not produced — they're either no-ops or rejected depending on

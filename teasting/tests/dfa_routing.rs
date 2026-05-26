@@ -7,10 +7,10 @@
 //! - Verify classification changes after route amendment
 //! - Revocation: remove a route, messages get Drop classification
 
-use pyana_captp::FederationId;
-use pyana_teasting::federation::quick_federation;
-use pyana_types::CellId;
-use pyana_wire::dfa_router::{
+use dregg_captp::FederationId;
+use dregg_teasting::federation::quick_federation;
+use dregg_types::CellId;
+use dregg_wire::dfa_router::{
     DispatchDecision, GovernanceProof, GovernedRouter, RouteTarget, RouteUpdateError, Router,
     cell_target, compile_routes, dispatch_path, federation_target, target_as_cell,
     target_as_federation,

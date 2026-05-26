@@ -8,7 +8,7 @@
 
 A _cell_ is the fundamental unit of isolated state in a shared fabric, analogous to an E object or a Mina zkApp account. Cells live within a federation's ledger (or sovereign, outside it); they interact with other cells via capability-mediated messaging that the executor (for hosted-cell turns) or the cell owner directly (for sovereign cells) lowers into atomic Turns. Each cell holds:
 
-- A content-addressed identity $"CellId" in {0,1}^(256)$, derived from $"BLAKE3"("pyana-cell-id-v1" || "owner_pubkey" || "factory_vk" || "genesis_nonce")$.
+- A content-addressed identity $"CellId" in {0,1}^(256)$, derived from $"BLAKE3"("dregg-cell-id-v1" || "owner_pubkey" || "factory_vk" || "genesis_nonce")$.
 - Mutable state: a $"STATE_SLOTS"$-wide array of field elements $s_0, ..., s_(n-1) in FF_p$ where $p = 2^(31) - 2^(27) + 1$ (BabyBear prime).
 - A _capability list_ (c-list): the set of capabilities the cell may exercise.
 - A _cell program_ declaring the cell's slot schema (`FieldVisibility` per slot), its `state_constraints`, and any operation-scoped transition rules.
@@ -50,7 +50,7 @@ The narrowing invariant is enforced by the runtime (for trusted-mode evaluation)
 
 === Bearer Capabilities
 
-Pyana also supports _bearer capabilities_: tokens that grant authority immediately upon presentation, without requiring storage in the recipient's c-list. A bearer capability carries a `BearerCapProof`---either a signed Ed25519 delegation chain or a STARK proof of delegation validity. Bearer capabilities follow E-semantics for immediate grants: useful for one-shot authorizations, tickets, ephemeral access tokens, and the swiss-number-bearing sturdy ref used for CapTP enlivenment.
+Dregg also supports _bearer capabilities_: tokens that grant authority immediately upon presentation, without requiring storage in the recipient's c-list. A bearer capability carries a `BearerCapProof`---either a signed Ed25519 delegation chain or a STARK proof of delegation validity. Bearer capabilities follow E-semantics for immediate grants: useful for one-shot authorizations, tickets, ephemeral access tokens, and the swiss-number-bearing sturdy ref used for CapTP enlivenment.
 
 == Turns on Strands
 
@@ -68,7 +68,7 @@ If any action in the call forest fails, all effects are rolled back via journal 
 
 === Canonical signing message
 
-The actor signs a domain-separated canonical message `pyana-turn-v3:` $||$ canonical body. The body includes `federation_id`, `actor_cell_id`, `actor_nonce`, the ordered effects list (with `effects_hash` algebraically derived), `previous_receipt_hash`, the `sovereign_witnesses` list, `execution_proof` reference, `custom_program_proofs` references, and any `conservation_proof` reference. Including `federation_id` in the signing message closes threat T6 (cross-federation replay); including `previous_receipt_hash` closes T8 (fake chain links); the full v3 body shape is verified by `pyana-verifier` during chain replay.
+The actor signs a domain-separated canonical message `dregg-turn-v3:` $||$ canonical body. The body includes `federation_id`, `actor_cell_id`, `actor_nonce`, the ordered effects list (with `effects_hash` algebraically derived), `previous_receipt_hash`, the `sovereign_witnesses` list, `execution_proof` reference, `custom_program_proofs` references, and any `conservation_proof` reference. Including `federation_id` in the signing message closes threat T6 (cross-federation replay); including `previous_receipt_hash` closes T8 (fake chain links); the full v3 body shape is verified by `dregg-verifier` during chain replay.
 
 == The Unified `Federation` <sec-federation>
 
@@ -88,7 +88,7 @@ pub struct Federation {
 
 Five things follow:
 
-+ *A federation is identified by its committee*, not by a random tag. $"federation_id" = "BLAKE3"("pyana-fed-id-v1" || "sorted_members" || "epoch")$ is a commitment, not a name. Two federations with the same committee at the same epoch *are the same federation*. This closes threat F1 from the federation audit (the prior random-16-byte `federation_id` was conventional, not algebraic).
++ *A federation is identified by its committee*, not by a random tag. $"federation_id" = "BLAKE3"("dregg-fed-id-v1" || "sorted_members" || "epoch")$ is a commitment, not a name. Two federations with the same committee at the same epoch *are the same federation*. This closes threat F1 from the federation audit (the prior random-16-byte `federation_id` was conventional, not algebraic).
 + *A federation has exactly one mode of operation: committee BFT.* The prior `FederationMode { Full, Solo }` flag is a quorum-arithmetic special case ("Solo" = committee of one, threshold = 1), not a runtime mode.
 + *A federation owns a blocklace.* The blocklace is the substrate over which committee members produce blocks; the federation's `committee` is the set of `StrandId`s authorized to write to that blocklace.
 + *A federation produces two kinds of receipt:* a `TurnReceipt` (per turn, by the local executor, federation-tagged via `federation_id` in the receipt hash), and an optional `FederationReceipt` (committee-attested via `ThresholdQC`; the cross-federation hand-off currency).
@@ -96,7 +96,7 @@ Five things follow:
 
 === `KnownFederations` registry
 
-Each node persists a `KnownFederations` registry at `<data-dir>/known_federations/<federation_id>.json`, listing every federation the node is willing to verify receipts and attestations from. Entries carry the committee descriptor, the committee epoch, the BLS verifier key, and trust metadata (when the entry was added, by whom). The `pyana register-federation` CLI subcommand atomically adds an entry; `CapTpState::sync_known_federations` keeps the in-memory CapTP routing table consistent with the on-disk registry.
+Each node persists a `KnownFederations` registry at `<data-dir>/known_federations/<federation_id>.json`, listing every federation the node is willing to verify receipts and attestations from. Entries carry the committee descriptor, the committee epoch, the BLS verifier key, and trust metadata (when the entry was added, by whom). The `dregg register-federation` CLI subcommand atomically adds an entry; `CapTpState::sync_known_federations` keeps the in-memory CapTP routing table consistent with the on-disk registry.
 
 This registry is the trust root for cross-federation operations. A receiver of a CapTP-delivered Turn at federation $F_2$ that claims to originate from federation $F_1$ checks (a) the Turn's `federation_id` matches an entry in $F_2$'s known-federations registry, (b) the introducer's signature on the handoff certificate verifies under the public key listed in that entry, (c) the `AttestedRoot` accompanying the cross-fed delivery carries a `ThresholdQC` that verifies under $F_1$'s committee. No entry in `known_federations` $arrow.r.double$ no acceptance.
 
@@ -188,7 +188,7 @@ pub struct FactoryDescriptor {
 Factory-created cells have _computable child verification keys_:
 
 - *Fixed*: every child uses the same VK (the factory's own).
-- *Derived*: $"child_vk" = "BLAKE3"("pyana-derived-child-vk" || "factory_vk" || "param_hash")$.
+- *Derived*: $"child_vk" = "BLAKE3"("dregg-derived-child-vk" || "factory_vk" || "param_hash")$.
 - *FromSet*: child VK must be a member of a pre-approved set.
 
 Factory creation is a composable effect within atomic turns---enabling flash-loan-style patterns where a factory spawns a child cell, the child performs work, and the parent observes the result, all within a single atomic turn with journal-based rollback on failure. Provenance tracking records which factory created each cell, enabling machine-auditable supply chains of cell construction. Factories are the foundation of *storage-as-cell-programs* (see @sec-storage-as-cell-programs)---every storage primitive lands as a factory whose descriptor declares the slot layout and `state_constraints`, with apps using the existing `createFromFactory` cclerk method to instantiate.
@@ -217,7 +217,7 @@ The critical invariant: *everything that crosses a trust boundary is post-quantu
 
 === The Effect VM <sec-effect-vm-intro>
 
-The Effect VM is the primary execution mechanism for cells. It is a domain-specific virtual machine whose instruction set matches Pyana's state transition primitives. Each turn produces a single STARK proof regardless of effect count. The AIR trace---approximately 151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1, with public inputs growing per-cell to $tilde$73 felts---encodes:
+The Effect VM is the primary execution mechanism for cells. It is a domain-specific virtual machine whose instruction set matches Dregg's state transition primitives. Each turn produces a single STARK proof regardless of effect count. The AIR trace---approximately 151 columns after Stage 7-$gamma$.0 + $gamma$.2 Phase 1 + sovereign-witness Phase 1, with public inputs growing per-cell to $tilde$73 felts---encodes:
 
 - Pre-state commitment (Poseidon2 hash of cell state before each effect)
 - Effect opcode and operands
@@ -258,7 +258,7 @@ Value cannot be created or destroyed within a turn. The fee is debited from the 
 
 In E @elang, a message send returns a _promise_ that resolves when the target processes the message. Multiple messages can be sent to the resolution of a pending promise without waiting for it to resolve---_promise pipelining_ eliminates round-trip latency in distributed object protocols.
 
-Pyana implements this via `EventualRef`: a reference to the output of a pending turn, identified by the turn's hash and an output slot index. A turn may target an `EventualRef` rather than a concrete `CellId`, declaring a dependency that the executor resolves during pipeline execution. The `Target` type is a sum:
+Dregg implements this via `EventualRef`: a reference to the output of a pending turn, identified by the turn's hash and an output slot index. A turn may target an `EventualRef` rather than a concrete `CellId`, declaring a dependency that the executor resolves during pipeline execution. The `Target` type is a sum:
 
 $ "Target" = "Concrete"("CellId") | "Eventual"("source_turn": ["u8"; 32], "slot": "u32") $
 
@@ -266,7 +266,7 @@ When the source turn commits, its outputs (granted capabilities, created cells, 
 
 === Three-Party Introduction
 
-Object-capability systems form new communication paths through _introductions_: Alice, holding capabilities to both Bob and Carol, introduces Bob to Carol by granting Bob a (possibly attenuated) capability to Carol. In Pyana, an `Effect::Introduce` during a turn emits a `RoutingDirective` and contributes to the trilateral binding accumulators (`INTRO_AS_INTRODUCER_ROOT`, `INTRO_AS_RECIPIENT_ROOT`, `INTRO_AS_TARGET_ROOT`) with a canonical $"intro_id" = "Poseidon2"("pyana-intro-id-v1" || "introducer" || "recipient" || "target" || "permissions_bits" || "introducer_nonce")$. The pyana-verifier's `bilateral-pair` subcommand cross-checks that the three per-cell proofs of one `Introduce` agree on `intro_id`.
+Object-capability systems form new communication paths through _introductions_: Alice, holding capabilities to both Bob and Carol, introduces Bob to Carol by granting Bob a (possibly attenuated) capability to Carol. In Dregg, an `Effect::Introduce` during a turn emits a `RoutingDirective` and contributes to the trilateral binding accumulators (`INTRO_AS_INTRODUCER_ROOT`, `INTRO_AS_RECIPIENT_ROOT`, `INTRO_AS_TARGET_ROOT`) with a canonical $"intro_id" = "Poseidon2"("dregg-intro-id-v1" || "introducer" || "recipient" || "target" || "permissions_bits" || "introducer_nonce")$. The dregg-verifier's `bilateral-pair` subcommand cross-checks that the three per-cell proofs of one `Introduce` agree on `intro_id`.
 
 === `Authorization::CapTpDelivered`
 
@@ -292,7 +292,7 @@ The service mesh is a governed namespace acting as a capability registry. It pro
 
 == Nameservice <sec-nameservice>
 
-Pyana's nameservice follows the petname model: names are always relative to the namer, never globally authoritative. Resolution through the nameservice is a form of capability discovery---resolving a name yields a capability reference.
+Dregg's nameservice follows the petname model: names are always relative to the namer, never globally authoritative. Resolution through the nameservice is a form of capability discovery---resolving a name yields a capability reference.
 
 - *Petnames* (local): private, per-agent mappings from human-readable strings to cell IDs. Stored in the agent's sealed state. Never published.
 - *Edge names*: names that one agent publishes about another. Visible to third parties who query Alice's directory.

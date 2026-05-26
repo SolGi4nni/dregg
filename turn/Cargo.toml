@@ -1,5 +1,5 @@
 [package]
-name = "pyana-turn"
+name = "dregg-turn"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,12 +10,12 @@ repository.workspace = true
 description = "Call-forest transaction model for atomic agent execution turns"
 
 [dependencies]
-pyana-captp = { path = "../captp" }
-pyana-cell = { path = "../cell" }
-pyana-circuit = { path = "../circuit" }
-pyana-commit = { path = "../commit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-types = { path = "../types" }
+dregg-captp = { path = "../captp" }
+dregg-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-types = { path = "../types" }
 blake3 = "1"
 chacha20poly1305 = { workspace = true }
 tracing = { workspace = true }

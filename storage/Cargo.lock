@@ -1581,7 +1581,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-circuit"
+name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
  "ark-ec",
@@ -1617,7 +1617,7 @@ dependencies = [
  "p3-util",
  "poly-commitment",
  "postcard",
- "pyana-dsl",
+ "dregg-dsl",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rmp-serde",
@@ -1626,7 +1626,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-dsl"
+name = "dregg-dsl"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -1635,7 +1635,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-storage"
+name = "dregg-storage"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -1646,7 +1646,7 @@ dependencies = [
  "ark-std",
  "blake3",
  "poly-commitment",
- "pyana-circuit",
+ "dregg-circuit",
  "serde",
 ]
 

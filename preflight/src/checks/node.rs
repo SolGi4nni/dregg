@@ -13,9 +13,9 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn check_node_binary_exists() -> Result<(), String> {
-    // The node binary is built from pyana-node crate. Check that the crate compiles.
+    // The node binary is built from dregg-node crate. Check that the crate compiles.
     let output = Command::new("cargo")
-        .args(["build", "-p", "pyana-node", "--message-format=short"])
+        .args(["build", "-p", "dregg-node", "--message-format=short"])
         .output()
         .map_err(|e| format!("failed to spawn cargo build: {e}"))?;
 
@@ -24,7 +24,7 @@ fn check_node_binary_exists() -> Result<(), String> {
         // Check if it's just a dependency issue vs a real problem.
         if stderr.contains("error[E") {
             return Err(format!(
-                "pyana-node does not compile: {}",
+                "dregg-node does not compile: {}",
                 stderr.lines().take(5).collect::<Vec<_>>().join("\n")
             ));
         }
@@ -36,7 +36,7 @@ fn check_node_binary_exists() -> Result<(), String> {
 
 fn check_node_help() -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["run", "-p", "pyana-node", "--", "--help"])
+        .args(["run", "-p", "dregg-node", "--", "--help"])
         .output()
         .map_err(|e| format!("failed to spawn: {e}"))?;
 
@@ -59,7 +59,7 @@ fn check_node_help() -> Result<(), String> {
 
 fn check_node_relay_help() -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["run", "-p", "pyana-node", "--", "relay", "--help"])
+        .args(["run", "-p", "dregg-node", "--", "relay", "--help"])
         .output()
         .map_err(|e| format!("failed to spawn: {e}"))?;
 

@@ -1,8 +1,8 @@
-# Pyana for Web2: Incremental Trust Without Blockchain
+# `dregg` for Web2: Incremental Trust Without Blockchain
 
 ## The Core Observation
 
-Pyana's token layer (`pyana-token`) is macaroon/biscuit-backed capability auth. This is standard web2 technology. The ZK circuit layer, federation consensus, and on-chain interop are *optional upgrades* atop a foundation that works today with nothing more than HMAC keys and Ed25519 signatures.
+`dregg`'s token layer (`dregg-token`) is macaroon/biscuit-backed capability auth. This is standard web2 technology. The ZK circuit layer, federation consensus, and on-chain interop are *optional upgrades* atop a foundation that works today with nothing more than HMAC keys and Ed25519 signatures.
 
 ## Pattern 1: Capability-First API Gateway
 
@@ -15,7 +15,7 @@ Mint a root token with `AgentCipherclerk::mint_token()`. The `Attenuation` struc
 - User-confine: `confine_user` (bind to identity at delegation time)
 - Budget-cap: `BudgetSpec` (rate limiting baked into the token itself)
 
-**Migration from OAuth2:** Your existing IdP mints pyana tokens instead of JWTs. Downstream services verify locally via `AuthToken::verify()` against an `AuthRequest` -- no token introspection endpoint, no shared Redis. Third-party caveats (`obtain_discharge()` in `sdk/src/discharge.rs`) replace OAuth's authorization code flow: the MFA gateway issues a discharge macaroon only after second-factor verification.
+**Migration from OAuth2:** Your existing IdP mints dregg tokens instead of JWTs. Downstream services verify locally via `AuthToken::verify()` against an `AuthRequest` -- no token introspection endpoint, no shared Redis. Third-party caveats (`obtain_discharge()` in `sdk/src/discharge.rs`) replace OAuth's authorization code flow: the MFA gateway issues a discharge macaroon only after second-factor verification.
 
 **What you gain over JWT:** Attenuation without re-issuance. A frontend can narrow its own token for a specific API call and hand that narrowed token to a third-party webhook -- the webhook cannot use it for anything beyond what it was narrowed to. JWTs cannot do this.
 
@@ -23,7 +23,7 @@ Mint a root token with `AgentCipherclerk::mint_token()`. The `Attenuation` struc
 
 **Signed causal DAGs. No consensus required.**
 
-The turn system (`pyana-turn`) already produces signed action forests with causal hash-pointers. Deploy this as an append-only audit log:
+The turn system (`dregg-turn`) already produces signed action forests with causal hash-pointers. Deploy this as an append-only audit log:
 
 1. Each service signs its actions with Ed25519 (the cclerk identity key)
 2. Each turn references its causal predecessors by hash (happened-before)
@@ -39,7 +39,7 @@ Start at "web2 normal" and add trust properties as requirements emerge:
 
 | Level | Infrastructure | What you get |
 |-------|---------------|--------------|
-| 0 | HMAC key + `pyana-token` | Attenuable bearer tokens, local verify |
+| 0 | HMAC key + `dregg-token` | Attenuable bearer tokens, local verify |
 | 1 | + Ed25519 identity | Signed audit trail, non-repudiation |
 | 2 | + single `SiloServer` | Revocation list, non-membership proofs |
 | 3 | + multi-node federation | BFT-ordered revocations, quorum attestation |
@@ -80,16 +80,16 @@ Full trust          Semi-trust              Privacy              Trustless
 bearer token    attenuable cap +         ZK presentation      on-chain verify
                 signed audit trail       selective disclosure  Mina interop
    |                    |                      |                     |
- web2 normal     pyana without ZK         pyana with STARK     pyana + bridge
+ web2 normal     dregg without ZK         dregg with STARK     dregg + bridge
 ```
 
-Most real deployments live between "semi-trust" and "privacy." The code in `pyana-token`, `pyana-sdk`, and `pyana-wire` covers that range today without touching the circuit crate.
+Most real deployments live between "semi-trust" and "privacy." The code in `dregg-token`, `dregg-sdk`, and `dregg-wire` covers that range today without touching the circuit crate.
 
 ## What You Can Build This Month
 
-1. **API gateway middleware** that verifies `AuthToken` on every request, replacing JWT validation (~200 LOC, `pyana-token` + `pyana-sdk`)
+1. **API gateway middleware** that verifies `AuthToken` on every request, replacing JWT validation (~200 LOC, `dregg-token` + `dregg-sdk`)
 2. **Delegation service** that lets users attenuate their own tokens for third-party integrations (~150 LOC, `AgentCipherclerk::attenuate()`)
-3. **Audit log service** backed by signed turn receipts, serving a verifiable event stream (~400 LOC, `pyana-turn` + `pyana-wire`)
+3. **Audit log service** backed by signed turn receipts, serving a verifiable event stream (~400 LOC, `dregg-turn` + `dregg-wire`)
 4. **Revocation server** using a single `SiloServer` with `DefaultRevocationHandler` (~100 LOC config)
 5. **Third-party MFA gateway** that issues discharge macaroons after TOTP/WebAuthn verification (~300 LOC, `sdk/src/discharge.rs` pattern)
 

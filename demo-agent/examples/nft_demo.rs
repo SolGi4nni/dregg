@@ -7,11 +7,11 @@
 //! 4. Double-spend prevention: Attempting to spend the original note again is rejected
 //! 5. Provenance: The chain of nullifiers traces ownership history
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
 
 fn main() {
-    println!("=== Pyana NFT Lifecycle Demo ===\n");
+    println!("=== Dregg NFT Lifecycle Demo ===\n");
 
     // --- Setup: Create two owners with Ed25519-style keys ---
     let alice_spending_key = blake3::derive_key("alice-spending-key-v1", b"alice-secret");
@@ -25,7 +25,7 @@ fn main() {
 
     // The unique asset identifier for our NFT (hash of the artwork metadata)
     let asset_id = u64::from_le_bytes(
-        blake3::hash(b"artwork-001: Sunset over the Pyana Valley").as_bytes()[..8]
+        blake3::hash(b"artwork-001: Sunset over the Dregg Valley").as_bytes()[..8]
             .try_into()
             .unwrap(),
     );
@@ -145,7 +145,7 @@ fn main() {
     let double_spend_result = nullifier_set.insert(nullifier_alice);
 
     match double_spend_result {
-        Err(pyana_cell::note::NoteError::DoubleSpend { nullifier }) => {
+        Err(dregg_cell::note::NoteError::DoubleSpend { nullifier }) => {
             println!("  REJECTED: double-spend detected!");
             println!(
                 "  Nullifier {:02x}{:02x}{:02x}{:02x}... already in set",

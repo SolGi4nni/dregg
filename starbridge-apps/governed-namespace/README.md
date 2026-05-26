@@ -2,13 +2,13 @@
 
 > **The governance-pattern reference for future apps.**
 > A governance-bound atomic route table swap on a sovereign cell, composed
-> from `pyana-dfa`'s `GovernedRouter` + `pyana-cell`'s slot caveats +
+> from `dregg-dfa`'s `GovernedRouter` + `dregg-cell`'s slot caveats +
 > `Authorization::Custom`'s threshold-signature predicate carrier.
 
 ## Overview
 
 A **governed-namespace cell** is a sovereign cell whose state holds the
-live `pyana_dfa::RouteTable` commitment, a monotonic version counter,
+live `dregg_dfa::RouteTable` commitment, a monotonic version counter,
 the constitutional committee, and the threshold. Route-table updates
 require:
 
@@ -24,7 +24,7 @@ require:
    success, the atomic swap fires: `route_table_root := new_root`,
    `version += 1`, `pending_proposal_root := 0`.
 
-This is the on-cell mirror of `pyana_dfa::GovernedRouter::update_routes`:
+This is the on-cell mirror of `dregg_dfa::GovernedRouter::update_routes`:
 the CAS check (commitment must match) becomes a slot caveat
 (`Immutable { index: 0 }` under propose / vote, `MonotonicSequence`
 on version under commit); the threshold verification is lifted from
@@ -176,8 +176,8 @@ must not perturb the live route table or proposal state).
 ### `dispatch` (read-only) — [`dispatch`]
 
 Not a turn. The read-side helper walks
-`pyana_dfa::Router::classify_path(input)` against the live route
-table. Used by the `<pyana-namespace-dispatch>` web component.
+`dregg_dfa::Router::classify_path(input)` against the live route
+table. Used by the `<dregg-namespace-dispatch>` web component.
 
 ## DFA + `Authorization::Custom` composition
 
@@ -186,10 +186,10 @@ fit together:
 
 | Primitive | Role |
 |---|---|
-| `pyana_dfa::RouteTable` | The route-table representation. Each cell's `slot[0]` holds the BLAKE3 commitment of the live table. |
-| `pyana_dfa::Router::classify_path` | Read-side dispatch — the AIR-attestable accept/reject walk. |
-| `pyana_dfa::GovernedRouter` | The in-memory mirror of "atomic table swap with CAS + threshold verification". We don't use it on the cell directly; instead, the cell-program + `Authorization::Custom` jointly enforce its invariants. |
-| `pyana_dfa::KindRegistry` | The set of `RouteTarget::Userspace { kind: ... }` identifiers this app accepts. Today: `NAMESPACE_SERVICE_KIND` for the `register_service` flow. |
+| `dregg_dfa::RouteTable` | The route-table representation. Each cell's `slot[0]` holds the BLAKE3 commitment of the live table. |
+| `dregg_dfa::Router::classify_path` | Read-side dispatch — the AIR-attestable accept/reject walk. |
+| `dregg_dfa::GovernedRouter` | The in-memory mirror of "atomic table swap with CAS + threshold verification". We don't use it on the cell directly; instead, the cell-program + `Authorization::Custom` jointly enforce its invariants. |
+| `dregg_dfa::KindRegistry` | The set of `RouteTarget::Userspace { kind: ... }` identifiers this app accepts. Today: `NAMESPACE_SERVICE_KIND` for the `register_service` flow. |
 | `StateConstraint::MonotonicSequence` | The slot-shape mirror of the `GovernedRouter`'s "version strictly increases per commit". |
 | `StateConstraint::Immutable` (committee, threshold) | The slot-shape mirror of "constitutional parameters bind across the cell's lifetime". |
 | `StateConstraint::SenderAuthorized { PublicRoot { set_root_index: 2 } }` | The slot-shape sender-membership check; proves "the proposer / voter is in the committee" via a Merkle witness against the committee root. |
@@ -212,7 +212,7 @@ dispatch.
 
 - The cell-program enforces every slot-caveat on every turn.
 - The Authorization::Custom variant exists (`turn::action::Authorization::Custom`).
-- The verifier registry exists (`pyana_cell::predicate::WitnessedPredicateRegistry`).
+- The verifier registry exists (`dregg_cell::predicate::WitnessedPredicateRegistry`).
 - The propagation lane wires the registry into the executor's
   `Authorization::Custom` match arm so that when this crate's
   `build_commit_table_update_action` lands at the executor, the
@@ -234,14 +234,14 @@ not in this crate.
 
 1. The wasm runtime (`wasm/src/runtime.rs`) preloads
    [`factory_descriptors()`] at startup. The browser-side
-   `window.pyana.createFromFactory(GOVERNANCE_FACTORY_VK, committee_root, threshold, dispute_window)`
+   `window.dregg.createFromFactory(GOVERNANCE_FACTORY_VK, committee_root, threshold, dispute_window)`
    resolves the string VK into the real descriptor and produces a
    sovereign governed-namespace cell.
 2. The Starbridge page (`pages/index.html`) is a site fragment
    surfaced under `/starbridge-apps/governed-namespace/`, importing
    the shared inspector registry and this app's four web components
-   (`<pyana-namespace>`, `<pyana-namespace-route-table>`,
-   `<pyana-namespace-proposal>`, `<pyana-namespace-dispatch>`).
+   (`<dregg-namespace>`, `<dregg-namespace-route-table>`,
+   `<dregg-namespace-proposal>`, `<dregg-namespace-dispatch>`).
 3. The extension cclerk (`extension/src/page.ts`) signs the `Action`
    produced by `build_propose_table_update_action` /
    `build_vote_on_proposal_action` / `build_register_service_action`

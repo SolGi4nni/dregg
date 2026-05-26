@@ -55,7 +55,7 @@ export type CapabilityRef =
 
 /** Result of exporting a cell as a sturdy reference. */
 export interface ExportResult {
-  /** The pyana:// URI string for the exported capability. */
+  /** The dregg:// URI string for the exported capability. */
   uri: string;
   /** The sturdy reference details. */
   sturdyRef: SturdyRef;

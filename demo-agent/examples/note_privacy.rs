@@ -9,9 +9,9 @@
 //! 6. Show: double-spend attempt fails (nullifier already in set)
 //! 7. Uses real STARK proofs via `prove_note_spend` to verify note ownership
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_circuit::{
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_circuit::{
     BabyBear,
     note_spending_air::{
         create_test_witness, key_to_field_elements, prove_note_spend, verify_note_spend,
@@ -24,16 +24,16 @@ const ASSET_GOLD: u64 = 0xABCD_0000_0000_0001;
 
 /// Helper: derive a spending key from a name (deterministic for demo).
 fn spending_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-note-demo-spending-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-note-demo-spending-key-v1", name.as_bytes())
 }
 
 /// Helper: derive an owner public key from a name (deterministic for demo).
 fn owner_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-note-demo-owner-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-note-demo-owner-key-v1", name.as_bytes())
 }
 
 fn main() {
-    println!("=== Pyana Note Privacy Demo (End-to-End Private Value Transfer) ===\n");
+    println!("=== Dregg Note Privacy Demo (End-to-End Private Value Transfer) ===\n");
     println!("This demo shows private value transfers where observers cannot link");
     println!("the sender, receiver, or amounts across transactions.\n");
 

@@ -1,4 +1,4 @@
-//! FoldDelta: represents an attenuation step in the pyana token system.
+//! FoldDelta: represents an attenuation step in the dregg token system.
 //!
 //! Attenuation is the process of narrowing a token's capabilities. A FoldDelta
 //! captures the difference between two states: what was removed, what checks

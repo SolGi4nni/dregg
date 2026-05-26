@@ -64,7 +64,7 @@ async fn table(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::Er
 
     if routes.is_empty() {
         ctx.info("No routes in the DFA route table.");
-        ctx.info("  Propose routes with: pyana route propose <routes.json>");
+        ctx.info("  Propose routes with: dregg route propose <routes.json>");
         return Ok(());
     }
 
@@ -179,7 +179,7 @@ async fn propose(
     ctx.success("Route amendment proposed:");
     ctx.kv("Proposal ID", &abbrev_hex(proposal_id, 8, 4));
     ctx.kv("Routes", &route_count.to_string());
-    ctx.info("  Validators vote with: pyana federation vote <proposal-id> yes|no");
+    ctx.info("  Validators vote with: dregg federation vote <proposal-id> yes|no");
 
     Ok(())
 }

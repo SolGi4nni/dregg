@@ -1,30 +1,30 @@
 [package]
-name = "pyana-observability"
+name = "dregg-observability"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Studio-shape trace event emitter for the pyana turn substrate"
+description = "Studio-shape trace event emitter for the dregg turn substrate"
 
 [dependencies]
-pyana-cell = { path = "../cell" }
-pyana-circuit = { path = "../circuit", default-features = false }
-pyana-turn = { path = "../turn" }
-pyana-captp = { path = "../captp" }
-pyana-federation = { path = "../federation", default-features = false }
-pyana-types = { path = "../types" }
+dregg-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit", default-features = false }
+dregg-turn = { path = "../turn" }
+dregg-captp = { path = "../captp" }
+dregg-federation = { path = "../federation", default-features = false }
+dregg-types = { path = "../types" }
 hex = "0.4"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 blake3 = "1"
 
 [lib]
-name = "pyana_observability"
+name = "dregg_observability"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pyana-observability"
+name = "dregg-observability"
 path = "src/main.rs"
 
 [lints]

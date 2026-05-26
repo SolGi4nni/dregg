@@ -7,14 +7,14 @@
 //! 3. The issuer membership proof uses blinded ring mode (different blinded_leaf each time).
 //! 4. No fixed identifier leaks through public inputs.
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::predicate_air::{
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::predicate_air::{
     PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
 };
-use pyana_sdk::{AgentCipherclerk, AuthRequest};
-use pyana_teasting::agent::{SimAgent, shared_root_key};
-use pyana_teasting::assertions::assert_unlinkable;
+use dregg_sdk::{AgentCipherclerk, AuthRequest};
+use dregg_teasting::agent::{SimAgent, shared_root_key};
+use dregg_teasting::assertions::assert_unlinkable;
 
 /// Same token, same request, two presentations: presentation tags must differ.
 #[test]
@@ -64,11 +64,11 @@ fn test_blinded_predicate_proofs_unlinkable() {
 
     // With blinding factor 1:
     let blinding1 = BabyBear::new(12345);
-    let fc_blinded1 = pyana_circuit::poseidon2::hash_4_to_1(&[fh, sr, blinding1, BabyBear::ZERO]);
+    let fc_blinded1 = dregg_circuit::poseidon2::hash_4_to_1(&[fh, sr, blinding1, BabyBear::ZERO]);
 
     // With blinding factor 2:
     let blinding2 = BabyBear::new(67890);
-    let fc_blinded2 = pyana_circuit::poseidon2::hash_4_to_1(&[fh, sr, blinding2, BabyBear::ZERO]);
+    let fc_blinded2 = dregg_circuit::poseidon2::hash_4_to_1(&[fh, sr, blinding2, BabyBear::ZERO]);
 
     // Blinded commitments must differ from each other and from unblinded.
     assert_ne!(
@@ -109,7 +109,7 @@ fn test_blinded_predicate_proofs_unlinkable() {
     let proof2 = prove_predicate(witness2).expect("blinded proof 2 should succeed");
 
     // Both verify against their respective (different) fact_commitments.
-    use pyana_circuit::predicate_air::verify_predicate;
+    use dregg_circuit::predicate_air::verify_predicate;
     assert!(verify_predicate(&proof1, BabyBear::new(threshold), fc_blinded1).is_ok());
     assert!(verify_predicate(&proof2, BabyBear::new(threshold), fc_blinded2).is_ok());
 }

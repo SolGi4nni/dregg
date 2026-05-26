@@ -17,8 +17,8 @@
 //! This replaces HTLC hash-lock patterns with receipt-based conditions,
 //! which are strictly more general (any provable statement, not just preimage knowledge).
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, permissions::Permissions};
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, permissions::Permissions};
+use dregg_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
@@ -403,7 +403,7 @@ fn main() {
 
     let trusted_roots = vec![(fed_root, 50u64)];
     let mut nullifiers = HashSet::new();
-    let result = pyana_turn::resolve_condition(
+    let result = dregg_turn::resolve_condition(
         &condition,
         &stark_proof,
         60,
@@ -418,7 +418,7 @@ fn main() {
     println!("    Federation root: {}", short_hex(&fed_root));
     println!("    Conclusion: ALLOW (1)");
     let mut n2 = HashSet::new();
-    let untrusted_result = pyana_turn::resolve_condition(
+    let untrusted_result = dregg_turn::resolve_condition(
         &condition,
         &stark_proof,
         60,

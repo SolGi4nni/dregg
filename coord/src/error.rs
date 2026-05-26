@@ -3,8 +3,8 @@
 //! CoordError covers failures in both causal chaining (Layer 1)
 //! and atomic multi-party turns (Layer 2).
 
-use pyana_cell::{CellId, LedgerError};
-use pyana_turn::TurnError;
+use dregg_cell::{CellId, LedgerError};
+use dregg_turn::TurnError;
 
 /// All possible failure modes in the coordination layer.
 #[derive(Clone, Debug, PartialEq, Eq)]

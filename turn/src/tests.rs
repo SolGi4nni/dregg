@@ -16,7 +16,7 @@
 //! - Receive permission enforcement
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
-use pyana_cell::{
+use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, Ledger, Permissions, VerificationKey,
     preconditions::Preconditions as CellPreconditions,
     state::{FIELD_ZERO, STATE_SLOTS},
@@ -122,7 +122,7 @@ fn zero_cost_executor() -> TurnExecutor {
 fn execute_chained(
     executor: &TurnExecutor,
     turn: &Turn,
-    ledger: &mut pyana_cell::Ledger,
+    ledger: &mut dregg_cell::Ledger,
 ) -> crate::turn::TurnResult {
     let mut t = turn.clone();
     if t.previous_receipt_hash.is_none() {
@@ -2958,7 +2958,7 @@ fn test_fragment_signature_count_mismatch() {
 // =============================================================================
 
 /// Helper: create a cell with a program and open permissions.
-fn make_programmed_cell(seed: u8, balance: u64, program: pyana_cell::CellProgram) -> Cell {
+fn make_programmed_cell(seed: u8, balance: u64, program: dregg_cell::CellProgram) -> Cell {
     let kp = TestKeypair::from_seed(seed);
     let token_id = [0u8; 32];
     let mut cell = Cell::with_balance(kp.public_key, token_id, balance);
@@ -2979,9 +2979,9 @@ fn make_programmed_cell(seed: u8, balance: u64, program: pyana_cell::CellProgram
 #[test]
 fn test_program_predicate_gte_enforced() {
     // A cell with FieldGte(index=0, value=100) rejects transitions that set field[0] < 100.
-    use pyana_cell::program::{StateConstraint, field_from_u64};
+    use dregg_cell::program::{StateConstraint, field_from_u64};
 
-    let program = pyana_cell::CellProgram::Predicate(vec![StateConstraint::FieldGte {
+    let program = dregg_cell::CellProgram::Predicate(vec![StateConstraint::FieldGte {
         index: 0,
         value: field_from_u64(100),
     }]);
@@ -3040,9 +3040,9 @@ fn test_program_predicate_gte_enforced() {
 #[test]
 fn test_program_immutable_field_enforced() {
     // A cell with Immutable(index=1) rejects transitions that change field[1].
-    use pyana_cell::program::{StateConstraint, field_from_u64};
+    use dregg_cell::program::{StateConstraint, field_from_u64};
 
-    let program = pyana_cell::CellProgram::Predicate(vec![StateConstraint::Immutable { index: 1 }]);
+    let program = dregg_cell::CellProgram::Predicate(vec![StateConstraint::Immutable { index: 1 }]);
 
     let mut ledger = Ledger::new();
     let (agent, _) = make_open_cell(1, 5000);
@@ -3105,7 +3105,7 @@ fn test_program_immutable_field_enforced() {
 fn test_program_none_backward_compat() {
     // A cell with CellProgram::None works exactly as before: any state change is
     // accepted and the effect is actually committed to the ledger.
-    use pyana_cell::program::field_from_u64;
+    use dregg_cell::program::field_from_u64;
 
     let (mut ledger, agent_id, target_id) = setup_two_open_cells(5000, 0);
     let executor = zero_cost_executor();
@@ -3144,9 +3144,9 @@ fn test_program_none_backward_compat() {
 #[test]
 fn test_program_sum_conservation_enforced() {
     // SumEquals constraint enforces that fields[0] + fields[1] + fields[2] = 1000.
-    use pyana_cell::program::{StateConstraint, field_from_u64};
+    use dregg_cell::program::{StateConstraint, field_from_u64};
 
-    let program = pyana_cell::CellProgram::Predicate(vec![StateConstraint::SumEquals {
+    let program = dregg_cell::CellProgram::Predicate(vec![StateConstraint::SumEquals {
         indices: vec![0, 1, 2],
         value: field_from_u64(1000),
     }]);
@@ -3683,7 +3683,7 @@ fn test_permission_change_doesnt_affect_same_action() {
 
     // Target has Signature required for send but open for set_permissions.
     let (mut target, _) = make_open_cell(2, 1000);
-    target.permissions = pyana_cell::Permissions {
+    target.permissions = dregg_cell::Permissions {
         send: AuthRequired::Signature,
         receive: AuthRequired::None,
         set_state: AuthRequired::None,
@@ -3713,7 +3713,7 @@ fn test_permission_change_doesnt_affect_same_action() {
             // First effect: weaken permissions.
             .effect_set_permissions(
                 target_id,
-                pyana_cell::Permissions {
+                dregg_cell::Permissions {
                     send: AuthRequired::None,
                     receive: AuthRequired::None,
                     set_state: AuthRequired::None,
@@ -4096,7 +4096,7 @@ fn test_note_conservation() {
             name: "spend_and_create_conservation",
             effects: vec![
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4104,7 +4104,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 60,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4112,7 +4112,7 @@ fn test_note_conservation() {
                     range_proof: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xCC; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xCC; 32]),
                     value: 40,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4126,7 +4126,7 @@ fn test_note_conservation() {
             name: "conservation_violated",
             effects: vec![
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4134,7 +4134,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 200,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4148,7 +4148,7 @@ fn test_note_conservation() {
             name: "nft_transfer",
             effects: vec![
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 0,
                     asset_type: 0xDEAD_BEEF,
@@ -4156,7 +4156,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 0,
                     asset_type: 0xDEAD_BEEF,
                     encrypted_note: vec![1, 2, 3],
@@ -4170,7 +4170,7 @@ fn test_note_conservation() {
             name: "multiple_asset_types_conservation",
             effects: vec![
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([1u8; 32]),
+                    nullifier: dregg_cell::Nullifier([1u8; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4178,7 +4178,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([2u8; 32]),
+                    nullifier: dregg_cell::Nullifier([2u8; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 50,
                     asset_type: 2,
@@ -4186,7 +4186,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([3u8; 32]),
+                    commitment: dregg_cell::NoteCommitment([3u8; 32]),
                     value: 100,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4194,7 +4194,7 @@ fn test_note_conservation() {
                     range_proof: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([4u8; 32]),
+                    commitment: dregg_cell::NoteCommitment([4u8; 32]),
                     value: 50,
                     asset_type: 2,
                     encrypted_note: vec![],
@@ -4208,7 +4208,7 @@ fn test_note_conservation() {
             name: "cross_asset_conservation_fails",
             effects: vec![
                 Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([1u8; 32]),
+                    nullifier: dregg_cell::Nullifier([1u8; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4216,7 +4216,7 @@ fn test_note_conservation() {
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([2u8; 32]),
+                    commitment: dregg_cell::NoteCommitment([2u8; 32]),
                     value: 100,
                     asset_type: 2,
                     encrypted_note: vec![],
@@ -4293,7 +4293,7 @@ fn test_note_spend_rejected_without_proof() {
         let action =
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_no_proof", agent_id)
                 .effect(Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4301,7 +4301,7 @@ fn test_note_spend_rejected_without_proof() {
                     value_commitment: None,
                 })
                 .effect(Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 100,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4342,7 +4342,7 @@ fn test_note_spend_rejected_with_invalid_proof() {
         let action =
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_bad_proof", agent_id)
                 .effect(Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4350,7 +4350,7 @@ fn test_note_spend_rejected_with_invalid_proof() {
                     value_commitment: None,
                 })
                 .effect(Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 100,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4391,7 +4391,7 @@ fn test_note_spend_rejected_without_verifier() {
         let action =
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_no_verifier", agent_id)
                 .effect(Effect::NoteSpend {
-                    nullifier: pyana_cell::Nullifier([0xAA; 32]),
+                    nullifier: dregg_cell::Nullifier([0xAA; 32]),
                     note_tree_root: [0xFFu8; 32],
                     value: 100,
                     asset_type: 1,
@@ -4399,7 +4399,7 @@ fn test_note_spend_rejected_without_verifier() {
                     value_commitment: None,
                 })
                 .effect(Effect::NoteCreate {
-                    commitment: pyana_cell::NoteCommitment([0xBB; 32]),
+                    commitment: dregg_cell::NoteCommitment([0xBB; 32]),
                     value: 100,
                     asset_type: 1,
                     encrypted_note: vec![],
@@ -4620,7 +4620,7 @@ fn test_introduction_emits_gc_export_records() {
 fn test_introduction_gc_export_enables_drop_tracking() {
     // End-to-end test: introduction creates GC export record, which can be
     // registered in ExportGcManager, and then properly cleaned up via DropRef.
-    use pyana_captp::{ExportGcManager, FederationId};
+    use dregg_captp::{ExportGcManager, FederationId};
 
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();
     let executor = zero_cost_executor();
@@ -4654,7 +4654,7 @@ fn test_introduction_gc_export_enables_drop_tracking() {
     let drop_result = gc_mgr.process_drop(carol_id, bobs_federation);
     assert_eq!(
         drop_result,
-        pyana_captp::DropResult::CanRevoke,
+        dregg_captp::DropResult::CanRevoke,
         "after drop, export should be revocable"
     );
 
@@ -5637,7 +5637,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
 
 #[test]
 fn test_is_stale_various_timestamps() {
-    use pyana_cell::DelegatedRef;
+    use dregg_cell::DelegatedRef;
 
     let source = CellId::derive_raw(&[1u8; 32], &[0u8; 32]);
     let child = CellId::derive_raw(&[2u8; 32], &[0u8; 32]);
@@ -6477,7 +6477,7 @@ fn test_adversarial_obligation_rollback_on_turn_failure() {
     let mut executor = zero_cost_executor();
     executor.set_block_height(10);
 
-    let stake_commitment = pyana_cell::NoteCommitment([0xAA; 32]);
+    let stake_commitment = dregg_cell::NoteCommitment([0xAA; 32]);
 
     // Build a turn that creates an obligation, then FAILS with an invalid field index.
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -6596,7 +6596,7 @@ fn test_adversarial_fulfill_obligation_wrong_caller() {
     let mut executor = zero_cost_executor();
     executor.set_block_height(10);
 
-    let stake_commitment = pyana_cell::NoteCommitment([0xBB; 32]);
+    let stake_commitment = dregg_cell::NoteCommitment([0xBB; 32]);
 
     // First turn: agent creates an obligation.
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -6619,7 +6619,7 @@ fn test_adversarial_fulfill_obligation_wrong_caller() {
 
     // Get the obligation_id (same derivation as executor, now includes condition).
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(agent_id.as_bytes());
         hasher.update(target_id.as_bytes());
         hasher.update(&100u64.to_le_bytes());
@@ -6786,7 +6786,7 @@ fn test_create_escrow_correct_cell_matches_target() {
 #[test]
 fn test_committed_conservation_valid_proof_passes() {
     use curve25519_dalek::scalar::Scalar;
-    use pyana_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation};
+    use dregg_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation};
 
     // Setup: single agent cell with open permissions and a proof verifier.
     let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
@@ -6827,9 +6827,9 @@ fn test_committed_conservation_valid_proof_passes() {
     let range_proof2 = BulletproofRangeProof::prove_range(200, &r_out2);
 
     // Build the turn with committed note effects.
-    let nullifier = pyana_cell::Nullifier([0xBB; 32]);
-    let commitment1 = pyana_cell::NoteCommitment([0xCC; 32]);
-    let commitment2 = pyana_cell::NoteCommitment([0xDD; 32]);
+    let nullifier = dregg_cell::Nullifier([0xBB; 32]);
+    let commitment1 = dregg_cell::NoteCommitment([0xCC; 32]);
+    let commitment2 = dregg_cell::NoteCommitment([0xDD; 32]);
 
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
@@ -6887,7 +6887,7 @@ fn test_committed_conservation_valid_proof_passes() {
 #[test]
 fn test_committed_conservation_inflated_output_fails() {
     use curve25519_dalek::scalar::Scalar;
-    use pyana_cell::{ValueCommitment, prove_conservation};
+    use dregg_cell::{ValueCommitment, prove_conservation};
 
     // Setup: single agent cell with open permissions and a proof verifier.
     let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
@@ -6916,8 +6916,8 @@ fn test_committed_conservation_inflated_output_fails() {
     let output_vc_bytes = output_vc.to_bytes().0;
 
     // Build the turn with committed note effects.
-    let nullifier = pyana_cell::Nullifier([0xEE; 32]);
-    let commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+    let nullifier = dregg_cell::Nullifier([0xEE; 32]);
+    let commitment = dregg_cell::NoteCommitment([0xFF; 32]);
 
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
@@ -6979,7 +6979,7 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
     // Create a cell that will become sovereign.
     let (mut sovereign_cell, sovereign_kp) = make_open_cell(2, 500);
     let sovereign_id = sovereign_cell.id();
-    sovereign_cell.mode = pyana_cell::CellMode::Sovereign;
+    sovereign_cell.mode = dregg_cell::CellMode::Sovereign;
 
     // Compute the initial commitment and register as sovereign.
     let initial_commitment = sovereign_cell.state_commitment();
@@ -7310,7 +7310,7 @@ fn sovereign_witness_tamper_invalidates_cclerk_signature() {
     // Build a sovereign cell and a witness for it.
     let (mut sovereign_cell, sovereign_kp) = make_open_cell(2, 500);
     let sovereign_id = sovereign_cell.id();
-    sovereign_cell.mode = pyana_cell::CellMode::Sovereign;
+    sovereign_cell.mode = dregg_cell::CellMode::Sovereign;
     let initial_commitment = sovereign_cell.state_commitment();
 
     let timestamp = 1234567890i64;
@@ -7339,7 +7339,7 @@ fn sovereign_witness_tamper_invalidates_cclerk_signature() {
     };
 
     let agent_kp = TestKeypair::from_seed(11);
-    let agent_cell = pyana_cell::Cell::with_balance(agent_kp.public_key, [0u8; 32], 1000);
+    let agent_cell = dregg_cell::Cell::with_balance(agent_kp.public_key, [0u8; 32], 1000);
     let agent_id = agent_cell.id();
 
     let mut witnesses = std::collections::HashMap::new();
@@ -7444,7 +7444,7 @@ fn sovereign_witness_rejected_with_forged_signature() {
 
     let (mut sovereign_cell, _real_kp) = make_open_cell(2, 500);
     let sovereign_id = sovereign_cell.id();
-    sovereign_cell.mode = pyana_cell::CellMode::Sovereign;
+    sovereign_cell.mode = dregg_cell::CellMode::Sovereign;
     let initial_commitment = sovereign_cell.state_commitment();
     ledger
         .register_sovereign_cell(sovereign_id, initial_commitment)
@@ -7554,7 +7554,7 @@ fn sovereign_witness_replay_rejected_by_sequence() {
 
     let (mut sovereign_cell, sovereign_kp) = make_open_cell(2, 500);
     let sovereign_id = sovereign_cell.id();
-    sovereign_cell.mode = pyana_cell::CellMode::Sovereign;
+    sovereign_cell.mode = dregg_cell::CellMode::Sovereign;
     let initial_commitment = sovereign_cell.state_commitment();
     ledger
         .register_sovereign_cell(sovereign_id, initial_commitment)
@@ -7779,11 +7779,11 @@ fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
     // This matches the format that TurnExecutor::commitment_to_4bb reads back, and
     // matches what EffectVmAir puts into PI[OLD_COMMIT_BASE..+4] via
     // CellState::compute_commitment_4 (resolves Silver-Vision bug #99).
-    let vm_state = pyana_circuit::CellState::new(
+    let vm_state = dregg_circuit::CellState::new(
         sovereign_cell.state.balance(),
         sovereign_cell.state.nonce() as u32,
     );
-    let commit_4bb = pyana_circuit::CellState::compute_commitment_4(
+    let commit_4bb = dregg_circuit::CellState::compute_commitment_4(
         vm_state.balance,
         vm_state.nonce,
         &vm_state.fields,
@@ -7826,9 +7826,9 @@ fn generate_valid_sovereign_proof(
 fn generate_valid_sovereign_proof_with_new_commit(
     _old_commitment: &[u8; 32],
 ) -> (Vec<u8>, [u8; 32]) {
-    use pyana_circuit::effect_vm::{CellState, Effect as VmEffect, pi};
-    use pyana_circuit::stark::{proof_to_bytes, prove};
-    use pyana_circuit::{EffectVmAir, generate_effect_vm_trace};
+    use dregg_circuit::effect_vm::{CellState, Effect as VmEffect, pi};
+    use dregg_circuit::stark::{proof_to_bytes, prove};
+    use dregg_circuit::{EffectVmAir, generate_effect_vm_trace};
 
     // Decode the old 4-felt commitment from the stored 32 bytes.
     // The stored format is 4 LE u32 values in bytes 0..15 (written by commitment_4bb_to_bytes).
@@ -7940,7 +7940,7 @@ fn test_proof_carrying_turn_wrong_old_commitment() {
 
     let effects_hash = {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
+        hasher.update(b"dregg-sovereign-effects-v1:");
         for root in &turn.call_forest.roots {
             hash_tree_effects_test(root, &mut hasher);
         }
@@ -8130,8 +8130,8 @@ fn hash_tree_effects_test(tree: &crate::forest::CallTree, hasher: &mut blake3::H
 /// SovereignTransitionAir).
 #[test]
 fn test_custom_program_proof_carrying_turn() {
-    use pyana_circuit::field::BabyBear;
-    use pyana_dsl_runtime::{
+    use dregg_circuit::field::BabyBear;
+    use dregg_dsl_runtime::{
         CellProgram, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, ProgramRegistry,
     };
     use std::collections::HashMap;
@@ -8140,7 +8140,7 @@ fn test_custom_program_proof_carrying_turn() {
         let mut result = Vec::with_capacity(8);
         for chunk in bytes.chunks(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            result.push(BabyBear(val % pyana_circuit::field::BABYBEAR_P));
+            result.push(BabyBear(val % dregg_circuit::field::BABYBEAR_P));
         }
         result
     }
@@ -8206,7 +8206,7 @@ fn test_custom_program_proof_carrying_turn() {
 
     // Register a sovereign cell with the custom program's VK hash.
     let sovereign_pk = [50u8; 32];
-    let sovereign_id = pyana_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
+    let sovereign_id = dregg_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
     let old_commitment = [10u8; 32];
 
     ledger
@@ -8232,7 +8232,7 @@ fn test_custom_program_proof_carrying_turn() {
     // Compute effects hash (same way the executor does).
     let effects_hash = {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
+        hasher.update(b"dregg-sovereign-effects-v1:");
         for root in &turn.call_forest.roots {
             hash_tree_effects_test(root, &mut hasher);
         }
@@ -8285,14 +8285,14 @@ fn test_custom_program_proof_carrying_turn() {
 /// is rejected (not silently falling through to the default AIR).
 #[test]
 fn test_custom_program_missing_from_registry_rejected() {
-    use pyana_circuit::field::BabyBear;
-    use pyana_dsl_runtime::ProgramRegistry;
+    use dregg_circuit::field::BabyBear;
+    use dregg_dsl_runtime::ProgramRegistry;
 
     fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<BabyBear> {
         let mut result = Vec::with_capacity(8);
         for chunk in bytes.chunks(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            result.push(BabyBear(val % pyana_circuit::field::BABYBEAR_P));
+            result.push(BabyBear(val % dregg_circuit::field::BABYBEAR_P));
         }
         result
     }
@@ -8308,7 +8308,7 @@ fn test_custom_program_missing_from_registry_rejected() {
 
     // Register a sovereign cell with a VK hash that doesn't exist in the registry.
     let sovereign_pk = [60u8; 32];
-    let sovereign_id = pyana_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
+    let sovereign_id = dregg_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
     let old_commitment = [11u8; 32];
     let fake_vk_hash = [0xABu8; 32];
 
@@ -8328,7 +8328,7 @@ fn test_custom_program_missing_from_registry_rejected() {
     // Compute effects hash.
     let effects_hash = {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
+        hasher.update(b"dregg-sovereign-effects-v1:");
         for root in &turn.call_forest.roots {
             hash_tree_effects_test(root, &mut hasher);
         }
@@ -8382,7 +8382,7 @@ fn test_default_air_still_works_without_vk_hash() {
         setup_sovereign_cell_for_proof_test();
 
     let mut executor = zero_cost_executor();
-    executor.set_program_registry(pyana_dsl_runtime::ProgramRegistry::new());
+    executor.set_program_registry(dregg_dsl_runtime::ProgramRegistry::new());
 
     // Generate a valid proof (determines new_commitment from trace execution).
     let (proof_bytes, new_commitment) =
@@ -8447,7 +8447,7 @@ fn test_faceted_capability_permits_allowed_effects() {
         alice.capabilities.grant_faceted(
             bob_id,
             AuthRequired::None,
-            pyana_cell::FACET_TRANSFER_ONLY,
+            dregg_cell::FACET_TRANSFER_ONLY,
         );
     }
 
@@ -8540,7 +8540,7 @@ fn test_faceted_capability_blocks_disallowed_effects() {
         alice.capabilities.grant_faceted(
             bob_id,
             AuthRequired::None,
-            pyana_cell::FACET_TRANSFER_ONLY,
+            dregg_cell::FACET_TRANSFER_ONLY,
         );
     }
 
@@ -8712,9 +8712,9 @@ fn test_unfaceted_capability_allows_all_effects() {
 #[test]
 fn test_facet_attenuation_only_restricts() {
     // Test that attenuate_faceted prevents amplification.
-    use pyana_cell::{EFFECT_SET_FIELD, FACET_STATE_WRITER, FACET_TRANSFER_ONLY};
+    use dregg_cell::{EFFECT_SET_FIELD, FACET_STATE_WRITER, FACET_TRANSFER_ONLY};
 
-    let mut cset = pyana_cell::CapabilitySet::new();
+    let mut cset = dregg_cell::CapabilitySet::new();
     let target = CellId::from_bytes([1u8; 32]);
 
     // Grant a faceted capability allowing only state writing.
@@ -8767,8 +8767,8 @@ fn make_bearer_delegation(
     }
 }
 
-fn make_open_permissions() -> pyana_cell::Permissions {
-    pyana_cell::Permissions {
+fn make_open_permissions() -> dregg_cell::Permissions {
+    dregg_cell::Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,
         set_state: AuthRequired::None,
@@ -8796,7 +8796,7 @@ fn make_bearer_turn(
                     method: symbol("set_field"),
                     args: vec![],
                     authorization: auth,
-                    preconditions: pyana_cell::preconditions::Preconditions::default(),
+                    preconditions: dregg_cell::preconditions::Preconditions::default(),
                     effects: vec![Effect::SetField {
                         cell: target_id,
                         index: 0,
@@ -8831,7 +8831,7 @@ fn make_bearer_turn(
 
 #[test]
 fn test_bearer_cap_signed_delegation_accepted() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(10);
     let bearer_kp = TestKeypair::from_seed(11);
     let token_id = [0u8; 32];
@@ -8874,7 +8874,7 @@ fn test_bearer_cap_signed_delegation_accepted() {
 
 #[test]
 fn test_bearer_cap_expired_rejected() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(20);
     let bearer_kp = TestKeypair::from_seed(21);
     let token_id = [0u8; 32];
@@ -8924,8 +8924,8 @@ fn test_bearer_cap_expired_rejected() {
 
 #[test]
 fn test_bearer_cap_revoked_channel_rejected() {
-    use pyana_cell::{RevocationChannelSet, revocation_channel::RevocationChannel};
-    let mut ledger = pyana_cell::Ledger::new();
+    use dregg_cell::{RevocationChannelSet, revocation_channel::RevocationChannel};
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(30);
     let bearer_kp = TestKeypair::from_seed(31);
     let token_id = [0u8; 32];
@@ -8983,7 +8983,7 @@ fn test_bearer_cap_revoked_channel_rejected() {
 
 #[test]
 fn test_bearer_cap_amplification_rejected() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(40);
     let bearer_kp = TestKeypair::from_seed(41);
     let token_id = [0u8; 32];
@@ -9032,7 +9032,7 @@ fn test_bearer_cap_amplification_rejected() {
 
 #[test]
 fn test_bearer_cap_delegator_lacks_capability_rejected() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(50);
     let bearer_kp = TestKeypair::from_seed(51);
     let token_id = [0u8; 32];
@@ -9079,7 +9079,7 @@ fn test_bearer_cap_delegator_lacks_capability_rejected() {
 
 #[test]
 fn test_bearer_cap_invalid_signature_rejected() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(60);
     let bearer_kp = TestKeypair::from_seed(61);
     let wrong_kp = TestKeypair::from_seed(62);
@@ -9136,7 +9136,7 @@ fn test_bearer_cap_invalid_signature_rejected() {
 
 #[test]
 fn test_bearer_cap_same_turn_as_delegation() {
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let delegator_kp = TestKeypair::from_seed(70);
     let bearer_kp = TestKeypair::from_seed(71);
     let token_id = [0u8; 32];
@@ -9184,7 +9184,7 @@ fn test_bearer_cap_same_turn_as_delegation() {
 #[test]
 fn test_bearer_cap_stark_delegation_invalid_proof_rejected() {
     use crate::action::{BearerCapProof, DelegationProofData};
-    let mut ledger = pyana_cell::Ledger::new();
+    let mut ledger = dregg_cell::Ledger::new();
     let bearer_kp = TestKeypair::from_seed(80);
     let token_id = [0u8; 32];
     let mut target_cell = Cell::with_balance([3u8; 32], token_id, 500);
@@ -9565,7 +9565,7 @@ mod privacy_wiring {
     use crate::conflict::ConflictSet;
     use crate::encrypted::{EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs};
     use crate::turn::{Turn, TurnResult};
-    use pyana_cell::Nullifier;
+    use dregg_cell::Nullifier;
 
     /// Fake verifier that accepts every proof — used to test the executor-side
     /// nullifier-set gate independently of STARK verification.
@@ -9689,7 +9689,7 @@ mod privacy_wiring {
         let conflict_set = ConflictSet::new();
         let plaintext = serde_json::to_vec(turn).unwrap();
         let expected_commit = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-turn-commitment v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-commitment v1");
             hasher.update(&plaintext);
             *hasher.finalize().as_bytes()
         };
@@ -9839,7 +9839,7 @@ mod privacy_wiring {
             method: symbol("noop"),
             args: vec![],
             authorization: Authorization::Unchecked,
-            preconditions: pyana_cell::Preconditions::default(),
+            preconditions: dregg_cell::Preconditions::default(),
             effects: vec![],
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
@@ -10076,8 +10076,8 @@ mod privacy_wiring {
 mod gamma_2_bilateral_tests {
     use super::*;
     use crate::bilateral_schedule::{ExpectedBilateral, derive_transfer_id, project_into_pi};
-    use pyana_circuit::effect_vm::pi;
-    use pyana_circuit::field::BabyBear;
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::field::BabyBear;
 
     /// Build a minimal Turn with a single Transfer(alice -> bob, amount).
     fn make_transfer_turn(alice: CellId, bob: CellId, amount: u64, nonce: u64) -> Turn {
@@ -10354,7 +10354,7 @@ mod gamma_2_bilateral_tests {
 #[cfg(test)]
 mod authorization_custom_tests {
     use super::*;
-    use pyana_cell::predicate::{
+    use dregg_cell::predicate::{
         InputRef as PredInputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
         WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
     };
@@ -10447,7 +10447,7 @@ mod authorization_custom_tests {
             method: symbol("custom_authd_op"),
             args: vec![],
             authorization: Authorization::Custom { predicate },
-            preconditions: pyana_cell::Preconditions::default(),
+            preconditions: dregg_cell::Preconditions::default(),
             effects: vec![Effect::SetField {
                 cell: target,
                 index: 0,
@@ -10718,7 +10718,7 @@ mod binding_proof_executor_tests {
     use crate::binding_proof::{EffectBindingProof, EffectDependency, EffectWitnessIndex};
     use crate::builder::TurnBuilder;
     use crate::executor::TurnExecutor;
-    use pyana_cell::CellId;
+    use dregg_cell::CellId;
 
     fn empty_turn(agent: CellId) -> crate::turn::Turn {
         TurnBuilder::new(agent, 0).build()
@@ -10739,7 +10739,7 @@ mod binding_proof_executor_tests {
         let mut turn = empty_turn(agent);
         turn.effect_binding_proofs.push(EffectBindingProof {
             effect_index: 0,
-            schema_id: "pyana-effect-not-a-real-schema-vXYZ".to_string(),
+            schema_id: "dregg-effect-not-a-real-schema-vXYZ".to_string(),
             proof_bytes: vec![0u8; 4],
             public_inputs: vec![],
         });
@@ -10754,7 +10754,7 @@ mod binding_proof_executor_tests {
         let mut turn = empty_turn(agent);
         turn.effect_binding_proofs.push(EffectBindingProof {
             effect_index: 5,
-            schema_id: "pyana-effect-note-spend-v1".to_string(),
+            schema_id: "dregg-effect-note-spend-v1".to_string(),
             proof_bytes: vec![0u8; 4],
             public_inputs: vec![],
         });
@@ -10856,8 +10856,8 @@ mod binding_proof_executor_tests {
     use crate::action::{Action, Authorization, DelegationMode, Effect};
     use crate::forest::{CallForest, CallTree};
     use crate::turn::Turn;
-    use pyana_cell::permissions::{AuthRequired, Permissions};
-    use pyana_cell::{Cell, Ledger, Preconditions};
+    use dregg_cell::permissions::{AuthRequired, Permissions};
+    use dregg_cell::{Cell, Ledger, Preconditions};
 
     fn permissive_perms() -> Permissions {
         Permissions {
@@ -10933,7 +10933,7 @@ mod binding_proof_executor_tests {
         };
         turn.effect_binding_proofs.push(EffectBindingProof {
             effect_index: 0,
-            schema_id: "pyana-effect-burn-v1".to_string(),
+            schema_id: "dregg-effect-burn-v1".to_string(),
             proof_bytes,
             public_inputs: public_inputs_u32,
         });
@@ -10946,10 +10946,10 @@ mod binding_proof_executor_tests {
     /// it cannot reconstruct.
     #[test]
     fn burn_binding_without_ledger_snapshot_rejects() {
-        use pyana_circuit::effect_action_air::{
+        use dregg_circuit::effect_action_air::{
             EffectActionWitness, SCHEMA_BURN, prove_effect_action,
         };
-        use pyana_circuit::stark;
+        use dregg_circuit::stark;
 
         let target = CellId::from_bytes([0xB7; 32]);
         let witness = EffectActionWitness {
@@ -10985,10 +10985,10 @@ mod binding_proof_executor_tests {
     /// matching loop accepts.
     #[test]
     fn burn_binding_with_honest_ledger_snapshot_verifies() {
-        use pyana_circuit::effect_action_air::{
+        use dregg_circuit::effect_action_air::{
             EffectActionWitness, SCHEMA_BURN, prove_effect_action,
         };
-        use pyana_circuit::stark;
+        use dregg_circuit::stark;
 
         // Build a ledger where the target's balance is exactly the
         // `old_balance` we claim in the binding proof.
@@ -11025,10 +11025,10 @@ mod binding_proof_executor_tests {
     /// MUST reject. This is the matching loop catching it.
     #[test]
     fn burn_binding_air_pi_lies_about_amount_is_rejected() {
-        use pyana_circuit::effect_action_air::{
+        use dregg_circuit::effect_action_air::{
             EffectActionWitness, SCHEMA_BURN, prove_effect_action,
         };
-        use pyana_circuit::stark;
+        use dregg_circuit::stark;
 
         let target_cell = permissive_cell_with_balance(0xB9, 1000);
         let target_id = target_cell.id();
@@ -11076,10 +11076,10 @@ mod binding_proof_executor_tests {
     /// "yes" they shouldn't.
     #[test]
     fn burn_binding_unknown_target_in_ledger_rejects() {
-        use pyana_circuit::effect_action_air::{
+        use dregg_circuit::effect_action_air::{
             EffectActionWitness, SCHEMA_BURN, prove_effect_action,
         };
-        use pyana_circuit::stark;
+        use dregg_circuit::stark;
 
         let target = CellId::from_bytes([0xBA; 32]);
         // Ledger has no cell at `target`.
@@ -11141,9 +11141,9 @@ mod binding_proof_executor_tests {
             method: [0u8; 32],
             args: vec![],
             authorization: Authorization::Unchecked,
-            preconditions: pyana_cell::Preconditions::default(),
+            preconditions: dregg_cell::Preconditions::default(),
             effects: vec![crate::action::Effect::NoteSpend {
-                nullifier: pyana_cell::Nullifier([0xDE; 32]),
+                nullifier: dregg_cell::Nullifier([0xDE; 32]),
                 note_tree_root: [0u8; 32],
                 value: 1,
                 asset_type: 0,
@@ -11187,7 +11187,7 @@ mod binding_proof_executor_tests {
         // length check or STARK deserialisation before the AIR ever runs.
         turn.effect_binding_proofs.push(EffectBindingProof {
             effect_index: 0,
-            schema_id: "pyana-effect-note-spend-v1".to_string(),
+            schema_id: "dregg-effect-note-spend-v1".to_string(),
             proof_bytes: vec![0xAAu8; 64],
             public_inputs: vec![],
         });
@@ -11233,7 +11233,7 @@ mod binding_proof_executor_tests {
 #[cfg(test)]
 mod lifecycle_effects_adversarial {
     use super::*;
-    use pyana_cell::lifecycle::{ArchivalAttestation, DeathCertificate, DeathReason};
+    use dregg_cell::lifecycle::{ArchivalAttestation, DeathCertificate, DeathReason};
 
     /// Build a CellDestroy effect targeting `cell` with a canonical
     /// DeathCertificate (voluntary retirement at height 0).
@@ -11854,7 +11854,7 @@ fn test_adversarial_fulfill_obligation_no_verifier_stark_proof() {
     // Deliberately do NOT set a proof_verifier (executor default is None).
     executor.set_block_height(10);
 
-    let stake_commitment = pyana_cell::NoteCommitment([0xCC; 32]);
+    let stake_commitment = dregg_cell::NoteCommitment([0xCC; 32]);
 
     // First: create the obligation.
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -11884,7 +11884,7 @@ fn test_adversarial_fulfill_obligation_no_verifier_stark_proof() {
 
     // Derive the obligation_id (must include the condition now -- #113 fix).
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(agent_id.as_bytes());
         hasher.update(beneficiary_id.as_bytes());
         hasher.update(&100u64.to_le_bytes());
@@ -11963,8 +11963,8 @@ fn test_adversarial_create_obligation_distinct_ids_for_distinct_conditions() {
     let mut executor = zero_cost_executor();
     executor.set_block_height(10);
 
-    let stake_a = pyana_cell::NoteCommitment([0xAA; 32]);
-    let stake_b = pyana_cell::NoteCommitment([0xAA; 32]); // identical stake
+    let stake_a = dregg_cell::NoteCommitment([0xAA; 32]);
+    let stake_b = dregg_cell::NoteCommitment([0xAA; 32]); // identical stake
 
     // Create obligation A: HashPreimage condition.
     let mut builder_a = TurnBuilder::new(agent_id, 0);
@@ -12018,7 +12018,7 @@ fn test_adversarial_create_obligation_distinct_ids_for_distinct_conditions() {
 
     // Derive both obligation IDs using the same hash logic as the executor.
     let id_a = {
-        let mut h = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut h = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         h.update(agent_id.as_bytes());
         h.update(beneficiary_id.as_bytes());
         h.update(&100u64.to_le_bytes());
@@ -12028,7 +12028,7 @@ fn test_adversarial_create_obligation_distinct_ids_for_distinct_conditions() {
         *h.finalize().as_bytes()
     };
     let id_b = {
-        let mut h = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut h = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         h.update(agent_id.as_bytes());
         h.update(beneficiary_id.as_bytes());
         h.update(&100u64.to_le_bytes());
@@ -12214,7 +12214,7 @@ fn test_queue_pipeline_step_into_restricted_sink_rejected() {
 #[test]
 fn test_note_create_invalid_range_proof_rejected() {
     use curve25519_dalek::scalar::Scalar;
-    use pyana_cell::ValueCommitment;
+    use dregg_cell::ValueCommitment;
 
     let (mut ledger, agent_id, _) = setup_two_open_cells(100000, 0);
     let mut executor = zero_cost_executor();
@@ -12229,7 +12229,7 @@ fn test_note_create_invalid_range_proof_rejected() {
     let output_vc_bytes = output_vc.to_bytes().0;
 
     // Construct a NoteCreate with a valid value_commitment but garbage range_proof.
-    let commitment = pyana_cell::NoteCommitment([0xEEu8; 32]);
+    let commitment = dregg_cell::NoteCommitment([0xEEu8; 32]);
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
         let action = ActionBuilder::new_unchecked_for_tests(agent_id, "bad_range", agent_id)
@@ -12273,7 +12273,7 @@ fn test_note_spend_malformed_value_commitment_rejected() {
     let mut executor = zero_cost_executor();
     executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
 
-    let nullifier = pyana_cell::Nullifier([0x55u8; 32]);
+    let nullifier = dregg_cell::Nullifier([0x55u8; 32]);
     // All-0xFF bytes are not a valid compressed Ristretto point.
     let bad_vc_bytes = [0xFFu8; 32];
 
@@ -12289,7 +12289,7 @@ fn test_note_spend_malformed_value_commitment_rejected() {
                 value_commitment: Some(bad_vc_bytes),
             })
             .effect(Effect::NoteCreate {
-                commitment: pyana_cell::NoteCommitment([0xCCu8; 32]),
+                commitment: dregg_cell::NoteCommitment([0xCCu8; 32]),
                 value: 0,
                 asset_type: 0,
                 encrypted_note: vec![],

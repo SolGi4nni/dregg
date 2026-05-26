@@ -183,7 +183,7 @@ impl BilateralAggregationAir {
     pub const PUBLIC_INPUTS: usize = OUTER_BASE_COUNT;
 
     /// AIR identifier; used by external dispatch.
-    pub const AIR_NAME: &'static str = "pyana-bilateral-aggregation-v1";
+    pub const AIR_NAME: &'static str = "dregg-bilateral-aggregation-v1";
 }
 
 #[cfg(feature = "plonky3")]

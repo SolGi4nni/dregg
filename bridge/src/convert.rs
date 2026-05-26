@@ -6,7 +6,7 @@
 //!
 //! # Canonical Implementation
 //!
-//! The canonical fact encoding now lives in `pyana_token::factset`. This module
+//! The canonical fact encoding now lives in `dregg_token::factset`. This module
 //! re-exports and delegates to that implementation. The encoding is part of the
 //! token semantics (it defines what a token MEANS in Datalog), so it belongs
 //! with the token crate.
@@ -30,15 +30,15 @@
 //! An "unrestricted" fact is added when the token has no caveats at all,
 //! representing a root token with unlimited access.
 
-use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable};
-use pyana_token::MacaroonToken;
-use pyana_token::pyana_caveats::{self, PyanaGrant};
+use dregg_commit::{Fact, FactSet, FieldElement, SymbolTable};
+use dregg_token::MacaroonToken;
+use dregg_token::dregg_caveats::{self, DreggGrant};
 
 // Re-export the canonical implementations from token::factset.
 // The bridge delegates to the token crate for fact encoding since
 // Datalog is now the sole canonical evaluator and the encoding defines
 // what tokens MEAN.
-pub use pyana_token::factset::grant_to_facts as canonical_grant_to_facts;
+pub use dregg_token::factset::grant_to_facts as canonical_grant_to_facts;
 
 /// Convert a MacaroonToken's caveats into a `FactSet` and `SymbolTable`.
 ///
@@ -64,7 +64,7 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
     }
 
     for wc in &caveats {
-        let grant = match pyana_caveats::decode_grant(wc) {
+        let grant = match dregg_caveats::decode_grant(wc) {
             Ok(g) => g,
             Err(_) => {
                 // SECURITY: Unknown/malformed caveats DENY by default (fail-closed).
@@ -89,35 +89,35 @@ pub fn macaroon_to_factset(token: &MacaroonToken) -> (FactSet, SymbolTable) {
 
 /// Convert a single decoded grant (caveat) into one or more Facts,
 /// interning all symbol names into the provided symbol table.
-pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
+pub fn grant_to_facts(grant: &DreggGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
     match grant {
-        PyanaGrant::App { id, actions } => {
+        DreggGrant::App { id, actions } => {
             let pred = symbols.intern("app");
             let id_fe = symbols.intern(id);
             let actions_fe = symbols.intern(&actions.to_string());
             vec![Fact::binary(pred, id_fe, actions_fe)]
         }
 
-        PyanaGrant::Service { name, actions } => {
+        DreggGrant::Service { name, actions } => {
             let pred = symbols.intern("service");
             let name_fe = symbols.intern(name);
             let actions_fe = symbols.intern(&actions.to_string());
             vec![Fact::binary(pred, name_fe, actions_fe)]
         }
 
-        PyanaGrant::Feature(name) => {
+        DreggGrant::Feature(name) => {
             let pred = symbols.intern("feature");
             let name_fe = symbols.intern(name);
             vec![Fact::unary(pred, name_fe)]
         }
 
-        PyanaGrant::ConfineUser(uid) => {
+        DreggGrant::ConfineUser(uid) => {
             let pred = symbols.intern("confine_user");
             let uid_fe = symbols.intern(uid);
             vec![Fact::unary(pred, uid_fe)]
         }
 
-        PyanaGrant::ValidityWindow {
+        DreggGrant::ValidityWindow {
             not_before,
             not_after,
         } => {
@@ -140,19 +140,19 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             facts
         }
 
-        PyanaGrant::OAuthProvider(provider) => {
+        DreggGrant::OAuthProvider(provider) => {
             let pred = symbols.intern("oauth_provider");
             let prov_fe = symbols.intern(provider);
             vec![Fact::unary(pred, prov_fe)]
         }
 
-        PyanaGrant::OAuthScope(scope) => {
+        DreggGrant::OAuthScope(scope) => {
             let pred = symbols.intern("oauth_scope");
             let scope_fe = symbols.intern(scope);
             vec![Fact::unary(pred, scope_fe)]
         }
 
-        PyanaGrant::FeatureGlob { include, exclude } => {
+        DreggGrant::FeatureGlob { include, exclude } => {
             // Feature globs are encoded as individual include/exclude facts.
             let mut facts = Vec::new();
             for pat in include {
@@ -168,14 +168,14 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             facts
         }
 
-        PyanaGrant::Budget { id, limit, .. } => {
+        DreggGrant::Budget { id, limit, .. } => {
             let pred = symbols.intern("budget");
             let id_fe = symbols.intern(id);
             let limit_fe = FieldElement::from_u64(*limit);
             vec![Fact::binary(pred, id_fe, limit_fe)]
         }
 
-        PyanaGrant::Unknown(_, _) => {
+        DreggGrant::Unknown(_, _) => {
             // SECURITY: Unknown caveats produce a poison fact that prevents
             // authorization. This is fail-closed: if we can't understand a caveat,
             // we assume it's maximally restrictive. An empty vec would silently
@@ -193,18 +193,18 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
 /// - `new_facts`: Facts the attenuation adds (restriction checks).
 /// - `removed_predicates`: Predicate names whose facts should be replaced.
 pub fn attenuation_to_facts(
-    attenuation: &pyana_token::Attenuation,
+    attenuation: &dregg_token::Attenuation,
     symbols: &mut SymbolTable,
 ) -> Vec<Fact> {
     // Convert the attenuation to wire caveats, then decode each as a grant,
     // then convert grants to secure hash-based facts.
     // Uses grant_to_facts_secure to emit action_allowed/svc_action_allowed facts
     // with exact hash equality matching (no substring vulnerability).
-    let wire_caveats = pyana_caveats::attenuation_to_wire_caveats(attenuation);
+    let wire_caveats = dregg_caveats::attenuation_to_wire_caveats(attenuation);
     let mut facts = Vec::new();
 
     for wc in &wire_caveats {
-        if let Ok(grant) = pyana_caveats::decode_grant(wc) {
+        if let Ok(grant) = dregg_caveats::decode_grant(wc) {
             facts.extend(grant_to_facts_secure(&grant, symbols));
         }
     }
@@ -240,7 +240,7 @@ pub fn macaroon_to_factset_secure(token: &MacaroonToken) -> (FactSet, SymbolTabl
     }
 
     for wc in &caveats {
-        let grant = match pyana_caveats::decode_grant(wc) {
+        let grant = match dregg_caveats::decode_grant(wc) {
             Ok(g) => g,
             Err(_) => {
                 // SECURITY: Unknown/malformed caveats DENY (fail-closed).
@@ -262,9 +262,9 @@ pub fn macaroon_to_factset_secure(token: &MacaroonToken) -> (FactSet, SymbolTabl
 /// For App and Service grants, instead of storing a single fact with a
 /// comma-separated action string, emits one `action_allowed` or
 /// `svc_action_allowed` fact per action in the set.
-pub fn grant_to_facts_secure(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
+pub fn grant_to_facts_secure(grant: &DreggGrant, symbols: &mut SymbolTable) -> Vec<Fact> {
     match grant {
-        PyanaGrant::App { id, actions } => {
+        DreggGrant::App { id, actions } => {
             let id_fe = symbols.intern(id);
             // Emit one action_allowed fact per action bit in the bitmask.
             let mut facts = Vec::new();
@@ -282,7 +282,7 @@ pub fn grant_to_facts_secure(grant: &PyanaGrant, symbols: &mut SymbolTable) -> V
             facts
         }
 
-        PyanaGrant::Service { name, actions } => {
+        DreggGrant::Service { name, actions } => {
             let name_fe = symbols.intern(name);
             let mut facts = Vec::new();
             let action_names = action_to_names(actions);
@@ -306,8 +306,8 @@ pub fn grant_to_facts_secure(grant: &PyanaGrant, symbols: &mut SymbolTable) -> V
 ///
 /// This bridges the compact bitmask representation (used in macaroons) to
 /// the named-action representation (used in the secure hash-based policy).
-fn action_to_names(action: &pyana_macaroon::action::Action) -> Vec<String> {
-    use pyana_macaroon::action::Action;
+fn action_to_names(action: &dregg_macaroon::action::Action) -> Vec<String> {
+    use dregg_macaroon::action::Action;
     let mut names = Vec::new();
     if action.contains(Action::READ) {
         names.push("read".to_string());
@@ -330,7 +330,7 @@ fn action_to_names(action: &pyana_macaroon::action::Action) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_token::{Attenuation, AuthToken, MacaroonToken};
+    use dregg_token::{Attenuation, AuthToken, MacaroonToken};
 
     fn test_key() -> [u8; 32] {
         let mut key = [0u8; 32];
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_unrestricted_token_to_factset() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
         let (mut factset, symbols) = macaroon_to_factset(&token);
         assert_eq!(factset.len(), 1);
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn test_attenuated_token_to_factset() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-1", "dregg.dev");
 
         // Use the inner macaroon API to attenuate and reconstruct.
         let restricted = token
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn test_grant_to_facts_budget() {
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::Budget {
+        let grant = DreggGrant::Budget {
             id: "agent:daily".into(),
             parent_id: None,
             class: "api_calls".into(),
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn test_grant_to_facts_feature_glob() {
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::FeatureGlob {
+        let grant = DreggGrant::FeatureGlob {
             include: vec!["src/**".into()],
             exclude: vec!["**/*.env".into()],
         };
@@ -483,9 +483,9 @@ mod tests {
 
     #[test]
     fn test_secure_app_grant_emits_per_action_facts() {
-        use pyana_macaroon::action::Action;
+        use dregg_macaroon::action::Action;
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::App {
+        let grant = DreggGrant::App {
             id: "my-app".into(),
             actions: Action::READ.union(Action::WRITE),
         };
@@ -528,9 +528,9 @@ mod tests {
 
     #[test]
     fn test_secure_service_grant_emits_per_action_facts() {
-        use pyana_macaroon::action::Action;
+        use dregg_macaroon::action::Action;
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::Service {
+        let grant = DreggGrant::Service {
             name: "http".into(),
             actions: Action::READ.union(Action::WRITE).union(Action::DELETE),
         };
@@ -557,9 +557,9 @@ mod tests {
 
     #[test]
     fn test_secure_conversion_no_substring_vulnerability() {
-        use pyana_macaroon::action::Action;
+        use dregg_macaroon::action::Action;
         let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::App {
+        let grant = DreggGrant::App {
             id: "my-app".into(),
             actions: Action::WRITE, // only write
         };
@@ -585,7 +585,7 @@ mod tests {
     #[test]
     fn test_secure_unrestricted_token() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-sec", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-sec", "dregg.dev");
 
         let (factset, symbols) = macaroon_to_factset_secure(&token);
         assert_eq!(factset.len(), 1);
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn test_secure_attenuated_token() {
         let key = test_key();
-        let token = MacaroonToken::mint(key, b"kid-sec", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid-sec", "dregg.dev");
 
         let restricted = token
             .attenuate(&Attenuation {

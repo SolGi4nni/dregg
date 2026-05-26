@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Pyana and Mina share the same proof system family (Kimchi/Pickles over Pasta curves).
+`dregg` and Mina share the same proof system family (Kimchi/Pickles over Pasta curves).
 This means a Mina bridge can be **fully proof-carrying** without any external wrapping
 service, compression, or curve mismatch workarounds. Unlike the Midnight bridge
 (blocked on BLS12-381 wrapping, operating at Level 1.5 optimistic), the Mina bridge
@@ -94,22 +94,22 @@ Wrap verifier: 6 public inputs + 15*136 bullet_reduce + ~170 final = ~4,700 rows
 ```typescript
 import { SmartContract, State, method, Proof, Field, Struct } from 'o1js';
 
-class PyanaStateRoot extends Struct({
-  root: Field,           // Poseidon hash of the pyana federation state
+class DreggStateRoot extends Struct({
+  root: Field,           // Poseidon hash of the dregg federation state
   epoch: Field,          // monotonic epoch counter
   proofDigest: Field,    // hash binding to the Pickles proof
 }) {}
 
-class PyanaVerifier extends SmartContract {
+class DreggVerifier extends SmartContract {
   @state(Field) currentRoot = State<Field>();
   @state(Field) currentEpoch = State<Field>();
   @state(Field) proofCount = State<Field>();
 
   /**
-   * Update the pyana state root on Mina.
+   * Update the dregg state root on Mina.
    *
    * The proof parameter is a Pickles-wrapped verification of:
-   * 1. A BabyBear STARK (pyana Effect VM execution)
+   * 1. A BabyBear STARK (dregg Effect VM execution)
    * 2. Verified inside Kimchi (PoseidonStarkVerifierCircuit)
    * 3. Wrapped into Pickles (recursive, constant-size)
    *
@@ -117,8 +117,8 @@ class PyanaVerifier extends SmartContract {
    * Mina proof. The on-chain verifier just checks the recursive structure.
    */
   @method async updateRoot(
-    newRoot: PyanaStateRoot,
-    transitionProof: Proof<PyanaStateRoot, PyanaStateRoot>
+    newRoot: DreggStateRoot,
+    transitionProof: Proof<DreggStateRoot, DreggStateRoot>
   ) {
     // Verify the recursive proof (Pickles verification is free on Mina!)
     transitionProof.verify();
@@ -142,37 +142,37 @@ class PyanaVerifier extends SmartContract {
 
 ```typescript
 class BridgeLock extends Struct({
-  sender: Field,        // pyana capability hash (Poseidon over Fp)
+  sender: Field,        // dregg capability hash (Poseidon over Fp)
   amount: Field,        // value to lock
   recipient: Field,     // Mina account hash
   nonce: Field,         // replay protection
 }) {}
 
-class PyanaMinaBridge extends SmartContract {
-  @state(Field) pyanaRoot = State<Field>();
+class DreggMinaBridge extends SmartContract {
+  @state(Field) dreggRoot = State<Field>();
   @state(Field) lockedAmount = State<Field>();
   @state(Field) nullifierRoot = State<Field>();
 
   /**
-   * Lock tokens from pyana onto Mina.
+   * Lock tokens from dregg onto Mina.
    *
    * Proof demonstrates:
-   * 1. The lock note exists in the pyana state (Merkle membership)
+   * 1. The lock note exists in the dregg state (Merkle membership)
    * 2. The capability authorizing the transfer is valid (Effect VM execution)
    * 3. The fold chain from issuance to this point is sound
    *
    * All verified recursively via Pickles. No federation attestation needed.
    */
-  @method async lockFromPyana(
+  @method async lockFromDregg(
     lock: BridgeLock,
-    membershipProof: Proof<BridgeLock, Field>,  // proves note in pyana state
+    membershipProof: Proof<BridgeLock, Field>,  // proves note in dregg state
     authorizationProof: Proof<Field, Field>,    // proves capability chain
   ) {
     membershipProof.verify();
     authorizationProof.verify();
 
-    // Check the membership proof binds to the current pyana root
-    const root = this.pyanaRoot.getAndRequireEquals();
+    // Check the membership proof binds to the current dregg root
+    const root = this.dreggRoot.getAndRequireEquals();
     membershipProof.publicOutput.assertEquals(root);
 
     // Verify nonce hasn't been used (nullifier check)
@@ -183,16 +183,16 @@ class PyanaMinaBridge extends SmartContract {
   }
 
   /**
-   * Unlock tokens back to pyana.
+   * Unlock tokens back to dregg.
    *
-   * Burns on Mina, emits an event that pyana's observer picks up.
-   * The pyana observer then creates a provable state transition to mint.
+   * Burns on Mina, emits an event that dregg's observer picks up.
+   * The dregg observer then creates a provable state transition to mint.
    */
-  @method async unlockToPyana(amount: Field, pyanaRecipient: Field) {
+  @method async unlockToDregg(amount: Field, dreggRecipient: Field) {
     // Verify caller owns the tokens
     // Burn them
-    // Emit event for pyana observer
-    this.emitEvent('unlock', { amount, recipient: pyanaRecipient });
+    // Emit event for dregg observer
+    this.emitEvent('unlock', { amount, recipient: dreggRecipient });
   }
 }
 ```
@@ -201,17 +201,17 @@ class PyanaMinaBridge extends SmartContract {
 
 ```typescript
 /**
- * A Mina zkApp whose state transitions REQUIRE a pyana proof.
+ * A Mina zkApp whose state transitions REQUIRE a dregg proof.
  *
  * This is the "sovereign cell on Mina" concept: the zkApp is part of
- * pyana's governed namespace but lives on the Mina chain.
+ * dregg's governed namespace but lives on the Mina chain.
  */
-class PyanaSovereignCell extends SmartContract {
+class DreggSovereignCell extends SmartContract {
   @state(Field) capabilityRoot = State<Field>();  // root of authorized caps
   @state(Field) cellState = State<Field>();       // arbitrary application state
 
   /**
-   * Perform a state transition, authorized by a pyana capability proof.
+   * Perform a state transition, authorized by a dregg capability proof.
    *
    * The proof carries the full authorization chain:
    * 1. Capability issuance (factory proof)
@@ -219,12 +219,12 @@ class PyanaSovereignCell extends SmartContract {
    * 3. Authorization evaluation (Effect VM STARK)
    * 4. STARK-in-Pickles wrapping (recursive Pasta proof)
    *
-   * The Mina chain acts as a settlement layer: pyana proves authorization,
+   * The Mina chain acts as a settlement layer: dregg proves authorization,
    * Mina stores and enforces the resulting state.
    */
   @method async transition(
     newState: Field,
-    capabilityProof: Proof<Field, Field>,  // pyana authorization chain
+    capabilityProof: Proof<Field, Field>,  // dregg authorization chain
   ) {
     capabilityProof.verify();
 
@@ -241,27 +241,27 @@ class PyanaSovereignCell extends SmartContract {
 
 ---
 
-## CapTP Integration: Mina zkApps as Pyana Objects
+## CapTP Integration: Mina zkApps as `dregg` Objects
 
 ### Mounting Pattern
 
-A Mina zkApp appears in pyana's governed namespace:
+A Mina zkApp appears in dregg's governed namespace:
 
 ```
-/bridges/mina/swap        -> PyanaMinaBridge (lock/unlock operations)
-/bridges/mina/anchor      -> PyanaVerifier (state root updates)
-/bridges/mina/cells/0x... -> PyanaSovereignCell (application state)
+/bridges/mina/swap        -> DreggMinaBridge (lock/unlock operations)
+/bridges/mina/anchor      -> DreggVerifier (state root updates)
+/bridges/mina/cells/0x... -> DreggSovereignCell (application state)
 ```
 
 ### CapTP Session Architecture
 
 ```
-pyana node                Mina bridge gateway               Mina full node
+dregg node                Mina bridge gateway               Mina full node
     |                           |                               |
     | CapTP.send(                |                               |
     |   target="/bridges/mina/  |                               |
     |     swap",                |                               |
-    |   method="lockFromPyana", |                               |
+    |   method="lockFromDregg", |                               |
     |   args=[proof, amount]    |                               |
     | )                         |                               |
     |                           | 1. Validate proof locally      |
@@ -283,11 +283,11 @@ A sovereign cell has:
 1. **State** (on-chain) -- zkApp has 8 state fields (Field elements, same Fp)
 2. **Receives messages** -- zkApp methods are callable
 3. **Produces proofs** -- every Mina state transition IS a proof
-4. **Is governable** -- pyana capability proofs control access
+4. **Is governable** -- dregg capability proofs control access
 5. **Composes recursively** -- zkApp A can verify proofs from zkApp B
 
 This is a much richer integration than Midnight, where we can only post
-attestations to a contract. On Mina, the zkApp IS the pyana object.
+attestations to a contract. On Mina, the zkApp IS the dregg object.
 
 ---
 
@@ -347,8 +347,8 @@ But this is an optimization, not a necessity.
 | Proof format adapter | 1-2 days | Serialize `DualCurveWrapProof` into o1js-compatible format |
 | CapTP bridge gateway | 3-5 days | Node.js service: CapTP -> Mina GraphQL submission |
 | Mina event observer | 2-3 days | Mirror of `midnight_observer.rs` for Mina events |
-| State root oracle | 1 day | Feed pyana state roots into `PyanaVerifier` contract |
-| Integration tests | 2-3 days | End-to-end: pyana proof -> Mina chain -> verification |
+| State root oracle | 1 day | Feed dregg state roots into `DreggVerifier` contract |
+| Integration tests | 2-3 days | End-to-end: dregg proof -> Mina chain -> verification |
 
 ---
 
@@ -356,10 +356,10 @@ But this is an optimization, not a necessity.
 
 ### Phase 1: Proof Submission (2 weeks)
 
-**Goal:** A pyana proof lands on Mina and is verified on-chain.
+**Goal:** A dregg proof lands on Mina and is verified on-chain.
 
 1. **Week 1:**
-   - Write `PyanaVerifier` o1js contract
+   - Write `DreggVerifier` o1js contract
    - Implement proof format adapter (Rust `DualCurveWrapProof` -> o1js `Proof`)
    - Deploy to Mina devnet (Berkeley testnet)
 
@@ -373,23 +373,23 @@ But this is an optimization, not a necessity.
 **Goal:** Lock/unlock/transfer with STARK proof verification.
 
 3. **Week 3:**
-   - Write `PyanaMinaBridge` contract (lock/unlock methods)
+   - Write `DreggMinaBridge` contract (lock/unlock methods)
    - Implement nullifier tracking (Merkle non-membership)
-   - Mina event observer for `unlockToPyana` events
+   - Mina event observer for `unlockToDregg` events
 
 4. **Week 4:**
-   - Integrate with pyana's note system (`BridgeDestination::Mina`)
+   - Integrate with dregg's note system (`BridgeDestination::Mina`)
    - CapTP routing: `/bridges/mina/swap` namespace mount
    - Bidirectional transfer tests
 
 ### Phase 3: Sovereign Cells (2 weeks)
 
-**Goal:** Pyana capabilities control Mina zkApp state.
+**Goal:** `dregg` capabilities control Mina zkApp state.
 
 5. **Week 5:**
-   - `PyanaSovereignCell` o1js contract
+   - `DreggSovereignCell` o1js contract
    - Capability proof verification on Mina
-   - State transition authorization via pyana Effect VM proofs
+   - State transition authorization via dregg Effect VM proofs
 
 6. **Week 6:**
    - Governed namespace integration
@@ -401,8 +401,8 @@ But this is an optimization, not a necessity.
 **Goal:** Full ecosystem integration.
 
 7. **Week 7:**
-   - Mina zkApps compose with pyana proofs recursively
-   - Cross-zkApp authorization (pyana proof controls multiple Mina contracts)
+   - Mina zkApps compose with dregg proofs recursively
+   - Cross-zkApp authorization (dregg proof controls multiple Mina contracts)
    - DeFi primitives: swap, lending, governed pools
 
 8. **Week 8:**
@@ -446,7 +446,7 @@ trustless cross-chain settlement, Mina is the natural partner.
 - **o1js version compatibility:** o1js has breaking changes between versions.
   Need to target a specific o1js version and pin it.
 - **Mina sequencer latency:** Mina blocks are ~3 minutes. Bridge operations
-  inherit this latency (vs. pyana's sub-second finality).
+  inherit this latency (vs. dregg's sub-second finality).
 - **SRS compatibility:** Our `new_index_for_test` uses dynamic SRS generation.
   Mina's production SRS is fixed. Need to align SRS parameters.
 
@@ -465,7 +465,7 @@ trustless cross-chain settlement, Mina is the natural partner.
 ## Appendix: Proof Flow Diagram
 
 ```
-                    PYANA SIDE                          MINA SIDE
+                    DREGG SIDE                          MINA SIDE
                     ----------                          ---------
 
  [Effect VM execution]
@@ -488,7 +488,7 @@ trustless cross-chain settlement, Mina is the natural partner.
          |                                              |
          | Bridge Gateway (proof format adapter)        |
          v                                              v
- [o1js-compatible proof] -----> [PyanaVerifier.updateRoot()] ----> [Mina chain state]
+ [o1js-compatible proof] -----> [DreggVerifier.updateRoot()] ----> [Mina chain state]
                                                                          |
                                                                     Verified root
                                                                     available to
@@ -510,9 +510,9 @@ expects.
 ### Option B: Re-proving Wrapper (fallback)
 If direct import is not supported, we create a trivial o1js `ZkProgram`:
 ```typescript
-const PyanaProofWrapper = ZkProgram({
-  name: 'pyana-wrapper',
-  publicInput: Field,   // pyana state root
+const DreggProofWrapper = ZkProgram({
+  name: 'dregg-wrapper',
+  publicInput: Field,   // dregg state root
   publicOutput: Field,  // verified root
   methods: {
     wrap: {

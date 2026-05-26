@@ -1,6 +1,6 @@
 # Recursive Verifier Status
 
-Current state of in-circuit recursive proof verification in pyana.
+Current state of in-circuit recursive proof verification in dregg.
 
 ---
 

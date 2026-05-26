@@ -1,16 +1,16 @@
 /**
- * <pyana-turn uri="pyana://turn/<hex32>"> — single turn.
+ * <dregg-turn uri="dregg://turn/<hex32>"> — single turn.
  *
  * In the sim runtime a "turn" is identified by its turn_hash; its observable
  * state is the matching TurnReceipt (pre/post state, computrons, actions).
- * Backed by the same `get_receipt_chain` lookup as <pyana-receipt>, but
+ * Backed by the same `get_receipt_chain` lookup as <dregg-receipt>, but
  * presented as a turn (with an embedded receipt for the effects view).
  */
 
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaTurn extends InspectorBase {
+class DreggTurn extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -29,10 +29,10 @@ class PyanaTurn extends InspectorBase {
 
     const Component = () => {
       const t = sig.value;
-      if (!t) return html`<div class="pyana-inspector pyana-inspector--empty">turn not found: <code>${shortHex(parsed.id, 16)}</code></div>`;
+      if (!t) return html`<div class="dregg-inspector dregg-inspector--empty">turn not found: <code>${shortHex(parsed.id, 16)}</code></div>`;
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
+          <span class="dregg-inspector dregg-inspector--compact">
             <code title=${parsed.id}>${shortHex(parsed.id)}</code>
             · ${String(t.action_count)} effects
           </span>`;
@@ -52,7 +52,7 @@ class PyanaTurn extends InspectorBase {
                     <code style="font-size:0.78rem;" title=${a.target_cell || ''}>${shortHex(a.target_cell, 10)}</code>
                     <span style="color:var(--fg-dim);font-size:0.78rem;">${shortHex(a.method, 8)}</span>
                     ${authJson
-                      ? html`<pyana-authorization data=${authJson} mode="compact"></pyana-authorization>`
+                      ? html`<dregg-authorization data=${authJson} mode="compact"></dregg-authorization>`
                       : null}
                   </li>`;
               })}
@@ -61,12 +61,12 @@ class PyanaTurn extends InspectorBase {
         : html`<dt>actions</dt><dd>${String(t.action_count)}</dd>`;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell">
+        <div class="dregg-inspector dregg-inspector--cell">
           <header>
-            <span class="pyana-inspector__kind">turn</span>
-            <code class="pyana-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 24)}</code>
+            <span class="dregg-inspector__kind">turn</span>
+            <code class="dregg-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 24)}</code>
           </header>
-          <dl class="pyana-inspector__kv">
+          <dl class="dregg-inspector__kv">
             <dt>turn hash</dt><dd><code>${t.turn_hash}</code></dd>
             <dt>effects</dt><dd>${String(t.action_count)}</dd>
             <dt>computrons</dt><dd>${String(t.computrons_used)}</dd>
@@ -78,15 +78,15 @@ class PyanaTurn extends InspectorBase {
             </dd>
             ${actionList}
             <dt>receipt</dt>
-            <dd><pyana-receipt uri=${`pyana://receipt/${t.turn_hash}`} mode="compact"></pyana-receipt></dd>
+            <dd><dregg-receipt uri=${`dregg://receipt/${t.turn_hash}`} mode="compact"></dregg-receipt></dd>
           </dl>
           <details style="margin-top:var(--s3,8px);">
             <summary style="cursor:pointer;color:var(--fg-dim);font-size:0.82rem;user-select:none;">Trace</summary>
-            <pyana-turn-debugger uri=${`pyana://turn/${t.turn_hash}`} mode="default"></pyana-turn-debugger>
+            <dregg-turn-debugger uri=${`dregg://turn/${t.turn_hash}`} mode="default"></dregg-turn-debugger>
           </details>
         </div>`;
     };
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-turn')) customElements.define('pyana-turn', PyanaTurn);
+if (!customElements.get('dregg-turn')) customElements.define('dregg-turn', DreggTurn);

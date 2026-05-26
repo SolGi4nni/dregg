@@ -1,8 +1,8 @@
 //! Turn execution checks: transfer, set_field, grant, multi-effect, nonce, conservation.
 
-use pyana_cell::{AuthRequired, CapabilityRef, Cell, Ledger, Permissions};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, CapabilityRef, Cell, Ledger, Permissions};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::{
     BudgetGate, BudgetSlice, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor,
     TurnResult,
 };

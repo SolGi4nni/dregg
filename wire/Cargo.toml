@@ -1,12 +1,12 @@
 [package]
-name = "pyana-wire"
+name = "dregg-wire"
 version.workspace = true
 edition.workspace = true
 
 [features]
 default = ["stark-verifier", "bridge"]
-stark-verifier = ["pyana-circuit"]
-bridge = ["pyana-bridge", "pyana-commit", "stark-verifier"]
+stark-verifier = ["dregg-circuit"]
+bridge = ["dregg-bridge", "dregg-commit", "stark-verifier"]
 dev = []
 
 [dependencies]
@@ -19,24 +19,24 @@ blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 tracing = { workspace = true }
 getrandom = { workspace = true }
-pyana-circuit = { path = "../circuit", optional = true }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-bridge = { path = "../bridge", optional = true, features = ["test-utils"] }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
-pyana-commit = { path = "../commit", optional = true }
-pyana-captp = { path = "../captp" }
-pyana-cell = { path = "../cell" }
-pyana-federation = { path = "../federation", default-features = false }
-pyana-persist = { path = "../persist" }
-pyana-turn = { path = "../turn" }
-pyana-types = { path = "../types" }
-pyana-dfa = { path = "../dfa" }
+dregg-circuit = { path = "../circuit", optional = true }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-bridge = { path = "../bridge", optional = true, features = ["test-utils"] }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-commit = { path = "../commit", optional = true }
+dregg-captp = { path = "../captp" }
+dregg-cell = { path = "../cell" }
+dregg-federation = { path = "../federation", default-features = false }
+dregg-persist = { path = "../persist" }
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
+dregg-dfa = { path = "../dfa" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bin]]
-name = "pyana-network-demo"
+name = "dregg-network-demo"
 path = "src/bin/demo.rs"
 required-features = ["stark-verifier"]
 

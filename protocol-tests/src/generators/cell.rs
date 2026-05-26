@@ -11,7 +11,7 @@
 //! `permission_enforcement`) build narrower ledgers from primitives in
 //! `capability.rs`.
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 
 /// A description of the cells to seed a ledger with.
 #[derive(Clone, Debug)]

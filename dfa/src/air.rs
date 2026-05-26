@@ -1,7 +1,7 @@
 //! AIR trace generation/verification for proving correct DFA execution.
 //!
 //! The trace shape `(step, state, byte, next_state)` matches the
-//! `pyana-dfa-routing-v1` AIR in `tests/src/dfa_circuit.rs` and the in-DSL
+//! `dregg-dfa-routing-v1` AIR in `tests/src/dfa_circuit.rs` and the in-DSL
 //! variant at `circuit::dsl::circuit:1711-1941`. Hooking up a route-table
 //! commitment to a STARK proof of "this input was correctly classified by
 //! the governance-bound DFA D" is therefore mechanical: serialize each

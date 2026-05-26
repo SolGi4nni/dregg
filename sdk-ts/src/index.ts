@@ -1,7 +1,7 @@
 /**
- * @pyana/sdk - TypeScript SDK for the pyana distributed authorization system.
+ * @dregg/sdk - TypeScript SDK for the dregg distributed authorization system.
  *
- * This SDK wraps the pyana-wasm module into ergonomic, type-safe APIs for:
+ * This SDK wraps the dregg-wasm module into ergonomic, type-safe APIs for:
  * - Token lifecycle (mint, attenuate, verify) via macaroon-based auth
  * - STARK proof generation and verification
  * - Merkle tree operations (membership, non-membership)
@@ -11,11 +11,11 @@
  *
  * @example
  * ```ts
- * import init from "pyana-wasm";
- * import { PyanaClient } from "@pyana/sdk";
+ * import init from "dregg-wasm";
+ * import { DreggClient } from "@dregg/sdk";
  *
  * const wasm = await init();
- * const client = new PyanaClient(wasm);
+ * const client = new DreggClient(wasm);
  *
  * // Mint and verify a token
  * const token = await client.cclerk.mint("my-service");
@@ -44,7 +44,7 @@ export { MerkleTree } from "./merkle";
 
 export { PredicateEvaluator } from "./predicates";
 
-export { PyanaRuntime } from "./runtime";
+export { DreggRuntime } from "./runtime";
 
 export type {
   // Core token types
@@ -134,19 +134,19 @@ import { TokenOps } from "./token";
 import { ProofEngine } from "./proof";
 import { MerkleTree } from "./merkle";
 import { PredicateEvaluator } from "./predicates";
-import { PyanaRuntime } from "./runtime";
+import { DreggRuntime } from "./runtime";
 
 /**
- * PyanaClient is the main entry point for the SDK. It combines all subsystems
+ * DreggClient is the main entry point for the SDK. It combines all subsystems
  * (cclerk, proofs, merkle, predicates, runtime) into a single cohesive interface.
  *
  * @example
  * ```ts
- * import init from "pyana-wasm";
- * import { PyanaClient } from "@pyana/sdk";
+ * import init from "dregg-wasm";
+ * import { DreggClient } from "@dregg/sdk";
  *
  * const wasm = await init();
- * const client = new PyanaClient(wasm);
+ * const client = new DreggClient(wasm);
  *
  * // Use individual subsystems
  * const token = await client.cclerk.mint("api-gateway");
@@ -154,7 +154,7 @@ import { PyanaRuntime } from "./runtime";
  * const root = await client.merkle.computeRoot(["a", "b", "c"]);
  * ```
  */
-export class PyanaClient {
+export class DreggClient {
   /** Token minting, attenuation, and verification. */
   public readonly cclerk: AgentCipherclerk;
   /** Token state operations and BLAKE3 hashing. */
@@ -166,16 +166,16 @@ export class PyanaClient {
   /** Datalog authorization evaluation. */
   public readonly predicates: PredicateEvaluator;
 
-  private readonly wasm: typeof import("pyana-wasm");
+  private readonly wasm: typeof import("dregg-wasm");
 
   /**
-   * Create a new PyanaClient. Prefer using `PyanaClient.init()` which
+   * Create a new DreggClient. Prefer using `DreggClient.init()` which
    * handles async cclerk creation.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param cclerk - A pre-created AgentCipherclerk instance.
    */
-  constructor(wasm: typeof import("pyana-wasm"), cclerk: AgentCipherclerk) {
+  constructor(wasm: typeof import("dregg-wasm"), cclerk: AgentCipherclerk) {
     this.wasm = wasm;
     this.cclerk = cclerk;
     this.token = new TokenOps(wasm);
@@ -185,42 +185,42 @@ export class PyanaClient {
   }
 
   /**
-   * Initialize a PyanaClient with a fresh random cclerk.
+   * Initialize a DreggClient with a fresh random cclerk.
    *
    * This is the recommended way to create a client instance.
    *
-   * @param wasm - The initialized pyana-wasm module.
-   * @returns A fully initialized PyanaClient.
+   * @param wasm - The initialized dregg-wasm module.
+   * @returns A fully initialized DreggClient.
    */
-  static async init(wasm: typeof import("pyana-wasm")): Promise<PyanaClient> {
+  static async init(wasm: typeof import("dregg-wasm")): Promise<DreggClient> {
     const cclerk = await AgentCipherclerk.create(wasm);
-    return new PyanaClient(wasm, cclerk);
+    return new DreggClient(wasm, cclerk);
   }
 
   /**
-   * Initialize a PyanaClient with an existing root key.
+   * Initialize a DreggClient with an existing root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param rootKey - A 32-byte root key (Uint8Array or hex string).
-   * @returns A PyanaClient using the provided key.
+   * @returns A DreggClient using the provided key.
    */
   static fromKey(
-    wasm: typeof import("pyana-wasm"),
+    wasm: typeof import("dregg-wasm"),
     rootKey: Uint8Array | string
-  ): PyanaClient {
+  ): DreggClient {
     const cclerk = AgentCipherclerk.fromKey(wasm, rootKey);
-    return new PyanaClient(wasm, cclerk);
+    return new DreggClient(wasm, cclerk);
   }
 
   /**
-   * Create a new PyanaRuntime for full distributed system simulation.
+   * Create a new DreggRuntime for full distributed system simulation.
    *
    * The runtime provides agents, cells, turns, federations, intents,
    * notes, capabilities, and revocation channels -- all running in WASM.
    *
-   * @returns A new PyanaRuntime instance.
+   * @returns A new DreggRuntime instance.
    */
-  createRuntime(): PyanaRuntime {
-    return new PyanaRuntime(this.wasm);
+  createRuntime(): DreggRuntime {
+    return new DreggRuntime(this.wasm);
   }
 }

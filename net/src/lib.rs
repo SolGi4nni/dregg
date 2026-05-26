@@ -1,6 +1,6 @@
-//! Pyana peer-to-peer networking via QUIC.
+//! Dregg peer-to-peer networking via QUIC.
 //!
-//! This crate provides P2P connectivity for pyana nodes using quinn's QUIC transport.
+//! This crate provides P2P connectivity for dregg nodes using quinn's QUIC transport.
 //! It implements:
 //!
 //! - Direct peer-to-peer QUIC connections with self-signed certificate identity.
@@ -9,11 +9,11 @@
 //!
 //! # Architecture
 //!
-//! - [`PeerNode`] wraps a quinn `Endpoint` for direct QUIC connections between pyana nodes.
+//! - [`PeerNode`] wraps a quinn `Endpoint` for direct QUIC connections between dregg nodes.
 //! - [`GossipNetwork`] provides topic-based pub/sub using simple eager-push gossip.
 //! - [`EntryDag`] tracks happened-before ordering between turns,
-//!   layered on `pyana_types::CausalDag`.
-//! - [`PeerMessage`] defines the wire protocol for pyana-specific exchanges.
+//!   layered on `dregg_types::CausalDag`.
+//! - [`PeerMessage`] defines the wire protocol for dregg-specific exchanges.
 //!
 //! # Note on iroh
 //!

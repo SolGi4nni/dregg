@@ -1,5 +1,5 @@
 /**
- * Example interactions with a deployed PyanaFederation zkApp.
+ * Example interactions with a deployed DreggFederation zkApp.
  *
  * Usage:
  *   DEPLOYER_KEY=<base58-private-key> \
@@ -23,7 +23,7 @@ import {
   fetchAccount,
   Poseidon,
 } from 'o1js';
-import { PyanaFederation } from '../src/PyanaFederation';
+import { DreggFederation } from '../src/DreggFederation';
 import { BridgeRelay } from '../src/bridge-ops';
 
 // ---------------------------------------------------------------------------
@@ -50,10 +50,10 @@ function requireEnv(name: string): string {
 // Commands
 // ---------------------------------------------------------------------------
 
-async function showStatus(zkApp: PyanaFederation, address: PublicKey) {
+async function showStatus(zkApp: DreggFederation, address: PublicKey) {
   await fetchAccount({ publicKey: address });
 
-  console.log('=== PyanaFederation Status ===\n');
+  console.log('=== DreggFederation Status ===\n');
   console.log(`  Address:        ${address.toBase58()}`);
   console.log(`  State Root:     ${zkApp.stateRoot.get().toString()}`);
   console.log(`  Proven Height:  ${zkApp.provenHeight.get().toString()}`);
@@ -120,7 +120,7 @@ async function withdraw(
   senderKey: PrivateKey,
   amount: string,
   nullifier: string,
-  zkApp: PyanaFederation,
+  zkApp: DreggFederation,
   address: PublicKey,
 ) {
   console.log('Processing withdrawal...');
@@ -169,7 +169,7 @@ async function main() {
   Mina.setActiveInstance(Network);
 
   const address = PublicKey.fromBase58(requireEnv('ZKAPP_ADDRESS'));
-  const zkApp = new PyanaFederation(address);
+  const zkApp = new DreggFederation(address);
 
   if (command === 'status') {
     await showStatus(zkApp, address);
@@ -181,7 +181,7 @@ async function main() {
 
   // Compile for proving
   console.log('Compiling zkApp...');
-  await PyanaFederation.compile();
+  await DreggFederation.compile();
 
   const relay = new BridgeRelay({
     zkAppAddress: address,

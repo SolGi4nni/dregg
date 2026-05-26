@@ -1,7 +1,7 @@
 //! `FactoryDescriptor`-shaped reference template for directory cells.
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md`, every storage primitive becomes a
-//! factory in `pyana_cell::factory::FactoryDescriptor` shape: the slot
+//! factory in `dregg_cell::factory::FactoryDescriptor` shape: the slot
 //! layout + state constraints declare the cell-program pattern, and the
 //! executor enforces those constraints on every state-modifying turn.
 //!
@@ -25,7 +25,7 @@
 //! | 6    | Created-at block height (`WriteOnce`)                        |
 //! | 7    | Reserved for sub-directory parent ref (used by MetaDirectory)|
 //!
-//! The eight slots map onto `pyana_cell::STATE_SLOTS`. The `entries`
+//! The eight slots map onto `dregg_cell::STATE_SLOTS`. The `entries`
 //! data themselves live off-cell (a Merkle tree); slot 5 commits to
 //! that tree's root so the executor can verify swap operations against
 //! a Merkle-membership witness.
@@ -46,8 +46,8 @@
 //! `RateLimitBySum`, sender ACLs via `SenderAuthorized + PublicRoot`,
 //! etc.) by extending `state_constraints` at descriptor-build time.
 
-use pyana_cell::factory::{ChildVkStrategy, FactoryDescriptor};
-use pyana_cell::{CellMode, StateConstraint, field_from_u64};
+use dregg_cell::factory::{ChildVkStrategy, FactoryDescriptor};
+use dregg_cell::{CellMode, StateConstraint, field_from_u64};
 
 /// Slot-index constants for the directory cell-program pattern.
 ///

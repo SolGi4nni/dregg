@@ -10,7 +10,7 @@
 //! - `accepts_effects()` returns false for Destroyed.
 //! - `certificate_hash()` binds every field of the DeathCertificate.
 
-use pyana_cell::{
+use dregg_cell::{
     Cell, CellId, Ledger,
     lifecycle::{
         ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason, LifecycleTransitionError,

@@ -8,8 +8,8 @@ export function initSandbox(wasm) {
     <div class="section-header">
       <h2>Code Sandbox</h2>
       <p>
-        Write and execute arbitrary JavaScript against the full pyana WASM API. The
-        <code>pyana</code> object is available with all methods. Use Ctrl+Enter to run.
+        Write and execute arbitrary JavaScript against the full dregg WASM API. The
+        <code>dregg</code> object is available with all methods. Use Ctrl+Enter to run.
         Explore freely — everything executes client-side in your browser.
       </p>
     </div>
@@ -32,13 +32,13 @@ export function initSandbox(wasm) {
       </select>
     </div>
 
-    <textarea class="sandbox-editor" id="sb-editor" spellcheck="false" placeholder="// Write JavaScript that calls the pyana WASM API...
-// The 'pyana' object is available with all methods.
+    <textarea class="sandbox-editor" id="sb-editor" spellcheck="false" placeholder="// Write JavaScript that calls the dregg WASM API...
+// The 'dregg' object is available with all methods.
 
-const key = await pyana.generateRootKey();
+const key = await dregg.generateRootKey();
 console.log('Root key:', key.key_hex);
 
-const minted = await pyana.mintToken(key.key_bytes, 'pyana.dev');
+const minted = await dregg.mintToken(key.key_bytes, 'dregg.dev');
 console.log('Token:', minted.token.slice(0, 40) + '...');
 "></textarea>
 
@@ -49,30 +49,30 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
     <div class="sandbox-api-ref">
       <div class="sandbox-api-ref__title">API Reference</div>
       <div class="sandbox-api-ref__list">
-        <div><span>pyana.generateRootKey</span>() &rarr; {key_hex, key_bytes}</div>
-        <div><span>pyana.mintToken</span>(keyBytes, location) &rarr; {token}</div>
-        <div><span>pyana.attenuate</span>(token, keyBytes, svc, actions, expiresBigInt) &rarr; {token, caveats_added}</div>
-        <div><span>pyana.verifyToken</span>(token, keyBytes, appId, action) &rarr; {allowed, policy}</div>
-        <div><span>pyana.generateStarkProof</span>(leafU32, depth) &rarr; {proof_size_bytes, trace_rows, ...}</div>
-        <div><span>pyana.verifyStarkProof</span>(jsonStr) &rarr; {valid, error}</div>
-        <div><span>pyana.tamperProof</span>(jsonStr) &rarr; tamperedJsonStr</div>
-        <div><span>pyana.merkleRoot</span>(leavesArr) &rarr; {root_hex, num_leaves, tree_depth}</div>
-        <div><span>pyana.merkleMembership</span>(leavesArr, target) &rarr; {verified, leaf_index, proof_path}</div>
-        <div><span>pyana.evaluateDatalog</span>(factsArr, reqObj) &rarr; {decision, matched_rule, steps}</div>
-        <div><span>pyana.demonstrateFold</span>(factsArr, removeArr) &rarr; {old_root, new_root, verified}</div>
-        <div><span>pyana.blake3Hash</span>(input) &rarr; hexStr</div>
-        <div><span>pyana.deriveStealthKeys</span>(mnemonic, passphrase) &rarr; {spend_pubkey, view_pubkey, ...}</div>
-        <div><span>pyana.createStealthAddress</span>(spendPub, viewPub) &rarr; {one_time_pubkey, ephemeral_pubkey}</div>
-        <div><span>pyana.checkStealthOwnership</span>(viewPriv, spendPub, ephPub, otPub) &rarr; {is_ours}</div>
-        <div><span>pyana.createValueCommitment</span>(amount, blinding) &rarr; {commitment, blinding}</div>
-        <div><span>pyana.verifyConservation</span>(inputsJson, outputsJson) &rarr; {valid}</div>
-        <div><span>pyana.createBearerCap</span>(delegatorHex, targetHex, action, expiry) &rarr; {bearer_token_hex}</div>
-        <div><span>pyana.verifyBearerCap</span>(tokenHex, delegatorHex, targetHex, action, expiry, now) &rarr; {valid}</div>
-        <div><span>pyana.createFromFactory</span>(factoryVkHex, ownerHex, balance) &rarr; {child_vk, param_hash}</div>
-        <div><span>pyana.verifyProvenance</span>(cellVkHex, factoryVksJson) &rarr; {from_factory}</div>
-        <div><span>pyana.makeCellSovereign</span>(cellIdHex, balance) &rarr; {state_commitment, mode}</div>
-        <div><span>pyana.peerExchange</span>(senderHex, receiverHex, amount) &rarr; {exchange_id, proof_commitment}</div>
-        <div><span>pyana.composeProofs</span>(proofsJson, mode) &rarr; {composed_proof, valid}</div>
+        <div><span>dregg.generateRootKey</span>() &rarr; {key_hex, key_bytes}</div>
+        <div><span>dregg.mintToken</span>(keyBytes, location) &rarr; {token}</div>
+        <div><span>dregg.attenuate</span>(token, keyBytes, svc, actions, expiresBigInt) &rarr; {token, caveats_added}</div>
+        <div><span>dregg.verifyToken</span>(token, keyBytes, appId, action) &rarr; {allowed, policy}</div>
+        <div><span>dregg.generateStarkProof</span>(leafU32, depth) &rarr; {proof_size_bytes, trace_rows, ...}</div>
+        <div><span>dregg.verifyStarkProof</span>(jsonStr) &rarr; {valid, error}</div>
+        <div><span>dregg.tamperProof</span>(jsonStr) &rarr; tamperedJsonStr</div>
+        <div><span>dregg.merkleRoot</span>(leavesArr) &rarr; {root_hex, num_leaves, tree_depth}</div>
+        <div><span>dregg.merkleMembership</span>(leavesArr, target) &rarr; {verified, leaf_index, proof_path}</div>
+        <div><span>dregg.evaluateDatalog</span>(factsArr, reqObj) &rarr; {decision, matched_rule, steps}</div>
+        <div><span>dregg.demonstrateFold</span>(factsArr, removeArr) &rarr; {old_root, new_root, verified}</div>
+        <div><span>dregg.blake3Hash</span>(input) &rarr; hexStr</div>
+        <div><span>dregg.deriveStealthKeys</span>(mnemonic, passphrase) &rarr; {spend_pubkey, view_pubkey, ...}</div>
+        <div><span>dregg.createStealthAddress</span>(spendPub, viewPub) &rarr; {one_time_pubkey, ephemeral_pubkey}</div>
+        <div><span>dregg.checkStealthOwnership</span>(viewPriv, spendPub, ephPub, otPub) &rarr; {is_ours}</div>
+        <div><span>dregg.createValueCommitment</span>(amount, blinding) &rarr; {commitment, blinding}</div>
+        <div><span>dregg.verifyConservation</span>(inputsJson, outputsJson) &rarr; {valid}</div>
+        <div><span>dregg.createBearerCap</span>(delegatorHex, targetHex, action, expiry) &rarr; {bearer_token_hex}</div>
+        <div><span>dregg.verifyBearerCap</span>(tokenHex, delegatorHex, targetHex, action, expiry, now) &rarr; {valid}</div>
+        <div><span>dregg.createFromFactory</span>(factoryVkHex, ownerHex, balance) &rarr; {child_vk, param_hash}</div>
+        <div><span>dregg.verifyProvenance</span>(cellVkHex, factoryVksJson) &rarr; {from_factory}</div>
+        <div><span>dregg.makeCellSovereign</span>(cellIdHex, balance) &rarr; {state_commitment, mode}</div>
+        <div><span>dregg.peerExchange</span>(senderHex, receiverHex, amount) &rarr; {exchange_id, proof_commitment}</div>
+        <div><span>dregg.composeProofs</span>(proofsJson, mode) &rarr; {composed_proof, valid}</div>
       </div>
     </div>
   `;
@@ -85,8 +85,8 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
   const clearBtn = container.querySelector('#sb-clear');
   const scenarioSelect = container.querySelector('#sb-scenarios');
 
-  // Pyana API wrapper (gracefully handles missing optional exports)
-  const pyana = {
+  // Dregg API wrapper (gracefully handles missing optional exports)
+  const dregg = {
     generateRootKey: () => wasm.generate_root_key(),
     mintToken: (keyBytes, location) => wasm.mint_token(keyBytes, location),
     attenuate: (token, keyBytes, service, actions, expiresSecs) =>
@@ -196,7 +196,7 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
           warn: (...args) => parent.postMessage({ type: 'log', level: 'warning', args: args.map(String) }, '*'),
           info: (...args) => parent.postMessage({ type: 'log', level: 'info', args: args.map(String) }, '*'),
         };
-        const pyana = new Proxy({}, {
+        const dregg = new Proxy({}, {
           get(target, prop) {
             return (...args) => {
               parent.postMessage({ type: 'apiCall', method: prop, args: JSON.parse(JSON.stringify(args)) }, '*');
@@ -214,8 +214,8 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
           }
         });
         try {
-          const fn = new Function('pyana', 'console', 'performance', \`return (async () => { \${code} })();\`);
-          await fn(pyana, console, performance);
+          const fn = new Function('dregg', 'console', 'performance', \`return (async () => { \${code} })();\`);
+          await fn(dregg, console, performance);
           parent.postMessage({ type: 'done' }, '*');
         } catch (err) {
           parent.postMessage({ type: 'error', message: err.message || String(err) }, '*');
@@ -246,7 +246,7 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
               break;
             case 'apiCall':
               try {
-                const result = pyana[msg.method](...(msg.args || []));
+                const result = dregg[msg.method](...(msg.args || []));
                 const resolved = result instanceof Promise ? result : Promise.resolve(result);
                 resolved.then(r => {
                   sandboxFrame.contentWindow.postMessage({ type: 'apiResult', callId: msg.method, result: r }, '*');
@@ -317,46 +317,46 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
   // Scenario loading
   const scenarios = {
     mint: `// Mint & Attenuate — full token lifecycle
-const root = await pyana.generateRootKey();
+const root = await dregg.generateRootKey();
 console.log("Root key:", root.key_hex);
 
-const minted = await pyana.mintToken(root.key_bytes, "pyana.dev");
+const minted = await dregg.mintToken(root.key_bytes, "dregg.dev");
 console.log("Minted:", minted.token.slice(0, 40) + "...");
 
-const att = await pyana.attenuate(minted.token, root.key_bytes, "dns", "read", 3600n);
+const att = await dregg.attenuate(minted.token, root.key_bytes, "dns", "read", 3600n);
 console.log("Attenuated (dns/read):", att.token.slice(0, 40) + "...");
 console.log("Caveats added:", att.caveats_added);
 
-const v1 = await pyana.verifyToken(att.token, root.key_bytes, "my-app", "read");
+const v1 = await dregg.verifyToken(att.token, root.key_bytes, "my-app", "read");
 console.log("Verify read:", v1.allowed ? "ALLOWED" : "DENIED");
 
-const v2 = await pyana.verifyToken(att.token, root.key_bytes, "my-app", "write");
+const v2 = await dregg.verifyToken(att.token, root.key_bytes, "my-app", "write");
 console.log("Verify write:", v2.allowed ? "ALLOWED" : "DENIED");`,
 
     stark: `// STARK Proof — generate, verify, tamper, re-verify
 const t0 = performance.now();
-const proof = await pyana.generateStarkProof(42, 4);
+const proof = await dregg.generateStarkProof(42, 4);
 console.log("Proof generated in", (performance.now() - t0).toFixed(1), "ms");
 console.log("Size:", proof.proof_size_bytes, "bytes");
 console.log("Trace rows:", proof.trace_rows);
 
-const valid = await pyana.verifyStarkProof(JSON.stringify(proof));
+const valid = await dregg.verifyStarkProof(JSON.stringify(proof));
 console.log("Verify:", valid.valid ? "VALID" : "INVALID");
 
-const tampered = await pyana.tamperProof(JSON.stringify(proof));
-const invalid = await pyana.verifyStarkProof(tampered);
+const tampered = await dregg.tamperProof(JSON.stringify(proof));
+const invalid = await dregg.verifyStarkProof(tampered);
 console.log("Tampered:", invalid.valid ? "VALID" : "INVALID (expected)");`,
 
     merkle: `// Merkle Tree — build, prove membership, prove absence
 const leaves = ["alice", "bob", "carol", "dave", "eve"];
-const tree = await pyana.merkleRoot(leaves);
+const tree = await dregg.merkleRoot(leaves);
 console.log("Root:", tree.root_hex);
 console.log("Leaves:", tree.num_leaves, "| Depth:", tree.tree_depth);
 
-const proof = await pyana.merkleMembership(leaves, "bob");
+const proof = await dregg.merkleMembership(leaves, "bob");
 console.log("Bob membership:", proof.verified, "at index", proof.leaf_index);
 
-const tree2 = await pyana.merkleRoot([...leaves, "frank"]);
+const tree2 = await dregg.merkleRoot([...leaves, "frank"]);
 console.log("New root (with frank):", tree2.root_hex);
 console.log("Root changed:", tree.root_hex !== tree2.root_hex);`,
 
@@ -367,44 +367,44 @@ const facts = [
 ];
 
 const req1 = { app_id: "my-app", action: "read", now: Date.now() / 1000 | 0 };
-const r1 = await pyana.evaluateDatalog(facts, req1);
+const r1 = await dregg.evaluateDatalog(facts, req1);
 console.log("my-app/read:", r1.decision, "-", r1.matched_rule);
 
 const req2 = { app_id: "my-app", action: "delete", now: Date.now() / 1000 | 0 };
-const r2 = await pyana.evaluateDatalog(facts, req2);
+const r2 = await dregg.evaluateDatalog(facts, req2);
 console.log("my-app/delete:", r2.decision, "-", r2.matched_rule || "default deny");`,
 
     pipeline: `// Full Pipeline — mint -> attenuate -> commit -> prove -> verify
 const t0 = performance.now();
 
-const root = await pyana.generateRootKey();
+const root = await dregg.generateRootKey();
 console.log("1. Key:", root.key_hex.slice(0, 16) + "...");
 
-const minted = await pyana.mintToken(root.key_bytes, "pyana.dev");
+const minted = await dregg.mintToken(root.key_bytes, "dregg.dev");
 console.log("2. Token:", minted.token.slice(0, 32) + "...");
 
-const att = await pyana.attenuate(minted.token, root.key_bytes, "dns", "read", 3600n);
+const att = await dregg.attenuate(minted.token, root.key_bytes, "dns", "read", 3600n);
 console.log("3. Attenuated:", att.caveats_added, "caveats");
 
-const hash = await pyana.blake3Hash(att.token);
-const tree = await pyana.merkleRoot([hash, "other-1", "other-2", "other-3"]);
+const hash = await dregg.blake3Hash(att.token);
+const tree = await dregg.merkleRoot([hash, "other-1", "other-2", "other-3"]);
 console.log("4. Merkle root:", tree.root_hex.slice(0, 24) + "...");
 
-const proof = await pyana.generateStarkProof(42, 4);
+const proof = await dregg.generateStarkProof(42, 4);
 console.log("5. STARK proof:", proof.proof_size_bytes, "bytes");
 
-const tokenOk = await pyana.verifyToken(att.token, root.key_bytes, "app", "read");
-const proofOk = await pyana.verifyStarkProof(JSON.stringify(proof));
+const tokenOk = await dregg.verifyToken(att.token, root.key_bytes, "app", "read");
+const proofOk = await dregg.verifyStarkProof(JSON.stringify(proof));
 console.log("6. Token valid:", tokenOk.allowed, "| Proof valid:", proofOk.valid);
 console.log("\\nPipeline complete in", (performance.now() - t0).toFixed(1), "ms");`,
 
     stealth: `// Stealth Address — derive keys, create address, check ownership
-const keys = await pyana.deriveStealthKeys("correct horse battery staple", "demo");
+const keys = await dregg.deriveStealthKeys("correct horse battery staple", "demo");
 console.log("View pubkey:", Array.from(keys.view_pubkey).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('') + "...");
 console.log("Spend pubkey:", Array.from(keys.spend_pubkey).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('') + "...");
 
 // Sender creates one-time address
-const addr = await pyana.createStealthAddress(
+const addr = await dregg.createStealthAddress(
   new Uint8Array(keys.spend_pubkey),
   new Uint8Array(keys.view_pubkey)
 );
@@ -412,7 +412,7 @@ console.log("\\nOne-time address:", Array.from(addr.one_time_pubkey).slice(0, 8)
 console.log("Ephemeral pubkey:", Array.from(addr.ephemeral_pubkey).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('') + "...");
 
 // Recipient checks ownership
-const check = await pyana.checkStealthOwnership(
+const check = await dregg.checkStealthOwnership(
   new Uint8Array(keys.view_privkey),
   new Uint8Array(keys.spend_pubkey),
   new Uint8Array(addr.ephemeral_pubkey),
@@ -435,18 +435,18 @@ console.log("Delegator:", delegator.slice(0, 16) + "...");
 console.log("Target cell:", target.slice(0, 16) + "...");
 
 // Create bearer cap (no expiry)
-const cap = await pyana.createBearerCap(delegator, target, "transfer", 0n);
+const cap = await dregg.createBearerCap(delegator, target, "transfer", 0n);
 console.log("\\nBearer token:", cap.bearer_token_hex.slice(0, 24) + "...");
 console.log("Action:", cap.action);
 
 // Verify it
 const now = BigInt(Math.floor(Date.now() / 1000));
-const valid = await pyana.verifyBearerCap(cap.bearer_token_hex, delegator, target, "transfer", 0n, now);
+const valid = await dregg.verifyBearerCap(cap.bearer_token_hex, delegator, target, "transfer", 0n, now);
 console.log("\\nValid:", valid.valid);
 console.log("Expired:", valid.expired);
 
 // Try wrong action
-const wrong = await pyana.verifyBearerCap(cap.bearer_token_hex, delegator, target, "admin", 0n, now);
+const wrong = await dregg.verifyBearerCap(cap.bearer_token_hex, delegator, target, "admin", 0n, now);
 console.log("\\nWrong action valid:", wrong.valid, "(expected false)");`,
 
     factory: `// Factory — deploy, create child, verify provenance
@@ -461,35 +461,35 @@ const ownerPk = randomHex();
 console.log("Factory VK:", factoryVk.slice(0, 20) + "...");
 
 // Create child cell from factory
-const child = await pyana.createFromFactory(factoryVk, ownerPk, 100n);
+const child = await dregg.createFromFactory(factoryVk, ownerPk, 100n);
 console.log("\\nChild VK:", child.child_vk.slice(0, 20) + "...");
 console.log("Param hash:", child.param_hash.slice(0, 20) + "...");
 
 // Verify provenance
-const prov = await pyana.verifyProvenance(child.child_vk, JSON.stringify([factoryVk]));
+const prov = await dregg.verifyProvenance(child.child_vk, JSON.stringify([factoryVk]));
 console.log("\\nFrom known factory:", prov.from_factory);
 console.log("Factory:", prov.factory_vk ? prov.factory_vk.slice(0, 20) + "..." : "none");
 
 // Try unknown cell
 const unknownCell = randomHex();
-const prov2 = await pyana.verifyProvenance(unknownCell, JSON.stringify([factoryVk]));
+const prov2 = await dregg.verifyProvenance(unknownCell, JSON.stringify([factoryVk]));
 console.log("\\nUnknown cell from factory:", prov2.from_factory, "(expected false)");`,
 
     composition: `// Proof Composition — generate 3 proofs, compose with AND
 const t0 = performance.now();
 
 // Generate individual proofs
-const proof1 = await pyana.generateStarkProof(42, 3);
+const proof1 = await dregg.generateStarkProof(42, 3);
 console.log("1. Membership proof:", proof1.proof_size_bytes, "bytes");
 
-const proof2 = await pyana.generateStarkProof(99, 3);
+const proof2 = await dregg.generateStarkProof(99, 3);
 console.log("2. Second proof:", proof2.proof_size_bytes, "bytes");
 
-const proof3 = await pyana.generateStarkProof(7, 3);
+const proof3 = await dregg.generateStarkProof(7, 3);
 console.log("3. Third proof:", proof3.proof_size_bytes, "bytes");
 
 // Compose with AND
-const composed = await pyana.composeProofs(JSON.stringify([
+const composed = await dregg.composeProofs(JSON.stringify([
   { proof_json: JSON.stringify(proof1), public_inputs: [42, 3] },
   { proof_json: JSON.stringify(proof2), public_inputs: [99, 3] },
   { proof_json: JSON.stringify(proof3), public_inputs: [7, 3] },
@@ -505,11 +505,11 @@ console.log("\\nTotal time:", (performance.now() - t0).toFixed(1), "ms");`,
 const t0 = performance.now();
 
 // 1. Recipient derives stealth keys
-const keys = await pyana.deriveStealthKeys("abandon abandon abandon", "test");
+const keys = await dregg.deriveStealthKeys("abandon abandon abandon", "test");
 console.log("1. Recipient stealth keys derived");
 
 // 2. Sender creates one-time address
-const addr = await pyana.createStealthAddress(
+const addr = await dregg.createStealthAddress(
   new Uint8Array(keys.spend_pubkey),
   new Uint8Array(keys.view_pubkey)
 );
@@ -518,11 +518,11 @@ console.log("2. One-time address created");
 // 3. Sender commits transfer amount (500 tokens)
 const blinding = new Uint8Array(32);
 crypto.getRandomValues(blinding);
-const commit = await pyana.createValueCommitment(500n, blinding);
+const commit = await dregg.createValueCommitment(500n, blinding);
 console.log("3. Value committed:", Array.from(new Uint8Array(commit.commitment)).slice(0,8).map(b=>b.toString(16).padStart(2,'0')).join('') + "...");
 
 // 4. Recipient scans and finds the payment
-const check = await pyana.checkStealthOwnership(
+const check = await dregg.checkStealthOwnership(
   new Uint8Array(keys.view_privkey),
   new Uint8Array(keys.spend_pubkey),
   new Uint8Array(addr.ephemeral_pubkey),
@@ -532,7 +532,7 @@ console.log("4. Recipient scan result: is_ours =", check.is_ours);
 
 // 5. Verify conservation (1000 in -> 500 transfer + 500 change)
 function rh() { return Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b=>b.toString(16).padStart(2,'0')).join(''); }
-const conserv = await pyana.verifyConservation(
+const conserv = await dregg.verifyConservation(
   JSON.stringify([rh()]),
   JSON.stringify([rh(), rh()])
 );

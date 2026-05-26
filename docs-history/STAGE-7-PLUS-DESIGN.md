@@ -404,7 +404,7 @@ Three options:
 - **Public.** Some applications (audit-heavy, public-by-design) just
   publish the witness alongside the receipt. Then anyone can replay.
 
-For Pyana's positioning, **option 2** is the natural default: the
+For `dregg`'s positioning, **option 2** is the natural default: the
 federation's recovery authority can decrypt to settle disputes; normal
 verifiers run only the receipt-level check.
 

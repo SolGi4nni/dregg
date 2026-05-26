@@ -14,8 +14,8 @@
 //! The key invariant: attenuation can only NARROW capabilities. The fold delta
 //! enforces this by only allowing fact removals and check additions.
 
-use pyana_commit::{Fact, FieldElement, FoldDelta, FoldDeltaBuilder, SymbolTable, TokenState};
-use pyana_token::{Attenuation, MacaroonToken};
+use dregg_commit::{Fact, FieldElement, FoldDelta, FoldDeltaBuilder, SymbolTable, TokenState};
+use dregg_token::{Attenuation, MacaroonToken};
 
 use crate::convert::{attenuation_to_facts, macaroon_to_factset};
 
@@ -314,7 +314,7 @@ pub fn further_attenuation_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_commit::verify_fold_chain;
+    use dregg_commit::verify_fold_chain;
 
     fn test_key() -> [u8; 32] {
         let mut key = [0u8; 32];

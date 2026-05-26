@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Monitoring — Pyana</title>
+<title>Monitoring — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Monitoring</h1>
 
     <p>
-      pyana-node uses the <code>tracing</code> crate for structured logging. Control
+      dregg-node uses the <code>tracing</code> crate for structured logging. Control
       log levels via the <code>RUST_LOG</code> environment variable.
     </p>
 
@@ -28,19 +28,19 @@
 
     <h2 id="logging">Log Configuration</h2>
 
-    <pre><code># Default: info-level pyana logs
-RUST_LOG=pyana_node=info pyana-node run ...
+    <pre><code># Default: info-level dregg logs
+RUST_LOG=dregg_node=info dregg-node run ...
 
 # Debug everything
-RUST_LOG=debug pyana-node run ...
+RUST_LOG=debug dregg-node run ...
 
 # Specific crate tracing
-RUST_LOG=pyana_node=debug,pyana_federation=info pyana-node run ...</code></pre>
+RUST_LOG=dregg_node=debug,dregg_federation=info dregg-node run ...</code></pre>
 
     <h2 id="tracing">Distributed Tracing</h2>
 
     <p>
-      pyana-node emits <code>tracing</code> spans on every <code>turn::execute</code>,
+      dregg-node emits <code>tracing</code> spans on every <code>turn::execute</code>,
       federation peer exchange, and STARK verification, but does not currently
       export them to a collector. The <code>tracing-subscriber</code> layer
       stack is local: stdout / JSON logs only. Bridging to OTLP /

@@ -1,5 +1,5 @@
 [package]
-name = "pyana-sdk"
+name = "dregg-sdk"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,28 +7,28 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Agent SDK and cipherclerk for the pyana federation — token management, turn execution, and proof generation"
+description = "Agent SDK and cipherclerk for the dregg federation — token management, turn execution, and proof generation"
 
 [dependencies]
-pyana-types = { path = "../types" }
-pyana-cell = { path = "../cell" }
-pyana-turn = { path = "../turn" }
-pyana-bridge = { path = "../bridge" }
-# `network` feature: tokio + pyana-wire — non-wasm32 (mio, quinn). Wasm
+dregg-types = { path = "../types" }
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-bridge = { path = "../bridge" }
+# `network` feature: tokio + dregg-wire — non-wasm32 (mio, quinn). Wasm
 # consumers set `default-features = false`; the modules that depend on
 # these (client, embed, discharge, discovery) are `#[cfg]`-gated.
-pyana-wire = { path = "../wire", optional = true }
-# `captp` feature: pyana-captp pulls async runtimes that are non-wasm32.
+dregg-wire = { path = "../wire", optional = true }
+# `captp` feature: dregg-captp pulls async runtimes that are non-wasm32.
 # captp_client + names are gated on this.
-pyana-captp = { path = "../captp", optional = true }
-pyana-circuit = { path = "../circuit" }
-pyana-commit = { path = "../commit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-dsl-tests = { path = "../pyana-dsl-tests" }
-pyana-intent = { path = "../intent" }
-pyana-macaroon = { workspace = true, features = ["crypto"] }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
-pyana-trace = { path = "../trace" }
+dregg-captp = { path = "../captp", optional = true }
+dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-dsl-tests = { path = "../dregg-dsl-tests" }
+dregg-intent = { path = "../intent" }
+dregg-macaroon = { workspace = true, features = ["crypto"] }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-trace = { path = "../trace" }
 
 async-trait = "0.1"
 base64 = { workspace = true }
@@ -55,9 +55,9 @@ zeroize = { workspace = true }
 # pass `default-features = false`.
 default = ["federation-client", "network", "captp"]
 federation-client = ["dep:reqwest"]
-network = ["dep:pyana-wire", "dep:tokio"]
-captp = ["dep:pyana-captp"]
-dev = ["pyana-circuit/dev"]
+network = ["dep:dregg-wire", "dep:tokio"]
+captp = ["dep:dregg-captp"]
+dev = ["dregg-circuit/dev"]
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated
 # behind a feature flag so that production builds cannot construct it at all.

@@ -7,8 +7,8 @@
 //! The chain is append-only: each entry references the previous via a hash link,
 //! forming a tamper-evident log of ownership.
 
-use pyana_app_framework::CellId;
-use pyana_app_framework::store::ContentStore;
+use dregg_app_framework::CellId;
+use dregg_app_framework::store::ContentStore;
 
 use crate::{ArtworkId, ProvenanceEntry};
 
@@ -153,7 +153,7 @@ fn compute_registration_receipt(
     artist: &CellId,
     block_height: u64,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-registration-receipt-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-registration-receipt-v1");
     hasher.update(artwork_id);
     hasher.update(artist.as_bytes());
     hasher.update(&block_height.to_le_bytes());

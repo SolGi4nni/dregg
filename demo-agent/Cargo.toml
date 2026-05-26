@@ -1,22 +1,22 @@
 [package]
-name = "pyana-demo-agent"
+name = "dregg-demo-agent"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pyana-cell = { path = "../cell" }
-pyana-turn = { path = "../turn" }
-pyana-coord = { path = "../coord" }
-pyana-types = { path = "../types" }
-pyana-bridge = { path = "../bridge", features = ["test-utils"] }
-pyana-circuit = { path = "../circuit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-commit = { path = "../commit" }
-pyana-sdk = { path = "../sdk" }
-pyana-trace = { path = "../trace" }
-pyana-federation = { path = "../federation" }
-pyana-intent = { path = "../intent" }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-coord = { path = "../coord" }
+dregg-types = { path = "../types" }
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
+dregg-circuit = { path = "../circuit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-commit = { path = "../commit" }
+dregg-sdk = { path = "../sdk" }
+dregg-trace = { path = "../trace" }
+dregg-federation = { path = "../federation" }
+dregg-intent = { path = "../intent" }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 blake3 = "1"
 serde_json = { workspace = true }
 ed25519-dalek = { version = "2", features = ["hazmat"] }
@@ -24,7 +24,7 @@ getrandom = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 
 [[bin]]
-name = "pyana-agent-demo"
+name = "dregg-agent-demo"
 path = "src/main.rs"
 
 [[example]]

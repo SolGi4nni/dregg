@@ -1,6 +1,6 @@
 # Honey, I Need to Shrink the Kids
 
-How does data leave pyana? Can state get smaller? What grows forever and what can we prune?
+How does data leave dregg? Can state get smaller? What grows forever and what can we prune?
 
 ## The Problem
 
@@ -54,7 +54,7 @@ Verkle trees replace Merkle trees with a structure using polynomial commitments 
 - **Efficient updates:** can update a leaf without recomputing the full path (amortized)
 - **Stateless verification:** proofs are self-contained (verifier doesn't need the tree)
 
-**Where they'd fit in pyana:**
+**Where they'd fit in dregg:**
 - Note commitment tree (currently 4-ary Poseidon2 Merkle) → Verkle
 - Cell state tree (currently HashMap, no tree) → Verkle for state proofs
 - Blocklace block commitments → Verkle for efficient history proofs

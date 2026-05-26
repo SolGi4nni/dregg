@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Scenario: cross-federation bearer-cap handoff with real pyana MCP + verifier.
+# Scenario: cross-federation bearer-cap handoff with real dregg MCP + verifier.
 #
 # This is the production version (no bash theater):
 #   - Drives F1 node-1 (primary) and F2 node-1 via real MCP stdio
-#     (pyana_create_agent, pyana_create_bearer_cap, pyana_bilateral_action)
+#     (dregg_create_agent, dregg_create_bearer_cap, dregg_bilateral_action)
 #   - Produces real Ed25519 delegation_chain from the node
 #   - Produces real WitnessedReceipts (with STARK proofs) from bilateral transfer on F2
 #   - Assembles real CrossFedReceiptBundle v1 (recipient_chain + attested roots
@@ -98,7 +98,7 @@ if [ -x "$NODE_BIN" ] && [ -x "$VERIFIER_BIN" ] && [ -n "$f1_status" ] && [ -n "
     cat > "$SCN_LOG_DIR/mcp_client.py" << 'PYEOF'
 #!/usr/bin/env python3
 """Minimal MCP-over-stdio driver for the cross_fed_handoff scenario.
-Matches the real pyana-node mcp argv (subcommand form) and the content[]
+Matches the real dregg-node mcp argv (subcommand form) and the content[]
 response shape used by the production McpClient.
 """
 from __future__ import annotations
@@ -121,7 +121,7 @@ class McpClient:
         self.stderr_log = open(self.stderr_log_path, "wb")
 
         env = os.environ.copy()
-        env.setdefault("RUST_LOG", "pyana_node=warn,error")
+        env.setdefault("RUST_LOG", "dregg_node=warn,error")
 
         self.proc = subprocess.Popen(
             [node_bin, "mcp", "--data-dir", data_dir],
@@ -328,7 +328,7 @@ def run_cross_fed_handoff_mcp(
     }
     try:
         with McpClient(node_bin, f1_data, "f1", log_dir) as f1:
-            alice = f1.tool("pyana_create_agent", {"name": "alice", "initial_balance": 100000})
+            alice = f1.tool("dregg_create_agent", {"name": "alice", "initial_balance": 100000})
             alice_cell = alice.get("cell_id")
             alice_pk = alice.get("public_key")
             if not alice_cell:
@@ -339,7 +339,7 @@ def run_cross_fed_handoff_mcp(
             out["alice_pk"] = alice_pk
 
             with McpClient(node_bin, f2_data, "f2", log_dir) as f2:
-                bob = f2.tool("pyana_create_agent", {"name": "bob", "initial_balance": 100000})
+                bob = f2.tool("dregg_create_agent", {"name": "bob", "initial_balance": 100000})
                 bob_cell = bob.get("cell_id")
                 bob_pk = bob.get("public_key")
                 if not bob_cell or not bob_pk:
@@ -351,7 +351,7 @@ def run_cross_fed_handoff_mcp(
 
                 # Bearer cap on F1 (real Ed25519 delegation_chain from the node)
                 bearer = f1.tool(
-                    "pyana_create_bearer_cap",
+                    "dregg_create_bearer_cap",
                     {
                         "target_cell": alice_cell,
                         "permissions": "signature",
@@ -376,7 +376,7 @@ def run_cross_fed_handoff_mcp(
                     "delegation_chain": delegation,
                     "introducer_pk": alice_pk,
                 }
-                handoff_uri = "pyana+bearer:" + json.dumps(handoff_payload, separators=(",", ":"))
+                handoff_uri = "dregg+bearer:" + json.dumps(handoff_payload, separators=(",", ":"))
                 (log_dir / "handoff.uri").write_text(handoff_uri)
 
                 # OOB delivery (cp as allowed)
@@ -385,7 +385,7 @@ def run_cross_fed_handoff_mcp(
                 # Bilateral transfer on F2 (produces the real WitnessedReceipts + STARK proofs)
                 # from=alice_cell (remote stub on F2), to=bob_cell
                 bil = f2.tool(
-                    "pyana_bilateral_action",
+                    "dregg_bilateral_action",
                     {"mode": "transfer", "from": alice_cell, "to": bob_cell, "amount": 50},
                 )
                 if not bil.get("committed"):
@@ -425,7 +425,7 @@ def run_cross_fed_handoff_mcp(
 
                 # Run real verifier (accept path)
                 ver_cmd = [
-                    str(Path(node_bin).parent / "pyana-verifier"),
+                    str(Path(node_bin).parent / "dregg-verifier"),
                     "verify-cross-fed-bundle",
                     "--bundle", str(bundle_path),
                     "--known-issuer", str(log_dir / "f1_committee.json"),
@@ -452,7 +452,7 @@ def run_cross_fed_handoff_mcp(
                     tamper_path.write_text('{"tamper_failed":true,"err":"' + str(e) + '"}')
 
                 ver2_cmd = [
-                    str(Path(node_bin).parent / "pyana-verifier"),
+                    str(Path(node_bin).parent / "dregg-verifier"),
                     "verify-cross-fed-bundle",
                     "--bundle", str(tamper_path),
                     "--known-issuer", str(log_dir / "f1_committee.json"),

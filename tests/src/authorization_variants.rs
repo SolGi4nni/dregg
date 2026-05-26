@@ -13,11 +13,11 @@
 //! marked `#[ignore]` until the surface helpers exist in
 //! `tests/src/main.rs`'s helper module.
 
-use pyana_cell::CellId;
-use pyana_turn::action::{
+use dregg_cell::CellId;
+use dregg_turn::action::{
     Action, Authorization, BearerCapProof, DelegationMode, DelegationProofData,
 };
-use pyana_turn::{CallForest, Effect, Turn};
+use dregg_turn::{CallForest, Effect, Turn};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -142,7 +142,7 @@ fn action_hash_bearer_signed_delegation_differs_from_stark_delegation() {
     let target = CellId([8u8; 32]);
     let signed = Authorization::Bearer(BearerCapProof {
         target,
-        permissions: pyana_cell::AuthRequired::None,
+        permissions: dregg_cell::AuthRequired::None,
         delegation_proof: DelegationProofData::SignedDelegation {
             delegator_pk: [1u8; 32],
             signature: [0u8; 64],
@@ -154,7 +154,7 @@ fn action_hash_bearer_signed_delegation_differs_from_stark_delegation() {
     });
     let stark = Authorization::Bearer(BearerCapProof {
         target,
-        permissions: pyana_cell::AuthRequired::None,
+        permissions: dregg_cell::AuthRequired::None,
         delegation_proof: DelegationProofData::StarkDelegation {
             proof_bytes: vec![],
             root_issuer_commitment: [9u8; 32],
@@ -175,7 +175,7 @@ fn action_hash_bearer_signed_delegation_differs_from_stark_delegation() {
 
 #[test]
 fn captp_delivered_signing_message_differs_per_turn() {
-    use pyana_turn::action::Effect as Eff;
+    use dregg_turn::action::Effect as Eff;
     let agent = CellId([10u8; 32]);
     let target = CellId([11u8; 32]);
     let cert_nonce = [0u8; 32];
@@ -214,7 +214,7 @@ fn captp_delivered_signing_message_includes_domain_separator() {
     let target = CellId([2u8; 32]);
     let msg = Authorization::captp_delivered_signing_message(&cert_nonce, &agent, &target, 0, &[]);
     assert!(
-        msg.starts_with(b"pyana-captp-delivered-v1"),
+        msg.starts_with(b"dregg-captp-delivered-v1"),
         "missing domain separator"
     );
 }
@@ -231,8 +231,8 @@ fn captp_delivered_message_includes_federation_id_for_cross_federation_replay_pr
 
 #[test]
 fn action_hash_custom_predicate_tamper_changes_hash() {
-    use pyana_cell::InputRef;
-    use pyana_cell::predicate::WitnessedPredicate;
+    use dregg_cell::InputRef;
+    use dregg_cell::predicate::WitnessedPredicate;
     let target = CellId([12u8; 32]);
     let p1 = WitnessedPredicate::dfa([1u8; 32], InputRef::SigningMessage, 0);
     let p2 = WitnessedPredicate::dfa([2u8; 32], InputRef::SigningMessage, 0);

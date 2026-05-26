@@ -74,9 +74,9 @@ test.describe('Accept capability', () => {
     expect(text).toBe('Accept Capability');
   });
 
-  test('accept with pyana:// URI triggers enliven flow', async ({ popup }) => {
+  test('accept with dregg:// URI triggers enliven flow', async ({ popup }) => {
     await popup.locator('.tab-btn[data-tab="capabilities"]').click();
-    const uri = 'pyana://node_mock_001/' + 'b'.repeat(64);
+    const uri = 'dregg://node_mock_001/' + 'b'.repeat(64);
     await popup.locator('#acceptUriInput').fill(uri);
     await popup.locator('#acceptCapBtn').click();
 

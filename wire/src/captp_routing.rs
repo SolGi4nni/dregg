@@ -22,12 +22,12 @@
 //! `export_gc`) and the post-commit hook reconciles the mirror with the
 //! receipt-emitted effect chain.
 
-use pyana_captp::HandoffCertificate;
-use pyana_cell::{CapabilityRef, CellId, Preconditions};
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::forest::{CallForest, CallTree};
-use pyana_turn::turn::Turn;
-use pyana_types::SigningKey;
+use dregg_captp::HandoffCertificate;
+use dregg_cell::{CapabilityRef, CellId, Preconditions};
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::forest::{CallForest, CallTree};
+use dregg_turn::turn::Turn;
+use dregg_types::SigningKey;
 use tracing::info;
 
 /// Build a single-action `Turn` carrying a CapTP `Effect`.
@@ -117,7 +117,7 @@ pub fn build_captp_turn_delivered(
         nonce,
         &effects,
     );
-    let signature = pyana_types::sign(recipient_key, &signing_msg);
+    let signature = dregg_types::sign(recipient_key, &signing_msg);
     let sender_pk = handoff_cert.recipient_pk;
 
     let action = Action {
@@ -234,7 +234,7 @@ pub fn build_captp_turn_delivered_from_parts(
 pub fn export_sturdy_ref_effect(
     swiss_number: [u8; 32],
     target: CellId,
-    permissions: pyana_cell::permissions::AuthRequired,
+    permissions: dregg_cell::permissions::AuthRequired,
 ) -> Effect {
     Effect::ExportSturdyRef {
         swiss_number,
@@ -256,7 +256,7 @@ pub fn enliven_ref_effect(
     swiss_number: [u8; 32],
     bearer: CellId,
     expected_cell_id: CellId,
-    expected_permissions: pyana_cell::permissions::AuthRequired,
+    expected_permissions: dregg_cell::permissions::AuthRequired,
 ) -> Effect {
     Effect::EnlivenRef {
         swiss_number,
@@ -319,7 +319,7 @@ mod tests {
     fn effect_builders_produce_expected_variants() {
         let cell = CellId::from_bytes([7u8; 32]);
         assert!(matches!(
-            export_sturdy_ref_effect([0u8; 32], cell, pyana_cell::permissions::AuthRequired::None),
+            export_sturdy_ref_effect([0u8; 32], cell, dregg_cell::permissions::AuthRequired::None),
             Effect::ExportSturdyRef { .. }
         ));
         assert!(matches!(
@@ -327,7 +327,7 @@ mod tests {
                 [0u8; 32],
                 cell,
                 CellId::from_bytes([8u8; 32]),
-                pyana_cell::permissions::AuthRequired::None
+                dregg_cell::permissions::AuthRequired::None
             ),
             Effect::EnlivenRef { .. }
         ));

@@ -16,10 +16,10 @@
 //! 6. Scaling analysis: delegation vs. individual grants
 //! 7. Staleness semantics demonstration
 
-use pyana_cell::{AuthRequired, Cell, CellId, DelegatedRef, Ledger, Permissions};
-use pyana_turn::action::symbol;
-use pyana_turn::turn::Turn;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, DelegatedRef, Ledger, Permissions};
+use dregg_turn::action::symbol;
+use dregg_turn::turn::Turn;
+use dregg_turn::{
     Action, Authorization, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect,
     TurnExecutor, TurnResult,
 };
@@ -88,7 +88,7 @@ fn worker_identity(index: usize) -> ([u8; 32], [u8; 32], CellId) {
 }
 
 fn main() {
-    println!("=== Pyana 10-Agent Swarm Delegation Demo ===");
+    println!("=== Dregg 10-Agent Swarm Delegation Demo ===");
     println!("    Snapshot+Refresh coordination for parallel AI agent workers");
     println!();
 

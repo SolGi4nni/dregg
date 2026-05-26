@@ -8,23 +8,23 @@
       starbridge-app fragment for the identity credentials surface.
       Mounts under /starbridge-apps/identity/ on the site build.
 
-      Bootstraps the same <pyana-app> context the Studio uses (see
+      Bootstraps the same <dregg-app> context the Studio uses (see
       site/STUDIO.md §6) and the same URI-addressable inspectors. The
       page itself is intentionally thin: shared inspectors do the
       rendering; this fragment configures which factory_vk to mount
       and which issuer cell to target.
 
       Wired-in JS:
-        - /pkg/pyana_wasm.js                       — the in-browser node
+        - /pkg/dregg_wasm.js                       — the in-browser node
         - /_includes/studio/runtimes.js            — runtime registry
         - /starbridge-apps/shared/inspectors/      — shared inspector registry
         - /starbridge-apps/identity/inspectors.js  — four custom elements:
-            <pyana-credential>
-            <pyana-credential-issue-form>
-            <pyana-credential-present-form>
-            <pyana-credential-verifier>
+            <dregg-credential>
+            <dregg-credential-issue-form>
+            <dregg-credential-present-form>
+            <dregg-credential-verifier>
         - /starbridge-apps/identity/turn-builders.js
-            — issue/present/verify presets that wrap window.pyana.signTurn
+            — issue/present/verify presets that wrap window.dregg.signTurn
 
       The factory_vk hex below mirrors ISSUER_FACTORY_VK from src/lib.rs.
       Keep these two in sync; a real deployment lifts the constant from
@@ -51,9 +51,9 @@
   </head>
   <body>
     <header class="identity-chrome">
-      <h1>Pyana Identity</h1>
+      <h1><code>dregg</code> Identity</h1>
       <p>Issue, present, and verify verifiable credentials. All ZK heavy
-         lifting via <code>pyana-credentials</code>; this app is the
+         lifting via <code>dregg-credentials</code>; this app is the
          userspace shell wiring it through cell programs. Backed by
          <code>issuer_factory_descriptor()</code> in
          <code>starbridge-apps/identity/src/lib.rs</code>.</p>
@@ -65,37 +65,37 @@
       </nav>
     </header>
     <main class="identity-panel">
-      <pyana-app
+      <dregg-app
         runtime="in-memory"
         factory-vk="73746172627269646765-6964656e746974792d6973737565722d66616374"
-        registry-uri="pyana://cell/identity-issuer-default"
+        registry-uri="dregg://cell/identity-issuer-default"
       >
         <section id="panel-cclerk" data-tab-panel>
           <h2>Credentials</h2>
-          <pyana-credential uri="pyana://credential/active"></pyana-credential>
+          <dregg-credential uri="dregg://credential/active"></dregg-credential>
         </section>
         <section id="panel-issue" data-tab-panel hidden>
           <h2>Issue Credential</h2>
-          <pyana-credential-issue-form
-            issuer-uri="pyana://cell/identity-issuer-default"
+          <dregg-credential-issue-form
+            issuer-uri="dregg://cell/identity-issuer-default"
             schema="kyc-v1"
-          ></pyana-credential-issue-form>
+          ></dregg-credential-issue-form>
         </section>
         <section id="panel-present" data-tab-panel hidden>
           <h2>Present Credential</h2>
-          <pyana-credential-present-form
-            credential-uri="pyana://credential/active"
-          ></pyana-credential-present-form>
+          <dregg-credential-present-form
+            credential-uri="dregg://credential/active"
+          ></dregg-credential-present-form>
         </section>
         <section id="panel-verify" data-tab-panel hidden>
           <h2>Verify Presentation</h2>
-          <pyana-credential-verifier
-            verifier-uri="pyana://cell/verifier-default"
-          ></pyana-credential-verifier>
+          <dregg-credential-verifier
+            verifier-uri="dregg://cell/verifier-default"
+          ></dregg-credential-verifier>
         </section>
-      </pyana-app>
+      </dregg-app>
     </main>
-    <script type="module" src="/pkg/pyana_wasm.js"></script>
+    <script type="module" src="/pkg/dregg_wasm.js"></script>
     <script type="module" src="/_includes/studio/runtimes.js"></script>
     <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
     <script type="module" src="/starbridge-apps/identity/inspectors.js"></script>

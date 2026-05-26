@@ -11,7 +11,7 @@ document.getElementById('method').textContent = method;
 
 document.getElementById('allowBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:originPermissionDecision',
+    type: 'dregg:originPermissionDecision',
     granted: true,
     origin,
   });
@@ -20,7 +20,7 @@ document.getElementById('allowBtn').addEventListener('click', () => {
 
 document.getElementById('denyBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:originPermissionDecision',
+    type: 'dregg:originPermissionDecision',
     granted: false,
     origin,
   });
@@ -29,7 +29,7 @@ document.getElementById('denyBtn').addEventListener('click', () => {
 
 window.addEventListener('beforeunload', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:originPermissionDecision',
+    type: 'dregg:originPermissionDecision',
     granted: false,
     origin,
   });

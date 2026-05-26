@@ -91,7 +91,7 @@ impl EpochTransition {
         new_threshold: usize,
     ) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-epoch-transition-v1");
+        msg.extend_from_slice(b"dregg-epoch-transition-v1");
         msg.extend_from_slice(&from_epoch.to_le_bytes());
         msg.extend_from_slice(&to_epoch.to_le_bytes());
         msg.extend_from_slice(&(new_threshold as u64).to_le_bytes());
@@ -396,7 +396,7 @@ pub fn verify_epoch_transition(transition: &EpochTransition, old_config: &EpochC
 /// - `epoch`: The epoch number for which the tree is generated.
 /// - `tree_height`: The XMSS tree height (e.g., 10 for 1024 signatures per epoch).
 pub fn new_epoch_tree(seed: &[u8; 32], epoch: u64, tree_height: u32) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-xmss-epoch-tree-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-xmss-epoch-tree-v1");
     hasher.update(seed);
     hasher.update(&epoch.to_le_bytes());
     hasher.update(&tree_height.to_le_bytes());

@@ -8,22 +8,52 @@
 
 mod common;
 
-use pyana_cell::Ledger;
-use pyana_sdk::CellId;
-use pyana_turn::{CallForest, ComputronCosts, EncryptedTurnError, Turn, TurnExecutor};
+use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
+use dregg_sdk::CellId;
+use dregg_turn::{
+    Action, Authorization, CallForest, ComputronCosts, DelegationMode, EncryptedTurnError, Turn,
+    TurnExecutor,
+};
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal Turn for the given agent
 // ---------------------------------------------------------------------------
 
+fn open_permissions() -> Permissions {
+    Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    }
+}
+
 fn empty_turn(agent: CellId) -> Turn {
+    let mut forest = CallForest::new();
+    let action = Action {
+        target: agent,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    };
+    forest.add_root(action);
     Turn {
         agent,
         nonce: 0,
         fee: 0,
         memo: None,
         valid_until: None,
-        call_forest: CallForest::new(),
+        call_forest: forest,
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
@@ -71,9 +101,17 @@ fn encrypted_turn_roundtrip_sets_was_encrypted_flag() {
         "verify_metadata must pass for a freshly-built EncryptedTurn"
     );
 
-    // Apply via the executor.
-    let executor = TurnExecutor::new(ComputronCosts::default());
+    // Set up ledger with the agent cell so the turn can execute.
     let mut ledger = Ledger::new();
+    let pk = cclerk.public_key().0;
+    let token_id = *blake3::hash(b"default").as_bytes();
+    let mut cell = Cell::with_balance(pk, token_id, 0);
+    cell.permissions = open_permissions();
+    assert_eq!(cell.id(), agent, "fixture cell id must match cipherclerk agent");
+    ledger.insert_cell(cell).unwrap();
+
+    // Apply via the executor (zero costs so the no-op action commits).
+    let executor = TurnExecutor::new(ComputronCosts::zero());
     let receipt = executor
         .apply_encrypted_turn(&encrypted, &unsealer_secret, &mut ledger)
         .expect("apply_encrypted_turn must succeed with correct secret");

@@ -1,7 +1,7 @@
 # DFA-RATIONALIZATION-DESIGN — what to do with the open DFA loop
 
 **Date:** 2026-05-24. **Status:** design only. Read-only on code; one new
-`.md`. **Scope:** decide the future shape of pyana's DFA / pattern-routing
+`.md`. **Scope:** decide the future shape of dregg's DFA / pattern-routing
 machinery, given that three implementations currently exist
 (`wire::dfa_router`, `rbg::routing`, `apps/governed-namespace::routes`),
 none of them subsume the others, and the wire-level one is mostly
@@ -23,7 +23,7 @@ sustainable answer is **Option B-with-borrowings**: keep
 `wire::dfa_router` as the canonical home, lift the regex compiler and
 the AIR-trace shape from `rbg::routing` into it, leave the
 `DirectoryCell` / `ScopedIntentPool` / `MetaDirectory` cluster as a
-*separate* lift into a `pyana-directory` crate, and stop pretending
+*separate* lift into a `dregg-directory` crate, and stop pretending
 `apps/governed-namespace::routes` is a DFA. The wire-level router is
 the right shape; the bottleneck is its compiler vocabulary and that
 nobody reaches for it.
@@ -39,7 +39,7 @@ Concretely, this design recommends:
    DFA's clothes) and re-host it on the unified
    `wire::dfa_router`. Closes a duplicate-implementation foot-gun.
 3. **Lift** `rbg::directory::{DirectoryCell, ScopedIntentPool,
-   MetaDirectory}` into a new `pyana-directory` crate. This is a
+   MetaDirectory}` into a new `dregg-directory` crate. This is a
    separate, larger workstream — it answers the apps-audit Tier-2
    `CommittedMap<K,V>` and the intent-scoping gap. Out of scope for
    this design beyond a roadmap link.
@@ -113,7 +113,7 @@ production-shaped consumer" of `wire::dfa_router` is **wrong on the
 detail and right on the spirit.** Inspecting the file: the test
 exercises the app's *own* `routes.rs` module, which independently
 implements a `BTreeMap<String, RouteEntry>` with longest-prefix
-lookup. The app does not import `pyana_wire::dfa_router`. There is
+lookup. The app does not import `dregg_wire::dfa_router`. There is
 **no production consumer** of `wire::dfa_router` today.
 
 ### 1.2 `apps/governed-namespace/src/routes.rs` — the duplicate
@@ -516,7 +516,7 @@ The proposed authoring shape, after the lift:
 ### 4.1 Sketch for a starbridge-app
 
 ```rust
-use pyana_wire::dfa_router::{compile_routes, Pattern, RouteTarget, GovernedRouter};
+use dregg_wire::dfa_router::{compile_routes, Pattern, RouteTarget, GovernedRouter};
 
 // A starbridge-app declares its routing table at startup.
 // Each route is a (Pattern, RouteTarget) pair.
@@ -644,7 +644,7 @@ pub trait DfaRoutedApp {
 // installs a GovernedRouter, exposes the governance endpoints.
 ```
 
-This is the *userspace* shape — `pyana-app-framework` would be the
+This is the *userspace* shape — `dregg-app-framework` would be the
 natural home for an `axum`-layer middleware that pre-classifies
 requests through the GovernedRouter and attaches the result as a
 request extension.
@@ -847,7 +847,7 @@ visibility:
 3. **Matcher predicate:** structural, held-cap-comparison.
 
 The DFA work is the wire-level prerequisite for the directory
-lift; the directory lift is the next-level pyana-directory crate
+lift; the directory lift is the next-level dregg-directory crate
 (out of scope here but cross-referenced).
 
 ---
@@ -990,7 +990,7 @@ per the governance-approved table."
 **Phase 5 — directory lift (out of scope, future work):**
 
 13. Lift `rbg::directory::{DirectoryCell, ScopedIntentPool,
-    MetaDirectory}` into a new `pyana-directory` crate. This is a
+    MetaDirectory}` into a new `dregg-directory` crate. This is a
     separate ~3-4 week workstream. It depends on Phase 1's
     compiler being in place (the scoped pool uses the
     classifier internally), but is otherwise independent.
@@ -1008,7 +1008,7 @@ per the governance-approved table."
 | 2 | `wire/src/dfa_router.rs`, `federation/src/constitution.rs` | ~80 | ~30 | 0 |
 | 3 | `apps/governed-namespace/src/*.rs`, `discord-bot/src/commands/*.rs` | ~100 | ~150 | ~250 |
 | 4 | `intent/src/gossip.rs`, `wire/src/server.rs`, `bridge/src/*.rs` | ~300 | ~100 | 0 |
-| 5 (deferred) | new `pyana-directory/` | ~2500 (from rbg) | 0 | rbg's 4500 |
+| 5 (deferred) | new `dregg-directory/` | ~2500 (from rbg) | 0 | rbg's 4500 |
 
 Total for Phases 1-4: **~1400 new LOC, ~430 edited, ~250 deleted**.
 ~2-4 weeks of focused work.
@@ -1116,11 +1116,11 @@ Total for Phases 1-4: **~1400 new LOC, ~430 edited, ~250 deleted**.
    wire-level production wiring.
 
 9. **`rbg::directory` lift — separate crate or merge into
-   `cell/`?** A `pyana-directory` crate keeps `cell/` focused on
+   `cell/`?** A `dregg-directory` crate keeps `cell/` focused on
    the cell model and lets directory cells be opt-in. Merging
    into `cell/` means every cell-program-aware consumer sees the
    directory types. Recommendation: separate crate
-   (`pyana-directory`) depending on `cell`. The directory is a
+   (`dregg-directory`) depending on `cell`. The directory is a
    higher-level construct.
 
 10. **What's the lifecycle of a `RouteTable` once it's compiled
@@ -1134,7 +1134,7 @@ Total for Phases 1-4: **~1400 new LOC, ~430 edited, ~250 deleted**.
 
 11. **Capability-secure source splitting** (the
     `rbg::routing::PacketSource` / `FilterTree` shape): is this
-    useful in pyana without seL4-style explicit ports? Inclined
+    useful in dregg without seL4-style explicit ports? Inclined
     toward "yes" (CapTP sessions are roughly the seL4-port
     analog), but the integration story isn't sketched. If the
     answer is "not yet," defer the `wire::source_capability`
@@ -1227,7 +1227,7 @@ caveats decide *whether* — and compose at the dispatcher. CapTP's
 swiss-table stays as the fast path with the DFA wrapping it as a
 pre-filter at ingress. The directory cluster
 (`DirectoryCell` / `ScopedIntentPool` / `MetaDirectory`) is a
-separate, larger lift into its own `pyana-directory` crate, out of
+separate, larger lift into its own `dregg-directory` crate, out of
 scope for this PR but enabled by it. Phases 1-4 are ~2-4 weeks;
 Phase 5 (the directory lift) is its own multi-week workstream.
 
@@ -1241,7 +1241,7 @@ Phase 5 (the directory lift) is its own multi-week workstream.
 - RBG directory cluster: `/Users/ember/dev/breadstuffs/rbg/src/directory.rs:1-1707`
 - RBG VFS: `/Users/ember/dev/breadstuffs/rbg/src/vfs.rs:1-1517`
 - Governed-namespace routing reinvention: `/Users/ember/dev/breadstuffs/apps/governed-namespace/src/routes.rs:1-287`
-- Governed-namespace test that *claims* to use wire dfa router: `/Users/ember/dev/breadstuffs/apps/governed-namespace/src/main.rs:1139-1177` (doesn't actually import `pyana_wire::dfa_router`)
+- Governed-namespace test that *claims* to use wire dfa router: `/Users/ember/dev/breadstuffs/apps/governed-namespace/src/main.rs:1139-1177` (doesn't actually import `dregg_wire::dfa_router`)
 - Workspace exclusion of `rbg/`: `/Users/ember/dev/breadstuffs/Cargo.toml:10-12`
 - Intent MatchSpec: `/Users/ember/dev/breadstuffs/intent/src/lib.rs:344-382`
 - Intent matcher: `/Users/ember/dev/breadstuffs/intent/src/matcher.rs:1-100`

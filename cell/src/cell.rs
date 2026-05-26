@@ -390,9 +390,9 @@ impl Cell {
     /// External code cannot mutate this field directly — the following must
     /// not compile:
     /// ```compile_fail
-    /// # use pyana_cell::Cell;
+    /// # use dregg_cell::Cell;
     /// let mut cell = Cell::new([0u8; 32], [0u8; 32]);
-    /// cell.id = pyana_cell::CellId::derive_raw(&[1u8; 32], &[2u8; 32]);
+    /// cell.id = dregg_cell::CellId::derive_raw(&[1u8; 32], &[2u8; 32]);
     /// ```
     #[inline]
     pub fn id(&self) -> CellId {
@@ -403,7 +403,7 @@ impl Cell {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::Cell;
+    /// # use dregg_cell::Cell;
     /// let mut cell = Cell::new([0u8; 32], [0u8; 32]);
     /// cell.public_key = [1u8; 32];
     /// ```
@@ -416,7 +416,7 @@ impl Cell {
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
-    /// # use pyana_cell::Cell;
+    /// # use dregg_cell::Cell;
     /// let mut cell = Cell::new([0u8; 32], [0u8; 32]);
     /// cell.token_id = [1u8; 32];
     /// ```

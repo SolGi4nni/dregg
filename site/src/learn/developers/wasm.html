@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>WASM Playground — Pyana</title>
+<title>WASM Playground — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>WASM Playground</h1>
 
     <p>
-      The pyana playground lets you experiment with tokens, proofs, and authorization
+      The dregg playground lets you experiment with tokens, proofs, and authorization
       directly in your browser using the WebAssembly build of the core crates.
     </p>
 
@@ -37,8 +37,8 @@
     <h2 id="building">Building the WASM Package</h2>
 
     <pre><code class="language-rust"># Build the WASM package from the workspace root
-cargo build -p pyana-wasm --target wasm32-unknown-unknown --release
-wasm-bindgen target/wasm32-unknown-unknown/release/pyana_wasm.wasm \
+cargo build -p dregg-wasm --target wasm32-unknown-unknown --release
+wasm-bindgen target/wasm32-unknown-unknown/release/dregg_wasm.wasm \
   --out-dir site/pkg --target web</code></pre>
 
     <h2 id="extension">Extension Development</h2>

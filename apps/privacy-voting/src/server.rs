@@ -38,11 +38,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
-use pyana_app_framework::server::{ErrorResponse, api_error};
-use pyana_sdk::cipherclerk::DelegatedToken;
-use pyana_storage::blinded::BlindedQueue;
-use pyana_types::PublicKey;
+use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+use dregg_app_framework::server::{ErrorResponse, api_error};
+use dregg_sdk::cipherclerk::DelegatedToken;
+use dregg_storage::blinded::BlindedQueue;
+use dregg_types::PublicKey;
 
 use crate::ballot::{self, BallotReveal, Commitment};
 use crate::eligibility::{EligibilityAuthority, verify_eligibility};
@@ -362,7 +362,7 @@ async fn submit_ballot(
     // payload — privacy is preserved by emitting only the proposal_id
     // and the commitment.
     let voting_cell = crate::effects::voting_cell_id();
-    let caller = pyana_cell::CellId::from_bytes(voter_pk.0);
+    let caller = dregg_cell::CellId::from_bytes(voter_pk.0);
     let _submit_action =
         crate::effects::build_ballot_submit_action(voting_cell, caller, proposal_id, commitment);
 
@@ -483,11 +483,11 @@ async fn tally(
 // =============================================================================
 
 fn parse_hex32(s: &str) -> Option<[u8; 32]> {
-    pyana_app_framework::hex::hex_to_bytes32(s).ok()
+    dregg_app_framework::hex::hex_to_bytes32(s).ok()
 }
 
 fn hex32(b: &[u8; 32]) -> String {
-    pyana_app_framework::hex::bytes32_to_hex(b)
+    dregg_app_framework::hex::bytes32_to_hex(b)
 }
 
 /// Test-only accessor: inspect the raw bytes stored in the queue (no identity).

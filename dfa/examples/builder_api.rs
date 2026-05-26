@@ -1,4 +1,4 @@
-//! Userspace builder-API example for `pyana-dfa`.
+//! Userspace builder-API example for `dregg-dfa`.
 //!
 //! This example walks through the three authoring idioms that cover the
 //! majority of starbridge-app routing needs:
@@ -18,10 +18,10 @@
 //! Run with:
 //!
 //! ```text
-//! cargo run --example builder_api -p pyana-dfa
+//! cargo run --example builder_api -p dregg-dfa
 //! ```
 
-use pyana_dfa::{
+use dregg_dfa::{
     GovernanceProof, GovernedRouter, KindRegistry, Pattern, RouteTableBuilder, RouteTarget,
 };
 

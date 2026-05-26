@@ -3,15 +3,15 @@
 //! Tests that proofs survive serialization boundaries — this catches wire protocol
 //! binding mismatches and format disagreements between prover and verifier.
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::predicate_air::{
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::predicate_air::{
     PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
     verify_predicate,
 };
-use pyana_circuit::stark::{proof_from_bytes, proof_to_bytes};
-use pyana_sdk::AuthRequest;
-use pyana_teasting::agent::{SimAgent, shared_root_key};
+use dregg_circuit::stark::{proof_from_bytes, proof_to_bytes};
+use dregg_sdk::AuthRequest;
+use dregg_teasting::agent::{SimAgent, shared_root_key};
 
 /// Predicate proof: generate → serialize (postcard) → deserialize → verify.
 #[test]
@@ -103,11 +103,11 @@ fn test_all_predicate_types_round_trip() {
 /// serializes/deserializes it, then verifies the deserialized proof.
 #[test]
 fn test_stark_proof_bytes_round_trip() {
-    use pyana_circuit::merkle_air::{MerkleLevelWitness, MerkleWitness};
-    use pyana_circuit::poseidon2;
-    use pyana_circuit::presentation::generate_merkle_poseidon2_stark_proof;
-    use pyana_circuit::stark::verify;
-    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use dregg_circuit::merkle_air::{MerkleLevelWitness, MerkleWitness};
+    use dregg_circuit::poseidon2;
+    use dregg_circuit::presentation::generate_merkle_poseidon2_stark_proof;
+    use dregg_circuit::stark::verify;
+    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
 
     // Build a Poseidon2-compatible Merkle witness (depth 4).
     let leaf_hash = BabyBear::new(12345);
@@ -196,7 +196,7 @@ fn test_presentation_proof_round_trip() {
     let bytes = postcard::to_allocvec(&wire_proof).expect("wire proof serializes");
 
     // Deserialize the wire proof.
-    let recovered: pyana_bridge::WirePresentationProof =
+    let recovered: dregg_bridge::WirePresentationProof =
         postcard::from_bytes(&bytes).expect("wire proof deserializes");
 
     // Verify the recovered proof's STARK issuer membership proof.
@@ -206,7 +206,7 @@ fn test_presentation_proof_round_trip() {
         .expect("recovered proof should have real STARK proof");
     assert_eq!(
         real_stark.verify(),
-        pyana_circuit::PresentationVerification::Valid,
+        dregg_circuit::PresentationVerification::Valid,
         "Recovered STARK proof should verify after round-trip"
     );
 }

@@ -112,7 +112,7 @@ def verify(state_dir: str) -> dict:
     )
 
     # 7. Bob's mount carries the nameservice resolve target.
-    expected_resolve = resolve_target("pyana://cell/" + bob_id["bob_cell"]).hex()
+    expected_resolve = resolve_target("dregg://cell/" + bob_id["bob_cell"]).hex()
     results["mount_carries_nameservice_resolve_target"] = (
         bob_mount["nameservice_resolve_target"] == expected_resolve
     )
@@ -229,7 +229,7 @@ def verify(state_dir: str) -> dict:
     # n5. Tampered nameservice resolve target — re-derive against a
     # different URI; the value must NOT match the mount's published
     # resolve target.
-    wrong_resolve = resolve_target("pyana://cell/eve-impersonator").hex()
+    wrong_resolve = resolve_target("dregg://cell/eve-impersonator").hex()
     results["rejects_tampered_resolve_target"] = (
         wrong_resolve != bob_mount["nameservice_resolve_target"]
     )

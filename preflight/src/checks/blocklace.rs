@@ -2,8 +2,8 @@
 //! finality progression, and constitution membership changes.
 
 use ed25519_dalek::SigningKey;
-use pyana_blocklace::constitution::{ConstitutionManager, MembershipProposal, MembershipVote};
-use pyana_blocklace::finality::{
+use dregg_blocklace::constitution::{ConstitutionManager, MembershipProposal, MembershipVote};
+use dregg_blocklace::finality::{
     Block, BlockError, BlockId, Blocklace, EquivocationProof, FinalityLevel, FinalityTracker,
     Payload,
 };

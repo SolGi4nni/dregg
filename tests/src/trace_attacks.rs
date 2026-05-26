@@ -7,9 +7,9 @@
 //! - Reordered derivation steps
 //! - References to nonexistent rules
 
-use pyana_trace::policy::minimal_policy;
-use pyana_trace::types::*;
-use pyana_trace::{Evaluator, standard_policy, symbol_from_str, verify_trace};
+use dregg_trace::policy::minimal_policy;
+use dregg_trace::types::*;
+use dregg_trace::{Evaluator, standard_policy, symbol_from_str, verify_trace};
 
 // =============================================================================
 // Helper: create a valid trace we can then tamper with

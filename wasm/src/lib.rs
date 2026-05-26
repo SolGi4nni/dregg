@@ -1,4 +1,4 @@
-//! pyana-wasm: Interactive browser playground for the pyana distributed system.
+//! dregg-wasm: Interactive browser playground for the dregg distributed system.
 //!
 //! Exposes:
 //! - Token minting, attenuation, verification (macaroon backend)
@@ -7,7 +7,7 @@
 //! - Datalog authorization evaluation
 //! - **Full runtime simulation**: cells, turns, capabilities, notes, federations, intents
 //!
-//! The `PyanaRuntime` (in `runtime` module) provides a complete virtualized distributed
+//! The `DreggRuntime` (in `runtime` module) provides a complete virtualized distributed
 //! system running in the browser. Users can create federations, agents, execute turns,
 //! exercise capabilities, bridge notes, and match intents -- all in WASM.
 
@@ -15,7 +15,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 // Import the AuthToken trait to bring its methods into scope.
-use pyana_token::AuthToken;
+use dregg_token::AuthToken;
 
 // Full runtime simulation modules.
 pub mod bindings;
@@ -37,7 +37,7 @@ pub fn mint_token(root_key: &[u8], location: &str) -> Result<JsValue, JsError> {
     let mut key = [0u8; 32];
     key.copy_from_slice(root_key);
 
-    let token = pyana_token::MacaroonToken::mint(key, b"playground-kid", location);
+    let token = dregg_token::MacaroonToken::mint(key, b"playground-kid", location);
     let encoded = token
         .to_encoded()
         .map_err(|e| JsError::new(&e.to_string()))?;
@@ -96,10 +96,10 @@ pub fn attenuate_token(
     let mut key = [0u8; 32];
     key.copy_from_slice(root_key);
 
-    let token = pyana_token::MacaroonToken::from_encoded(token_str, key)
+    let token = dregg_token::MacaroonToken::from_encoded(token_str, key)
         .map_err(|e| JsError::new(&e.to_string()))?;
 
-    let mut attenuation = pyana_token::Attenuation::default();
+    let mut attenuation = dregg_token::Attenuation::default();
     if !service.is_empty() {
         attenuation.services = vec![(service.to_string(), actions.to_string())];
     }
@@ -149,10 +149,10 @@ pub fn verify_token(
     let mut key = [0u8; 32];
     key.copy_from_slice(root_key);
 
-    let token = pyana_token::MacaroonToken::from_encoded(token_str, key)
+    let token = dregg_token::MacaroonToken::from_encoded(token_str, key)
         .map_err(|e| JsError::new(&e.to_string()))?;
 
-    let mut request = pyana_token::AuthRequest::default();
+    let mut request = dregg_token::AuthRequest::default();
     if !app_id.is_empty() {
         request.app_id = Some(app_id.to_string());
     }
@@ -167,7 +167,7 @@ pub fn verify_token(
         error: Option<String>,
     }
 
-    let verification: Result<pyana_token::TokenClearance, pyana_token::TokenError> =
+    let verification: Result<dregg_token::TokenClearance, dregg_token::TokenError> =
         token.verify(&request);
 
     match verification {
@@ -203,8 +203,8 @@ pub fn verify_token(
 /// Returns JSON with proof bytes, generation time, proof size, etc.
 #[wasm_bindgen]
 pub fn generate_demo_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue, JsError> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::{MerkleStarkAir, prove};
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark::{MerkleStarkAir, prove};
 
     let depth = depth.clamp(2, 8) as usize;
 
@@ -271,8 +271,8 @@ pub fn generate_demo_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue,
 /// Returns JSON: { "valid": bool, "error": null | "..." }
 #[wasm_bindgen]
 pub fn verify_demo_stark_proof(proof_json: &str) -> Result<JsValue, JsError> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::{MerkleStarkAir, StarkProof, verify};
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark::{MerkleStarkAir, StarkProof, verify};
 
     let start = perf_now();
 
@@ -313,7 +313,7 @@ pub fn verify_demo_stark_proof(proof_json: &str) -> Result<JsValue, JsError> {
 /// Returns the tampered proof JSON.
 #[wasm_bindgen]
 pub fn tamper_demo_stark_proof(proof_json: &str) -> Result<String, JsError> {
-    use pyana_circuit::stark::StarkProof;
+    use dregg_circuit::stark::StarkProof;
 
     let mut proof: StarkProof =
         serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -353,9 +353,9 @@ pub fn generate_predicate_proof(
     attribute_key: &str,
     state_root: u32,
 ) -> Result<JsValue, JsError> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2;
-    use pyana_circuit::predicate_types::{PredicateType, PredicateWitness, prove_predicate};
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2;
+    use dregg_circuit::predicate_types::{PredicateType, PredicateWitness, prove_predicate};
 
     let start = perf_now();
 
@@ -381,7 +381,7 @@ pub fn generate_predicate_proof(
         .map_err(|e| JsError::new(&format!("getrandom failed: {e}")))?;
     let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
 
-    let fact_commitment = pyana_circuit::predicate_types::compute_blinded_fact_commitment(
+    let fact_commitment = dregg_circuit::predicate_types::compute_blinded_fact_commitment(
         fact_hash,
         state_root_bb,
         blinding,
@@ -421,7 +421,7 @@ pub fn generate_predicate_proof(
     }
 
     // Self-verify.
-    let verified = pyana_circuit::predicate_types::verify_predicate(
+    let verified = dregg_circuit::predicate_types::verify_predicate(
         &proof,
         BabyBear::new(threshold),
         fact_commitment,
@@ -453,8 +453,8 @@ pub fn verify_predicate_proof(
     threshold: u32,
     fact_commitment: u32,
 ) -> Result<JsValue, JsError> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::predicate_types::{PredicateProof, verify_predicate};
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::predicate_types::{PredicateProof, verify_predicate};
 
     let proof: PredicateProof =
         serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -480,7 +480,7 @@ pub fn verify_predicate_proof(
 /// Returns JSON: { "root_hex": "...", "num_leaves": N, "tree_depth": D }
 #[wasm_bindgen]
 pub fn compute_merkle_root(leaves_json: &str) -> Result<JsValue, JsError> {
-    use pyana_commit::{Fact, FactSet, FieldElement};
+    use dregg_commit::{Fact, FactSet, FieldElement};
 
     let leaves: Vec<String> =
         serde_json::from_str(leaves_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -514,7 +514,7 @@ pub fn compute_merkle_root(leaves_json: &str) -> Result<JsValue, JsError> {
 /// Returns JSON with the proof path and verification result.
 #[wasm_bindgen]
 pub fn merkle_membership_proof(leaves_json: &str, target_leaf: &str) -> Result<JsValue, JsError> {
-    use pyana_commit::{Fact, FactSet, FieldElement};
+    use dregg_commit::{Fact, FactSet, FieldElement};
 
     let leaves: Vec<String> =
         serde_json::from_str(leaves_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -571,7 +571,7 @@ pub fn merkle_non_membership_proof(
     leaves_json: &str,
     absent_leaf: &str,
 ) -> Result<JsValue, JsError> {
-    use pyana_commit::{Fact, FactSet, FieldElement};
+    use dregg_commit::{Fact, FactSet, FieldElement};
 
     let leaves: Vec<String> =
         serde_json::from_str(leaves_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -631,8 +631,8 @@ pub fn merkle_non_membership_proof(
 /// Returns the full derivation trace as JSON.
 #[wasm_bindgen]
 pub fn evaluate_datalog(facts_json: &str, request_json: &str) -> Result<JsValue, JsError> {
-    use pyana_trace::types::*;
-    use pyana_trace::{Evaluator, standard_policy};
+    use dregg_trace::types::*;
+    use dregg_trace::{Evaluator, standard_policy};
 
     // Parse facts
     let raw_facts: Vec<RawFact> =
@@ -731,7 +731,7 @@ pub fn evaluate_datalog(facts_json: &str, request_json: &str) -> Result<JsValue,
 /// Returns JSON with old_root, new_root, verification status.
 #[wasm_bindgen]
 pub fn demonstrate_fold(facts_json: &str, remove_json: &str) -> Result<JsValue, JsError> {
-    use pyana_commit::{Fact, FieldElement, FoldDeltaBuilder, TokenState};
+    use dregg_commit::{Fact, FieldElement, FoldDeltaBuilder, TokenState};
 
     let fact_strs: Vec<String> =
         serde_json::from_str(facts_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -827,7 +827,7 @@ pub fn blake3_hash(input: &str) -> String {
 ///
 /// Takes a JSON object with: kind, actions, resource_pattern, constraints, expiry, creator.
 /// Returns the hex-encoded 32-byte BLAKE3 intent ID using postcard serialization,
-/// identical to `Intent::compute_id()` in the `pyana-intent` crate.
+/// identical to `Intent::compute_id()` in the `dregg-intent` crate.
 ///
 /// JSON schema:
 /// ```json
@@ -1003,7 +1003,7 @@ pub fn compute_intent_id(intent_json: &str) -> Result<String, JsError> {
     let canonical = postcard::to_allocvec(&body)
         .map_err(|e| JsError::new(&format!("postcard serialization failed: {e}")))?;
 
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-intent-id-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-intent-id-v2");
     hasher.update(&canonical);
     let hash = hasher.finalize();
 
@@ -1126,12 +1126,12 @@ pub fn prove_committed_threshold(
     threshold: u32,
     blinding: u32,
 ) -> Result<JsValue, JsError> {
-    use pyana_circuit::committed_threshold::{
+    use dregg_circuit::committed_threshold::{
         CommittedThresholdWitness, compute_threshold_commitment,
         prove_committed_threshold as prove_ct, verify_committed_threshold as verify_ct,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2;
 
     let start = perf_now();
 
@@ -1197,11 +1197,11 @@ pub fn verify_committed_threshold(
     threshold_commitment: u32,
     fact_commitment: u32,
 ) -> Result<JsValue, JsError> {
-    use pyana_circuit::committed_threshold::{
+    use dregg_circuit::committed_threshold::{
         CommittedThresholdProof, verify_committed_threshold as verify_ct,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::StarkProof;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark::StarkProof;
 
     let start = perf_now();
 
@@ -1242,8 +1242,8 @@ pub fn verify_committed_threshold(
 /// Returns JSON: { "secret_key": [8 u32 elements], "public_key": { "x": [8], "y": [8] } }
 #[wasm_bindgen]
 pub fn schnorr_keygen() -> Result<JsValue, JsError> {
-    use pyana_circuit::schnorr_curve::scalar_to_bytes;
-    use pyana_circuit::schnorr_sig::schnorr_keygen as keygen;
+    use dregg_circuit::schnorr_curve::scalar_to_bytes;
+    use dregg_circuit::schnorr_sig::schnorr_keygen as keygen;
 
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).map_err(|e| JsError::new(&e.to_string()))?;
@@ -1275,8 +1275,8 @@ pub fn schnorr_keygen() -> Result<JsValue, JsError> {
 /// Returns JSON with signature { "r_x": [8], "r_y": [8], "s": [8] }
 #[wasm_bindgen]
 pub fn schnorr_sign(secret_key_json: &str, message: &str) -> Result<JsValue, JsError> {
-    use pyana_circuit::schnorr_curve::scalar_to_bytes;
-    use pyana_circuit::schnorr_sig::{schnorr_keygen as keygen, schnorr_sign as sign};
+    use dregg_circuit::schnorr_curve::scalar_to_bytes;
+    use dregg_circuit::schnorr_sig::{schnorr_keygen as keygen, schnorr_sign as sign};
 
     #[derive(serde::Deserialize)]
     struct SecretKeyInput {
@@ -1326,10 +1326,10 @@ pub fn schnorr_verify(
     message: &str,
     signature_json: &str,
 ) -> Result<bool, JsError> {
-    use pyana_circuit::babybear8::BabyBear8;
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::schnorr_curve::{CurvePoint, scalar_from_bytes};
-    use pyana_circuit::schnorr_sig::{
+    use dregg_circuit::babybear8::BabyBear8;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::schnorr_curve::{CurvePoint, scalar_from_bytes};
+    use dregg_circuit::schnorr_sig::{
         SchnorrPublicKey, SchnorrSignature, schnorr_verify as verify,
     };
 
@@ -1432,7 +1432,7 @@ pub fn schnorr_verify(
 /// Returns JSON with: result (pass/fail), proof_size, garbling_time_ms
 #[wasm_bindgen]
 pub fn garbled_compare(prover_value: u32, verifier_threshold: u32) -> Result<JsValue, JsError> {
-    use pyana_circuit::garbled::{
+    use dregg_circuit::garbled::{
         COMPARISON_BITS, evaluate_garbled_circuit, garble_comparison_circuit,
         prove_private_threshold, verify_private_threshold,
     };
@@ -1524,8 +1524,8 @@ pub fn prove_anonymous_membership(
     agent_id_hex: &str,
     ring_members_json: &str,
 ) -> Result<JsValue, JsError> {
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2;
 
     let start = perf_now();
 
@@ -1584,7 +1584,7 @@ pub fn prove_anonymous_membership(
     // distinct tags with overwhelming probability.
     let mut full_tag_nonce = [0u8; 32];
     getrandom::fill(&mut full_tag_nonce).map_err(|e| JsError::new(&e.to_string()))?;
-    let mut tag_hasher = blake3::Hasher::new_derive_key("pyana-ring-presentation-tag-v1");
+    let mut tag_hasher = blake3::Hasher::new_derive_key("dregg-ring-presentation-tag-v1");
     tag_hasher.update(&blinded_leaf.as_u32().to_le_bytes());
     tag_hasher.update(&tag_bytes);
     tag_hasher.update(&full_tag_nonce);
@@ -1626,12 +1626,12 @@ pub fn prove_anonymous_membership(
 }
 
 // ============================================================================
-// Mnemonic / Key Derivation (BLAKE3 path, matching pyana-sdk)
+// Mnemonic / Key Derivation (BLAKE3 path, matching dregg-sdk)
 // ============================================================================
 
-/// Derive an Ed25519 keypair from a BIP39 mnemonic using the pyana BLAKE3 derivation path.
+/// Derive an Ed25519 keypair from a BIP39 mnemonic using the dregg BLAKE3 derivation path.
 ///
-/// This uses the same BLAKE3-based derivation as `pyana-sdk`'s `mnemonic_to_seed` +
+/// This uses the same BLAKE3-based derivation as `dregg-sdk`'s `mnemonic_to_seed` +
 /// `derive_keypair`. The Ed25519 public key is computed in-WASM via ed25519-dalek.
 ///
 /// Returns an object `{ public_key: Vec<u8>(32), secret_key: Vec<u8>(32) }`.
@@ -1661,9 +1661,9 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
         )));
     }
 
-    // BLAKE3 seed derivation (matches pyana-sdk's seed_from_entropy path).
-    let context_a = format!("pyana mnemonic seed v1 {}", passphrase);
-    let context_b = format!("pyana mnemonic seed v1 extend {}", passphrase);
+    // BLAKE3 seed derivation (matches dregg-sdk's seed_from_entropy path).
+    let context_a = format!("dregg mnemonic seed v1 {}", passphrase);
+    let context_b = format!("dregg mnemonic seed v1 extend {}", passphrase);
 
     let mnemonic_bytes = mnemonic.as_bytes();
     let entropy_hash = blake3::hash(mnemonic_bytes);
@@ -1680,9 +1680,9 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
         s
     };
 
-    // Derive keypair at "pyana/0" path (main agent identity).
+    // Derive keypair at "dregg/0" path (main agent identity).
     // The derived 32 bytes are the Ed25519 secret-key seed.
-    let secret_seed: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key("pyana/0", &seed[..]));
+    let secret_seed: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key("dregg/0", &seed[..]));
 
     // Compute the Ed25519 public key from the secret seed.
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_seed);
@@ -1761,8 +1761,8 @@ pub fn sign_message(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, JsErro
 /// `/turns/submit` endpoint expects.
 #[wasm_bindgen]
 pub fn build_turn(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_sdk::AgentCipherclerk;
-    use pyana_turn::Effect;
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::Effect;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -1843,7 +1843,7 @@ pub fn build_turn(spec_json: &str) -> Result<JsValue, JsError> {
 /// constructor-transparency path.
 ///
 /// This replaces the standalone `create_from_factory` derivation function
-/// for the extension's `window.pyana.createFromFactory` path. The previous
+/// for the extension's `window.dregg.createFromFactory` path. The previous
 /// shape only computed `(child_vk, param_hash)` deterministically — useful
 /// for client-side preview, but it never actually minted a cell. The
 /// canonical path is: build a real signed turn, submit it via
@@ -1873,9 +1873,9 @@ pub fn build_turn(spec_json: &str) -> Result<JsValue, JsError> {
 /// without round-tripping through the node.
 #[wasm_bindgen]
 pub fn cipherclerk_create_from_factory(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_cell::CellMode;
-    use pyana_cell::factory::{ChildVkStrategy, FactoryCreationParams};
-    use pyana_sdk::AgentCipherclerk;
+    use dregg_cell::CellMode;
+    use dregg_cell::factory::{ChildVkStrategy, FactoryCreationParams};
+    use dregg_sdk::AgentCipherclerk;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -2008,10 +2008,10 @@ fn hex_decode_32(hex: &str) -> Result<[u8; 32], String> {
 /// }
 /// ```
 ///
-/// `match_spec` is parsed via the canonical `pyana_intent::MatchSpec`
+/// `match_spec` is parsed via the canonical `dregg_intent::MatchSpec`
 /// serde shape, so the field names are exactly those of the Rust type.
 /// The extension already coerces its inbound MatchSpec to this shape
-/// for `pyana:postIntent` / `compute_intent_id`, so the same payload
+/// for `dregg:postIntent` / `compute_intent_id`, so the same payload
 /// flows through here.
 ///
 /// Returns JSON: `{ intent_id: <hex>, encrypted_intent_bytes: Uint8Array,
@@ -2020,8 +2020,8 @@ fn hex_decode_32(hex: &str) -> Result<[u8; 32], String> {
 /// to forward to `/intents/encrypted` (or equivalent transport).
 #[wasm_bindgen]
 pub fn cipherclerk_post_encrypted_intent(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_intent::{IntentKind, MatchSpec};
-    use pyana_sdk::AgentCipherclerk;
+    use dregg_intent::{IntentKind, MatchSpec};
+    use dregg_sdk::AgentCipherclerk;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -2102,8 +2102,8 @@ pub fn cipherclerk_post_encrypted_intent(spec_json: &str) -> Result<JsValue, JsE
 /// `Turn` ready for `/turns/submit`.
 #[wasm_bindgen]
 pub fn cipherclerk_private_transfer(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_cell::stealth::StealthMetaAddress;
-    use pyana_sdk::AgentCipherclerk;
+    use dregg_cell::stealth::StealthMetaAddress;
+    use dregg_sdk::AgentCipherclerk;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -2210,8 +2210,8 @@ pub fn cipherclerk_private_transfer(spec_json: &str) -> Result<JsValue, JsError>
 /// page-side callers don't break.
 #[wasm_bindgen]
 pub fn cipherclerk_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_sdk::AgentCipherclerk;
-    use pyana_turn::Effect;
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::Effect;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -2241,12 +2241,12 @@ pub fn cipherclerk_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
     // bind the transition to the (sender, receiver, amount) tuple so a
     // verifier replaying with the same inputs can re-derive them and
     // detect tampering.
-    let mut h = blake3::Hasher::new_derive_key("pyana-peer-exchange-old-commit-v1");
+    let mut h = blake3::Hasher::new_derive_key("dregg-peer-exchange-old-commit-v1");
     h.update(&sender_cell.0);
     h.update(&receiver);
     let old_commitment = *h.finalize().as_bytes();
 
-    let mut h = blake3::Hasher::new_derive_key("pyana-peer-exchange-new-commit-v1");
+    let mut h = blake3::Hasher::new_derive_key("dregg-peer-exchange-new-commit-v1");
     h.update(&old_commitment);
     h.update(&spec.amount.to_le_bytes());
     h.update(&receiver);
@@ -2255,7 +2255,7 @@ pub fn cipherclerk_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
     // Effects hash binds the actual transfer payload.
     let effects = vec![Effect::Transfer {
         from: sender_cell,
-        to: pyana_cell::CellId::from_bytes(receiver),
+        to: dregg_cell::CellId::from_bytes(receiver),
         amount: spec.amount,
     }];
     let effects_bytes = postcard::to_allocvec(&effects)
@@ -2275,7 +2275,7 @@ pub fn cipherclerk_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
     // Proof commitment: BLAKE3 binding of the canonical fields the
     // verifier checks. Surfaced for UI display + log binding parity with
     // the legacy peer_exchange_with_proof shape.
-    let mut ph = blake3::Hasher::new_derive_key("pyana-peer-exchange-proof-v1");
+    let mut ph = blake3::Hasher::new_derive_key("dregg-peer-exchange-proof-v1");
     ph.update(&exchange_id);
     ph.update(&effects_hash);
     ph.update(&new_commitment);
@@ -2336,8 +2336,8 @@ pub fn cipherclerk_peer_exchange(spec_json: &str) -> Result<JsValue, JsError> {
 /// `/turns/submit` endpoint.
 #[wasm_bindgen]
 pub fn cipherclerk_make_action_turn(spec_json: &str) -> Result<JsValue, JsError> {
-    use pyana_sdk::AgentCipherclerk;
-    use pyana_turn::Effect;
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::Effect;
     use zeroize::Zeroizing;
 
     #[derive(serde::Deserialize)]
@@ -2467,7 +2467,7 @@ struct RawRequest {
 // Adversarial tests for the audit fixes.
 // ============================================================================
 //
-// These run on the host target (`cargo test -p pyana-wasm`). They exercise the
+// These run on the host target (`cargo test -p dregg-wasm`). They exercise the
 // `#[wasm_bindgen]`-exported public surface to lock in the audit fixes against
 // regression.
 
@@ -2592,7 +2592,7 @@ mod audit_tests {
     fn sign_message_produces_valid_ed25519_signature() {
         // Generate a known keypair from a fixed seed.
         let seed = [42u8; 32];
-        let msg = b"hello pyana turn";
+        let msg = b"hello dregg turn";
         let sig_bytes =
             sign_message(&seed, msg).expect("sign_message should succeed for 32-byte seed");
         assert_eq!(sig_bytes.len(), 64, "Ed25519 signature must be 64 bytes");
@@ -2617,7 +2617,7 @@ mod audit_tests {
 
     #[test]
     fn build_turn_produces_postcard_deserializable_turn() {
-        use pyana_turn::Turn;
+        use dregg_turn::Turn;
         let spec = serde_json::json!({
             "sender_pubkey": vec![0u8; 32],
             "sender_privkey": vec![55u8; 32],

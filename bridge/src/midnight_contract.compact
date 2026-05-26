@@ -7,12 +7,12 @@
 // Deployment target: Midnight DApp shield (Zswap-integrated contract)
 //
 // Architecture:
-//   - lockForPyana: User locks NIGHT tokens on Midnight → pyana observer mints on pyana side.
-//   - unlockFromPyana: User presents pyana federation attestation → contract releases NIGHT.
+//   - lockForDregg: User locks NIGHT tokens on Midnight → dregg observer mints on dregg side.
+//   - unlockFromDregg: User presents dregg federation attestation → contract releases NIGHT.
 //
 // Trust model:
-//   - Midnight → pyana: Trust the pyana federation's observation of finalized Midnight blocks.
-//   - Pyana → Midnight: Trust the pyana federation's threshold signature (Ed25519, 2-of-3).
+//   - Midnight → dregg: Trust the dregg federation's observation of finalized Midnight blocks.
+//   - Dregg → Midnight: Trust the dregg federation's threshold signature (Ed25519, 2-of-3).
 //
 // References:
 //   - ~/midnight/compact/examples/ for Compact syntax
@@ -42,7 +42,7 @@ type UsedNonce = {
 
 // Public state (visible to all, stored in contract's unshielded ledger slot):
 //   - totalLocked: u64        — total NIGHT currently locked in the bridge
-//   - federationKey: Bytes<32> — current pyana federation aggregate public key
+//   - federationKey: Bytes<32> — current dregg federation aggregate public key
 //   - federationEpoch: u64    — current epoch number
 //   - minAmount: u64          — minimum bridge amount (governance-set)
 //   - maxAmount: u64          — maximum per-tx bridge amount (governance-set)
@@ -51,29 +51,29 @@ type UsedNonce = {
 //   - usedNonces: Set<UsedNonce> — nonces used for unlocks (replay prevention)
 
 // ============================================================================
-// Lock: Midnight → Pyana direction
+// Lock: Midnight → Dregg direction
 // ============================================================================
 
 // @public
-// Lock NIGHT tokens on Midnight. The pyana observer will detect the BridgeLock
-// event and mint equivalent value on the pyana side.
+// Lock NIGHT tokens on Midnight. The dregg observer will detect the BridgeLock
+// event and mint equivalent value on the dregg side.
 //
 // Inputs:
 //   amount: u64          — amount to lock (in STARS, 10^6 = 1 NIGHT)
-//   pyanaRecipient: Bytes<32> — pyana cell ID to receive the minted note
+//   dreggRecipient: Bytes<32> — dregg cell ID to receive the minted note
 //   nonce: u64           — caller-chosen nonce for correlation
 //
 // Effects:
 //   1. Transfer `amount` from caller's balance to this contract's locked pool.
-//   2. Emit BridgeLock(amount, pyanaRecipient, nonce) event.
+//   2. Emit BridgeLock(amount, dreggRecipient, nonce) event.
 //   3. Increment totalLocked.
 //
-// The pyana observer watches for BridgeLock events in finalized blocks and
-// submits a MidnightToPyanaMessage to the federation for note minting.
+// The dregg observer watches for BridgeLock events in finalized blocks and
+// submits a MidnightToDreggMessage to the federation for note minting.
 //
-export circuit lockForPyana(
+export circuit lockForDregg(
   amount: Field,
-  pyanaRecipient: Bytes<32>,
+  dreggRecipient: Bytes<32>,
   nonce: Field
 ): [] {
   // Enforce minimum and maximum amounts.
@@ -88,30 +88,30 @@ export circuit lockForPyana(
   // Update public state.
   contract.totalLocked = contract.totalLocked + amount;
 
-  // Emit event for the pyana observer.
+  // Emit event for the dregg observer.
   // In Midnight's Compact, events are part of the transaction's public outputs.
   emit BridgeLock {
     amount: amount,
-    pyanaRecipient: pyanaRecipient,
+    dreggRecipient: dreggRecipient,
     nonce: nonce
   };
 }
 
 // ============================================================================
-// Unlock: Pyana → Midnight direction
+// Unlock: Dregg → Midnight direction
 // ============================================================================
 
 // @public
-// Unlock NIGHT tokens on Midnight after verifying a pyana federation attestation.
-// Called by the user (or relayer) who burned a note on pyana and received an attestation.
+// Unlock NIGHT tokens on Midnight after verifying a dregg federation attestation.
+// Called by the user (or relayer) who burned a note on dregg and received an attestation.
 //
 // Inputs:
 //   amount: u64            — amount to unlock
 //   recipient: Bytes<32>   — Midnight public key to receive unlocked NIGHT
 //   nonce: u64             — replay-prevention nonce (unique per epoch)
 //   epoch: u64             — federation epoch of the attestation
-//   signature: Bytes<64>   — Ed25519 threshold signature from pyana federation
-//   nullifier: Bytes<32>   — the pyana nullifier that was burned
+//   signature: Bytes<64>   — Ed25519 threshold signature from dregg federation
+//   nullifier: Bytes<32>   — the dregg nullifier that was burned
 //
 // Effects:
 //   1. Verify the federation signature over (nullifier || amount || recipient || nonce).
@@ -120,7 +120,7 @@ export circuit lockForPyana(
 //   4. Decrement totalLocked.
 //   5. Record nonce as used.
 //
-export circuit unlockFromPyana(
+export circuit unlockFromDregg(
   amount: Field,
   recipient: Bytes<32>,
   nonce: Field,
@@ -135,9 +135,9 @@ export circuit unlockFromPyana(
   assert(validEpoch, "attestation epoch is not current or previous");
 
   // 2. Compute the message that was signed.
-  //    Canonical: BLAKE3_derive_key("pyana-midnight-bridge-v1", nullifier || amount_le || recipient || nonce_le)
+  //    Canonical: BLAKE3_derive_key("dregg-midnight-bridge-v1", nullifier || amount_le || recipient || nonce_le)
   let message = blake3DeriveKey(
-    "pyana-midnight-bridge-v1",
+    "dregg-midnight-bridge-v1",
     concat(nullifier, toLeBytes(amount), recipient, toLeBytes(nonce))
   );
 
@@ -180,7 +180,7 @@ export circuit unlockFromPyana(
 // @governance (restricted to authorized governance multisig)
 // Rotate the federation public key to a new epoch.
 //
-// Called when the pyana federation rotates its threshold signing key.
+// Called when the dregg federation rotates its threshold signing key.
 // The previous key remains valid for one more epoch to allow in-flight attestations.
 //
 export circuit rotateFederationKey(

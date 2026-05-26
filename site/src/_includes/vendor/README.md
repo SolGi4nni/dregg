@@ -1,6 +1,6 @@
 # Vendored runtime dependencies
 
-These three files are the entire runtime layer for the pyana site's interactive
+These three files are the entire runtime layer for the dregg site's interactive
 visualizers. They are vendored locally rather than loaded from a CDN because
 direct `npm install` on the host (and trust in third-party CDNs like esm.sh)
 has been flagged as risky in light of ongoing supply-chain attacks against the

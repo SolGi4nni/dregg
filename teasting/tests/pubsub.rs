@@ -3,8 +3,8 @@
 //! Exercises topic creation, subscriber management, independent cursor tracking,
 //! lag monitoring, GC of consumed entries, subscriber caps, and fee model.
 
-use pyana_storage::pubsub::{PubSubError, PubSubTopic};
-use pyana_teasting::harness::SimulationHarness;
+use dregg_storage::pubsub::{PubSubError, PubSubTopic};
+use dregg_teasting::harness::SimulationHarness;
 
 /// Deterministic identity from a seed byte.
 fn identity(n: u8) -> [u8; 32] {

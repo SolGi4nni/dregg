@@ -3,7 +3,7 @@
  *
  * Two entry points:
  *   - `render(container, data)` — legacy direct-render helper.
- *   - `defineVisualizer('state-diff', ...)` — `<pyana-vizzer>` registration.
+ *   - `defineVisualizer('state-diff', ...)` — `<dregg-vizzer>` registration.
  *
  * Dataset (JSON in data-dataset):
  *   {

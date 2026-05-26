@@ -31,9 +31,9 @@ impl TurnExecutor {
         turn: &Turn,
         ledger: &mut Ledger,
     ) -> Result<(), TurnError> {
-        use pyana_circuit::effect_vm;
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::effect_vm;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark;
 
         // 1. Get stored commitment (check both legacy sovereign_commitments and registrations).
         let old_commitment = if let Some(c) = ledger.get_sovereign_commitment(cell_id) {
@@ -317,7 +317,7 @@ impl TurnExecutor {
                 )));
             }
         } else {
-            let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+            let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
             stark::verify(&air, &proof, &public_inputs)
                 .map_err(|e| TurnError::ProofVerificationFailed(e))?;
         }
@@ -325,7 +325,7 @@ impl TurnExecutor {
         // 12. Verify custom program proofs (CellProgram dispatch).
         if let Some(custom_proofs) = turn.custom_program_proofs.as_ref() {
             let custom_commitments =
-                pyana_circuit::extract_custom_proof_commitments(&public_inputs);
+                dregg_circuit::extract_custom_proof_commitments(&public_inputs);
             if custom_commitments.len() != custom_proofs.len() {
                 return Err(TurnError::InvalidExecutionProof(format!(
                     "custom proof count mismatch: PI declares {}, turn provides {}",
@@ -410,7 +410,7 @@ impl TurnExecutor {
             }
         } else {
             let custom_commitments =
-                pyana_circuit::extract_custom_proof_commitments(&public_inputs);
+                dregg_circuit::extract_custom_proof_commitments(&public_inputs);
             if !custom_commitments.is_empty() {
                 return Err(TurnError::InvalidExecutionProof(format!(
                     "Effect VM proof declares {} custom effects but turn provides no custom proofs",
@@ -436,7 +436,7 @@ impl TurnExecutor {
 
     /// Verify a sovereign-witness STARK transition proof.
     ///
-    /// Mirrors `pyana_cell::peer_exchange::PeerExchange::verify_stark_transition`:
+    /// Mirrors `dregg_cell::peer_exchange::PeerExchange::verify_stark_transition`:
     /// deserializes the proof, widens the 32-byte commitments to 4 BabyBear
     /// felts each, overrides the proof's commitment PIs with verifier-
     /// derived values, and verifies via `EffectVmAir`. A divergence on
@@ -449,9 +449,9 @@ impl TurnExecutor {
         _effects_hash: &[u8; 32],
         proof_bytes: &[u8],
     ) -> Result<(), TurnError> {
-        use pyana_circuit::effect_vm::pi;
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark;
+        use dregg_circuit::effect_vm::pi;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark;
 
         let proof = stark::proof_from_bytes(proof_bytes)
             .map_err(|e| TurnError::InvalidExecutionProof(e))?;
@@ -515,7 +515,7 @@ impl TurnExecutor {
             }
         }
 
-        let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+        let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
         stark::verify(&air, &proof, &public_inputs)
             .map_err(|e| TurnError::ProofVerificationFailed(e))?;
         Ok(())
@@ -549,11 +549,11 @@ impl TurnExecutor {
     /// every other on the four shared slots and (when `turn.is_some()`)
     /// with the canonical projection.
     pub fn verify_proof_carrying_turn_bundle(
-        bundle_pis: &[Vec<pyana_circuit::field::BabyBear>],
+        bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
         turn: Option<&Turn>,
     ) -> Result<(), TurnError> {
-        use pyana_circuit::effect_vm::pi;
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::effect_vm::pi;
+        use dregg_circuit::field::BabyBear;
 
         if bundle_pis.is_empty() {
             return Ok(());
@@ -684,7 +684,7 @@ impl TurnExecutor {
     /// PI check through that copy; then it issues the snapshot-aware
     /// binding-proof sweep against the original turn.
     pub fn verify_proof_carrying_turn_bundle_with_ledger(
-        bundle_pis: &[Vec<pyana_circuit::field::BabyBear>],
+        bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
         turn: Option<&Turn>,
         ledger: Option<&Ledger>,
     ) -> Result<(), TurnError> {
@@ -761,8 +761,8 @@ impl TurnExecutor {
         turn: &Turn,
         ledger: Option<&Ledger>,
     ) -> Result<(), TurnError> {
-        use pyana_circuit::effect_action_air as eaa;
-        use pyana_circuit::stark;
+        use dregg_circuit::effect_action_air as eaa;
+        use dregg_circuit::stark;
 
         // Build the canonical DFS-order effect list once, mirroring
         // `compute_turn_identity_pi`'s `dfs_collect`.
@@ -792,7 +792,7 @@ impl TurnExecutor {
             // view of the effect's typed parameters. Burn routes through
             // the snapshot-aware extractor; everything else uses the
             // snapshot-free path.
-            let (exp_fields, exp_amounts) = if bp.schema_id == "pyana-effect-burn-v1" {
+            let (exp_fields, exp_amounts) = if bp.schema_id == "dregg-effect-burn-v1" {
                 Self::extract_burn_binding_params(eff, ledger).ok_or_else(|| {
                     TurnError::InvalidExecutionProof(format!(
                         "effect_binding_proofs[{}]: Burn binding requires a ledger \
@@ -963,8 +963,8 @@ impl TurnExecutor {
     /// separator). Returns `None` for unknown ids.
     pub(super) fn schema_by_id(
         id: &str,
-    ) -> Option<pyana_circuit::effect_action_air::EffectActionSchema> {
-        use pyana_circuit::effect_action_air as eaa;
+    ) -> Option<dregg_circuit::effect_action_air::EffectActionSchema> {
+        use dregg_circuit::effect_action_air as eaa;
         macro_rules! match_schemas {
             ($($s:ident),* $(,)?) => {
                 $(
@@ -1018,7 +1018,7 @@ impl TurnExecutor {
     ) -> Option<(Vec<[u8; 32]>, Vec<u64>)> {
         match (schema_id, effect) {
             (
-                "pyana-effect-note-spend-v1",
+                "dregg-effect-note-spend-v1",
                 Effect::NoteSpend {
                     nullifier,
                     note_tree_root,
@@ -1030,7 +1030,7 @@ impl TurnExecutor {
             ) => {
                 let asset_type_commit = {
                     let mut h = blake3::Hasher::new();
-                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(b"dregg-asset-type-commit/v1");
                     h.update(&asset_type.to_le_bytes());
                     *h.finalize().as_bytes()
                 };
@@ -1041,7 +1041,7 @@ impl TurnExecutor {
                 ))
             }
             (
-                "pyana-effect-note-create-v1",
+                "dregg-effect-note-create-v1",
                 Effect::NoteCreate {
                     commitment,
                     value,
@@ -1053,7 +1053,7 @@ impl TurnExecutor {
             ) => {
                 let asset_type_commit = {
                     let mut h = blake3::Hasher::new();
-                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(b"dregg-asset-type-commit/v1");
                     h.update(&asset_type.to_le_bytes());
                     *h.finalize().as_bytes()
                 };
@@ -1068,7 +1068,7 @@ impl TurnExecutor {
                 ))
             }
             (
-                "pyana-effect-bridge-lock-v1",
+                "dregg-effect-bridge-lock-v1",
                 Effect::BridgeLock {
                     nullifier,
                     destination,
@@ -1080,7 +1080,7 @@ impl TurnExecutor {
             ) => {
                 let asset_type_commit = {
                     let mut h = blake3::Hasher::new();
-                    h.update(b"pyana-asset-type-commit/v1");
+                    h.update(b"dregg-asset-type-commit/v1");
                     h.update(&asset_type.to_le_bytes());
                     *h.finalize().as_bytes()
                 };
@@ -1093,17 +1093,17 @@ impl TurnExecutor {
                     vec![*value, *asset_type, *timeout_height],
                 ))
             }
-            ("pyana-effect-bridge-finalize-v1", Effect::BridgeFinalize { nullifier, receipt }) => {
+            ("dregg-effect-bridge-finalize-v1", Effect::BridgeFinalize { nullifier, receipt }) => {
                 let receipt_hash = {
                     let bytes = postcard::to_allocvec(receipt).unwrap_or_default();
                     *blake3::hash(&bytes).as_bytes()
                 };
                 Some((vec![*nullifier, receipt_hash], vec![]))
             }
-            ("pyana-effect-bridge-cancel-v1", Effect::BridgeCancel { nullifier }) => {
+            ("dregg-effect-bridge-cancel-v1", Effect::BridgeCancel { nullifier }) => {
                 Some((vec![*nullifier], vec![]))
             }
-            ("pyana-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
+            ("dregg-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
                 Some((vec![*child.as_bytes()], vec![]))
             }
             // SCHEMA_BURN (AIR-SOUNDNESS-AUDIT.md #75) is wired in
@@ -1112,11 +1112,11 @@ impl TurnExecutor {
             // snapshot-free extractor cannot reconstruct. The snapshot-
             // aware path is taken from
             // `verify_effect_binding_proofs_with_ledger` when the schema
-            // id is `pyana-effect-burn-v1`; the snapshot-free path keeps
+            // id is `dregg-effect-burn-v1`; the snapshot-free path keeps
             // returning None here as a structural rejection so a Burn
             // binding proof can never silently slip through without
             // ledger context.
-            ("pyana-effect-burn-v1", Effect::Burn { .. }) => None,
+            ("dregg-effect-burn-v1", Effect::Burn { .. }) => None,
             // Other variants: extend as wire-in surface grows. Today
             // the lane closes NoteSpend/NoteCreate/BridgeLock at full
             // fidelity (the deferred §5 items); the remaining
@@ -1207,7 +1207,7 @@ impl TurnExecutor {
     /// about outbound transfer), T3 (intro permission tampering across
     /// sides), T15 multi-cell tails. See `STAGE-7-GAMMA-2-PI-DESIGN.md` §4.
     pub fn verify_bilateral_bundle(
-        bundle: &[(pyana_types::CellId, Vec<pyana_circuit::field::BabyBear>)],
+        bundle: &[(dregg_types::CellId, Vec<dregg_circuit::field::BabyBear>)],
         turn: &Turn,
     ) -> Result<(), TurnError> {
         use crate::bilateral_schedule::ExpectedBilateral;
@@ -1227,12 +1227,12 @@ impl TurnExecutor {
     /// keep using [`verify_bilateral_bundle`] — it builds an empty
     /// unilateral list, which produces sentinel roots / zero counts.
     pub fn verify_bilateral_bundle_with_schedule(
-        bundle: &[(pyana_types::CellId, Vec<pyana_circuit::field::BabyBear>)],
+        bundle: &[(dregg_types::CellId, Vec<dregg_circuit::field::BabyBear>)],
         turn: &Turn,
         schedule: &crate::bilateral_schedule::ExpectedBilateral,
     ) -> Result<(), TurnError> {
         use crate::bilateral_schedule::extract_from_pi;
-        use pyana_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
 
         if bundle.is_empty() {
             return Ok(());
@@ -1347,7 +1347,7 @@ impl TurnExecutor {
         // does not, that's a hard reject — the bundle is incomplete
         // relative to the schedule, and a malicious prover could otherwise
         // produce only the side that benefits them.
-        let covered: std::collections::HashSet<&pyana_types::CellId> =
+        let covered: std::collections::HashSet<&dregg_types::CellId> =
             bundle.iter().map(|(c, _)| c).collect();
         for t in &schedule.transfers {
             let from_in = covered.contains(&t.from);
@@ -1378,7 +1378,7 @@ impl TurnExecutor {
                 || covered.contains(&intro.recipient)
                 || covered.contains(&intro.target);
             if any_covered {
-                let distinct: std::collections::HashSet<&pyana_types::CellId> =
+                let distinct: std::collections::HashSet<&dregg_types::CellId> =
                     [&intro.introducer, &intro.recipient, &intro.target]
                         .into_iter()
                         .collect();
@@ -1414,8 +1414,8 @@ impl TurnExecutor {
     /// multi-cell aggregation callers (Stage 7-γ.1+) a stable entry point.
     pub fn verify_bundle_with_stark(
         bundle: &[(
-            pyana_circuit::stark::StarkProof,
-            Vec<pyana_circuit::field::BabyBear>,
+            dregg_circuit::stark::StarkProof,
+            Vec<dregg_circuit::field::BabyBear>,
         )],
         turn: Option<&Turn>,
     ) -> Result<(), TurnError> {
@@ -1427,16 +1427,16 @@ impl TurnExecutor {
     /// who carry a Burn binding proof in `turn.effect_binding_proofs`.
     pub fn verify_bundle_with_stark_and_ledger(
         bundle: &[(
-            pyana_circuit::stark::StarkProof,
-            Vec<pyana_circuit::field::BabyBear>,
+            dregg_circuit::stark::StarkProof,
+            Vec<dregg_circuit::field::BabyBear>,
         )],
         turn: Option<&Turn>,
         ledger: Option<&Ledger>,
     ) -> Result<(), TurnError> {
-        use pyana_circuit::stark;
+        use dregg_circuit::stark;
 
         for (i, (proof, pis)) in bundle.iter().enumerate() {
-            let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
+            let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
             stark::verify(&air, proof, pis).map_err(|e| {
                 TurnError::ProofVerificationFailed(format!("bundle proof {}: {}", i, e))
             })?;
@@ -1448,7 +1448,7 @@ impl TurnExecutor {
     /// Read the per-cell `max_custom_effects` from the cell's program manifest.
     ///
     /// Per `DESIGN-max-custom-effects.md` §4. Falls back to
-    /// [`pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] if the cell
+    /// [`dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT`] if the cell
     /// has no explicit declaration (hosted or legacy sovereign cells).
     ///
     /// Stage 1: looks at sovereign registration's `max_custom_effects` optional
@@ -1460,7 +1460,7 @@ impl TurnExecutor {
                 return m;
             }
         }
-        pyana_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT
+        dregg_circuit::effect_vm::pi::MAX_CUSTOM_EFFECTS_DEFAULT
     }
 
     /// Read the federation-scoped `approved_handoffs_root` as 4 BabyBear felts.
@@ -1468,8 +1468,8 @@ impl TurnExecutor {
     /// Stage 1: returns the empty-tree sentinel (`Commitment4::empty()`).
     /// Stage 7 populates this from federation state when CapTP runtime
     /// emitters land. Per `DESIGN-captp-integration.md` §4.2.
-    pub(super) fn read_approved_handoffs_root(&self) -> [pyana_circuit::field::BabyBear; 4] {
-        [pyana_circuit::field::BabyBear::ZERO; 4]
+    pub(super) fn read_approved_handoffs_root(&self) -> [dregg_circuit::field::BabyBear; 4] {
+        [dregg_circuit::field::BabyBear::ZERO; 4]
     }
 
     /// Get the verification key hash for a sovereign cell, if one is set.
@@ -1493,19 +1493,19 @@ impl TurnExecutor {
     }
 
     /// Encode a 32-byte hash as 8 BabyBear field elements (4 bytes each, little-endian).
-    pub(super) fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<pyana_circuit::field::BabyBear> {
-        use pyana_circuit::field::BabyBear;
+    pub(super) fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<dregg_circuit::field::BabyBear> {
+        use dregg_circuit::field::BabyBear;
         let mut result = Vec::with_capacity(8);
         for chunk in bytes.chunks(4) {
             let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             // Reduce mod BabyBear prime to ensure valid field element.
-            result.push(BabyBear(val % pyana_circuit::field::BABYBEAR_P));
+            result.push(BabyBear(val % dregg_circuit::field::BABYBEAR_P));
         }
         result
     }
 
     /// Convert 4 BabyBear elements to a 16-byte array (for custom proof commitment matching).
-    pub(super) fn babybear4_to_bytes16(elems: &[pyana_circuit::field::BabyBear; 4]) -> [u8; 16] {
+    pub(super) fn babybear4_to_bytes16(elems: &[dregg_circuit::field::BabyBear; 4]) -> [u8; 16] {
         let mut result = [0u8; 16];
         for (i, elem) in elems.iter().enumerate() {
             result[i * 4..i * 4 + 4].copy_from_slice(&elem.0.to_le_bytes());
@@ -1520,7 +1520,7 @@ impl TurnExecutor {
     /// `expand_vk_hash_16_to_32` (zero-padded upper 16 bytes), giving 80-bit
     /// effective security in a 128-bit system. The full 32-byte form
     /// distinguishes VK hashes whose lower 16 bytes collide.
-    pub(super) fn babybear8_to_bytes32(elems: &[pyana_circuit::field::BabyBear; 8]) -> [u8; 32] {
+    pub(super) fn babybear8_to_bytes32(elems: &[dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
         let mut result = [0u8; 32];
         for (i, elem) in elems.iter().enumerate() {
             result[i * 4..i * 4 + 4].copy_from_slice(&elem.0.to_le_bytes());
@@ -1569,7 +1569,7 @@ impl TurnExecutor {
     /// callers that absorb commitments into Merkle leaves; it now derives
     /// the felt from the full 32-byte canonical commitment rather than a
     /// 4-byte truncation.
-    pub fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
+    pub fn commitment_to_babybear(bytes: &[u8; 32]) -> dregg_circuit::field::BabyBear {
         // Position 0 of the 4-felt form is the in-trace continuity binding.
         Self::commitment_to_4bb(bytes)[0]
     }
@@ -1588,8 +1588,8 @@ impl TurnExecutor {
     /// `compute_commitment_4`), causing a byte-incompatible PI mismatch between
     /// trace generation and verification (Silver-Vision bug: sovereign-cell proofs
     /// always rejected, GitHub #99).
-    pub fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
-        use pyana_circuit::field::BabyBear;
+    pub fn commitment_to_4bb(bytes: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 4] {
+        use dregg_circuit::field::BabyBear;
         [
             BabyBear::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
             BabyBear::new(u32::from_le_bytes(bytes[4..8].try_into().unwrap())),
@@ -1604,7 +1604,7 @@ impl TurnExecutor {
     /// This is the canonical format read back by [`commitment_to_4bb`].
     /// Use this instead of [`babybear_to_commitment`] when the proof's PI carries
     /// a widened 4-felt commitment (`CellState::compute_commitment_4` output).
-    pub fn commitment_4bb_to_bytes(felts: [pyana_circuit::field::BabyBear; 4]) -> [u8; 32] {
+    pub fn commitment_4bb_to_bytes(felts: [dregg_circuit::field::BabyBear; 4]) -> [u8; 32] {
         let mut result = [0u8; 32];
         result[0..4].copy_from_slice(&felts[0].0.to_le_bytes());
         result[4..8].copy_from_slice(&felts[1].0.to_le_bytes());
@@ -1618,7 +1618,7 @@ impl TurnExecutor {
     /// Packs the u32 value into the first 4 bytes (LE), zeroes the rest.
     /// Legacy single-felt encoding; prefer [`commitment_4bb_to_bytes`] for new
     /// proof-carrying paths that use the widened 4-felt PI layout.
-    pub fn babybear_to_commitment(bb: pyana_circuit::field::BabyBear) -> [u8; 32] {
+    pub fn babybear_to_commitment(bb: dregg_circuit::field::BabyBear) -> [u8; 32] {
         let mut result = [0u8; 32];
         result[..4].copy_from_slice(&bb.0.to_le_bytes());
         result
@@ -1630,8 +1630,8 @@ impl TurnExecutor {
     /// state-commitment encoding is provided by the surrounding PI slot
     /// (different position in PI), not by a tag — both inputs are 32 bytes
     /// of opaque commitment material.
-    pub fn pubkey_to_witness_key_commit(pubkey: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
-        pyana_commit::typed::canonical_32_to_felts_4(pubkey)
+    pub fn pubkey_to_witness_key_commit(pubkey: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 4] {
+        dregg_commit::typed::canonical_32_to_felts_4(pubkey)
     }
 
     /// Compute the AIR-bound 4-felt commitment to a transition_proof's
@@ -1639,9 +1639,9 @@ impl TurnExecutor {
     /// commitment is `canonical_32_to_felts_4(blake3(proof_bytes))`, picking
     /// up blake3's preimage resistance + the Poseidon2-domain mapping the
     /// AIR uses for everything else.
-    pub fn transition_proof_commitment(proof_bytes: &[u8]) -> [pyana_circuit::field::BabyBear; 4] {
+    pub fn transition_proof_commitment(proof_bytes: &[u8]) -> [dregg_circuit::field::BabyBear; 4] {
         let h = *blake3::hash(proof_bytes).as_bytes();
-        pyana_commit::typed::canonical_32_to_felts_4(&h)
+        dregg_commit::typed::canonical_32_to_felts_4(&h)
     }
 
     /// Populate the sovereign-witness AIR-teeth PI slots on the verifier
@@ -1657,14 +1657,14 @@ impl TurnExecutor {
     /// hosted-cell path); the boundary constraint holds via sentinel
     /// agreement.
     pub fn populate_sovereign_witness_pi(
-        public_inputs: &mut [pyana_circuit::field::BabyBear],
+        public_inputs: &mut [dregg_circuit::field::BabyBear],
         cell_id: &CellId,
         ledger: &Ledger,
         witness: Option<&crate::turn::SovereignCellWitness>,
         execution_proof_bytes: Option<&[u8]>,
     ) {
-        use pyana_circuit::effect_vm::pi;
-        use pyana_circuit::field::BabyBear;
+        use dregg_circuit::effect_vm::pi;
+        use dregg_circuit::field::BabyBear;
 
         // Default sentinel values (hosted-cell path).
         for i in 0..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN {
@@ -1738,8 +1738,8 @@ impl TurnExecutor {
 
     /// Encode two BabyBear elements as a [u8; 32] for error reporting.
     pub(super) fn babybear_pair_to_bytes32(
-        lo: pyana_circuit::field::BabyBear,
-        hi: pyana_circuit::field::BabyBear,
+        lo: dregg_circuit::field::BabyBear,
+        hi: dregg_circuit::field::BabyBear,
     ) -> [u8; 32] {
         let mut result = [0u8; 32];
         result[..4].copy_from_slice(&lo.0.to_le_bytes());
@@ -1773,14 +1773,14 @@ impl TurnExecutor {
     pub fn compute_turn_identity_pi(
         turn: &Turn,
     ) -> (
-        [pyana_circuit::field::BabyBear; 4],
-        [pyana_circuit::field::BabyBear; 4],
+        [dregg_circuit::field::BabyBear; 4],
+        [dregg_circuit::field::BabyBear; 4],
         u64,
-        [pyana_circuit::field::BabyBear; 4],
+        [dregg_circuit::field::BabyBear; 4],
     ) {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::poseidon2::hash_4_to_1;
-        use pyana_commit::typed::canonical_32_to_felts_4;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_4_to_1;
+        use dregg_commit::typed::canonical_32_to_felts_4;
 
         let turn_hash_4 = canonical_32_to_felts_4(&turn.hash());
 

@@ -6,7 +6,7 @@
 //!   2. Fabricate per-cell [`WitnessedReceipt`]s for alice + bob with the
 //!      γ.2 bilateral PI slots populated.
 //!   3. Serialize a [`BilateralBundle`] to a tempfile.
-//!   4. Invoke the `pyana-verifier bilateral-pair <bundle.json>` subprocess.
+//!   4. Invoke the `dregg-verifier bilateral-pair <bundle.json>` subprocess.
 //!   5. Confirm exit code 0 + `verified == true` in the JSON verdict.
 //!   6. Tamper with the bundle (overwrite Alice's `OUTGOING_TRANSFER_ROOT`
 //!      with garbage), re-invoke, confirm exit code 1 + `verified == false`.
@@ -23,10 +23,10 @@
 use std::io::Write;
 use std::process::Command;
 
-use pyana_circuit::effect_vm::pi as p;
-use pyana_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt};
-use pyana_types::CellId;
-use pyana_verifier::{
+use dregg_circuit::effect_vm::pi as p;
+use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt};
+use dregg_types::CellId;
+use dregg_verifier::{
     BilateralBundle, BilateralEntry, BilateralVerdict, fabricate_witnessed_receipt,
 };
 
@@ -75,12 +75,12 @@ fn write_bundle(bundle: &BilateralBundle) -> tempfile::NamedTempFile {
 }
 
 fn run_subcommand(bundle_path: &std::path::Path) -> (i32, BilateralVerdict) {
-    let bin = env!("CARGO_BIN_EXE_pyana-verifier");
+    let bin = env!("CARGO_BIN_EXE_dregg-verifier");
     let out = Command::new(bin)
         .arg("bilateral-pair")
         .arg(bundle_path)
         .output()
-        .expect("spawn pyana-verifier");
+        .expect("spawn dregg-verifier");
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let verdict: BilateralVerdict = serde_json::from_str(&stdout)

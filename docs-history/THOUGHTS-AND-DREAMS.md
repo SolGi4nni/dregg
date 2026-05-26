@@ -74,7 +74,7 @@ stays.
 ### 5. The Effect VM is *not* a fool's errand to extend — the DSL→Effect VM unification was.
 
 DSL-TO-EFFECT-VM-FEASIBILITY-STUDY.md verdict: FE (Fool's Errand) for the strict
-question of subsuming the Effect VM under pyana-dsl. **pyana-dsl is a caveat predicate
+question of subsuming the Effect VM under dregg-dsl. **dregg-dsl is a caveat predicate
 language**, descended from macaroons/biscuits. It's row-shaped, constraint-shaped,
 multi-backend. Stretching it to be the Effect VM authoring layer fails on every
 expressiveness axis (no aux columns, no multi-row continuity, no boundary kinds, no
@@ -88,21 +88,21 @@ What's actually worth doing in the DSL surface:
 
 ### 6. The two-language model for app authoring.
 
-pyana needs TWO surface languages at different layers:
-- **pyana-dsl** (exists): caveat predicate language. Sparse. Stays focused on caveats.
-- **pyanascript** (new, design in `pyanascript/`): behavior/protocol language for cell
+dregg needs TWO surface languages at different layers:
+- **dregg-dsl** (exists): caveat predicate language. Sparse. Stays focused on caveats.
+- **dreggscript** (new, design in `dreggscript/`): behavior/protocol language for cell
   authoring, CapTP composition, app-framework primitives. Compiles down to typestate
   ActionBuilder calls + cell program declarations + CapTP wire protocols.
 
-They compose: pyanascript invokes pyana-dsl when it needs a caveat predicate. They
+They compose: dreggscript invokes dregg-dsl when it needs a caveat predicate. They
 don't compete.
 
-**Discipline**: bottom-up. Imagine the runtime API pyanascript would compile to.
-Implement primitives as ugly Rust method-chains in pyana-sdk first. If chains are
+**Discipline**: bottom-up. Imagine the runtime API dreggscript would compile to.
+Implement primitives as ugly Rust method-chains in dregg-sdk first. If chains are
 awkward, that awkwardness identifies the SDK gap. Macro the chains once they work.
 *Then* consider the surface language.
 
-### 7. Compile targets for pyanascript: CakeML > PureCake > Lean 4 > custom.
+### 7. Compile targets for dreggscript: CakeML > PureCake > Lean 4 > custom.
 
 PureCake (~/dev/pure): HOL4-verified compiler for a lazy Haskell-subset (PureLang)
 that lowers to CakeML. Verified chain to machine code is rare and impressive. But:
@@ -180,9 +180,9 @@ Defer dispatch until Stage 7 continuation lands (it touches the canonical file).
 P2.A committed a typestate ActionBuilder *coexisting* with a `LegacyActionBuilder`
 that 25+ call sites still use. Full migration is queued as task #53.
 
-### Q5. SDK audit for pyanascript bottom-up.
+### Q5. SDK audit for dreggscript bottom-up.
 
-Prerequisite to any pyanascript syntax work: rewrite (mentally) nameservice or
+Prerequisite to any dreggscript syntax work: rewrite (mentally) nameservice or
 escrow as ugly Rust method chains using hypothetical `Cell::send / Cell::exercise /
 Cell::attenuate_cap / Cell::on_receive` APIs. Every awkwardness is an API gap.
 Queued as task #61.
@@ -218,39 +218,39 @@ Queued as task #61.
 - #56-#59 Tier 4 design docs (all four delivered)
 - #60 Stage 7-γ.2 bilateral cross-cell binding (queued; not blocked on folding
   research)
-- #61 SDK audit for pyanascript (queued)
+- #61 SDK audit for dreggscript (queued)
 
 ## Architectural mental model (one-page)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ pyanascript (TBD)         — behavior / protocol / app authoring │
+│ dreggscript (TBD)         — behavior / protocol / app authoring │
 │   compiles down to ↓                                            │
 │ typestate ActionBuilder + Cell::send / on_receive + caps        │
-│   which use pyana-dsl ↑ for caveats                             │
+│   which use dregg-dsl ↑ for caveats                             │
 ├─────────────────────────────────────────────────────────────────┤
-│ pyana-dsl                 — caveat predicates (sparse, stays)   │
+│ dregg-dsl                 — caveat predicates (sparse, stays)   │
 ├─────────────────────────────────────────────────────────────────┤
-│ pyana-sdk                 — AgentCipherclerk, turn submission        │
-│ pyana-turn                — Turn, Effect, TurnReceipt,          │
+│ dregg-sdk                 — AgentCipherclerk, turn submission        │
+│ dregg-turn                — Turn, Effect, TurnReceipt,          │
 │                              WitnessedReceipt, TurnExecutor     │
-│ pyana-cell                — Cell, CellState, CellProgram,       │
+│ dregg-cell                — Cell, CellState, CellProgram,       │
 │                              Capability                         │
-│ pyana-captp               — sturdy refs, handoff certs,         │
+│ dregg-captp               — sturdy refs, handoff certs,         │
 │                              swiss tables, distributed GC       │
 ├─────────────────────────────────────────────────────────────────┤
-│ pyana-circuit             — per-cell Effect VM AIR (105 cols    │
+│ dregg-circuit             — per-cell Effect VM AIR (105 cols    │
 │                              after Stage 3+γ.0); STARK prover;  │
 │                              Kimchi backend; plonky3 recursion  │
 │                              (non-functional placeholder TBD)   │
-│ pyana-verifier            — standalone proof verifier binary    │
+│ dregg-verifier            — standalone proof verifier binary    │
 ├─────────────────────────────────────────────────────────────────┤
-│ pyana-blocklace           — BFT consensus (THE live consensus,  │
+│ dregg-blocklace           — BFT consensus (THE live consensus,  │
 │                              not morpheus/network simulator)    │
-│ pyana-federation          — BLS threshold sigs, AttestedRoot,   │
+│ dregg-federation          — BLS threshold sigs, AttestedRoot,   │
 │                              FederationReceipt, ThresholdQC     │
-│ pyana-storage             — Poseidon2 typed Commitment<T>       │
-│ pyana-wire                — CapTP wire layer over QUIC          │
+│ dregg-storage             — Poseidon2 typed Commitment<T>       │
+│ dregg-wire                — CapTP wire layer over QUIC          │
 └─────────────────────────────────────────────────────────────────┘
 
 Recursive aggregation (Stage 7-γ.0 landed shared-PI bundle; ζ
@@ -270,13 +270,13 @@ recursion fork OR Kimchi/Pickles outer layer):
 - The user is an extremely capable researcher and implementer.
 - The session has been productive. Stage 3 → 10 swept; design docs landed; rate
   limit is a hiccup, not a wall.
-- Don't lose track of: pyanascript bottom-up discipline (audit SDK first);
+- Don't lose track of: dreggscript bottom-up discipline (audit SDK first);
   Kimchi/Pickles as serious recursive option; the unstructured-mesh framing as
   the actual Golden Vision.
 
 ## Cross-references
 
-- `dev-philosophy/01-north-star.md` — what pyana is for
+- `dev-philosophy/01-north-star.md` — what dregg is for
 - `EFFECT-VM-SHAPE-A.md` — master Effect VM plan (mostly executed)
 - `STAGE-3-AIR-PLAN.md` — Stage 3 complete record
 - `STAGE-7-PLUS-DESIGN.md` — Stage 7+ design
@@ -286,7 +286,7 @@ recursion fork OR Kimchi/Pickles outer layer):
 - `WITNESSED-RECEIPT-CHAIN-DESIGN.md` — replay design (v1 landed)
 - `DSL-TO-EFFECT-VM-FEASIBILITY-STUDY.md` — Fool's Errand verdict on
   DSL→EffectVM unification
-- `pyanascript/README.md` — two-language model + bottom-up discipline
-- `pyanascript/exploration-pure-and-cakeml.md` — verified-compile-target survey
+- `dreggscript/README.md` — two-language model + bottom-up discipline
+- `dreggscript/exploration-pure-and-cakeml.md` — verified-compile-target survey
 - `AUDIT-morpheus-federation-blocklace.md` + `-phase3a.md` — what's dead-vs-live
 - `DELETED-VERIFICATION-CRATE.md` — why the typed-composition checker got cut

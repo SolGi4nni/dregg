@@ -9,14 +9,14 @@
 //! - Independent per-connection rate limits
 //! - Bounded backpressure (slow readers don't exhaust memory)
 
-use pyana_wire::codec::{self, read_message_with_limit, write_message};
-use pyana_wire::connection::PeerConnection;
-use pyana_wire::hardening::{
+use dregg_wire::codec::{self, read_message_with_limit, write_message};
+use dregg_wire::connection::PeerConnection;
+use dregg_wire::hardening::{
     ConnectionMetrics, DEFAULT_MAX_MESSAGE_SIZE, HardeningConfig, RateLimiter, ShutdownCoordinator,
     message_cost,
 };
-use pyana_wire::message::{AuthorizationRequest, PROTOCOL_VERSION, WireMessage};
-use pyana_wire::server::{NoopVerifier, PeerRole, SiloConfig, SiloServer};
+use dregg_wire::message::{AuthorizationRequest, PROTOCOL_VERSION, WireMessage};
+use dregg_wire::server::{NoopVerifier, PeerRole, SiloConfig, SiloServer};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -94,7 +94,7 @@ mod tests {
         let response = codec::read_message(&mut reader).await.unwrap();
         match response {
             WireMessage::Error { code, message } => {
-                assert_eq!(code, pyana_wire::hardening::ERROR_MESSAGE_TOO_LARGE);
+                assert_eq!(code, dregg_wire::hardening::ERROR_MESSAGE_TOO_LARGE);
                 assert!(
                     message.contains("too large"),
                     "expected 'too large' in error message, got: {message}"
@@ -207,7 +207,7 @@ mod tests {
 
         match result {
             Ok(Ok(WireMessage::Error { code, .. })) => {
-                assert_eq!(code, pyana_wire::hardening::ERROR_HEARTBEAT_TIMEOUT);
+                assert_eq!(code, dregg_wire::hardening::ERROR_HEARTBEAT_TIMEOUT);
             }
             Ok(Ok(WireMessage::Ping { .. })) => {
                 // Server may send additional pings before timing out.
@@ -217,7 +217,7 @@ mod tests {
                         .await;
                 match final_result {
                     Ok(Ok(WireMessage::Error { code, .. })) => {
-                        assert_eq!(code, pyana_wire::hardening::ERROR_HEARTBEAT_TIMEOUT);
+                        assert_eq!(code, dregg_wire::hardening::ERROR_HEARTBEAT_TIMEOUT);
                     }
                     Ok(Err(codec::CodecError::ConnectionClosed)) => {
                         // Also acceptable: server closed the connection
@@ -288,7 +288,7 @@ mod tests {
             match response {
                 WireMessage::Pong { .. } => accepted_count += 1,
                 WireMessage::Error { code, .. }
-                    if code == pyana_wire::hardening::ERROR_RATE_LIMITED =>
+                    if code == dregg_wire::hardening::ERROR_RATE_LIMITED =>
                 {
                     rejected_count += 1;
                 }
@@ -470,10 +470,10 @@ mod tests {
     #[test]
     fn bounded_channel_prevents_memory_growth() {
         // Test that the outgoing channel is bounded at the expected capacity
-        let (tx, _rx) = pyana_wire::hardening::outgoing_channel();
+        let (tx, _rx) = dregg_wire::hardening::outgoing_channel();
         assert_eq!(
             tx.max_capacity(),
-            pyana_wire::hardening::OUTGOING_CHANNEL_CAPACITY
+            dregg_wire::hardening::OUTGOING_CHANNEL_CAPACITY
         );
 
         // Try to fill the channel
@@ -483,11 +483,11 @@ mod tests {
             .unwrap();
 
         rt.block_on(async {
-            let (tx, _rx) = pyana_wire::hardening::outgoing_channel();
+            let (tx, _rx) = dregg_wire::hardening::outgoing_channel();
 
             // Fill the channel to capacity
-            for i in 0..pyana_wire::hardening::OUTGOING_CHANNEL_CAPACITY {
-                let msg = pyana_wire::hardening::OutgoingMessage::Wire(WireMessage::Ping {
+            for i in 0..dregg_wire::hardening::OUTGOING_CHANNEL_CAPACITY {
+                let msg = dregg_wire::hardening::OutgoingMessage::Wire(WireMessage::Ping {
                     seq: i as u64,
                     timestamp: 0,
                 });
@@ -495,7 +495,7 @@ mod tests {
             }
 
             // Next send should fail (channel full) with try_send
-            let overflow_msg = pyana_wire::hardening::OutgoingMessage::Wire(WireMessage::Ping {
+            let overflow_msg = dregg_wire::hardening::OutgoingMessage::Wire(WireMessage::Ping {
                 seq: 999,
                 timestamp: 0,
             });
@@ -503,7 +503,7 @@ mod tests {
             assert!(
                 result.is_err(),
                 "channel should be full after {cap} messages",
-                cap = pyana_wire::hardening::OUTGOING_CHANNEL_CAPACITY
+                cap = dregg_wire::hardening::OUTGOING_CHANNEL_CAPACITY
             );
         });
     }
@@ -551,8 +551,8 @@ mod tests {
         // SubmitRevocation costs 5
         let revocation = WireMessage::SubmitRevocation {
             token_id: "tok".to_string(),
-            authority: pyana_wire::message::PublicKey([0; 32]),
-            authority_sig: pyana_wire::message::Signature([0; 64]),
+            authority: dregg_wire::message::PublicKey([0; 32]),
+            authority_sig: dregg_wire::message::Signature([0; 64]),
             nonce: [0; 16],
             timestamp: 0,
         };

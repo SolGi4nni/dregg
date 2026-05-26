@@ -3,10 +3,10 @@
 //! Tests the full escrow primitive: locking funds, releasing with a valid condition,
 //! refunding after timeout, and rejecting release with bad proofs.
 
-use pyana_cell::{Cell, CellId, Ledger, NoteCommitment};
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
-use pyana_turn::{Effect, EscrowCondition, TurnBuilder, TurnResult};
+use dregg_cell::{Cell, CellId, Ledger, NoteCommitment};
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
+use dregg_turn::{Effect, EscrowCondition, TurnBuilder, TurnResult};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ impl ProofVerifier for TestProofVerifier {
 
 /// Create a cell with a given balance and permissive permissions for testing.
 fn create_funded_cell(ledger: &mut Ledger, seed: u8, balance: u64) -> CellId {
-    use pyana_cell::permissions::{AuthRequired, Permissions};
+    use dregg_cell::permissions::{AuthRequired, Permissions};
     let mut pk = [0u8; 32];
     pk[0] = seed;
     pk[1] = seed.wrapping_mul(7);
@@ -345,7 +345,7 @@ fn test_obligation_create_and_fulfill() {
     // Create obligation: Alice stakes 1000 for Bob, deadline at height 100.
     let create = Effect::CreateObligation {
         beneficiary: bob,
-        condition: pyana_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
+        condition: dregg_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
         deadline_height: 100,
         stake,
         stake_amount: 1000,
@@ -362,7 +362,7 @@ fn test_obligation_create_and_fulfill() {
 
     // Derive the obligation ID (same derivation as executor, including condition).
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(alice.as_bytes());
         hasher.update(bob.as_bytes());
         hasher.update(&100u64.to_le_bytes());
@@ -376,7 +376,7 @@ fn test_obligation_create_and_fulfill() {
     // Fulfill obligation before deadline (block_height still 10 < 100).
     let fulfill = Effect::FulfillObligation {
         obligation_id,
-        proof: pyana_turn::conditional::ConditionProof::Preimage([0xDD; 32]),
+        proof: dregg_turn::conditional::ConditionProof::Preimage([0xDD; 32]),
     };
 
     let result = exec_turn(&executor, &mut ledger, alice, 1, 0, vec![fulfill]);
@@ -405,7 +405,7 @@ fn test_obligation_slash_after_deadline() {
 
     let create = Effect::CreateObligation {
         beneficiary: bob,
-        condition: pyana_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
+        condition: dregg_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
         deadline_height: 50,
         stake,
         stake_amount: 2000,
@@ -416,7 +416,7 @@ fn test_obligation_slash_after_deadline() {
     assert_eq!(ledger.get(&alice).unwrap().state.balance(), 8_000);
 
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(alice.as_bytes());
         hasher.update(bob.as_bytes());
         hasher.update(&50u64.to_le_bytes());
@@ -458,7 +458,7 @@ fn test_obligation_slash_before_deadline_rejected() {
 
     let create = Effect::CreateObligation {
         beneficiary: bob,
-        condition: pyana_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
+        condition: dregg_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
         deadline_height: 100,
         stake,
         stake_amount: 500,
@@ -467,7 +467,7 @@ fn test_obligation_slash_before_deadline_rejected() {
     assert!(matches!(result, TurnResult::Committed { .. }));
 
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(alice.as_bytes());
         hasher.update(bob.as_bytes());
         hasher.update(&100u64.to_le_bytes());
@@ -504,7 +504,7 @@ fn test_obligation_fulfill_after_deadline_rejected() {
 
     let create = Effect::CreateObligation {
         beneficiary: bob,
-        condition: pyana_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
+        condition: dregg_turn::conditional::ProofCondition::HashPreimage { hash: [0xCC; 32] },
         deadline_height: 50,
         stake,
         stake_amount: 1500,
@@ -513,7 +513,7 @@ fn test_obligation_fulfill_after_deadline_rejected() {
     assert!(matches!(result, TurnResult::Committed { .. }));
 
     let obligation_id = {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
         hasher.update(alice.as_bytes());
         hasher.update(bob.as_bytes());
         hasher.update(&50u64.to_le_bytes());
@@ -530,7 +530,7 @@ fn test_obligation_fulfill_after_deadline_rejected() {
     // Attempt to fulfill after deadline → rejected.
     let fulfill = Effect::FulfillObligation {
         obligation_id,
-        proof: pyana_turn::conditional::ConditionProof::Preimage([0xDD; 32]),
+        proof: dregg_turn::conditional::ConditionProof::Preimage([0xDD; 32]),
     };
     let result = exec_turn(&executor, &mut ledger, alice, 1, 0, vec![fulfill]);
     assert!(

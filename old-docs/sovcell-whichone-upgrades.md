@@ -12,7 +12,7 @@ The downgrade attack surface: if `set_verification_key` is `Signature`, the acco
 
 In Kimchi/Pickles, the `VerifierIndex` is a collection of polynomial commitments (sigma, coefficients, gates) plus domain parameters. Its `digest()` method hashes these commitments into a single field element. This digest IS the verification key hash stored on-chain. Changing any gate constraint, any wiring, any lookup table — all produce a different digest. The VK is the program.
 
-## The Binding Question for Pyana
+## The Binding Question for `dregg`
 
 We already have `CellId = BLAKE3(public_key || token_id)` — identity is independent of the VK. This is Option B from the design space, matching Mina's model. The VK is a mutable field on the Cell struct, gated by `permissions.set_verification_key`.
 

@@ -215,7 +215,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "Target Has No Cipherclerk",
-                &format!("<@{target_id}> does not have a pyana cclerk."),
+                &format!("<@{target_id}> does not have a dregg cclerk."),
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -287,7 +287,7 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &BotSta
     match state.devnet.list_credentials(&cell_id).await {
         Ok(creds) => {
             if creds.is_empty() {
-                let embed = embeds::pyana_embed("Your Credentials").description(
+                let embed = embeds::dregg_embed("Your Credentials").description(
                     "You have no credentials yet. Use `/credential issue` to create one.",
                 );
                 let _ = command
@@ -309,7 +309,7 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 ));
             }
 
-            let embed = embeds::pyana_embed("Your Credentials")
+            let embed = embeds::dregg_embed("Your Credentials")
                 .description(description)
                 .field("Total", creds.len().to_string(), true);
             let _ = command

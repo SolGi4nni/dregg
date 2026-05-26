@@ -1,0 +1,13 @@
+[package]
+name = "dregg-dsl-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1"
+dregg-dsl = { path = "../dregg-dsl" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-circuit = { path = "../circuit" }
+
+[lints]
+workspace = true

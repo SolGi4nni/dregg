@@ -13,10 +13,10 @@
 #   chmod +x demo.sh && ./demo.sh
 #
 # For the full Rust demo with real crypto:
-#   cargo run -p pyana-gallery --example demo
+#   cargo run -p dregg-gallery --example demo
 #
 # For devnet integration with HTTP API:
-#   cargo run -p pyana-gallery --example devnet_gallery
+#   cargo run -p dregg-gallery --example devnet_gallery
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ echo "=== moons' gallery: Commit-Reveal Auction Demo ==="
 echo ""
 echo "This demo exercises the gallery HTTP API using curl."
 echo "For real BLAKE3 commitments and TurnComposer settlement, run:"
-echo "  cargo run -p pyana-gallery --example devnet_gallery"
+echo "  cargo run -p dregg-gallery --example devnet_gallery"
 echo ""
 
 # Start the gallery server (assumes it's already built).
@@ -191,4 +191,4 @@ echo "  - Phase advancement and settlement"
 echo "  - Provenance chain tracking"
 echo ""
 echo "For the full Rust demo with real crypto:"
-echo "  cargo run -p pyana-gallery --example devnet_gallery"
+echo "  cargo run -p dregg-gallery --example devnet_gallery"

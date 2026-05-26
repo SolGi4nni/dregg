@@ -19,7 +19,7 @@ jobs:
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p pyana-circuit --features plonky3
+      - run: cargo test -p dregg-circuit --features plonky3
 
   # NOTE: The `mina` feature now uses git deps and can be built in CI.
   # Uncomment if a mina CI job is needed in the future.

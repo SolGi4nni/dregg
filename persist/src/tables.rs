@@ -70,7 +70,7 @@ pub const NULLIFIERS: TableDefinition<&[u8; 32], ()> = TableDefinition::new("nul
 /// Checkpoints: height (u64) -> serialized Checkpoint.
 ///
 /// Key: checkpoint height (always a multiple of the checkpoint interval).
-/// Value: postcard-serialized `pyana_federation::Checkpoint` struct.
+/// Value: postcard-serialized `dregg_federation::Checkpoint` struct.
 pub const CHECKPOINTS: TableDefinition<u64, &[u8]> = TableDefinition::new("checkpoints");
 
 /// Byte-blob metadata table for values that don't fit in a u64.

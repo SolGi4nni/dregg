@@ -1,7 +1,7 @@
 //! Discharge Gateway HTTP service.
 //!
 //! This crate provides an axum-based HTTP server that wraps the core
-//! [`pyana_macaroon::DischargeGateway`] logic. It exposes:
+//! [`dregg_macaroon::DischargeGateway`] logic. It exposes:
 //!
 //! - `POST /discharge` — request a discharge macaroon
 //! - `GET /conditions` — list supported condition types
@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use pyana_macaroon::{
+use dregg_macaroon::{
     AllowlistEvaluator, AlwaysAllow, DischargeGateway, PaymentEvaluator, RateLimitEvaluator,
 };
 
@@ -162,7 +162,7 @@ pub fn build_gateway(config: &GatewayConfig) -> Result<(SharedState, Router), St
                 gateway.add_evaluator(Box::new(AllowlistEvaluator { allowed }));
             }
             ConditionConfig::ProofRequired => {
-                gateway.add_evaluator(Box::new(pyana_macaroon::ProofRequiredEvaluator));
+                gateway.add_evaluator(Box::new(dregg_macaroon::ProofRequiredEvaluator));
             }
         }
     }
@@ -254,7 +254,7 @@ async fn post_discharge(
         None => None,
     };
 
-    let discharge_req = pyana_macaroon::DischargeRequest {
+    let discharge_req = dregg_macaroon::DischargeRequest {
         ticket,
         client_id: req.client_id,
         proof,

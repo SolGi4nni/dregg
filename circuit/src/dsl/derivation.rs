@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use pyana_dsl_runtime::derivation::{prove_derivation_dsl, verify_derivation_dsl};
+//! use dregg_dsl_runtime::derivation::{prove_derivation_dsl, verify_derivation_dsl};
 //! use crate::derivation_air::DerivationWitness;
 //!
 //! let proof = prove_derivation_dsl(&witness).unwrap();
@@ -675,7 +675,7 @@ pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
     ];
 
     CircuitDescriptor {
-        name: "pyana-derivation-v1".into(),
+        name: "dregg-derivation-v1".into(),
         trace_width: EXTENDED_TRACE_WIDTH,
         max_degree: 8,
         columns,

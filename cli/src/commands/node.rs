@@ -52,7 +52,7 @@ async fn status(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::E
     let data = get_json(cfg, "/status").await.map_err(|e| {
         spinner.finish_and_clear();
         format!(
-            "Cannot reach node at {}. Is pyana-node running?\n  Error: {}",
+            "Cannot reach node at {}. Is dregg-node running?\n  Error: {}",
             cfg.node.url, e
         )
     })?;
@@ -145,7 +145,7 @@ async fn peers(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::Er
                     "{peer_count} peer(s) connected (details not available via this endpoint)."
                 ));
             } else {
-                ctx.info("No peers connected. Use `pyana node connect <address>` to add one.");
+                ctx.info("No peers connected. Use `dregg node connect <address>` to add one.");
             }
         }
     }

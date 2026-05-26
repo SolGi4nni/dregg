@@ -25,7 +25,7 @@ def run_identity(args) -> int:
     log_dir = state_dir / "logs"
 
     with McpClient(args.node_bin, args.data_dir, "bob.id", log_dir) as cli:
-        agent = cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
+        agent = cli.tool("dregg_create_agent", {"name": "bob", "initial_balance": 1_000_000})
         bob_pk = agent["public_key"]
         bob_cell = agent["cell_id"]
         result = {"bob_pk": bob_pk, "bob_cell": bob_cell}
@@ -45,15 +45,15 @@ def run_exercise(args) -> int:
     handoff_uri = uri_path.read_text().strip()
     print(f"[bob] received handoff URI ({len(handoff_uri)} bytes)", file=sys.stderr)
 
-    # Parse the URI. Today this is the `pyana+bearer:<json>` shim from
-    # alice.py (see blocker-2). When the real `pyana-handoff:` compact
+    # Parse the URI. Today this is the `dregg+bearer:<json>` shim from
+    # alice.py (see blocker-2). When the real `dregg-handoff:` compact
     # string lands, replace this with `HandoffCertificate::from_compact_string`-
-    # equivalent parsing (likely a new MCP tool `pyana_decode_handoff_uri`).
-    if handoff_uri.startswith("pyana+bearer:"):
-        payload = json.loads(handoff_uri[len("pyana+bearer:") :])
-    elif handoff_uri.startswith("pyana-handoff:"):
+    # equivalent parsing (likely a new MCP tool `dregg_decode_handoff_uri`).
+    if handoff_uri.startswith("dregg+bearer:"):
+        payload = json.loads(handoff_uri[len("dregg+bearer:") :])
+    elif handoff_uri.startswith("dregg-handoff:"):
         print(
-            "[bob] received a real pyana-handoff: URI but blocker-2 is unresolved; "
+            "[bob] received a real dregg-handoff: URI but blocker-2 is unresolved; "
             "no decoder tool yet",
             file=sys.stderr,
         )
@@ -67,14 +67,14 @@ def run_exercise(args) -> int:
         # The current MCP create_agent generates fresh keypairs every call,
         # so we re-create. Identity persistence across MCP sessions is a
         # separate gap (orthogonal to this demo).
-        agent = cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
+        agent = cli.tool("dregg_create_agent", {"name": "bob", "initial_balance": 1_000_000})
         bob_cell = agent["cell_id"]
         alice_cell = payload["target_cell"]
 
         # Snapshot pre-exercise balances. The exercise tool will auto-insert
         # a remote stub for alice_cell (pre-funded), so the stub's balance
-        # only becomes readable after `pyana_exercise_bearer_cap` runs.
-        bob_pre = cli.tool("pyana_read_cell", {"cell_id": bob_cell})
+        # only becomes readable after `dregg_exercise_bearer_cap` runs.
+        bob_pre = cli.tool("dregg_read_cell", {"cell_id": bob_cell})
 
         # ── Step 6: enliven + Step 7: exercise (one tool today) ───────────
         # Bob exercises the bearer cap to perform a Transfer from alice_cell
@@ -92,7 +92,7 @@ def run_exercise(args) -> int:
             "amount": args.amount,
         }
         exercise = cli.tool(
-            "pyana_exercise_bearer_cap",
+            "dregg_exercise_bearer_cap",
             {
                 "target_cell":      payload["target_cell"],
                 "method":           "transfer",
@@ -115,7 +115,7 @@ def run_exercise(args) -> int:
             return 7
 
         # Capture the Effect VM proof from the exercise response and write
-        # the standalone artifact for charlie.py / pyana-verifier.
+        # the standalone artifact for charlie.py / dregg-verifier.
         exercise_proof_hex = exercise.get("effect_vm_proof_hex")
         exercise_proof_pi = exercise.get("effect_vm_public_inputs") or []
         exercise_trace_rows = exercise.get("effect_vm_trace_rows") or []
@@ -127,7 +127,7 @@ def run_exercise(args) -> int:
                 "trace_rows":    exercise_trace_rows,
                 "witness_hash_hex": exercise_witness_hash,
                 "vk_hash":       "auto",
-                "source":        "pyana_exercise_bearer_cap",
+                "source":        "dregg_exercise_bearer_cap",
             }, indent=2))
             print(f"[bob] wrote exercise proof artifact "
                   f"({len(exercise_proof_hex) // 2} proof bytes, "
@@ -142,8 +142,8 @@ def run_exercise(args) -> int:
         # canonical balance lives on alice's node); after the Transfer that
         # stub balance should drop by `args.amount`, and bob_cell should
         # gain the same amount.
-        bob_post = cli.tool("pyana_read_cell", {"cell_id": bob_cell})
-        alice_stub_post = cli.tool("pyana_read_cell", {"cell_id": alice_cell})
+        bob_post = cli.tool("dregg_read_cell", {"cell_id": bob_cell})
+        alice_stub_post = cli.tool("dregg_read_cell", {"cell_id": alice_cell})
 
         bob_pre_bal = bob_pre.get("balance") or 0
         bob_post_bal = bob_post.get("balance") or 0
@@ -151,7 +151,7 @@ def run_exercise(args) -> int:
         alice_stub_bal = alice_stub_post.get("balance")
 
         # Snapshot Bob's receipt chain so charlie/run.sh can inspect.
-        chain = cli.tool("pyana_get_receipt_chain", {"limit": 50})
+        chain = cli.tool("dregg_get_receipt_chain", {"limit": 50})
 
         result = {
             "exercise_turn_hash": exercise["turn_hash"],

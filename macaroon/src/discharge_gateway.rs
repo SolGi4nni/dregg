@@ -3,7 +3,7 @@
 //!
 //! # Overview
 //!
-//! The discharge gateway is how pyana becomes useful without federation/ZK — just
+//! The discharge gateway is how dregg becomes useful without federation/ZK — just
 //! macaroons:
 //!
 //! 1. Service A issues a token with caveat "get discharge from Service B"
@@ -302,7 +302,7 @@ pub type ProofVerifierFn =
 /// # Example
 ///
 /// ```
-/// use pyana_macaroon::discharge_gateway::{VerifyingProofEvaluator, DischargeRequest};
+/// use dregg_macaroon::discharge_gateway::{VerifyingProofEvaluator, DischargeRequest};
 ///
 /// let evaluator = VerifyingProofEvaluator::new(Box::new(|proof_bytes, _request| {
 ///     // In production: deserialize and verify the STARK proof
@@ -1054,7 +1054,7 @@ mod tests {
 
         let root_key = crypto::random_key();
         let shared_key = crypto::random_key();
-        let location = "https://gateway.pyana.dev";
+        let location = "https://gateway.dregg.dev";
 
         // 1. Issuer creates token with 3P caveat.
         let mut token = Macaroon::new(

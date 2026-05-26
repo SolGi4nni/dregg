@@ -1,4 +1,4 @@
-//! Atomic JSON file persistence for pyana app state.
+//! Atomic JSON file persistence for dregg app state.
 //!
 //! Provides [`JsonPersistence`], a simple helper that serializes state to a JSON
 //! file using an atomic write-then-rename strategy. This prevents corruption from
@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::persistence::JsonPersistence;
+//! use dregg_app_framework::persistence::JsonPersistence;
 //!
 //! #[derive(serde::Serialize, serde::Deserialize)]
 //! struct MyState { counter: u64 }
@@ -64,7 +64,7 @@ impl JsonPersistence {
         }
         // Test writability by touching the tmp file.
         let tmp = self.tmp_path();
-        std::fs::write(&tmp, b"pyana-persistence-init")?;
+        std::fs::write(&tmp, b"dregg-persistence-init")?;
         std::fs::remove_file(&tmp)?;
         Ok(())
     }
@@ -167,7 +167,7 @@ impl From<io::Error> for PersistError {
 /// # Usage
 ///
 /// ```ignore
-/// use pyana_app_framework::persistence::{AutoPersist, JsonPersistence};
+/// use dregg_app_framework::persistence::{AutoPersist, JsonPersistence};
 ///
 /// let persist = JsonPersistence::new("/tmp/state.json");
 /// let mut ap = AutoPersist::new(MyState::default(), persist);
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join("pyana-persist-test-roundtrip");
+        let dir = std::env::temp_dir().join("dregg-persist-test-roundtrip");
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("state.json");
 
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn load_missing_returns_none() {
-        let path = std::env::temp_dir().join("pyana-persist-test-missing/state.json");
+        let path = std::env::temp_dir().join("dregg-persist-test-missing/state.json");
         let persist = JsonPersistence::new(&path);
         let loaded: Result<Option<TestState>, _> = persist.load();
         assert!(loaded.unwrap().is_none());
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn auto_persist_mutate_saves() {
-        let dir = std::env::temp_dir().join("pyana-persist-test-auto");
+        let dir = std::env::temp_dir().join("dregg-persist-test-auto");
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("state.json");
 

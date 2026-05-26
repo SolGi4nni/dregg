@@ -5,7 +5,7 @@ import { Field, Struct, UInt64, PublicKey, Poseidon, UInt32, Bool } from 'o1js';
 // ---------------------------------------------------------------------------
 
 /**
- * A pyana state root commitment. This is the Poseidon hash of the entire
+ * A dregg state root commitment. This is the Poseidon hash of the entire
  * federation's cell state tree at a given height.
  */
 export class StateRoot extends Struct({
@@ -91,12 +91,12 @@ export class CellMerkleWitness extends Struct({
 // ---------------------------------------------------------------------------
 
 /**
- * A deposit note: locks tokens on Mina, to be credited on the pyana side.
+ * A deposit note: locks tokens on Mina, to be credited on the dregg side.
  */
 export class DepositNote extends Struct({
   /** Amount of MINA locked */
   amount: UInt64,
-  /** Commitment to the pyana note (blinding + recipient + amount) */
+  /** Commitment to the dregg note (blinding + recipient + amount) */
   noteCommitment: Field,
   /** Mina block height at deposit time */
   minaHeight: UInt32,
@@ -111,14 +111,14 @@ export class DepositNote extends Struct({
 }
 
 /**
- * A withdrawal proof: proves a note was spent on pyana, unlocks tokens on Mina.
+ * A withdrawal proof: proves a note was spent on dregg, unlocks tokens on Mina.
  */
 export class WithdrawalProof extends Struct({
   /** Amount to unlock */
   amount: UInt64,
   /** Nullifier proving the note was spent (prevents double-withdrawal) */
   nullifier: Field,
-  /** The pyana state root at the time of spend */
+  /** The dregg state root at the time of spend */
   stateRootAtSpend: Field,
   /** Recipient on Mina */
   recipient: PublicKey,
@@ -138,7 +138,7 @@ export class WithdrawalProof extends Struct({
 // ---------------------------------------------------------------------------
 
 /**
- * A capability attestation: proves that a principal holds a capability on pyana.
+ * A capability attestation: proves that a principal holds a capability on dregg.
  * Used for bridging authorization tokens to Mina-native contracts.
  */
 export class CapabilityAttestation extends Struct({

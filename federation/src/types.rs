@@ -1,15 +1,15 @@
-//! Core types for the pyana federation consensus system.
+//! Core types for the dregg federation consensus system.
 //!
 //! Cryptographic primitives (`PublicKey`, `Signature`, `SigningKey`) and helpers
 //! (`generate_keypair`, `sign`, `verify`, `hex_encode`) are re-exported from the
-//! canonical `pyana-types` crate. Federation-specific consensus types (blocks,
+//! canonical `dregg-types` crate. Federation-specific consensus types (blocks,
 //! votes, QCs, attested roots, messages) are defined here.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// Re-export canonical cryptographic primitives and AttestedRoot from pyana-types.
-pub use pyana_types::{
+// Re-export canonical cryptographic primitives and AttestedRoot from dregg-types.
+pub use dregg_types::{
     AttestedRoot, PublicKey, Signature, SigningKey, generate_keypair, hex_encode, sign, verify,
 };
 
@@ -128,7 +128,7 @@ impl RevocationBlock {
         note_tree_root: &[u8; 32],
         nullifier_set_root: &[u8; 32],
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-federation block v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-federation block v1");
         hasher.update(&height.to_le_bytes());
         hasher.update(&view.to_le_bytes());
         hasher.update(&(proposer as u64).to_le_bytes());
@@ -288,7 +288,7 @@ impl QuorumCertificate {
     /// Build the canonical vote message for signature verification.
     pub fn vote_message(block_hash: &[u8; 32], height: u64, view: u64) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-federation-vote-v1");
+        msg.extend_from_slice(b"dregg-federation-vote-v1");
         msg.extend_from_slice(block_hash);
         msg.extend_from_slice(&height.to_le_bytes());
         msg.extend_from_slice(&view.to_le_bytes());
@@ -309,7 +309,7 @@ impl QuorumCertificate {
 }
 
 // =============================================================================
-// Attested Root (re-exported from pyana-types, with federation-specific helpers)
+// Attested Root (re-exported from dregg-types, with federation-specific helpers)
 // =============================================================================
 
 /// Verify an attested root using the threshold committee.
@@ -357,13 +357,13 @@ pub fn verify_attested_root_with_committee(
 /// state commitment. This is equivalent to a Merkle membership proof for the
 /// purposes of state verification.
 pub fn verify_via_receipt_chain(
-    receipts: &[pyana_turn::TurnReceipt],
+    receipts: &[dregg_turn::TurnReceipt],
     expected_post_state: Option<[u8; 32]>,
-) -> Result<(), pyana_turn::VerifyError> {
-    let head_state = pyana_turn::verify_receipt_chain_head(receipts)?;
+) -> Result<(), dregg_turn::VerifyError> {
+    let head_state = dregg_turn::verify_receipt_chain_head(receipts)?;
     if let Some(expected) = expected_post_state {
         if head_state != expected {
-            return Err(pyana_turn::VerifyError::StateChainBreak {
+            return Err(dregg_turn::VerifyError::StateChainBreak {
                 index: receipts.len() - 1,
                 expected_pre_state: expected,
                 actual_pre_state: head_state,
@@ -390,7 +390,7 @@ pub struct RevocationProof {
     /// The attested root this proof is relative to.
     pub attested_root: AttestedRoot,
     /// The non-membership proof from the Merkle tree.
-    pub non_membership: pyana_commit::NonMembershipProof,
+    pub non_membership: dregg_commit::NonMembershipProof,
 }
 
 // =============================================================================
@@ -471,7 +471,7 @@ impl ViewChangeMessage {
     /// Compute the canonical message that is signed for a view-change.
     pub fn signing_message(new_view: u64, height: u64) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-view-change-v1");
+        msg.extend_from_slice(b"dregg-view-change-v1");
         msg.extend_from_slice(&new_view.to_le_bytes());
         msg.extend_from_slice(&height.to_le_bytes());
         msg

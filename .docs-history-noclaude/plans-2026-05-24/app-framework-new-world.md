@@ -129,7 +129,7 @@ impl AppServer {
 }
 ```
 
-**Who needs this:** ALL apps. `pyana name resolve amm` → finds the AMM. `pyana namespace discover --tag defi` → finds all DeFi apps.
+**Who needs this:** ALL apps. `dregg name resolve amm` → finds the AMM. `dregg namespace discover --tag defi` → finds all DeFi apps.
 
 ### 8. Multi-Asset Fee Acceptance
 

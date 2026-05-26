@@ -1,5 +1,5 @@
 [package]
-name = "pyana-demo"
+name = "dregg-demo"
 version.workspace = true
 edition.workspace = true
 
@@ -11,25 +11,25 @@ hex = "0.4"
 postcard = { version = "1", features = ["use-std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-pyana-captp = { path = "../captp" }
-pyana-cell = { path = "../cell" }
-pyana-circuit = { path = "../circuit" }
-pyana-commit = { path = "../commit" }
-pyana-federation = { path = "../federation" }
-pyana-turn = { path = "../turn" }
-pyana-types = { path = "../types" }
-pyana-verifier = { path = "../verifier" }
+dregg-captp = { path = "../captp" }
+dregg-cell = { path = "../cell" }
+dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
+dregg-federation = { path = "../federation" }
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
+dregg-verifier = { path = "../verifier" }
 # Cross-app demo helper — drives the four anchor starbridge-apps through
 # `EmbeddedExecutor` to produce real `TurnReceipt`s per step.
-pyana-app-framework = { path = "../app-framework" }
-pyana-credentials = { path = "../credentials" }
+dregg-app-framework = { path = "../app-framework" }
+dregg-credentials = { path = "../credentials" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
 starbridge-subscription = { path = "../starbridge-apps/subscription" }
 
 [[bin]]
-name = "pyana-demo"
+name = "dregg-demo"
 path = "src/main.rs"
 
 [[bin]]

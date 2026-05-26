@@ -1,19 +1,19 @@
-//! Pyana P2P Networking Demo
+//! Dregg P2P Networking Demo
 //!
 //! Demonstrates two peer nodes connecting via QUIC, exchanging turns
 //! with causal ordering, and gossiping revocations.
 
-use pyana_net::causal::{DagEntry, EntryDag};
+use dregg_net::causal::{DagEntry, EntryDag};
 // GossipNetwork is available for topic-based pub/sub (see src/gossip.rs)
 #[allow(unused_imports)]
-use pyana_net::gossip::GossipNetwork;
-use pyana_net::message::PeerMessage;
-use pyana_net::node::{PeerNode, PeerNodeConfig, fmt_node_id};
+use dregg_net::gossip::GossipNetwork;
+use dregg_net::message::PeerMessage;
+use dregg_net::node::{PeerNode, PeerNodeConfig, fmt_node_id};
 use tracing_subscriber::EnvFilter;
 
 const BANNER: &str = r#"
 ═══════════════════════════════════════════════════════
-  PYANA P2P NETWORKING DEMO
+  DREGG P2P NETWORKING DEMO
 ═══════════════════════════════════════════════════════
 "#;
 
@@ -203,7 +203,7 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
                 let response = PeerMessage::TurnResponse { turn_data };
                 handle.respond(&response).await?;
             }
-            Ok::<_, pyana_net::node::PeerError>(())
+            Ok::<_, dregg_net::node::PeerError>(())
         },
         // A: request
         async {

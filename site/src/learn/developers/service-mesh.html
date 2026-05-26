@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Service Mesh — Pyana</title>
+<title>Service Mesh — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Service Mesh</h1>
 
     <p>
-      The Pyana service mesh is a governed namespace that acts as a capability
+      The <code>dregg</code> service mesh is a governed namespace that acts as a capability
       registry. Services are mounted at URL-style paths, discoverable by authorized
       parties, and resolved via DFA-classified routing. Access is controlled by
       provable ACLs -- not string-matching rules, but STARK-proved DFA evaluation.
@@ -64,11 +64,11 @@ cat > my-service.json &lt;&lt;'EOF'
 EOF
 
 # Mount at a namespace path
-pyana namespace mount --path /services/ai/inference --descriptor my-service.json</code></pre>
+dregg namespace mount --path /services/ai/inference --descriptor my-service.json</code></pre>
 
     <h3>Via the SDK</h3>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, ServiceDescriptor, Effect};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, ServiceDescriptor, Effect};
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -91,7 +91,7 @@ cclerk.mount_service("/services/ai/inference", descriptor).await?;</code></pre>
 
     <h3>1. Direct Resolution (Known Path)</h3>
     <pre><code># Resolve a known path to its service descriptor
-pyana namespace resolve /services/ai/inference
+dregg namespace resolve /services/ai/inference
 # Output:
 #   cell: abc123...
 #   name: inference-api
@@ -100,7 +100,7 @@ pyana namespace resolve /services/ai/inference
 
     <h3>2. Prefix Enumeration (Browse)</h3>
     <pre><code># List all services under a prefix (requires read capability on the prefix)
-pyana namespace list /services/ai/
+dregg namespace list /services/ai/
 # Output:
 #   /services/ai/inference    -- GPT-4 inference service
 #   /services/ai/embeddings   -- Text embedding service
@@ -108,7 +108,7 @@ pyana namespace list /services/ai/
 
     <h3>3. Intent-Based Discovery (Private)</h3>
     <pre><code># Broadcast a need without revealing what you already hold
-pyana intent post --need '{"type":"compute","model":"gpt4","budget":5000}'
+dregg intent post --need '{"type":"compute","model":"gpt4","budget":5000}'
 
 # Services that can satisfy your need respond with STARK proofs
 # (they prove they CAN satisfy it without revealing their full capabilities)</code></pre>
@@ -123,7 +123,7 @@ pyana intent post --need '{"type":"compute","model":"gpt4","budget":5000}'
       <li><strong>Service binding:</strong> You receive a live CapTP reference to the service cell.</li>
     </ol>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -171,13 +171,13 @@ result.verify()?;</code></pre>
     </ul>
 
     <pre><code># Propose adding a new namespace route
-pyana route propose --add /services/new-category --acl 'capability("tier2")'
+dregg route propose --add /services/new-category --acl 'capability("tier2")'
 
 # Check proposal status
-pyana route proposal-status $PROPOSAL_ID
+dregg route proposal-status $PROPOSAL_ID
 
 # After h-rule acceptance, the route becomes active
-pyana namespace list /services/new-category/</code></pre>
+dregg namespace list /services/new-category/</code></pre>
 
     <h2 id="patterns">Common Patterns</h2>
 

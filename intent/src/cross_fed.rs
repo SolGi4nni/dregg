@@ -7,7 +7,7 @@
 //! solvers only see one federation's pool at a time.
 //!
 //! The fix wires the cross-federation registry
-//! ([`pyana_federation::KnownFederations`]) into the intent layer's
+//! ([`dregg_federation::KnownFederations`]) into the intent layer's
 //! solver dispatch. For each known federation, the solver collects
 //! that federation's `RingTrade` candidates and produces a unified
 //! cross-federation candidate set.
@@ -27,7 +27,7 @@
 //! The federation crate is read-only here per lane constraints — we
 //! consume `KnownFederations` but don't restructure it.
 
-use pyana_federation::{FederationId, KnownFederations};
+use dregg_federation::{FederationId, KnownFederations};
 
 use crate::solver::{RingSolver, RingTrade, Settlement};
 use crate::{IntentId, solver::IntentNode};

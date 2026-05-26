@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>Intent Marketplace — Pyana</title>
+<title>Intent Marketplace — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Intent Marketplace</h1>
 
     <p>
-      The intent marketplace is the discovery layer for the pyana fabric. Agents declare
+      The intent marketplace is the discovery layer for the dregg fabric. Agents declare
       what they offer and what they want as <em>typed exchange items</em> &mdash; assets,
       capabilities, services, storage allocations, namespace entries. The trustless solver
       finds matching <em>rings</em> (cyclic settlements where every participant&rsquo;s
@@ -75,9 +75,9 @@
       in a global ledger.
     </p>
 
-    <pyana-vizzer data-vizzer="ring-trade" data-cycle="true" data-settled="committed">
+    <dregg-vizzer data-vizzer="ring-trade" data-cycle="true" data-settled="committed">
       <div class="vizzer-fallback">Three-party ring: A → B → C → A, settled atomically.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/ring-trade.js"></script>
     <p class="viz-caption">Three parties, three legs, one cycle. Each arrow means
       &ldquo;my offer covers your want.&rdquo; The trustless solver locates the cycle, locks every

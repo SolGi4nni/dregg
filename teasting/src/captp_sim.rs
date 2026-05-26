@@ -6,12 +6,12 @@
 
 use std::collections::VecDeque;
 
-use pyana_captp::{
-    CapSession, ExportGcManager, FederationId as GroupId, ImportGcManager, PyanaUri, SwissTable,
+use dregg_captp::{
+    CapSession, ExportGcManager, FederationId as GroupId, ImportGcManager, DreggUri, SwissTable,
 };
-use pyana_cell::AuthRequired;
-use pyana_types::CellId;
-use pyana_wire::message::WireMessage;
+use dregg_cell::AuthRequired;
+use dregg_types::CellId;
+use dregg_wire::message::WireMessage;
 
 /// A simulated bilateral CapTP session between two federations.
 ///
@@ -148,8 +148,8 @@ impl SimCapTpSession {
 
     /// Export a cell from federation A, making it available to B via a sturdy ref.
     ///
-    /// Returns the generated `PyanaUri` that B can use to enliven.
-    pub fn export_from_a(&mut self, cell_id: CellId, permissions: AuthRequired) -> PyanaUri {
+    /// Returns the generated `DreggUri` that B can use to enliven.
+    pub fn export_from_a(&mut self, cell_id: CellId, permissions: AuthRequired) -> DreggUri {
         // Register in A's swiss table
         let swiss =
             self.swiss_table_a
@@ -163,7 +163,7 @@ impl SimCapTpSession {
             .record_export(cell_id, self.fed_b_id, self.current_height);
 
         // Build the URI
-        PyanaUri {
+        DreggUri {
             federation_id: self.fed_a_id.0,
             cell_id: cell_id.0,
             swiss,
@@ -172,14 +172,14 @@ impl SimCapTpSession {
 
     /// Export a cell from federation B, making it available to A via a sturdy ref.
     ///
-    /// Returns the generated `PyanaUri` that A can use to enliven.
-    pub fn export_from_b(&mut self, cell_id: CellId, permissions: AuthRequired) -> PyanaUri {
+    /// Returns the generated `DreggUri` that A can use to enliven.
+    pub fn export_from_b(&mut self, cell_id: CellId, permissions: AuthRequired) -> DreggUri {
         let swiss =
             self.swiss_table_b
                 .export(cell_id, permissions.clone(), self.current_height, None);
         self.session_b.export(cell_id, permissions);
 
-        PyanaUri {
+        DreggUri {
             federation_id: self.fed_b_id.0,
             cell_id: cell_id.0,
             swiss,
@@ -189,7 +189,7 @@ impl SimCapTpSession {
     /// Enliven a sturdy ref at federation A (B is presenting a URI that A exported).
     ///
     /// Returns the resolved `CellId` on success, or an error string on failure.
-    pub fn enliven_at_a(&mut self, uri: &PyanaUri) -> Result<CellId, String> {
+    pub fn enliven_at_a(&mut self, uri: &DreggUri) -> Result<CellId, String> {
         // Validate the URI targets federation A
         if uri.federation_id != self.fed_a_id.0 {
             return Err("URI does not target federation A".to_string());
@@ -212,7 +212,7 @@ impl SimCapTpSession {
     /// Enliven a sturdy ref at federation B (A is presenting a URI that B exported).
     ///
     /// Returns the resolved `CellId` on success, or an error string on failure.
-    pub fn enliven_at_b(&mut self, uri: &PyanaUri) -> Result<CellId, String> {
+    pub fn enliven_at_b(&mut self, uri: &DreggUri) -> Result<CellId, String> {
         if uri.federation_id != self.fed_b_id.0 {
             return Err("URI does not target federation B".to_string());
         }

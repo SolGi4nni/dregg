@@ -1,6 +1,6 @@
-//! Ring trade participation trait for pyana apps.
+//! Ring trade participation trait for dregg apps.
 //!
-//! Wraps `pyana_intent::solver` types. Apps that want to contribute liquidity
+//! Wraps `dregg_intent::solver` types. Apps that want to contribute liquidity
 //! to multi-party ring trades implement [`RingTradeParticipant`] and register
 //! with a solver coordinator. The solver calls `exchange_offers` to enumerate
 //! what the app currently offers, then calls `settle_leg` / `rollback_leg` for
@@ -9,7 +9,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::ring_trade::{RingTradeParticipant, ExchangeSpec, Settlement};
+//! use dregg_app_framework::ring_trade::{RingTradeParticipant, ExchangeSpec, Settlement};
 //!
 //! impl RingTradeParticipant for MyAMM {
 //!     type Error = MyError;
@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-pub use pyana_intent::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade, Settlement};
+pub use dregg_intent::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade, Settlement};
 
 /// An opaque identifier for a single leg in a ring trade.
 ///
@@ -73,7 +73,7 @@ pub trait RingTradeParticipant {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_intent::CommitmentId;
+    use dregg_intent::CommitmentId;
 
     #[test]
     fn leg_id_is_deterministic() {

@@ -26,7 +26,7 @@
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 
-use pyana_cell::{Cell, CellId, Ledger, SovereignRegistration};
+use dregg_cell::{Cell, CellId, Ledger, SovereignRegistration};
 
 use crate::tables;
 use crate::{PersistentStore, Result, StoreError};

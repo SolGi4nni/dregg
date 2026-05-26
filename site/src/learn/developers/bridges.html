@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Bridges: Mina, EVM, and Midnight — Pyana</title>
+<title>Bridges: Mina, EVM, and Midnight — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,8 +16,8 @@
 <h1>Bridges: Mina, EVM, and Midnight</h1>
 
     <p>
-      Pyana connects to external chains via proof translation -- not consensus
-      bridging. Each bridge converts a Pyana STARK proof into a format the target
+      <code>dregg</code> connects to external chains via proof translation -- not consensus
+      bridging. Each bridge converts a <code>dregg</code> STARK proof into a format the target
       chain can verify natively. No trusted relayers, no multisigs, no committee
       attestations. The target chain verifies the math directly.
     </p>
@@ -42,25 +42,25 @@
       <li><strong>Generate STARK proof</strong> (off-chain): The Effect VM proves your state transition.</li>
       <li><strong>SP1 wrapping</strong> (off-chain): Succinct's SP1 zkVM verifies the STARK inside a RISC-V guest program, producing a Groth16 proof.</li>
       <li><strong>On-chain verification</strong> (EVM): The Groth16 proof is verified by the SP1 Verifier Gateway contract (~200K gas).</li>
-      <li><strong>State update</strong> (EVM): The Pyana bridge contract records the new state commitment on-chain.</li>
+      <li><strong>State update</strong> (EVM): The <code>dregg</code> bridge contract records the new state commitment on-chain.</li>
     </ol>
 
-    <h3>Depositing (EVM to Pyana)</h3>
-    <pre><code class="language-rust"># Step 1: Deposit ETH/tokens to the Pyana bridge contract
+    <h3>Depositing (EVM to <code>dregg</code>)</h3>
+    <pre><code class="language-rust"># Step 1: Deposit ETH/tokens to the Dregg bridge contract
 # (uses commit-reveal to prevent frontrunning)
 
-# Step 2: The deposit appears as a note commitment in Pyana's note tree
+# Step 2: The deposit appears as a note commitment in Dregg's note tree
 # (federation includes it in the next epoch)
 
-# Step 3: Claim the deposit in Pyana
-pyana cclerk claim-deposit --tx-hash 0xabc123...</code></pre>
+# Step 3: Claim the deposit in Dregg
+dregg cclerk claim-deposit --tx-hash 0xabc123...</code></pre>
 
-    <h3>Withdrawing (Pyana to EVM)</h3>
+    <h3>Withdrawing (<code>dregg</code> to EVM)</h3>
     <pre><code># Step 1: Generate a STARK proof of your note ownership
-pyana proof generate --backend plonky3 --turn $SPEND_TURN
+dregg proof generate --backend plonky3 --turn $SPEND_TURN
 
 # Step 2: Wrap in Groth16 via SP1
-pyana proof wrap-sp1 --input $STARK_PROOF --output evm-proof.bin
+dregg proof wrap-sp1 --input $STARK_PROOF --output evm-proof.bin
 
 # Step 3: Submit the Groth16 proof to the bridge contract
 # (calls verifyAndWithdraw on-chain)</code></pre>
@@ -71,13 +71,13 @@ pyana proof wrap-sp1 --input $STARK_PROOF --output evm-proof.bin
       stored in the bridge contract. This enables:
     </p>
     <ul>
-      <li>Other smart contracts to verify Pyana state transitions on-chain.</li>
-      <li>EVM DeFi protocols to interact with Pyana cells (e.g., collateral proofs).</li>
-      <li>Cross-chain atomic swaps between EVM tokens and Pyana notes.</li>
+      <li>Other smart contracts to verify <code>dregg</code> state transitions on-chain.</li>
+      <li>EVM DeFi protocols to interact with <code>dregg</code> cells (e.g., collateral proofs).</li>
+      <li>Cross-chain atomic swaps between EVM tokens and <code>dregg</code> notes.</li>
     </ul>
 
     <h3>Contract Addresses (Base Sepolia)</h3>
-    <pre><code>PyanaBridge:       0x... (deployed via Foundry)
+    <pre><code>DreggBridge:       0x... (deployed via Foundry)
 SP1VerifierGateway: 0x... (Succinct's deployed verifier)
 VKRegistry:        0x... (governance-managed VK updates)</code></pre>
 
@@ -94,35 +94,35 @@ VKRegistry:        0x... (governance-managed VK updates)</code></pre>
     <h3>Architecture</h3>
     <p>
       Mina natively supports Pickles recursive proofs over the Pasta curve cycle
-      (Pallas/Vesta). Pyana's Kimchi backend produces proofs over these same curves,
+      (Pallas/Vesta). <code>dregg</code>'s Kimchi backend produces proofs over these same curves,
       enabling zero-cost verification on Mina.
     </p>
     <ol>
-      <li><strong>STARK generation</strong> (Pyana): BabyBear/FRI proof of the state transition (~24 KiB).</li>
-      <li><strong>Kimchi wrapping</strong> (Pyana): Verify the STARK inside a Kimchi circuit (~30K gates).</li>
-      <li><strong>Pickles recursion</strong> (Pyana): Accumulate into a constant-size Pickles proof (~10 KiB).</li>
+      <li><strong>STARK generation</strong> (<code>dregg</code>): BabyBear/FRI proof of the state transition (~24 KiB).</li>
+      <li><strong>Kimchi wrapping</strong> (<code>dregg</code>): Verify the STARK inside a Kimchi circuit (~30K gates).</li>
+      <li><strong>Pickles recursion</strong> (<code>dregg</code>): Accumulate into a constant-size Pickles proof (~10 KiB).</li>
       <li><strong>Mina verification</strong> (Mina): Pickles proof is natively verifiable by Mina validators and zkApps.</li>
     </ol>
 
     <h3>Using the Mina Bridge</h3>
     <pre><code># Generate a Kimchi proof of your state transition
-pyana proof generate --backend kimchi --turn $TURN_HASH
+dregg proof generate --backend kimchi --turn $TURN_HASH
 
 # Wrap in Pickles for Mina
-pyana proof wrap-pickles --input $KIMCHI_PROOF --output mina-proof.bin
+dregg proof wrap-pickles --input $KIMCHI_PROOF --output mina-proof.bin
 
 # The mina-proof.bin can be submitted to any Mina zkApp that
-# includes a Pyana verifier contract
+# includes a Dregg verifier contract
 
 # Verify a Mina proof locally (for testing)
-pyana proof verify --input mina-proof.bin --backend pickles</code></pre>
+dregg proof verify --input mina-proof.bin --backend pickles</code></pre>
 
     <h3>What You Can Do</h3>
     <ul>
-      <li><strong>zkApp verification:</strong> Mina smart contracts can verify Pyana state transitions natively.</li>
-      <li><strong>Cross-chain credentials:</strong> Prove you hold a Pyana capability to a Mina zkApp (without revealing the capability).</li>
-      <li><strong>State anchoring:</strong> Anchor Pyana federation roots on Mina for trustless freshness verification.</li>
-      <li><strong>Recursive accumulation:</strong> Chain multiple Pyana proofs into a single Pickles proof for batch verification.</li>
+      <li><strong>zkApp verification:</strong> Mina smart contracts can verify <code>dregg</code> state transitions natively.</li>
+      <li><strong>Cross-chain credentials:</strong> Prove you hold a <code>dregg</code> capability to a Mina zkApp (without revealing the capability).</li>
+      <li><strong>State anchoring:</strong> Anchor <code>dregg</code> federation roots on Mina for trustless freshness verification.</li>
+      <li><strong>Recursive accumulation:</strong> Chain multiple <code>dregg</code> proofs into a single Pickles proof for batch verification.</li>
     </ul>
 
     <h3>Timeline</h3>
@@ -143,7 +143,7 @@ pyana proof verify --input mina-proof.bin --backend pickles</code></pre>
 
     <h3>How It Works</h3>
     <ol>
-      <li><strong>Submit transition</strong>: Post a Pyana state transition to Midnight with a bond.</li>
+      <li><strong>Submit transition</strong>: Post a <code>dregg</code> state transition to Midnight with a bond.</li>
       <li><strong>Dispute window</strong>: 24 hours (configurable). Anyone can challenge.</li>
       <li><strong>If challenged</strong>: Submitter must produce a full STARK proof within the response window.</li>
       <li><strong>If unchallenged</strong>: Transition is accepted; bond is returned.</li>
@@ -151,35 +151,35 @@ pyana proof verify --input mina-proof.bin --backend pickles</code></pre>
 
     <h3>Level 1 (Attestation -- Operational Now)</h3>
     <p>
-      Pyana state roots are attested on Midnight as observation-based data, following
+      <code>dregg</code> state roots are attested on Midnight as observation-based data, following
       the same pattern as Midnight's Cardano bridge. This provides:
     </p>
     <ul>
-      <li>Proof that a Pyana state existed at a given height.</li>
+      <li>Proof that a <code>dregg</code> state existed at a given height.</li>
       <li>Freshness anchoring for offline verification.</li>
       <li>No proof verification required (observation only).</li>
     </ul>
 
     <h3>Level 2 (Future: Native ZKIR Verification)</h3>
     <p>
-      The DSL's ZKIR v3 backend compiles Pyana constraint programs directly into
+      The DSL's ZKIR v3 backend compiles <code>dregg</code> constraint programs directly into
       Midnight-compatible contracts. This will enable Midnight validators to verify
-      Pyana proofs natively -- eliminating the dispute window entirely. Awaiting
+      <code>dregg</code> proofs natively -- eliminating the dispute window entirely. Awaiting
       ZKIR v3 stabilization.
     </p>
 
     <h3>Using the Midnight Bridge</h3>
     <pre><code># Attest a state root on Midnight (Level 1)
-pyana bridge midnight attest --root $FEDERATION_ROOT
+dregg bridge midnight attest --root $FEDERATION_ROOT
 
 # Submit with optimistic acceptance (Level 1.5)
-pyana bridge midnight submit --turn $TURN_HASH --bond 50000
+dregg bridge midnight submit --turn $TURN_HASH --bond 50000
 
 # Check dispute status
-pyana bridge midnight status --submission $SUBMISSION_ID
+dregg bridge midnight status --submission $SUBMISSION_ID
 
 # Respond to a challenge (produces full STARK proof)
-pyana bridge midnight respond --challenge $CHALLENGE_ID</code></pre>
+dregg bridge midnight respond --challenge $CHALLENGE_ID</code></pre>
 
     <h2 id="choosing">Choosing a Bridge</h2>
 
@@ -198,8 +198,8 @@ pyana bridge midnight respond --challenge $CHALLENGE_ID</code></pre>
 
     <h2 id="sdk">SDK Bridge Operations</h2>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
-use pyana_chain::{EvmBridge, MinaBridge};
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
+use dregg_chain::{EvmBridge, MinaBridge};
 
 let cclerk = AgentCipherclerk::new();
 

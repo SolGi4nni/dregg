@@ -1,6 +1,6 @@
 //! Relay operator service.
 //!
-//! Exposes the `pyana-storage` RelayOperator as an HTTP service. Operators bond
+//! Exposes the `dregg-storage` RelayOperator as an HTTP service. Operators bond
 //! computrons to host inboxes, accept store-and-forward messages from senders,
 //! deliver them to recipients on drain, charge fees, and run periodic GC.
 //!
@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::info;
 
-use pyana_storage::inbox::InboxMessage;
-use pyana_storage::operator::RelayOperator;
-use pyana_storage::queue::DequeueProof;
+use dregg_storage::inbox::InboxMessage;
+use dregg_storage::operator::RelayOperator;
+use dregg_storage::queue::DequeueProof;
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -108,7 +108,7 @@ impl Default for FeePolicy {
 
 /// Shared relay service state.
 pub struct RelayState {
-    /// The underlying relay operator (from pyana-storage).
+    /// The underlying relay operator (from dregg-storage).
     pub operator: RelayOperator,
     /// Configuration.
     pub config: RelayConfig,
@@ -156,7 +156,7 @@ pub struct SubscribeRequest {
     /// request to a single use (F-P1-1).
     pub nonce: String,
     /// Hex-encoded 64-byte Ed25519 signature over
-    /// `b"pyana-relay-subscribe-v1" || owner || nonce`.
+    /// `b"dregg-relay-subscribe-v1" || owner || nonce`.
     pub signature: String,
 }
 
@@ -177,7 +177,7 @@ pub struct UnsubscribeRequest {
     /// Hex-encoded 8-byte nonce (F-P1-1).
     pub nonce: String,
     /// Hex-encoded 64-byte Ed25519 signature over
-    /// `b"pyana-relay-unsubscribe-v1" || owner || nonce`.
+    /// `b"dregg-relay-unsubscribe-v1" || owner || nonce`.
     pub signature: String,
 }
 
@@ -209,7 +209,7 @@ pub struct DrainQuery {
     /// Hex-encoded 8-byte nonce (F-P1-1).
     pub nonce: String,
     /// Hex-encoded 64-byte Ed25519 signature over
-    /// `b"pyana-relay-drain-v1" || owner || nonce || max_le_bytes`.
+    /// `b"dregg-relay-drain-v1" || owner || nonce || max_le_bytes`.
     pub signature: String,
 }
 
@@ -363,7 +363,7 @@ async fn handle_subscribe(
     if let Err(e) = verify_owner_signature(
         &owner,
         &req.signature,
-        b"pyana-relay-subscribe-v1",
+        b"dregg-relay-subscribe-v1",
         &payload,
     ) {
         return Err((
@@ -403,8 +403,8 @@ async fn handle_subscribe(
         .map_err(|e| {
             let msg = format!("{e:?}");
             let status = match &e {
-                pyana_storage::relay::RelayError::AlreadyHosted { .. } => StatusCode::CONFLICT,
-                pyana_storage::relay::RelayError::Underbonded { .. } => {
+                dregg_storage::relay::RelayError::AlreadyHosted { .. } => StatusCode::CONFLICT,
+                dregg_storage::relay::RelayError::Underbonded { .. } => {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
                 _ => StatusCode::BAD_REQUEST,
@@ -455,7 +455,7 @@ async fn handle_unsubscribe(
     if let Err(e) = verify_owner_signature(
         &owner,
         &req.signature,
-        b"pyana-relay-unsubscribe-v1",
+        b"dregg-relay-unsubscribe-v1",
         &payload,
     ) {
         return Err((
@@ -528,11 +528,11 @@ async fn handle_send(
         .map_err(|e| {
             let msg = format!("{e:?}");
             let status = match &e {
-                pyana_storage::relay::RelayError::InboxNotFound { .. } => StatusCode::NOT_FOUND,
-                pyana_storage::relay::RelayError::InsufficientDeposit { .. } => {
+                dregg_storage::relay::RelayError::InboxNotFound { .. } => StatusCode::NOT_FOUND,
+                dregg_storage::relay::RelayError::InsufficientDeposit { .. } => {
                     StatusCode::PAYMENT_REQUIRED
                 }
-                pyana_storage::relay::RelayError::QueueFull { .. } => {
+                dregg_storage::relay::RelayError::QueueFull { .. } => {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
                 _ => StatusCode::BAD_REQUEST,
@@ -579,7 +579,7 @@ async fn handle_drain(
     payload.extend_from_slice(&nonce_bytes);
     payload.extend_from_slice(&(max as u64).to_le_bytes());
     if let Err(e) =
-        verify_owner_signature(&owner, &query.signature, b"pyana-relay-drain-v1", &payload)
+        verify_owner_signature(&owner, &query.signature, b"dregg-relay-drain-v1", &payload)
     {
         return Err((
             StatusCode::FORBIDDEN,
@@ -836,10 +836,10 @@ mod tests {
         let (_sk, pk) = make_key(1);
         let payload = b"\x00\x01\x02";
         // Empty signature.
-        assert!(verify_owner_signature(&pk, "", b"pyana-relay-drain-v1", payload).is_err());
+        assert!(verify_owner_signature(&pk, "", b"dregg-relay-drain-v1", payload).is_err());
         // Garbage signature.
         let bad = "ff".repeat(64);
-        assert!(verify_owner_signature(&pk, &bad, b"pyana-relay-drain-v1", payload).is_err());
+        assert!(verify_owner_signature(&pk, &bad, b"dregg-relay-drain-v1", payload).is_err());
     }
 
     /// F-P1-1: a drain signature by another key (key A) but claiming to be
@@ -853,13 +853,13 @@ mod tests {
         payload.extend_from_slice(b"nonce123");
         // Sign with A's key but verify against B.
         let mut full = Vec::new();
-        full.extend_from_slice(b"pyana-relay-drain-v1");
+        full.extend_from_slice(b"dregg-relay-drain-v1");
         full.extend_from_slice(&payload);
         let sig = sk_a.sign(&full);
         let sig_hex: String = sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
 
         assert!(
-            verify_owner_signature(&pk_b, &sig_hex, b"pyana-relay-drain-v1", &payload).is_err(),
+            verify_owner_signature(&pk_b, &sig_hex, b"dregg-relay-drain-v1", &payload).is_err(),
             "must reject when signer != claimed owner"
         );
     }
@@ -874,13 +874,13 @@ mod tests {
         payload.extend_from_slice(&100u64.to_le_bytes());
 
         let mut full = Vec::new();
-        full.extend_from_slice(b"pyana-relay-drain-v1");
+        full.extend_from_slice(b"dregg-relay-drain-v1");
         full.extend_from_slice(&payload);
         let sig = sk.sign(&full);
         let sig_hex: String = sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
 
         assert!(
-            verify_owner_signature(&pk, &sig_hex, b"pyana-relay-drain-v1", &payload).is_ok(),
+            verify_owner_signature(&pk, &sig_hex, b"dregg-relay-drain-v1", &payload).is_ok(),
             "valid signature should pass"
         );
     }
@@ -894,20 +894,20 @@ mod tests {
 
         // Sign for subscribe.
         let mut full = Vec::new();
-        full.extend_from_slice(b"pyana-relay-subscribe-v1");
+        full.extend_from_slice(b"dregg-relay-subscribe-v1");
         full.extend_from_slice(payload);
         let sig = sk.sign(&full);
         let sig_hex: String = sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
 
         // Verifies under subscribe domain.
         assert!(
-            verify_owner_signature(&pk, &sig_hex, b"pyana-relay-subscribe-v1", payload).is_ok()
+            verify_owner_signature(&pk, &sig_hex, b"dregg-relay-subscribe-v1", payload).is_ok()
         );
         // Replayed as drain: rejected.
-        assert!(verify_owner_signature(&pk, &sig_hex, b"pyana-relay-drain-v1", payload).is_err());
+        assert!(verify_owner_signature(&pk, &sig_hex, b"dregg-relay-drain-v1", payload).is_err());
         // Replayed as unsubscribe: rejected.
         assert!(
-            verify_owner_signature(&pk, &sig_hex, b"pyana-relay-unsubscribe-v1", payload).is_err()
+            verify_owner_signature(&pk, &sig_hex, b"dregg-relay-unsubscribe-v1", payload).is_err()
         );
     }
 

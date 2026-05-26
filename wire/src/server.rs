@@ -25,7 +25,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio_rustls::TlsAcceptor;
 
-use pyana_captp::{
+use dregg_captp::{
     CapSession, CrossFedPipelineBridge, ExportGcManager, FederationId, HandoffPresentation,
     PipelinedAction, PipelinedMessage, SwissTable, validate_handoff,
 };
@@ -46,7 +46,7 @@ pub trait ProofVerifier: Send + Sync + std::fmt::Debug {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String>;
 }
 
-/// Real STARK proof verifier using pyana-circuit.
+/// Real STARK proof verifier using dregg-circuit.
 ///
 /// Deserializes the proof bytes and runs full STARK verification
 /// (Merkle commitments, FRI low-degree test, Fiat-Shamir checks).
@@ -60,24 +60,24 @@ pub struct StarkVerifier;
 #[cfg(feature = "stark-verifier")]
 impl ProofVerifier for StarkVerifier {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String> {
-        let proof = pyana_circuit::stark::proof_from_bytes(proof_bytes)?;
+        let proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)?;
         // Use new_canonical() to reduce modulo p, preventing non-canonical field
         // element malleability from deserialized proof data.
-        let public_inputs: Vec<pyana_circuit::field::BabyBear> = proof
+        let public_inputs: Vec<dregg_circuit::field::BabyBear> = proof
             .public_inputs
             .iter()
-            .map(|&v| pyana_circuit::field::BabyBear::new_canonical(v))
+            .map(|&v| dregg_circuit::field::BabyBear::new_canonical(v))
             .collect();
 
         // Verify action binding: public_inputs[2..6] must be the canonical commitment
         // to (action, resource) via compute_action_binding (4 elements, 124-bit security).
         // Layout: [leaf_hash, merkle_root, action_binding[0..4], composition_commitment[0..4]]
         // The bridge verifier (bridge/src/verifier.rs) also uses pi[2..6].
-        let expected_binding = pyana_circuit::compute_action_binding(action, resource);
-        if public_inputs.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        let expected_binding = dregg_circuit::compute_action_binding(action, resource);
+        if public_inputs.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return Ok(false);
         }
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if public_inputs[2 + i] != expected_binding[i] {
                 return Ok(false); // Proof not bound to this (action, resource)
             }
@@ -88,21 +88,21 @@ impl ProofVerifier for StarkVerifier {
         // issuer membership STARK to the derivation proof that concluded "Allow".
         // Without this check, a federation member could present a valid membership
         // proof even when their authorization was DENIED.
-        let composition_start = 2 + pyana_circuit::ACTION_BINDING_WIDTH; // index 6
+        let composition_start = 2 + dregg_circuit::ACTION_BINDING_WIDTH; // index 6
         if public_inputs.len() < composition_start + 4 {
             return Ok(false); // No composition commitment present
         }
         let has_nonzero_composition = public_inputs[composition_start..composition_start + 4]
             .iter()
-            .any(|&v| v != pyana_circuit::field::BabyBear::ZERO);
+            .any(|&v| v != dregg_circuit::field::BabyBear::ZERO);
         if !has_nonzero_composition {
             return Ok(false); // Zeroed composition = no authorization binding
         }
 
         // Production verification uses the DSL Merkle Poseidon2 circuit.
         // The legacy hand-written AIR is deprecated.
-        let circuit = pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit();
-        match pyana_circuit::stark::verify(&circuit, &proof, &public_inputs) {
+        let circuit = dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit();
+        match dregg_circuit::stark::verify(&circuit, &proof, &public_inputs) {
             Ok(()) => Ok(true),
             Err(_reason) => Ok(false),
         }
@@ -352,7 +352,7 @@ impl SiloConfig {
 /// Trait for delegating revocation logic to an external handler.
 ///
 /// This allows the silo server to delegate revocation submission, status checks,
-/// and root computation to an external system (e.g., a `pyana-federation` backed
+/// and root computation to an external system (e.g., a `dregg-federation` backed
 /// handler or a `RevocationRegistry`-backed handler) while maintaining backward
 /// compatibility with the standalone logic.
 pub trait RevocationHandler: Send + Sync {
@@ -384,7 +384,7 @@ pub trait RevocationHandler: Send + Sync {
     }
 }
 
-/// Default revocation handler backed by a [`pyana_token::RevocationRegistry`].
+/// Default revocation handler backed by a [`dregg_token::RevocationRegistry`].
 ///
 /// Provides exact (no false-positive) revocation checks and Merkle-based
 /// non-membership proof generation via a sorted revocation tree.
@@ -395,7 +395,7 @@ pub trait RevocationHandler: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct DefaultRevocationHandler {
     /// The underlying revocation registry (exact set + Merkle tree).
-    registry: std::sync::Arc<std::sync::RwLock<pyana_token::RevocationRegistry>>,
+    registry: std::sync::Arc<std::sync::RwLock<dregg_token::RevocationRegistry>>,
     /// Current height (incremented on each revocation for compatibility).
     height: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
@@ -408,7 +408,7 @@ impl DefaultRevocationHandler {
     pub fn new(_genesis_root: [u8; 32]) -> Self {
         Self {
             registry: std::sync::Arc::new(std::sync::RwLock::new(
-                pyana_token::RevocationRegistry::new(),
+                dregg_token::RevocationRegistry::new(),
             )),
             height: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
@@ -464,7 +464,7 @@ pub struct SiloState {
     /// **Canonical source**: When a [`RevocationHandler`] is configured on the
     /// [`SiloServer`], this field is updated from the handler's `current_root()`
     /// after each revocation. The handler (typically backed by a
-    /// `pyana-federation` `RevocationTree`) is the single source of truth.
+    /// `dregg-federation` `RevocationTree`) is the single source of truth.
     ///
     /// When no handler is configured, the standalone BLAKE3 hash-chain
     /// computation in [`SiloState::apply_revocation_standalone`] is used as a
@@ -490,7 +490,7 @@ pub struct SiloState {
 impl SiloState {
     /// Create initial state with a genesis root.
     pub fn genesis(member_count: u32) -> Self {
-        let root = *blake3::hash(b"pyana-federation-genesis").as_bytes();
+        let root = *blake3::hash(b"dregg-federation-genesis").as_bytes();
         Self {
             federation_root: root,
             height: 0,
@@ -507,7 +507,7 @@ impl SiloState {
     ///
     /// This updates the local revocation index and height, then sets
     /// `federation_root` to the handler's `current_root()`. The handler
-    /// (backed by `pyana-federation`'s `RevocationTree`) is the single source
+    /// (backed by `dregg-federation`'s `RevocationTree`) is the single source
     /// of truth for the Merkle root.
     ///
     /// If no handler is available, use [`apply_revocation_standalone`] instead.
@@ -534,12 +534,12 @@ impl SiloState {
     /// # Deprecation Notice
     ///
     /// This method computes a root via a sequential BLAKE3 hash chain, which is
-    /// **not consistent** with the 4-ary Merkle tree used by `pyana-federation`'s
+    /// **not consistent** with the 4-ary Merkle tree used by `dregg-federation`'s
     /// `RevocationTree`. It exists for backward compatibility in tests and
     /// single-node deployments where no `RevocationHandler` is configured.
     ///
     /// New code should use [`apply_revocation_delegated`] with a handler backed
-    /// by `pyana-federation::RevocationTree` to ensure root consistency across
+    /// by `dregg-federation::RevocationTree` to ensure root consistency across
     /// the federation.
     #[deprecated(
         note = "Use apply_revocation_delegated() with a RevocationHandler for consistent roots"
@@ -554,7 +554,7 @@ impl SiloState {
         self.height += 1;
 
         // Standalone BLAKE3 hash-chain root (NOT consistent with federation Merkle tree).
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-root v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-wire revocation-root v1");
         hasher.update(&self.federation_root);
         hasher.update(token_id.as_bytes());
         hasher.update(&authority_sig.0);
@@ -887,7 +887,7 @@ impl ParticipantSource for StaticParticipants {
 ///
 /// Domain-separated via blake3 derive_key to prevent cross-protocol replay.
 pub fn peer_auth_signing_message(nonce: &[u8; 32], server_node_id: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire peer-auth v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-wire peer-auth v1");
     hasher.update(nonce);
     hasher.update(server_node_id);
     *hasher.finalize().as_bytes()
@@ -944,7 +944,7 @@ pub struct CapTpState {
     /// immediately (e.g., `swiss_table.enliven`); the drained turn is
     /// the receipt-side record. P1.C tightens the AIR membership
     /// constraints to bind the mirror's Merkle root.
-    pub pending_captp_turns: Vec<pyana_turn::Turn>,
+    pub pending_captp_turns: Vec<dregg_turn::Turn>,
     /// Cross-federation pipeline bridge: receives PipelinedMsg from peers
     /// and queues them against unresolved promises, plus tracks our own
     /// local promises so we can resolve / break them and notify peers.
@@ -972,7 +972,7 @@ pub struct CapTpState {
     /// [`BrokenPromiseNotification::notify_federation`]. (Closes audit
     /// GAP-5 on the *send* side: the cascade no longer dies in the wire
     /// layer.)
-    pub pending_broken_promises: Vec<pyana_captp::BrokenPromiseNotification>,
+    pub pending_broken_promises: Vec<dregg_captp::BrokenPromiseNotification>,
     /// Inbound proactive `AttestedRootPush` messages from peers in the
     /// known-federations set, awaiting node-side quorum verification +
     /// application. The node tick drains this, verifies the signatures
@@ -1025,13 +1025,13 @@ impl CapTpState {
     }
 
     /// Synchronize `known_federations` from a node-level
-    /// [`pyana_federation::KnownFederations`] registry.
+    /// [`dregg_federation::KnownFederations`] registry.
     ///
     /// Per FEDERATION-UNIFICATION-DESIGN.md §7: the wire layer keeps the
     /// id-list shape used for routing, but its source of truth is now the
     /// node-level `KnownFederations` registry. Call this after registering
     /// or removing a peer federation to keep CapTP routing in sync.
-    pub fn sync_known_federations(&mut self, registry: &pyana_federation::KnownFederations) {
+    pub fn sync_known_federations(&mut self, registry: &dregg_federation::KnownFederations) {
         self.known_federations = registry.ids();
     }
 
@@ -1040,7 +1040,7 @@ impl CapTpState {
     /// The node tick calls this to learn which promises must be reported
     /// to peers (each notification carries the federation to notify and
     /// the promise id on that federation's side that has broken).
-    pub fn drain_pending_broken_promises(&mut self) -> Vec<pyana_captp::BrokenPromiseNotification> {
+    pub fn drain_pending_broken_promises(&mut self) -> Vec<dregg_captp::BrokenPromiseNotification> {
         std::mem::take(&mut self.pending_broken_promises)
     }
 
@@ -1090,7 +1090,7 @@ impl CapTpState {
 
     /// Drain pending CapTP routing turns. The node layer calls this in
     /// its main loop and executes each turn through `TurnExecutor`.
-    pub fn drain_pending_captp_turns(&mut self) -> Vec<pyana_turn::Turn> {
+    pub fn drain_pending_captp_turns(&mut self) -> Vec<dregg_turn::Turn> {
         std::mem::take(&mut self.pending_captp_turns)
     }
 
@@ -1101,7 +1101,7 @@ impl CapTpState {
     pub fn resolve_local_pipeline_promise(
         &mut self,
         promise_id: u64,
-        cell: pyana_types::CellId,
+        cell: dregg_types::CellId,
     ) -> Vec<PipelinedMessage> {
         self.pipeline_bridge.resolve_local_promise(promise_id, cell)
     }
@@ -1110,7 +1110,7 @@ impl CapTpState {
     /// The transport tick calls this and writes each wire message out.
     pub fn drain_pipeline_outbox(
         &mut self,
-    ) -> Vec<(FederationId, pyana_captp::PipelineWireMessage)> {
+    ) -> Vec<(FederationId, dregg_captp::PipelineWireMessage)> {
         self.pipeline_bridge.drain_outbox()
     }
 
@@ -1130,7 +1130,7 @@ impl CapTpState {
     pub fn on_peer_disconnect(
         &mut self,
         peer: FederationId,
-    ) -> Vec<pyana_captp::BrokenPromiseNotification> {
+    ) -> Vec<dregg_captp::BrokenPromiseNotification> {
         // Mark any associated CapSession promises as broken.
         let mut notifications = Vec::new();
         if let Some(session) = self.sessions.get_mut(&peer) {
@@ -1139,7 +1139,7 @@ impl CapTpState {
                 .promises
                 .iter()
                 .filter_map(|(id, st)| {
-                    if matches!(st, pyana_captp::session::PromiseState::Pending) {
+                    if matches!(st, dregg_captp::session::PromiseState::Pending) {
                         Some(*id)
                     } else {
                         None
@@ -1191,8 +1191,8 @@ impl CapTpState {
     /// Returns the number of exports successfully registered.
     pub fn process_introduction_exports(
         &mut self,
-        exports: &[pyana_turn::IntroductionExport],
-        resolve_federation: impl Fn(&pyana_types::CellId) -> Option<FederationId>,
+        exports: &[dregg_turn::IntroductionExport],
+        resolve_federation: impl Fn(&dregg_types::CellId) -> Option<FederationId>,
     ) -> usize {
         let height = self.current_height;
         let mut registered = 0;
@@ -1282,7 +1282,7 @@ pub struct SiloServer {
 /// turns are not redelivered.
 pub type CapTpTurnDispatcher = Arc<
     dyn Fn(
-            pyana_turn::Turn,
+            dregg_turn::Turn,
         )
             -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
         + Send
@@ -1328,7 +1328,7 @@ impl SiloServer {
         let tls_acceptor = Self::build_tls_acceptor(&config.tls);
         if !config.tls.is_configured() {
             eprintln!(
-                "WARNING: pyana-wire server '{}' running WITHOUT TLS. \
+                "WARNING: dregg-wire server '{}' running WITHOUT TLS. \
                  All traffic is plaintext. Set tls_cert_path and tls_key_path \
                  in SiloConfig for production use.",
                 config.name
@@ -1362,7 +1362,7 @@ impl SiloServer {
         let tls_acceptor = Self::build_tls_acceptor(&config.tls);
         if !config.tls.is_configured() {
             eprintln!(
-                "WARNING: pyana-wire server '{}' running WITHOUT TLS. \
+                "WARNING: dregg-wire server '{}' running WITHOUT TLS. \
                  All traffic is plaintext. Set tls_cert_path and tls_key_path \
                  in SiloConfig for production use.",
                 config.name
@@ -1514,7 +1514,7 @@ impl SiloServer {
                 };
                 for turn in drained {
                     if let Err(e) = dispatcher(turn).await {
-                        eprintln!("pyana-wire: captp turn dispatch failed: {e}");
+                        eprintln!("dregg-wire: captp turn dispatch failed: {e}");
                     }
                 }
             }
@@ -1621,7 +1621,7 @@ impl SiloServer {
             {
                 let ban_list = self.ban_list.lock().await;
                 if ban_list.is_banned(&remote_addr.ip()) {
-                    eprintln!("pyana-wire: rejecting connection from {remote_addr}: IP is banned");
+                    eprintln!("dregg-wire: rejecting connection from {remote_addr}: IP is banned");
                     drop(stream);
                     continue;
                 }
@@ -1633,7 +1633,7 @@ impl SiloServer {
                 self.active_connections.fetch_sub(1, Ordering::SeqCst);
                 // Reject: at capacity. Drop the stream (sends RST).
                 eprintln!(
-                    "pyana-wire: rejecting connection from {remote_addr}: \
+                    "dregg-wire: rejecting connection from {remote_addr}: \
                      at capacity ({max})",
                     max = self.config.max_connections,
                 );
@@ -1685,7 +1685,7 @@ impl SiloServer {
                             .await;
                         }
                         Err(e) => {
-                            eprintln!("pyana-wire: TLS handshake failed from {remote_addr}: {e}");
+                            eprintln!("dregg-wire: TLS handshake failed from {remote_addr}: {e}");
                         }
                     }
                 } else {
@@ -1939,7 +1939,7 @@ impl SiloServer {
                     };
                     if now_banned {
                         eprintln!(
-                            "pyana-wire: peer {remote_addr} banned after repeated auth failures"
+                            "dregg-wire: peer {remote_addr} banned after repeated auth failures"
                         );
                     }
 
@@ -2497,7 +2497,7 @@ impl SiloServer {
                 // attacks where an attacker replays a valid signature with a different
                 // nonce or timestamp.
                 let sig_message = {
-                    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+                    let mut hasher = blake3::Hasher::new_derive_key("dregg-wire revocation-sig v1");
                     hasher.update(token_id.as_bytes());
                     hasher.update(&nonce);
                     hasher.update(&timestamp.to_le_bytes());
@@ -2699,9 +2699,9 @@ impl SiloServer {
                 // and applies the federation-mirror mutation; the node
                 // drains the queue to produce the on-chain receipt.
                 let height = captp.current_height;
-                let agent_cell = pyana_types::CellId(config.node_id);
+                let agent_cell = dregg_types::CellId(config.node_id);
                 for export_bytes in &initial_exports {
-                    let cell_id = pyana_types::CellId(*export_bytes);
+                    let cell_id = dregg_types::CellId(*export_bytes);
                     // Wire-layer mirror mutation (unchanged).
                     captp
                         .export_gc
@@ -2721,7 +2721,7 @@ impl SiloServer {
                     let effect = captp_routing::export_sturdy_ref_effect(
                         *export_bytes,
                         cell_id,
-                        pyana_cell::permissions::AuthRequired::None,
+                        dregg_cell::permissions::AuthRequired::None,
                     );
                     let turn = captp_routing::build_captp_turn(agent_cell, cell_id, effect, 0);
                     captp.pending_captp_turns.push(turn);
@@ -2759,7 +2759,7 @@ impl SiloServer {
                 requester_height: _,
             } => {
                 // Parse the URI from postcard-serialized bytes.
-                let uri: pyana_captp::PyanaUri = match postcard::from_bytes(&uri_bytes) {
+                let uri: dregg_captp::DreggUri = match postcard::from_bytes(&uri_bytes) {
                     Ok(uri) => uri,
                     Err(_) => {
                         return Some(WireMessage::EnlivenResponse {
@@ -2773,22 +2773,22 @@ impl SiloServer {
 
                 let mut captp = captp_state.write().await;
                 let current_height = captp.current_height;
-                let agent_cell = pyana_types::CellId(config.node_id);
+                let agent_cell = dregg_types::CellId(config.node_id);
 
                 // Attempt to enliven the swiss number.
                 match captp.swiss_table.enliven(&uri.swiss, current_height) {
                     Ok(entry) => {
                         let perm_tag = match &entry.permissions {
-                            pyana_cell::AuthRequired::None => 0u8,
-                            pyana_cell::AuthRequired::Signature => 1u8,
-                            pyana_cell::AuthRequired::Proof => 2u8,
-                            pyana_cell::AuthRequired::Either => 3u8,
-                            pyana_cell::AuthRequired::Impossible => 4u8,
+                            dregg_cell::AuthRequired::None => 0u8,
+                            dregg_cell::AuthRequired::Signature => 1u8,
+                            dregg_cell::AuthRequired::Proof => 2u8,
+                            dregg_cell::AuthRequired::Either => 3u8,
+                            dregg_cell::AuthRequired::Impossible => 4u8,
                             // App-defined auth mode (AUTHORIZATION-CUSTOM-DESIGN).
                             // Discriminant 5 on the wire; the vk_hash routes
                             // through the cell's AuthModeRegistry at execution
                             // time, not the perm_tag byte.
-                            pyana_cell::AuthRequired::Custom { .. } => 5u8,
+                            dregg_cell::AuthRequired::Custom { .. } => 5u8,
                         };
                         let bearer_cell = entry.cell_id;
                         // Stage 7 / P1.B: route the EnlivenRef as a Turn.
@@ -2837,7 +2837,7 @@ impl SiloServer {
                 session_epoch: msg_epoch,
             } => {
                 let fed_id = FederationId(from_strand);
-                let cell = pyana_types::CellId(cell_id);
+                let cell = dregg_types::CellId(cell_id);
 
                 let mut captp = captp_state.write().await;
 
@@ -2875,7 +2875,7 @@ impl SiloServer {
                     .process_drop_with_session(cell, fed_id, current_epoch);
 
                 match result {
-                    pyana_captp::DropResult::CanRevoke | pyana_captp::DropResult::StillHeld => {
+                    dregg_captp::DropResult::CanRevoke | dregg_captp::DropResult::StillHeld => {
                         // Also decrement the session export refcount if session exists.
                         if let Some(session) = captp.sessions.get_mut(&fed_id) {
                             session.release_export(&cell);
@@ -2883,13 +2883,13 @@ impl SiloServer {
                         // Stage 7 / P1.B: route the DropRef as a Turn.
                         // ref_id = the cell_id bytes (matches what the wire
                         // message identifies).
-                        let agent_cell = pyana_types::CellId(config.node_id);
+                        let agent_cell = dregg_types::CellId(config.node_id);
                         let effect = captp_routing::drop_ref_effect(cell_id);
                         let turn = captp_routing::build_captp_turn(agent_cell, cell, effect, 0);
                         captp.pending_captp_turns.push(turn);
                         None // Silent success (GC is fire-and-forget).
                     }
-                    pyana_captp::DropResult::Invalid => Some(WireMessage::Error {
+                    dregg_captp::DropResult::Invalid => Some(WireMessage::Error {
                         code: crate::message::error_codes::INVALID_DROP,
                         message: "invalid drop: unknown federation, cell, or session mismatch"
                             .to_string(),
@@ -3033,7 +3033,7 @@ impl SiloServer {
                         }
                     };
 
-                let intro_pk = pyana_types::PublicKey(introducer_pk);
+                let intro_pk = dregg_types::PublicKey(introducer_pk);
                 let mut captp = captp_state.write().await;
                 let current_height = captp.current_height;
                 let known_feds = captp.known_federations.clone();
@@ -3047,7 +3047,7 @@ impl SiloServer {
                 if captp.seen_handoff_nonces.contains(&cert_nonce) {
                     return Some(WireMessage::Error {
                         code: crate::message::error_codes::HANDOFF_FAILED,
-                        message: pyana_captp::HandoffError::ReplayDetected.to_string(),
+                        message: dregg_captp::HandoffError::ReplayDetected.to_string(),
                     });
                 }
 
@@ -3061,20 +3061,20 @@ impl SiloServer {
                 ) {
                     Ok(acceptance) => {
                         let perm_tag = match &acceptance.permissions {
-                            pyana_cell::AuthRequired::None => 0u8,
-                            pyana_cell::AuthRequired::Signature => 1u8,
-                            pyana_cell::AuthRequired::Proof => 2u8,
-                            pyana_cell::AuthRequired::Either => 3u8,
-                            pyana_cell::AuthRequired::Impossible => 4u8,
+                            dregg_cell::AuthRequired::None => 0u8,
+                            dregg_cell::AuthRequired::Signature => 1u8,
+                            dregg_cell::AuthRequired::Proof => 2u8,
+                            dregg_cell::AuthRequired::Either => 3u8,
+                            dregg_cell::AuthRequired::Impossible => 4u8,
                             // App-defined auth mode (AUTHORIZATION-CUSTOM-DESIGN);
                             // see the matching arm in the EnlivenRef path above.
-                            pyana_cell::AuthRequired::Custom { .. } => 5u8,
+                            dregg_cell::AuthRequired::Custom { .. } => 5u8,
                         };
                         // Stage 7 / P1.B + Seam 3 keystone: route the ValidateHandoff
                         // as a Turn. The cert_hash is BLAKE3 over the presentation
                         // bytes (consume-on-use binding).
                         let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-                        let agent_cell = pyana_types::CellId(config.node_id);
+                        let agent_cell = dregg_types::CellId(config.node_id);
                         let target_cell = acceptance.cell_id;
                         // Block1-bind closure: ValidateHandoff carries the
                         // cert's recipient/introducer pks explicitly so the
@@ -3421,7 +3421,7 @@ impl SiloServer {
             WireMessage::NonMembershipResponse { proof, root, .. } => {
                 // Verify the non-membership attestation before trusting it.
                 if let Some(ref proof_bytes) = proof {
-                    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire non-membership-v1");
+                    let mut hasher = blake3::Hasher::new_derive_key("dregg-wire non-membership-v1");
                     hasher.update(token_id.as_bytes());
                     hasher.update(&root);
                     let expected = hasher.finalize();
@@ -3467,14 +3467,14 @@ fn current_timestamp() -> i64 {
 /// Compute the message that a revocation authority must sign.
 ///
 /// The signature covers `blake3(token_id || nonce || timestamp)` using the
-/// domain separation key `"pyana-wire revocation-sig v1"`. This ensures the
+/// domain separation key `"dregg-wire revocation-sig v1"`. This ensures the
 /// signature is bound to the specific nonce and timestamp, preventing replay
 /// and substitution attacks.
 ///
 /// Both the client (when constructing `SubmitRevocation`) and the server (when
 /// verifying) must use this function to compute the signing message.
 pub fn revocation_signing_message(token_id: &str, nonce: &[u8; 16], timestamp: i64) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-wire revocation-sig v1");
     hasher.update(token_id.as_bytes());
     hasher.update(nonce);
     hasher.update(&timestamp.to_le_bytes());
@@ -3510,7 +3510,7 @@ fn generate_non_membership_proof(
         return None;
     }
 
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-wire non-membership-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-wire non-membership-v1");
     hasher.update(token_id.as_bytes());
     hasher.update(root);
     let attestation = hasher.finalize();
@@ -3629,7 +3629,7 @@ mod tests {
     #[tokio::test]
     async fn server_handles_revocation() {
         // Generate the keypair FIRST so we can add it to the whitelist.
-        let (sk, pk) = pyana_types::generate_keypair();
+        let (sk, pk) = dregg_types::generate_keypair();
 
         let config = SiloConfig::new("revoker")
             .with_verifier(Arc::new(NoopVerifier))
@@ -3665,13 +3665,13 @@ mod tests {
 
         // Sign over blake3(token_id || nonce || timestamp) per P1-7.
         let sig_message = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-wire revocation-sig v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-wire revocation-sig v1");
             hasher.update(token_id.as_bytes());
             hasher.update(&nonce);
             hasher.update(&timestamp.to_le_bytes());
             *hasher.finalize().as_bytes()
         };
-        let sig = pyana_types::sign(&sk, &sig_message);
+        let sig = dregg_types::sign(&sk, &sig_message);
 
         let msg = WireMessage::SubmitRevocation {
             token_id: token_id.to_string(),
@@ -3699,7 +3699,7 @@ mod tests {
     #[tokio::test]
     async fn server_rejects_revocation_with_invalid_signature() {
         // Generate a valid keypair and configure it as the only authority.
-        let (_sk, pk) = pyana_types::generate_keypair();
+        let (_sk, pk) = dregg_types::generate_keypair();
         let config = SiloConfig::new("revoker")
             .with_verifier(Arc::new(NoopVerifier))
             .with_revocation_authorities(vec![pk]);
@@ -3831,16 +3831,16 @@ mod tests {
 
     #[test]
     fn captp_process_introduction_exports_registers_gc() {
-        use pyana_captp::DropResult;
+        use dregg_captp::DropResult;
 
         let mut captp = CapTpState::new();
         captp.current_height = 50;
 
-        let target_cell = pyana_types::CellId([0x11; 32]);
-        let recipient_cell = pyana_types::CellId([0x22; 32]);
+        let target_cell = dregg_types::CellId([0x11; 32]);
+        let recipient_cell = dregg_types::CellId([0x22; 32]);
         let recipient_federation = FederationId([0xBB; 32]);
 
-        let exports = vec![pyana_turn::IntroductionExport {
+        let exports = vec![dregg_turn::IntroductionExport {
             target: target_cell,
             recipient: recipient_cell,
             authorizing_turn: [0xAA; 32],
@@ -3880,10 +3880,10 @@ mod tests {
         let mut captp = CapTpState::new();
         captp.current_height = 10;
 
-        let target_cell = pyana_types::CellId([0x33; 32]);
-        let unknown_recipient = pyana_types::CellId([0x44; 32]);
+        let target_cell = dregg_types::CellId([0x33; 32]);
+        let unknown_recipient = dregg_types::CellId([0x44; 32]);
 
-        let exports = vec![pyana_turn::IntroductionExport {
+        let exports = vec![dregg_turn::IntroductionExport {
             target: target_cell,
             recipient: unknown_recipient,
             authorizing_turn: [0xCC; 32],
@@ -3933,7 +3933,7 @@ mod tests {
     #[tokio::test]
     async fn require_auth_drops_failed_connections() {
         // Server with require_auth=true: unauthenticated peers get dropped.
-        let (_sk, pk) = pyana_types::generate_keypair();
+        let (_sk, pk) = dregg_types::generate_keypair();
         let participant_key = pk.0;
         let participants = StaticParticipants::new(vec![participant_key]);
 
@@ -4011,7 +4011,7 @@ mod tests {
     #[tokio::test]
     async fn authenticated_member_can_proceed() {
         // Server with require_auth=true: properly authenticated peers proceed.
-        let (sk, pk) = pyana_types::generate_keypair();
+        let (sk, pk) = dregg_types::generate_keypair();
         let participant_key = pk.0;
         let participants = StaticParticipants::new(vec![participant_key]);
 
@@ -4058,7 +4058,7 @@ mod tests {
 
         // Sign the challenge correctly
         let signing_msg = peer_auth_signing_message(&nonce, &server_node_id);
-        let sig = pyana_types::sign(&sk, &signing_msg);
+        let sig = dregg_types::sign(&sk, &signing_msg);
 
         client
             .send(WireMessage::PeerAuthResponse {

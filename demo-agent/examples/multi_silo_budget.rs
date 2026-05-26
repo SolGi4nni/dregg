@@ -8,8 +8,8 @@
 //! 5. Even if one silo is Byzantine, total spend cannot exceed the true balance
 //! 6. Periodic rebalancing when one silo's slice is exhausted
 
-use pyana_cell::CellId;
-use pyana_coord::budget::StingrayCounter;
+use dregg_cell::CellId;
+use dregg_coord::budget::StingrayCounter;
 
 /// Helper: deterministic silo IDs for the demo.
 fn silo_id(index: u8) -> [u8; 32] {
@@ -25,7 +25,7 @@ fn debit_digest(tx_num: u64) -> [u8; 32] {
 }
 
 fn main() {
-    println!("=== Pyana Multi-Silo Budget Demo (Bounded Counters) ===\n");
+    println!("=== Dregg Multi-Silo Budget Demo (Bounded Counters) ===\n");
 
     // ─── Setup ───────────────────────────────────────────────────────────────
     let agent = CellId::from_bytes([0xAA; 32]);

@@ -155,7 +155,7 @@ impl StarkAir for GarbledEvaluationAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-garbled-evaluation-v1"
+        "dregg-garbled-evaluation-v1"
     }
 
     fn eval_constraints(

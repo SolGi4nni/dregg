@@ -4,8 +4,8 @@
 //! settlement layer. At no point does any on-chain observer learn the transfer graph.
 //!
 //! **Story**:
-//!   1. Alice bridges 100 USDC into pyana (deposit to vault on Base)
-//!   2. Alice transfers 30 USDC to Bob privately (inside pyana, via notes)
+//!   1. Alice bridges 100 USDC into dregg (deposit to vault on Base)
+//!   2. Alice transfers 30 USDC to Bob privately (inside dregg, via notes)
 //!   3. Bob bridges 30 USDC back out to Base (burn note -> SP1 proof -> vault release)
 //!   4. At no point does anyone learn: Alice sent money to Bob, or how much
 //!
@@ -16,11 +16,11 @@
 //!   - SP1 wrapping means Base gas is constant (~200k) regardless of proof complexity
 //!   - Credentials can be layered on top (prove KYC status while transferring privately)
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example base_private_transfer
+//! Run with: cargo run --release -p dregg-demo-agent --example base_private_transfer
 
-use pyana_cell::note::Note;
-use pyana_cell::nullifier_set::NullifierSet;
-use pyana_circuit::{
+use dregg_cell::note::Note;
+use dregg_cell::nullifier_set::NullifierSet;
+use dregg_circuit::{
     BabyBear,
     note_spending_air::{
         create_test_witness, key_to_field_elements, prove_note_spend, verify_note_spend,
@@ -33,17 +33,17 @@ const ASSET_USDC: u64 = 0xA0B8_6991_C621_8B36; // first 8 bytes of USDC address
 
 /// Helper: derive a spending key from a name (deterministic for demo).
 fn spending_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-base-demo-spending-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-base-demo-spending-key-v1", name.as_bytes())
 }
 
 /// Helper: derive an owner public key from a name (deterministic for demo).
 fn owner_key(name: &str) -> [u8; 32] {
-    blake3::derive_key("pyana-base-demo-owner-key-v1", name.as_bytes())
+    blake3::derive_key("dregg-base-demo-owner-key-v1", name.as_bytes())
 }
 
-/// Simulates the on-chain deposit to PyanaVault.
+/// Simulates the on-chain deposit to DreggVault.
 fn simulate_vault_deposit(_token: &str, amount: u64, note_commitment: &[u8; 32], leaf_index: u64) {
-    println!("    [Base TX] PyanaVault.deposit(");
+    println!("    [Base TX] DreggVault.deposit(");
     println!("      token: USDC (0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48),");
     println!("      amount: {amount},");
     println!(
@@ -55,7 +55,7 @@ fn simulate_vault_deposit(_token: &str, amount: u64, note_commitment: &[u8; 32],
     println!("    Gas: ~80k (ERC-20 transfer + event emission)");
 }
 
-/// Simulates the on-chain withdrawal from PyanaVault.
+/// Simulates the on-chain withdrawal from DreggVault.
 fn simulate_vault_withdraw(
     _token: &str,
     amount: u64,
@@ -63,7 +63,7 @@ fn simulate_vault_withdraw(
     nullifier: &[u8; 32],
     proof_size: usize,
 ) {
-    println!("    [Base TX] PyanaVault.withdraw(");
+    println!("    [Base TX] DreggVault.withdraw(");
     println!("      token: USDC,");
     println!("      amount: {amount},");
     println!("      recipient: {recipient},");
@@ -94,9 +94,9 @@ fn main() {
     let mut nullifier_set = NullifierSet::new();
 
     // =========================================================================
-    // STEP 1: ALICE BRIDGES 100 USDC INTO PYANA
+    // STEP 1: ALICE BRIDGES 100 USDC INTO DREGG
     // =========================================================================
-    println!("--- Step 1: ALICE BRIDGES 100 USDC INTO PYANA ---");
+    println!("--- Step 1: ALICE BRIDGES 100 USDC INTO DREGG ---");
     println!();
 
     let alice_owner = owner_key("alice");
@@ -132,22 +132,22 @@ fn main() {
     println!();
 
     println!("  What happened on Base:");
-    println!("    - 100 USDC transferred from Alice's EOA to PyanaVault");
+    println!("    - 100 USDC transferred from Alice's EOA to DreggVault");
     println!("    - Note commitment added to vault's Merkle tree (leaf #0)");
-    println!("    - Deposit event emitted (pyana federation nodes observe this)");
+    println!("    - Deposit event emitted (dregg federation nodes observe this)");
     println!();
     println!("  What an observer sees:");
     println!("    - Alice deposited 100 USDC (this IS public — deposit amounts visible)");
     println!("    - A commitment hash (opaque — cannot determine note contents)");
     println!();
-    println!("  Pyana federation action:");
+    println!("  Dregg federation action:");
     println!("    - Observes Deposit event on Base");
     println!("    - Adds alice_commitment to the federation's note tree");
     println!("    - Federation root updated and attested by quorum");
     println!();
 
     // =========================================================================
-    // STEP 2: ALICE TRANSFERS 30 USDC TO BOB (INSIDE PYANA — FULLY PRIVATE)
+    // STEP 2: ALICE TRANSFERS 30 USDC TO BOB (INSIDE DREGG — FULLY PRIVATE)
     // =========================================================================
     println!("--- Step 2: ALICE TRANSFERS 30 USDC TO BOB (fully private) ---");
     println!();
@@ -159,7 +159,7 @@ fn main() {
     let alice_nullifier = alice_note.nullifier(&alice_sk);
     nullifier_set.insert(alice_nullifier).expect("first spend");
 
-    println!("  Alice spends her 100 USDC note inside pyana:");
+    println!("  Alice spends her 100 USDC note inside dregg:");
     println!(
         "    Nullifier revealed: 0x{:02x}{:02x}{:02x}{:02x}...",
         alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]
@@ -220,14 +220,14 @@ fn main() {
     println!("    Conservation: 100 = 30 + 70 [VERIFIED IN CIRCUIT]");
     println!();
 
-    println!("  What happens inside pyana (fully off-chain / private):");
+    println!("  What happens inside dregg (fully off-chain / private):");
     println!("    - Alice's nullifier added to federation's nullifier set");
     println!("    - Bob's commitment added to federation's note tree");
     println!("    - Alice's change commitment added to note tree");
     println!("    - Federation quorum attests to the new state root");
     println!();
     println!("  What an observer sees: NOTHING.");
-    println!("    - This transfer happens entirely inside pyana");
+    println!("    - This transfer happens entirely inside dregg");
     println!("    - No Base transaction. No on-chain footprint.");
     println!("    - The federation's internal state is private.");
     println!();
@@ -250,7 +250,7 @@ fn main() {
     nullifier_set.insert(bob_nullifier).expect("first spend");
 
     println!("  Bob wants to withdraw 30 USDC to his Base address.");
-    println!("  He burns his pyana note:");
+    println!("  He burns his dregg note:");
     println!(
         "    Nullifier: 0x{:02x}{:02x}{:02x}{:02x}...",
         bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]
@@ -317,11 +317,11 @@ fn main() {
     println!("  │                                                                         │");
     println!("  │  Sees:                                                                  │");
     println!(
-        "  │    TX 1: Alice deposited 100 USDC to PyanaVault (commitment: 0x{:02x}{:02x}...)  │",
+        "  │    TX 1: Alice deposited 100 USDC to DreggVault (commitment: 0x{:02x}{:02x}...)  │",
         alice_commitment.0[0], alice_commitment.0[1]
     );
     println!(
-        "  │    TX 2: Bob withdrew 30 USDC from PyanaVault (nullifier: 0x{:02x}{:02x}...)    │",
+        "  │    TX 2: Bob withdrew 30 USDC from DreggVault (nullifier: 0x{:02x}{:02x}...)    │",
         bob_nullifier.0[0], bob_nullifier.0[1]
     );
     println!("  │                                                                         │");
@@ -333,7 +333,7 @@ fn main() {
     println!("  └─────────────────────────────────────────────────────────────────────────┘");
     println!();
     println!("  ┌─────────────────────────────────────────────────────────────────────────┐");
-    println!("  │  PYANA FEDERATION NODES:                                                │");
+    println!("  │  DREGG FEDERATION NODES:                                                │");
     println!("  │                                                                         │");
     println!("  │  See:                                                                   │");
     println!(
@@ -351,7 +351,7 @@ fn main() {
     println!("  └─────────────────────────────────────────────────────────────────────────┘");
     println!();
     println!("  ┌─────────────────────────────────────────────────────────────────────────┐");
-    println!("  │  THE PYANAAULT CONTRACT ITSELF:                                         │");
+    println!("  │  THE DREGGAULT CONTRACT ITSELF:                                         │");
     println!("  │                                                                         │");
     println!("  │  Knows:                                                                 │");
     println!("  │    - Total deposits: 100 USDC                                           │");
@@ -416,7 +416,7 @@ fn main() {
     println!("  Gas costs on Base:");
     println!("    Deposit:    ~80k gas  (~$0.005)");
     println!("    Withdrawal: ~300k gas (~$0.02)");
-    println!("    Internal transfer: 0 gas (off-chain, inside pyana)");
+    println!("    Internal transfer: 0 gas (off-chain, inside dregg)");
     println!();
 
     // =========================================================================
@@ -427,8 +427,8 @@ fn main() {
     println!("===============================================================================");
     println!();
     println!("  Flow completed:");
-    println!("    1. Alice bridged 100 USDC into pyana (deposit to Base vault)");
-    println!("    2. Alice transferred 30 USDC to Bob privately (inside pyana)");
+    println!("    1. Alice bridged 100 USDC into dregg (deposit to Base vault)");
+    println!("    2. Alice transferred 30 USDC to Bob privately (inside dregg)");
     println!("    3. Bob bridged 30 USDC back out to Base (SP1 proof -> vault release)");
     println!();
     println!("  Privacy guarantees:");

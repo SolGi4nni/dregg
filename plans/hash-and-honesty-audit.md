@@ -137,7 +137,7 @@ fn hash_custom_proof(proof_bytes: &[u8]) -> [u8; 16] {
 **File:** `cell/src/cell.rs:239-280`
 ```rust
 pub fn state_commitment(&self) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-cell-state-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-cell-state-v1");
     // ... hashes id, public_key, token_id, state fields, capabilities, permissions
 }
 ```
@@ -155,7 +155,7 @@ The executor reconciles these: `commitment_to_babybear()` reads the stored [u8; 
 
 This is confirmed at `turn/src/tests.rs:7224-7233`:
 ```rust
-let vm_state = pyana_circuit::CellState::new(balance, nonce);
+let vm_state = dregg_circuit::CellState::new(balance, nonce);
 let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
 ```
 

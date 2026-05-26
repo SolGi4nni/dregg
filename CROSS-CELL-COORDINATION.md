@@ -47,9 +47,9 @@ agreement.
 
 | Effect          | Cells touched | Topology                 | Id derivation                                      |
 |-----------------|---------------|--------------------------|----------------------------------------------------|
-| `Transfer`      | 2             | symmetric bilateral      | `H("pyana-transfer-id-v1", from, to, amount, n)`   |
-| `GrantCapability`| 2            | asymmetric bilateral     | `H("pyana-grant-id-v1", from, to, cap_entry_hash, n)`|
-| `Introduce`     | 3             | trilateral, 3 roles      | `H("pyana-intro-id-v1", introducer, recipient, target, perms, n)`|
+| `Transfer`      | 2             | symmetric bilateral      | `H("dregg-transfer-id-v1", from, to, amount, n)`   |
+| `GrantCapability`| 2            | asymmetric bilateral     | `H("dregg-grant-id-v1", from, to, cap_entry_hash, n)`|
+| `Introduce`     | 3             | trilateral, 3 roles      | `H("dregg-intro-id-v1", introducer, recipient, target, perms, n)`|
 
 Every binding is *publicly recomputable* from `(call_forest, actor_nonce)`,
 which the verifier already has from γ.0's `TURN_HASH` agreement. The id
@@ -322,7 +322,7 @@ federations). The "presupposition" is encoded as:
 - Phase `i`'s Turn's `Authorization::Custom` predicate witnesses
   phase `i-1`'s commitment (e.g., a Merkle membership proof against
   the source-chain's attested state root, or a witnessed receipt
-  of phase `i-1`'s pyana turn).
+  of phase `i-1`'s dregg turn).
 - Phase `i`'s effect outputs commitments consumed by phase `i+1`.
 - The blocklace's per-federation ordering guarantees ordering
   *within a federation*; cross-federation order is enforced by the
@@ -917,11 +917,11 @@ and `count >= threshold`.
 γ.2: not involved (single-cell turn). Pairwise binding has nothing to
 bind.
 
-### 8.3 Cross-federation bridge: pyana A → Midnight B
+### 8.3 Cross-federation bridge: dregg A → Midnight B
 
 **Goal:** A on federation `F_p` sends 100 STARS to B on Midnight.
 
-**Phase 1 (pyana side):** A's federation produces a turn locking 100
+**Phase 1 (dregg side):** A's federation produces a turn locking 100
 STARS in a bridge cell on `F_p`. γ.2: pairwise Transfer (A → bridge_cell).
 
 **Phase 2 (witness):** federation `F_p` emits an `AttestedRoot`
@@ -929,13 +929,13 @@ including the lock event. `AttestedRoot::is_valid` over `F_p`'s
 committee.
 
 **Phase 3 (Midnight side):** Midnight contract sees the lock event
-(via observer); mints 100 STARS to B. This is *off-pyana*, on
+(via observer); mints 100 STARS to B. This is *off-dregg*, on
 Midnight; no γ.2.
 
 **Phase 4 (optional refund):** if Midnight mint fails, a refund turn
 on `F_p` releases the lock. Causal chain via WR.
 
-γ.2 binds only intra-pyana. Cross-fed binding is the AttestedRoot
+γ.2 binds only intra-dregg. Cross-fed binding is the AttestedRoot
 chain + Midnight contract verification.
 
 ### 8.4 Publisher fans out to 1000 subscribers

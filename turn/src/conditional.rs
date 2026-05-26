@@ -15,8 +15,8 @@
 
 use std::collections::HashSet;
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::stark;
+use dregg_circuit::BabyBear;
+use dregg_circuit::stark;
 use serde::{Deserialize, Serialize};
 
 use crate::error::TurnError;
@@ -103,7 +103,7 @@ pub struct ConditionalTurn {
 impl ConditionalTurn {
     /// Compute a unique hash identifying this conditional turn.
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-conditional-turn-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-conditional-turn-v1");
         hasher.update(&self.turn.hash());
         hasher.update(&self.timeout_height.to_le_bytes());
         hasher.update(&self.submitted_at.to_le_bytes());
@@ -226,7 +226,7 @@ pub fn resolve_condition(
 
 /// Compute a BLAKE3 hash of the proof for nullifier tracking.
 pub fn compute_proof_hash(proof: &ConditionProof) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-nullifier-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-nullifier-v1");
     match proof {
         ConditionProof::Preimage(preimage) => {
             hasher.update(&[0u8]);
@@ -339,8 +339,8 @@ fn resolve_inner(
 
             // Verify the STARK proof using DSL circuit dispatch.
             let circuit =
-                pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-                    .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+                dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+                    .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
             if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
@@ -395,8 +395,8 @@ fn resolve_inner(
 
             // Verify the STARK proof using DSL circuit dispatch.
             let circuit =
-                pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-                    .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+                dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+                    .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
             if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
@@ -533,9 +533,9 @@ pub fn burn_conditional_deposit(_conditional: &ConditionalTurn) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
-    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+    use dregg_circuit::stark::{self as circuit_stark, proof_to_bytes};
+    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     fn nullifiers() -> HashSet<[u8; 32]> {
         HashSet::new()
@@ -631,14 +631,14 @@ mod tests {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(12345);
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
             expected_conclusion: public_outputs[0],
         };
         let proof = ConditionProof::StarkProof {
             proof_bytes,
             federation_root: fed_root,
             public_outputs,
-            air_name: "pyana-merkle-poseidon2-v1".to_string(),
+            air_name: "dregg-merkle-poseidon2-v1".to_string(),
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
@@ -716,14 +716,14 @@ mod tests {
     fn test_local_proof_resolved() {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(54321);
         let condition = ProofCondition::LocalProof {
-            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
             expected_public_inputs: public_outputs.clone(),
         };
         let proof = ConditionProof::StarkProof {
             proof_bytes,
             federation_root: [0u8; 32],
             public_outputs,
-            air_name: "pyana-merkle-poseidon2-v1".to_string(),
+            air_name: "dregg-merkle-poseidon2-v1".to_string(),
         };
         let mut n = nullifiers();
         let result = resolve_condition(
@@ -786,7 +786,7 @@ mod tests {
             computrons_used: 500,
             action_count: 1,
             previous_receipt_hash: None,
-            agent: pyana_cell::CellId([0u8; 32]),
+            agent: dregg_cell::CellId([0u8; 32]),
             federation_id: [0u8; 32],
             routing_directives: vec![],
             introduction_exports: vec![],
@@ -832,7 +832,7 @@ mod tests {
             computrons_used: 500,
             action_count: 1,
             previous_receipt_hash: None,
-            agent: pyana_cell::CellId([0u8; 32]),
+            agent: dregg_cell::CellId([0u8; 32]),
             federation_id: [0u8; 32],
             routing_directives: vec![],
             introduction_exports: vec![],
@@ -874,7 +874,7 @@ mod tests {
             computrons_used: 500,
             action_count: 1,
             previous_receipt_hash: None,
-            agent: pyana_cell::CellId([0u8; 32]),
+            agent: dregg_cell::CellId([0u8; 32]),
             federation_id: [0u8; 32],
             routing_directives: vec![],
             introduction_exports: vec![],
@@ -927,7 +927,7 @@ mod tests {
     fn test_conditional_turn_hash_deterministic() {
         use crate::forest::CallForest;
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 1000,
@@ -1073,7 +1073,7 @@ mod tests {
     fn test_validate_deadline_too_far() {
         use crate::forest::CallForest;
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 100,
@@ -1105,7 +1105,7 @@ mod tests {
     fn test_validate_zero_fee() {
         use crate::forest::CallForest;
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 0,
@@ -1139,7 +1139,7 @@ mod tests {
         // timeout_height=100, current_height=10, blocks=90
         // required deposit = 500 + 10*90 = 1400
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 1400,
@@ -1187,12 +1187,12 @@ mod tests {
         // could both be satisfied by the same proof if we didn't have nullifiers.
         let condition_1 = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
             expected_conclusion: public_outputs[0],
         };
         let condition_2 = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
             expected_conclusion: public_outputs[0],
         };
 
@@ -1201,7 +1201,7 @@ mod tests {
             proof_bytes,
             federation_root: fed_root,
             public_outputs,
-            air_name: "pyana-merkle-poseidon2-v1".to_string(),
+            air_name: "dregg-merkle-poseidon2-v1".to_string(),
         };
 
         let mut used = nullifiers();
@@ -1575,7 +1575,7 @@ mod tests {
         use crate::forest::CallForest;
         // timeout_height=110, current_height=100 => deposit = 600
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 600,
@@ -1609,7 +1609,7 @@ mod tests {
         use crate::forest::CallForest;
         // timeout_height=110, current_height=100 => deposit = 600, but fee = 500
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 500,
@@ -1652,7 +1652,7 @@ mod tests {
     fn test_resolved_conditional_deposit_refunded() {
         use crate::forest::CallForest;
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 1400,
@@ -1685,7 +1685,7 @@ mod tests {
     fn test_expired_conditional_deposit_burned() {
         use crate::forest::CallForest;
         let turn = Turn {
-            agent: pyana_cell::CellId([1u8; 32]),
+            agent: dregg_cell::CellId([1u8; 32]),
             nonce: 0,
             call_forest: CallForest::new(),
             fee: 1400,

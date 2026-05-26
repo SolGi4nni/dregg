@@ -6,9 +6,9 @@
 
 ## Summary
 
-The SDK at this layer is mostly thin orchestration: `AgentRuntime` ties cclerk+ledger+executor, `PyanaEngine` is the no-IO embedder, `captp_client` is local bookkeeping over the captp crate, and `verify.rs` / `privacy.rs` re-expose proof-system verifiers. Where signature and STARK verification happen, they delegate to crates audited elsewhere. The security checks present in `client.rs` (digest-bound responses, pinned federation roots, domain-separated revocation sigs, refuses-HTTPS-fallback-to-plaintext in `discharge.rs`) are notably defensive and well-commented.
+The SDK at this layer is mostly thin orchestration: `AgentRuntime` ties cclerk+ledger+executor, `DreggEngine` is the no-IO embedder, `captp_client` is local bookkeeping over the captp crate, and `verify.rs` / `privacy.rs` re-expose proof-system verifiers. Where signature and STARK verification happen, they delegate to crates audited elsewhere. The security checks present in `client.rs` (digest-bound responses, pinned federation roots, domain-separated revocation sigs, refuses-HTTPS-fallback-to-plaintext in `discharge.rs`) are notably defensive and well-commented.
 
-The pattern that worries me is **what the SDK does NOT enforce at the API boundary**: callers of `verify_membership_proof`, `verify_selective_presentation`, `verify_anonymous_presentation`, and several `verify_*` helpers get a `bool` back. If a caller writes `if !engine.verify_membership_proof(p, &root) { reject() }` they cannot distinguish "decode failure" from "valid proof against wrong root". A second class of footguns: `PyanaEngine::ledger_mut`, `set_federation_root`, `executor_mut`, and `SubAgent::federation_id` are all writable post-construction by anyone holding `&mut`. The current code documents these in AUDIT[P2] comments and they're not exploitable across a trust boundary (you already need `&mut PyanaEngine` to use them), but they are landmines for refactors.
+The pattern that worries me is **what the SDK does NOT enforce at the API boundary**: callers of `verify_membership_proof`, `verify_selective_presentation`, `verify_anonymous_presentation`, and several `verify_*` helpers get a `bool` back. If a caller writes `if !engine.verify_membership_proof(p, &root) { reject() }` they cannot distinguish "decode failure" from "valid proof against wrong root". A second class of footguns: `DreggEngine::ledger_mut`, `set_federation_root`, `executor_mut`, and `SubAgent::federation_id` are all writable post-construction by anyone holding `&mut`. The current code documents these in AUDIT[P2] comments and they're not exploitable across a trust boundary (you already need `&mut DreggEngine` to use them), but they are landmines for refactors.
 
 The `agent_demo.rs` example uses the correct typed `LocalDelegation` path (via `runtime.spawn_sub_agent` → `make_local_delegation`), not the unsafe `DelegatedToken { delegator_signature: None }` pattern. The unsafe pattern is not constructible anywhere in the SDK surface — `make_local_delegation` is `pub(crate)`, and `DelegatedToken::delegator_signature` is a non-Option `Signature`.
 
@@ -28,15 +28,15 @@ The `enliven` API takes `permissions: AuthRequired` as an argument and stores th
 **P2-2.  `SubAgent` `pub federation_id` (existing AUDIT marker preserved)** (`sdk/src/runtime.rs:469-498`)
 Confirmed: the AUDIT[P2] comment is in place. `federation_id: [u8; 32]` is `pub` and is used in `SubAgent::execute` at line 553 as the signing-message domain separator. A holder of `&mut SubAgent` can rewrite it post-construction. Same fix as recommended in the comment: make all `SubAgent` fields private with read-only accessors. The fields `cclerk`, `cell_id`, `token`, `parent`, `domain` are also `pub` and should be moved behind accessors for the same reason.
 
-**P2-3.  `PyanaEngine::verify_membership_proof` returns `bool` (existing AUDIT marker preserved)** (`sdk/src/embed.rs:442-469`)
+**P2-3.  `DreggEngine::verify_membership_proof` returns `bool` (existing AUDIT marker preserved)** (`sdk/src/embed.rs:442-469`)
 Confirmed: marker is in place. Same pattern reappears in:
   - `privacy::verify_anonymous_presentation` (`privacy.rs:662`) — returns `bool`, silently fails on missing `real_stark_proof`, on wrong AIR name, on missing federation root, on STARK verify failure. All four error categories collapse to `false`.
   - `verify::verify_selective_presentation` and `verify_disclosure_presentation` (`verify.rs:283,310`) — return `bool`, and the `_ => false` arm makes a non-`Selective` variant indistinguishable from a failed commitment check.
   - `embed::WireCodec::process_message` PresentToken handler (`embed.rs:737`) — `.unwrap_or(false)` swallows the verifier's error category before reporting "proof verification failed".
 *Fix*: introduce a `VerifyOutcome` (Ok / DecodeError / StarkInvalid / RootMismatch / FreshnessExpired / WrongAir / NoStark) enum and return it from these methods. Keep a `bool`-returning convenience wrapper if needed.
 
-**P2-4.  `PyanaEngine::ledger_mut`, `executor_mut`, `set_federation_root` (existing AUDIT markers preserved)** (`sdk/src/embed.rs:566-648`)
-Confirmed: markers are in place. The engine exposes raw `&mut Ledger`, raw `&mut TurnExecutor`, and an unauthenticated `set_federation_root`. As noted in the in-source AUDIT comment, callers with `&mut PyanaEngine` already have full process trust, but a monotonic version on `federation_root` (and a `downgrade_federation_root` method that requires an explicit "I know this is going backwards" call) would prevent accidental rollback of the public input that every membership STARK is verified against. Severity P2 — operator-only.
+**P2-4.  `DreggEngine::ledger_mut`, `executor_mut`, `set_federation_root` (existing AUDIT markers preserved)** (`sdk/src/embed.rs:566-648`)
+Confirmed: markers are in place. The engine exposes raw `&mut Ledger`, raw `&mut TurnExecutor`, and an unauthenticated `set_federation_root`. As noted in the in-source AUDIT comment, callers with `&mut DreggEngine` already have full process trust, but a monotonic version on `federation_root` (and a `downgrade_federation_root` method that requires an explicit "I know this is going backwards" call) would prevent accidental rollback of the public input that every membership STARK is verified against. Severity P2 — operator-only.
 
 **P2-5.  `EngineConfig` accepts `timestamp: 0` even outside `for_testing()`** (`sdk/src/embed.rs:153-198`)
 `EngineConfig::new(timestamp: i64)` does not reject `timestamp <= 0`. The doc warns "a timestamp of 0 will cause all verification to fail silently", and `prove_presentation` does refuse to mint with timestamp 0 (line 337), but `verify_presentation_against` happily verifies with `now = 0` and `max_proof_age_secs > 0` (the freshness window then admits everything from epoch). *Fix*: `EngineConfig::new` should reject `<= 0`; the `for_testing()` constructor remains the documented escape hatch.
@@ -76,7 +76,7 @@ The pattern `unwrap_or_else(|e| e.into_inner())` is documented as deliberate. Th
 
 ### `lib.rs` — re-exports
 - All re-exports are explicit (no `pub use ...::*`). Good.
-- Re-exports `pyana_bridge::present::verify_presentation` under `#[allow(deprecated)]` — flag for cleanup.
+- Re-exports `dregg_bridge::present::verify_presentation` under `#[allow(deprecated)]` — flag for cleanup.
 - Re-exports `LocalDelegation` at crate root — this is the right type to expose for receiver-side `receive_local_delegation` callers, but the *constructor* is `pub(crate)` so external callers cannot manufacture them. Good.
 - `DelegatedToken` and `DelegationAuthority` are re-exported. `DelegationAuthority::Open` exists for backward compatibility (the cclerk warns on use). The example does NOT use `Open`. Good.
 
@@ -95,7 +95,7 @@ The pattern `unwrap_or_else(|e| e.into_inner())` is documented as deliberate. Th
 ### `embed.rs`
 | `pub fn` | Trust class |
 |---|---|
-| `PyanaEngine::new` / `with_ledger` | Constructor |
+| `DreggEngine::new` / `with_ledger` | Constructor |
 | `execute_turn` / `execute_turn_bytes` / `validate_turn` / `estimate_cost` | Caller-trusted; pure on input bytes |
 | `prove_presentation` | Caller holds the root key |
 | `verify_presentation_bytes` / `verify_presentation_against` | **Returns Result<bool> — see P2-3** |
@@ -146,7 +146,7 @@ A subtle correctness note in `prove_predicate_unlinkable` (`privacy.rs:407-411`)
 **Aspirational naming check** — scanned for `Verified*` / `Signed*` / `Authenticated*` / `Sealed*` / `Encrypted*` / `Authorized*` types in the audited files:
 - `PresentationResult { accepted: bool }` — name is honest (just "result", not "Verified")
 - `RevocationStatus::NotRevoked { root, height }` vs `Unverified` — *good* distinction. The doc comment explicitly says "Callers MUST NOT treat this as equivalent to `NotRevoked`."
-- `VerifiedProof` (re-exported from `pyana_circuit`) — out of scope, but the call site at `verify::verify_production` constructs one *only* after `verify_authorization_proof` returns `true`. Good.
+- `VerifiedProof` (re-exported from `dregg_circuit`) — out of scope, but the call site at `verify::verify_production` constructs one *only* after `verify_authorization_proof` returns `true`. Good.
 - `AnonymousPresentation { proof, presentation_tag }` — proves anonymity only if the underlying STARK uses `BLINDED_MERKLE_AIR_NAME`. The verifier at `privacy.rs:682` correctly rejects other AIRs. Good.
 - No `SignedX` types found that don't carry a `Signature` field.
 - No `EncryptedX` found that holds plaintext.
@@ -166,7 +166,7 @@ A subtle correctness note in `prove_predicate_unlinkable` (`privacy.rs:407-411`)
 
 ## Open questions for the user
 
-1. **`PyanaEngine::ledger_mut` and `executor_mut`**: are these *required* for any external embedder, or can they be removed entirely? If embedders only need them for tests, gate behind `#[cfg(any(test, feature = "test-utils"))]`.
+1. **`DreggEngine::ledger_mut` and `executor_mut`**: are these *required* for any external embedder, or can they be removed entirely? If embedders only need them for tests, gate behind `#[cfg(any(test, feature = "test-utils"))]`.
 2. **`LiveRef::enliven` permissions**: should there be a real "verify swiss number against remote" path in the SDK, or is this expected to always be done at a higher layer (e.g., `app-framework`)? If higher, the SDK API shape should make that mandatory.
 3. **`discharge.rs` plaintext HTTP**: is there any production user who relies on `http://` gateways? If not, remove the plaintext path entirely.
 4. **`SubAgent` field privacy**: are any external callers (CLI, app-framework, apps/*) actually reading `SubAgent.token` / `.federation_id` directly? If they're going through accessors anyway, the `pub`s can be removed without churn.

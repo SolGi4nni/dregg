@@ -258,7 +258,7 @@ impl StealthAnnouncement {
 /// Derive a 32-byte shared secret from the raw DH output using BLAKE3 KDF.
 /// Domain-separated to prevent cross-protocol attacks.
 fn derive_shared_secret(dh_output: &[u8; 32], ephemeral_pubkey: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-stealth shared-secret v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-stealth shared-secret v1");
     hasher.update(dh_output);
     hasher.update(ephemeral_pubkey);
     *hasher.finalize().as_bytes()
@@ -316,7 +316,7 @@ fn derive_one_time_spending_key(
 /// Derive a scalar value from a shared secret using BLAKE3.
 /// The output is reduced mod l when used with `Scalar::from_bytes_mod_order`.
 fn derive_stealth_scalar(shared_secret: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-stealth scalar v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-stealth scalar v1");
     hasher.update(shared_secret);
     *hasher.finalize().as_bytes()
 }

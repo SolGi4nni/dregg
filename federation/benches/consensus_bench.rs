@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use hints::{PartialSignature, sign as bls_sign};
-use pyana_federation::generate_test_committee;
+use dregg_federation::generate_test_committee;
 
 // =============================================================================
 // BLS Partial Signature benchmarks

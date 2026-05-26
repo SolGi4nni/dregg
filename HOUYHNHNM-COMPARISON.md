@@ -1,4 +1,4 @@
-# HOUYHNHNM ↔ pyana — A Comparison Study
+# HOUYHNHNM ↔ dregg — A Comparison Study
 
 **Date:** 2026-05-25.
 **Reader:** anyone familiar with `NEW-WORLD.md` and `BOUNDARIES.md`.
@@ -10,8 +10,8 @@ contrast to extant Human computer systems.
 **Stance:** this is a comparison, not a feature-port spec. The intent
 is to find where two designs *converge* (one validates the other),
 where they *diverge productively* (the divergence itself is a
-teaching), where pyana is *narrow* and houyhnhnm is *broad*, and
-where pyana is *concrete* and houyhnhnm is *evocative*.
+teaching), where dregg is *narrow* and houyhnhnm is *broad*, and
+where dregg is *concrete* and houyhnhnm is *evocative*.
 
 ---
 
@@ -179,29 +179,29 @@ divergences are about *scope*, not technique.
 There are real cross-walks. Let me lay them out before the more
 fragmentary analysis below.
 
-| houyhnhnm primitive | pyana primitive | Notes |
+| houyhnhnm primitive | dregg primitive | Notes |
 |---|---|---|
 | "Computing system" (Sentients + machines + world) | The *mesh* — cells + agents + federations + bridges + users | Both insist the unit of analysis includes the human / agent in the loop. |
-| Orthogonal persistence (everything, by default) | `WitnessedReceipt` chain + persistent ledger + blocklace DAG | Pyana persists every *transition*, not every keystroke. The unit of persistence is the turn, not the edit. |
-| Single source-controlled history of code + data | `WitnessedReceipt` chain + canonical AIR PI + sovereign-cell sequence numbers | Pyana versions *state transitions* with cryptographic continuity. Code itself (cell programs) is identified by a VK; program upgrades change the VK. |
-| Version-control-as-virtualization (branch any subsystem freely) | `cell::peer_exchange` for off-federation branches; the `bridge` for cross-federation; conceptual branching of cells via `CreateCellFromFactory` | Pyana has no first-class fork-and-merge of an arbitrary subtree. The closest is "spawn a cell from a factory." |
-| Schema upgrade with mandatory typed upgrade function | `FactoryDescriptor` + program VK pinning + `CellProgram` revisioning | Pyana has no in-system upgrade story for live cells. Either the program VK changes (new cell) or the program is fixed forever. The categorical analysis flags this as a missing primitive. |
-| Linear logic on resources | The Effect VM's effect graph + sovereign-witness `SovereignCellWitness` shape + bilateral schedule (γ.2) | Pyana enforces conservation algebraically per effect family, not as a unified linear-type discipline. |
-| Capability-secure references (sturdy refs, attenuable caps) | `cell::Capability` / `CapabilityCaveat` / faceted/sealed/bearer caps / `Authorization::CapTpDelivered` | Pyana implements the OCapN family directly. **This is the deepest convergence.** |
-| Three-party handoff | `captp/src/handoff.rs` + `Authorization::CapTpDelivered { handoff_cert, introducer_pk, sender_pk, sender_signature }` + γ.2 `Introduce` family | Same primitive, but pyana additionally requires algebraic agreement *across* the two cells involved. |
-| Polycentric "kernels" (each subsystem its own kernel) | The `crate` boundary structure: `turn`, `cell`, `circuit`, `captp`, `wire`, `blocklace`, `intent`, `bridge`, `coord`, `federation` | Each pyana crate enforces a narrow contract at its boundary; there is no single "kernel". |
-| Linear-logic device broker | The `coord::BudgetCoordinator` (incomplete — has unverified-signature gaps acknowledged in `NEW-WORLD.md` item 5) | Pyana acknowledges the abstraction is incomplete. |
-| Full-abstraction sandboxing | `Cell::seal { allowed_effects }`; `FieldVisibility::Committed`; capability attenuation by `FacetConstraint` | Pyana does this *per effect kind* and *per slot*; houyhnhnm asserts it at the language level. |
-| "Autistic application" / interactive document | An app with `EmbeddedExecutor` + no outbound capability + no bridge use | Pyana's `app-framework` makes this composable; whether a starbridge-app is "autistic" is a configuration of its capability surface. |
-| Implicit communication (copy-paste, pipes, registers) | `Effect::EmitEvent` + the gossip layer + DFA-as-caveat ingress filtering; CapTP swiss-table promise pipelining | Pyana's implicit channel is the receipt log itself: any verifier can read it, no application cooperation required. |
+| Orthogonal persistence (everything, by default) | `WitnessedReceipt` chain + persistent ledger + blocklace DAG | `dregg` persists every *transition*, not every keystroke. The unit of persistence is the turn, not the edit. |
+| Single source-controlled history of code + data | `WitnessedReceipt` chain + canonical AIR PI + sovereign-cell sequence numbers | `dregg` versions *state transitions* with cryptographic continuity. Code itself (cell programs) is identified by a VK; program upgrades change the VK. |
+| Version-control-as-virtualization (branch any subsystem freely) | `cell::peer_exchange` for off-federation branches; the `bridge` for cross-federation; conceptual branching of cells via `CreateCellFromFactory` | `dregg` has no first-class fork-and-merge of an arbitrary subtree. The closest is "spawn a cell from a factory." |
+| Schema upgrade with mandatory typed upgrade function | `FactoryDescriptor` + program VK pinning + `CellProgram` revisioning | `dregg` has no in-system upgrade story for live cells. Either the program VK changes (new cell) or the program is fixed forever. The categorical analysis flags this as a missing primitive. |
+| Linear logic on resources | The Effect VM's effect graph + sovereign-witness `SovereignCellWitness` shape + bilateral schedule (γ.2) | `dregg` enforces conservation algebraically per effect family, not as a unified linear-type discipline. |
+| Capability-secure references (sturdy refs, attenuable caps) | `cell::Capability` / `CapabilityCaveat` / faceted/sealed/bearer caps / `Authorization::CapTpDelivered` | `dregg` implements the OCapN family directly. **This is the deepest convergence.** |
+| Three-party handoff | `captp/src/handoff.rs` + `Authorization::CapTpDelivered { handoff_cert, introducer_pk, sender_pk, sender_signature }` + γ.2 `Introduce` family | Same primitive, but dregg additionally requires algebraic agreement *across* the two cells involved. |
+| Polycentric "kernels" (each subsystem its own kernel) | The `crate` boundary structure: `turn`, `cell`, `circuit`, `captp`, `wire`, `blocklace`, `intent`, `bridge`, `coord`, `federation` | Each dregg crate enforces a narrow contract at its boundary; there is no single "kernel". |
+| Linear-logic device broker | The `coord::BudgetCoordinator` (incomplete — has unverified-signature gaps acknowledged in `NEW-WORLD.md` item 5) | `dregg` acknowledges the abstraction is incomplete. |
+| Full-abstraction sandboxing | `Cell::seal { allowed_effects }`; `FieldVisibility::Committed`; capability attenuation by `FacetConstraint` | `dregg` does this *per effect kind* and *per slot*; houyhnhnm asserts it at the language level. |
+| "Autistic application" / interactive document | An app with `EmbeddedExecutor` + no outbound capability + no bridge use | `dregg`'s `app-framework` makes this composable; whether a starbridge-app is "autistic" is a configuration of its capability surface. |
+| Implicit communication (copy-paste, pipes, registers) | `Effect::EmitEvent` + the gossip layer + DFA-as-caveat ingress filtering; CapTP swiss-table promise pipelining | `dregg`'s implicit channel is the receipt log itself: any verifier can read it, no application cooperation required. |
 | Explicit communication (typed channels with reflection) | `captp` sturdy refs + `Effect::PipelinedSend` + `Authorization::CapTpDelivered` | This is direct. |
-| Persistent identity (durable name with stable referent) | `cell_id` (Poseidon2-derived); `sturdy_ref` (CapTP); `federation_id = H(committee_pubkeys)`; `WitnessedReceipt` hash; starbridge-apps `nameservice` | Pyana goes farther: identity is **cryptographic**, not nominal. Genesis can't fabricate a `federation_id`. Houyhnhnm asks for stable identity but says nothing about *who is responsible for the binding*. |
-| Meta-program controlling base-level program | `TurnExecutor` over `Action` + `WitnessedReceipt` over `Turn` + the off-AIR verifiers (`pyana-verifier bilateral-pair`, the credential gateway) | Pyana's meta-level is *adversarial-tolerant*: even an honest-but-curious executor can't lie about what happened. Houyhnhnm's meta-level is trusted-by-construction. |
-| Branchable system state ("virtualization as branching") | Sovereign-cell peer-exchange + cell-program forking via factories; `bridge::burn-and-mint` for cross-federation egress | Pyana has the *protocols* for cross-federation movement but no first-class "branch this whole subsystem and play with it" operator. |
-| Build = meta-level development | Cargo + the pyana-dsl multi-backend differential testing harness + the 7 DSL backends + Studio's wasm runtime | Pyana lives in cargo's world; the only "build = meta" insight pyana adopts is *differential testing across backends* — the DSL emits to 7 backends and a single behavioral spec is checked against each. |
-| Persistence log = inputs, not bytes | `WitnessedReceipt { receipt, proof, public_inputs, witness_bundle? }` with scope-2 re-executable | Pyana's persistence log is the *witnessed transition stream*, replayable from inputs. This is **the strongest single point of convergence** in the entire study. |
+| Persistent identity (durable name with stable referent) | `cell_id` (Poseidon2-derived); `sturdy_ref` (CapTP); `federation_id = H(committee_pubkeys)`; `WitnessedReceipt` hash; starbridge-apps `nameservice` | `dregg` goes farther: identity is **cryptographic**, not nominal. Genesis can't fabricate a `federation_id`. Houyhnhnm asks for stable identity but says nothing about *who is responsible for the binding*. |
+| Meta-program controlling base-level program | `TurnExecutor` over `Action` + `WitnessedReceipt` over `Turn` + the off-AIR verifiers (`dregg-verifier bilateral-pair`, the credential gateway) | `dregg`'s meta-level is *adversarial-tolerant*: even an honest-but-curious executor can't lie about what happened. Houyhnhnm's meta-level is trusted-by-construction. |
+| Branchable system state ("virtualization as branching") | Sovereign-cell peer-exchange + cell-program forking via factories; `bridge::burn-and-mint` for cross-federation egress | `dregg` has the *protocols* for cross-federation movement but no first-class "branch this whole subsystem and play with it" operator. |
+| Build = meta-level development | Cargo + the dregg-dsl multi-backend differential testing harness + the 7 DSL backends + Studio's wasm runtime | `dregg` lives in cargo's world; the only "build = meta" insight dregg adopts is *differential testing across backends* — the DSL emits to 7 backends and a single behavioral spec is checked against each. |
+| Persistence log = inputs, not bytes | `WitnessedReceipt { receipt, proof, public_inputs, witness_bundle? }` with scope-2 re-executable | `dregg`'s persistence log is the *witnessed transition stream*, replayable from inputs. This is **the strongest single point of convergence** in the entire study. |
 | "Determinism by construction" | The Effect VM AIR's ~151-column trace, BabyBear field, Plonky3 + FRI; the cclerk-v3 canonical signing message; canonical encoders that VKs commit to | Direct. |
-| Time-preference choice of tools (Ch.11) | The *Silver → Golden* roadmap; the deliberate decision in `NEW-WORLD.md` to not chase Golden until Silver is integration-complete | Pyana's two-vision frame is explicitly low time-preference. This is genuinely Houyhnhnmoid. |
+| Time-preference choice of tools (Ch.11) | The *Silver → Golden* roadmap; the deliberate decision in `NEW-WORLD.md` to not chase Golden until Silver is integration-complete | `dregg`'s two-vision frame is explicitly low time-preference. This is genuinely Houyhnhnmoid. |
 | The "Yahoo / Horse" distinction (sentient vs. nonsentient quadrupeds; Human vs. Yahoo) | The (deleted) slop-apps list in `NEW-WORLD.md` vs. the surviving starbridge-apps | Both designs distinguish "the thing that looks right but isn't" from "the thing that is right but unfamiliar." The deletion of `amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `prediction-market` is a Houyhnhnmoid act: refusing the surface-similar but architecturally-wrong things. |
 | No notion of "destroy" | …also no notion of `CellDestroy` (per `PROTOCOL-CATEGORICAL-ANALYSIS.md` §1) | **Both designs are weak at retirement.** This is a shared gap, not a divergence. See §5. |
 
@@ -214,7 +214,7 @@ problem without solving it.
 
 ## 3. Strong alignments — where independent arrival validates
 
-These are convergences sharp enough that pyana should feel
+These are convergences sharp enough that dregg should feel
 *validated* by houyhnhnm's independent arrival at the same idea, even
 when expressed in radically different vocabulary.
 
@@ -226,21 +226,21 @@ Houyhnhnm (Ch.3):
 > that all sources of non-determinism are either eliminated or
 > recorded — which Houyhnhnm computing systems do by construction."
 
-Pyana: `WitnessedReceipt` is exactly this. The turn — the *event* —
+`dregg`: `WitnessedReceipt` is exactly this. The turn — the *event* —
 plus the proof that the transition was determined by the witness, is
 the persisted unit. The state on disk is *derivable* from the witness
 stream; the witness stream is the source of truth. Scope-2
 WitnessedReceipts contain the inline witness data so *any* verifier
 can re-execute the AIR.
 
-This is the central conceptual convergence. Pyana arrived at this
+This is the central conceptual convergence. `dregg` arrived at this
 from cryptographic necessity (you can't prove a transition you can't
 replay); houyhnhnm arrived at it from "we want infinite undo and we
 hate flushing buffers." Same answer, very different motivation.
 
-The houyhnhnm framing *clarifies pyana's existing meaning*: the
-WitnessedReceipt chain is not "a log of proofs" — it is **pyana's
-persistence layer**. The fact that pyana can derive state by
+The houyhnhnm framing *clarifies dregg's existing meaning*: the
+WitnessedReceipt chain is not "a log of proofs" — it is **dregg's
+persistence layer**. The fact that dregg can derive state by
 re-execution from witnesses is not a debugging affordance; it is the
 *definition* of the system's state. We should talk about
 WitnessedReceipt this way more.
@@ -255,14 +255,14 @@ Houyhnhnm (Ch.6):
 > programmers define the access abstractions that fit their
 > purposes."
 
-Pyana's `CapabilityCaveat` + `FacetConstraint` + `BearerCap` +
+`dregg`'s `CapabilityCaveat` + `FacetConstraint` + `BearerCap` +
 `Authorization::CapTpDelivered` + `Authorization::Custom { predicate:
 WitnessedPredicate }` does exactly what Ann describes. The "explicit
 primitives in their programming language" *is* the `WitnessedPredicate
 KindRegistry` — applications register their own auth predicate kinds
 and the system routes by `vk_hash`.
 
-Houyhnhnm says "no one-size-fits-all"; pyana says "six built-in modes
+Houyhnhnm says "no one-size-fits-all"; dregg says "six built-in modes
 plus `Custom { predicate: WitnessedPredicate }` for whatever you
 need." Same answer.
 
@@ -273,8 +273,8 @@ Houyhnhnm (Ch.6):
 > instead they possess as many 'kernels' as there are computing
 > subsystems and subsubsystems"
 
-Pyana's crate structure is precisely this. There is no
-`pyana-kernel`. There is `turn::TurnExecutor`, `cell::Cell`,
+`dregg`'s crate structure is precisely this. There is no
+`dregg-kernel`. There is `turn::TurnExecutor`, `cell::Cell`,
 `circuit::EffectVmAir`, `captp::Session`, `wire::DfaRouter`,
 `blocklace::Blocklace`, `federation::Federation`, each owning its
 contract at its boundary. The `BOUNDARIES.md` document is the
@@ -282,7 +282,7 @@ explicit acknowledgement of this: 14 named boundaries, each with a
 contract in {cleartext-inside, commitment-inside, acceptance-inside,
 out-of-band}.
 
-This validates pyana's resistance to building a kernel. It also
+This validates dregg's resistance to building a kernel. It also
 suggests we should keep resisting: when someone proposes a "core" or
 "kernel" abstraction that everything must go through, that's the
 Human / Urbit move, not the Houyhnhnm move.
@@ -295,7 +295,7 @@ Houyhnhnm (Ch.8):
 > activity that displays the data; this meta-program is part of a
 > common extensible platform"
 
-Pyana's `EmitEvent` + gossip + the off-AIR verifiers (`pyana-verifier
+`dregg`'s `EmitEvent` + gossip + the off-AIR verifiers (`dregg-verifier
 bilateral-pair`, `WitnessedReceipt` reading) are exactly this. The
 *activity* — the cell program — does its job. The *meta-programs* —
 the verifier CLI, the bilateral checker, the Studio inspector
@@ -303,7 +303,7 @@ registry, the credential gateway — read the receipt stream and
 present, combine, transform.
 
 The base-cell never has to cooperate with these meta-programs. The
-houyhnhnm framing helps us *name* this: receipts are pyana's
+houyhnhnm framing helps us *name* this: receipts are dregg's
 copy-paste clipboard. They are user-controlled (well,
 verifier-controlled) implicit communication channels.
 
@@ -315,12 +315,12 @@ Houyhnhnm (Ch.8):
 > 'virtual machines'; rather it is all about providing full
 > abstraction, i.e. abstractions that don't leak."
 
-Pyana: `Cell::seal { allowed_effects }` + the AIR enforcement that no
+`dregg`: `Cell::seal { allowed_effects }` + the AIR enforcement that no
 effect outside the allowed set can appear in a proof + the cipherclerk's
 inability to construct a turn that violates a slot caveat. The
 sandbox is *algebraic*. No hardware involvement.
 
-This is the philosophical core of pyana that houyhnhnm validates.
+This is the philosophical core of dregg that houyhnhnm validates.
 "Algebraic enforcement at the constraint layer" is a Houyhnhnm move.
 
 ### 3.6. Cross-cell algebra (γ.2) ≈ "the meta-program controls more
@@ -341,7 +341,7 @@ combined behavior algebraically*. The cross-cell verifier doesn't
 ask the cells anything; it reads their published PI and confirms the
 outgoing-root from one matches the incoming-root from the other.
 
-Houyhnhnm framing: γ.2 is pyana's "meta-level FRP node" that takes
+Houyhnhnm framing: γ.2 is dregg's "meta-level FRP node" that takes
 two computations as inputs and emits "they agreed" as output.
 
 ### 3.7. Determinism as the precondition for sharable computation
@@ -353,7 +353,7 @@ Houyhnhnm (Ch.9 on builds):
 > abstractions that guarantee that the final result doesn't depend on
 > the order of concurrent effects."
 
-Pyana: the Effect VM AIR is deterministic by construction. Effects
+`dregg`: the Effect VM AIR is deterministic by construction. Effects
 within a turn have a defined ordering (encoded in the trace's row
 ordering); the bilateral schedule between cells is a CRDT-shaped
 deterministic accumulator; blocklace consensus is a deterministic
@@ -368,7 +368,7 @@ Houyhnhnm (Ch.3):
 > rest of the system remains shared; and of course you can merge two
 > branches back together, somehow fusing changes."
 
-Pyana's `peer_exchange` is *exactly this for two sovereign cells*.
+`dregg`'s `peer_exchange` is *exactly this for two sovereign cells*.
 Alice and Bob can transact privately, off the federation's view, and
 later (if they wish) reveal the transition stream to the federation,
 "merging the branch back." Houyhnhnm doesn't help us extend
@@ -389,10 +389,10 @@ choice. We could *announce* the Golden Vision and skim a fraction of
 the value, and we don't. We're shipping Silver fully first. Ch.11
 validates that posture.
 
-### 3.10. Pyana's existing `pyana-dsl` multi-backend differential
+### 3.10. `dregg`'s existing `dregg-dsl` multi-backend differential
 test as Houyhnhnmoid build-system thinking
 
-The `pyana-dsl` crate has 7 backends (`gen_air`, `gen_kimchi`,
+The `dregg-dsl` crate has 7 backends (`gen_air`, `gen_kimchi`,
 `gen_plonky3`, `gen_sp1`, `gen_midnight`, `gen_datalog`, `gen_rust`)
 and a differential-test harness that runs the *same* caveat
 specification against multiple semantically-equivalent backends and
@@ -404,7 +404,7 @@ Houyhnhnm (Ch.4):
 > of any existing tower before you start using it, you can add or
 > replace layers below the tower"
 
-The differential test infrastructure is pyana's "we can swap out the
+The differential test infrastructure is dregg's "we can swap out the
 turtle underneath a running program and the program above doesn't
 notice" infrastructure. This is much more Houyhnhnmoid than I
 realized before this comparison. We should *celebrate* it.
@@ -416,11 +416,11 @@ Houyhnhnm (Ch.3):
 > of the system, on which change happens, and from which the text is
 > extracted if and when needed"
 
-Pyana's `VK-AS-RE-EXECUTION-RECIPE.md` thesis is that the verifying
+`dregg`'s `VK-AS-RE-EXECUTION-RECIPE.md` thesis is that the verifying
 key commits to the **canonical encoder** for its public inputs. The
 VK *is* a source-of-truth pointer: you can't change the encoder
 without changing the VK, and you can't change the program without
-changing the VK. The VK is pyana's content-hash for "the semantic
+changing the VK. The VK is dregg's content-hash for "the semantic
 state of the verifier" — exactly what houyhnhnm asks for.
 
 ---
@@ -430,7 +430,7 @@ state of the verifier" — exactly what houyhnhnm asks for.
 These are places where the two designs choose differently, and the
 divergence itself is teaching. I'll mark each one *deep* (a
 philosophical chasm; don't try to bridge) or *small mod* (worth
-considering an actual change in pyana).
+considering an actual change in dregg).
 
 ### 4.1. (deep) Trust model
 
@@ -441,16 +441,16 @@ adversarial code, but the deeper assumption is that *you control the
 machine your computation runs on*. The free-software emphasis is
 because closed source means *you* can't read the meta-program.
 
-Pyana assumes the *executor* is adversarial. The whole point of
+`dregg` assumes the *executor* is adversarial. The whole point of
 WitnessedReceipt is that even the entity that ran the computation
 cannot lie about it. The `EXECUTOR-HONESTY-AUDIT.md` enumerates 15
 specific threats *from* the executor — these have no analogue in the
 houyhnhnm worldview.
 
-This is the deepest divergence. **Don't try to backport pyana's
+This is the deepest divergence. **Don't try to backport dregg's
 adversarial threat model into the houyhnhnm framing**; it doesn't
 fit. **Don't try to forward-port houyhnhnm's "you control the machine"
-assumption into pyana**; pyana exists *because* you don't.
+assumption into dregg**; dregg exists *because* you don't.
 
 The teaching here: when reading houyhnhnm, mentally insert "and the
 machine I'm running this on is honest" before every assertion. Many
@@ -468,15 +468,15 @@ merge-and-branch assumes a more-or-less centralized history with
 local divergences. There is no concept of "two federations that
 mutually distrust each other" or "a peer who can't be reached."
 
-Pyana lives in a world where there are *multiple federations* with
+`dregg` lives in a world where there are *multiple federations* with
 *mutually-binding-but-not-coextensive* histories. `AttestedRoot v3`
 binds `federation_id + blocklace_block_id + finality_round`
 specifically because two federations have to be told apart on the
 wire.
 
-Teaching: when houyhnhnm says "the system," pyana should hear "a
+Teaching: when houyhnhnm says "the system," dregg should hear "a
 single sovereign-cell-cluster within one federation." Beyond that
-boundary, pyana has the distributed-systems machinery and houyhnhnm
+boundary, dregg has the distributed-systems machinery and houyhnhnm
 falls silent.
 
 ### 4.3. (small mod) Linear-logic resource handling
@@ -493,14 +493,14 @@ And Ch.5 on schema upgrade:
 > care about anymore, so you can't lose information by mistake or
 > omission"
 
-Pyana enforces conservation per effect family. `Transfer` conserves
+`dregg` enforces conservation per effect family. `Transfer` conserves
 balances; `Mint` and `Burn` are the asymmetric pair; `Grant` /
 `Revoke` is the cap pair. The bilateral schedule (γ.2) is *almost* a
 linear-logic move: the outgoing-root from cell A must match the
 incoming-root from cell B; the resource (the message) exists exactly
 once across the two cells.
 
-**Small mod**: pyana could *name* the linearity it already enforces.
+**Small mod**: dregg could *name* the linearity it already enforces.
 Each effect family that has a conservation law could carry a
 `LinearityClass` discriminant — `Conserved`, `Bounded`,
 `Monotonic`, `Free` — so that when a new effect is added, the
@@ -517,10 +517,10 @@ Houyhnhnm's most operational idea about upgrades:
 > care about anymore, so you can't lose information by mistake or
 > omission"
 
-Pyana has no live schema upgrade. The categorical analysis flags this
+`dregg` has no live schema upgrade. The categorical analysis flags this
 as a deep gap. **GPT's session note advised against treating this as a
 first-class roadmap item.** Fine. But the houyhnhnm framing suggests a
-*much smaller* thing that pyana could do: when a `FactoryDescriptor`
+*much smaller* thing that dregg could do: when a `FactoryDescriptor`
 changes — meaning the program VK changes — the *factory* could carry
 a `migration_hint: Option<MigrationHint>` field that describes, in
 the registry, "old cells from this factory's previous version should
@@ -531,21 +531,21 @@ future tooling something to read. Sub-1-day.
 ### 4.5. (deep) Code-data-as-one-history
 
 Houyhnhnm Ch.3 / Ch.5 insist code and data live in the same
-versioned history. In pyana, the *program* (the cell program) is
+versioned history. In dregg, the *program* (the cell program) is
 identified by a VK; the *data* (the cell state) is identified by a
 commitment. They are linked at construction (the cell's program is
 fixed at creation), but the data has its own history (the
 WitnessedReceipt chain) and the program has its own history (the
 factory's VK lineage). They are not the same history.
 
-This is deep, and pyana's choice is correct for the
+This is deep, and dregg's choice is correct for the
 adversarial-executor model: if code and data were in one history, you
 could "upgrade the program retroactively" by editing history, and
-proofs against the old VK would have to be invalidated. Pyana
+proofs against the old VK would have to be invalidated. `dregg`
 *deliberately* keeps these separate so the WitnessedReceipt chain
 under VK_old remains valid even if VK_new is deployed later.
 
-Teaching: pyana is *more* mature than houyhnhnm here. The houyhnhnm
+Teaching: dregg is *more* mature than houyhnhnm here. The houyhnhnm
 position works because there's no adversary; once you have one, code
 and data have to be cryptographically separable.
 
@@ -555,7 +555,7 @@ Houyhnhnm Ch.11's blame analysis: in a joint decision where either
 party could have averted disaster, both are 80% responsible; the sum
 of partial blames exceeds the total blame attributable.
 
-Pyana's `EXECUTOR-HONESTY-AUDIT.md` enumerates threats per-attacker.
+`dregg`'s `EXECUTOR-HONESTY-AUDIT.md` enumerates threats per-attacker.
 It doesn't model the *layered* responsibility — e.g., "the executor
 forged effects, AND the verifier failed to check the receipt's PI
 completeness, AND the cclerk didn't include witness blobs."
@@ -572,16 +572,16 @@ Houyhnhnm Ch.3:
 > decision doesn't have to be made by the programmer, though he may
 > provide hints: the end-user has the last say."
 
-Pyana persists what the protocol requires for verifiability. The
+`dregg` persists what the protocol requires for verifiability. The
 *user* doesn't choose what's in the WitnessedReceipt chain; the
 *protocol* does. This is correct for the adversarial setting: an
 attacker who could "choose not to persist this receipt" could rewrite
 history.
 
-But pyana could honestly distinguish "what the protocol requires to
+But dregg could honestly distinguish "what the protocol requires to
 be persistent" from "what an individual node *chooses* to retain
 locally as cache" from "what an end-user *requests* to retain in
-their own copy." The latter two are user choice. Pyana has no
+their own copy." The latter two are user choice. `dregg` has no
 explicit model of the difference. This is *not* a small mod — it
 touches storage, blocklace replication, federation attestation, and
 GC. But it is worth flagging as a place where the *vocabulary* would
@@ -592,7 +592,7 @@ persistence" vs. "user-elected persistence."
 
 Houyhnhnm Ch.7's "autistic application" / "interactive document" is
 the class of activity that has *no outbound effects to other
-processes*. Pyana has no marker for this. A starbridge-app like a
+processes*. `dregg` has no marker for this. A starbridge-app like a
 visualization that reads receipts but never authors a turn is
 *structurally* an interactive document; one like `nameservice` is
 not.
@@ -603,7 +603,7 @@ to the narrowest. Compile-time check that the app doesn't construct
 effects of broader reach than declared. Sub-1-day on the app
 framework side; touches no proof / consensus code.
 
-### 4.9. (deep) Houyhnhnm's monism vs. pyana's pluralism on
+### 4.9. (deep) Houyhnhnm's monism vs. dregg's pluralism on
 programming languages
 
 Houyhnhnm Ch.9:
@@ -614,47 +614,47 @@ Houyhnhnm Ch.9:
 
 One platform. One language family. Modularity through it.
 
-Pyana has the opposite stance: the `pyana-dsl` compiles to *7
+`dregg` has the opposite stance: the `dregg-dsl` compiles to *7
 backends*, deliberately. We want the caveat language to outlive any
 specific prover. The categorical-analysis doc proposes more, not
 fewer, backend targets. This is intentional pluralism.
 
 Both stances make sense in their domain. Houyhnhnm targets *one
-user's* coherent computing world; pyana targets *interoperability
+user's* coherent computing world; dregg targets *interoperability
 across* heterogeneous proving infrastructures and chains. The
 divergence is a teaching: *be explicit about which kind of
-monoculture you're refusing*. Pyana refuses cryptographic monoculture
+monoculture you're refusing*. `dregg` refuses cryptographic monoculture
 (one chain, one prover, one VK system); houyhnhnm refuses semantic
 monoculture (one language). Different choices, different scopes.
 
 ### 4.10. (deep) "Build = development at meta-level"
 
-Pyana lives in cargo. Cargo is, by houyhnhnm standards, an abomination
+`dregg` lives in cargo. Cargo is, by houyhnhnm standards, an abomination
 — a separate build system, non-reactive, with manifest files outside
 the language, with feature flags as a quasi-DSL that the language
 itself can't introspect, with `[patch]` and `[workspace]` and
 `build.rs` as ad-hoc escape hatches.
 
-Pyana cannot fix this. The divergence is structural: we share Rust's
+`dregg` cannot fix this. The divergence is structural: we share Rust's
 build model.
 
 But the houyhnhnm framing gives one *narrow* operational suggestion:
-pyana's "VK-as-re-execution-recipe" can be thought of as pyana's
+dregg's "VK-as-re-execution-recipe" can be thought of as dregg's
 *content-addressed cache identity* for cryptographic artifacts. A
 VK_hash is a *source-addressed digest* of the program-plus-encoder.
 This is precisely Ch.9's "source-addressed" build cache idea, applied
 to the verifier. We already have the right idea; we should *name* it
 this way.
 
-### 4.11. (small mod) Hot-patching as a pyana primitive
+### 4.11. (small mod) Hot-patching as a dregg primitive
 
 Houyhnhnm Ch.9:
 > "Finally, 'hot-patching' is a form of code instrumentation that is
 > essential to fix critical issues in modules that one doesn't
 > maintain"
 
-Pyana cannot hot-patch cell programs (program is VK-pinned). But
-pyana *can* — and increasingly does — hot-patch the *meta-program*:
+`dregg` cannot hot-patch cell programs (program is VK-pinned). But
+dregg *can* — and increasingly does — hot-patch the *meta-program*:
 the verifier can grow new `WitnessedPredicateKind`s, the bilateral
 schedule can grow new families, the executor can be replaced with a
 new binary that handles the same Turn stream.
@@ -671,8 +671,8 @@ Houyhnhnm Ch.8:
 > availability of sources. … A program that comes without source is
 > crippled in terms of functionality; it is also untrusted"
 
-Pyana's position is structurally compatible (everything we build is
-open source), but pyana has a *cryptographic* substitute for
+`dregg`'s position is structurally compatible (everything we build is
+open source), but dregg has a *cryptographic* substitute for
 source-availability for the case where you don't trust the source:
 *the VK*. If a third party gives you a black-box prover for a
 cell program, and the prover emits proofs verifiable under a
@@ -681,13 +681,13 @@ trust the proofs. The VK + the verifier algorithm + the canonical
 encoder is the contract.
 
 This is genuinely novel relative to houyhnhnm. Houyhnhnm's
-free-software requirement comes from the need to *audit*; pyana
+free-software requirement comes from the need to *audit*; dregg
 substitutes *succinct verification*. Both achieve "you don't have to
-trust the implementer." Pyana's version scales better to mutually
+trust the implementer." `dregg`'s version scales better to mutually
 distrustful parties.
 
 Teaching: don't adopt houyhnhnm's free-software-as-prerequisite
-posture; pyana's cryptographic substitute is structurally better for
+posture; dregg's cryptographic substitute is structurally better for
 the adversarial-multi-party case.
 
 ### 4.13. (small mod) Domain-of-origin clipboard semantics
@@ -697,7 +697,7 @@ Houyhnhnm Ch.8:
 > user can't unintentionally paste sensitive data into untrusted
 > activities, or data of an unexpected kind."
 
-Pyana's analogue: a capability passed across a CapTP handoff carries
+`dregg`'s analogue: a capability passed across a CapTP handoff carries
 its origin. The `HandoffCertificate` records introducer ↔ introducee
 ↔ target. But when a *value* (a field element, a commitment, a
 witness blob) crosses cells, its origin is *not* tracked — it's just
@@ -720,9 +720,9 @@ Houyhnhnm Ch.8:
 > suspended, or get blank data, or fake data from a randomized
 > honeypot"
 
-Pyana's `Cell::seal { allowed_effects }` already does the structural
+`dregg`'s `Cell::seal { allowed_effects }` already does the structural
 version of this: an effect outside the allowed set is rejected at the
-executor, not exposed to the cell program. But pyana doesn't have the
+executor, not exposed to the cell program. But dregg doesn't have the
 *honeypot* facility — a cell program asking for a balance it can't
 see gets *blocked*, not *misled*.
 
@@ -730,12 +730,12 @@ This is probably correct (deception is hard to reason about), but
 worth flagging. The houyhnhnm position would be: *if* a cell is
 attempting to probe its environment in a way it shouldn't, the
 appropriate response is to feed it convincing-looking data and log
-the attempt. Pyana's response is to reject and propagate the error.
+the attempt. `dregg`'s response is to reject and propagate the error.
 **Not a recommended mod**; just a divergence to note.
 
-### 4.15. (deep) The Urbit critique (Ch.10) applied to pyana
+### 4.15. (deep) The Urbit critique (Ch.10) applied to dregg
 
-The most operationally useful chapter for pyana is Ch.10. Faré argues
+The most operationally useful chapter for dregg is Ch.10. Faré argues
 that Urbit's mistake is to fix a *low-level VM* (Nock) "for all users
 at all time" — which sounds Houyhnhnmoid but is actually anti-pattern,
 because:
@@ -747,41 +747,41 @@ because:
    replay other random people's computations, which is *exactly* the
    crypto-currency use case Urbit isn't.
 
-**Pyana is exactly the case Faré exempts.** We *are* the
+**`dregg` is exactly the case Faré exempts.** We *are* the
 "crypto-currency with smart contracts" scenario where global
 deterministic semantics matters, because we *do* want to verify other
 people's computations. The Effect VM AIR is our Nock; the Plonky3 +
 FRI implementation is our u3; the program VK is our "fixed function."
 
 But Faré's critiques apply even there:
-- **(a) Impedance mismatch.** Pyana's Effect VM has ~151 columns; not
+- **(a) Impedance mismatch.** `dregg`'s Effect VM has ~151 columns; not
   every cell program fits naturally; placeholder PIs and 30-bit
   truncations exist because the AIR shape was decided early. *This
-  is real.* Pyana should keep watching the impedance-mismatch cost.
+  is real.* `dregg` should keep watching the impedance-mismatch cost.
 - **(b) Real semantics escape into the runtime.** Many invariants
-  pyana cares about (executor honesty T9, T12; coord signature gaps;
+  dregg cares about (executor honesty T9, T12; coord signature gaps;
   bridge proof-to-action binding) live in *executor code*, not in
   the AIR. The `EXECUTOR-HONESTY-AUDIT.md` openly tracks which
   invariants are AIR-enforced vs. executor-trusted. **This is the
-  Nock/u3 split applied honestly**; pyana's saving grace vs. Urbit
+  Nock/u3 split applied honestly**; dregg's saving grace vs. Urbit
   is that the audit document *exists* and tracks the gaps.
 - **(c) The VM is decided early.** True. The Effect VM AIR shape was
   picked at a time when the least was known. The categorical-analysis
   document is a (very long) recognition of "we need more effect
   variants and the categorical structure has gaps."
 
-The teaching: **pyana should treat the Effect VM AIR's stability as a
+The teaching: **dregg should treat the Effect VM AIR's stability as a
 *liability* to manage, not as an asset to defend.** When a new
 effect family doesn't fit the current AIR shape, the right move is to
 *extend the AIR*, not to *deform the effect family*. The
 `MAX_CUSTOM_EFFECTS` design and `DESIGN-max-custom-effects.md` are
 already moves in this direction.
 
-Sub-thought: pyana's VK-as-re-execution-recipe contract means that
+Sub-thought: dregg's VK-as-re-execution-recipe contract means that
 *versions* of the Effect VM AIR are first-class objects (each VK
 identifies one version). Old proofs against old VK_v1 don't need
 re-verification when VK_v2 ships. This is much better than Urbit's
-posture (Nock is fixed forever). The teaching from Ch.10: pyana
+posture (Nock is fixed forever). The teaching from Ch.10: dregg
 should *celebrate* this and use it actively — ship Effect VM AIR v2
 when the impedance is too high, not strain to keep v1.
 
@@ -793,23 +793,23 @@ tolerance, threshold signing, finality, equivocation, or
 fork-resolution. The closest is Ch.8's "different domains" with
 "privacy policies."
 
-Pyana has all of this. Blocklace + Constitutional Consensus + BLS
+`dregg` has all of this. Blocklace + Constitutional Consensus + BLS
 threshold signing + AttestedRoot v3 + 199 unit tests for the
 CRDT/safety/liveness/equivocation matrix.
 
 This isn't a divergence; it's an entire scope where houyhnhnm is
-silent. Pyana shouldn't try to learn anything about consensus from
-houyhnhnm. But the *framing* helps: pyana's federation is, in
+silent. `dregg` shouldn't try to learn anything about consensus from
+houyhnhnm. But the *framing* helps: dregg's federation is, in
 houyhnhnm terms, the meta-program that resolves "which history is
 canonical" — not the base-level cells themselves. Make that explicit.
 (`FEDERATION-AS-CELL.md` is moving toward this.)
 
 ---
 
-## 5. Gaps in pyana that houyhnhnm has, ranked by Silver-relevance
+## 5. Gaps in dregg that houyhnhnm has, ranked by Silver-relevance
 
 I rank these by *how much they help Silver Vision land*, not by how
-philosophically deep they are. The user's note: GPT advised pyana is
+philosophically deep they are. The user's note: GPT advised dregg is
 weak at retirement / narrowing / archival / finality artifacts. The
 houyhnhnm comparison sharpens *some* but not all of those.
 
@@ -817,7 +817,7 @@ houyhnhnm comparison sharpens *some* but not all of those.
 declaration
 
 Houyhnhnm Ch.3: persistence is configurable per domain; the user has
-the last say. Pyana's WitnessedReceipt chain is one-size-fits-all:
+the last say. `dregg`'s WitnessedReceipt chain is one-size-fits-all:
 everything is kept by everyone who chooses to be a federation member.
 
 **Silver relevance: high.** Real deployments will need to make this
@@ -835,10 +835,10 @@ change; it's an operator-side declaration.
 ### 5.2. (high Silver relevance) Schema upgrade tier-1 metadata
 
 Houyhnhnm Ch.5: every type modification carries a typed upgrade
-function and is part of the history. Pyana has no live schema upgrade.
+function and is part of the history. `dregg` has no live schema upgrade.
 
-**Silver relevance: high but indirect.** Pyana doesn't need live
-upgrade for Silver, but pyana *does* need to communicate "this
+**Silver relevance: high but indirect.** `dregg` doesn't need live
+upgrade for Silver, but dregg *does* need to communicate "this
 factory's program changed; here's how to interpret state created by
 the old version." Right now this is implicit (the VK is different,
 so they're "different programs"; no migration narrative).
@@ -853,12 +853,12 @@ Compatible }`. Metadata only.
 Houyhnhnm Ch.3 / Ch.6: virtualization = branching. Any subsystem can
 be forked, any branch can be merged, any I/O can be redirected.
 
-Pyana has *some* of this: factories let you spawn new cells; the
+`dregg` has *some* of this: factories let you spawn new cells; the
 `peer_exchange` protocol lets two sovereign cells run a private
 branch. But no first-class "fork this cell into two divergent state
 chains and let me try things in one of them."
 
-**Silver relevance: medium.** Pyana doesn't *need* general branching
+**Silver relevance: medium.** `dregg` doesn't *need* general branching
 for Silver. But the lack of it means there's no clean way to
 *sandbox-test* a turn against live state without actually applying
 it. The closest is the cipherclerk's dry-run path; that's not the same as
@@ -873,7 +873,7 @@ we're not adding it now. Note the gap and move on.
 Houyhnhnm Ch.9: hot-patching modules you don't maintain to fix critical
 issues without forcing a re-release cycle.
 
-Pyana's meta-layer (verifier CLI, off-AIR verifiers, the
+`dregg`'s meta-layer (verifier CLI, off-AIR verifiers, the
 `WitnessedPredicateKindRegistry`) is already hot-patchable in
 practice: we add a new kind, redeploy the verifier, the same
 witnessed-predicate variants keep verifying. But this is *implicit*.
@@ -887,7 +887,7 @@ representation"
 Houyhnhnm Ch.3: the source is the semantic state of the system; text
 is extracted from it.
 
-Pyana's "source" is the WitnessedReceipt chain; the on-disk
+`dregg`'s "source" is the WitnessedReceipt chain; the on-disk
 serialization is one representation; the verifier-replay is another.
 This is already houyhnhnm-compliant in spirit.
 
@@ -905,7 +905,7 @@ applications.
 vocabulary
 
 Houyhnhnm Ch.8 distinguishes implicit (copy-paste, pipes,
-event streams) from explicit (named-target message passing). Pyana
+event streams) from explicit (named-target message passing). `dregg`
 has both — gossip / `EmitEvent` is implicit; CapTP `Send` is explicit
 — but the design doesn't *name* the distinction.
 
@@ -914,7 +914,7 @@ has both — gossip / `EmitEvent` is implicit; CapTP `Send` is explicit
 ### 5.8. (very low Silver relevance) Linear-logic resource discipline
 as a unified primitive
 
-Houyhnhnm Ch.6's "linear logic for hardware resources." Pyana's
+Houyhnhnm Ch.6's "linear logic for hardware resources." `dregg`'s
 conservation is per-effect-family. A unified linear discipline would
 be elegant but is a much larger change than Silver wants.
 
@@ -925,27 +925,27 @@ something to hang on.
 ### 5.9. (not Silver, but worth listing) Branchable history of *programs*
 
 Houyhnhnm's most ambitious claim is that code and data share *one*
-history, branchable, merge-able. Pyana cannot adopt this without
+history, branchable, merge-able. `dregg` cannot adopt this without
 breaking the cryptographic separation that makes WitnessedReceipts
 work. **Do not adopt.**
 
 ---
 
-## 6. Gaps in houyhnhnm that pyana has
+## 6. Gaps in houyhnhnm that dregg has
 
-These are the places where pyana does something houyhnhnm doesn't,
-where the comparison should give pyana confidence rather than
+These are the places where dregg does something houyhnhnm doesn't,
+where the comparison should give dregg confidence rather than
 prompting a change.
 
 ### 6.1. Adversarial-tolerant execution
 
-Houyhnhnm has none. Pyana's `EXECUTOR-HONESTY-AUDIT.md` is the
+Houyhnhnm has none. `dregg`'s `EXECUTOR-HONESTY-AUDIT.md` is the
 existence proof that we've taken the problem seriously: 15 named
 threats, per-threat closure tracked at AIR / recursion / verifier-PI
 layers, three remaining boundary cuts named honestly.
 
 Houyhnhnm's entire model collapses if the executor is adversarial.
-Pyana's model is *built for* adversarial executors. This is not a
+`dregg`'s model is *built for* adversarial executors. This is not a
 minor refinement; it is a different category of system.
 
 ### 6.2. Cryptographic identity
@@ -959,20 +959,20 @@ mutual trust.
 
 ### 6.3. Zero-knowledge / succinct verification
 
-Pyana's STARK proofs let a verifier confirm a computation happened
+`dregg`'s STARK proofs let a verifier confirm a computation happened
 without re-executing it, and without learning the witness. The whole
 `WitnessedPredicate` taxonomy + `BlindedSet` + the
 sovereign-witness-AIR design are houyhnhnm-impossible: they
 *selectively* reveal aspects of a transition.
 
 Houyhnhnm's "privacy" is achieved by "the data is in your domain and
-others don't see it" — *physical* containment. Pyana achieves it via
+others don't see it" — *physical* containment. `dregg` achieves it via
 *algebraic* commitment + selective opening. This is the OCapN-tier
 question that houyhnhnm doesn't even pose.
 
 ### 6.4. Cross-cell algebraic binding (γ.2)
 
-Houyhnhnm's "branching the system" is described informally. Pyana's
+Houyhnhnm's "branching the system" is described informally. `dregg`'s
 γ.2 is a *cryptographic protocol* that proves two independent
 computations agreed on a shared bilateral event. This has no
 counterpart in houyhnhnm.
@@ -981,8 +981,8 @@ counterpart in houyhnhnm.
 operator
 
 Houyhnhnm mentions capability-ish "handles" and "proxies" (Ch.6) but
-has nothing like pyana's `FacetConstraint` + `CapabilityCaveat`
-composition vocabulary. Pyana's caveat algebra (slot-caveats × token
+has nothing like dregg's `FacetConstraint` + `CapabilityCaveat`
+composition vocabulary. `dregg`'s caveat algebra (slot-caveats × token
 caveats × Effect-VM AIR) is *richer* than houyhnhnm's loose talk of
 "access control."
 
@@ -995,7 +995,7 @@ houyhnhnm, where boundaries are gestured at but never named.
 
 ### 6.7. Federation as the meta-layer for "which history is canonical"
 
-Pyana has worked out (in `FEDERATION-AS-CELL.md`) the position that
+`dregg` has worked out (in `FEDERATION-AS-CELL.md`) the position that
 the federation *is* a cell that runs constitutional consensus,
 producing the attested-roots that anchor cross-history claims.
 Houyhnhnm has nothing here.
@@ -1003,16 +1003,16 @@ Houyhnhnm has nothing here.
 ### 6.8. Bridge / `present` / `discharge-gateway`
 
 Cross-federation interaction is a *non-trivial* design problem in
-pyana — burn-and-mint with proof-bridging, signed-attestation
+dregg — burn-and-mint with proof-bridging, signed-attestation
 discharge. Houyhnhnm doesn't acknowledge that two federations exist;
 it cannot offer guidance.
 
 ### 6.9. Multi-backend differential testing
 
-The pyana-dsl's 7-backend × differential-test infrastructure is
+The dregg-dsl's 7-backend × differential-test infrastructure is
 *more* Houyhnhnmoid than houyhnhnm itself; the philosophy advocates
 "polycentric implementation strategies" but never describes a
-working harness. Pyana has one.
+working harness. `dregg` has one.
 
 ### 6.10. The deletion of the slop-list
 
@@ -1020,26 +1020,26 @@ The decision to *delete* six slop apps that were producing the
 appearance of activity but the wrong shape of design is a
 particularly mature move. Houyhnhnm gives the rhetorical category
 ("Yahoo computing") but offers no methodology for recognizing and
-removing it in your own codebase. Pyana has done it.
+removing it in your own codebase. `dregg` has done it.
 
 ### 6.11. Honesty about the gap
 
 `EXECUTOR-HONESTY-AUDIT.md`, `BOUNDARIES.md`'s "nine
 inconsistencies", `NEW-WORLD.md`'s "What's not done (honest)"
-section. Houyhnhnm is utopian. Pyana is *humble*. The humility itself
+section. Houyhnhnm is utopian. `dregg` is *humble*. The humility itself
 is a feature.
 
 ---
 
 ## 7. Inspiration without adoption
 
-These are houyhnhnm patterns that should *inform* how pyana evolves,
+These are houyhnhnm patterns that should *inform* how dregg evolves,
 without becoming concrete features.
 
 ### 7.1. The Sacred Motto: "I object to doing things that computers
 can do."
 
-Pyana has unspoken adherents already — the canonical encoder
+`dregg` has unspoken adherents already — the canonical encoder
 discipline, the differential test harness, the deliberate refusal to
 do anything by hand that an encoder can do. Make it explicit. When a
 design choice forces a human to manually maintain an invariant
@@ -1052,21 +1052,21 @@ question
 Houyhnhnm Ch.6 starts every architectural discussion with "what does
 [the kernel / the application / the build system] *do*?", refuses to
 take the artifact-name as the unit, and then maps the actual
-interactions to its own paradigm. Pyana should use this as a default
+interactions to its own paradigm. `dregg` should use this as a default
 question. The `EFFECT-VM-SHAPE-A.md` and `BOUNDARIES.md` documents
 already operate this way; the categorical-analysis doc partially
 does. When in doubt: "what does this thing actually *do*?"
 
 ### 7.3. The polycentric-kernel posture
 
-Resist anything that wants to become "the core." Each pyana crate
+Resist anything that wants to become "the core." Each dregg crate
 should own its own boundary and contract. When a new abstraction is
 proposed that "everyone should depend on" — that's the Houyhnhnm
 warning bell. Keep it polycentric.
 
 ### 7.4. "Determinism by construction" as a code-review heuristic
 
-When reviewing a new piece of pyana code, ask "what are the sources
+When reviewing a new piece of dregg code, ask "what are the sources
 of non-determinism in this, and which are *recorded*?" The cclerk-v3
 fix was exactly this question applied to signing message
 construction. The houyhnhnm framing makes the question reusable.
@@ -1083,7 +1083,7 @@ cheap.
 
 ### 7.6. The blame-game framing for incident triage
 
-Sub-additive blame (Ch.11). When a future pyana incident gets
+Sub-additive blame (Ch.11). When a future dregg incident gets
 post-mortemed, the framing should *not* be "whose fault is it" but
 "which combinations of layers could have caught this, and what was
 each layer's degree of culpability." This is also how the threat
@@ -1091,16 +1091,16 @@ ledger should be read.
 
 ### 7.7. Low time-preference on the cryptographic substrate
 
-Ch.11. Pyana's Silver → Golden split is already low-time-preference.
+Ch.11. `dregg`'s Silver → Golden split is already low-time-preference.
 When new sub-decisions arise — "should we adopt cryptographic
 primitive X now or wait for primitive Y to mature?" — apply the
 Houyhnhnm test: *which choice optimizes for the arc of evolution
-over the lifetime of pyana, not the demo next quarter?* Most of
-pyana's hardest decisions have been made this way already. Keep it.
+over the lifetime of dregg, not the demo next quarter?* Most of
+dregg's hardest decisions have been made this way already. Keep it.
 
 ### 7.8. "The interaction is the unit, not the artifact"
 
-Repeated throughout. Pyana should resist artifact-thinking — "is the
+Repeated throughout. `dregg` should resist artifact-thinking — "is the
 proof done?", "is the verifier done?", "is the cclerk done?" — in
 favor of interaction-thinking — "can a user, holding only public
 information about a federation, verify a third party's claim about
@@ -1118,7 +1118,7 @@ availability isn't the requirement; *verifiability* is.
 ### 7.10. The deletion discipline
 
 Houyhnhnm describes a culture in which deletion is the developer's
-explicit, considered, expensive act, not a routine cleanup. Pyana's
+explicit, considered, expensive act, not a routine cleanup. `dregg`'s
 slop-app deletion was Houyhnhnmoid. Apply the same standard to
 internal abstractions: when something is no longer the right shape,
 delete it explicitly with a doc trail, rather than letting it
@@ -1181,7 +1181,7 @@ internal docs (or call both, with a houyhnhnm note)
 §3.1, §5.5. A naming hint that helps engineers see WitnessedReceipts
 as the *persistence layer*, not as an auxiliary log.
 
-### 8.9. Add a `pyana-receipts-archive` micro-crate stub
+### 8.9. Add a `dregg-receipts-archive` micro-crate stub
 
 Following GPT's recommendation about `ReceiptArchive`. Just the
 *type*: a `ReceiptArchive { covering_root: AttestedRoot, receipts:
@@ -1209,14 +1209,14 @@ note explaining the deletion discipline. (Optional; very small.)
 ## 9. Big questions left open
 
 These are questions that the houyhnhnm comparison has *raised* but
-not answered, and that pyana would have to take seriously in a real
+not answered, and that dregg would have to take seriously in a real
 design session.
 
 ### 9.1. Should the WitnessedReceipt chain be *the* persistence
 abstraction, or one of several?
 
 Houyhnhnm Ch.3 makes persistence pluggable — a domain can have its
-own persistence policy. Pyana implicitly assumes WitnessedReceipt is
+own persistence policy. `dregg` implicitly assumes WitnessedReceipt is
 the universal persistence abstraction. Is this right?
 
 Sub-questions: should observability traces be on the WitnessedReceipt
@@ -1225,14 +1225,14 @@ ingested-but-not-attested events be? Right now these live in
 different abstractions. A real design session would ask whether they
 *should*, or whether the conceptual unification has operational value.
 
-### 9.2. What is pyana's "domain" concept?
+### 9.2. What is dregg's "domain" concept?
 
 Houyhnhnm has *domains*: scoped contexts each with their own
-persistence / privacy / replication policy. Pyana has *federations*,
+persistence / privacy / replication policy. `dregg` has *federations*,
 *cells*, *capabilities* — all of which carry scope information but
 not in a unified vocabulary.
 
-If pyana invented a "domain" abstraction as the unit of "shared
+If dregg invented a "domain" abstraction as the unit of "shared
 policy for X, Y, Z," what would it contain? The federation it belongs
 to, the cell-set it covers, the privacy boundary it enforces, the
 persistence retention it asks for? This is a design session question.
@@ -1241,11 +1241,11 @@ persistence retention it asks for? This is a design session question.
 versions?
 
 The houyhnhnm framing presses on this: when VK_v1 → VK_v2, what is
-the relationship? Pyana currently says "different programs." The
+the relationship? `dregg` currently says "different programs." The
 houyhnhnm position would be "same program, different version, with
 an explicit upgrade function over state."
 
-Pyana cannot fully adopt this (see §4.5). But there's a middle: the
+`dregg` cannot fully adopt this (see §4.5). But there's a middle: the
 factory could carry a "lineage" of VKs, marking some as
 "compatible-state" (you can re-issue receipts under v2 for state
 created under v1) and others as "independent" (v2 is genuinely a new
@@ -1260,7 +1260,7 @@ the *monitor* — a simple but complete computing system that can
 inspect, fix, and restart the broken system, without the bad system
 being able to interfere.
 
-Pyana has nothing like this at the federation layer. If a federation
+`dregg` has nothing like this at the federation layer. If a federation
 ends up in a wedged state (e.g., the BLS threshold can't be reached
 because too many members are down), what is the recovery path? The
 houyhnhnm answer would be: a *meta-federation* that can attest "this
@@ -1273,10 +1273,10 @@ normal operation. The monitor is about the *abnormal* path.
 
 ### 9.5. What does "merging two cells' branches" mean operationally?
 
-Pyana's `peer_exchange` is the closest pyana primitive to houyhnhnm's
+`dregg`'s `peer_exchange` is the closest dregg primitive to houyhnhnm's
 "branching the system." Two sovereign cells run a private history;
 either can later reveal it. What's missing: *if both peers ran
-divergent histories*, how do they reconcile? Pyana currently assumes
+divergent histories*, how do they reconcile? `dregg` currently assumes
 each peer-exchange is bilateral and not in conflict with another.
 
 The houyhnhnm framing (Ch.3 "you can merge two branches back
@@ -1287,9 +1287,9 @@ kind of question worth recording.
 ### 9.6. Is the Effect VM AIR a Nock-shaped mistake?
 
 §4.15 worked this out: the AIR shape is fixed at proof-time and the
-real semantics escape into executor / verifier code. Pyana mitigates
+real semantics escape into executor / verifier code. `dregg` mitigates
 via the audit ledger and VK-versioning, but the *structural*
-question is open: should pyana invest in *narrower, composable* AIRs
+question is open: should dregg invest in *narrower, composable* AIRs
 (one per effect family) verified-and-aggregated via recursion,
 instead of one big ~151-column AIR?
 
@@ -1298,24 +1298,24 @@ both point toward this. A real design session would commit (or
 explicitly defer) the move to narrow per-family AIRs joined by
 recursion.
 
-### 9.7. What is pyana's stance on closed-source participation?
+### 9.7. What is dregg's stance on closed-source participation?
 
-Houyhnhnm forbids it. Pyana hasn't taken an explicit position.
+Houyhnhnm forbids it. `dregg` hasn't taken an explicit position.
 
-The pyana-cryptographic-substitute (§4.12) is: a black-box prover is
+The dregg-cryptographic-substitute (§4.12) is: a black-box prover is
 fine if it emits proofs verifiable under a *published* VK + a
 *canonical* encoder. But this requires the VK and the encoder to be
 known to all participants. If a vendor refuses to publish either, the
-proofs are useless. **Should pyana require VK + encoder publication
+proofs are useless. **Should dregg require VK + encoder publication
 as a precondition for federation participation?** I think yes. But
 the design hasn't said so.
 
-### 9.8. What is pyana's monitor / debugger?
+### 9.8. What is dregg's monitor / debugger?
 
 Houyhnhnm Ch.3 describes omniscient debugging as routine; you can
-replay any session, instrument any layer, narrow any bug. Pyana's
+replay any session, instrument any layer, narrow any bug. `dregg`'s
 WitnessedReceipt re-execution is the kernel of this, but there is no
-*tooling* on top. A real "pyana monitor" would let an operator
+*tooling* on top. A real "dregg monitor" would let an operator
 re-execute a turn under instrumentation, observe the trace,
 selectively reveal witness data. Studio is partially this; it isn't
 designed to be.
@@ -1324,7 +1324,7 @@ designed to be.
 standalone binary?
 
 Houyhnhnm Ch.7: applications are platform extensions, not
-standalones. `pyana-verifier` is currently a standalone CLI. Should
+standalones. `dregg-verifier` is currently a standalone CLI. Should
 it instead be a Studio module — extensible, composable with other
 modules, sharing the Studio inspector registry? This is a real
 question and we deferred it for Silver. It will come back.
@@ -1333,7 +1333,7 @@ question and we deferred it for Silver. It will come back.
 the wrong *level of abstraction*?
 
 `PROTOCOL-CATEGORICAL-ANALYSIS.md` is 2424 lines of "here is the
-structure pyana's protocol *should* have, expressed in categorical
+structure dregg's protocol *should* have, expressed in categorical
 language; here is everything missing." The user's GPT session
 advised treating this as inspiration rather than roadmap. The
 houyhnhnm comparison suggests this is the right call: the categorical
@@ -1343,7 +1343,7 @@ should the protocol support?" — the houyhnhnm question.
 
 A real design session would ask: should we re-do the categorical
 analysis from the *interactions* end? Start with "here are the
-interactions a pyana user needs to participate in," and let the
+interactions a dregg user needs to participate in," and let the
 categorical structure fall out, rather than starting with category
 theory and observing which interactions are missing? This is a
 significant reframing and worth real thought.
@@ -1353,39 +1353,39 @@ significant reframing and worth real thought.
 ## Closing
 
 The deepest take-away from this comparison is also the simplest: many
-of pyana's most distinctive design choices have *independent
+of dregg's most distinctive design choices have *independent
 philosophical support* from a 2015–2020 essay series that did not
 have crypto, distributed systems, or proof systems in mind. The
 WitnessedReceipt-as-persistence move; the polycentric-no-kernel
 structure; the capability-secure stance; the algebraic-rather-than-
 hardware sandbox; the source-as-canonical-form posture; the Sacred
-Motto of automating what computers can do — pyana arrived at each of
+Motto of automating what computers can do — dregg arrived at each of
 these from cryptographic / capability-secure / adversarial
 requirements, and houyhnhnm arrived at each of these from purely
 ergonomic / aesthetic ones. **The convergence is the validation.**
 
-The places where pyana is *richer* than houyhnhnm — adversarial
+The places where dregg is *richer* than houyhnhnm — adversarial
 execution, cryptographic identity, succinct verification, cross-cell
 algebra, federation BFT — are exactly the places houyhnhnm doesn't
-address. Pyana shouldn't apologize for these; they are *additions*,
+address. `dregg` shouldn't apologize for these; they are *additions*,
 not deformations, to a Houyhnhnmoid worldview.
 
-The places where pyana is *narrower* — schema upgrade, branching the
+The places where dregg is *narrower* — schema upgrade, branching the
 system, retirement primitives, monitor / recovery for stuck
 federations — are real gaps, and they are the same gaps GPT
 flagged. Houyhnhnm sharpens *some* of the language for them
 (persistence-as-policy, branching, monitor) but does not — and
-cannot, given its single-machine setting — give pyana the operational
+cannot, given its single-machine setting — give dregg the operational
 shape of the fix. Those remain real design work.
 
 The Urbit critique in Ch.10 is the most operationally pointed piece
-of advice the document gives pyana: *don't defend the Effect VM AIR's
+of advice the document gives dregg: *don't defend the Effect VM AIR's
 stability as a feature; treat its impedance mismatch as a managed
 cost, and use VK-versioning to ship new AIRs when the mismatch grows
 too large.*
 
 The smallest concrete suggestion is §8.10's `DESIGN-houyhnhnm-notes.md`
-glossary — a vocabulary that lets the next pyana contributor see
-*what philosophical position* a given pyana design choice instantiates.
+glossary — a vocabulary that lets the next dregg contributor see
+*what philosophical position* a given dregg design choice instantiates.
 A change of perspective is worth 80 IQ points; houyhnhnm offers
-several perspective shifts pyana can adopt for free.
+several perspective shifts dregg can adopt for free.

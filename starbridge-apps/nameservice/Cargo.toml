@@ -5,16 +5,16 @@ edition = "2024"
 description = "Starbridge userspace nameservice — FactoryDescriptors and turn helpers for federation name registration, resolution, and delegation."
 
 # Greenfield rebuild of `apps/nameservice/` following STARBRIDGE-APPS-PLAN.md
-# §3.1. Composes pyana primitives (FactoryDescriptor + Effect::SetField +
+# §3.1. Composes dregg primitives (FactoryDescriptor + Effect::SetField +
 # Effect::EmitEvent + Caveat::ResourcePrefix) instead of inventing a
 # domain-specific `Effect::RegisterName`. See `src/lib.rs` for the
 # in-source design notes and the WriteOnce / slot-caveat TODO.
 
 [dependencies]
-pyana-app-framework = { path = "../../app-framework" }
-pyana-cell = { path = "../../cell", default-features = false }
-pyana-turn = { path = "../../turn" }
-pyana-types = { path = "../../types" }
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-turn = { path = "../../turn" }
+dregg-types = { path = "../../types" }
 
 blake3 = "1"
 serde = { workspace = true }

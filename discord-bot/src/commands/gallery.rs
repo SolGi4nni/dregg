@@ -71,7 +71,7 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &BotSta
         Ok(artworks) => {
             if artworks.is_empty() {
                 let embed =
-                    embeds::pyana_embed("Gallery").description("No artworks on devnet yet.");
+                    embeds::dregg_embed("Gallery").description("No artworks on devnet yet.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                     .await;
@@ -86,7 +86,7 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 ));
             }
 
-            let embed = embeds::pyana_embed("Gallery")
+            let embed = embeds::dregg_embed("Gallery")
                 .description(description)
                 .field("Total", artworks.len().to_string(), true);
             let _ = command
@@ -111,7 +111,7 @@ async fn handle_auctions(ctx: &Context, command: &CommandInteraction, state: &Bo
     match state.devnet.list_auctions().await {
         Ok(auctions) => {
             if auctions.is_empty() {
-                let embed = embeds::pyana_embed("Active Auctions")
+                let embed = embeds::dregg_embed("Active Auctions")
                     .description("No active auctions right now.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -132,7 +132,7 @@ async fn handle_auctions(ctx: &Context, command: &CommandInteraction, state: &Bo
                 ));
             }
 
-            let embed = embeds::pyana_embed("Active Auctions")
+            let embed = embeds::dregg_embed("Active Auctions")
                 .description(description)
                 .field("Total", auctions.len().to_string(), true);
             let _ = command
@@ -258,7 +258,7 @@ async fn handle_mybids(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(bids) => {
             if bids.is_empty() {
                 let embed =
-                    embeds::pyana_embed("Your Bids").description("You have no active bids.");
+                    embeds::dregg_embed("Your Bids").description("You have no active bids.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                     .await;
@@ -273,7 +273,7 @@ async fn handle_mybids(ctx: &Context, command: &CommandInteraction, state: &BotS
                 ));
             }
 
-            let embed = embeds::pyana_embed("Your Bids")
+            let embed = embeds::dregg_embed("Your Bids")
                 .description(description)
                 .field("Active", bids.len().to_string(), true);
             let _ = command

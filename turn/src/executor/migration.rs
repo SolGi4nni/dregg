@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 /// State of a cell migration operation (two-phase commit protocol).

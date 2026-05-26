@@ -22,7 +22,7 @@
 //! crosses an epoch boundary, the minter issues computrons to the treasury cell.
 //! The minter is stateless between restarts (derives state from `current_height` alone).
 
-use pyana_cell::{CellId, Ledger};
+use dregg_cell::{CellId, Ledger};
 use serde::{Deserialize, Serialize};
 
 // ─── Minting Policy ───────────────────────────────────────────────────────────
@@ -290,7 +290,7 @@ impl EpochMinter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_cell::CellId;
+    use dregg_cell::CellId;
 
     fn test_treasury_cell() -> CellId {
         CellId::derive_raw(&[0xAA; 32], &[0xBB; 32])
@@ -361,7 +361,7 @@ mod tests {
         let treasury_id = test_treasury_cell();
         let mut ledger = Ledger::new();
         // Create treasury cell with initial balance
-        let treasury = pyana_cell::Cell::with_balance([0xAA; 32], [0xBB; 32], 1000);
+        let treasury = dregg_cell::Cell::with_balance([0xAA; 32], [0xBB; 32], 1000);
         ledger.insert_cell(treasury).unwrap();
 
         let mut minter = EpochMinter::with_treasury(treasury_id);
@@ -409,7 +409,7 @@ mod tests {
     fn minter_max_supply_stops_minting() {
         let treasury_id = test_treasury_cell();
         let mut ledger = Ledger::new();
-        let treasury = pyana_cell::Cell::with_balance([0xAA; 32], [0xBB; 32], 0);
+        let treasury = dregg_cell::Cell::with_balance([0xAA; 32], [0xBB; 32], 0);
         ledger.insert_cell(treasury).unwrap();
 
         let mut minter = EpochMinter::new(MintingPolicy::custom(

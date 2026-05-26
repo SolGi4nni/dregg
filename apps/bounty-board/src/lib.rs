@@ -1,4 +1,4 @@
-//! Federated bounty board: a privacy-preserving work marketplace built on pyana.
+//! Federated bounty board: a privacy-preserving work marketplace built on dregg.
 //!
 //! # Architecture
 //!
@@ -23,10 +23,10 @@ pub mod qualification;
 pub mod server;
 pub mod state;
 
-use pyana_app_framework::CellId;
-use pyana_app_framework::PredicateType;
-use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
-use pyana_turn::TurnReceipt;
+use dregg_app_framework::CellId;
+use dregg_app_framework::PredicateType;
+use dregg_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
+use dregg_turn::TurnReceipt;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -234,7 +234,7 @@ pub fn compute_bounty_id(
     reward_amount: u64,
     created_at: u64,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bounty-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-bounty-id-v1");
     hasher.update(issuer_cell.as_bytes());
     hasher.update(title.as_bytes());
     hasher.update(&reward_amount.to_le_bytes());
@@ -248,7 +248,7 @@ pub fn compute_bounty_id(
 /// unlinkable commitment. The same worker claiming different bounties
 /// produces different commitments (different randomness each time).
 pub fn compute_worker_commitment(worker_key: &[u8; 32], randomness: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-worker-commitment-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-worker-commitment-v1");
     hasher.update(worker_key);
     hasher.update(randomness);
     *hasher.finalize().as_bytes()
@@ -369,7 +369,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // Build commitment.
-        use pyana_storage::blinded::crypto;
+        use dregg_storage::blinded::crypto;
         let item_data = b"claim-slot-1";
         let randomness = [0x42u8; 32];
         let commitment = crypto::create_commitment(item_data, &randomness);
@@ -434,7 +434,7 @@ mod tests {
         let base = start_test_server().await;
         let client = reqwest::Client::new();
 
-        use pyana_storage::blinded::crypto;
+        use dregg_storage::blinded::crypto;
 
         // Commit two items.
         for i in 0u8..2 {

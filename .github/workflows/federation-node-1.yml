@@ -14,8 +14,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   NODE_ID: "1"
-  STATE_DIR: /tmp/pyana-state
-  GATEWAY_PEER: "pyana.commonquant.com:9420"
+  STATE_DIR: /tmp/dregg-state
+  GATEWAY_PEER: "dregg.commonquant.com:9420"
 
 permissions:
   contents: write
@@ -62,13 +62,13 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build pyana-node
-        run: cargo build --release -p pyana-node
+      - name: Build dregg-node
+        run: cargo build --release -p dregg-node
 
       - name: Load node identity
         run: |
           mkdir -p "$STATE_DIR"
-          echo -n "${{ secrets.PYANA_NODE_1_KEY }}" | xxd -r -p > "$STATE_DIR/node.key"
+          echo -n "${{ secrets.DREGG_NODE_1_KEY }}" | xxd -r -p > "$STATE_DIR/node.key"
           echo "Node 1 identity loaded"
 
       - name: Resolve peers
@@ -83,12 +83,12 @@ jobs:
 
       - name: Run federation node
         env:
-          PYANA_ROOT_KEY: ${{ secrets.PYANA_ROOT_KEY }}
-          PYANA_NODE_KEY: ${{ secrets.PYANA_NODE_1_KEY }}
+          DREGG_ROOT_KEY: ${{ secrets.DREGG_ROOT_KEY }}
+          DREGG_NODE_KEY: ${{ secrets.DREGG_NODE_1_KEY }}
           RUST_LOG: info
         run: |
           # Start the node in background
-          ./target/release/pyana-node run \
+          ./target/release/dregg-node run \
             --data-dir "$STATE_DIR" \
             --port 8420 \
             --federation-peers "$GATEWAY_PEER,${{ steps.peers.outputs.peer_list }}" &
@@ -141,8 +141,8 @@ jobs:
           cp "$STATE_DIR/state.json" nodes/node-1.json 2>/dev/null || echo '{}' > nodes/node-1.json
           git add nodes/node-1.json
           git diff --cached --quiet || {
-            git config user.name "pyana-federation[bot]"
-            git config user.email "federation@pyana.dev"
+            git config user.name "dregg-federation[bot]"
+            git config user.email "federation@dregg.dev"
             git commit -m "node-1 state update [skip ci]"
             git push origin federation-state
           }

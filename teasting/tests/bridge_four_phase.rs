@@ -39,13 +39,13 @@
 //! 12. `bridge_action_air_wrong_destination_federation_rejected` — full
 //!     32-byte destination federation binding.
 
-use pyana_cell::note::{NoteCommitment, Nullifier};
-use pyana_cell::note_bridge::{
+use dregg_cell::note::{NoteCommitment, Nullifier};
+use dregg_cell::note_bridge::{
     BridgeError, BridgePhase, BridgePhaseError, BridgePhaseLog, BridgeReceiptEnvelope,
     BridgedNullifierSet, PendingBridgeSet, compute_bridge_id, create_portable_note,
     initiate_bridge, verify_portable_note,
 };
-use pyana_types::{AttestedRoot, FederationId};
+use dregg_types::{AttestedRoot, FederationId};
 
 const FED_A: [u8; 32] = [0xAA; 32];
 const FED_B: [u8; 32] = [0xBB; 32];
@@ -515,7 +515,7 @@ fn double_mint_rejected() {
 // =============================================================================
 // Full-fidelity bridge-action AIR tests
 //
-// These tests exercise `pyana_circuit::bridge_action_air`, the sibling AIR
+// These tests exercise `dregg_circuit::bridge_action_air`, the sibling AIR
 // that binds the bridge action's parameters at full byte/bit fidelity:
 //   - nullifier: 8 BabyBear limbs (~248 bits)
 //   - recipient (destination_commitment): 8 BabyBear limbs (~248 bits)
@@ -528,7 +528,7 @@ fn double_mint_rejected() {
 //     lived in executor comments, not the circuit)
 // =============================================================================
 
-use pyana_circuit::bridge_action_air::{
+use dregg_circuit::bridge_action_air::{
     BridgeActionWitness, prove_bridge_action, verify_bridge_action,
 };
 

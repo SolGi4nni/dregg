@@ -1,28 +1,28 @@
-//! Midnight bridge: cross-chain value transfer between pyana and Midnight Network.
+//! Midnight bridge: cross-chain value transfer between dregg and Midnight Network.
 //!
 //! # Architecture
 //!
 //! The bridge uses an **observation pattern** (same as Midnight's own Cardano bridge):
-//! - **Pyana → Midnight**: A note is burned on pyana, the pyana federation produces a
+//! - **Dregg → Midnight**: A note is burned on dregg, the dregg federation produces a
 //!   threshold attestation, and the Midnight contract verifies it to unlock/mint.
-//! - **Midnight → Pyana**: Tokens are locked in a Midnight contract (emitting an event),
-//!   the pyana observer detects the event, and the federation mints a note.
+//! - **Midnight → Dregg**: Tokens are locked in a Midnight contract (emitting an event),
+//!   the dregg observer detects the event, and the federation mints a note.
 //!
 //! # Trust Model
 //!
-//! - **Midnight → Pyana direction**: Relies on the pyana federation's observation of
+//! - **Midnight → Dregg direction**: Relies on the dregg federation's observation of
 //!   *finalized* Midnight blocks. Only events from blocks past Substrate finality
 //!   (GRANDPA) are accepted. This mirrors Midnight's own `c2m-bridge` pallet.
-//! - **Pyana → Midnight direction**: Relies on a 2-of-3 (configurable) threshold
-//!   signature from the pyana federation. The Midnight contract verifies this
+//! - **Dregg → Midnight direction**: Relies on a 2-of-3 (configurable) threshold
+//!   signature from the dregg federation. The Midnight contract verifies this
 //!   attestation before releasing funds.
 //!
 //! # Security Properties
 //!
 //! 1. **No double-mint**: Each Midnight lock event is tracked by tx_hash + log_index.
-//!    The pyana observer deduplicates before submitting to consensus.
-//! 2. **No double-unlock**: Each pyana nullifier is recorded in the Midnight contract's
-//!    storage. The `unlockFromPyana` function rejects replayed nonces.
+//!    The dregg observer deduplicates before submitting to consensus.
+//! 2. **No double-unlock**: Each dregg nullifier is recorded in the Midnight contract's
+//!    storage. The `unlockFromDregg` function rejects replayed nonces.
 //! 3. **Finality**: Only finalized Midnight blocks are observed (no reorgs).
 //! 4. **Liveness**: If the observer goes down, events accumulate and are replayed on
 //!    restart (idempotent via deduplication).
@@ -33,9 +33,9 @@ use serde::{Deserialize, Serialize};
 // Federation Attestation (shared between both directions)
 // ============================================================================
 
-/// A threshold attestation from the pyana federation.
+/// A threshold attestation from the dregg federation.
 ///
-/// The pyana federation produces this when a note is burned and bound for Midnight.
+/// The dregg federation produces this when a note is burned and bound for Midnight.
 /// The Midnight contract verifies this before releasing funds.
 ///
 /// # Threshold Signature Scheme
@@ -60,9 +60,9 @@ pub struct FederationAttestation {
 impl FederationAttestation {
     /// Compute the domain-separated message hash for attestation signing.
     ///
-    /// The message is: BLAKE3_derive_key("pyana-midnight-bridge-v1", payload).
+    /// The message is: BLAKE3_derive_key("dregg-midnight-bridge-v1", payload).
     pub fn compute_message_hash(payload: &[u8]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-midnight-bridge-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-midnight-bridge-v1");
         hasher.update(payload);
         *hasher.finalize().as_bytes()
     }
@@ -127,19 +127,19 @@ impl FederationAttestation {
 }
 
 // ============================================================================
-// Pyana → Midnight message
+// Dregg → Midnight message
 // ============================================================================
 
-/// A bridge message from pyana to Midnight (attested by pyana federation).
+/// A bridge message from dregg to Midnight (attested by dregg federation).
 ///
 /// Flow:
-/// 1. User burns a note on pyana (nullifier published, destination = "midnight").
+/// 1. User burns a note on dregg (nullifier published, destination = "midnight").
 /// 2. Federation observes the burn and produces a threshold attestation.
 /// 3. User (or relayer) submits this message to the Midnight bridge contract.
 /// 4. Contract verifies attestation, checks nonce, and mints tDUST/NIGHT for recipient.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PyanaToMidnightMessage {
-    /// The pyana note nullifier (proves the note was spent on pyana side).
+pub struct DreggToMidnightMessage {
+    /// The dregg note nullifier (proves the note was spent on dregg side).
     pub nullifier: [u8; 32],
     /// Amount in atomic units (STARS on Midnight, 10^6 STARS = 1 NIGHT).
     pub amount: u64,
@@ -152,7 +152,7 @@ pub struct PyanaToMidnightMessage {
     pub nonce: u64,
 }
 
-impl PyanaToMidnightMessage {
+impl DreggToMidnightMessage {
     /// Compute the canonical encoding used for attestation signing.
     ///
     /// The canonical form is: nullifier || amount_le || recipient || nonce_le
@@ -175,32 +175,32 @@ impl PyanaToMidnightMessage {
 }
 
 // ============================================================================
-// Midnight → Pyana message
+// Midnight → Dregg message
 // ============================================================================
 
-/// A bridge message from Midnight to pyana (observed from finalized Midnight blocks).
+/// A bridge message from Midnight to dregg (observed from finalized Midnight blocks).
 ///
 /// Flow:
-/// 1. User calls `lockForPyana` on the Midnight bridge contract.
+/// 1. User calls `lockForDregg` on the Midnight bridge contract.
 /// 2. Contract locks tokens and emits a `BridgeLock` event.
-/// 3. The pyana observation node detects the event in a finalized block.
-/// 4. Observer constructs this message and submits it to pyana federation consensus.
+/// 3. The dregg observation node detects the event in a finalized block.
+/// 4. Observer constructs this message and submits it to dregg federation consensus.
 /// 5. Federation verifies the block/event proof and mints a note for the recipient.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MidnightToPyanaMessage {
+pub struct MidnightToDreggMessage {
     /// Midnight transaction hash containing the lock event.
     pub midnight_tx_hash: [u8; 32],
     /// Amount locked on Midnight (in STARS, atomic units).
     pub amount: u64,
-    /// Recipient's pyana cell ID (the note will be minted to this identity).
-    pub pyana_recipient: [u8; 32],
+    /// Recipient's dregg cell ID (the note will be minted to this identity).
+    pub dregg_recipient: [u8; 32],
     /// Block height on Midnight where this event was finalized.
     pub midnight_height: u64,
     /// Log index within the transaction (for deduplication when multiple events in one tx).
     pub log_index: u32,
 }
 
-impl MidnightToPyanaMessage {
+impl MidnightToDreggMessage {
     /// Unique identifier for deduplication: (tx_hash, log_index).
     pub fn dedup_key(&self) -> ([u8; 32], u32) {
         (self.midnight_tx_hash, self.log_index)
@@ -211,7 +211,7 @@ impl MidnightToPyanaMessage {
         let mut payload = Vec::with_capacity(32 + 8 + 32 + 8 + 4);
         payload.extend_from_slice(&self.midnight_tx_hash);
         payload.extend_from_slice(&self.amount.to_le_bytes());
-        payload.extend_from_slice(&self.pyana_recipient);
+        payload.extend_from_slice(&self.dregg_recipient);
         payload.extend_from_slice(&self.midnight_height.to_le_bytes());
         payload.extend_from_slice(&self.log_index.to_le_bytes());
         payload
@@ -225,22 +225,22 @@ impl MidnightToPyanaMessage {
 /// Events emitted by the Midnight bridge contract that the observer watches for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MidnightBridgeEvent {
-    /// Tokens locked on Midnight, destined for pyana.
+    /// Tokens locked on Midnight, destined for dregg.
     Lock {
         /// Amount locked (STARS).
         amount: u64,
-        /// Target pyana cell ID.
-        pyana_recipient: [u8; 32],
+        /// Target dregg cell ID.
+        dregg_recipient: [u8; 32],
         /// Nonce (set by the caller for correlation).
         nonce: u64,
     },
-    /// Tokens unlocked on Midnight (from a pyana → Midnight transfer completing).
+    /// Tokens unlocked on Midnight (from a dregg → Midnight transfer completing).
     Unlock {
         /// Amount unlocked.
         amount: u64,
         /// Midnight recipient public key.
         midnight_recipient: Vec<u8>,
-        /// The pyana nullifier that authorized this unlock.
+        /// The dregg nullifier that authorized this unlock.
         nullifier: [u8; 32],
     },
 }
@@ -339,13 +339,13 @@ impl ObserverState {
 }
 
 // ============================================================================
-// Nonce Tracking (for pyana → Midnight direction)
+// Nonce Tracking (for dregg → Midnight direction)
 // ============================================================================
 
 /// Tracks used nonces per epoch to prevent replay on the Midnight side.
 ///
 /// This would be stored in the Midnight contract's state. We define it here
-/// so the pyana side can pre-check before submitting.
+/// so the dregg side can pre-check before submitting.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NonceTracker {
     /// Used nonces indexed by epoch.
@@ -463,7 +463,7 @@ impl std::error::Error for MidnightBridgeError {}
 // Validation functions
 // ============================================================================
 
-/// Validate a pyana → Midnight message before submission to the Midnight contract.
+/// Validate a dregg → Midnight message before submission to the Midnight contract.
 ///
 /// Checks:
 /// 1. Message is self-consistent (attestation hash matches payload).
@@ -471,8 +471,8 @@ impl std::error::Error for MidnightBridgeError {}
 /// 3. Amount is within bridge limits.
 /// 4. Nonce has not been used.
 /// 5. Recipient key is well-formed (32 bytes for JubJub point).
-pub fn validate_pyana_to_midnight(
-    msg: &PyanaToMidnightMessage,
+pub fn validate_dregg_to_midnight(
+    msg: &DreggToMidnightMessage,
     config: &MidnightBridgeConfig,
     nonce_tracker: &NonceTracker,
 ) -> Result<(), MidnightBridgeError> {
@@ -528,15 +528,15 @@ pub fn validate_pyana_to_midnight(
     Ok(())
 }
 
-/// Validate a Midnight → pyana message before minting a note.
+/// Validate a Midnight → dregg message before minting a note.
 ///
 /// Checks:
 /// 1. The event has not been previously processed (dedup).
 /// 2. The block height is at or below the last finalized height.
 /// 3. Amount is within limits.
 /// 4. Recipient cell ID is non-zero.
-pub fn validate_midnight_to_pyana(
-    msg: &MidnightToPyanaMessage,
+pub fn validate_midnight_to_dregg(
+    msg: &MidnightToDreggMessage,
     config: &MidnightBridgeConfig,
     state: &ObserverState,
     finalized_height: u64,
@@ -569,9 +569,9 @@ pub fn validate_midnight_to_pyana(
     }
 
     // 4. Non-zero recipient.
-    if msg.pyana_recipient == [0u8; 32] {
+    if msg.dregg_recipient == [0u8; 32] {
         return Err(MidnightBridgeError::InvalidRecipient {
-            reason: "pyana recipient cell ID is all zeros".to_string(),
+            reason: "dregg recipient cell ID is all zeros".to_string(),
         });
     }
 
@@ -607,7 +607,7 @@ mod tests {
         ed25519_dalek::SigningKey::from_bytes(&[0x42u8; 32])
     }
 
-    fn make_valid_pyana_to_midnight() -> PyanaToMidnightMessage {
+    fn make_valid_dregg_to_midnight() -> DreggToMidnightMessage {
         let sk = test_signing_key();
         let nullifier = [0xAA; 32];
         let amount = 5_000_000u64; // 5 NIGHT
@@ -623,7 +623,7 @@ mod tests {
 
         let attestation = FederationAttestation::create(&payload, &sk, 0);
 
-        PyanaToMidnightMessage {
+        DreggToMidnightMessage {
             nullifier,
             amount,
             midnight_recipient: recipient,
@@ -652,13 +652,13 @@ mod tests {
         let hash2 = FederationAttestation::compute_message_hash(b"hello midnight");
         assert_eq!(hash1, hash2);
 
-        let hash3 = FederationAttestation::compute_message_hash(b"hello pyana");
+        let hash3 = FederationAttestation::compute_message_hash(b"hello dregg");
         assert_ne!(hash1, hash3);
     }
 
     #[test]
-    fn test_pyana_to_midnight_self_consistency() {
-        let msg = make_valid_pyana_to_midnight();
+    fn test_dregg_to_midnight_self_consistency() {
+        let msg = make_valid_dregg_to_midnight();
         assert!(msg.is_self_consistent());
 
         // Tamper with amount → inconsistent.
@@ -668,19 +668,19 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_success() {
-        let msg = make_valid_pyana_to_midnight();
+    fn test_validate_dregg_to_midnight_success() {
+        let msg = make_valid_dregg_to_midnight();
         let config = test_config();
         let nonce_tracker = NonceTracker::new();
 
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(result.is_ok(), "validation should pass: {result:?}");
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_below_minimum() {
+    fn test_validate_dregg_to_midnight_below_minimum() {
         let sk = test_signing_key();
-        let mut msg = make_valid_pyana_to_midnight();
+        let mut msg = make_valid_dregg_to_midnight();
         msg.amount = 100; // Below min of 1_000_000.
         // Rebuild attestation with new amount.
         let payload = msg.canonical_payload();
@@ -689,7 +689,7 @@ mod tests {
         let config = test_config();
         let nonce_tracker = NonceTracker::new();
 
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::BelowMinimum { .. })
@@ -697,17 +697,17 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_nonce_replay() {
-        let msg = make_valid_pyana_to_midnight();
+    fn test_validate_dregg_to_midnight_nonce_replay() {
+        let msg = make_valid_dregg_to_midnight();
         let config = test_config();
         let mut nonce_tracker = NonceTracker::new();
 
         // First use succeeds.
-        assert!(validate_pyana_to_midnight(&msg, &config, &nonce_tracker).is_ok());
+        assert!(validate_dregg_to_midnight(&msg, &config, &nonce_tracker).is_ok());
         nonce_tracker.record(msg.attestation.epoch, msg.nonce);
 
         // Second use (replay) fails.
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::NonceReplay { .. })
@@ -715,15 +715,15 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_bad_attestation() {
-        let mut msg = make_valid_pyana_to_midnight();
+    fn test_validate_dregg_to_midnight_bad_attestation() {
+        let mut msg = make_valid_dregg_to_midnight();
         // Corrupt the signature.
         msg.attestation.signature[0] ^= 0xFF;
 
         let config = test_config();
         let nonce_tracker = NonceTracker::new();
 
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::InvalidAttestation { .. })
@@ -731,9 +731,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_wrong_epoch() {
+    fn test_validate_dregg_to_midnight_wrong_epoch() {
         let sk = test_signing_key();
-        let mut msg = make_valid_pyana_to_midnight();
+        let mut msg = make_valid_dregg_to_midnight();
         // Rebuild with epoch 99 (not in config).
         let payload = msg.canonical_payload();
         msg.attestation = FederationAttestation::create(&payload, &sk, 99);
@@ -741,7 +741,7 @@ mod tests {
         let config = test_config();
         let nonce_tracker = NonceTracker::new();
 
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::UnknownEpochKey { epoch: 99 })
@@ -749,9 +749,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pyana_to_midnight_bad_recipient_length() {
+    fn test_validate_dregg_to_midnight_bad_recipient_length() {
         let sk = test_signing_key();
-        let mut msg = make_valid_pyana_to_midnight();
+        let mut msg = make_valid_dregg_to_midnight();
         msg.midnight_recipient = vec![0xBB; 20]; // Wrong length.
         // Rebuild attestation.
         let payload = msg.canonical_payload();
@@ -760,7 +760,7 @@ mod tests {
         let config = test_config();
         let nonce_tracker = NonceTracker::new();
 
-        let result = validate_pyana_to_midnight(&msg, &config, &nonce_tracker);
+        let result = validate_dregg_to_midnight(&msg, &config, &nonce_tracker);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::InvalidRecipient { .. })
@@ -768,11 +768,11 @@ mod tests {
     }
 
     #[test]
-    fn test_midnight_to_pyana_message_dedup() {
-        let msg = MidnightToPyanaMessage {
+    fn test_midnight_to_dregg_message_dedup() {
+        let msg = MidnightToDreggMessage {
             midnight_tx_hash: [0x11; 32],
             amount: 5_000_000,
-            pyana_recipient: [0x22; 32],
+            dregg_recipient: [0x22; 32],
             midnight_height: 100,
             log_index: 0,
         };
@@ -781,12 +781,12 @@ mod tests {
         let mut state = ObserverState::default();
 
         // First processing.
-        let result = validate_midnight_to_pyana(&msg, &config, &state, 200);
+        let result = validate_midnight_to_dregg(&msg, &config, &state, 200);
         assert!(result.is_ok());
         state.mark_processed(msg.midnight_tx_hash, msg.log_index);
 
         // Second processing (replay).
-        let result = validate_midnight_to_pyana(&msg, &config, &state, 200);
+        let result = validate_midnight_to_dregg(&msg, &config, &state, 200);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::AlreadyProcessed { .. })
@@ -794,11 +794,11 @@ mod tests {
     }
 
     #[test]
-    fn test_midnight_to_pyana_not_finalized() {
-        let msg = MidnightToPyanaMessage {
+    fn test_midnight_to_dregg_not_finalized() {
+        let msg = MidnightToDreggMessage {
             midnight_tx_hash: [0x33; 32],
             amount: 5_000_000,
-            pyana_recipient: [0x44; 32],
+            dregg_recipient: [0x44; 32],
             midnight_height: 500, // Higher than finalized.
             log_index: 0,
         };
@@ -806,7 +806,7 @@ mod tests {
         let config = test_config();
         let state = ObserverState::default();
 
-        let result = validate_midnight_to_pyana(&msg, &config, &state, 400);
+        let result = validate_midnight_to_dregg(&msg, &config, &state, 400);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::NotFinalized { height: 500 })
@@ -814,11 +814,11 @@ mod tests {
     }
 
     #[test]
-    fn test_midnight_to_pyana_zero_recipient() {
-        let msg = MidnightToPyanaMessage {
+    fn test_midnight_to_dregg_zero_recipient() {
+        let msg = MidnightToDreggMessage {
             midnight_tx_hash: [0x55; 32],
             amount: 5_000_000,
-            pyana_recipient: [0x00; 32], // All zeros.
+            dregg_recipient: [0x00; 32], // All zeros.
             midnight_height: 100,
             log_index: 0,
         };
@@ -826,7 +826,7 @@ mod tests {
         let config = test_config();
         let state = ObserverState::default();
 
-        let result = validate_midnight_to_pyana(&msg, &config, &state, 200);
+        let result = validate_midnight_to_dregg(&msg, &config, &state, 200);
         assert!(matches!(
             result,
             Err(MidnightBridgeError::InvalidRecipient { .. })
@@ -865,23 +865,23 @@ mod tests {
 
     #[test]
     fn test_serialization_roundtrip() {
-        let msg = make_valid_pyana_to_midnight();
+        let msg = make_valid_dregg_to_midnight();
         let bytes = postcard::to_stdvec(&msg).unwrap();
-        let decoded: PyanaToMidnightMessage = postcard::from_bytes(&bytes).unwrap();
+        let decoded: DreggToMidnightMessage = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn test_midnight_to_pyana_serialization() {
-        let msg = MidnightToPyanaMessage {
+    fn test_midnight_to_dregg_serialization() {
+        let msg = MidnightToDreggMessage {
             midnight_tx_hash: [0xAA; 32],
             amount: 1_000_000,
-            pyana_recipient: [0xBB; 32],
+            dregg_recipient: [0xBB; 32],
             midnight_height: 999,
             log_index: 2,
         };
         let bytes = postcard::to_stdvec(&msg).unwrap();
-        let decoded: MidnightToPyanaMessage = postcard::from_bytes(&bytes).unwrap();
+        let decoded: MidnightToDreggMessage = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(msg, decoded);
     }
 }

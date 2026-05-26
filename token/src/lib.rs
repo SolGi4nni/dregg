@@ -1,4 +1,4 @@
-//! Pyana Authorization Token Library
+//! Dregg Authorization Token Library
 //!
 //! Unified abstraction over two token formats:
 //!
@@ -16,15 +16,15 @@
 //! # Token Format Detection
 //!
 //! Tokens are self-describing via prefix:
-//! - `em2_` — Macaroon (Pyana Macaroon v2)
-//! - `eb2_` — Biscuit (Pyana Biscuit v2)
+//! - `em2_` — Macaroon (Dregg Macaroon v2)
+//! - `eb2_` — Biscuit (Dregg Biscuit v2)
 //!
 //! Use [`TokenFormat::detect`] to auto-detect from an encoded string.
 
 pub mod action_set;
 pub mod error;
 pub mod format;
-pub mod pyana;
+pub mod dregg;
 #[cfg(feature = "rand-deps")]
 pub mod revocation;
 pub mod traits;
@@ -33,7 +33,7 @@ pub mod traits;
 pub mod biscuit_backend;
 
 #[cfg(feature = "macaroon")]
-pub mod pyana_caveats;
+pub mod dregg_caveats;
 
 #[cfg(all(feature = "macaroon", feature = "rand-deps"))]
 pub mod macaroon_backend;
@@ -71,7 +71,7 @@ pub use macaroon_backend::MacaroonToken;
 pub use biscuit_auth;
 
 #[cfg(feature = "macaroon")]
-pub use pyana_macaroon;
+pub use dregg_macaroon;
 
 /// Decode a token from its prefixed string representation.
 ///

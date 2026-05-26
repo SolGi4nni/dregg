@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::{CellId, Ledger};
+use dregg_cell::{CellId, Ledger};
 
 use crate::action::Effect;
 use crate::eventual::{EventualRef, Pipeline, PipelineError, PipelineResult, TurnOutput};
@@ -451,7 +451,7 @@ fn extract_tree_outputs(
                 token_id,
                 ..
             } => {
-                let cell_id = pyana_cell::CellId::derive_raw(public_key, token_id);
+                let cell_id = dregg_cell::CellId::derive_raw(public_key, token_id);
                 outputs.push(TurnOutput::CreatedCell { cell: cell_id });
             }
             crate::action::Effect::GrantCapability { to, .. } => {
@@ -479,7 +479,7 @@ fn extract_tree_outputs(
                 child_token_id,
                 ..
             } => {
-                let cell_id = pyana_cell::CellId::derive_raw(child_public_key, child_token_id);
+                let cell_id = dregg_cell::CellId::derive_raw(child_public_key, child_token_id);
                 outputs.push(TurnOutput::CreatedCell { cell: cell_id });
             }
             _ => {}

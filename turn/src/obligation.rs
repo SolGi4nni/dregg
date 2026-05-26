@@ -19,7 +19,7 @@
 
 use std::collections::HashSet;
 
-use pyana_cell::{CellId, NoteCommitment};
+use dregg_cell::{CellId, NoteCommitment};
 use serde::{Deserialize, Serialize};
 
 use crate::conditional::{
@@ -159,7 +159,7 @@ pub struct ProofObligation {
 impl ProofObligation {
     /// Compute a unique hash identifying this obligation.
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-obligation-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-obligation-v1");
         hasher.update(&self.id);
         hasher.update(self.obligor.as_bytes());
         hasher.update(self.beneficiary.as_bytes());
@@ -199,7 +199,7 @@ pub fn create_obligation(
     stake: NoteCommitment,
 ) -> ProofObligation {
     // Derive a deterministic obligation ID from its parameters.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-obligation-id-v1");
     hasher.update(obligor.as_bytes());
     hasher.update(beneficiary.as_bytes());
     hasher.update(&deadline_height.to_le_bytes());
@@ -479,10 +479,10 @@ mod tests {
 
     #[test]
     fn test_obligation_with_remote_proof_condition() {
-        use pyana_circuit::BabyBear;
-        use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
-        use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-        use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark::{self as circuit_stark, proof_to_bytes};
+        use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+        use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
         // Generate a valid STARK proof.
         let leaf_hash = BabyBear::new(77777);
@@ -507,7 +507,7 @@ mod tests {
         let fed_root = [0xFE; 32];
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "pyana-merkle-poseidon2-v1".to_string(),
+            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
             expected_conclusion: public_outputs[0],
         };
 
@@ -518,7 +518,7 @@ mod tests {
             proof_bytes,
             federation_root: fed_root,
             public_outputs,
-            air_name: "pyana-merkle-poseidon2-v1".to_string(),
+            air_name: "dregg-merkle-poseidon2-v1".to_string(),
         };
 
         let trusted: Vec<TrustedRoot> = vec![(fed_root, 100u64)];

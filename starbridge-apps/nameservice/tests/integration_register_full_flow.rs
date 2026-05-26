@@ -27,7 +27,7 @@ use starbridge_nameservice::{
 // =============================================================================
 
 mod common {
-    use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+    use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 
     pub fn make_cipherclerk(seed: u8) -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [seed; 32])
@@ -66,7 +66,7 @@ fn executor_register_name_emits_receipt_with_name_registered_event() {
 
     let owner = [0xAAu8; 32];
     let expiry: u64 = 1_000_000;
-    let name = "alice.pyana";
+    let name = "alice.dregg";
 
     let action = build_register_action(&cipherclerk, registry_cell, name, owner, expiry);
     let receipt = executor
@@ -111,7 +111,7 @@ fn executor_renew_extends_expiry_and_monotonic_blocks_rollback() {
     let owner = [0xBBu8; 32];
     let initial_expiry: u64 = 500;
     let renewed_expiry: u64 = 5_256_000; // one rent epoch
-    let name = "bob.pyana";
+    let name = "bob.dregg";
 
     // Step 1: register (creates the initial state with expiry = 500).
     let reg_action =
@@ -156,7 +156,7 @@ fn executor_revoke_blocks_subsequent_name_slot_overwrite() {
     let (executor, registry_cell) = common::make_executor_with_cell(&cipherclerk);
 
     let owner = [0xCCu8; 32];
-    let name = "carol.pyana";
+    let name = "carol.dregg";
 
     // Register.
     let reg_action = build_register_action(&cipherclerk, registry_cell, name, owner, 1_000);
@@ -185,7 +185,7 @@ fn executor_revoke_blocks_subsequent_name_slot_overwrite() {
 
     // Adversarial: attempt a second revocation with a different tombstone.
     // `WriteOnce(REVOKED_SLOT)` must block this.
-    let second_revoke_action = build_revoke_action(&cipherclerk, registry_cell, "eve.pyana");
+    let second_revoke_action = build_revoke_action(&cipherclerk, registry_cell, "eve.dregg");
     let second_revoke_result = executor.submit_action(&cipherclerk, second_revoke_action);
     assert!(
         second_revoke_result.is_err(),
@@ -207,7 +207,7 @@ fn executor_transfer_emits_name_transferred_event_with_correct_owner_hashes() {
 
     let old_owner = [0xAAu8; 32];
     let new_owner = [0xBBu8; 32];
-    let name = "dan.pyana";
+    let name = "dan.dregg";
 
     // Register.
     let reg_action = build_register_action(&cipherclerk, registry_cell, name, old_owner, 2_000);
@@ -250,7 +250,7 @@ fn executor_transfer_emits_name_transferred_event_with_correct_owner_hashes() {
 #[test]
 fn executor_enforces_factory_descriptor_state_constraints() {
     // Confirm the descriptor advertises WriteOnce on NAME_HASH_SLOT.
-    use pyana_cell::StateConstraint;
+    use dregg_cell::StateConstraint;
     let d = name_factory_descriptor();
     assert!(
         d.state_constraints.iter().any(|c| matches!(
@@ -265,7 +265,7 @@ fn executor_enforces_factory_descriptor_state_constraints() {
     let (executor, registry_cell) = common::make_executor_with_cell(&cipherclerk);
 
     let owner = [0xDDu8; 32];
-    let name = "eve.pyana";
+    let name = "eve.dregg";
 
     // First register — legal.
     let reg_action = build_register_action(&cipherclerk, registry_cell, name, owner, 3_000);
@@ -275,7 +275,7 @@ fn executor_enforces_factory_descriptor_state_constraints() {
 
     // Second register (WriteOnce violation) — must be rejected by executor.
     let re_reg_action =
-        build_register_action(&cipherclerk, registry_cell, "alice.pyana", owner, 4_000);
+        build_register_action(&cipherclerk, registry_cell, "alice.dregg", owner, 4_000);
     let result = executor.submit_action(&cipherclerk, re_reg_action);
     assert!(
         result.is_err(),

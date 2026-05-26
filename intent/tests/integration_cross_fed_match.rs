@@ -7,10 +7,10 @@
 //! - A ring where all participants are from the same federation is NOT cross-fed
 //! - `CrossFederationSolver::solve_cross_fed_only` filters correctly
 
-use pyana_federation::{FederationId, KnownFederations};
-use pyana_intent::CommitmentId;
-use pyana_intent::cross_fed::{CrossFedRingTrade, CrossFederationSolver, FederatedIntentNode};
-use pyana_intent::solver::{ExchangeSpec, IntentNode, RingSolver};
+use dregg_federation::{FederationId, KnownFederations};
+use dregg_intent::CommitmentId;
+use dregg_intent::cross_fed::{CrossFedRingTrade, CrossFederationSolver, FederatedIntentNode};
+use dregg_intent::solver::{ExchangeSpec, IntentNode, RingSolver};
 
 // ============================================================================
 // Helpers
@@ -54,7 +54,7 @@ fn make_known() -> KnownFederations {
 fn single_fed_ring_is_not_cross_federation() {
     let f = fed(0xAA);
     let ring = CrossFedRingTrade {
-        ring: pyana_intent::solver::RingTrade {
+        ring: dregg_intent::solver::RingTrade {
             participants: vec![[0x01; 32], [0x02; 32]],
             settlements: vec![],
             score: 1.0,
@@ -70,7 +70,7 @@ fn two_fed_ring_is_cross_federation() {
     let f1 = fed(0x11);
     let f2 = fed(0x22);
     let ring = CrossFedRingTrade {
-        ring: pyana_intent::solver::RingTrade {
+        ring: dregg_intent::solver::RingTrade {
             participants: vec![[0x01; 32], [0x02; 32]],
             settlements: vec![],
             score: 2.5,
@@ -89,7 +89,7 @@ fn three_leg_two_fed_ring_distinct_count() {
     let f1 = fed(0x33);
     let f2 = fed(0x44);
     let ring = CrossFedRingTrade {
-        ring: pyana_intent::solver::RingTrade {
+        ring: dregg_intent::solver::RingTrade {
             participants: vec![[0x01; 32], [0x02; 32], [0x03; 32]],
             settlements: vec![],
             score: 3.0,
@@ -103,7 +103,7 @@ fn three_leg_two_fed_ring_distinct_count() {
 #[test]
 fn empty_federation_list_not_cross_fed() {
     let ring = CrossFedRingTrade {
-        ring: pyana_intent::solver::RingTrade {
+        ring: dregg_intent::solver::RingTrade {
             participants: vec![],
             settlements: vec![],
             score: 0.0,

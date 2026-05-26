@@ -1,6 +1,6 @@
 //! Cell lifecycle checks: hosted, sovereign, factory creation.
 
-use pyana_cell::{
+use dregg_cell::{
     Cell, CellId, CellMode, ChildVkStrategy, FactoryDescriptor, FactoryRegistry, FieldConstraint,
     Ledger,
 };

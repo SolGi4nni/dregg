@@ -12,21 +12,21 @@
 //! ## Running
 //!
 //! ```bash
-//! cargo run -p pyana-gallery --example demo
+//! cargo run -p dregg-gallery --example demo
 //! ```
 
-use pyana_app_framework::{CellId, EngineConfig, PyanaEngine};
+use dregg_app_framework::{CellId, EngineConfig, DreggEngine};
 
-use pyana_gallery::artwork::ArtworkRegistry;
-use pyana_gallery::auction::AuctionEngine;
-use pyana_gallery::provenance::ProvenanceRegistry;
-use pyana_gallery::{AuctionPhase, compute_bid_commitment, id_to_hex};
+use dregg_gallery::artwork::ArtworkRegistry;
+use dregg_gallery::auction::AuctionEngine;
+use dregg_gallery::provenance::ProvenanceRegistry;
+use dregg_gallery::{AuctionPhase, compute_bid_commitment, id_to_hex};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Pyana Gallery: Commit-Reveal Auction Demo ===\n");
+    println!("=== Dregg Gallery: Commit-Reveal Auction Demo ===\n");
 
-    let mut engine = PyanaEngine::new(EngineConfig::new(1000));
+    let mut engine = DreggEngine::new(EngineConfig::new(1000));
     let artwork_registry = ArtworkRegistry::new();
     let auction_engine = AuctionEngine::new();
     let provenance_registry = ProvenanceRegistry::new();
@@ -241,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  4. Provenance chain tracking ownership history");
     println!("  5. Escrow-based bidding with refunds for losers");
     println!();
-    println!("Pyana primitives used:");
+    println!("Dregg primitives used:");
     println!("  - Cells (artwork identity)");
     println!("  - Capabilities (ownership as delegatable capability)");
     println!("  - Commit-Reveal (BLAKE3 bid commitments)");

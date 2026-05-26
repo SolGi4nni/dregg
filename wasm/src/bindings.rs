@@ -1,4 +1,4 @@
-//! wasm-bindgen bindings for PyanaRuntime.
+//! wasm-bindgen bindings for DreggRuntime.
 //!
 //! All public functions here are `#[wasm_bindgen]` and take/return JsValue or primitives.
 //! Complex types are serialized via serde-wasm-bindgen.
@@ -6,17 +6,17 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use pyana_cell::predicate::{InputRef, WitnessedPredicateKind};
-use pyana_cell::program::{
+use dregg_cell::predicate::{InputRef, WitnessedPredicateKind};
+use dregg_cell::program::{
     AuthorizedSet, CellProgram, HashKind, StateConstraint, TransitionCase, TransitionGuard,
 };
-use pyana_cell::{AuthRequired, CellId};
-use pyana_intent::{ActionPattern, Constraint, IntentKind};
-use pyana_turn::action::Authorization;
-use pyana_turn::conditional::ProofCondition;
-use pyana_turn::{Effect, TurnResult};
+use dregg_cell::{AuthRequired, CellId};
+use dregg_intent::{ActionPattern, Constraint, IntentKind};
+use dregg_turn::action::Authorization;
+use dregg_turn::conditional::ProofCondition;
+use dregg_turn::{Effect, TurnResult};
 
-use crate::runtime::{PyanaRuntime, TraceStep};
+use crate::runtime::{DreggRuntime, TraceStep};
 
 // ============================================================================
 // Global runtime store (WASM is single-threaded, so this is safe)
@@ -25,12 +25,12 @@ use crate::runtime::{PyanaRuntime, TraceStep};
 use std::cell::RefCell;
 
 thread_local! {
-    static RUNTIMES: RefCell<Vec<Option<PyanaRuntime>>> = const { RefCell::new(Vec::new()) };
+    static RUNTIMES: RefCell<Vec<Option<DreggRuntime>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn with_runtime<F, R>(handle: usize, f: F) -> Result<R, JsError>
 where
-    F: FnOnce(&mut PyanaRuntime) -> Result<R, String>,
+    F: FnOnce(&mut DreggRuntime) -> Result<R, String>,
 {
     RUNTIMES.with(|runtimes| {
         let mut runtimes = runtimes.borrow_mut();
@@ -44,7 +44,7 @@ where
 
 fn with_runtime_ref<F, R>(handle: usize, f: F) -> Result<R, JsError>
 where
-    F: FnOnce(&PyanaRuntime) -> Result<R, String>,
+    F: FnOnce(&DreggRuntime) -> Result<R, String>,
 {
     RUNTIMES.with(|runtimes| {
         let runtimes = runtimes.borrow();
@@ -60,7 +60,7 @@ where
 // World Management
 // ============================================================================
 
-/// Create a new PyanaRuntime and return its handle.
+/// Create a new DreggRuntime and return its handle.
 #[wasm_bindgen]
 pub fn create_runtime() -> usize {
     RUNTIMES.with(|runtimes| {
@@ -68,12 +68,12 @@ pub fn create_runtime() -> usize {
         // Reuse a tombstone slot if available.
         for (i, slot) in runtimes.iter_mut().enumerate() {
             if slot.is_none() {
-                *slot = Some(PyanaRuntime::new());
+                *slot = Some(DreggRuntime::new());
                 return i;
             }
         }
         let handle = runtimes.len();
-        runtimes.push(Some(PyanaRuntime::new()));
+        runtimes.push(Some(DreggRuntime::new()));
         handle
     })
 }
@@ -149,7 +149,7 @@ pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsErr
             /// signs over. Exposed so the JS layer can drive the peer-exchange
             /// flow without recomputing.
             state_commitment: String,
-            /// Refactor 6: full cell program structure for `<pyana-cell-program>`
+            /// Refactor 6: full cell program structure for `<dregg-cell-program>`
             /// inspector rendering.
             program: CellProgramView,
         }
@@ -306,7 +306,7 @@ pub fn create_agent_with_factory(
 /// alongside the runtime's default test-cipherclerk factory.
 #[wasm_bindgen]
 pub fn deploy_factory_descriptor(handle: usize, descriptor_json: &str) -> Result<JsValue, JsError> {
-    use pyana_cell::factory::FactoryDescriptor;
+    use dregg_cell::factory::FactoryDescriptor;
 
     with_runtime(handle, |rt| {
         let descriptor: FactoryDescriptor =
@@ -767,7 +767,7 @@ pub fn get_notes(handle: usize, agent_index: usize) -> Result<JsValue, JsError> 
 // Federation
 // ============================================================================
 
-// Federation bindings: surface the real `pyana_federation::Federation` to
+// Federation bindings: surface the real `dregg_federation::Federation` to
 // the Studio. All hashes / signatures / merkle roots returned to JS come
 // from the canonical crate's types; no JS-side simulation lives in
 // runtime-in-memory.js for these paths.
@@ -1093,10 +1093,10 @@ pub fn list_federation_blocks(handle: usize, fed_index: usize) -> Result<JsValue
  * Existing: list_federation_blocks (1055), get_federation_block, get_delegation_graph (1840),
  * create/verify/decode_peer_transition (1451+), merkle_*_proof + get_merkle_tree_viz, list_known_federations.
  * These power the 4 inspectors + block-dag + federation views without JS reimpl (delegates to Rust
- * pyana_federation + blocklace crate used in node).
+ * dregg_federation + blocklace crate used in node).
  * No new list_blocklace/simulate_peer_transition needed for current studio (sim is educational carve-out;
- * live via node MCP pyana_get_blocklace_status + constitution at node/src/mcp.rs:3841+ and blocklace/src/*).
- * Future: if exposing full pyana_blocklace::Blocklace to wasm for Remote parity, add here after reading
+ * live via node MCP dregg_get_blocklace_status + constitution at node/src/mcp.rs:3841+ and blocklace/src/*).
+ * Future: if exposing full dregg_blocklace::Blocklace to wasm for Remote parity, add here after reading
  * blocklace/src/lib.rs + node/blocklace_sync + with_runtime pattern. See PLAN §4.5, §5, §8.
  * (Read before this comment edit per rules; no cargo.)
  */*/
@@ -1108,7 +1108,7 @@ pub fn list_federation_blocks(handle: usize, fed_index: usize) -> Result<JsValue
 //  This resolves conflicting entrypoints in the wasm surface visible to Starbridge federation inspectors
 //  and extension registerFederation calls.)
 
-/// Stub for factory descriptor listing (deploy already exists; this closes the read path for <pyana-factory-descriptor>).
+/// Stub for factory descriptor listing (deploy already exists; this closes the read path for <dregg-factory-descriptor>).
 /// Returns the Vks + basic metadata of deployed factories in the executor.
 #[wasm_bindgen]
 pub fn list_deployed_factories(handle: usize) -> Result<JsValue, JsError> {
@@ -1131,8 +1131,8 @@ pub fn list_deployed_factories(handle: usize) -> Result<JsValue, JsError> {
     })
 }
 
-/// DFA compile/eval stub. In full: delegates to pyana_dfa::compiler + air.
-/// For inspector <pyana-dfa> + relay/pubsub. Returns placeholder shape today.
+/// DFA compile/eval stub. In full: delegates to dregg_dfa::compiler + air.
+/// For inspector <dregg-dfa> + relay/pubsub. Returns placeholder shape today.
 #[wasm_bindgen]
 pub fn compile_dfa(pattern_json: &str) -> Result<JsValue, JsError> {
     // Placeholder — real path wires dfa crate when DFA lane + wasm gate complete.
@@ -1250,13 +1250,13 @@ pub fn match_intent_for_agent(
         }
 
         let view = match result {
-            pyana_intent::matcher::MatchResult::Matched { token_index, .. } => MatchResultView {
+            dregg_intent::matcher::MatchResult::Matched { token_index, .. } => MatchResultView {
                 matched: true,
                 kind: "matched".to_string(),
                 token_index: Some(token_index),
                 token_indices: None,
             },
-            pyana_intent::matcher::MatchResult::CompoundMatched { token_indices, .. } => {
+            dregg_intent::matcher::MatchResult::CompoundMatched { token_indices, .. } => {
                 MatchResultView {
                     matched: true,
                     kind: "compound_matched".to_string(),
@@ -1264,19 +1264,19 @@ pub fn match_intent_for_agent(
                     token_indices: Some(token_indices),
                 }
             }
-            pyana_intent::matcher::MatchResult::NoMatch => MatchResultView {
+            dregg_intent::matcher::MatchResult::NoMatch => MatchResultView {
                 matched: false,
                 kind: "no_match".to_string(),
                 token_index: None,
                 token_indices: None,
             },
-            pyana_intent::matcher::MatchResult::Expired => MatchResultView {
+            dregg_intent::matcher::MatchResult::Expired => MatchResultView {
                 matched: false,
                 kind: "expired".to_string(),
                 token_index: None,
                 token_indices: None,
             },
-            pyana_intent::matcher::MatchResult::WrongKind => MatchResultView {
+            dregg_intent::matcher::MatchResult::WrongKind => MatchResultView {
                 matched: false,
                 kind: "wrong_kind".to_string(),
                 token_index: None,
@@ -1330,7 +1330,7 @@ pub fn submit_conditional(
     })
 }
 
-/// List pending conditional turns in the runtime (for <pyana-conditional-turn>).
+/// List pending conditional turns in the runtime (for <dregg-conditional-turn>).
 /// Uses the real PendingConditional vec from runtime; condition simplified to string tag.
 #[wasm_bindgen]
 pub fn get_pending_conditionals(handle: usize) -> Result<JsValue, JsError> {
@@ -1439,7 +1439,7 @@ pub fn trip_revocation_channel(
 // ============================================================================
 // Peer Exchange (sovereign-cell P2P)
 //
-// Direct facade over `pyana_cell::PeerExchange` (canonical sovereign-cell
+// Direct facade over `dregg_cell::PeerExchange` (canonical sovereign-cell
 // peer protocol). Each agent owns one `PeerExchange` constructed with the
 // cipherclerk's real Ed25519 signing key. These bindings carry no cryptographic
 // logic — they just marshal arguments into / out of the canonical type.
@@ -1618,7 +1618,7 @@ struct PeerCellViewSerializable {
     last_updated: i64,
 }
 
-fn peer_cell_view_to_serializable(view: &pyana_cell::PeerCellView) -> PeerCellViewSerializable {
+fn peer_cell_view_to_serializable(view: &dregg_cell::PeerCellView) -> PeerCellViewSerializable {
     PeerCellViewSerializable {
         cell_id: hex_encode(&view.cell_id.0),
         last_known_commitment: hex_encode(&view.last_known_commitment),
@@ -1649,7 +1649,7 @@ pub fn is_channel_active(handle: usize, channel_id_hex: &str) -> Result<JsValue,
 
 /// List all known revocation channels (ids + active state). Now uses real
 /// RevocationChannelSet::iter() (the TODO is resolved; inspector cluster A).
-/// Enables <pyana-revocation-channel> list + URI views with live state.
+/// Enables <dregg-revocation-channel> list + URI views with live state.
 #[wasm_bindgen]
 pub fn list_revocation_channels(handle: usize) -> Result<JsValue, JsError> {
     with_runtime_ref(handle, |rt| {
@@ -1705,7 +1705,7 @@ pub fn get_merkle_tree_viz(handle: usize) -> Result<JsValue, JsError> {
 /// Refactor 3: adds `actions: Vec<ActionView>` per receipt, each with
 /// `target_cell`, `method`, `effects`, and `authorization` (6-variant tagged union).
 /// Refactor 7: adds `proof_view: Option<ProofView>` per receipt for γ.2 bilateral
-/// PI rendering by `<pyana-proof>`.
+/// PI rendering by `<dregg-proof>`.
 /// Existing fields are byte-equivalent to the prior shape.
 #[wasm_bindgen]
 pub fn get_receipt_chain(handle: usize) -> Result<JsValue, JsError> {
@@ -1778,7 +1778,7 @@ pub fn get_receipt_chain(handle: usize) -> Result<JsValue, JsError> {
 /// attached.
 #[wasm_bindgen]
 pub fn decode_peer_transition(bytes: &[u8]) -> Result<JsValue, JsError> {
-    use pyana_cell::PeerStateTransition;
+    use dregg_cell::PeerStateTransition;
 
     let transition: PeerStateTransition =
         postcard::from_bytes(bytes).map_err(|e| JsError::new(&format!("decode error: {e}")))?;
@@ -1822,7 +1822,7 @@ pub fn decode_peer_transition(bytes: &[u8]) -> Result<JsValue, JsError> {
 //
 // What IS stored is the receipt + committed turn (call forest). This
 // binding surfaces the receipt's per-action effect log as a trace-step
-// list so `<pyana-trace>` can walk execution.
+// list so `<dregg-trace>` can walk execution.
 //
 // Gap note: a full EffectVM trace (151-column AIR rows) is not available
 // from the sim runtime. What we surface is:
@@ -2035,10 +2035,10 @@ fn authorization_to_view(auth: &Authorization) -> AuthorizationView {
             target: hex_encode(&proof.target.0),
             expires_at: proof.expires_at,
             delegation_kind: match &proof.delegation_proof {
-                pyana_turn::action::DelegationProofData::SignedDelegation { .. } => {
+                dregg_turn::action::DelegationProofData::SignedDelegation { .. } => {
                     "SignedDelegation".to_string()
                 }
-                pyana_turn::action::DelegationProofData::StarkDelegation { .. } => {
+                dregg_turn::action::DelegationProofData::StarkDelegation { .. } => {
                     "StarkDelegation".to_string()
                 }
             },
@@ -2105,7 +2105,7 @@ fn input_ref_name(ir: &InputRef) -> String {
 }
 
 /// Walk a turn's call forest and collect ActionView for each action.
-fn collect_actions_from_forest(turn: &pyana_turn::Turn) -> Vec<ActionView> {
+fn collect_actions_from_forest(turn: &dregg_turn::Turn) -> Vec<ActionView> {
     let mut out = Vec::new();
     for tree in &turn.call_forest.roots {
         collect_actions_from_tree(tree, &mut out);
@@ -2113,7 +2113,7 @@ fn collect_actions_from_forest(turn: &pyana_turn::Turn) -> Vec<ActionView> {
     out
 }
 
-fn collect_actions_from_tree(tree: &pyana_turn::forest::CallTree, out: &mut Vec<ActionView>) {
+fn collect_actions_from_tree(tree: &dregg_turn::forest::CallTree, out: &mut Vec<ActionView>) {
     let action = &tree.action;
     let effects: Vec<String> = action.effects.iter().map(|e| format!("{e:?}")).collect();
     out.push(ActionView {
@@ -2129,7 +2129,7 @@ fn collect_actions_from_tree(tree: &pyana_turn::forest::CallTree, out: &mut Vec<
 
 /// Walk a turn's call forest and build TraceStep entries.
 fn collect_trace_steps_from_forest(
-    turn: &pyana_turn::Turn,
+    turn: &dregg_turn::Turn,
     total_computrons: u64,
 ) -> Vec<TraceStep> {
     let mut out = Vec::new();
@@ -2140,7 +2140,7 @@ fn collect_trace_steps_from_forest(
 }
 
 fn collect_trace_steps_from_tree(
-    tree: &pyana_turn::forest::CallTree,
+    tree: &dregg_turn::forest::CallTree,
     path: &[usize],
     total_computrons: u64,
     out: &mut Vec<TraceStep>,
@@ -2570,7 +2570,7 @@ fn state_constraint_to_view(sc: &StateConstraint) -> StateConstraintView {
             proof_witness_index: wp.proof_witness_index,
         },
         StateConstraint::Renounced { set } => {
-            use pyana_cell::program::RenouncedSet;
+            use dregg_cell::program::RenouncedSet;
             let (set_kind, commitment) = match set {
                 RenouncedSet::PublicRoot { set_root_index } => (
                     format!("PublicRoot(slot={set_root_index})"),
@@ -2596,8 +2596,8 @@ fn state_constraint_to_view(sc: &StateConstraint) -> StateConstraintView {
     }
 }
 
-fn simple_sc_to_view(sc: &pyana_cell::program::SimpleStateConstraint) -> StateConstraintView {
-    use pyana_cell::program::SimpleStateConstraint;
+fn simple_sc_to_view(sc: &dregg_cell::program::SimpleStateConstraint) -> StateConstraintView {
+    use dregg_cell::program::SimpleStateConstraint;
     match sc {
         SimpleStateConstraint::FieldEquals { index, value } => StateConstraintView::FieldEquals {
             index: *index,
@@ -2892,10 +2892,10 @@ fn serialize_turn_result(result: &TurnResult) -> Result<JsValue, String> {
     serde_wasm_bindgen::to_value(&view).map_err(|e| e.to_string())
 }
 
-/// Return the current pyana-observability event log as the Studio wire JSON
+/// Return the current dregg-observability event log as the Studio wire JSON
 /// (schema with "schema_version", "events": [{kind, envelope, payload}, ...]).
 /// This is the source for the signal-cached getter in runtime-in-memory.js
-/// and the <pyana-activity> live feed inspector (Task #30).
+/// and the <dregg-activity> live feed inspector (Task #30).
 ///
 /// The log contains TurnLifecycle (at minimum; full 7 variants when deeper
 /// executor hooks land) plus any future Authorization etc. events.
@@ -2914,7 +2914,7 @@ pub fn get_trace_events_json(handle: usize) -> Result<JsValue, JsError> {
 /// format (Houyhnhnm + plan §8 Q4). Unblocks JS/inspector prep for
 /// snapshot-and-replay / time-travel without requiring the human cargo
 /// session for proving changes. Matches the Rust surface added to
-/// PyanaRuntime::export_runtime_snapshot_stub.
+/// DreggRuntime::export_runtime_snapshot_stub.
 ///
 /// Safe thin binding (delegates only; no new crypto, no circuit).
 #[wasm_bindgen]
@@ -2929,7 +2929,7 @@ pub fn export_runtime_snapshot_stub(handle: usize) -> Result<String, JsError> {
 /// Err explaining the pending snapshot format dependency.
 /// For target > current: explicit forward-only error.
 ///
-/// Provides the JS-callable surface + error shape for `<pyana-...>`
+/// Provides the JS-callable surface + error shape for `<dregg-...>`
 /// scrubber / cursor UI to target. `caps.timeTravel` should stay false
 /// in surfaces until real impl lands. See runtime.rs docs and plan §5.10.
 ///

@@ -17,7 +17,7 @@
 //!   the embedded `Arc<Blocklace>` was deferred — `Federation` is a pure
 //!   attestation context, and the blocklace lives separately (typically held
 //!   alongside `Federation` in `node::state::State`). This keeps `Federation`
-//!   light enough to clone freely and avoids a `pyana-blocklace` dep on the
+//!   light enough to clone freely and avoids a `dregg-blocklace` dep on the
 //!   federation crate that wasn't there before.
 //!
 //! The 1-to-1 binding is preserved by convention: `node::state::State`
@@ -29,7 +29,7 @@ use std::sync::Arc;
 use crate::identity::derive_federation_id_with_epoch;
 use crate::threshold::FederationCommittee;
 use crate::types::PublicKey;
-use pyana_types::FederationId;
+use dregg_types::FederationId;
 
 use crate::threshold::MemberSecret;
 
@@ -48,7 +48,7 @@ pub struct LocalSeat {
     /// Index in `Federation::members` (after sorting).
     pub index: usize,
     /// Local Ed25519 signing key.
-    pub signing_key: pyana_types::SigningKey,
+    pub signing_key: dregg_types::SigningKey,
     /// Local BLS member secret, present when `bls_committee.is_some()`.
     pub bls_secret: Option<MemberSecret>,
 }
@@ -289,10 +289,10 @@ impl Federation {
     ///
     /// Note: full BLS verification of an `AttestedRoot`'s `threshold_qc`
     /// requires the BLS committee and lives in
-    /// `pyana_types::verify_attested_root_with_committee`; this method covers
+    /// `dregg_types::verify_attested_root_with_committee`; this method covers
     /// the Ed25519 path (the common case for the live blocklace_sync
     /// verifier).
-    pub fn verify_attested_root(&self, root: &pyana_types::AttestedRoot) -> bool {
+    pub fn verify_attested_root(&self, root: &dregg_types::AttestedRoot) -> bool {
         root.is_valid(&self.members)
     }
 
@@ -325,8 +325,8 @@ impl Federation {
         timestamp: i64,
         blocklace_block_id: [u8; 32],
         finality_round: u64,
-    ) -> pyana_types::AttestedRoot {
-        pyana_types::AttestedRoot {
+    ) -> dregg_types::AttestedRoot {
+        dregg_types::AttestedRoot {
             merkle_root,
             note_tree_root,
             nullifier_set_root,
@@ -476,7 +476,7 @@ impl std::fmt::Debug for KnownFederations {
 mod tests {
     use super::*;
     use crate::identity::derive_federation_id_with_epoch;
-    use pyana_types::generate_keypair;
+    use dregg_types::generate_keypair;
 
     #[test]
     fn id_is_derived_from_members_and_epoch() {

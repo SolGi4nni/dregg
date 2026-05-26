@@ -36,22 +36,22 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
-use pyana_cell::{
+use dregg_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
+use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, CellMode, Ledger, NoteCommitment, Nullifier,
     Permissions, Preconditions, SealedBox, ValueCommitmentBytes, factory::FactoryCreationParams,
 };
-use pyana_circuit::{CellState as VmCellState, EffectVmAir, generate_effect_vm_trace, stark};
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::action::{BearerCapProof, DelegationProofData, QueueTxOp, symbol};
-use pyana_turn::conditional::ProofCondition;
-use pyana_turn::escrow::{EscrowClaimAuth, EscrowCondition};
-use pyana_turn::eventual::EventualRef;
-use pyana_turn::{
+use dregg_circuit::{CellState as VmCellState, EffectVmAir, generate_effect_vm_trace, stark};
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::action::{BearerCapProof, DelegationProofData, QueueTxOp, symbol};
+use dregg_turn::conditional::ProofCondition;
+use dregg_turn::escrow::{EscrowClaimAuth, EscrowCondition};
+use dregg_turn::eventual::EventualRef;
+use dregg_turn::{
     Action, Authorization, ComputronCosts, DelegationMode, Effect, Event, Turn, TurnExecutor,
     TurnResult,
 };
-use pyana_types::AttestedRoot;
+use dregg_types::AttestedRoot;
 
 // ---------------------------------------------------------------------------
 // Variant catalogue
@@ -84,7 +84,7 @@ fn all_effect_variants() -> Vec<Variant> {
     let cap = CapabilityRef {
         target: cell_b,
         slot: 0,
-        permissions: pyana_cell::permissions::AuthRequired::None,
+        permissions: dregg_cell::permissions::AuthRequired::None,
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
@@ -242,7 +242,7 @@ fn all_effect_variants() -> Vec<Variant> {
                         quorum_signatures: vec![],
                         threshold_qc: None,
                         threshold: 0,
-                        federation_id: pyana_types::FederationId::PLACEHOLDER,
+                        federation_id: dregg_types::FederationId::PLACEHOLDER,
                         receipt_stream_root: None,
                     },
                     spending_proof: vec![],
@@ -324,7 +324,7 @@ fn all_effect_variants() -> Vec<Variant> {
             label: "FulfillObligation",
             effect: Effect::FulfillObligation {
                 obligation_id: [0u8; 32],
-                proof: pyana_turn::ConditionProof::Preimage([0u8; 32]),
+                proof: dregg_turn::ConditionProof::Preimage([0u8; 32]),
             },
         },
         Variant {
@@ -471,7 +471,7 @@ fn all_effect_variants() -> Vec<Variant> {
             effect: Effect::ExportSturdyRef {
                 swiss_number: [0xCDu8; 32],
                 target: cell_b,
-                permissions: pyana_cell::permissions::AuthRequired::None,
+                permissions: dregg_cell::permissions::AuthRequired::None,
             },
         },
         Variant {
@@ -480,7 +480,7 @@ fn all_effect_variants() -> Vec<Variant> {
                 swiss_number: [0xCDu8; 32],
                 bearer: cell_b,
                 expected_cell_id: cell_b,
-                expected_permissions: pyana_cell::permissions::AuthRequired::None,
+                expected_permissions: dregg_cell::permissions::AuthRequired::None,
             },
         },
         Variant {
@@ -503,7 +503,7 @@ fn all_effect_variants() -> Vec<Variant> {
             effect: Effect::Refusal {
                 cell: cell_a,
                 offered_action_commitment: [0xAB; 32],
-                refusal_reason: pyana_turn::action::RefusalReason::Declined,
+                refusal_reason: dregg_turn::action::RefusalReason::Declined,
                 proof_witness_index: 0,
             },
         },
@@ -523,12 +523,12 @@ fn all_effect_variants() -> Vec<Variant> {
             label: "CellDestroy",
             effect: Effect::CellDestroy {
                 target: cell_a,
-                certificate: pyana_cell::lifecycle::DeathCertificate {
+                certificate: dregg_cell::lifecycle::DeathCertificate {
                     cell_id: cell_a,
                     last_receipt_hash: [0x22; 32],
                     final_state_commitment: [0x33; 32],
                     destroyed_at_height: 1,
-                    reason: pyana_cell::lifecycle::DeathReason::Voluntary,
+                    reason: dregg_cell::lifecycle::DeathReason::Voluntary,
                 },
             },
         },
@@ -554,7 +554,7 @@ fn all_effect_variants() -> Vec<Variant> {
             label: "ReceiptArchive",
             effect: Effect::ReceiptArchive {
                 prefix_end_height: 1,
-                checkpoint: pyana_cell::lifecycle::ArchivalAttestation {
+                checkpoint: dregg_cell::lifecycle::ArchivalAttestation {
                     cell_id: cell_a,
                     archive_start_height: 0,
                     archive_end_height: 1,
@@ -723,7 +723,7 @@ fn construct_minimal_turn_with(agent: CellId, effect: Effect, nonce: u64) -> Tur
         witness_blobs: vec![],
     };
 
-    let mut forest = pyana_turn::forest::CallForest::new();
+    let mut forest = dregg_turn::forest::CallForest::new();
     forest.add_root(action);
 
     Turn {
@@ -850,12 +850,12 @@ fn print_exec_summary(report: &[(String, ExecOutcome)]) {
 /// the suite stay green until Stages 3-6 of EFFECT-VM-SHAPE-A land per-
 /// effect projections. To inspect progress, run:
 ///
-///   cargo test -p pyana-tests every_effect_variant_round_trips_through_projection \
+///   cargo test -p dregg-tests every_effect_variant_round_trips_through_projection \
 ///       -- --nocapture --include-ignored
 #[test]
 #[ignore = "known pending until projection fix (EFFECT-VM-SHAPE-A Stages 3-6)"]
 fn every_effect_variant_round_trips_through_projection() {
-    use pyana_circuit::effect_vm::Effect as VmEffect;
+    use dregg_circuit::effect_vm::Effect as VmEffect;
 
     let mut collapsed = Vec::<String>::new();
     let mut ok = Vec::<String>::new();
@@ -949,7 +949,7 @@ fn prove_and_verify_variant(
     initial_state: &VmCellState,
     effect: &Effect,
 ) -> Result<(), String> {
-    use pyana_circuit::effect_vm::Effect as VmEffect;
+    use dregg_circuit::effect_vm::Effect as VmEffect;
 
     let projected = AgentCipherclerk::convert_effects_to_vm(cell_id, &[effect.clone()]);
 
@@ -1016,10 +1016,10 @@ fn print_proof_summary(report: &[(String, ProofOutcome)]) {
 /// Always-runs report. Surfaces the totals without unignoring the
 /// progress-tracking tests above. Run with:
 ///
-///   cargo test -p pyana-tests every_variant_summary -- --nocapture
+///   cargo test -p dregg-tests every_variant_summary -- --nocapture
 #[test]
 fn every_variant_summary() {
-    use pyana_circuit::effect_vm::Effect as VmEffect;
+    use dregg_circuit::effect_vm::Effect as VmEffect;
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let agent = cell_id(b"variant-cell-a");

@@ -32,14 +32,14 @@ jobs:
           cache-on-failure: true
 
       - name: Build demo crates
-        run: cargo build --release -p pyana-demo -p pyana-demo-agent
+        run: cargo build --release -p dregg-demo -p dregg-demo-agent
 
       - name: Run main demo binary
         id: main_demo
         run: |
           START=$(date +%s%3N)
           set +e
-          cargo run --release -p pyana-demo 2>&1 | tee /tmp/demo_main.txt
+          cargo run --release -p dregg-demo 2>&1 | tee /tmp/demo_main.txt
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           END=$(date +%s%3N)
@@ -78,7 +78,7 @@ jobs:
             echo "::group::Running $example"
             START=$(date +%s%3N)
             set +e
-            cargo run --release -p pyana-demo-agent --example "$example" 2>&1 | tee "/tmp/demo_${example}.txt"
+            cargo run --release -p dregg-demo-agent --example "$example" 2>&1 | tee "/tmp/demo_${example}.txt"
             EXIT_CODE=${PIPESTATUS[0]}
             set -e
             END=$(date +%s%3N)
@@ -105,7 +105,7 @@ jobs:
           MAIN_OUTPUT=$(cat /tmp/demo_main.txt | jq -Rs .)
           cat > "/tmp/demo_results/_main.json" <<ENDJSON
           {
-            "name": "pyana-demo (main binary)",
+            "name": "dregg-demo (main binary)",
             "output": ${MAIN_OUTPUT},
             "exit_code": ${{ steps.main_demo.outputs.exit_code }},
             "duration_ms": ${{ steps.main_demo.outputs.duration }}

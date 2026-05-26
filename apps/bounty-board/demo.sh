@@ -3,11 +3,11 @@
 #
 # This script exercises the bounty board's HTTP API using curl.
 # For the REAL privacy-preserving flow with STARK proofs, see:
-#   cargo run -p pyana-bounty-board --example devnet_demo
+#   cargo run -p dregg-bounty-board --example devnet_demo
 #
 # Prerequisites:
-#   1. Devnet running (pyana-node on port 8420)
-#   2. Bounty board running: cargo run -p pyana-bounty-board -- --node-url http://127.0.0.1:8420
+#   1. Devnet running (dregg-node on port 8420)
+#   2. Bounty board running: cargo run -p dregg-bounty-board -- --node-url http://127.0.0.1:8420
 #
 # Usage:
 #   chmod +x demo.sh && ./demo.sh
@@ -42,12 +42,12 @@ set -euo pipefail
 
 BASE_URL="${BOUNTY_BOARD_URL:-http://127.0.0.1:3030}"
 
-echo "=== Pyana Bounty Board Demo (curl) ==="
+echo "=== Dregg Bounty Board Demo (curl) ==="
 echo "Target: $BASE_URL"
 echo ""
 echo "NOTE: This script exercises the HTTP API without generating real proofs."
 echo "      For the full privacy-preserving flow with STARK proofs, run:"
-echo "        cargo run -p pyana-bounty-board --example devnet_demo"
+echo "        cargo run -p dregg-bounty-board --example devnet_demo"
 echo ""
 
 # =============================================================================
@@ -190,7 +190,7 @@ if [ -n "$BOUNTY_ID" ]; then
     -d "{
       \"bounty_id\": \"$BOUNTY_ID\",
       \"worker_commitment\": [187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187],
-      \"completion_evidence\": {\"ExternalProof\": {\"url\": \"https://github.com/emberian/pyana/pull/42\", \"hash\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]}},
+      \"completion_evidence\": {\"ExternalProof\": {\"url\": \"https://github.com/emberian/dregg/pull/42\", \"hash\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]}},
       \"completion_proof\": [1,2,3,4,5,6,7,8]
     }")
   echo "$SUBMIT_RESULT" | python3 -m json.tool 2>/dev/null || echo "$SUBMIT_RESULT"
@@ -241,4 +241,4 @@ echo "  - Work submission with proof-of-completion"
 echo "  - Atomic payment release on approval"
 echo ""
 echo "For the REAL privacy-preserving flow with STARK proofs, run:"
-echo "  cargo run -p pyana-bounty-board --example devnet_demo"
+echo "  cargo run -p dregg-bounty-board --example devnet_demo"

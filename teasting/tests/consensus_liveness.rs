@@ -6,8 +6,8 @@
 //! - Recovery: crashed nodes rejoin and sync up.
 //! - View changes: leader failure triggers view change.
 
-use pyana_teasting::federation::{drive_to_finalization, quick_federation};
-use pyana_teasting::harness::SimulationHarness;
+use dregg_teasting::federation::{drive_to_finalization, quick_federation};
+use dregg_teasting::harness::SimulationHarness;
 
 /// Basic consensus: 4 nodes, all online, finalize a revocation block.
 #[test]

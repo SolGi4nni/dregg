@@ -1,6 +1,6 @@
 # Midnight Integration Insights & Action Plan
 
-## What's Least Zcash/Midnight-Like About Pyana
+## What's Least Zcash/Midnight-Like About `dregg`
 
 ### Critical Gaps (ordered by severity)
 
@@ -47,7 +47,7 @@
 
 8. **BLS12-381 value commitment wrapper** — For bridge-facing operations, produce Pedersen commitments on JubJub matching Midnight's `value_commitment` format. Verifiable within Midnight's circuit infrastructure.
 
-9. **Observation-based Midnight bridge** — Federation node watches Midnight blocks via Substrate RPC, detects bridge contract events, mirrors into pyana. Same trust model as Midnight's own Cardano bridge.
+9. **Observation-based Midnight bridge** — Federation node watches Midnight blocks via Substrate RPC, detects bridge contract events, mirrors into dregg. Same trust model as Midnight's own Cardano bridge.
 
 10. **In-circuit Keccak-256** — For EVM signature/state proof verification inside circuits. Midnight has this. Substantial work for STARK (many rows per hash) but existing implementations exist.
 
@@ -61,13 +61,13 @@
 | Pickles inside STARK | Impractical | 256-bit curve ops in 31-bit field = millions of constraints. Would need SP1/zkVM approach |
 | STARK inside Midnight (Plonk/KZG) | Medium | Write STARK verifier as ZKIR program (their stdlib has arbitrary hash gadgets). Or use SP1→Groth16→BN254 precompile if Midnight adds one |
 | Midnight inside STARK | Impractical | Same problem as Pickles (BLS12-381 curve ops in BabyBear) |
-| Application-level composition | Easy | Pyana proves authorization (STARK), Midnight proves value transfer (Plonk). They share a public commitment hash. No cross-proof-system verification |
+| Application-level composition | Easy | `dregg` proves authorization (STARK), Midnight proves value transfer (Plonk). They share a public commitment hash. No cross-proof-system verification |
 
 ### Recommended: Application-Level Composition
 
-Pyana handles authorization privacy. Midnight handles value privacy. They compose at the application level:
+`dregg` handles authorization privacy. Midnight handles value privacy. They compose at the application level:
 - Shared: a Pedersen commitment to the value being transferred
-- Pyana's proof: "I am authorized to transfer this commitment" (STARK)
+- `dregg`'s proof: "I am authorized to transfer this commitment" (STARK)
 - Midnight's proof: "This commitment's value is conserved in the shielded pool" (Plonk)
 - Bridge: the commitment is the interop atom. Same bytes on both sides.
 

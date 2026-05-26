@@ -12,7 +12,7 @@ use crate::error::SdkError;
 /// proof, then returns the discharge macaroon string (em2_ encoded).
 ///
 /// # Arguments
-/// - `gateway_url`: Base URL of the discharge gateway (e.g., "https://gateway.pyana.dev")
+/// - `gateway_url`: Base URL of the discharge gateway (e.g., "https://gateway.dregg.dev")
 /// - `ticket`: The encrypted ticket bytes from the 3P caveat
 /// - `proof`: Optional proof bytes (ZK proof, signature, etc.)
 /// - `client_id`: Optional client identifier for rate limiting / allowlist
@@ -101,8 +101,8 @@ pub async fn obtain_discharge(
 ///
 /// Returns a list of `(location, ticket_bytes)` pairs for each 3P caveat found.
 pub fn extract_third_party_tickets(token: &HeldToken) -> Result<Vec<(String, Vec<u8>)>, SdkError> {
-    use pyana_macaroon::format::decode_token;
-    use pyana_macaroon::{Macaroon, ThirdPartyCaveat};
+    use dregg_macaroon::format::decode_token;
+    use dregg_macaroon::{Macaroon, ThirdPartyCaveat};
 
     let binary = decode_token(token.encoded())
         .map_err(|e| SdkError::Wire(format!("failed to decode token: {e}")))?;

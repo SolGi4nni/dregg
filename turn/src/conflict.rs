@@ -15,7 +15,7 @@
 //! Two conflict sets overlap if the bitwise AND of their filters is non-zero. This is a
 //! necessary (but not sufficient) condition for a true conflict.
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 /// Number of hash functions (k) for the Bloom filter.
@@ -106,7 +106,7 @@ impl ConflictSet {
     /// verify the conflict set wasn't tampered with after the validity proof was generated.
     pub fn commitment(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-conflict-set-v1");
+        hasher.update(b"dregg-conflict-set-v1");
         hasher.update(&self.filter);
         hasher.update(&self.cell_count.to_le_bytes());
         *hasher.finalize().as_bytes()

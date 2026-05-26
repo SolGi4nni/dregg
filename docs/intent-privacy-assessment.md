@@ -1,4 +1,4 @@
-# Intent Privacy Assessment: Is Pyana's Intent System Private Enough?
+# Intent Privacy Assessment: Is `dregg`'s Intent System Private Enough?
 
 Short answer: No. The system provides component-level privacy (PIR for browsing, STARK proofs for fulfillment) but the composition leaks enough metadata to profile participants in a real marketplace.
 
@@ -64,7 +64,7 @@ No mixnet, no onion routing, no padding, no dummy traffic. The wire server logs 
 
 **Layer 4 -- Fulfillment Delivery:** Replace direct fulfillment delivery with a dead-drop or relay system. The fulfiller posts an encrypted fulfillment to a shared bulletin board; the intent creator retrieves it via PIR. Neither party communicates directly.
 
-**Layer 5 -- Payment:** Integrate the existing Pedersen commitment and conservation proof machinery into the executor. Payments must be committed values, not cleartext u64. This exists in pyana's crypto layer but is not wired into the Turn system.
+**Layer 5 -- Payment:** Integrate the existing Pedersen commitment and conservation proof machinery into the executor. Payments must be committed values, not cleartext u64. This exists in dregg's crypto layer but is not wired into the Turn system.
 
 ## Honest Assessment
 

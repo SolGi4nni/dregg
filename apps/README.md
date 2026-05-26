@@ -6,28 +6,28 @@ THEY ARE SHAPEFORMS I USED TO REVERSE-EXPLORE THE DESIGN SPACE
 
        THEY ARE MANY KNOWN ISSUES WITH ALL OF THEM
 
-(except pyana-discord-bot. we love pyana-discord-bot.)
+(except dregg-discord-bot. we love dregg-discord-bot.)
 
 ## apps/
 
-Applications built on pyana. Each demonstrates real cryptographic properties — STARK proofs, Pedersen commitments, garbled circuits, ring membership, capability delegation. No mocks.
+Applications built on dregg. Each demonstrates real cryptographic properties — STARK proofs, Pedersen commitments, garbled circuits, ring membership, capability delegation. No mocks.
 
 ## Running
 
 ```bash
-cargo run -p pyana-gallery          # :3000 — Art auctions
-cargo run -p pyana-stablecoin       # :3050 — CDP stablecoin
-cargo run -p pyana-amm              # :3051 — AMM/swap
-cargo run -p pyana-identity         # :3052 — Verifiable credentials
-cargo run -p pyana-orderbook        # :3053 — Trading
-cargo run -p pyana-bounty-board     # :3001 — Bounties
+cargo run -p dregg-gallery          # :3000 — Art auctions
+cargo run -p dregg-stablecoin       # :3050 — CDP stablecoin
+cargo run -p dregg-amm              # :3051 — AMM/swap
+cargo run -p dregg-identity         # :3052 — Verifiable credentials
+cargo run -p dregg-orderbook        # :3053 — Trading
+cargo run -p dregg-bounty-board     # :3001 — Bounties
 cargo run -p compute-exchange       # :3002 — GPU marketplace
 cargo run -p governed-namespace      # :3003 — Service mesh
-cargo run -p pyana-discord-bot      # Discord bot (no HTTP)
+cargo run -p dregg-discord-bot      # Discord bot (no HTTP)
 ```
 
-Persistence: `--state-file path.json` or `PYANA_STATE_FILE` env.
-Admin auth: `PYANA_ADMIN_TOKEN` env (Bearer header on `/admin/*`).
+Persistence: `--state-file path.json` or `DREGG_STATE_FILE` env.
+Admin auth: `DREGG_ADMIN_TOKEN` env (Bearer header on `/admin/*`).
 
 ## The Apps
 
@@ -65,7 +65,7 @@ Dual escrow (payment + SLA bond). Commit-reveal fulfillment with 3-strike penalt
 
 ### `governed-namespace/` — Governed Service Mesh
 
-DAO-controlled capability registry with DFA-based routing. Files stored as nameless writes (content-addressed, no indirection). Route table governed by constitutional threshold vote (propose → vote → atomic DFA swap). Service mesh: mount capabilities at named paths, discover by tags, resolve to sturdy refs (`pyana://` URIs). Auth levels: Anonymous, Member, Admin, Multisig(N) — classified by DFA. The directory is a programmable introduction service: registering = making your services discoverable to the DAO.
+DAO-controlled capability registry with DFA-based routing. Files stored as nameless writes (content-addressed, no indirection). Route table governed by constitutional threshold vote (propose → vote → atomic DFA swap). Service mesh: mount capabilities at named paths, discover by tags, resolve to sturdy refs (`dregg://` URIs). Auth levels: Anonymous, Member, Admin, Multisig(N) — classified by DFA. The directory is a programmable introduction service: registering = making your services discoverable to the DAO.
 
 ### `discord-bot/` — Devnet Interface (moved to toplevel `/discord-bot`)
 
@@ -85,7 +85,7 @@ than an app.
 
 ## Deployment
 
-Behind Caddy at `devnet.pyana.fg-goose.online`:
+Behind Caddy at `devnet.dregg.fg-goose.online`:
 - `/app/<name>/` — Static frontends
 - `/<name>/*` — REST APIs
 - `/ws` — WebSocket (gallery live events)

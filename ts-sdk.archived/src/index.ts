@@ -111,7 +111,7 @@ export type {
 // ---------------------------------------------------------------------------
 
 export type {
-  PyanaClient,
+  DreggClient,
   CapTpClient,
   DirectoryClient,
   StorageClient,

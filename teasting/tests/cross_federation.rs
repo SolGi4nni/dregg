@@ -5,23 +5,23 @@
 
 use std::collections::HashSet;
 
-use pyana_cell::note::{NoteCommitment, Nullifier};
-use pyana_cell::note_bridge::{
+use dregg_cell::note::{NoteCommitment, Nullifier};
+use dregg_cell::note_bridge::{
     BridgedNullifierSet, PendingBridgeSet, create_portable_note, initiate_bridge,
     verify_portable_note,
 };
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_teasting::agent::SimAgent;
-use pyana_teasting::federation::{drive_to_finalization, dual_federation};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_token::RevocationRegistry;
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_teasting::agent::SimAgent;
+use dregg_teasting::federation::{drive_to_finalization, dual_federation};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_token::RevocationRegistry;
+use dregg_turn::{
     CallForest, CallTree, ComputronCosts, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, Effect, ProofCondition, Turn, TurnExecutor, TurnResult,
     action::{Action, Authorization, DelegationMode},
     compute_conditional_deposit, resolve_condition, validate_conditional_submission,
 };
-use pyana_types::AttestedRoot;
+use dregg_types::AttestedRoot;
 
 fn open_permissions() -> Permissions {
     Permissions {
@@ -363,7 +363,7 @@ fn test_note_bridge_between_federations() {
         quorum_signatures: vec![],
         threshold_qc: None,
         threshold: 0,
-        federation_id: pyana_types::FederationId::PLACEHOLDER,
+        federation_id: dregg_types::FederationId::PLACEHOLDER,
         receipt_stream_root: None,
     };
 

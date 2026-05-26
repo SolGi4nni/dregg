@@ -15,7 +15,7 @@ use crate::types::PublicKey;
 /// Domain separator for the committee → federation_id mapping.
 ///
 /// Bumping this string breaks every existing federation id — greenfield-only.
-pub const FEDERATION_ID_DOMAIN: &str = "pyana-fed-id-v1";
+pub const FEDERATION_ID_DOMAIN: &str = "dregg-fed-id-v1";
 
 /// Derive a federation id from the (unsorted) committee Ed25519 public keys.
 ///

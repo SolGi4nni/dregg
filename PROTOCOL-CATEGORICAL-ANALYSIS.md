@@ -1,7 +1,7 @@
 # PROTOCOL-CATEGORICAL-ANALYSIS — duals, inverses, and lifecycle gaps across the protocol surface
 
 **Date:** 2026-05-24. **Status:** study/design lane; read-only on code;
-one new `.md`. **Scope:** the *rest* of pyana's protocol surface
+one new `.md`. **Scope:** the *rest* of dregg's protocol surface
 beyond what `CROSS-CELL-CATEGORICAL-ANALYSIS.md` already covers.
 
 **Companion docs:** `CROSS-CELL-CATEGORICAL-ANALYSIS.md` (prior lane —
@@ -17,7 +17,7 @@ Renunciation / Refusal / OneOf — DO NOT REPEAT),
 The seed observation from the user that triggered this analysis:
 *"we can't… destroy cells? hmm."*
 
-That is correct. pyana has `CreateCell`, `CreateCellFromFactory`,
+That is correct. dregg has `CreateCell`, `CreateCellFromFactory`,
 `SpawnWithDelegation`, `MakeSovereign` (a creation-shaped transition
 between Hosted and Sovereign modes), and a runtime
 `CellMigrationManager` that *physically removes* a cell from one
@@ -44,7 +44,7 @@ The opinionated TL;DR — written first so it can be read alone:
 
 > Across ten protocol surfaces, fourteen Tier 1 lifecycle / dual gaps
 > emerge. The most foundational is **`Effect::CellDestroy` and its
-> companion `DeathCertificate`**: pyana has no provable way to retire
+> companion `DeathCertificate`**: dregg has no provable way to retire
 > a cell, no first-class shape for the c-list-disposition question
 > ("what happens to the descendants?"), and no audit trail that says
 > "this id is permanently irreclaimable." This is the missing terminal
@@ -63,7 +63,7 @@ The opinionated TL;DR — written first so it can be read alone:
 > narrower is to revoke-and-reissue, which is racy and observable).
 >
 > Three Tier 1 receipt-side gaps: **(d) no `ReceiptArchive` / pruning
-> primitive** with provable history-elision attestation — pyana's
+> primitive** with provable history-elision attestation — dregg's
 > chains are append-only with no first-class shape for "this prefix
 > has been archived under attestation `A`, replays start from
 > snapshot `S`"; **(e) no cross-chain-receipt-of-receipt structure**
@@ -91,7 +91,7 @@ The opinionated TL;DR — written first so it can be read alone:
 > auditing, **(p) higher-order predicate witnessing** (predicate-of-
 > predicates) — useful for governance-of-governance schemes.
 >
-> The pattern is consistent: pyana's *constructive* side is rich;
+> The pattern is consistent: dregg's *constructive* side is rich;
 > its *destructive*, *transitive-quotient*, and *cross-time-windowed*
 > sides are thin. The seed observation generalizes.
 
@@ -136,7 +136,7 @@ mode-transition (`MakeSovereign`), and relocation
 The categorical dual of "create" is "destroy." Categorically: if
 *every initial-state cell has a unique morphism from `⊥` (the
 uninstantiated cell)*, then *every terminal-state cell has a unique
-morphism to `⊤` (the destroyed cell)*. Pyana has the morphism *from*
+morphism to `⊤` (the destroyed cell)*. `dregg` has the morphism *from*
 `⊥`; it does not have the morphism *to* `⊤`.
 
 What's near it:
@@ -175,7 +175,7 @@ cannot be asked of a *frozen* or *migrated* cell:
    silently; parent migration is treated as "parent moved" not
    "parent died"; no machinery for "parent is gone."
 
-2. **"Can the id be re-used?"** Pyana's content-addressed CellId is
+2. **"Can the id be re-used?"** `dregg`'s content-addressed CellId is
    `BLAKE3(public_key || token_id)`. So the answer in practice is
    *no, never* — once `(pk, token_id)` is consumed, it can never be
    re-issued because the same pre-image produces the same id. This
@@ -557,7 +557,7 @@ Why this matters:
    compliance flows ("I burn N to commit to not violating predicate P
    in the next epoch").
 3. **The structural sense.** Mint and Burn are categorically dual.
-   Pyana has note-burn (`NoteSpend` with no `NoteCreate` of equal
+   `dregg` has note-burn (`NoteSpend` with no `NoteCreate` of equal
    value) at the value-commitment layer, but not at the cell-balance
    layer. The asymmetry is real.
 
@@ -653,13 +653,13 @@ present analysis flags.
 
 ### §2.10. The "compensating action" non-finding
 
-A natural categorical question: does pyana have a *generic compensating
+A natural categorical question: does dregg have a *generic compensating
 action* — an effect that says "the previous effect at slot P was wrong;
 this effect compensates"? The answer is *no by design* — the executor
 operates under turn-atomicity, so within a turn all effects are atomic
 (commit or rollback together) and across turns the receipt chain is
 append-only. The "compensating action" pattern in distributed-systems
-language is *external* to pyana: it lives in the off-chain
+language is *external* to dregg: it lives in the off-chain
 orchestrator that observes a failed turn and *issues a new turn* to
 compensate. This is correct; there is no in-protocol "rollback" because
 there is nothing to roll back to.
@@ -976,13 +976,13 @@ branch* with an attested divergence point and resolution policy."
 **Tier 3** — too niche to prioritize. The honest categorical
 observation: receipt chains are *trees with a single canonical path
 selected by federation consensus*, and the absence of a "branch
-declaration" effect reflects pyana's commitment to consensus-decided
+declaration" effect reflects dregg's commitment to consensus-decided
 linearity. *No primitive proposed*; this is a clarifying observation.
 
 ### §4.4. Receipt-of-receipt — the recursive structure
 
 The categorical name for "a receipt that verifies another receipt"
-is *recursive proof composition*. Today pyana has this — partially:
+is *recursive proof composition*. Today dregg has this — partially:
 
 - `WitnessBundle.recursive_proof: Option<RecursiveProofVariant>` —
   a proof verifying a base proof.
@@ -1292,7 +1292,7 @@ CapTP machinery (`captp/src/lib.rs`):
 - `HandoffPresentation::create` / `verify_recipient_signature` — recipient-signed presentation.
 - `validate_handoff` — federation-side cert validation.
 - `MessageRelay::queue_for_offline` / `deliver` (store_forward) — offline cap delivery.
-- `PyanaUri` (sturdy URI) — `pyana://fed_id/cell_id/swiss`.
+- `DreggUri` (sturdy URI) — `dregg://fed_id/cell_id/swiss`.
 - Pipelined sends: `PipelinePromiseState`, `PipelinedMessage`, etc.
 
 At the turn level:
@@ -1307,7 +1307,7 @@ At the turn level:
 
 ### §6.2. Sturdy-ref serialization / cross-federation export
 
-A sturdy ref is a `pyana://fed_id/cell_id/swiss` URI. Anyone holding
+A sturdy ref is a `dregg://fed_id/cell_id/swiss` URI. Anyone holding
 the URI can present it to the named federation and (if the swiss is
 valid) receive a live routing entry.
 
@@ -1422,7 +1422,7 @@ adversaries. Examples:
   channel before refusing.
 - A cap that mimics a high-value target but actually grants nothing.
 
-Pyana has no first-class "decoy" shape. The closest is `Permissions::
+`dregg` has no first-class "decoy" shape. The closest is `Permissions::
 frozen()` + an `EmitEvent` on attempted access. A structural primitive
 would be:
 
@@ -1463,13 +1463,13 @@ OCapN (the cap-system specification) defines:
 - *Promise pipelining* (pipelined sends to unresolved targets). ✓
 - *Vat-shutdown attestation* — when a vat (a CapTP endpoint) shuts
   down, peers learn that all its imports are dead. **PARTIAL**
-  in pyana (a cell going to `Permissions::frozen()` is the closest
+  in dregg (a cell going to `Permissions::frozen()` is the closest
   analog, but it doesn't broadcast to importers).
 - *Promise rejection forwarding* — when a pipelined target turns out
   to be broken, the rejection propagates to downstream pipelined
   sends. **PARTIAL** — `BrokenReason` exists, propagation is partial.
 
-The OCapN lineage check: pyana implements ~80% of OCapN. The gaps
+The OCapN lineage check: dregg implements ~80% of OCapN. The gaps
 are:
 
 1. **Vat-shutdown** (would be `Effect::CellSeal` / `CellDestroy` per
@@ -1569,7 +1569,7 @@ the workaround (custom AIR per use) carries the load.
 
 A *predicate over predicates* is structurally a meta-witness: "the
 holder of cap `c` has been authorized to invoke predicate kind `K` —
-prove that `K`'s vk_hash is in this approved registry." Pyana has
+prove that `K`'s vk_hash is in this approved registry." `dregg` has
 this *implicitly* (cap-holders are identified by signature; the
 predicate registry is a federation-level config). But it's not
 *reifiable as a first-class predicate*.
@@ -2109,7 +2109,7 @@ RingClosureAttestation, Renunciation, Refusal, OneOf).
 | T1-11 | `Effect::FederationWindDown` | Provable federation retirement | `turn::action::Effect` + `federation` bootstrap |
 
 **Total: 11 Tier 1 primitives**, clustered around the *missing
-destructive / merge / split operations*. The unifying theme: *pyana
+destructive / merge / split operations*. The unifying theme: *dregg
 is rich in creation, thin in deliberate termination*.
 
 ### §11.2. Tier 2 — composability gains
@@ -2283,13 +2283,13 @@ Six landing units capture the bulk; the remainder is sweep work.
 
 ---
 
-## §12. Meta-reflection — why is pyana asymmetric this way?
+## §12. Meta-reflection — why is dregg asymmetric this way?
 
 Two honest observations close out the analysis.
 
 ### §12.1. The bias toward creation
 
-Pyana's design rhythm — visible from the inventory above — is
+`dregg`'s design rhythm — visible from the inventory above — is
 *"how do we build this thing safely?"* much more than *"how do we
 retire this thing safely?"* This is *normal* for a Phase-1 system:
 the creative half of the algebra accrues mass first because
@@ -2297,14 +2297,14 @@ creating-a-cell, granting-a-cap, writing-a-state, executing-a-turn
 *are* the protocol's reason for existing. The destructive half
 accrues mass when the system has been live long enough to need it.
 
-What this analysis suggests is that pyana *is* now mature enough to
+What this analysis suggests is that dregg *is* now mature enough to
 need the destructive half. The seed observation ("we can't destroy
 cells?") generalizes — and the punch list shows it generalizes
 *widely*. Cells, queues, federations, introductions, sturdies,
 delegation subtrees — every creation point in the substrate is
 missing its retirement point.
 
-The *categorical* observation: pyana is rich in initial morphisms
+The *categorical* observation: dregg is rich in initial morphisms
 ("morphisms from `⊥` into the substrate") and thin in terminal
 morphisms ("morphisms from the substrate to `⊤`"). The prior lane's
 analysis already named this for `Predicate` (no `False`) and
@@ -2330,7 +2330,7 @@ same pattern at *federation* level:
 - Three-fed-or-more operations have no first-class shape (only
   pairwise compositions).
 
-This is a *design commitment*, not a gap. Pyana deliberately resists
+This is a *design commitment*, not a gap. `dregg` deliberately resists
 k-ary primitives — the verifier-loop complexity and the consensus-
 coordination complexity argue against them. The pairwise composition
 is *expected* to be the workhorse.
@@ -2338,7 +2338,7 @@ is *expected* to be the workhorse.
 The Tier 2 `Effect::BridgeChain` is the *first place this commitment
 softens* — atomic multi-hop bridges *do* need k-ary structure. The
 analysis doesn't recommend changing the commitment, but it does flag
-that as pyana scales, the *one place* the k-ary pressure becomes
+that as dregg scales, the *one place* the k-ary pressure becomes
 real is in liquidity-routing bridges. Watch this surface.
 
 ### §12.3. The "improve don't degrade" thesis
@@ -2351,7 +2351,7 @@ primitive," not "carve out a soundness hole." The Tier 1 list is
 ~11 primitives over ~4 cohesive landings (Cell-destroy family,
 Federation-lifecycle family, Receipt-archival family,
 Effect-symmetries family), each of which is a real *upgrade* to the
-substrate without lowering any of pyana's current invariants.
+substrate without lowering any of dregg's current invariants.
 
 The categorical hygiene is *additive*. Every primitive proposed here
 *completes* a missing dual without weakening any existing one.

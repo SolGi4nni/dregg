@@ -1,4 +1,4 @@
-//! Production `ThresholdVerifier` backed by `pyana-federation`'s
+//! Production `ThresholdVerifier` backed by `dregg-federation`'s
 //! `FederationCommittee` + `ThresholdQC` BLS aggregate verifier.
 //!
 //! This module is feature-gated behind `federation-verifier` so that
@@ -10,9 +10,9 @@
 //!
 //! ```ignore
 //! use std::sync::Arc;
-//! use pyana_dfa::{GovernedRouter, RouteTableBuilder, RouteTarget};
-//! use pyana_dfa::federation_verifier::FederationQcVerifier;
-//! use pyana_federation::threshold::FederationCommittee;
+//! use dregg_dfa::{GovernedRouter, RouteTableBuilder, RouteTarget};
+//! use dregg_dfa::federation_verifier::FederationQcVerifier;
+//! use dregg_federation::threshold::FederationCommittee;
 //!
 //! let committee: FederationCommittee = /* loaded from federation state */;
 //! let verifier = Arc::new(FederationQcVerifier::new(committee));
@@ -25,13 +25,13 @@
 //! # Wire-format
 //!
 //! `GovernanceProof::proof_data` is a postcard-encoded
-//! `pyana_federation::threshold::ThresholdQC`. The verifier reconstructs the
+//! `dregg_federation::threshold::ThresholdQC`. The verifier reconstructs the
 //! QC, builds the canonical signing message `old_commitment ‖ new_commitment`,
 //! and delegates to `FederationCommittee::verify(&qc, &message)`.
 
 use std::fmt;
 
-use pyana_federation::threshold::{FederationCommittee, ThresholdQC};
+use dregg_federation::threshold::{FederationCommittee, ThresholdQC};
 
 use crate::router::ThresholdVerifier;
 

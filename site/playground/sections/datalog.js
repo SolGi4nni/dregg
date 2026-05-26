@@ -7,10 +7,10 @@ export function initDatalog(wasm) {
   container.innerHTML = `
     <div class="section-header">
       <h2>Datalog Policy Engine</h2>
-      <!-- §4.9 tiered migration (FOLLOWUP-05): Tier 2 deprecation to <pyana-predicate> -->
+      <!-- §4.9 tiered migration (FOLLOWUP-05): Tier 2 deprecation to <dregg-predicate> -->
       <div style="background:#fff8e6;border:1px solid #f0d080;padding:0.25rem 0.5rem;font-size:0.75rem;margin:0.3rem 0;">
-        <strong>§4.9 Migration:</strong> Superseded by platform <code>&lt;pyana-predicate&gt;</code> + <code>&lt;pyana-witnessed-predicate&gt;</code> (derivation trace, Datalog). Core preserved for learn. 
-        <a href="/starbridge.html?at=pyana://predicate/demo" target="_blank">Deep-link to Starbridge now →</a>
+        <strong>§4.9 Migration:</strong> Superseded by platform <code>&lt;dregg-predicate&gt;</code> + <code>&lt;dregg-witnessed-predicate&gt;</code> (derivation trace, Datalog). Core preserved for learn. 
+        <a href="/starbridge.html?at=dregg://predicate/demo" target="_blank">Deep-link to Starbridge now →</a>
       </div>
       <p>
         Authorization decisions are made by a Datalog evaluator. Facts describe the token's
@@ -23,7 +23,7 @@ export function initDatalog(wasm) {
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
       <div>
         <div class="control-group">
-          <label>Policy Rules (read-only — these are pyana's standard rules)</label>
+          <label>Policy Rules (read-only — these are dregg's standard rules)</label>
           <div style="background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); line-height: 1.7; margin-top: 4px;">
 <pre style="margin:0; font-size:inherit; background:none; border:none; padding:0; color:inherit;">rule allow_unrestricted:
   fact(unrestricted, "true") =>

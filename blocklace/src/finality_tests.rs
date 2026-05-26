@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 
 use crate::finality::{Block, BlockError, Blocklace, FinalityLevel, FinalityTracker, Payload};
-use crate::pyana_bridge::{CodManager, ExecutionTier, PyanaBlocklaceBridge, classify_turn};
+use crate::dregg_bridge::{CodManager, ExecutionTier, DreggBlocklaceBridge, classify_turn};
 
 fn random_key() -> SigningKey {
     SigningKey::generate(&mut OsRng)
@@ -410,7 +410,7 @@ fn cod_budget_management() {
 fn bridge_submit_and_process() {
     let key = random_key();
     let mut lace = Blocklace::new(key, 3);
-    let bridge = PyanaBlocklaceBridge::new(5);
+    let bridge = DreggBlocklaceBridge::new(5);
 
     let block_id = bridge.submit_turn(&mut lace, vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert!(lace.contains(&block_id));
@@ -628,7 +628,7 @@ fn metrics_reflect_state() {
 fn process_finalized_no_duplicates() {
     let key = random_key();
     let mut lace = Blocklace::new(key, 3);
-    let mut bridge = PyanaBlocklaceBridge::new(5);
+    let mut bridge = DreggBlocklaceBridge::new(5);
 
     // Submit turns.
     let turn_data = vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0];

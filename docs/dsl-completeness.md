@@ -1,4 +1,4 @@
-# Pyana DSL Completeness Assessment
+# `dregg` DSL Completeness Assessment
 
 ## Verdict: Complete
 
@@ -12,7 +12,7 @@ The DSL handles all 16 caveats and all effect types. Nothing is impossible; some
 
 **Third-party discharge** — The "interaction" is witness acquisition, not circuit execution. The prover obtains the discharge out-of-band, then the circuit verifies `HMAC(key, token) == expected`. The DSL provides `hmac_verify!` (compiling to Poseidon2-HMAC for STARK, native Poseidon for Kimchi) as a built-in. The discharge token is a private witness column; the expected HMAC is a public input. No interaction at proof time. Cost: one hash invocation (~200 constraints for Poseidon2).
 
-**Complex effects (NoteSpend)** — Composition of primitives the DSL already handles: `hash!` (Poseidon2), `merkle_path.verify` (iterated hashing), `publish!` (boundary constraint / public output), `emit_value!` (conservation accounting). The `#[pyana_effect]` macro recognizes these built-ins and emits the corresponding sub-AIRs composed vertically within a single trace. Each primitive maps to a known column-width; the total is their sum. Conservation checking becomes a separate constraint that sums `emit_value!` calls across all effects in a transaction.
+**Complex effects (NoteSpend)** — Composition of primitives the DSL already handles: `hash!` (Poseidon2), `merkle_path.verify` (iterated hashing), `publish!` (boundary constraint / public output), `emit_value!` (conservation accounting). The `#[dregg_effect]` macro recognizes these built-ins and emits the corresponding sub-AIRs composed vertically within a single trace. Each primitive maps to a known column-width; the total is their sum. Conservation checking becomes a separate constraint that sums `emit_value!` calls across all effects in a transaction.
 
 **Struct field access / indexing** — Array indexing with a runtime index compiles to a one-hot selector pattern: prover provides the selector vector, circuit enforces `sum(sel) == 1`, and per-element constraints gate updates through `sel[i] * (new[i] - value) == 0`. Struct field access with a compile-time-known field is trivial (direct column reference). Cost: N additional columns for the selector on an array of size N, plus 2N degree-2 constraints.
 

@@ -1,6 +1,6 @@
-# Pyana Gateway Node — AWS Graviton Deployment
+# `dregg` Gateway Node — AWS Graviton Deployment
 
-Always-on gateway node for the pyana federation. Runs on an AWS Graviton instance
+Always-on gateway node for the dregg federation. Runs on an AWS Graviton instance
 in the commonquant-ember account, providing a stable HTTPS/WSS endpoint for browser
 clients and a permanent peer for ephemeral GitHub Actions federation nodes.
 
@@ -9,64 +9,64 @@ clients and a permanent peer for ephemeral GitHub Actions federation nodes.
 ```
 Internet
   │
-  ├── Browser/Extension ──► https://devnet.pyana.fg-goose.online (Caddy TLS)
+  ├── Browser/Extension ──► https://devnet.dregg.fg-goose.online (Caddy TLS)
   │                              │
-  │                              ├── /api/*     → pyana-node :8420
-  │                              ├── /ws        → pyana-node :8420 (WebSocket)
+  │                              ├── /api/*     → dregg-node :8420
+  │                              ├── /ws        → dregg-node :8420 (WebSocket)
   │                              ├── /explorer  → static files
   │                              └── /playground → static files
   │
-  └── GitHub Actions nodes ──► devnet.pyana.fg-goose.online:9420 (QUIC gossip)
+  └── GitHub Actions nodes ──► devnet.dregg.fg-goose.online:9420 (QUIC gossip)
 ```
 
 ## Prerequisites
 
 - AWS Graviton instance (t4g.small or larger) with Ubuntu 22.04+ or AL2023
-- Domain `devnet.pyana.fg-goose.online` pointing to the instance's public IP
+- Domain `devnet.dregg.fg-goose.online` pointing to the instance's public IP
 - Ports open: 80 (HTTP, for ACME), 443 (HTTPS), 8420 (HTTP API, optional direct), 9420 (QUIC gossip)
 - SSH access configured
-- GitHub deploy key for the pyana repo
+- GitHub deploy key for the dregg repo
 
 ## First-Time Setup
 
 ```bash
-ssh ubuntu@devnet.pyana.fg-goose.online
-curl -sSL https://raw.githubusercontent.com/emberian/pyana/main/deploy/aws/setup.sh | bash
+ssh ubuntu@devnet.dregg.fg-goose.online
+curl -sSL https://raw.githubusercontent.com/emberian/dregg/main/deploy/aws/setup.sh | bash
 ```
 
 Or if you prefer to inspect first:
 
 ```bash
-ssh ubuntu@devnet.pyana.fg-goose.online
-git clone git@github.com:emberian/pyana.git /tmp/pyana-setup
-less /tmp/pyana-setup/deploy/aws/setup.sh
-bash /tmp/pyana-setup/deploy/aws/setup.sh
+ssh ubuntu@devnet.dregg.fg-goose.online
+git clone git@github.com:emberian/dregg.git /tmp/dregg-setup
+less /tmp/dregg-setup/deploy/aws/setup.sh
+bash /tmp/dregg-setup/deploy/aws/setup.sh
 ```
 
 ## Updating
 
 ```bash
-ssh ubuntu@devnet.pyana.fg-goose.online
-bash /opt/pyana/deploy/aws/update.sh
+ssh ubuntu@devnet.dregg.fg-goose.online
+bash /opt/dregg/deploy/aws/update.sh
 ```
 
 ## Monitoring
 
 ```bash
 # Service status
-sudo systemctl status pyana-gateway
+sudo systemctl status dregg-gateway
 
 # Logs (live)
-sudo journalctl -u pyana-gateway -f
+sudo journalctl -u dregg-gateway -f
 
 # Last 100 lines
-sudo journalctl -u pyana-gateway -n 100 --no-pager
+sudo journalctl -u dregg-gateway -n 100 --no-pager
 
 # Caddy logs
 sudo journalctl -u caddy -f
 
 # Health check
-curl https://devnet.pyana.fg-goose.online/status
+curl https://devnet.dregg.fg-goose.online/status
 ```
 
 ## Ports
@@ -75,7 +75,7 @@ curl https://devnet.pyana.fg-goose.online/status
 |------|----------|---------|
 | 80   | TCP      | Caddy ACME challenge (auto-redirects to 443) |
 | 443  | TCP      | HTTPS (Caddy reverse proxy, auto Let's Encrypt) |
-| 8420 | TCP      | pyana-node HTTP API (direct, optional) |
+| 8420 | TCP      | dregg-node HTTP API (direct, optional) |
 | 9420 | UDP      | QUIC gossip (federation peer protocol) |
 
 ## Security Group (AWS)
@@ -92,34 +92,34 @@ To run a relay operator alongside (or instead of) the gateway node:
 
 ```bash
 # Start the relay operator service on port 3100
-pyana-node relay \
+dregg-node relay \
   --bond 10000 \
   --port 3100 \
-  --data-dir /opt/pyana-data \
-  --state-file /opt/pyana-data/relay-state.json \
+  --data-dir /opt/dregg-data \
+  --state-file /opt/dregg-data/relay-state.json \
   --gc-interval 300 \
   --message-ttl 1000 \
   --max-capacity 100000
 ```
 
-### Systemd Unit (pyana-relay.service)
+### Systemd Unit (dregg-relay.service)
 
-Create `/etc/systemd/system/pyana-relay.service`:
+Create `/etc/systemd/system/dregg-relay.service`:
 
 ```ini
 [Unit]
-Description=Pyana Relay Operator
+Description=Dregg Relay Operator
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=pyana
-ExecStart=/opt/pyana/target/release/pyana-node relay \
+User=dregg
+ExecStart=/opt/dregg/target/release/dregg-node relay \
   --bond 10000 \
   --port 3100 \
-  --data-dir /opt/pyana-data \
-  --state-file /opt/pyana-data/relay-state.json
+  --data-dir /opt/dregg-data \
+  --state-file /opt/dregg-data/relay-state.json
 Restart=always
 RestartSec=5
 
@@ -129,7 +129,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now pyana-relay
+sudo systemctl enable --now dregg-relay
 ```
 
 ### Caddy Configuration (add to Caddyfile)
@@ -156,16 +156,16 @@ Add to the security group:
 curl http://localhost:3100/relay/status
 
 # Service logs
-sudo journalctl -u pyana-relay -f
+sudo journalctl -u dregg-relay -f
 ```
 
 ## Troubleshooting
 
 **Node won't start:**
 ```bash
-sudo journalctl -u pyana-gateway -n 50 --no-pager
+sudo journalctl -u dregg-gateway -n 50 --no-pager
 # Check data dir permissions
-ls -la /opt/pyana-data/
+ls -la /opt/dregg-data/
 ```
 
 **TLS certificate issues:**
@@ -187,8 +187,8 @@ sudo ufw status
 ```bash
 df -h
 # Prune old data if needed
-sudo systemctl stop pyana-gateway
+sudo systemctl stop dregg-gateway
 # The node supports pruning, but manual cleanup:
-du -sh /opt/pyana-data/*
-sudo systemctl start pyana-gateway
+du -sh /opt/dregg-data/*
+sudo systemctl start dregg-gateway
 ```

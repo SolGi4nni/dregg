@@ -1,4 +1,4 @@
-# Test Reality Audit — pyana
+# Test Reality Audit — dregg
 
 Audit date: 2026-05-25
 Auditor: read-only research lane
@@ -7,7 +7,7 @@ federation/, verifier/, demo/, tests/, teasting/, apps/, starbridge-apps/
 
 The question this audit answers:
 
-> Are pyana's "passing" claims backed by tests that genuinely prove the
+> Are dregg's "passing" claims backed by tests that genuinely prove the
 > thing claimed, or by tests that look like proofs and aren't?
 
 A test is **real** if (1) it constructs the artifact through the real surface
@@ -18,8 +18,8 @@ that holds by construction, mocks the thing it claims to verify, prints
 instead of asserting, is silently `#[ignore]`d, or asserts on a
 divergent code path while documenting the real claim as "still TODO".
 
-The headline: pyana's **unit tests for primitives** are largely real
-(predicates, threshold sigs, CellState, NonMembership). pyana's
+The headline: dregg's **unit tests for primitives** are largely real
+(predicates, threshold sigs, CellState, NonMembership). dregg's
 **adversarial / soundness / cross-cutting tests** are the weak spot
 — this is exactly the place where seemingness costs the most. The
 multi-node-devnet scripts are scaffolding-shaped: they test their own
@@ -55,7 +55,7 @@ Sampled (counts approximate, big files spot-sampled):
 | `protocol-tests/src/invariants/effect_vm_differential.rs` | 1256 | first 50 LOC | |
 
 **Not sampled** (would need a follow-up lane):
-- `pyana-dsl-tests/` (~10000 LOC, sees a lot of TODO/Phase-3 markers)
+- `dregg-dsl-tests/` (~10000 LOC, sees a lot of TODO/Phase-3 markers)
 - `circuit/src/backends/kimchi_native/tests.rs` middle/end
 - `coord/src/tests.rs` body (only `#[cfg(any())]` block read)
 - `chain/`, `wire/`, `tokenizer/`, `directory/` tests
@@ -116,7 +116,7 @@ Each entry: file:line — what it claims to test — why it's seeming — fix.
 **File:** `demo/cross-app-e2e/verify.py:152–161`
 **Test in expected.json:** `subscription_head_advances_claim` / `_fulfill` / `_settle`, `bob_consume_advances_tail_by_one`
 **Claim:** Subscription head advances by +1 per publish.
-**Reality:** The check reads `dan_claim["new_head"]` (a number Dan's script wrote into the file) and compares against `1`. If Dan's script has a bug that writes `new_head = 1` regardless of whether the subscription substrate actually advanced, the assertion still passes. The canonical re-derivation in this file (`bounty_state_payload_hash`) is honest — the subscription head check is the weak spot. **However**: §6 will note that pyana's cross-app-e2e is on the whole the best demo in the audit because of the *other* checks.
+**Reality:** The check reads `dan_claim["new_head"]` (a number Dan's script wrote into the file) and compares against `1`. If Dan's script has a bug that writes `new_head = 1` regardless of whether the subscription substrate actually advanced, the assertion still passes. The canonical re-derivation in this file (`bounty_state_payload_hash`) is honest — the subscription head check is the weak spot. **However**: §6 will note that dregg's cross-app-e2e is on the whole the best demo in the audit because of the *other* checks.
 **Fix:** Have the canonical Python compute the expected head from the prior state's pinned head + the publish count, not read it back from Dan's output.
 
 ### S8. `cross_fed_handoff.sh` — pure scaffolding theater
@@ -128,7 +128,7 @@ Each entry: file:line — what it claims to test — why it's seeming — fix.
 - `handoff_replay_artifact_constructed = (n1 == n2)` after `cp` of the same file → tests `cp` preserves bytes
 - `handoff_tampered_artifact_distinguishable = diff_count > 0` after `jq '.permissions = "ALL"'` → tests `jq` modifies its input
 None of these touch the cross-fed handoff substrate. The script's own comments admit it (lines 30–34, 98–108) but the assertions still claim "true" in the result JSON, which `run_all_scenarios.sh` collates into a green check.
-**Fix:** Either (a) the scenario should call the real `pyana_create_cross_fed_bearer_cap` MCP tool and submit the resulting Turn to F2; if the lane isn't built yet, mark every assertion `null`/`pending`, NOT `true`. Or (b) move these to a `pending/` directory until the lane lands so they cannot accidentally be counted as passes.
+**Fix:** Either (a) the scenario should call the real `dregg_create_cross_fed_bearer_cap` MCP tool and submit the resulting Turn to F2; if the lane isn't built yet, mark every assertion `null`/`pending`, NOT `true`. Or (b) move these to a `pending/` directory until the lane lands so they cannot accidentally be counted as passes.
 
 ### S9. `intent_match_cross_fed.sh` — same scaffolding shape
 **File:** `demo/multi-node-devnet/scenarios/intent_match_cross_fed.sh:104–120`
@@ -140,7 +140,7 @@ None of these touch the cross-fed handoff substrate. The script's own comments a
 **File:** `coord/src/tests.rs:1394, 1446`
 **Tests:** `many_node_causal_dag`, `rejected_turn_still_in_dag`
 **Claim:** Multi-node causal DAG behaves correctly.
-**Reality:** Both wrapped in `#[cfg(any())]` (a Rust idiom for "always-false" that disables the test). Documented as "blocked on causal-test-port lane", but until that lane lands, the suite includes 0 multi-node causal-DAG tests. Anyone reading `cargo test -p pyana-coord` will see "all green" while these never run.
+**Reality:** Both wrapped in `#[cfg(any())]` (a Rust idiom for "always-false" that disables the test). Documented as "blocked on causal-test-port lane", but until that lane lands, the suite includes 0 multi-node causal-DAG tests. Anyone reading `cargo test -p dregg-coord` will see "all green" while these never run.
 **Fix:** Move to a `tests/causal_dag.rs.disabled` file or document them in `BLOCKED-TESTS.md` so the disabling is louder.
 
 ### S11. Massive ignore-list in `tests/src/executor_honesty_threats.rs`
@@ -183,7 +183,7 @@ None of these touch the cross-fed handoff substrate. The script's own comments a
 
 ### S19. `protocol-tests/src/invariants/effect_vm_differential.rs` "passthrough gap" tripwires
 **File:** `protocol-tests/src/invariants/effect_vm_differential.rs:20–22` (module header)
-**Reality:** Module documents that "PASSTHROUGH GAP" tests are intentionally `#[ignore]`d — they describe known gaps where the AIR's state delta is a subset of the runtime's. The tests are tripwires for when AIR coverage expands. This is a *deliberate* and *documented* tradeoff, not a bullshit; flagged here because anyone running `cargo test -p pyana-protocol-tests` will see green while 22 effect variants have known AIR-vs-runtime divergence.
+**Reality:** Module documents that "PASSTHROUGH GAP" tests are intentionally `#[ignore]`d — they describe known gaps where the AIR's state delta is a subset of the runtime's. The tests are tripwires for when AIR coverage expands. This is a *deliberate* and *documented* tradeoff, not a bullshit; flagged here because anyone running `cargo test -p dregg-protocol-tests` will see green while 22 effect variants have known AIR-vs-runtime divergence.
 
 ### S20. `every_variant_roundtrip.rs` — 2 ignores covering "the audit observed 31 of 41" variant gaps
 **File:** `tests/src/every_variant_roundtrip.rs:843–897`
@@ -191,7 +191,7 @@ None of these touch the cross-fed handoff substrate. The script's own comments a
 
 ---
 
-## §3. The real-tests showcase — pyana's house style when it's good
+## §3. The real-tests showcase — dregg's house style when it's good
 
 These are the load-bearing examples of what "real" tests look like in this codebase. Worth holding up as the bar for new tests.
 
@@ -280,7 +280,7 @@ Subjective "real-coverage" estimate — fraction of the area's CLAIMS that have 
 | `apps/gallery`, `apps/privacy-voting`, etc. | not audited beyond spot-checks |
 | `starbridge-apps/*` | not audited (one zero-pinned spot in governed-namespace looks legitimate) |
 | `demo/cross-app-e2e` | 90% | Best demo. Real cross-implementation Python + Rust derivation (R12). One weak spot: subscription-head advances (S7) |
-| `demo/two-ai-handoff` | 75–85% | `silver_helper.rs` does real signature verification, real `CellProgram::evaluate`, real STARK proofs via `pyana-verifier`. Charlie's verdict mostly depends on `silver_helper` doing the right thing — but `silver_helper` IS real and visible. The bilateral-tamper-rejection path goes through real `pyana-verifier bilateral-pair` invocations |
+| `demo/two-ai-handoff` | 75–85% | `silver_helper.rs` does real signature verification, real `CellProgram::evaluate`, real STARK proofs via `dregg-verifier`. Charlie's verdict mostly depends on `silver_helper` doing the right thing — but `silver_helper` IS real and visible. The bilateral-tamper-rejection path goes through real `dregg-verifier bilateral-pair` invocations |
 | `demo/multi-node-devnet` | 20–35% | Scaffolding theater. Five scenarios; we audited two and both write fixtures the assertions then check. Federation-attestation and bilateral-transfer not audited but I expect similar shape unless they call real `/api/*` endpoints |
 | `demo/silver-vision-e2e` | abandoned (expected.json only, no scripts) |
 | `tests/src/*` workspace harness | ~30% running, ~70% `#[ignore]`d (see S11–S15, S20) |
@@ -316,11 +316,11 @@ Prioritized. The user is leaning on these.
 This demo is the brightest spot in the audit. Architecture:
 
 1. `canonical.py` (181 LOC) is an **independent Python implementation** of every commitment derivation. It uses `blake3.derive_key_context=domain` to mirror the Rust `blake3::Hasher::new_derive_key(domain)`, with byte-level documentation comments showing the exact Rust call shape (e.g., lines 60–66 for `credential_set_commitment`).
-2. Each agent script (alice, bob, carol, dan) runs real CLI / MCP calls against `pyana-node` (or the real `starbridge_*` crates) and writes its receipt artifacts to `state/`.
+2. Each agent script (alice, bob, carol, dan) runs real CLI / MCP calls against `dregg-node` (or the real `starbridge_*` crates) and writes its receipt artifacts to `state/`.
 3. `verify.py` (294 LOC) loads every agent's artifact, re-derives every commitment from raw inputs using `canonical.py`, and asserts the agent's pinned commitment matches the canonical re-derivation.
 4. **Negative tests** (lines 192–249) reproduce tamper attempts (wrong issuer, wrong schema, wrong actor pk, tampered prior_state, tampered resolve target, wrong method, wrong constraint variant) and assert the resulting commitments don't match.
 
-The independent-implementation property is the soundness floor. If the Rust `pyana_cell::program::AuthorizedSet::credential_set_commitment` had a subtle bug, the Python re-derivation would catch it byte-equal. This is exactly the shape (R12, "cross-implementation test") that the audit's §"What real tests look like" describes.
+The independent-implementation property is the soundness floor. If the Rust `dregg_cell::program::AuthorizedSet::credential_set_commitment` had a subtle bug, the Python re-derivation would catch it byte-equal. This is exactly the shape (R12, "cross-implementation test") that the audit's §"What real tests look like" describes.
 
 Single weak spot: subscription-head advance checks (S7) read back the agent's own claimed `new_head` rather than re-deriving it. Not load-bearing — every other check in the verifier is honest.
 
@@ -329,10 +329,10 @@ Single weak spot: subscription-head advance checks (S7) read back the agent's ow
 ### `demo/two-ai-handoff` — mostly real, depends on `silver_helper.rs`
 
 `charlie.py` is a thin runner that:
-1. Calls the real `pyana-verifier` binary (`verify-proof`, `replay-chain`, `bilateral-pair`, `scope-recursive`) on real artifacts.
+1. Calls the real `dregg-verifier` binary (`verify-proof`, `replay-chain`, `bilateral-pair`, `scope-recursive`) on real artifacts.
 2. Calls `silver_helper` for verification subcommands (`verify-captp-delivered`, `verify-captp-delivered-tampered`).
 3. Reads `silver.sovereign-witness.json.self_verifies` etc. directly from disk — these are populated by `silver_helper`'s `cmd_make_*` functions which DO run real Ed25519 verification (`silver_helper.rs:643–667`).
-4. For bilateral binding: writes a tampered bundle, calls `pyana-verifier bilateral-pair` on it, asserts rejection.
+4. For bilateral binding: writes a tampered bundle, calls `dregg-verifier bilateral-pair` on it, asserts rejection.
 
 The substrate-honest claim hinges on whether `silver_helper.rs` is honest. Sampling `cmd_make_sovereign_witness` (lines 599–685): real `SovereignCellWitness::signing_message`, real `alice_sk.sign(...)`, real `verify_strict`, tampered `new_commitment[0] ^= 0x01` re-derives the message and confirms the original signature no longer verifies. The slot-caveat demo (`cmd_slot_caveat_demo`, line 695+) installs a real `CellProgram::Predicate(vec![WriteOnce, Monotonic])` and exercises positive + negative paths against real `CellProgram::evaluate`.
 
@@ -374,7 +374,7 @@ The 10 highest-leverage new tests that would close real gaps. Ordered by leverag
 **Why:** The two existing tests pass for the wrong reason. The Unwitnessable code path is genuinely untested.
 
 ### A5. Multi-node-devnet `cross_fed_handoff` against real HTTP / CapTP surface
-**Target:** S8. Either invoke the real `pyana_create_cross_fed_bearer_cap` MCP tool and submit the resulting URI to F2's executor (asserting the transfer applies and F2's `/federation/roots` advances), or mark every assertion `pending`.
+**Target:** S8. Either invoke the real `dregg_create_cross_fed_bearer_cap` MCP tool and submit the resulting URI to F2's executor (asserting the transfer applies and F2's `/federation/roots` advances), or mark every assertion `pending`.
 **Why:** Closes the largest single seeming-demo in the audit. Currently the user cannot tell from `run_all_scenarios.sh` output whether cross-fed handoff is actually wired.
 
 ### A6. Executor T6: signing message includes federation_id
@@ -445,7 +445,7 @@ Legitimate (documented sentinels):
 
 Worth examining:
 - `verifier/src/lib.rs:397` (`d.federation_id_bytes() == [0u8; 32]`) — only if this is a `null federation` test it's fine; if it's pinning a real federation's id to zero, it's a placeholder.
-- `pyana-storage-templates/src/cap_inbox.rs:642–645` — four `[0u8; 32]` slot reads. Almost certainly legitimate (empty inbox = zero slots), but worth a glance if anyone's auditing the templates crate.
+- `dregg-storage-templates/src/cap_inbox.rs:642–645` — four `[0u8; 32]` slot reads. Almost certainly legitimate (empty inbox = zero slots), but worth a glance if anyone's auditing the templates crate.
 - `sdk/src/embed.rs:806, 895` — `engine.federation_root() == [0u8; 32]`. Same question: empty-federation sentinel, or a placeholder waiting for a real root?
 
 None of these stood out as actively misleading; flagged here so a follow-up audit knows what to spot-check.

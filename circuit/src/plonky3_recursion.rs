@@ -32,7 +32,7 @@ use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 
 use crate::field::BabyBear;
-use crate::plonky3_prover::{PyanaProof, create_config, to_p3, verify_plonky3};
+use crate::plonky3_prover::{DreggProof, create_config, to_p3, verify_plonky3};
 use crate::poseidon2::hash_4_to_1;
 
 // ============================================================================
@@ -106,7 +106,7 @@ impl<AB: AirBuilder> Air<AB> for AggregationAir {
 /// Input for recursive proof aggregation.
 pub struct RecursionInput {
     /// The inner proof (from prove_plonky3).
-    pub proof: PyanaProof,
+    pub proof: DreggProof,
     /// Public inputs of the inner proof [leaf_hash, root].
     pub public_inputs: Vec<BabyBear>,
 }
@@ -114,7 +114,7 @@ pub struct RecursionInput {
 /// Result of recursive proof aggregation.
 pub struct RecursiveProof {
     /// The aggregation proof (proves the hash chain of all inner proofs' public inputs).
-    pub aggregation_proof: PyanaProof,
+    pub aggregation_proof: DreggProof,
     /// The inner proofs (still needed for full verification).
     pub inner_proofs: Vec<RecursionInput>,
     /// The final accumulator hash (commitment to the sequence of public inputs).

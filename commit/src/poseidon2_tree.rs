@@ -13,8 +13,8 @@
 
 use std::sync::LazyLock;
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_4_to_1;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::hash_4_to_1;
 use serde::{Deserialize, Serialize};
 
 /// Default tree depth (4^16 = ~4 billion leaves).
@@ -321,7 +321,7 @@ pub fn commitment_to_field(commitment: &[u8; 32]) -> BabyBear {
     // Encode the 32-byte commitment as 8 BabyBear elements (4 bytes each)
     let elements = BabyBear::encode_hash(commitment);
     // Hash them through Poseidon2 to get a single field element
-    pyana_circuit::poseidon2::hash_many(&elements)
+    dregg_circuit::poseidon2::hash_many(&elements)
 }
 
 /// Convert arbitrary bytes to a BabyBear field element via Poseidon2.
@@ -330,7 +330,7 @@ pub fn commitment_to_field(commitment: &[u8; 32]) -> BabyBear {
 /// then hashes them with Poseidon2's sponge construction.
 pub fn hash_bytes_to_field(data: &[u8]) -> BabyBear {
     let elements = BabyBear::from_bytes_packed(data);
-    pyana_circuit::poseidon2::hash_many(&elements)
+    dregg_circuit::poseidon2::hash_many(&elements)
 }
 
 #[cfg(test)]
@@ -543,9 +543,9 @@ mod tests {
     #[test]
     #[ignore = "REVIEW[stage2-canonical-vs-poseidon-mismatch]: note spending PI layout regressed in Stage 1; needs end-to-end realignment"]
     fn end_to_end_note_spending_stark_from_real_tree() {
-        use pyana_circuit::note_spending_air::{NoteSpendingAir, NoteSpendingWitness};
-        use pyana_circuit::poseidon2::hash_many;
-        use pyana_dsl_runtime::note_spending::{prove_note_spend, verify_note_spend};
+        use dregg_circuit::note_spending_air::{NoteSpendingAir, NoteSpendingWitness};
+        use dregg_circuit::poseidon2::hash_many;
+        use dregg_dsl_runtime::note_spending::{prove_note_spend, verify_note_spend};
 
         // Step 1: Define a note's field-element preimage
         let owner = BabyBear::new(0xA11CE);
@@ -553,7 +553,7 @@ mod tests {
         let asset_type = BabyBear::new(1);
         let creation_nonce = BabyBear::new(0xCAFE);
         let randomness = BabyBear::new(0xBEEF);
-        let spending_key = pyana_circuit::note_spending_air::test_spending_key(0xDEAD_BEEF);
+        let spending_key = dregg_circuit::note_spending_air::test_spending_key(0xDEAD_BEEF);
 
         // Step 2: Compute the commitment (same formula as NoteSpendingWitness::commitment)
         let commitment = hash_many(&[owner, value, asset_type, creation_nonce, randomness]);

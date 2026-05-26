@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Inter-Chain Bridges — Pyana</title>
+<title>Inter-Chain Bridges — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -17,9 +17,9 @@
 
     <div class="callout callout--note">
       <p>
-        Cross-group communication within pyana now uses multi-group participation
-        (<code>pyana-node run --groups</code>) with interest-based dissemination
-        and cryptographic cross-references. The old <code>pyana-node bridge</code>
+        Cross-group communication within dregg now uses multi-group participation
+        (<code>dregg-node run --groups</code>) with interest-based dissemination
+        and cryptographic cross-references. The old <code>dregg-node bridge</code>
         command has been removed. This page documents inter-chain bridges to
         external networks (EVM, Mina, Midnight).
       </p>
@@ -28,14 +28,14 @@
     <h2 id="evm-bridge">EVM Bridge (Base Sepolia)</h2>
 
     <p>
-      The EVM bridge wraps Pyana STARK proofs in Groth16 via SP1 for on-chain
+      The EVM bridge wraps <code>dregg</code> STARK proofs in Groth16 via SP1 for on-chain
       verification (~200K gas). Operators run the bridge relay to facilitate
       deposits and withdrawals.
     </p>
 
     <pre><code># Run the EVM bridge relay
-pyana-node bridge-evm \
-  --data-dir ~/.pyana \
+dregg-node bridge-evm \
+  --data-dir ~/.dregg \
   --rpc-url https://sepolia.base.org \
   --bridge-contract 0x... \
   --private-key-file ./keys/bridge-operator.key \
@@ -50,7 +50,7 @@ pyana-node bridge-evm \
       </thead>
       <tbody>
         <tr><td>SP1 Verifier Gateway</td><td>Succinct's deployed contract verifying Groth16 proofs</td></tr>
-        <tr><td>PyanaBridge contract</td><td>State commitment registry + deposit/withdraw logic</td></tr>
+        <tr><td>DreggBridge contract</td><td>State commitment registry + deposit/withdraw logic</td></tr>
         <tr><td>VK Registry</td><td>Governance-managed verification key updates (multisig)</td></tr>
         <tr><td>Incremental Merkle tree</td><td>O(log n) deposit insertions on-chain</td></tr>
       </tbody>
@@ -59,15 +59,15 @@ pyana-node bridge-evm \
     <h2 id="mina-bridge">Mina Bridge</h2>
 
     <p>
-      The Mina bridge uses native Pickles recursion. Pyana STARK proofs are wrapped
+      The Mina bridge uses native Pickles recursion. <code>dregg</code> STARK proofs are wrapped
       in Kimchi circuits over Pasta curves, producing Pickles recursive proofs that
       Mina validators verify natively. No relay operator is required for proof
       verification -- the proofs are self-contained.
     </p>
 
     <pre><code># Generate a Mina-compatible proof
-pyana proof generate --backend kimchi --turn $TURN_HASH
-pyana proof wrap-pickles --input $KIMCHI_PROOF --output mina-proof.bin
+dregg proof generate --backend kimchi --turn $TURN_HASH
+dregg proof wrap-pickles --input $KIMCHI_PROOF --output mina-proof.bin
 
 # Submit to a Mina zkApp (requires o1js tooling)
 # The proof is natively verifiable by Mina's consensus</code></pre>
@@ -80,8 +80,8 @@ pyana proof wrap-pickles --input $KIMCHI_PROOF --output mina-proof.bin
     </p>
 
     <pre><code># Run the Midnight attestation relay
-pyana-node bridge-midnight \
-  --data-dir ~/.pyana \
+dregg-node bridge-midnight \
+  --data-dir ~/.dregg \
   --midnight-endpoint wss://midnight-node.example.com \
   --attestation-interval 100  # attest every 100 blocks
   --bond-amount 50000</code></pre>

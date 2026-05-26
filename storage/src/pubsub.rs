@@ -1,11 +1,11 @@
 //! Pub-sub topics: one publisher, multiple subscriber cursors over a shared queue.
 //!
-//! # DEPRECATED — migrate to `pyana_storage_templates::pubsub_topic`
+//! # DEPRECATED — migrate to `dregg_storage_templates::pubsub_topic`
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §3.3 this module's
 //! [`PubSubTopic`] is the legacy operator-side append-only-log
 //! primitive. The canonical replacement is the cell-program template
-//! [`pyana_storage_templates::pubsub_topic`], whose
+//! [`dregg_storage_templates::pubsub_topic`], whose
 //! `pubsub_topic_factory_descriptor()` exports a `FactoryDescriptor`
 //! whose `CellProgram::Cases` enforces publisher-authorization,
 //! monotonic event-root growth, and per-subscriber cursor advancement
@@ -62,7 +62,7 @@ impl From<QueueError> for PubSubError {
 /// Subscribers can be added/removed dynamically.
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_storage_templates::pubsub_topic::pubsub_topic_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.3. The cell-program template's publisher-`SenderAuthorized`, monotonic `event_root`, monotonic `subscriber_cursors_root`, and monotonic `dedup_root` constraints are enforced by the executor on every turn."
+    note = "Use `dregg_storage_templates::pubsub_topic::pubsub_topic_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.3. The cell-program template's publisher-`SenderAuthorized`, monotonic `event_root`, monotonic `subscriber_cursors_root`, and monotonic `dedup_root` constraints are enforced by the executor on every turn."
 )]
 #[derive(Debug, Clone)]
 pub struct PubSubTopic {

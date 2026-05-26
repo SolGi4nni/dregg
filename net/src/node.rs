@@ -1,6 +1,6 @@
-//! PeerNode: quinn-based QUIC transport for pyana P2P connections.
+//! PeerNode: quinn-based QUIC transport for dregg P2P connections.
 //!
-//! Each pyana node runs a `PeerNode` that manages its identity (via a self-signed
+//! Each dregg node runs a `PeerNode` that manages its identity (via a self-signed
 //! certificate derived from a secret key) and provides connect/accept operations
 //! for direct QUIC streams.
 //!
@@ -24,8 +24,8 @@ use tracing::{debug, info, warn};
 
 use crate::message::{DecodeError, PeerMessage};
 
-/// ALPN protocol identifier for pyana P2P connections.
-pub const PYANA_ALPN: &[u8] = b"pyana/p2p/1";
+/// ALPN protocol identifier for dregg P2P connections.
+pub const DREGG_ALPN: &[u8] = b"dregg/p2p/1";
 
 /// A 32-byte node identity derived from the certificate's public key.
 pub type NodeId = [u8; 32];
@@ -39,7 +39,7 @@ const RATE_LIMIT_MAX_ATTEMPTS: u32 = 10;
 /// Rate limit window duration.
 const RATE_LIMIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// A pyana peer-to-peer network node backed by a quinn QUIC endpoint.
+/// A dregg peer-to-peer network node backed by a quinn QUIC endpoint.
 ///
 /// Each node has a unique identity derived from its TLS certificate.
 /// Connections are authenticated via mutual TLS with self-signed certificates.
@@ -54,7 +54,7 @@ pub struct PeerNode {
     rate_limiter: ConnectionRateLimiter,
 }
 
-/// A bidirectional connection to a remote pyana peer.
+/// A bidirectional connection to a remote dregg peer.
 pub struct PeerConnection {
     connection: Connection,
     remote_id: NodeId,
@@ -159,14 +159,14 @@ impl ConnectionRateLimiter {
 }
 
 impl PeerNode {
-    /// Create a new pyana peer node with a fresh identity.
+    /// Create a new dregg peer node with a fresh identity.
     ///
     /// Generates a self-signed certificate for authentication.
     /// Binds to the specified address (default: localhost with OS-assigned port).
     /// Uses mutual TLS: the server requires clients to present a certificate.
     pub async fn new(config: PeerNodeConfig) -> Result<Self, PeerError> {
         // Generate a self-signed certificate
-        let cert_params = rcgen::CertificateParams::new(vec!["pyana.local".to_string()])
+        let cert_params = rcgen::CertificateParams::new(vec!["dregg.local".to_string()])
             .map_err(|e| PeerError::Tls(e.to_string()))?;
         let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
             .map_err(|e| PeerError::Tls(e.to_string()))?;
@@ -221,7 +221,7 @@ impl PeerNode {
         let client_config = Self::build_client_config()?;
         let connection = self
             .endpoint
-            .connect_with(client_config, addr, "pyana.local")
+            .connect_with(client_config, addr, "dregg.local")
             .map_err(|e| PeerError::Connect(e.to_string()))?
             .await
             .map_err(|e| PeerError::Connect(e.to_string()))?;
@@ -331,7 +331,7 @@ impl PeerNode {
             .with_single_cert(vec![cert], key)
             .map_err(|e| PeerError::Tls(e.to_string()))?;
 
-        server_crypto.alpn_protocols = vec![PYANA_ALPN.to_vec()];
+        server_crypto.alpn_protocols = vec![DREGG_ALPN.to_vec()];
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
@@ -357,7 +357,7 @@ impl PeerNode {
             .with_client_auth_cert(vec![cert], key)
             .map_err(|e| PeerError::Tls(e.to_string()))?;
 
-        client_crypto.alpn_protocols = vec![PYANA_ALPN.to_vec()];
+        client_crypto.alpn_protocols = vec![DREGG_ALPN.to_vec()];
 
         let client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
@@ -390,7 +390,7 @@ impl PeerNode {
     /// For direct peer connections, use [`build_client_config_with_allowlist`] instead.
     pub fn build_client_config_static() -> Result<ClientConfig, PeerError> {
         // Generate ephemeral certificate for mutual TLS
-        let cert_params = rcgen::CertificateParams::new(vec!["pyana.local".to_string()])
+        let cert_params = rcgen::CertificateParams::new(vec!["dregg.local".to_string()])
             .map_err(|e| PeerError::Tls(e.to_string()))?;
         let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
             .map_err(|e| PeerError::Tls(e.to_string()))?;
@@ -407,7 +407,7 @@ impl PeerNode {
             .with_client_auth_cert(vec![cert_der], key_der)
             .map_err(|e| PeerError::Tls(e.to_string()))?;
 
-        client_crypto.alpn_protocols = vec![PYANA_ALPN.to_vec()];
+        client_crypto.alpn_protocols = vec![DREGG_ALPN.to_vec()];
         let client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
                 .map_err(|e| PeerError::Tls(e.to_string()))?,
@@ -686,7 +686,7 @@ impl AllowlistVerifier {
             .with_custom_certificate_verifier(Arc::new(self.clone()))
             .with_no_client_auth();
 
-        client_crypto.alpn_protocols = vec![PYANA_ALPN.to_vec()];
+        client_crypto.alpn_protocols = vec![DREGG_ALPN.to_vec()];
 
         let client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
@@ -918,7 +918,7 @@ mod tests {
         let cert = CertificateDer::from(fake_cert_bytes);
 
         let verifier = AllowlistVerifier::new([node_id]);
-        let server_name = ServerName::try_from("pyana.local").unwrap();
+        let server_name = ServerName::try_from("dregg.local").unwrap();
 
         // Should succeed - node_id is in allowlist
         let result = verifier.verify_server_cert(&cert, &[], &server_name, &[], UnixTime::now());

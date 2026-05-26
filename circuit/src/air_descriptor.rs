@@ -9,7 +9,7 @@
 //! public-input layout looks like, how many algebraic constraints it
 //! carries, and what maximum polynomial degree they reach. The
 //! [`fingerprint`] function compresses this description into a 32-byte
-//! hash under the domain `"pyana-air-fingerprint-v1"` — the value that
+//! hash under the domain `"dregg-air-fingerprint-v1"` — the value that
 //! goes into [`crate::vk_v2::VkComponents::air_fingerprint`] when
 //! computing a cell-program VK that should bind to a *specific* AIR.
 //!
@@ -101,15 +101,15 @@ pub struct AirDescriptor {
 
 /// Compute the 32-byte fingerprint of an [`AirDescriptor`].
 ///
-/// Domain-keyed under `"pyana-air-fingerprint-v1"` so AIR fingerprints
+/// Domain-keyed under `"dregg-air-fingerprint-v1"` so AIR fingerprints
 /// cannot collide with cell-program VK hashes, custom-predicate VK
-/// hashes, or any other `[u8; 32]` identifier in pyana.
+/// hashes, or any other `[u8; 32]` identifier in dregg.
 ///
 /// The encoding is canonical: every field is fed into the hasher with
 /// an explicit length prefix where the field has variable size, so
 /// concatenation attacks cannot collide two different descriptors.
 pub fn fingerprint(d: &AirDescriptor) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-air-fingerprint-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-air-fingerprint-v1");
     let id_bytes = d.air_id.as_bytes();
     hasher.update(&(id_bytes.len() as u64).to_le_bytes());
     hasher.update(id_bytes);

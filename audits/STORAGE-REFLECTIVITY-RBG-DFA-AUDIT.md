@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-24. **Status:** read-only investigation. Answers the
 designer's five questions about (1) the `storage/` crate primitives and
-whether they're reflective into pyana userspace, (2) `rbg/` — the
+whether they're reflective into dregg userspace, (2) `rbg/` — the
 workspace-excluded Robigalia-heritage exploration, (3) the DFA router,
 (4) how all three relate to the 16 missing primitives in
 `APPS-AS-USERSPACE-AUDIT.md`, and (5) where the factory abstraction
@@ -18,8 +18,8 @@ Cross-cuts: `APPS-AS-USERSPACE-AUDIT.md`, `apps/subscription/CLAUDIT.md`,
 
 ### 1.1 What the storage crate provides
 
-`storage/` (`pyana-storage`, in the workspace `exclude` list because of
-KZG / ark deps, but it takes a path dep on `pyana-circuit`) is a
+`storage/` (`dregg-storage`, in the workspace `exclude` list because of
+KZG / ark deps, but it takes a path dep on `dregg-circuit`) is a
 single-crate kitchen sink of "blob-as-queue" abstractions plus their
 typed Poseidon2/BLAKE3 commitment plumbing. Inventory by module:
 
@@ -52,13 +52,13 @@ Cross-cutting: every authoritative commitment in storage carries a
 dual-form (BLAKE3 + Poseidon2) per `commitment.rs`. There is NO BLAKE3
 inside a STARK by design (`DESIGN-commitment-framework.md` §2.2).
 
-### 1.2 API surface pyana-core consumes — and via what
+### 1.2 API surface dregg-core consumes — and via what
 
 Two **separate** reflectivity surfaces exist:
 
 **(A) The `Effect` enum (turn-level / circuit-level reflectivity).**
 `turn/src/action.rs:636-689` declares the six **queue effects** that
-are first-class in pyana's effect-VM:
+are first-class in dregg's effect-VM:
 
 - `Effect::QueueAllocate { capacity, program_vk: Option<[u8;32]> }`
 - `Effect::QueueEnqueue { queue: CellId, message_hash, deposit }`
@@ -79,11 +79,11 @@ core CapTP effects. SDK wrappers exist in `sdk/src/cipherclerk.rs`:
 - `AgentCipherclerk::queue_atomic_tx` at `:5715` (`Effect::QueueAtomicTx`)
 - (no SDK wrapper for `QueueResize` or `QueuePipelineStep`)
 
-The executor implementation **does not import `pyana-storage`**. The
+The executor implementation **does not import `dregg-storage`**. The
 queue state lives in a regular cell's `state.fields[0..3]`
 (`fields[0]` = capacity, `fields[1]` = current length, `fields[2]` =
 owner cell id, `fields[3]` = program VK hash) — see `executor.rs:
-7167-7175`. The `pyana-storage::queue::MerkleQueue` data structure is
+7167-7175`. The `dregg-storage::queue::MerkleQueue` data structure is
 *not* what the executor manipulates; the on-chain queue is its own
 field-encoded form. This is the **first major reflectivity gap**: the
 ledger's queue is a single cell with four felts of state; the storage
@@ -108,7 +108,7 @@ themselves don't go through turns. The `sender_hex` is request-body
 claimed (subscription audit §P0-5, `apps/subscription/CLAUDIT.md`
 line "POST /inbox/subscribers/send").
 
-### 1.3 Is storage "reflective" into pyana core?
+### 1.3 Is storage "reflective" into dregg core?
 
 **Partial. Here's the breakdown of what's reflected vs. what isn't:**
 
@@ -123,7 +123,7 @@ line "POST /inbox/subscribers/send").
 | `Pipeline` (dataflow) | yes — `Effect::QueuePipelineStep` | no | partial (pipeline_id passed through, but routing not enforced in-circuit) | no |
 | Relay store-and-forward (`RelayOperator`) | no | no | no — the relay's bond and slashing are in the storage-crate's own `RelayOperator` struct, not in the ledger | no |
 | `StorageMount` (namespace mount) | no — see Q1.5 (governed-namespace) | no | no | no |
-| Dual-form commitments (`Commitment<T>`) | **partially** — they're what the Poseidon2/AIR side reads, but pyana's core `commit/src/typed.rs` is the canonical home and the storage crate duplicates the pattern (it's a leaf, not a base) | no | no | no |
+| Dual-form commitments (`Commitment<T>`) | **partially** — they're what the Poseidon2/AIR side reads, but dregg's core `commit/src/typed.rs` is the canonical home and the storage crate duplicates the pattern (it's a leaf, not a base) | no | no | no |
 | `BulletinBoard` / `WorkQueue` (namespace kinds) | no | no | no — kinds exist as enum variants in `StorageMountKind` but the executor never sees them | no |
 | Erasure coding / availability sampling | no | no | no | no |
 
@@ -174,7 +174,7 @@ Concretely:
 Confirmed. Per `apps/subscription/CLAUDIT.md`:
 
 - Subscription's `delivery.rs:141` uses `CapInbox::receive_at(msg, 0,
-  item.epoch)` — **the only "real Pyana primitive use" in the app
+  item.epoch)` — **the only "real `dregg` primitive use" in the app
   beyond signed-delegation** (CLAUDIT §"Verdict").
 - The inbox is shared across all subscribers (capacity 1024,
   `min_deposit: 0`, `enqueued_at: 0`).
@@ -211,16 +211,16 @@ verdict ("BROKEN") would collapse to a small set of localized fixes.
 `rbg/` = **Robigalia-inspired exploration**. From its README:
 
 > Exploring how Robigalia's capability-secure OS designs map to
-> pyana's distributed runtime.
+> dregg's distributed runtime.
 
-The crate name `pyana-rbg` and description "Robigalia-inspired
-VFS/storage layer for pyana's capability-secure distributed runtime"
+The crate name `dregg-rbg` and description "Robigalia-inspired
+VFS/storage layer for dregg's capability-secure distributed runtime"
 make it explicit. It is **not** "Recursive Block Generator" nor
 "Random Beacon Generation"; **RBG = Robigalia**, the
 seL4-on-Rust capability-secure microkernel research from
-~2014-2017. The README maps Robigalia concepts to pyana 1:1:
+~2014-2017. The README maps Robigalia concepts to dregg 1:1:
 
-| Robigalia | Pyana mapping (per `rbg/README.md`) |
+| Robigalia | `dregg` mapping (per `rbg/README.md`) |
 |---|---|
 | Transaction Protocol (Submit/Execute/Retrieve/Reap) | Turn (submit/execute/receipt/advance) |
 | Promise Pipelining (dep bitmask, Consuming state) | CapTP `pipeline.rs` |
@@ -228,7 +228,7 @@ seL4-on-Rust capability-secure microkernel research from
 | Nameless Writes (content-addressed storage) | Note commitments |
 | Capability-Secure VFS (Volume / Blob / Directory) | Cell model (c-list as directory) |
 | **DFA Message Routing** | gossip topic matching / intent `MatchSpec` |
-| SturdyRefs | `pyana://` URIs |
+| SturdyRefs | `dregg://` URIs |
 | Automata packet classification | Could enhance wire protocol routing |
 
 ### 2.2 Design intent and inspiration
@@ -236,7 +236,7 @@ seL4-on-Rust capability-secure microkernel research from
 Inspiration is explicit, named, and grounded in three sources:
 
 1. **Robigalia's Transaction Protocol** — the seL4-style async-RPC
-   protocol with a formal liveness proof. Pyana's turn protocol is
+   protocol with a formal liveness proof. `dregg`'s turn protocol is
    isomorphic; the "Consuming" state ≈ "Tentative" finality, the
    generation counter ≈ nonce + block height binding.
 
@@ -247,7 +247,7 @@ Inspiration is explicit, named, and grounded in three sources:
 
 3. **Nameless Writes** (Zhang et al., cited in the README as
    `~/Desktop/zhang2-7-12.pdf`) — clients write data, storage picks
-   the location, returns the address. Pyana notes ARE this: commit a
+   the location, returns the address. `dregg` notes ARE this: commit a
    value, get back the commitment hash as its address.
 
 ### 2.3 State of the crate
@@ -258,11 +258,11 @@ Inspiration is explicit, named, and grounded in three sources:
   `VfsEffect` (mirrors `Effect` from `turn`), full `Vfs` aggregate,
   capability permission bitmask, blob splice, directory swap. The
   module's top comment says: *"This maps Robigalia's VFS design into
-  pyana's distributed runtime."* — but it uses **stub types**
+  dregg's distributed runtime."* — but it uses **stub types**
   (`CellId(pub [u8; 32])`, `NoteCommitment([u8;32])`, `Permissions(u32)`)
-  rather than importing `pyana-cell` / `pyana-types`. So it's a
+  rather than importing `dregg-cell` / `dregg-types`. So it's a
   parallel implementation that *demonstrates* the userspace VFS
-  pattern by re-implementing pyana primitives.
+  pattern by re-implementing dregg primitives.
 
 - `rbg/src/routing.rs` (1346 LOC) — **complete DFA implementation**
   with NFA → DFA subset construction, NFA combinators (concat /
@@ -295,10 +295,10 @@ Three reasons stack:
 
 1. **Edition 2021** vs. workspace's edition 2024.
 2. **Stub types** — `rbg::vfs::CellId` etc. are local, not
-   `pyana-types::CellId`. Re-integration requires plumbing real
-   pyana types through.
+   `dregg-types::CellId`. Re-integration requires plumbing real
+   dregg types through.
 3. **No in-tree consumers.** Nobody in `apps/` or the core crates
-   imports `pyana-rbg`. The exclusion is bookkeeping: it builds
+   imports `dregg-rbg`. The exclusion is bookkeeping: it builds
    independently when invoked but isn't part of `cargo test`.
 
 ### 2.5 What re-integration would look like
@@ -321,7 +321,7 @@ expressive. Effort: ~1-2 weeks. Unlocks: gossip-topic filtering
 packet classification, in-circuit DFA proofs (the AIR primitives
 already exist).
 
-**Path B — Promote `rbg::directory` into a new `pyana-directory`
+**Path B — Promote `rbg::directory` into a new `dregg-directory`
 crate, federate it with `intent/` and `captp/`.**
 The "scoped intent directories" pattern is the **answer** to several
 of the 16 missing primitives (see Q4 below). Concretely:
@@ -332,7 +332,7 @@ the largest payoff. Effort: 3-4 weeks. Unlocks: nameservice
 (pure-userspace), intent scoping (vs. flat global pool), discovery
 without information leakage.
 
-**Path C — Promote `rbg::vfs` into `pyana-storage` or its own
+**Path C — Promote `rbg::vfs` into `dregg-storage` or its own
 crate, replace the field-encoded queue with the proper VFS
 abstractions.**
 The on-chain queue today is "four felts in a cell". The
@@ -344,12 +344,12 @@ the unified Blob/Volume/Directory + interpretation overlays. Effort:
 large (storage refactor + AIR rebinding). Unlocks: a coherent
 userspace storage model.
 
-### 2.6 What rbg offers that pyana-core lacks
+### 2.6 What rbg offers that dregg-core lacks
 
 The single highest-value thing rbg provides that core doesn't: a
 **formal compositional model for userspace** built on three small
 operators (Volume, Blob, Directory) plus capability-secure source
-splitting. The current pyana-core has *cells*, *capabilities*,
+splitting. The current dregg-core has *cells*, *capabilities*,
 *notes*, and a *swiss table* — all good — but no unified
 "namespace" or "container" abstraction beyond ad-hoc per-app cell
 hierarchies. The rbg directory-as-capability model is exactly what
@@ -366,12 +366,12 @@ Two implementations exist:
 
 | Crate / file | Status | Role |
 |---|---|---|
-| `wire/src/dfa_router.rs` | live; in `pyana-wire` | Production. URL-pattern route table compiled to flat-trie DFA. Governance-controlled atomic swap (`GovernedRouter`). |
+| `wire/src/dfa_router.rs` | live; in `dregg-wire` | Production. URL-pattern route table compiled to flat-trie DFA. Governance-controlled atomic swap (`GovernedRouter`). |
 | `rbg/src/routing.rs` | workspace-excluded | Full NFA → DFA theoretical implementation. AIR-trace generation. Capability-secure source splitting. |
 
 ### 3.2 What it is and what it routes
 
-**`pyana-wire::dfa_router`** (`wire/src/dfa_router.rs:1-700`):
+**`dregg-wire::dfa_router`** (`wire/src/dfa_router.rs:1-700`):
 
 - A **deterministic finite automaton** ingesting raw message bytes
   or URL-style paths and dispatching to a `RouteTarget`:
@@ -459,15 +459,15 @@ Cross-referencing the 16 missing primitives in
 | 4 | T1 | Federation clock (G16) | new `app-framework/src/clock.rs` + `node/src/clock.rs` |
 | 5 | T1 | Generic claim-slot / nullifier-set primitive (`Effect::ClaimSlot`) | new in `turn/src/action.rs` |
 | 6 | T2 | Paired-escrow / atomic-swap primitive | new in `app-framework::swap` or as effect |
-| 7 | T2 | Promote `bridge::present` to `pyana-credentials` | refactor `bridge/src/present.rs` |
+| 7 | T2 | Promote `bridge::present` to `dregg-credentials` | refactor `bridge/src/present.rs` |
 | 8 | T2 | Scheduled-effect primitive (`Effect::FireAt`) | new `node/src/scheduler.rs` |
 | 9 | T2 | Cell-program `ExpressionEquals` (math gadget registry) | new in `cell::program` + DSL |
-| 10 | T2 | `CommittedMap<K, V>` storage primitive | new in `pyana-storage` |
+| 10 | T2 | `CommittedMap<K, V>` storage primitive | new in `dregg-storage` |
 | 11 | T3 | Subscription / streaming caps | `captp` + `Caveat::EventFilter` |
 | 12 | T3 | `BlindedQueue` payload return channel | `storage/src/blinded.rs` (extend `Consumed`) |
-| 13 | T3 | Trusted-attester registry (G26) | new `pyana-attesters` crate |
+| 13 | T3 | Trusted-attester registry (G26) | new `dregg-attesters` crate |
 | 14 | T3 | Coordinator-key threshold-decrypt primitive | `coord/` + `Effect::CoordinatorDecrypt` |
-| 15 | T3 | Blob primitive (`Effect::BindBlob`) | new in `pyana-storage` |
+| 15 | T3 | Blob primitive (`Effect::BindBlob`) | new in `dregg-storage` |
 | 16 | T3 | Window-bounded caveats (`Caveat::CommitWindow` etc.) | `turn/src/cap_caveats.rs` |
 
 ### 4.2 Unlocked by promoting storage primitives to userspace
@@ -548,12 +548,12 @@ discovery* gaps that storage doesn't cover:
 |---|---|---|
 | `Pattern → Nfa → Dfa` regex combinators + AIR trace | `rbg::routing` | merge into `wire::dfa_router` (replacing the trie-only compiler) |
 | `PacketSource` / `FilterTree` capability-secure source splitting | `rbg::routing` | promote into a new `wire::source_capability` module |
-| `DirectoryCell` / `Listing` / `swap`-on-nonce | `rbg::directory` | promote into a new `pyana-directory` crate, or into `cell` as a built-in cell-program |
+| `DirectoryCell` / `Listing` / `swap`-on-nonce | `rbg::directory` | promote into a new `dregg-directory` crate, or into `cell` as a built-in cell-program |
 | `ScopedIntentPool` + `MatchPattern` | `rbg::directory` | replace the global pool in `intent/src/lib.rs` |
 | `MetaDirectory` (yellow pages) | `rbg::directory` | use it as the substrate for nameservice |
 | `DirectoryFactory` | `rbg::directory` | unify with `cell::factory::FactoryDescriptor` |
-| `AudienceBoundClaim` | `rbg::directory` | merge with `bridge::present` for `pyana-credentials` (#7 T2) |
-| `Blob` / `Volume` / `Directory` triple | `rbg::vfs` | refactor `pyana-storage` to use this triple as its top-level vocabulary (overlay protocols ride on top) |
+| `AudienceBoundClaim` | `rbg::directory` | merge with `bridge::present` for `dregg-credentials` (#7 T2) |
+| `Blob` / `Volume` / `Directory` triple | `rbg::vfs` | refactor `dregg-storage` to use this triple as its top-level vocabulary (overlay protocols ride on top) |
 
 ### 4.4 Unlocked by exposing DFA routing as a userspace primitive
 
@@ -720,12 +720,12 @@ whole app BROKEN. **The promotion targets** (Q4.2): lift
 
 **2. RBG = Robigalia, not "Recursive Block Generator".** A 4,500-LOC
 exploration mapping seL4-style capability-secure OS designs onto
-pyana's distributed runtime: Volume / Blob / Directory triple, full
+dregg's distributed runtime: Volume / Blob / Directory triple, full
 NFA → DFA with regex combinators and AIR-trace generation, scoped
 intent directories with meta-directories and topic subscription
 managers, `AudienceBoundClaim` for presented credentials. **Working
 prototype state**, with one `Cargo.toml` block from being absorbed:
-edition mismatch (2021 vs 2024), stub types instead of `pyana-types`
+edition mismatch (2021 vs 2024), stub types instead of `dregg-types`
 imports, and no in-tree consumers. The exclusion is explicitly
 documented as "kept excluded until either integrated or removed."
 **The highest-leverage re-integration is Path B (Q2.5):** the
@@ -752,7 +752,7 @@ gossip filtering, intent matching, and capability revocation.
 | Subsystem | Top promotion targets | Audit-# unlocked |
 |---|---|---|
 | storage | `QueueConstraint` → `StateConstraint` (transition variants); `ContentStore` → `Effect::BindBlob`; `BlindedQueue::Consumed` + payload; queue cell `fields[1]` ← Merkle root; `RelayOperator` → on-chain deposit/slash | #1 (T1), #5 (T1), #11 (T3), #12 (T3), #15 (T3), partial #10 (T2) |
-| rbg | `DirectoryCell` + `ScopedIntentPool` + `MetaDirectory` → new `pyana-directory`; `DirectoryFactory` ⊆ `cell::factory`; `AudienceBoundClaim` → `pyana-credentials` (with `bridge::present`); `Blob/Volume/Directory` → `pyana-storage` refactor | #10 (T2), #7 (T2), nameservice purity (audit §1) |
+| rbg | `DirectoryCell` + `ScopedIntentPool` + `MetaDirectory` → new `dregg-directory`; `DirectoryFactory` ⊆ `cell::factory`; `AudienceBoundClaim` → `dregg-credentials` (with `bridge::present`); `Blob/Volume/Directory` → `dregg-storage` refactor | #10 (T2), #7 (T2), nameservice purity (audit §1) |
 | DFA | `rbg::routing` regex engine → `wire::dfa_router`; `PacketSource` → `wire::source_capability`; `MatchSpec`→DFA → `intent::matcher`; gossip DFA → `intent::gossip` | intent scoping; revocation; partial #11 (T3) |
 
 **The top promotion — if you do one thing — is:** lift the

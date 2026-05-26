@@ -1,7 +1,7 @@
 /**
- * pyana explorer — main application logic.
+ * dregg explorer — main application logic.
  *
- * Single-page chain explorer that connects to a pyana node and displays
+ * Single-page chain explorer that connects to a dregg node and displays
  * federation state: blocks, turns, receipts, cells, capabilities, proofs,
  * intents, federation status, notes, and deployed apps.
  */
@@ -13,7 +13,7 @@ import * as api from './api.js';
 // =============================================================================
 
 let currentPage = 'overview';
-let autoRefresh = localStorage.getItem('pyana_auto_refresh') !== 'false';
+let autoRefresh = localStorage.getItem('dregg_auto_refresh') !== 'false';
 let refreshTimer = null;
 let connected = false;
 
@@ -126,7 +126,7 @@ function initSettings() {
   save.addEventListener('click', () => {
     api.setNodeUrl(urlInput.value.trim() || 'http://localhost:8420');
     autoRefresh = autoRefreshToggle.checked;
-    localStorage.setItem('pyana_auto_refresh', autoRefresh);
+    localStorage.setItem('dregg_auto_refresh', autoRefresh);
     modal.hidden = true;
     refresh();
     if (autoRefresh) startAutoRefresh();

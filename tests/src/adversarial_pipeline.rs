@@ -1,4 +1,4 @@
-//! End-to-end adversarial integration tests for pyana.
+//! End-to-end adversarial integration tests for dregg.
 //!
 //! Each test exercises the FULL pipeline — real crypto, real execution — then
 //! tampers with an intermediate value and verifies that the tampered version
@@ -14,9 +14,9 @@
 //! 7. Conservation violation (excess != 0, transfer creates value)
 //! 8. Proof for wrong statement (wrong action binding in proof authorization)
 
-use pyana_cell::{AuthRequired, Permissions};
-use pyana_turn::ProofVerifier;
-use pyana_turn::builder::ActionBuilder;
+use dregg_cell::{AuthRequired, Permissions};
+use dregg_turn::ProofVerifier;
+use dregg_turn::builder::ActionBuilder;
 
 // =============================================================================
 // Helpers
@@ -76,7 +76,7 @@ fn make_binding_proof(action: &str, resource: &str, vk: &[u8]) -> Vec<u8> {
 fn adversarial_token_lifecycle_forgery() {
     // --- Step 1: Mint root token ---
     let issuer_key = test_key("issuer-lifecycle");
-    let root_token = MacaroonToken::mint(issuer_key, b"lifecycle-kid", "auth.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"lifecycle-kid", "auth.dregg.dev");
 
     // --- Step 2: Attenuate (restrict to compute/read, expiry) ---
     let att = Attenuation {
@@ -101,14 +101,14 @@ fn adversarial_token_lifecycle_forgery() {
     // --- Step 4: TAMPER with the HMAC chain (use wrong key) ---
     // Mint with a DIFFERENT key, then try to verify with the original key.
     let wrong_key = test_key("wrong-issuer");
-    let forged_root = MacaroonToken::mint(wrong_key, b"lifecycle-kid", "auth.pyana.dev");
+    let forged_root = MacaroonToken::mint(wrong_key, b"lifecycle-kid", "auth.dregg.dev");
     let forged_attenuated = forged_root.attenuate(&att).unwrap();
 
     // The forged token cannot verify against the original issuer's key.
     // Construct a new token object with the ORIGINAL key but the forged inner.
     // Since MacaroonToken encapsulates the key, the cleanest forgery test is:
     // verify that a token minted with key A, when verified by someone expecting key B, fails.
-    let wrong_key_token = MacaroonToken::mint(wrong_key, b"lifecycle-kid", "auth.pyana.dev");
+    let wrong_key_token = MacaroonToken::mint(wrong_key, b"lifecycle-kid", "auth.dregg.dev");
     let wrong_attenuated = wrong_key_token.attenuate(&att).unwrap();
 
     // Encode and decode with the WRONG key to simulate HMAC chain mismatch.
@@ -172,8 +172,8 @@ fn adversarial_token_lifecycle_forgery() {
 //
 // The previous version of this test exercised the `CAV_REVOCABLE` token
 // caveat, which was retired in the 2026-05-24 modernization pass (see
-// `token/src/pyana_caveats.rs` module docs). Revocation now lives in
-// `pyana_token::RevocationRegistry` (STARK-attested non-membership) and
+// `token/src/dregg_caveats.rs` module docs). Revocation now lives in
+// `dregg_token::RevocationRegistry` (STARK-attested non-membership) and
 // in cell-level nullifier sets. This test exercises the nullifier-set
 // double-insertion contract; the full `RevocationRegistry` path is
 // covered by `tests/cross_federation.rs`.
@@ -204,7 +204,7 @@ fn adversarial_revocation_propagation() {
 #[test]
 fn adversarial_attenuation_honesty() {
     let issuer_key = test_key("issuer-attenuation-honesty");
-    let root_token = MacaroonToken::mint(issuer_key, b"honesty-kid", "auth.pyana.dev");
+    let root_token = MacaroonToken::mint(issuer_key, b"honesty-kid", "auth.dregg.dev");
 
     // Root has all permissions (no restrictions)
     let full_request = AuthRequest {
@@ -482,7 +482,7 @@ fn adversarial_note_double_spend() {
         "Double-spend MUST be rejected"
     );
     match double_spend_result {
-        Err(pyana_cell::NoteError::DoubleSpend { nullifier: n }) => {
+        Err(dregg_cell::NoteError::DoubleSpend { nullifier: n }) => {
             assert_eq!(n, nullifier, "Rejected nullifier should match");
         }
         _ => panic!("Expected DoubleSpend error variant"),

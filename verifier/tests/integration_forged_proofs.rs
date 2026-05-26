@@ -10,12 +10,12 @@
 //!
 //! Every assertion is `!verified` — a tampered proof that passes is a soundness bug.
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{generate_effect_vm_trace, pi},
     stark::{self, proof_to_bytes},
 };
-use pyana_verifier::{
+use dregg_verifier::{
     AUTO_DETECT_VK_HASH, EFFECT_VM_VK_HASH_HEX, exit_code, verify_effect_vm_proof,
 };
 

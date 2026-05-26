@@ -12,13 +12,13 @@
 //! - `cell/src/program.rs` (CellProgram, StateConstraint)
 //! - `turn/src/executor.rs` (TurnExecutor, ProofVerifier)
 
-use pyana_cell::program::{CellProgram, ProgramError, StateConstraint, field_from_u64};
-use pyana_cell::state::CellState;
-use pyana_cell::{AuthRequired, Cell, Ledger, Permissions, VerificationKey};
-use pyana_turn::action::symbol;
-use pyana_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
-use pyana_turn::forest::CallForest;
-use pyana_turn::{Action, Authorization, DelegationMode, Effect, Turn, TurnResult};
+use dregg_cell::program::{CellProgram, ProgramError, StateConstraint, field_from_u64};
+use dregg_cell::state::CellState;
+use dregg_cell::{AuthRequired, Cell, Ledger, Permissions, VerificationKey};
+use dregg_turn::action::symbol;
+use dregg_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
+use dregg_turn::forest::CallForest;
+use dregg_turn::{Action, Authorization, DelegationMode, Effect, Turn, TurnResult};
 
 /// A mock proof verifier that validates proofs based on a simple protocol:
 /// The proof bytes must start with the verification key's first 4 bytes (matching check).
@@ -36,7 +36,7 @@ impl ProofVerifier for MockStarkVerifier {
 }
 
 fn main() {
-    println!("=== Pyana Programmable Cell Demo ===\n");
+    println!("=== Dregg Programmable Cell Demo ===\n");
 
     // =========================================================================
     // SECTION 1: PREDICATE PROGRAMS
@@ -155,7 +155,7 @@ fn main() {
 
     // Create a cell whose state can only be modified with a valid STARK proof.
     // The circuit_hash identifies which verification circuit must be satisfied.
-    let circuit_hash: [u8; 32] = *blake3::hash(b"pyana-balance-transfer-circuit-v1").as_bytes();
+    let circuit_hash: [u8; 32] = *blake3::hash(b"dregg-balance-transfer-circuit-v1").as_bytes();
     let circuit_program = CellProgram::Circuit { circuit_hash };
 
     println!("  Circuit program:");

@@ -9,14 +9,14 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::CellId;
-use pyana_teasting::assertions::{
+use dregg_cell::CellId;
+use dregg_teasting::assertions::{
     assert_conservation_invariant, assert_gc_consistency, assert_nonce_monotonicity,
 };
-use pyana_teasting::fault::{CrashableNode, FaultConfig, FaultyNetwork, MessageBuffer, SavedState};
-use pyana_teasting::federation::{drive_to_finalization, dual_federation, quick_federation};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_wire::message::WireMessage;
+use dregg_teasting::fault::{CrashableNode, FaultConfig, FaultyNetwork, MessageBuffer, SavedState};
+use dregg_teasting::federation::{drive_to_finalization, dual_federation, quick_federation};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Helpers
@@ -133,7 +133,7 @@ fn test_crash_after_proof_before_broadcast() {
     // but crashed before broadcasting
     let proof_message = WireMessage::PresentToken {
         proof: vec![0xDE, 0xAD, 0xBE, 0xEF], // simulated proof bytes
-        request: pyana_wire::message::AuthorizationRequest {
+        request: dregg_wire::message::AuthorizationRequest {
             resource: "/cells/alpha/read".to_string(),
             action: "read".to_string(),
             principal: "agent-0x01".to_string(),

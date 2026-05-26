@@ -1,7 +1,7 @@
 //! Presence tracking and cryptographic attestation system.
 //!
 //! Tracks Discord presence updates (online/idle/dnd/offline) and issues signed
-//! attestations that can be used as dischargeable caveats in pyana's capability model.
+//! attestations that can be used as dischargeable caveats in dregg's capability model.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -87,7 +87,7 @@ impl std::fmt::Display for PresenceClaim {
 pub struct PresenceAttestation {
     /// The Discord user ID this attests.
     pub user_id: u64,
-    /// The user's pyana cell ID (derived from their cclerk).
+    /// The user's dregg cell ID (derived from their cclerk).
     pub cell_id: [u8; 32],
     /// What is being attested.
     pub claim: PresenceClaim,
@@ -625,7 +625,7 @@ impl PresenceTracker {
     /// Get the bot's cell ID (derived from signing key with a special path).
     #[allow(dead_code)]
     pub fn bot_cell_id(&self) -> [u8; 32] {
-        blake3::derive_key("pyana-presence-bot-cell-v1", &self.signing_key)
+        blake3::derive_key("dregg-presence-bot-cell-v1", &self.signing_key)
     }
 
     /// Get the signing key (for external verifiers to use).

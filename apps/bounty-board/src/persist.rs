@@ -1,4 +1,4 @@
-//! State persistence for the bounty board — delegated to `pyana-app-framework`.
+//! State persistence for the bounty board — delegated to `dregg-app-framework`.
 //!
 //! Uses the framework's [`JsonPersistence`] for atomic write-then-rename state
 //! snapshots. This module defines the [`BoardSnapshot`] type and provides the
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use pyana_app_framework::persistence::JsonPersistence;
+use dregg_app_framework::persistence::JsonPersistence;
 
 use crate::Bounty;
 use crate::state::WorkerHistory;
@@ -146,10 +146,10 @@ impl PersistManager {
 
 /// Encode a [u8; 32] as hex for JSON serialization.
 pub fn bytes32_hex(bytes: &[u8; 32]) -> String {
-    pyana_app_framework::hex::bytes32_to_hex(bytes)
+    dregg_app_framework::hex::bytes32_to_hex(bytes)
 }
 
 /// Decode hex back to [u8; 32].
 pub fn hex_bytes32(hex: &str) -> Option<[u8; 32]> {
-    pyana_app_framework::hex::hex_to_bytes32(hex).ok()
+    dregg_app_framework::hex::hex_to_bytes32(hex).ok()
 }

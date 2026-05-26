@@ -35,7 +35,7 @@ async function deriveAesKey(myPriv, theirPubBytes) {
   // HKDF-SHA256 → 32-byte AES-GCM key
   const ikm = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: new TextEncoder().encode('pyana-inbox') },
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: new TextEncoder().encode('dregg-inbox') },
     ikm,
     { name: 'AES-GCM', length: 256 },
     false,

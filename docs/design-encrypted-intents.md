@@ -8,7 +8,7 @@ MatchSpecs broadcast in cleartext over gossip expose transaction semantics to al
 
 ### 1. Functional Encryption (FE) over MatchSpecs
 
-Pyana's constraint language (actions, resources, budget ranges, globs, Datalog predicates) maps to inner-product predicates for equality checks and range proofs for budgets. The CiFEr library (Rust: `cife-rs` wrapping the C library) implements IPFE (inner-product functional encryption) under DDH. Key sizes are O(n) in the vector dimension; ciphertexts are 2 group elements per dimension.
+`dregg`'s constraint language (actions, resources, budget ranges, globs, Datalog predicates) maps to inner-product predicates for equality checks and range proofs for budgets. The CiFEr library (Rust: `cife-rs` wrapping the C library) implements IPFE (inner-product functional encryption) under DDH. Key sizes are O(n) in the vector dimension; ciphertexts are 2 group elements per dimension.
 
 Problem: glob matching and Datalog evaluation are NOT expressible as inner products. Attribute-based encryption (CP-ABE via `rabe` crate) handles AND/OR policy trees over attributes, which maps to constraint conjunctions but not glob patterns. No practical FE scheme handles `documents/*` matching against `documents/reports/q4.pdf` without enumerating all possible matches.
 

@@ -1,21 +1,21 @@
-//! Integration tests for `pyana-verifier`.
+//! Integration tests for `dregg-verifier`.
 //!
 //! These tests exercise the full verification path:
-//! 1. Generate a real Effect VM STARK proof using `pyana-circuit`.
+//! 1. Generate a real Effect VM STARK proof using `dregg-circuit`.
 //! 2. Serialise it to bytes (as the prover would write to disk).
-//! 3. Call `pyana_verifier::verify_effect_vm_proof` with the bytes — simulating
+//! 3. Call `dregg_verifier::verify_effect_vm_proof` with the bytes — simulating
 //!    the independent verifier reading from disk.
 //! 4. Assert accept / reject as appropriate.
 //!
 //! The verifier function is called directly here (faster than spawning a subprocess),
 //! but the binary integration test at the bottom exercises the actual subprocess too.
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::generate_effect_vm_trace,
     stark::{self, proof_to_bytes},
 };
-use pyana_verifier::{
+use dregg_verifier::{
     AUTO_DETECT_VK_HASH, EFFECT_VM_VK_HASH_HEX, exit_code, verify_effect_vm_proof,
 };
 
@@ -225,7 +225,7 @@ fn test_binary_cli() {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let binary = env!("CARGO_BIN_EXE_pyana-verifier");
+    let binary = env!("CARGO_BIN_EXE_dregg-verifier");
 
     // ---- 1. File-arg mode (happy path) ----
     let (proof_bytes, pi_u32) = make_proof_and_pi(

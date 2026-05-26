@@ -18,12 +18,12 @@
 use serde::{Deserialize, Serialize};
 
 /// A note commitment (published to the note tree).
-/// commitment = H("pyana-note commitment v1", owner || fields[0..8] || randomness || creation_nonce)
+/// commitment = H("dregg-note commitment v1", owner || fields[0..8] || randomness || creation_nonce)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteCommitment(pub [u8; 32]);
 
 /// A nullifier (published when spending a note).
-/// nullifier = H("pyana-note nullifier v1", commitment || spending_key || creation_nonce)
+/// nullifier = H("dregg-note nullifier v1", commitment || spending_key || creation_nonce)
 /// Only the owner can compute this. Publishing it "spends" the note.
 /// Derived from note-intrinsic data only — no tree position — so the same note
 /// produces the same nullifier regardless of which tree it lives in.
@@ -111,7 +111,7 @@ impl Note {
         getrandom::fill(&mut randomness).expect("getrandom failed");
 
         // Derive creation_nonce from randomness (independent domain separation).
-        let mut nonce_hasher = blake3::Hasher::new_derive_key("pyana-note creation-nonce v1");
+        let mut nonce_hasher = blake3::Hasher::new_derive_key("dregg-note creation-nonce v1");
         nonce_hasher.update(&owner);
         nonce_hasher.update(&randomness);
         let mut creation_nonce = [0u8; 32];
@@ -128,7 +128,7 @@ impl Note {
     /// Create a note with explicit randomness and creation nonce (for deterministic tests).
     pub fn with_randomness(owner: [u8; 32], fields: [u64; 8], randomness: [u8; 32]) -> Self {
         // Derive a deterministic creation_nonce from the randomness.
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-note creation-nonce v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-note creation-nonce v1");
         hasher.update(&owner);
         hasher.update(&randomness);
         let mut creation_nonce = [0u8; 32];
@@ -160,7 +160,7 @@ impl Note {
     /// Compute the commitment for this note.
     /// Uses domain-separated BLAKE3 over (owner || fields || randomness || creation_nonce).
     pub fn commitment(&self) -> NoteCommitment {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-note commitment v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-note commitment v1");
         hasher.update(&self.owner);
         for f in &self.fields {
             hasher.update(&f.to_le_bytes());
@@ -171,7 +171,7 @@ impl Note {
     }
 
     /// Compute the nullifier for this note given the owner's secret key.
-    /// nullifier = H("pyana-note nullifier v1", commitment || spending_key || creation_nonce)
+    /// nullifier = H("dregg-note nullifier v1", commitment || spending_key || creation_nonce)
     ///
     /// Derived from note-intrinsic data only. No tree position is used, so the same
     /// note produces the same nullifier regardless of which tree (or federation) it
@@ -180,13 +180,13 @@ impl Note {
     /// This is the **canonical in-protocol nullifier** consumed by the
     /// note-spending STARK AIR (`circuit/src/note_spending_air.rs`) and the
     /// production `NullifierSet` in the turn executor. The separate EVM
-    /// withdrawal path (`pyana_chain::withdraw::derive_nullifier`) uses a
-    /// different, domain-separated scheme (`pyana-withdrawal-nullifier-v1`)
+    /// withdrawal path (`dregg_chain::withdraw::derive_nullifier`) uses a
+    /// different, domain-separated scheme (`dregg-withdrawal-nullifier-v1`)
     /// because it commits to a different SP1 circuit; see that function's
     /// doc-comment for why the schemes are intentionally distinct.
     pub fn nullifier(&self, spending_key: &[u8; 32]) -> Nullifier {
         let commitment = self.commitment();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-note nullifier v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-note nullifier v1");
         hasher.update(&commitment.0);
         hasher.update(spending_key);
         hasher.update(&self.creation_nonce);
@@ -234,9 +234,9 @@ impl Note {
     /// - creation_nonce: first 4 bytes of self.creation_nonce as LE u32, reduced mod p
     /// - randomness: first 4 bytes of self.randomness as LE u32, reduced mod p
     #[cfg(feature = "zkvm")]
-    pub fn poseidon2_commitment(&self) -> pyana_circuit::field::BabyBear {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::poseidon2::hash_many;
+    pub fn poseidon2_commitment(&self) -> dregg_circuit::field::BabyBear {
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_many;
 
         let owner = BabyBear::new_canonical(u32::from_le_bytes([
             self.owner[0],

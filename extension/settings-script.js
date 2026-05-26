@@ -1,8 +1,8 @@
-// Settings page script for Pyana Cipherclerk node configuration.
+// Settings page script for Dregg Cipherclerk node configuration.
 
-const NODE_CONFIG_KEY = 'pyana_node_config';
-const DEFAULT_NODE_URL = 'https://devnet.pyana.fg-goose.online';
-const DEFAULT_NODE_WSS_URL = 'wss://devnet.pyana.fg-goose.online/ws';
+const NODE_CONFIG_KEY = 'dregg_node_config';
+const DEFAULT_NODE_URL = 'https://devnet.dregg.fg-goose.online';
+const DEFAULT_NODE_WSS_URL = 'wss://devnet.dregg.fg-goose.online/ws';
 const DEFAULT_NODE_WS_URL = 'ws://localhost:8420/ws';
 
 const nodeUrlInput = document.getElementById('nodeUrl');
@@ -81,7 +81,7 @@ saveBtn.addEventListener('click', async () => {
   // Save via background message (triggers WebSocket reconnect).
   try {
     const response = await chrome.runtime.sendMessage({
-      type: 'pyana:setNodeConfig',
+      type: 'dregg:setNodeConfig',
       id: 'settings_save',
       config,
     });

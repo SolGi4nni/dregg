@@ -1,4 +1,4 @@
-//! Axum HTTP API router for the pyana node.
+//! Axum HTTP API router for the dregg node.
 //!
 //! Serves a localhost-only API that the browser extension cipherclerk talks to.
 //! All handlers access shared [`NodeState`] via Axum's state extraction.
@@ -33,8 +33,8 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 
-use pyana_sdk::{Attenuation, AuthRequest, CellId};
-use pyana_turn::{CallForest, Turn};
+use dregg_sdk::{Attenuation, AuthRequest, CellId};
+use dregg_turn::{CallForest, Turn};
 
 use crate::state::{CommittedEvent, NodeEvent, NodeState};
 use crate::ws::handle_ws;
@@ -132,14 +132,14 @@ pub struct SubmitTurnResponse {
 // EncryptedTurn submission types (AUDIT-privacy.md §11.2 wiring).
 //
 // Wire format: the request body is the postcard-serialized
-// `pyana_turn::EncryptedTurn` envelope as **raw bytes** (Content-Type:
+// `dregg_turn::EncryptedTurn` envelope as **raw bytes** (Content-Type:
 // application/octet-stream). The body is **not** wrapped in JSON because
 // the EncryptedTurn includes a ciphertext blob whose size makes hex/base64
-// inflation undesirable and because postcard is the canonical pyana wire
+// inflation undesirable and because postcard is the canonical dregg wire
 // format for binary envelopes.
 //
 // The executor's X25519 unsealer secret is derived from the node's cipherclerk
-// via `AgentCipherclerk::derive_symmetric_key("pyana-turn-unsealer-v1")`.
+// via `AgentCipherclerk::derive_symmetric_key("dregg-turn-unsealer-v1")`.
 // The matching public key is exposed via `GET /turns/encryption-key` so a
 // sender can encrypt to this executor.
 //
@@ -221,7 +221,7 @@ pub struct CellDetailResponse {
     pub delegation_epoch: u64,
     /// Content-addressed commitment for PeerExchange / state sync (matches wasm CellStateView).
     pub state_commitment: String,
-    /// Quick kind for <pyana-cell-program> and raw views without full program dump.
+    /// Quick kind for <dregg-cell-program> and raw views without full program dump.
     pub program_kind: String,
 }
 
@@ -291,7 +291,7 @@ pub struct EncryptedIntentSubmitResponse {
 pub struct SseSearchRequest {
     /// Capability keywords (cleartext, e.g. "action:read",
     /// "resource:documents/*"). The server hashes each as
-    /// `BLAKE3_derive_key("pyana-sse-token-v1", keyword || epoch_le)`.
+    /// `BLAKE3_derive_key("dregg-sse-token-v1", keyword || epoch_le)`.
     pub capability_keywords: Vec<String>,
     /// Epoch for token derivation (must match the epoch the poster
     /// used; rotate-by-epoch makes cross-epoch correlation harder).
@@ -306,7 +306,7 @@ pub struct SseSearchRequest {
 #[derive(Serialize)]
 pub struct SseSearchHit {
     pub intent_id: String,
-    pub encrypted_intent: pyana_intent::sse::EncryptedIntent,
+    pub encrypted_intent: dregg_intent::sse::EncryptedIntent,
 }
 
 /// Response from `/intents/encrypted/search`. Returns intent
@@ -365,7 +365,7 @@ pub struct PirInfoResponse {
 #[derive(Serialize)]
 pub struct IntentListEntry {
     pub id: String,
-    pub intent: pyana_intent::Intent,
+    pub intent: dregg_intent::Intent,
 }
 
 // =============================================================================
@@ -790,7 +790,7 @@ async fn require_auth(
     match auth_header {
         Some(header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
-            let expected_token_bytes = blake3::derive_key("pyana-api-bearer-v1", bearer_seed);
+            let expected_token_bytes = blake3::derive_key("dregg-api-bearer-v1", bearer_seed);
             let expected_token: String = expected_token_bytes
                 .iter()
                 .map(|b| format!("{b:02x}"))
@@ -1283,7 +1283,7 @@ async fn post_submit_turn(
     // Mirror the MCP path: derive the agent cell from the cipherclerk's pubkey and
     // ignore the body's value (we still parse it for error reporting).
     let _body_agent = hex_decode(&req.agent).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let agent_bytes = pyana_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]).0;
+    let agent_bytes = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]).0;
     let turn = Turn {
         agent: CellId(agent_bytes),
         nonce: req.nonce,
@@ -1310,11 +1310,11 @@ async fn post_submit_turn(
     let turn_hash = hex_encode(&turn_hash_bytes);
 
     // Execute the turn locally FIRST.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
-        pyana_turn::TurnResult::Committed { mut receipt, .. } => {
+        dregg_turn::TurnResult::Committed { mut receipt, .. } => {
             crate::metrics::inc_turns_executed("committed");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
@@ -1323,7 +1323,7 @@ async fn post_submit_turn(
             // and advance the solo consensus height.
             if let Some(ref mut solo) = s.solo_consensus {
                 if solo.is_solo {
-                    receipt.finality = pyana_turn::Finality::Tentative;
+                    receipt.finality = dregg_turn::Finality::Tentative;
                     // Record any nullifiers from this turn in the solo nullifier log.
                     // The turn_hash itself serves as the sequencing entry for ordering.
                     let height = solo.height;
@@ -1381,7 +1381,7 @@ async fn post_submit_turn(
                 turn_hash: Some(turn_hash),
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => {
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             drop(s);
@@ -1406,7 +1406,7 @@ async fn post_submit_turn(
 /// across deployments — a single node always presents the same public key
 /// for a given cipherclerk, which is required so senders can cache the recipient
 /// key across reconnects.
-const TURN_UNSEALER_DOMAIN: &str = "pyana-turn-unsealer-v1";
+const TURN_UNSEALER_DOMAIN: &str = "dregg-turn-unsealer-v1";
 
 /// GET /turns/encryption-key — return the executor's static X25519 public
 /// key (the value senders pass as `recipient_public` to
@@ -1428,7 +1428,7 @@ async fn get_turn_encryption_key(
 }
 
 /// POST /turns/submit-encrypted — accept a postcard-encoded
-/// `pyana_turn::EncryptedTurn` envelope, decrypt with the cipherclerk-derived
+/// `dregg_turn::EncryptedTurn` envelope, decrypt with the cipherclerk-derived
 /// X25519 unsealer secret, and apply via
 /// `TurnExecutor::apply_encrypted_turn`. AUDIT-privacy.md §11.2: closes
 /// the "encryption claim unreachable from production" gap.
@@ -1458,7 +1458,7 @@ async fn post_submit_encrypted_turn(
 
     // Decode the envelope. A malformed wire body returns 400; no further
     // executor work is done.
-    let encrypted: pyana_turn::EncryptedTurn = match postcard::from_bytes(&body) {
+    let encrypted: dregg_turn::EncryptedTurn = match postcard::from_bytes(&body) {
         Ok(e) => e,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
@@ -1472,7 +1472,7 @@ async fn post_submit_encrypted_turn(
     // local for the lifetime of this handler only.
     let sealer_secret = s.cclerk.derive_symmetric_key(TURN_UNSEALER_DOMAIN);
 
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
     let result = executor.apply_encrypted_turn(&encrypted, &sealer_secret, &mut s.ledger);
 
@@ -1488,7 +1488,7 @@ async fn post_submit_encrypted_turn(
             let turn_hash_bytes = receipt.turn_hash;
             if let Some(ref mut solo) = s.solo_consensus {
                 if solo.is_solo {
-                    receipt.finality = pyana_turn::Finality::Tentative;
+                    receipt.finality = dregg_turn::Finality::Tentative;
                     let height = solo.height;
                     let _ = solo
                         .nullifier_log
@@ -1536,7 +1536,7 @@ async fn get_cell(
     let s = state.read().await;
 
     let cell_id_bytes: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     let found = s.ledger.get(&cell_id).is_some();
 
@@ -1563,7 +1563,7 @@ async fn get_all_cells(State(state): State<NodeState>) -> Json<Vec<CellListEntry
             nonce: cell.state.nonce(),
             capability_count: cell.capabilities.len(),
             has_delegate: cell.delegate.is_some(),
-            has_program: !matches!(cell.program, pyana_cell::CellProgram::None),
+            has_program: !matches!(cell.program, dregg_cell::CellProgram::None),
             found: true,
         })
         .collect();
@@ -1578,7 +1578,7 @@ async fn get_cell_detail(
     let s = state.read().await;
 
     let cell_id_bytes: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     match s.ledger.get(&cell_id) {
         Some(cell) => Ok(Json(CellDetailResponse {
@@ -1590,17 +1590,17 @@ async fn get_cell_detail(
             num_capabilities: cell.capabilities.len(),
             has_delegate: cell.delegate.is_some(),
             delegate: cell.delegate.as_ref().map(|d| hex_encode(&d.0)),
-            has_program: !matches!(cell.program, pyana_cell::CellProgram::None),
+            has_program: !matches!(cell.program, dregg_cell::CellProgram::None),
             public_key: hex_encode(cell.public_key()),
             token_id: hex_encode(cell.token_id()),
             proved_state: cell.state.proved_state(),
             delegation_epoch: cell.state.delegation_epoch(),
             state_commitment: hex_encode(&cell.state_commitment()),
             program_kind: match &cell.program {
-                pyana_cell::CellProgram::None => "None".to_string(),
-                pyana_cell::CellProgram::Predicate { .. } => "Predicate".to_string(),
-                pyana_cell::CellProgram::Cases { .. } => "Cases".to_string(),
-                pyana_cell::CellProgram::Circuit { .. } => "Circuit".to_string(),
+                dregg_cell::CellProgram::None => "None".to_string(),
+                dregg_cell::CellProgram::Predicate { .. } => "Predicate".to_string(),
+                dregg_cell::CellProgram::Cases { .. } => "Cases".to_string(),
+                dregg_cell::CellProgram::Circuit { .. } => "Circuit".to_string(),
                 _ => "Other".to_string(),
             },
         })),
@@ -1638,7 +1638,7 @@ fn hash_passphrase(passphrase: &str) -> (String, [u8; 32]) {
     // This is safe because BLAKE3 is a proper KDF and the input has high entropy
     // (passphrase + random salt).
     let bearer_seed = blake3::derive_key(
-        "pyana-node-bearer-v1",
+        "dregg-node-bearer-v1",
         format!("{}{}", passphrase, salt.as_str()).as_bytes(),
     );
     (phc_string, bearer_seed)
@@ -1766,14 +1766,14 @@ async fn post_intent(
     Json(raw): Json<serde_json::Value>,
 ) -> Result<Json<IntentSubmitResponse>, StatusCode> {
     // P0 Fix 3: Deserialize into a proper Intent struct for validation.
-    let intent: pyana_intent::Intent =
+    let intent: dregg_intent::Intent =
         serde_json::from_value(raw.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Validate the intent using pyana-intent's validation logic.
-    pyana_intent::validation::validate_intent(&intent).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // Validate the intent using dregg-intent's validation logic.
+    dregg_intent::validation::validate_intent(&intent).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Verify the content-addressed ID is correct (prevents ID spoofing).
-    let recomputed = pyana_intent::Intent::new(
+    let recomputed = dregg_intent::Intent::new(
         intent.kind,
         intent.matcher.clone(),
         intent.creator,
@@ -1838,14 +1838,14 @@ async fn get_events(
     Json(events)
 }
 
-/// GET /observability/stream — SSE live feed of pyana-observability events
+/// GET /observability/stream — SSE live feed of dregg-observability events
 /// (Task #30). Currently serves a welcome event (proves the path + remote
 /// consumption). Full broadcast of TurnLifecycle etc. from node turns is
 /// future (would wire Emitter into submit path + shared tx in NodeState).
 async fn observability_stream() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let welcome = Event::default()
         .event("observability")
-        .data(r#"{"schema_version":1,"schema_name":"pyana-observability-event-stream-v1","event_count":1,"events":[{"kind":"turn_lifecycle","envelope":{"seq":0,"timestamp":"2026-05-25T00:00:00.000Z"},"payload":{"phase":"stream_connected"}}]}"#);
+        .data(r#"{"schema_version":1,"schema_name":"dregg-observability-event-stream-v1","event_count":1,"events":[{"kind":"turn_lifecycle","envelope":{"seq":0,"timestamp":"2026-05-25T00:00:00.000Z"},"payload":{"phase":"stream_connected"}}]}"#);
     let stream = stream::once(async move { Ok::<_, Infallible>(welcome) });
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
 }
@@ -1857,7 +1857,7 @@ async fn observability_stream() -> Sse<impl Stream<Item = Result<Event, Infallib
 /// which point the poster reveals the decryption key over a direct channel.
 async fn post_encrypted_intent(
     State(state): State<NodeState>,
-    Json(encrypted): Json<pyana_intent::sse::EncryptedIntent>,
+    Json(encrypted): Json<dregg_intent::sse::EncryptedIntent>,
 ) -> Result<Json<EncryptedIntentSubmitResponse>, StatusCode> {
     let intent_id_hex = hex_encode(&encrypted.id);
 
@@ -1942,7 +1942,7 @@ async fn post_sse_search(
         if encrypted.is_expired(now) {
             continue;
         }
-        if !pyana_intent::sse::capability_matches_tokens(
+        if !dregg_intent::sse::capability_matches_tokens(
             &keyword_refs,
             &encrypted.search_tokens,
             req.epoch,
@@ -1968,13 +1968,13 @@ async fn post_sse_search(
 /// trustless intent engine's current batch.
 ///
 /// Unlike `/intents/encrypted` (single-recipient SSE sealed-box), this
-/// path routes through [`pyana_intent::trustless::TrustlessIntentEngine`]:
+/// path routes through [`dregg_intent::trustless::TrustlessIntentEngine`]:
 /// validators collaboratively decrypt the batch via Shamir-over-GF(256)
 /// + ChaCha20-Poly1305, solvers compete with STARK validity proofs, and
 /// the winning solution settles atomically through the lowering tower.
 async fn post_trustless_intent(
     State(state): State<NodeState>,
-    Json(encrypted): Json<pyana_intent::trustless::EncryptedIntent>,
+    Json(encrypted): Json<dregg_intent::trustless::EncryptedIntent>,
 ) -> Result<Json<EncryptedIntentSubmitResponse>, StatusCode> {
     let content_id = encrypted.content_id();
     let mut s = state.write().await;
@@ -1993,7 +1993,7 @@ async fn post_trustless_intent(
 /// and advances to the Solving phase.
 async fn post_trustless_decrypt_share(
     State(state): State<NodeState>,
-    Json(share): Json<pyana_intent::trustless::DecryptionShare>,
+    Json(share): Json<dregg_intent::trustless::DecryptionShare>,
 ) -> Result<Json<TrustlessEngineStatus>, StatusCode> {
     let mut s = state.write().await;
     s.trustless_intent_engine
@@ -2029,7 +2029,7 @@ struct TrustlessEngineStatus {
 }
 
 impl TrustlessEngineStatus {
-    fn from_engine(engine: &pyana_intent::trustless::TrustlessIntentEngine) -> Self {
+    fn from_engine(engine: &dregg_intent::trustless::TrustlessIntentEngine) -> Self {
         Self {
             batch_id: engine.current_batch.batch_id,
             batch_state: format!("{:?}", engine.batch_state()),
@@ -2069,8 +2069,8 @@ async fn post_fulfill_intent(
     let recipient_bytes: [u8; 32] =
         hex_decode(&req.recipient_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let payer_cell = pyana_sdk::CellId(payer_bytes);
-    let recipient_cell = pyana_sdk::CellId(recipient_bytes);
+    let payer_cell = dregg_sdk::CellId(payer_bytes);
+    let recipient_cell = dregg_sdk::CellId(recipient_bytes);
 
     // Look up the intent.
     let mut s = state.write().await;
@@ -2103,14 +2103,14 @@ async fn post_fulfill_intent(
     // Deserialize the base fulfillment. For now we construct a minimal one from the
     // request fields since the full Fulfillment struct isn't directly serde-friendly
     // across the wire. The verification happens inside execute_fulfillment_flow.
-    let state_root = pyana_circuit::BabyBear::new(req.state_root);
+    let state_root = dregg_circuit::BabyBear::new(req.state_root);
 
     // Build a minimal FulfillmentWithPredicates for the execution flow.
     // The actual fulfillment proof is already verified by the node in this flow.
-    let base_fulfillment = pyana_intent::fulfillment::Fulfillment {
+    let base_fulfillment = dregg_intent::fulfillment::Fulfillment {
         intent_id,
-        fulfiller: pyana_intent::CommitmentId(recipient_bytes),
-        mode: pyana_intent::VerificationMode::Trusted,
+        fulfiller: dregg_intent::CommitmentId(recipient_bytes),
+        mode: dregg_intent::VerificationMode::Trusted,
         token_data: Some(vec![0x01; 4]), // Non-empty stub for trusted mode verification.
         proof: None,
         granted_actions: intent
@@ -2127,7 +2127,7 @@ async fn post_fulfill_intent(
         expiry: Some(intent.expiry),
     };
 
-    let fulfillment_with_preds = pyana_intent::fulfillment::FulfillmentWithPredicates {
+    let fulfillment_with_preds = dregg_intent::fulfillment::FulfillmentWithPredicates {
         base: base_fulfillment,
         predicate_proofs: vec![], // Predicates already verified by caller in this API path.
         state_root,
@@ -2144,8 +2144,8 @@ async fn post_fulfill_intent(
         .unwrap_or(0);
 
     // Execute the fulfillment payment flow.
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
-    let result = pyana_intent::fulfillment::execute_fulfillment_flow(
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    let result = dregg_intent::fulfillment::execute_fulfillment_flow(
         &intent,
         &fulfillment_with_preds,
         &executor,
@@ -2205,7 +2205,7 @@ async fn post_fast_path_lock(
     State(state): State<NodeState>,
     Json(req): Json<FastPathLockRequest>,
 ) -> Result<Json<FastPathLockResponse>, StatusCode> {
-    let turn: pyana_turn::Turn =
+    let turn: dregg_turn::Turn =
         serde_json::from_value(req.turn).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let turn_hash = turn.hash();
@@ -2244,7 +2244,7 @@ async fn post_fast_path_lock(
     // Split borrows: take mutable ref to cell_lock_table and immutable ref to ledger
     // from disjoint fields of the same struct.
     let inner = &mut *s;
-    let result = pyana_turn::process_fast_path_lock(
+    let result = dregg_turn::process_fast_path_lock(
         &mut inner.cell_lock_table,
         &turn,
         turn_hash,
@@ -2282,7 +2282,7 @@ async fn post_fast_path_certificate(
     State(state): State<NodeState>,
     Json(req): Json<FastPathCertificateRequest>,
 ) -> Result<Json<FastPathCertificateResponse>, StatusCode> {
-    let turn: pyana_turn::Turn =
+    let turn: dregg_turn::Turn =
         serde_json::from_value(req.turn).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let turn_hash_bytes: [u8; 32] =
@@ -2308,7 +2308,7 @@ async fn post_fast_path_certificate(
         }
         let mut sig = [0u8; 64];
         sig.copy_from_slice(&sig_bytes);
-        signatures.push(pyana_turn::TurnSign {
+        signatures.push(dregg_turn::TurnSign {
             validator_key: vk,
             signature: sig,
             height: entry.height,
@@ -2325,7 +2325,7 @@ async fn post_fast_path_certificate(
     };
     let f = (n.saturating_sub(1)) / 3;
     let threshold = n - f;
-    let cert = match pyana_turn::assemble_certificate(turn, turn_hash_bytes, signatures, threshold)
+    let cert = match dregg_turn::assemble_certificate(turn, turn_hash_bytes, signatures, threshold)
     {
         Ok(c) => c,
         Err(e) => {
@@ -2339,11 +2339,11 @@ async fn post_fast_path_certificate(
 
     // Execute the certified turn.
     let mut s = state.write().await;
-    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
 
     // Split borrows: take mutable refs to disjoint fields.
     let inner = &mut *s;
-    let result = pyana_turn::execute_certified_turn(
+    let result = dregg_turn::execute_certified_turn(
         &cert,
         &executor,
         &mut inner.ledger,
@@ -2351,7 +2351,7 @@ async fn post_fast_path_certificate(
     );
 
     match result {
-        pyana_turn::TurnResult::Committed { receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             let hash_hex = hex_encode(&receipt.turn_hash);
             s.cclerk
                 .append_receipt(receipt)
@@ -2366,7 +2366,7 @@ async fn post_fast_path_certificate(
                 error: None,
             }))
         }
-        pyana_turn::TurnResult::Rejected { reason, .. } => Ok(Json(FastPathCertificateResponse {
+        dregg_turn::TurnResult::Rejected { reason, .. } => Ok(Json(FastPathCertificateResponse {
             executed: false,
             turn_hash: Some(hex_encode(&turn_hash_bytes)),
             error: Some(format!("turn rejected: {reason}")),
@@ -2400,14 +2400,14 @@ async fn post_submit_conditional(
         .unwrap_or(0);
     drop(s);
 
-    let condition: pyana_turn::ProofCondition =
+    let condition: dregg_turn::ProofCondition =
         serde_json::from_value(req.condition).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let turn: pyana_turn::Turn =
+    let turn: dregg_turn::Turn =
         serde_json::from_value(req.turn).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let deposit_amount =
-        pyana_turn::compute_conditional_deposit(req.timeout_height, current_height);
-    let conditional = pyana_turn::ConditionalTurn {
+        dregg_turn::compute_conditional_deposit(req.timeout_height, current_height);
+    let conditional = dregg_turn::ConditionalTurn {
         turn,
         condition,
         timeout_height: req.timeout_height,
@@ -2415,7 +2415,7 @@ async fn post_submit_conditional(
         deposit_amount,
     };
 
-    if let Err(_e) = pyana_turn::validate_conditional_submission(&conditional, current_height) {
+    if let Err(_e) = dregg_turn::validate_conditional_submission(&conditional, current_height) {
         return Ok(Json(SubmitConditionalResponse {
             accepted: false,
             conditional_hash: None,
@@ -2467,7 +2467,7 @@ async fn post_resolve_conditional(
 
     let hash_bytes = hex_decode(&req.conditional_hash).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let proof: pyana_turn::ConditionProof =
+    let proof: dregg_turn::ConditionProof =
         serde_json::from_value(req.proof).map_err(|_| StatusCode::BAD_REQUEST)?;
     let verify_start = Instant::now();
 
@@ -2498,7 +2498,7 @@ async fn post_resolve_conditional(
 
     let condition = s.pending_conditionals[idx].condition.clone();
     let timeout_height = s.pending_conditionals[idx].timeout_height;
-    let trusted_roots: Vec<pyana_turn::TrustedRoot> = s
+    let trusted_roots: Vec<dregg_turn::TrustedRoot> = s
         .store
         .all_attested_roots()
         .unwrap_or_default()
@@ -2508,13 +2508,13 @@ async fn post_resolve_conditional(
     let trusted_executor_keys: Vec<[u8; 32]> =
         s.known_federation_keys.iter().map(|k| k.0).collect();
 
-    let result = pyana_turn::resolve_condition(
+    let result = dregg_turn::resolve_condition(
         &condition,
         &proof,
         current_height,
         timeout_height,
         &trusted_roots,
-        pyana_turn::DEFAULT_MAX_ROOT_AGE,
+        dregg_turn::DEFAULT_MAX_ROOT_AGE,
         &mut s.used_proof_hashes,
         &trusted_executor_keys,
     );
@@ -2522,27 +2522,27 @@ async fn post_resolve_conditional(
     crate::metrics::record_proof_verification_duration(verify_start.elapsed().as_secs_f64());
 
     match result {
-        pyana_turn::ConditionalResult::Resolved => {
+        dregg_turn::ConditionalResult::Resolved => {
             crate::metrics::inc_proofs_verified("valid");
             // SECURITY: Persist the proof nullifier to the store immediately so
             // a crash cannot allow proof replay. The in-memory set was already
             // updated by resolve_condition; this makes it durable.
-            let proof_hash = pyana_turn::compute_proof_hash(&proof);
+            let proof_hash = dregg_turn::compute_proof_hash(&proof);
             if let Err(e) = s.store.insert_proof_hash(&proof_hash) {
                 tracing::warn!(error = %e, "failed to persist proof nullifier to store");
             }
 
             let conditional = s.pending_conditionals.remove(idx);
 
-            let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+            let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
             let exec_result = executor.execute(&conditional.turn, &mut s.ledger);
 
             match exec_result {
-                pyana_turn::TurnResult::Committed { mut receipt, .. } => {
+                dregg_turn::TurnResult::Committed { mut receipt, .. } => {
                     // Solo mode: mark receipt as Tentative and log in nullifier log.
                     if let Some(ref mut solo) = s.solo_consensus {
                         if solo.is_solo {
-                            receipt.finality = pyana_turn::Finality::Tentative;
+                            receipt.finality = dregg_turn::Finality::Tentative;
                             let height = solo.height;
                             let _ = solo.nullifier_log.insert(
                                 receipt.turn_hash,
@@ -2566,26 +2566,26 @@ async fn post_resolve_conditional(
                         reason: None,
                     }))
                 }
-                pyana_turn::TurnResult::Rejected { reason, .. } => {
+                dregg_turn::TurnResult::Rejected { reason, .. } => {
                     Ok(Json(ResolveConditionalResponse {
                         resolved: false,
                         turn_hash: None,
                         reason: Some(format!("turn rejected: {reason}")),
                     }))
                 }
-                pyana_turn::TurnResult::Expired => Ok(Json(ResolveConditionalResponse {
+                dregg_turn::TurnResult::Expired => Ok(Json(ResolveConditionalResponse {
                     resolved: false,
                     turn_hash: None,
                     reason: Some("turn expired during execution".to_string()),
                 })),
-                pyana_turn::TurnResult::Pending => Ok(Json(ResolveConditionalResponse {
+                dregg_turn::TurnResult::Pending => Ok(Json(ResolveConditionalResponse {
                     resolved: false,
                     turn_hash: None,
                     reason: Some("turn pending during execution".to_string()),
                 })),
             }
         }
-        pyana_turn::ConditionalResult::Expired => {
+        dregg_turn::ConditionalResult::Expired => {
             crate::metrics::inc_proofs_verified("error");
             s.pending_conditionals.remove(idx);
             Ok(Json(ResolveConditionalResponse {
@@ -2594,12 +2594,12 @@ async fn post_resolve_conditional(
                 reason: Some("conditional turn has expired".to_string()),
             }))
         }
-        pyana_turn::ConditionalResult::Pending => Ok(Json(ResolveConditionalResponse {
+        dregg_turn::ConditionalResult::Pending => Ok(Json(ResolveConditionalResponse {
             resolved: false,
             turn_hash: None,
             reason: Some("condition not yet satisfied".to_string()),
         })),
-        pyana_turn::ConditionalResult::InvalidProof(e) => {
+        dregg_turn::ConditionalResult::InvalidProof(e) => {
             crate::metrics::inc_proofs_verified("invalid");
             Ok(Json(ResolveConditionalResponse {
                 resolved: false,
@@ -2631,10 +2631,10 @@ async fn get_pending_conditionals(
         .iter()
         .map(|ct| {
             let condition_type = match &ct.condition {
-                pyana_turn::ProofCondition::HashPreimage { .. } => "hash_preimage",
-                pyana_turn::ProofCondition::RemoteProof { .. } => "remote_proof",
-                pyana_turn::ProofCondition::LocalProof { .. } => "local_proof",
-                pyana_turn::ProofCondition::TurnExecuted { .. } => "turn_executed",
+                dregg_turn::ProofCondition::HashPreimage { .. } => "hash_preimage",
+                dregg_turn::ProofCondition::RemoteProof { .. } => "remote_proof",
+                dregg_turn::ProofCondition::LocalProof { .. } => "local_proof",
+                dregg_turn::ProofCondition::TurnExecuted { .. } => "turn_executed",
             };
             PendingConditionalInfo {
                 hash: hex_encode(&ct.hash()),
@@ -2685,14 +2685,14 @@ async fn post_atomic_proposal(
     // Parse the initiator cell ID.
     let initiator_bytes: [u8; 32] =
         hex_decode(&req.initiator).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let initiator = pyana_cell::CellId(initiator_bytes);
+    let initiator = dregg_cell::CellId(initiator_bytes);
 
     // Deserialize the call forest.
-    let forest: pyana_turn::CallForest =
+    let forest: dregg_turn::CallForest =
         serde_json::from_value(req.forest).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Build the atomic forest.
-    let atomic_forest = pyana_coord::AtomicForest::new(
+    let atomic_forest = dregg_coord::AtomicForest::new(
         participants.clone(),
         forest,
         vec![], // preconditions left empty; participants validate locally
@@ -2708,7 +2708,7 @@ async fn post_atomic_proposal(
 
     let node_id = s.silo_id;
     let signing_key = s.cclerk.gossip_signing_key().to_bytes();
-    let costs = pyana_turn::ComputronCosts::default();
+    let costs = dregg_turn::ComputronCosts::default();
 
     // F-P1-4: build participant key map. Prior code used (id, id) which only
     // happened to work when cell_id == pubkey (sovereign cells). The request
@@ -2755,7 +2755,7 @@ async fn post_atomic_proposal(
         }
     };
 
-    let mut coordinator = pyana_coord::Coordinator::new(
+    let mut coordinator = dregg_coord::Coordinator::new(
         node_id,
         signing_key,
         req.threshold,
@@ -2833,9 +2833,9 @@ async fn post_atomic_vote(
     signature.copy_from_slice(&sig_bytes);
 
     let vote = if req.approve {
-        pyana_coord::Vote::yes(signature)
+        dregg_coord::Vote::yes(signature)
     } else {
-        pyana_coord::Vote::no("participant rejected", signature)
+        dregg_coord::Vote::no("participant rejected", signature)
     };
 
     // Defense-in-depth: verify the vote signature against the claimed voter's
@@ -2856,9 +2856,9 @@ async fn post_atomic_vote(
         };
         let forest_hash = active.forest.hash;
         let sig_valid = if req.approve {
-            pyana_coord::Vote::verify_yes(&signature, &proposal_id, &forest_hash, &voter)
+            dregg_coord::Vote::verify_yes(&signature, &proposal_id, &forest_hash, &voter)
         } else {
-            pyana_coord::Vote::verify_no(&signature, &proposal_id, &forest_hash, &voter)
+            dregg_coord::Vote::verify_no(&signature, &proposal_id, &forest_hash, &voter)
         };
         if !sig_valid {
             return Ok(Json(AtomicVoteResponse {
@@ -2897,7 +2897,7 @@ async fn post_atomic_vote(
 
     // Handle the decision.
     match decision {
-        Some(pyana_coord::Decision::Commit) => {
+        Some(dregg_coord::Decision::Commit) => {
             // Extract the proposal so we can borrow ledger mutably.
             let mut active = s.atomic_proposals.remove(&proposal_id).unwrap();
             // Execute the atomic turn against the ledger.
@@ -2919,7 +2919,7 @@ async fn post_atomic_vote(
                 }
             }
         }
-        Some(pyana_coord::Decision::Abort) => {
+        Some(dregg_coord::Decision::Abort) => {
             let mut active = s.atomic_proposals.remove(&proposal_id).unwrap();
             let _ = active
                 .coordinator
@@ -2931,7 +2931,7 @@ async fn post_atomic_vote(
                 error: None,
             }))
         }
-        Some(pyana_coord::Decision::Pending) | None => {
+        Some(dregg_coord::Decision::Pending) | None => {
             // Still waiting for more votes.
             Ok(Json(AtomicVoteResponse {
                 accepted: true,
@@ -2969,14 +2969,14 @@ async fn get_proposal_status(
     };
 
     let (state_name, yes_count, no_count, total) = match &active.coordinator.state {
-        pyana_coord::CoordinatorState::Idle => ("idle", 0, 0, 0),
-        pyana_coord::CoordinatorState::Proposing { forest, votes, .. } => {
+        dregg_coord::CoordinatorState::Idle => ("idle", 0, 0, 0),
+        dregg_coord::CoordinatorState::Proposing { forest, votes, .. } => {
             let yes = votes.values().filter(|v| v.is_yes()).count();
             let no = votes.values().filter(|v| v.is_no()).count();
             ("proposing", yes, no, forest.participant_count())
         }
-        pyana_coord::CoordinatorState::Committed { .. } => ("committed", 0, 0, 0),
-        pyana_coord::CoordinatorState::Aborted { .. } => ("aborted", 0, 0, 0),
+        dregg_coord::CoordinatorState::Committed { .. } => ("committed", 0, 0, 0),
+        dregg_coord::CoordinatorState::Aborted { .. } => ("aborted", 0, 0, 0),
     };
 
     let age_secs = std::time::Instant::now()
@@ -3014,7 +3014,7 @@ async fn post_evaluate_proposal(
         hex_decode(&req.proposal_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Deserialize the atomic forest from the request.
-    let atomic_forest: pyana_coord::AtomicForest =
+    let atomic_forest: dregg_coord::AtomicForest =
         serde_json::from_value(req.forest).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let s = state.write().await;
@@ -3022,21 +3022,21 @@ async fn post_evaluate_proposal(
     // Build a Participant from the node's local identity and ledger.
     let node_id = s.silo_id;
     let signing_key = s.cclerk.gossip_signing_key().to_bytes();
-    let cell_id = pyana_cell::CellId(node_id);
+    let cell_id = dregg_cell::CellId(node_id);
 
     let mut participant =
-        pyana_coord::Participant::new(cell_id, node_id, signing_key, s.ledger.clone());
+        dregg_coord::Participant::new(cell_id, node_id, signing_key, s.ledger.clone());
 
     // Evaluate the proposal locally.
     let vote = participant.evaluate_proposal(&proposal_id, &atomic_forest);
 
     match vote {
-        pyana_coord::Vote::Yes { signature } => Ok(Json(EvaluateProposalResponse {
+        dregg_coord::Vote::Yes { signature } => Ok(Json(EvaluateProposalResponse {
             approve: true,
             reason: None,
             signature: hex_encode_var(&signature),
         })),
-        pyana_coord::Vote::No { reason, signature } => Ok(Json(EvaluateProposalResponse {
+        dregg_coord::Vote::No { reason, signature } => Ok(Json(EvaluateProposalResponse {
             approve: false,
             reason: Some(reason),
             signature: hex_encode_var(&signature),
@@ -3076,8 +3076,8 @@ async fn post_register_cell(
         }));
     }
 
-    let ttl = req.ttl_blocks.unwrap_or(pyana_cell::DEFAULT_SOVEREIGN_TTL);
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let ttl = req.ttl_blocks.unwrap_or(dregg_cell::DEFAULT_SOVEREIGN_TTL);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     // Parse optional verification key hash.
     let vk_hash: Option<[u8; 32]> = match &req.verification_key_hash {
@@ -3134,7 +3134,7 @@ async fn post_deregister_cell(
         }));
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
     let mut s = state.write().await;
 
     match s.ledger.deregister_sovereign_cell(&cell_id) {
@@ -3180,7 +3180,7 @@ async fn post_update_commitment(
         }));
     }
 
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
     let mut s = state.write().await;
     let current_height = s
         .store
@@ -3221,11 +3221,11 @@ async fn post_deploy_program(
         hex_decode_var(&req.descriptor_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Deserialize the CircuitDescriptor from postcard format.
-    let descriptor: pyana_dsl_runtime::CircuitDescriptor =
+    let descriptor: dregg_dsl_runtime::CircuitDescriptor =
         postcard::from_bytes(&descriptor_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Create the CellProgram (computes VK hash).
-    let program = pyana_dsl_runtime::CellProgram::new(descriptor, req.version);
+    let program = dregg_dsl_runtime::CellProgram::new(descriptor, req.version);
 
     // Deploy to registry (validates safety bounds).
     let mut s = state.write().await;
@@ -3275,8 +3275,8 @@ async fn get_pir_info(State(state): State<NodeState>) -> Json<PirInfoResponse> {
 
     // Use cached index or build and cache it.
     if s.pir_index_cache.is_none() {
-        let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
-        s.pir_index_cache = Some(pyana_intent::pir::IntentIndex::build_from_intents(&intents));
+        let intents: Vec<dregg_intent::Intent> = s.intent_pool.values().cloned().collect();
+        s.pir_index_cache = Some(dregg_intent::pir::IntentIndex::build_from_intents(&intents));
     }
     let index = s.pir_index_cache.as_ref().unwrap();
 
@@ -3302,8 +3302,8 @@ async fn post_pir_query(
 
     // Use cached index or build and cache it.
     if s.pir_index_cache.is_none() {
-        let intents: Vec<pyana_intent::Intent> = s.intent_pool.values().cloned().collect();
-        s.pir_index_cache = Some(pyana_intent::pir::IntentIndex::build_from_intents(&intents));
+        let intents: Vec<dregg_intent::Intent> = s.intent_pool.values().cloned().collect();
+        s.pir_index_cache = Some(dregg_intent::pir::IntentIndex::build_from_intents(&intents));
     }
     let index = s.pir_index_cache.as_ref().unwrap();
 
@@ -3313,16 +3313,16 @@ async fn post_pir_query(
     }
 
     // Convert the u32 query vector to BabyBear field elements.
-    let query = pyana_intent::pir::PirQuery {
+    let query = dregg_intent::pir::PirQuery {
         query_vector: req
             .query_vector
             .iter()
-            .map(|&v| pyana_circuit::field::BabyBear::new(v))
+            .map(|&v| dregg_circuit::field::BabyBear::new(v))
             .collect(),
     };
 
     // Compute the PIR response.
-    let response = pyana_intent::pir::compute_pir_response(&query, &index.entries);
+    let response = dregg_intent::pir::compute_pir_response(&query, &index.entries);
 
     // Convert back to u32 for serialization.
     Ok(Json(PirQueryResponse {
@@ -3359,7 +3359,7 @@ async fn get_checkpoint_at_height(
     }
 }
 
-fn checkpoint_to_response(cp: &pyana_federation::Checkpoint) -> CheckpointResponse {
+fn checkpoint_to_response(cp: &dregg_federation::Checkpoint) -> CheckpointResponse {
     CheckpointResponse {
         height: cp.height,
         ledger_state_root: hex_encode(&cp.ledger_state_root),
@@ -3502,24 +3502,24 @@ async fn post_faucet(
     let mut s = state.write().await;
 
     // Ensure the faucet cell exists in the ledger (create on first use).
-    let faucet_cell_id = pyana_cell::CellId::derive_raw(&FAUCET_PUBLIC_KEY, &FAUCET_TOKEN_ID);
+    let faucet_cell_id = dregg_cell::CellId::derive_raw(&FAUCET_PUBLIC_KEY, &FAUCET_TOKEN_ID);
     if s.ledger.get(&faucet_cell_id).is_none() {
         let faucet_cell =
-            pyana_cell::Cell::with_balance(FAUCET_PUBLIC_KEY, FAUCET_TOKEN_ID, 100_000);
+            dregg_cell::Cell::with_balance(FAUCET_PUBLIC_KEY, FAUCET_TOKEN_ID, 100_000);
         let _ = s.ledger.insert_cell(faucet_cell);
     }
 
     // Ensure the recipient cell exists (create with zero balance if not).
-    let recipient_cell_id = pyana_cell::CellId(recipient_bytes);
+    let recipient_cell_id = dregg_cell::CellId(recipient_bytes);
     if s.ledger.get(&recipient_cell_id).is_none() {
         // Create a minimal recipient cell. Use the recipient_bytes as both the
         // public key and derive the ID from it. For devnet this is fine.
-        let recipient_cell = pyana_cell::Cell::with_balance(recipient_bytes, FAUCET_TOKEN_ID, 0);
+        let recipient_cell = dregg_cell::Cell::with_balance(recipient_bytes, FAUCET_TOKEN_ID, 0);
         let _ = s.ledger.insert_cell(recipient_cell);
     }
 
     // Apply the transfer.
-    let delta = pyana_cell::LedgerDelta {
+    let delta = dregg_cell::LedgerDelta {
         created: Vec::new(),
         updated: Vec::new(),
         computron_transfers: vec![(faucet_cell_id, recipient_cell_id, req.amount)],
@@ -3588,7 +3588,7 @@ pub struct NodeDischargeResponse {
 ///
 /// The node acts as a discharge gateway for its own federation's tokens.
 /// The shared key is derived from the cipherclerk's signing key using BLAKE3 KDF
-/// with domain "pyana-discharge-gateway-v1".
+/// with domain "dregg-discharge-gateway-v1".
 async fn post_discharge(
     State(state): State<NodeState>,
     Json(req): Json<NodeDischargeRequest>,
@@ -3617,11 +3617,11 @@ async fn post_discharge(
     // actual replay prevention. Previously, a fresh gateway was created per
     // request, making the replay set useless (it was dropped immediately).
     if s.discharge_gateway.is_none() {
-        let gateway_key = s.cclerk.derive_symmetric_key("pyana-discharge-gateway-v1");
-        let location = format!("pyana-node://{}", hex_encode(&s.cclerk.public_key().0));
-        let mut gateway = pyana_macaroon::DischargeGateway::new(gateway_key, location);
+        let gateway_key = s.cclerk.derive_symmetric_key("dregg-discharge-gateway-v1");
+        let location = format!("dregg-node://{}", hex_encode(&s.cclerk.public_key().0));
+        let mut gateway = dregg_macaroon::DischargeGateway::new(gateway_key, location);
         // Default evaluator: require proof to prevent accidental open gateways.
-        gateway.add_evaluator(Box::new(pyana_macaroon::ProofRequiredEvaluator));
+        gateway.add_evaluator(Box::new(dregg_macaroon::ProofRequiredEvaluator));
         // Load previously persisted replay set from store (survives restarts).
         if let Ok(Some(data)) = s.store.get_config("discharge_issued_set") {
             gateway.load_issued_set(&data);
@@ -3631,7 +3631,7 @@ async fn post_discharge(
 
     let gateway = s.discharge_gateway.as_ref().unwrap();
 
-    let discharge_req = pyana_macaroon::DischargeRequest {
+    let discharge_req = dregg_macaroon::DischargeRequest {
         ticket,
         client_id: req.client_id,
         proof,
@@ -3679,7 +3679,7 @@ struct CreateFromFactoryRequest {
     /// Hex-encoded 8-byte nonce, included in the signed message (F-P1-2).
     nonce: String,
     /// Hex-encoded 64-byte Ed25519 signature from `owner_pubkey` over
-    /// `b"pyana-create-from-factory-v1" || factory_vk || owner_pubkey || nonce`.
+    /// `b"dregg-create-from-factory-v1" || factory_vk || owner_pubkey || nonce`.
     signature: String,
 }
 
@@ -3716,7 +3716,7 @@ async fn post_create_from_factory(
         if let Err(e) = verify_ed25519_sig(
             &owner_pubkey,
             &req.signature,
-            b"pyana-create-from-factory-v1",
+            b"dregg-create-from-factory-v1",
             &payload,
         ) {
             return Ok(Json(CreateFromFactoryResponse {
@@ -3728,24 +3728,24 @@ async fn post_create_from_factory(
         }
     }
 
-    let params = pyana_cell::factory::FactoryCreationParams {
+    let params = dregg_cell::factory::FactoryCreationParams {
         owner_pubkey,
-        mode: pyana_cell::CellMode::default(),
+        mode: dregg_cell::CellMode::default(),
         program_vk: None,
         initial_fields: vec![],
         initial_caps: vec![],
     };
 
-    let param_hash = pyana_cell::factory::ChildVkStrategy::compute_param_hash(&params);
-    let child_vk = pyana_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
+    let param_hash = dregg_cell::factory::ChildVkStrategy::compute_param_hash(&params);
+    let child_vk = dregg_cell::factory::ChildVkStrategy::derive_child_vk(&factory_vk, &param_hash);
 
     // Derive cell_id from owner + token_id.
     let token_id = req
         .token_id
         .as_deref()
         .map(|s| *blake3::hash(s.as_bytes()).as_bytes())
-        .unwrap_or_else(|| *blake3::hash(b"pyana-default-domain").as_bytes());
-    let cell_id = pyana_cell::CellId::derive_raw(&owner_pubkey, &token_id);
+        .unwrap_or_else(|| *blake3::hash(b"dregg-default-domain").as_bytes());
+    let cell_id = dregg_cell::CellId::derive_raw(&owner_pubkey, &token_id);
 
     Ok(Json(CreateFromFactoryResponse {
         success: true,
@@ -3761,7 +3761,7 @@ struct MakeSovereignRequest {
     /// Hex-encoded 8-byte nonce (F-P1-2).
     nonce: String,
     /// Hex-encoded 64-byte Ed25519 signature from the cell owner over
-    /// `b"pyana-make-sovereign-v1" || cell_id || nonce`. The signing key
+    /// `b"dregg-make-sovereign-v1" || cell_id || nonce`. The signing key
     /// MUST be the cell's `public_key` if the cell exists on the ledger;
     /// otherwise it MUST be the `cell_id` itself (sovereign convention:
     /// for fresh sovereign cells, cell_id == pubkey).
@@ -3785,7 +3785,7 @@ async fn post_make_sovereign(
     }
 
     let cell_id_bytes = hex_decode_32_result(&req.cell_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let cell_id = pyana_cell::CellId(cell_id_bytes);
+    let cell_id = dregg_cell::CellId(cell_id_bytes);
 
     // F-P1-2: verify the caller possesses the cell-owner private key. For an
     // existing cell, the signing key is the cell's `public_key`. For a brand
@@ -3803,7 +3803,7 @@ async fn post_make_sovereign(
     if let Err(e) = verify_ed25519_sig(
         &owner_pk,
         &req.signature,
-        b"pyana-make-sovereign-v1",
+        b"dregg-make-sovereign-v1",
         &payload,
     ) {
         return Ok(Json(MakeSovereignResponse {
@@ -3816,7 +3816,7 @@ async fn post_make_sovereign(
     // Compute a state commitment from the cell ID (deterministic for the API response).
     // The full state commitment is computed by the cipherclerk SDK and submitted via
     // /cells/register with the proper sovereign workflow.
-    let commitment = blake3::derive_key("pyana-sovereign-commitment-v1", &cell_id_bytes);
+    let commitment = blake3::derive_key("dregg-sovereign-commitment-v1", &cell_id_bytes);
 
     match s.ledger.register_sovereign_cell(cell_id, commitment) {
         Ok(()) => Ok(Json(MakeSovereignResponse {
@@ -3857,7 +3857,7 @@ async fn post_compose_proofs(
     }
 
     // Compute composition commitment binding all proofs.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-proof-composition-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-proof-composition-v1");
     hasher.update(req.mode.as_bytes());
     for (i, proof) in req.proofs.iter().enumerate() {
         hasher.update(&(i as u32).to_le_bytes());
@@ -3905,7 +3905,7 @@ async fn post_bearer_auth(
     }
 
     // Deserialize the BearerCapProof from the request JSON.
-    let bearer_proof: pyana_turn::BearerCapProof =
+    let bearer_proof: dregg_turn::BearerCapProof =
         serde_json::from_value(req.bearer_proof).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let _target_cell =
@@ -3920,7 +3920,7 @@ async fn post_bearer_auth(
         .map(|r| r.height)
         .unwrap_or(0);
 
-    let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     executor.set_block_height(current_height);
 
     // F-P1-7: use the node's stable `silo_id` as the federation ID. Prior code
@@ -3971,7 +3971,7 @@ async fn post_peer_exchange(
     let receiver = hex_decode_32_result(&req.receiver_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Generate exchange ID.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-peer-exchange-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-peer-exchange-v1");
     hasher.update(&sender);
     hasher.update(&receiver);
     hasher.update(&req.amount.to_le_bytes());
@@ -4151,7 +4151,7 @@ async fn post_queue_allocate(
     }
 
     // Derive a queue ID from capacity + program_vk + a random nonce.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-queue-allocate-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-queue-allocate-v1");
     hasher.update(&req.capacity.to_le_bytes());
     if let Some(ref vk) = req.program_vk {
         hasher.update(vk.as_bytes());
@@ -4288,27 +4288,27 @@ async fn post_queue_atomic_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_coord::{AtomicForest, Coordinator, Decision, Vote};
-    use pyana_turn::ComputronCosts;
-    use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+    use dregg_coord::{AtomicForest, Coordinator, Decision, Vote};
+    use dregg_turn::ComputronCosts;
+    use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
     /// Helper: create a deterministic key pair for testing.
     fn test_key(name: &str) -> [u8; 32] {
-        *blake3::hash(format!("pyana-node-atomic-test:{name}").as_bytes()).as_bytes()
+        *blake3::hash(format!("dregg-node-atomic-test:{name}").as_bytes()).as_bytes()
     }
 
     /// Helper: build a minimal AtomicForest with a single noop-like action.
     fn make_test_forest(participants: Vec<[u8; 32]>, initiator: [u8; 32]) -> AtomicForest {
-        let cell_id = pyana_cell::CellId(initiator);
-        let mut forest = pyana_turn::CallForest::new();
+        let cell_id = dregg_cell::CellId(initiator);
+        let mut forest = dregg_turn::CallForest::new();
         let action = Action {
             target: cell_id,
             method: *blake3::hash(b"noop").as_bytes(),
             args: vec![],
             authorization: Authorization::Unchecked,
-            preconditions: pyana_cell::Preconditions::default(),
+            preconditions: dregg_cell::Preconditions::default(),
             effects: vec![],
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
@@ -4509,8 +4509,8 @@ mod tests {
         let sk_b = SigningKey::from_bytes(&seed_b);
         let pk_b = sk_b.verifying_key().to_bytes();
 
-        let domain_x = b"pyana-x-v1";
-        let domain_y = b"pyana-y-v1";
+        let domain_x = b"dregg-x-v1";
+        let domain_y = b"dregg-y-v1";
         let payload = b"hello";
 
         // A signs (domain_x || payload).
@@ -4554,21 +4554,21 @@ mod tests {
     #[test]
     fn audit_f_p1_3_cclerk_agent_overrides_body() {
         // The handler derives:
-        //   `pyana_cell::CellId::derive_raw(&cipherclerk.public_key().0, &[0u8;32])`
+        //   `dregg_cell::CellId::derive_raw(&cipherclerk.public_key().0, &[0u8;32])`
         // The body's `agent` is discarded. If a victim's `cell_id` is supplied
         // as the body's agent, the derived id MUST differ (so the cipherclerk's
         // signature can't be tricked into authorizing a victim's c-list).
         let cclerk_pk = [0x77u8; 32];
         let victim_cell = [0x99u8; 32];
 
-        let derived = pyana_cell::CellId::derive_raw(&cclerk_pk, &[0u8; 32]).0;
+        let derived = dregg_cell::CellId::derive_raw(&cclerk_pk, &[0u8; 32]).0;
         assert_ne!(
             derived, victim_cell,
             "agent must be derived from cipherclerk pubkey, not victim cell id"
         );
 
         // Sanity: the derivation is a function of the cipherclerk pubkey.
-        let derived2 = pyana_cell::CellId::derive_raw(&cclerk_pk, &[0u8; 32]).0;
+        let derived2 = dregg_cell::CellId::derive_raw(&cclerk_pk, &[0u8; 32]).0;
         assert_eq!(derived, derived2);
     }
 

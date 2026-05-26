@@ -1,10 +1,10 @@
 //! App-framework cipherclerk handle.
 //!
 //! Apps are *userspace*: they should not reach past the SDK into
-//! `pyana_turn::builder::ActionBuilder` or hand-encode `[0u8; 64]`
+//! `dregg_turn::builder::ActionBuilder` or hand-encode `[0u8; 64]`
 //! placeholder signatures. Instead, the framework hands them a narrow,
 //! cipherclerk-bound action-construction surface backed by the SDK's
-//! [`pyana_sdk::AgentCipherclerk`].
+//! [`dregg_sdk::AgentCipherclerk`].
 //!
 //! See the crate root docs for the lineage of the name "cipherclerk"
 //! (Greg Egan's *Polis*); the SDK's [`AgentCipherclerk`] is the broad
@@ -42,17 +42,17 @@
 //! ## Federation binding
 //!
 //! Action signatures carry a 32-byte `federation_id` to prevent
-//! cross-federation replay (see `pyana_turn::executor::TurnExecutor::compute_signing_message`).
+//! cross-federation replay (see `dregg_turn::executor::TurnExecutor::compute_signing_message`).
 //! The framework holds *one* federation_id per process — set at
 //! [`AppCipherclerk::new`] — and threads it into every `make_action` /
 //! `sign_action` call. Apps never see it.
 
 use std::sync::{Arc, Mutex, RwLock};
 
-use pyana_sdk::{AgentCipherclerk, AgentRuntime};
-use pyana_turn::action::{Action, Effect};
-use pyana_turn::{Turn, TurnReceipt};
-use pyana_types::{CellId, PublicKey};
+use dregg_sdk::{AgentCipherclerk, AgentRuntime};
+use dregg_turn::action::{Action, Effect};
+use dregg_turn::{Turn, TurnReceipt};
+use dregg_types::{CellId, PublicKey};
 
 /// A cipherclerk handle suitable for app-level userspace.
 ///
@@ -170,7 +170,7 @@ impl AppCipherclerk {
     /// The Turn's `agent` is `self.cell_id()`, `previous_receipt_hash` is
     /// pulled from the cipherclerk's chain head, `nonce` defaults to 0 (the
     /// caller's submission path is expected to set the real nonce; see
-    /// `pyana_sdk::AgentRuntime::execute`), and forest/tree hashes are
+    /// `dregg_sdk::AgentRuntime::execute`), and forest/tree hashes are
     /// zeroed and filled in by `compute_turn_bytes` at signing time.
     pub fn make_turn(&self, action: Action) -> Turn {
         self.read().make_turn_for(&self.domain, action)
@@ -196,7 +196,7 @@ impl AppCipherclerk {
     /// path.
     ///
     /// This is the *userspace* entry to constructor-transparency cell
-    /// birth: the extension cipherclerk's `window.pyana.createFromFactory`,
+    /// birth: the extension cipherclerk's `window.dregg.createFromFactory`,
     /// the wasm runtime's `create_agent`, and any in-process app that
     /// mints cells go through here. No callers should reach past the
     /// `AppCipherclerk` for `Effect::CreateCellFromFactory` — when they do, a
@@ -226,7 +226,7 @@ impl AppCipherclerk {
         factory_vk: [u8; 32],
         owner_pubkey: [u8; 32],
         token_id: [u8; 32],
-        params: pyana_cell::FactoryCreationParams,
+        params: dregg_cell::FactoryCreationParams,
     ) -> Turn {
         let issuer = self.cell_id();
         self.read().create_from_factory(
@@ -259,7 +259,7 @@ impl AppCipherclerk {
     /// Take a read lock on the underlying SDK cipherclerk (panic-safe).
     ///
     /// Lock poisoning is recovered by surfacing the (possibly stale)
-    /// inner value — matches the convention `pyana_sdk::AgentRuntime`
+    /// inner value — matches the convention `dregg_sdk::AgentRuntime`
     /// already uses.
     fn read(&self) -> std::sync::RwLockReadGuard<'_, AgentCipherclerk> {
         self.inner.read().unwrap_or_else(|e| e.into_inner())
@@ -322,7 +322,7 @@ impl EmbeddedExecutor {
     /// signing key.
     ///
     /// The framework wraps the shared cipherclerk in an [`AgentRuntime`] —
-    /// which constructs a local [`pyana_cell::Ledger`] seeded with the
+    /// which constructs a local [`dregg_cell::Ledger`] seeded with the
     /// agent's cell (1M computrons default balance, see
     /// `AgentRuntime::new_simple`).
     ///
@@ -365,7 +365,7 @@ impl EmbeddedExecutor {
     /// state.  Used by integration tests that need multiple agent cells
     /// (e.g. a voter whose cell is distinct from the executor's primary
     /// agent) in the same ledger.
-    pub fn ensure_cell(&self, cell: pyana_cell::Cell) -> Result<(), String> {
+    pub fn ensure_cell(&self, cell: dregg_cell::Cell) -> Result<(), String> {
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         let mut ledger = rt.ledger().lock().unwrap();
         let cell_id = cell.id();
@@ -380,7 +380,7 @@ impl EmbeddedExecutor {
     /// Used by integration tests that need the executor to enforce
     /// program constraints (e.g. `Monotonic`, `MonotonicSequence`) on a
     /// cell created by `AgentRuntime::new`.
-    pub fn install_program(&self, cell_id: CellId, program: pyana_cell::CellProgram) {
+    pub fn install_program(&self, cell_id: CellId, program: dregg_cell::CellProgram) {
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         let mut ledger = rt.ledger().lock().unwrap();
         if let Some(cell) = ledger.get_mut(&cell_id) {
@@ -395,7 +395,7 @@ impl EmbeddedExecutor {
     /// through the executor.
     pub fn with_ledger_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut pyana_cell::Ledger) -> R,
+        F: FnOnce(&mut dregg_cell::Ledger) -> R,
     {
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         let mut ledger = rt.ledger().lock().unwrap();
@@ -453,7 +453,7 @@ impl std::fmt::Debug for EmbeddedExecutor {
 /// [`EmbeddedExecutor::submit_action`] when the executor rejects the
 /// submission.
 ///
-/// Wraps the underlying `pyana_sdk::SdkError` string so the framework
+/// Wraps the underlying `dregg_sdk::SdkError` string so the framework
 /// surface does not leak the SDK error enum (apps just need to surface
 /// the failure to clients; the structured details live in the
 /// receipt-chain side of the runtime).
@@ -495,7 +495,7 @@ mod tests {
 
         // The whole point: not Unchecked, and not a zero signature.
         match action.authorization {
-            pyana_turn::action::Authorization::Signature(a, b) => {
+            dregg_turn::action::Authorization::Signature(a, b) => {
                 assert!(
                     a != [0u8; 32] || b != [0u8; 32],
                     "signature must be non-zero"
@@ -539,7 +539,7 @@ mod tests {
         let action = cclerk.make_self_action("local-bump", vec![]);
         assert_eq!(action.target, cclerk.cell_id());
         match action.authorization {
-            pyana_turn::action::Authorization::Signature(a, b) => {
+            dregg_turn::action::Authorization::Signature(a, b) => {
                 assert!(a != [0u8; 32] || b != [0u8; 32]);
             }
             other => panic!("expected Signature variant, got {other:?}"),
@@ -552,8 +552,8 @@ mod tests {
         // AgentCipherclerk::create_from_factory and binds it to the framework's
         // federation_id. The returned Turn must carry one
         // Effect::CreateCellFromFactory action with a real signature.
-        use pyana_cell::{CellMode, FactoryCreationParams};
-        use pyana_turn::action::{Authorization, Effect};
+        use dregg_cell::{CellMode, FactoryCreationParams};
+        use dregg_turn::action::{Authorization, Effect};
 
         let sdk_cclerk = AgentCipherclerk::new();
         let cclerk = AppCipherclerk::new(sdk_cclerk, [33u8; 32]);

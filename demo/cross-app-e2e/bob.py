@@ -7,7 +7,7 @@ Bob plays two roles:
     carries a `WitnessedPredicate::BlindedSet` whose commitment is
     derived from (alice_issuer_cell, schema_commitment).
   - In mode `mount`, he mounts his cell under the governed-namespace at
-    `pyana://bob.dev` via a `register_service` turn that carries the
+    `dregg://bob.dev` via a `register_service` turn that carries the
     nameservice's canonical resolve target.
 
 The substrate primitives this step exercises:
@@ -145,7 +145,7 @@ def cmd_register(args: argparse.Namespace) -> int:
 
 
 def cmd_mount(args: argparse.Namespace) -> int:
-    """Mount Bob's cell under a governed-namespace at `pyana://bob.dev`.
+    """Mount Bob's cell under a governed-namespace at `dregg://bob.dev`.
 
     Carries the nameservice's canonical resolve target so the route
     table's classifier and the nameservice's resolve slot agree.
@@ -159,7 +159,7 @@ def cmd_mount(args: argparse.Namespace) -> int:
 
     # The route-table path and its nameservice resolve target.
     path_str = "/bob.dev"
-    ns_resolve = resolve_target("pyana://cell/" + bob_cell.hex())
+    ns_resolve = resolve_target("dregg://cell/" + bob_cell.hex())
 
     out = {
         "agent": "bob",

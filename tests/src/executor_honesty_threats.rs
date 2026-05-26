@@ -12,9 +12,9 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::action::{Action, Authorization, BearerCapProof, DelegationProofData, symbol};
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::action::{Action, Authorization, BearerCapProof, DelegationProofData, symbol};
+use dregg_turn::{
     CallForest, ComputronCosts, DelegationMode, Effect, Turn, TurnExecutor, TurnResult,
 };
 
@@ -341,7 +341,7 @@ fn t14_receipt_without_proof_rejected_at_wire_level() {
 }
 
 #[test]
-#[ignore = "blocked on protocol requirement: standalone pyana-verifier binary rejects receipt with malformed proof bytes"]
+#[ignore = "blocked on protocol requirement: standalone dregg-verifier binary rejects receipt with malformed proof bytes"]
 fn t14_malformed_proof_bytes_rejected() {
     panic!("blocked");
 }

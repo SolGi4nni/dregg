@@ -25,7 +25,7 @@ use crate::capability::CapabilityRef;
 /// Contains only the information needed to seal (encrypt) capabilities.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealerPublic {
-    /// Unique pair identifier: BLAKE3("pyana-seal pair-id v2", sealer_public).
+    /// Unique pair identifier: BLAKE3("dregg-seal pair-id v2", sealer_public).
     pub id: [u8; 32],
     /// X25519 public key (used for encryption).
     pub sealer_public: [u8; 32],
@@ -40,7 +40,7 @@ pub struct SealerPublic {
 /// from lingering in memory after the pair is no longer needed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealPair {
-    /// Unique pair identifier: BLAKE3("pyana-seal pair-id v2", sealer_public).
+    /// Unique pair identifier: BLAKE3("dregg-seal pair-id v2", sealer_public).
     pub id: [u8; 32],
     /// X25519 public key (known to sealer holder -- used for encryption).
     pub sealer_public: [u8; 32],
@@ -61,7 +61,7 @@ pub struct SealedBox {
     pub pair_id: [u8; 32],
     /// Sender's ephemeral X25519 public key (needed for DH during unseal).
     pub ephemeral_public: [u8; 32],
-    /// Commitment: BLAKE3("pyana-seal commitment v2", cap_hash || ephemeral_public || nonce).
+    /// Commitment: BLAKE3("dregg-seal commitment v2", cap_hash || ephemeral_public || nonce).
     pub commitment: [u8; 32],
     /// ChaCha20-Poly1305 encrypted capability data.
     pub ciphertext: Vec<u8>,
@@ -161,7 +161,7 @@ impl SealPair {
     }
 
     fn compute_pair_id(sealer_public: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal pair-id v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-seal pair-id v2");
         hasher.update(sealer_public);
         *hasher.finalize().as_bytes()
     }
@@ -239,7 +239,7 @@ impl SealPair {
     fn generate_nonce(cap: &CapabilityRef, ephemeral_public: &[u8; 32]) -> [u8; 32] {
         let mut entropy = [0u8; 16];
         getrandom::fill(&mut entropy).expect("getrandom failed");
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal nonce v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-seal nonce v2");
         hasher.update(ephemeral_public);
         hasher.update(cap.target.as_bytes());
         hasher.update(&cap.slot.to_le_bytes());
@@ -253,7 +253,7 @@ impl SealPair {
         nonce: &[u8; 32],
     ) -> [u8; 32] {
         let cap_hash = blake3::hash(plaintext);
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal commitment v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-seal commitment v2");
         hasher.update(cap_hash.as_bytes());
         hasher.update(ephemeral_public);
         hasher.update(nonce);
@@ -274,7 +274,7 @@ impl SealPair {
         ephemeral_public: &[u8; 32],
         recipient_public: &[u8; 32],
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal encryption v3");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-seal encryption v3");
         hasher.update(shared_secret);
         hasher.update(ephemeral_public);
         hasher.update(recipient_public);

@@ -1,4 +1,4 @@
-# Pyana Codebase Remediation — Master Plan
+# `dregg` Codebase Remediation — Master Plan
 
 ## Status (as of 2026-05-24)
 
@@ -192,7 +192,7 @@ These run in parallel after Stage 1; no shared writable region beyond their crat
 | **5 — Group D AIR variants (escrow ×6)** | `CreateEscrow`, `ReleaseEscrow`, `RefundEscrow`, `CreateCommittedEscrow`, `ReleaseCommittedEscrow`, `RefundCommittedEscrow`. Each needs condition_hash binding, timeout vs `CURRENT_BLOCK_HEIGHT` witness, beneficiary commitment. New `escrow_root` cell-state column. | 5d | 1 |
 | **6 — Group E AIR variants (bridge ×4)** | `BridgeMint`, `BridgeLock`, `BridgeFinalize`, `BridgeCancel`. Receipt format per `DESIGN-receipts.md` §5 (shared envelope + 4 phase-payloads, `bridge_id` join key, safety-margin race defense). New `bridge_state_root` if needed for in-flight bridges. | 6d | 1 |
 | **7 — CapTP runtime emitters + AIR fixes** | Per `DESIGN-captp-integration.md`: 4 new runtime `Effect` variants (`ExportSturdyRef`, `EnlivenRef`, `DropRef`, `ValidateHandoff`); wire-layer alignment to go through executor not direct `CapTpState` mutation; consume-on-use for handoff certs; the 3 new Merkle roots are populated. AIR-side tautology fixes for these landed in Stage 2; this stage adds the runtime emitter side. | 5d | 1, 2 |
-| **8 — DSL phased rollout** | Per `DESIGN-dsl.md` §A–G. **8a** typestate `ActionBuilder`. **8b** four-layer tower `Intent → EffectPlan → SealedTurn → Turn` with `pyana_intent::lowering`. **8c** all 42 typed `effect_*` methods. **8d** conservation derived (delete `balance_change` from user API). **8e** four auth modes first-class. **8f** app-framework `Authorizer`-required constructors. **8g** delete `CompoundTurn`/`SettlementAction`; integrate `trustless.rs`. Add `RegisterName` effect. Fix `apps/nameservice`, `apps/privacy-voting`. Closes audit findings 1, 3–9, 12–15, 18–20. | 8d | 1 |
+| **8 — DSL phased rollout** | Per `DESIGN-dsl.md` §A–G. **8a** typestate `ActionBuilder`. **8b** four-layer tower `Intent → EffectPlan → SealedTurn → Turn` with `dregg_intent::lowering`. **8c** all 42 typed `effect_*` methods. **8d** conservation derived (delete `balance_change` from user API). **8e** four auth modes first-class. **8f** app-framework `Authorizer`-required constructors. **8g** delete `CompoundTurn`/`SettlementAction`; integrate `trustless.rs`. Add `RegisterName` effect. Fix `apps/nameservice`, `apps/privacy-voting`. Closes audit findings 1, 3–9, 12–15, 18–20. | 8d | 1 |
 | **9 — Receipts overhaul** | Per `DESIGN-receipts.md` §8. Bump `Turn::hash` v2→v3 covering proof fields (resolves R-2). Adopt BLS `ThresholdQC` (federation/threshold.rs) as the federation receipt QC. Full `BridgeReceipt` struct + 4 phase payloads. `executor_signature` actually set. End-to-end receipt chain crosses fed boundaries. | 5d | 1 |
 | **10 — Storage Poseidon2 migration** | `storage/src/blinded.rs` + ad-hoc `storage/` commitments migrate to `Commitment<T>` typed forms. Aligns with `DESIGN-commitment-framework.md` migration plan. | 2d | 1 |
 
@@ -201,7 +201,7 @@ These run in parallel after Stage 1; no shared writable region beyond their crat
 | Stage | Work | Est | Deps |
 |-------|------|-----|------|
 | **11 — Integration tests** | End-to-end: a turn emitting one of each of the 42 runtime effects, proving via Effect VM, verifying. Adversarial: prover declares wrong `net_delta` → rejected. Prover swaps proof keeping signature → rejected. Bridge phase-1→3 happy path. CapTP handoff happy path + double-redeem rejected. | 3d | 3–10 |
-| **12 — Doc & ship** | Update `PYANA_DESIGN.md` (currently misrepresents the system); update `docs/turn-execution-model.md`; write a short `MIGRATION.md` for app authors. | 1d | 11 |
+| **12 — Doc & ship** | Update `DREGG_DESIGN.md` (currently misrepresents the system); update `docs/turn-execution-model.md`; write a short `MIGRATION.md` for app authors. | 1d | 11 |
 
 ---
 

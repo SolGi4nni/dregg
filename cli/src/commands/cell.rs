@@ -146,7 +146,7 @@ async fn list(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::Err
     let empty = vec![];
     let cells = data.as_array().unwrap_or(&empty);
     if cells.is_empty() {
-        ctx.info("No cells found. Create one with `pyana cell create`.");
+        ctx.info("No cells found. Create one with `dregg cell create`.");
         return Ok(());
     }
 
@@ -216,7 +216,7 @@ async fn create(
         ctx.success(&format!("Registered sovereign cell: {}", cell_id));
         let short = abbrev_hex(&cell_id, 8, 4);
         ctx.info(&format!(
-            "  Use `pyana cell inspect {}` to view its state (once committed).",
+            "  Use `dregg cell inspect {}` to view its state (once committed).",
             short
         ));
     } else {

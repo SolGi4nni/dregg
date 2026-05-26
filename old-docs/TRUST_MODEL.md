@@ -1,6 +1,6 @@
 # Trust Model Architecture
 
-This document defines the trust boundaries in the Pyana protocol stack and the
+This document defines the trust boundaries in the `dregg` protocol stack and the
 verification properties at each level.
 
 ## Trust Levels
@@ -139,7 +139,7 @@ constraints.
 
 **Current**: Executor counts computrons and deducts fees.
 **Target**: Fee accounting proven in the turn proof (balance conservation check).
-**Status**: The `FullConservationProof` in `pyana_cell` already proves balance
+**Status**: The `FullConservationProof` in `dregg_cell` already proves balance
 conservation for note-based transfers. Need to extend to computron metering.
 
 ## Security Invariants

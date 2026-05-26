@@ -17,16 +17,16 @@
 //!
 //! `commit/src/typed.rs` (upstream) is the canonical home of this pattern.
 //! storage is in the workspace `exclude` list and cannot depend on
-//! `commit` without pulling extra crates (`pyana-dsl-runtime`). We
+//! `commit` without pulling extra crates (`dregg-dsl-runtime`). We
 //! intentionally duplicate the pattern here — same domain-tagging strategy,
 //! same `canonical_32_to_felts_4` shape, same `seal`/`empty` API — atop
-//! the public Poseidon2 surface in `pyana_circuit::poseidon2`.
+//! the public Poseidon2 surface in `dregg_circuit::poseidon2`.
 //!
 //! Bumping a domain tag invalidates both forms together. Tags MUST end in
 //! a version suffix.
 
 use core::marker::PhantomData;
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -37,18 +37,18 @@ use serde::{Deserialize, Serialize};
 /// invalidates both BLAKE3 and Poseidon2 forms together.
 pub mod domain {
     // From audit P4.A — 12 typed markers covering 16 production sites.
-    pub const TAG_QUEUE_ENTRY: &str = "pyana-storage:queue-entry v1";
-    pub const TAG_QUEUE_ENTRY_SET: &str = "pyana-storage:queue-entry-set v1";
-    pub const TAG_BLINDED_ITEM: &str = "pyana-storage:blinded-item v1";
-    pub const TAG_BLINDED_NULLIFIER: &str = "pyana-storage:blinded-nullifier v1";
-    pub const TAG_BLINDED_ITEM_SET: &str = "pyana-storage:blinded-item-set v1";
-    pub const TAG_QUEUE_PROGRAM: &str = "pyana-storage:queue-program v1";
-    pub const TAG_AUTHORIZED_KEY_SET: &str = "pyana-storage:authorized-key-set v1";
-    pub const TAG_SHARD_SET: &str = "pyana-storage:shard-set v1";
-    pub const TAG_PIPELINE_SPEC: &str = "pyana-storage:pipeline-spec v1";
-    pub const TAG_QUEUE_TRANSACTION: &str = "pyana-storage:queue-transaction v1";
-    pub const TAG_ERASURE_CHUNK: &str = "pyana-storage:erasure-chunk v1";
-    pub const TAG_ERASURE_SET: &str = "pyana-storage:erasure-set v1";
+    pub const TAG_QUEUE_ENTRY: &str = "dregg-storage:queue-entry v1";
+    pub const TAG_QUEUE_ENTRY_SET: &str = "dregg-storage:queue-entry-set v1";
+    pub const TAG_BLINDED_ITEM: &str = "dregg-storage:blinded-item v1";
+    pub const TAG_BLINDED_NULLIFIER: &str = "dregg-storage:blinded-nullifier v1";
+    pub const TAG_BLINDED_ITEM_SET: &str = "dregg-storage:blinded-item-set v1";
+    pub const TAG_QUEUE_PROGRAM: &str = "dregg-storage:queue-program v1";
+    pub const TAG_AUTHORIZED_KEY_SET: &str = "dregg-storage:authorized-key-set v1";
+    pub const TAG_SHARD_SET: &str = "dregg-storage:shard-set v1";
+    pub const TAG_PIPELINE_SPEC: &str = "dregg-storage:pipeline-spec v1";
+    pub const TAG_QUEUE_TRANSACTION: &str = "dregg-storage:queue-transaction v1";
+    pub const TAG_ERASURE_CHUNK: &str = "dregg-storage:erasure-chunk v1";
+    pub const TAG_ERASURE_SET: &str = "dregg-storage:erasure-set v1";
 }
 
 // =============================================================================
@@ -502,10 +502,10 @@ pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
 /// Compress a 32-byte canonical commitment into 4 BabyBear felts via Poseidon2.
 pub fn canonical_32_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
     let eight = canonical_32_to_felts_8(canonical);
-    let a = pyana_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
-    let b = pyana_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
-    let c = pyana_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
-    let d = pyana_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
+    let a = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
+    let b = dregg_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
+    let c = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
+    let d = dregg_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
     [a, b, c, d]
 }
 
@@ -515,7 +515,7 @@ pub fn poseidon2_single_with_tag(domain: &str, felts: &[BabyBear]) -> BabyBear {
     let mut tagged = Vec::with_capacity(felts.len() + 1);
     tagged.push(tag);
     tagged.extend_from_slice(felts);
-    pyana_circuit::poseidon2::hash_many(&tagged)
+    dregg_circuit::poseidon2::hash_many(&tagged)
 }
 
 /// Squeeze 4 BabyBears from a domain-tagged sponge over felts.
@@ -523,7 +523,7 @@ pub fn poseidon2_single_with_tag(domain: &str, felts: &[BabyBear]) -> BabyBear {
 /// Uses 4 independent compressions with different salts as the 4th input to
 /// a final hash_4_to_1, mirroring `commit::typed::poseidon2_quad_with_tag`.
 pub fn poseidon2_quad_with_tag(domain: &str, felts: &[BabyBear]) -> [BabyBear; 4] {
-    use pyana_circuit::poseidon2::{hash_4_to_1, hash_many};
+    use dregg_circuit::poseidon2::{hash_4_to_1, hash_many};
     let tag = BabyBear::new(tag_hash_31(domain));
     let mut tagged = Vec::with_capacity(felts.len() + 1);
     tagged.push(tag);
@@ -540,7 +540,7 @@ pub fn poseidon2_quad_with_tag(domain: &str, felts: &[BabyBear]) -> [BabyBear; 4
 /// Absorb a 4-felt block into a 4-felt sponge state via hash_4_to_1 over the
 /// component-wise pairing of chain and block.
 pub fn absorb_4(chain: [BabyBear; 4], block: [BabyBear; 4]) -> [BabyBear; 4] {
-    use pyana_circuit::poseidon2::hash_4_to_1;
+    use dregg_circuit::poseidon2::hash_4_to_1;
     [
         hash_4_to_1(&[chain[0], block[0], chain[1], block[1]]),
         hash_4_to_1(&[chain[1], block[1], chain[2], block[2]]),
@@ -579,7 +579,7 @@ pub fn blake3_binary_root(leaves: &[[u8; 32]]) -> [u8; 32] {
 /// leaf unchanged. Each parent absorbs the 8 felts of its two children via
 /// two hash_4_to_1 calls folded into a final hash_4_to_1.
 pub fn poseidon2_binary_root(leaves: &[[BabyBear; 4]]) -> [BabyBear; 4] {
-    use pyana_circuit::poseidon2::hash_4_to_1;
+    use dregg_circuit::poseidon2::hash_4_to_1;
     if leaves.is_empty() {
         return [BabyBear::ZERO; 4];
     }
@@ -832,7 +832,7 @@ mod tests {
         let c: Commitment4<BlindedItemMarker> = Commitment4::seal(&canonical[..]);
 
         // Hardcoded expected bytes from a run of this test on 2026-05-24
-        // against pyana_circuit::poseidon2 (BabyBear, WIDTH=8).
+        // against dregg_circuit::poseidon2 (BabyBear, WIDTH=8).
         // If you bump the Poseidon2 round constants, the BabyBear modulus,
         // or the TAG_BLINDED_ITEM domain tag, regenerate by uncommenting
         // the eprintln! lines below and rerunning with --nocapture.
@@ -856,7 +856,7 @@ mod tests {
                 c.poseidon2[3].0
             ],
             expected_poseidon2,
-            "Poseidon2 form drifted — pyana_circuit::poseidon2 parameters changed",
+            "Poseidon2 form drifted — dregg_circuit::poseidon2 parameters changed",
         );
     }
 }
@@ -867,7 +867,7 @@ mod tests {
 //
 // Hardcoded byte/felt values for the known-input stability test
 // `poseidon2_commitments_are_stable`. Filled in on 2026-05-24 from the
-// current Poseidon2 implementation in pyana_circuit::poseidon2.
+// current Poseidon2 implementation in dregg_circuit::poseidon2.
 //
 // Update procedure: if a deliberate parameter change requires these to
 // drift, run the test with the eprintln! lines uncommented and
@@ -887,4 +887,4 @@ const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] = [433_477_333, 626_868_483, 68_24
 // design (see DESIGN-commitment-framework.md §2.2). The framework here
 // duplicates `commit/src/typed.rs` rather than depending on it because
 // `storage` is in the workspace `exclude` list; widening visibility was
-// not required (pyana_circuit::poseidon2 is already pub).
+// not required (dregg_circuit::poseidon2 is already pub).

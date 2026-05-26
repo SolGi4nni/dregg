@@ -1,11 +1,11 @@
-//! Federated art gallery with commit-reveal auctions on the pyana protocol.
+//! Federated art gallery with commit-reveal auctions on the dregg protocol.
 //!
 //! # Architecture
 //!
 //! ```text
 //! Federation nodes (3-node devnet)
 //!     ↕ wire protocol
-//! Gallery Backend (axum API server using pyana-sdk)
+//! Gallery Backend (axum API server using dregg-sdk)
 //!     ↕ REST/WebSocket
 //! Browser Frontend (vanilla JS/HTML using WASM SDK + browser extension)
 //! ```
@@ -34,8 +34,8 @@ pub mod settlement;
 pub mod tests;
 pub mod ws;
 
-use pyana_app_framework::CellId;
-use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
+use dregg_app_framework::CellId;
+use dregg_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -282,7 +282,7 @@ pub enum WsEvent {
 
 /// Compute an artwork ID from its creation parameters.
 pub fn compute_artwork_id(artist: &CellId, title: &str, image_hash: &[u8; 32]) -> ArtworkId {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-artwork-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-artwork-id-v1");
     hasher.update(artist.as_bytes());
     hasher.update(title.as_bytes());
     hasher.update(image_hash);
@@ -291,7 +291,7 @@ pub fn compute_artwork_id(artist: &CellId, title: &str, image_hash: &[u8; 32]) -
 
 /// Compute an auction ID from its creation parameters.
 pub fn compute_auction_id(artwork_id: &ArtworkId, created_at: u64) -> AuctionId {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-auction-id-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-auction-id-v1");
     hasher.update(artwork_id);
     hasher.update(&created_at.to_le_bytes());
     *hasher.finalize().as_bytes()
@@ -299,7 +299,7 @@ pub fn compute_auction_id(artwork_id: &ArtworkId, created_at: u64) -> AuctionId 
 
 /// Compute a bid commitment: BLAKE3(bidder_cell || amount || nonce).
 pub fn compute_bid_commitment(bidder: &CellId, amount: u64, nonce: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-gallery-bid-commitment-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-gallery-bid-commitment-v1");
     hasher.update(bidder.as_bytes());
     hasher.update(&amount.to_le_bytes());
     hasher.update(nonce);

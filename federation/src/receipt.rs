@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::identity::derive_federation_id_with_epoch;
 use crate::threshold::{FederationCommittee, ThresholdQC};
 use crate::types::{PublicKey, Signature};
-use pyana_types::{CellId, ThresholdQC as OpaqueThresholdQC};
+use dregg_types::{CellId, ThresholdQC as OpaqueThresholdQC};
 
 // =============================================================================
 // FederationReceiptBody
@@ -64,9 +64,9 @@ impl FederationReceiptBody {
     /// Compute the canonical body hash — what the BLS QC actually signs.
     ///
     /// Domain-separated via BLAKE3 derive_key, so it cannot collide with any
-    /// other pyana signing message (vote, attested root, bridge phase).
+    /// other dregg signing message (vote, attested root, bridge phase).
     pub fn body_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-fed-receipt-body-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-fed-receipt-body-v1");
         hasher.update(&self.turn_hash);
         hasher.update(&self.block_height.to_le_bytes());
         hasher.update(&self.block_hash);
@@ -121,7 +121,7 @@ pub enum ReceiptQc {
 /// the Ed25519 path depending on the QC flavor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FederationReceipt {
-    /// Version tag: "pyana-fed-receipt-v1".
+    /// Version tag: "dregg-fed-receipt-v1".
     pub version: u32,
     /// Federation identity (BLAKE3 over the committee's static descriptor).
     pub federation_id: [u8; 32],
@@ -263,7 +263,7 @@ mod tests {
     use crate::identity::derive_federation_id;
     use crate::threshold::generate_test_committee;
     use hints::PartialSignature;
-    use pyana_types::{generate_keypair, sign};
+    use dregg_types::{generate_keypair, sign};
 
     fn sample_body(seed: u8) -> FederationReceiptBody {
         FederationReceiptBody {

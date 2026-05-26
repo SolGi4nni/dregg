@@ -1,10 +1,10 @@
-//! Derivation trace format and reference evaluator for the pyana ZK token system.
+//! Derivation trace format and reference evaluator for the dregg ZK token system.
 //!
 //! This crate provides:
 //! - Data structures for representing Datalog derivation traces
 //! - A bottom-up Datalog evaluator that records proof traces
 //! - A standalone trace verifier
-//! - Standard policy rules for the pyana authorization model
+//! - Standard policy rules for the dregg authorization model
 
 pub mod check;
 pub mod eval;

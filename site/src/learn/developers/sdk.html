@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>SDK Quickstart — Pyana</title>
+<title>SDK Quickstart — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>SDK Quickstart</h1>
 
     <p>
-      This guide walks through the core <code>pyana-sdk</code> APIs: creating a cipherclerk,
+      This guide walks through the core <code>dregg-sdk</code> APIs: creating a cipherclerk,
       minting tokens, attenuating and delegating, generating STARK proofs, and signing
       turns. All code examples use real API signatures from the codebase.
     </p>
@@ -28,7 +28,7 @@
       Ed25519 identity, token collection, and proof generation.
     </p>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
 
 // Option 1: Fresh random identity
 let mut cclerk = AgentCipherclerk::new();
@@ -59,7 +59,7 @@ println!("Agent ID: {:?}", my_identity);</code></pre>
       <span class="keyword">pub fn</span> <span class="fn-name">mint_token</span>(<span class="param">&amp;mut self, root_key: &amp;[u8; 32], service: &amp;str</span>) -> <span class="type">HeldToken</span>
     </div>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -80,7 +80,7 @@ assert!(root_token.can_mint()); // Root tokens can forge new ones</code></pre>
       <span class="keyword">pub fn</span> <span class="fn-name">attenuate</span>(<span class="param">&amp;mut self, token: &amp;HeldToken, restrictions: &amp;Attenuation</span>) -> <span class="type">Result&lt;HeldToken, SdkError&gt;</span>
     </div>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation};
 
 let mut cclerk = AgentCipherclerk::new();
 let root = cclerk.mint_token(b"my-secret-root-key-32-bytes!!!!!", "api");
@@ -103,7 +103,7 @@ assert!(!restricted.can_mint()); // Attenuated tokens cannot forge</code></pre>
       <span class="keyword">pub fn</span> <span class="fn-name">delegate</span>(<span class="param">&amp;mut self, token: &amp;HeldToken, to: &amp;PublicKey, restrictions: &amp;Attenuation</span>) -> <span class="type">Result&lt;DelegatedToken, SdkError&gt;</span>
     </div>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation, PublicKey};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation, PublicKey};
 
 let mut alice = AgentCipherclerk::new();
 let mut bob = AgentCipherclerk::new();
@@ -135,7 +135,7 @@ bob.receive_signed_delegation(
       <span class="keyword">pub fn</span> <span class="fn-name">authorize</span>(<span class="param">&amp;self, token: &amp;HeldToken, request: &amp;AuthRequest, mode: VerificationMode</span>) -> <span class="type">Result&lt;AuthorizationPresentation, SdkError&gt;</span>
     </div>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation, AuthRequest};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, VerificationMode, AuthorizationPresentation, AuthRequest};
 
 let mut cclerk = AgentCipherclerk::new();
 let token = cclerk.mint_token(b"my-secret-root-key-32-bytes!!!!!", "dns");
@@ -170,7 +170,7 @@ match private {
       <span class="keyword">pub fn</span> <span class="fn-name">sign_turn</span>(<span class="param">&amp;self, turn: &amp;Turn</span>) -> <span class="type">SignedTurn</span>
     </div>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, CellId, Turn, TurnBuilder, Effect};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, CellId, Turn, TurnBuilder, Effect};
 
 let cclerk = AgentCipherclerk::new();
 
@@ -183,10 +183,10 @@ let turn = TurnBuilder::new()
 let signed = cclerk.sign_turn(&turn);
 // Submit signed.turn + signed.signature + signed.signer to the node</code></pre>
 
-    <pyana-vizzer data-vizzer="state-diff"
+    <dregg-vizzer data-vizzer="state-diff"
       data-dataset='{"before":{"balance":1000,"nonce":12,"notes":3,"capabilities":5},"after":{"balance":880,"nonce":13,"notes":4,"capabilities":5}}'>
       <div class="vizzer-fallback">State diff — balance, nonce, notes, capabilities before and after a turn.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/state-diff.js"></script>
     <p class="viz-caption">One turn moves 120 units of value into a fresh note. Balance drops,
       nonce advances, the note count climbs, the capability list is untouched. The conservation
@@ -198,8 +198,8 @@ let signed = cclerk.sign_turn(&turn);
       After each successful turn, append the receipt to build a verifiable history:
     </p>
 
-    <pre><code class="language-rust">use pyana_sdk::AgentCipherclerk;
-use pyana_turn::TurnReceipt;
+    <pre><code class="language-rust">use dregg_sdk::AgentCipherclerk;
+use dregg_turn::TurnReceipt;
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -211,7 +211,7 @@ cclerk.verify_own_chain().unwrap();
 
 // Export for anyone to verify offline
 let chain = cclerk.receipt_chain();
-pyana_turn::verify_receipt_chain(chain).unwrap();</code></pre>
+dregg_turn::verify_receipt_chain(chain).unwrap();</code></pre>
 
     <h2 id="ivc">IVC (Constant-Size State Proof)</h2>
 
@@ -219,7 +219,7 @@ pyana_turn::verify_receipt_chain(chain).unwrap();</code></pre>
       Enable IVC to compress your entire receipt chain into a constant-size proof:
     </p>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, BabyBear, verify_ivc};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, BabyBear, verify_ivc};
 
 let mut cclerk = AgentCipherclerk::new();
 
@@ -298,7 +298,7 @@ let bob_transition = session.receive_transition().await?;
     <ul>
       <li><a href="tokens.html">Token Lifecycle</a> -- Deep dive into the full token lifecycle</li>
       <li><a href="privacy-api.html">Privacy API</a> -- Anonymous auth, private notes, predicates</li>
-      <li><a href="mcp.html">MCP Integration</a> -- Connect AI agents to pyana via tools</li>
+      <li><a href="mcp.html">MCP Integration</a> -- Connect AI agents to dregg via tools</li>
       <li><a href="/learn/architecture/overview.html">Architecture Overview</a> -- Understand the system design</li>
     </ul>
 

@@ -15,7 +15,7 @@
 
 mod common;
 
-use pyana_turn::verify_receipt_chain;
+use dregg_turn::verify_receipt_chain;
 
 // ---------------------------------------------------------------------------
 // 1. Happy-path chain of 3
@@ -85,7 +85,7 @@ fn receipt_chain_of_three_links_correctly() {
 /// test documents the new fail-closed behavior.
 #[test]
 fn audit_77_wrong_prev_hash_is_rejected_strict() {
-    use pyana_sdk::ChainAppendError;
+    use dregg_sdk::ChainAppendError;
 
     let mut cclerk = common::cclerk_from_label("audit-77-strict");
     let cell = cclerk.cell_id("test");

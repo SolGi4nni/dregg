@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use pyana_app_framework::CellId;
-use pyana_app_framework::store::ContentStore;
+use dregg_app_framework::CellId;
+use dregg_app_framework::store::ContentStore;
 
 use crate::persist::{BoardSnapshot, bytes32_hex, hex_bytes32};
 use crate::{

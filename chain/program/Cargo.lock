@@ -617,7 +617,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-sp1-program"
+name = "dregg-sp1-program"
 version = "0.1.0"
 dependencies = [
  "blake3",

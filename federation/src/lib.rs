@@ -1,7 +1,7 @@
-//! `pyana-federation`: Multi-node federated revocation attestation.
+//! `dregg-federation`: Multi-node federated revocation attestation.
 //!
 //! Historically this crate hosted a Morpheus-shaped BFT consensus simulation;
-//! the live consensus engine is now `pyana-blocklace` (Cordial Miners DAG +
+//! the live consensus engine is now `dregg-blocklace` (Cordial Miners DAG +
 //! tau ordering). What remains here are the federated revocation primitives
 //! (Merkle accumulator, attested roots, quorum signatures) plus the solo /
 //! threshold / checkpoint utilities the live node consumes.
@@ -24,7 +24,7 @@
 //! │       │              │              │              │            │
 //! │       └──────────────┴──────────────┴──────────────┘            │
 //! │                         │                                        │
-//! │              BFT Consensus (blocklace, see pyana-blocklace)      │
+//! │              BFT Consensus (blocklace, see dregg-blocklace)      │
 //! │              (Propose -> Vote -> Finalize)                       │
 //! │                         │                                        │
 //! │                    Attested Root                                  │
@@ -38,7 +38,7 @@
 //!    event for a token ID.
 //!
 //! 2. **Consensus**: The BFT protocol (propose/vote/finalize, as implemented
-//!    by `pyana-blocklace`) agrees on a block of revocations. A quorum (n - f)
+//!    by `dregg-blocklace`) agrees on a block of revocations. A quorum (n - f)
 //!    of nodes must vote for the block to be finalized.
 //!
 //! 3. **State update**: After finalization, all nodes apply the revocations
@@ -87,7 +87,7 @@ pub use cross_fed_bundle::CrossFedReceiptBundle;
 pub use federation::{Federation, KnownFederations, LocalSeat};
 pub use identity::{derive_federation_id, derive_federation_id_with_epoch};
 // NOTE (FEDERATION-UNIFICATION-DESIGN.md §6 step 6): the Morpheus BFT
-// simulator (`node.rs` + `transport.rs`) is legally dead — `pyana-blocklace`
+// simulator (`node.rs` + `transport.rs`) is legally dead — `dregg-blocklace`
 // is the live consensus path. The simulator survives as in-crate code only
 // because `teasting`, `wasm`, and `demo/sdk-consensus` still import it. As
 // each of those consumers migrates to drive a real blocklace, the relevant
@@ -100,7 +100,7 @@ pub use node::{
     Federation as MorpheusFederation, FederationNode, PendingStateRoots, ReconfigurationProposal,
     ReconfigurationVotes,
 };
-pub use pyana_types::FederationId;
+pub use dregg_types::FederationId;
 pub use receipt::{FederationReceipt, FederationReceiptBody, ReceiptQc};
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
 pub use solo::{

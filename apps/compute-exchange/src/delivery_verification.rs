@@ -29,9 +29,9 @@
 //! raw `impl StarkAir` approach. The descriptor works with all three backends
 //! (STARK + Plonky3 + Kimchi).
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark;
-use pyana_dsl_runtime::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::stark;
+use dregg_dsl_runtime::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };
@@ -40,7 +40,7 @@ use crate::orderbook::SlaGuarantees;
 use crate::settlement::Settlement;
 
 /// BabyBear prime for negation in polynomial terms.
-const BABYBEAR_P: u32 = pyana_circuit::field::BABYBEAR_P;
+const BABYBEAR_P: u32 = dregg_circuit::field::BABYBEAR_P;
 
 // =============================================================================
 // Compute SLA (the verifier's view of what was contracted)

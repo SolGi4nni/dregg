@@ -1,7 +1,7 @@
 //! Effect VM AIR: Multi-row DSL circuit proving arbitrary sequences of effects
 //! (turns) in a single STARK proof.
 //!
-//! Inspired by o1vm (RISC-V execution trace proving), but for pyana Effects instead
+//! Inspired by o1vm (RISC-V execution trace proving), but for dregg Effects instead
 //! of CPU instructions. Each trace row represents one effect execution step.
 //!
 //! # Instruction Set (Effect Types)

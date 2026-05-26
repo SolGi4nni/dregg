@@ -4,8 +4,8 @@
 //! same process (as a background tokio task), avoiding the need for a separate
 //! binary or a live devnet node.
 //!
-//! Uses the shared `AppServer` from `pyana-app-framework` for consistent
-//! infrastructure (health endpoint, CORS) across all pyana apps.
+//! Uses the shared `AppServer` from `dregg-app-framework` for consistent
+//! infrastructure (health endpoint, CORS) across all dregg apps.
 //!
 //! REVIEW[P2]: The blinded-queue and inbox upgrades live ONLY in this in-process
 //! server. The production binary entrypoint `src/main.rs` does not call
@@ -29,15 +29,15 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
-use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
-use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
-use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
-use pyana_app_framework::inbox_endpoint::InboxEndpoint;
-use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_app_framework::{CellId, EngineConfig, PyanaEngine};
-use pyana_storage::QuotaId;
-use pyana_storage::blinded::BlindedQueue;
-use pyana_storage::inbox::{CapInbox, InboxMessage};
+use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
+use dregg_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
+use dregg_app_framework::inbox_endpoint::InboxEndpoint;
+use dregg_app_framework::server::{AppConfig, AppServer};
+use dregg_app_framework::{CellId, EngineConfig, DreggEngine};
+use dregg_storage::QuotaId;
+use dregg_storage::blinded::BlindedQueue;
+use dregg_storage::inbox::{CapInbox, InboxMessage};
 
 use crate::qualification::{FederationRootHistory, verify_qualification};
 use crate::state::BoardState;
@@ -77,7 +77,7 @@ struct AppState {
     board: BoardState,
     root_history: Arc<RwLock<FederationRootHistory>>,
     root_last_updated: Arc<RwLock<Option<Instant>>>,
-    engine: Arc<Mutex<PyanaEngine>>,
+    engine: Arc<Mutex<DreggEngine>>,
     node_url: Arc<String>,
     node_connected: Arc<RwLock<bool>>,
     admin_token: AdminToken,
@@ -140,7 +140,7 @@ pub async fn start_server(config: ServerConfig) -> SocketAddr {
             config.federation_root,
         ))),
         root_last_updated: Arc::new(RwLock::new(Some(Instant::now()))),
-        engine: Arc::new(Mutex::new(PyanaEngine::new(EngineConfig::new(now_ts)))),
+        engine: Arc::new(Mutex::new(DreggEngine::new(EngineConfig::new(now_ts)))),
         node_url: Arc::new("none".to_string()),
         node_connected: Arc::new(RwLock::new(false)),
         // In-process server uses open admin mode (no token needed for tests/examples).
@@ -154,7 +154,7 @@ pub async fn start_server(config: ServerConfig) -> SocketAddr {
     let app_config = AppConfig::default().with_listen(config.listen.to_string());
 
     let addr = AppServer::new(app_config)
-        .service_name("pyana-bounty-board")
+        .service_name("dregg-bounty-board")
         .with_health()
         .with_cors()
         // Upgrade 1: blinded queue for fair bounty claiming

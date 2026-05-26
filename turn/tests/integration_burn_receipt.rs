@@ -7,8 +7,8 @@
 //! - Non-zero slot is rejected (only slot 0 supported in Silver-Vision).
 //! - receipt.was_burn is false for a plain transfer (control case).
 
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::{Turn, TurnReceipt, TurnResult},
 };

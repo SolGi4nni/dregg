@@ -1,7 +1,7 @@
 //! Client-side CapTP operations for the cipherclerk SDK.
 //!
 //! Provides high-level APIs wrapping the raw captp crate:
-//! - `export_sturdy_ref(cell_id) -> PyanaUri` — make a capability shareable
+//! - `export_sturdy_ref(cell_id) -> DreggUri` — make a capability shareable
 //! - `enliven(uri) -> LiveRef` — connect to a shared capability
 //! - `create_handoff(cell_id, recipient_pk) -> HandoffCertificate` — offline delegation
 //! - `pipeline(actions) -> Vec<EventualRef>` — chain multiple operations
@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```no_run
-//! use pyana_sdk::AgentCipherclerk;
-//! use pyana_sdk::captp_client::{CapTpConfig, EventualRef};
+//! use dregg_sdk::AgentCipherclerk;
+//! use dregg_sdk::captp_client::{CapTpConfig, EventualRef};
 //!
 //! let cipherclerk = AgentCipherclerk::new();
 //! // ... share a cell as a sturdy reference:
@@ -19,16 +19,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use pyana_captp::FederationId as GroupId;
-use pyana_captp::gc::{DropMessage, ImportGcManager};
-use pyana_captp::handoff::HandoffCertificate;
-use pyana_captp::pipeline::{PipelineRegistry, PipelinedAction};
-use pyana_captp::session::CapSession;
-use pyana_captp::sturdy::SwissTable;
-use pyana_captp::uri::PyanaUri;
-use pyana_cell::AuthRequired;
-use pyana_types::CellId;
-use pyana_wire::message::WireMessage;
+use dregg_captp::FederationId as GroupId;
+use dregg_captp::gc::{DropMessage, ImportGcManager};
+use dregg_captp::handoff::HandoffCertificate;
+use dregg_captp::pipeline::{PipelineRegistry, PipelinedAction};
+use dregg_captp::session::CapSession;
+use dregg_captp::sturdy::SwissTable;
+use dregg_captp::uri::DreggUri;
+use dregg_cell::AuthRequired;
+use dregg_types::CellId;
+use dregg_wire::message::WireMessage;
 
 use crate::error::SdkError;
 
@@ -228,7 +228,7 @@ impl LiveRef {
             let result_promise = registry.create_promise();
             // Queue locally so break_promise cascades correctly if the
             // result is later broken on the wire.
-            let msg = pyana_captp::pipeline::PipelinedMessage {
+            let msg = dregg_captp::pipeline::PipelinedMessage {
                 target_promise_id: bearer_promise,
                 action: action.clone(),
                 result_promise_id: Some(result_promise),
@@ -438,7 +438,7 @@ impl CapTpClient {
     // Export — share a cell as a sturdy reference
     // =========================================================================
 
-    /// Export a cell as a sturdy reference, returning a `pyana://` URI.
+    /// Export a cell as a sturdy reference, returning a `dregg://` URI.
     ///
     /// The cell becomes accessible to anyone who possesses the URI. The swiss
     /// number in the URI acts as a bearer token proving the holder was granted
@@ -454,11 +454,11 @@ impl CapTpClient {
         cell_id: CellId,
         permissions: AuthRequired,
         expires_at: Option<u64>,
-    ) -> PyanaUri {
+    ) -> DreggUri {
         let swiss =
             self.swiss_table
                 .export(cell_id, permissions, self.config.current_height, expires_at);
-        PyanaUri {
+        DreggUri {
             federation_id: self.config.federation_id.0,
             cell_id: cell_id.0,
             swiss,
@@ -495,10 +495,10 @@ impl CapTpClient {
     ///
     /// # Arguments
     ///
-    /// * `uri` - The parsed `PyanaUri` to enliven.
+    /// * `uri` - The parsed `DreggUri` to enliven.
     /// * `permissions` - The caller's claim about what authority the import
     ///   carries. Trust class: same-process.
-    pub fn enliven(&mut self, uri: &PyanaUri, permissions: AuthRequired) -> LiveRef {
+    pub fn enliven(&mut self, uri: &DreggUri, permissions: AuthRequired) -> LiveRef {
         self.enliven_internal(uri, permissions)
     }
 
@@ -507,7 +507,7 @@ impl CapTpClient {
     /// Identical semantics; the rename communicates the trust assumption to
     /// future readers.
     #[doc(hidden)]
-    pub fn enliven_local(&mut self, uri: &PyanaUri, permissions: AuthRequired) -> LiveRef {
+    pub fn enliven_local(&mut self, uri: &DreggUri, permissions: AuthRequired) -> LiveRef {
         self.enliven_internal(uri, permissions)
     }
 
@@ -533,9 +533,9 @@ impl CapTpClient {
     /// Returns [`SdkError::Wire`] if any of the four checks above fails.
     pub fn enliven_with_proof(
         &mut self,
-        uri: &PyanaUri,
+        uri: &DreggUri,
         handoff_cert: &HandoffCertificate,
-        introducer_pk: &pyana_types::PublicKey,
+        introducer_pk: &dregg_types::PublicKey,
         recipient_pk: &[u8; 32],
     ) -> Result<LiveRef, SdkError> {
         // (1) Signature verification.
@@ -581,7 +581,7 @@ impl CapTpClient {
     }
 
     /// Internal helper: shared bookkeeping for all enliven entrypoints.
-    fn enliven_internal(&mut self, uri: &PyanaUri, permissions: AuthRequired) -> LiveRef {
+    fn enliven_internal(&mut self, uri: &DreggUri, permissions: AuthRequired) -> LiveRef {
         let federation_id = GroupId(uri.federation_id);
         let cell_id = CellId(uri.cell_id);
 
@@ -625,8 +625,8 @@ impl CapTpClient {
         uri_str: &str,
         permissions: AuthRequired,
     ) -> Result<LiveRef, SdkError> {
-        let uri = PyanaUri::parse(uri_str)
-            .map_err(|e| SdkError::Wire(format!("invalid pyana:// URI: {e}")))?;
+        let uri = DreggUri::parse(uri_str)
+            .map_err(|e| SdkError::Wire(format!("invalid dregg:// URI: {e}")))?;
         Ok(self.enliven(&uri, permissions))
     }
 
@@ -656,7 +656,7 @@ impl CapTpClient {
     /// * `max_uses` - Optional maximum number of times the cert can be presented.
     pub fn create_handoff(
         &mut self,
-        signing_key: &pyana_types::SigningKey,
+        signing_key: &dregg_types::SigningKey,
         target_cell: CellId,
         recipient_pk: [u8; 32],
         permissions: AuthRequired,
@@ -712,12 +712,12 @@ impl CapTpClient {
     #[allow(clippy::too_many_arguments)]
     pub fn create_handoff_for_remote(
         &self,
-        signing_key: &pyana_types::SigningKey,
+        signing_key: &dregg_types::SigningKey,
         target_federation: GroupId,
         target_cell: CellId,
         recipient_pk: [u8; 32],
         permissions: AuthRequired,
-        allowed_effects: Option<pyana_cell::EffectMask>,
+        allowed_effects: Option<dregg_cell::EffectMask>,
         expires_at: Option<u64>,
         max_uses: Option<u32>,
         swiss: [u8; 32],
@@ -805,7 +805,7 @@ impl CapTpClient {
 
             let result_promise = registry.create_promise();
 
-            let msg = pyana_captp::pipeline::PipelinedMessage {
+            let msg = dregg_captp::pipeline::PipelinedMessage {
                 target_promise_id: eventual.promise_id,
                 action: action.clone(),
                 result_promise_id: Some(result_promise),
@@ -881,7 +881,7 @@ impl std::fmt::Debug for CapTpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_captp::pipeline::PipelinedAction;
+    use dregg_captp::pipeline::PipelinedAction;
 
     fn test_config() -> CapTpConfig {
         CapTpConfig {
@@ -916,7 +916,7 @@ mod tests {
 
         // Should round-trip through string format
         let uri_str = uri.to_uri_string();
-        let parsed = PyanaUri::parse(&uri_str).unwrap();
+        let parsed = DreggUri::parse(&uri_str).unwrap();
         assert_eq!(parsed, uri);
     }
 
@@ -935,7 +935,7 @@ mod tests {
     #[test]
     fn enliven_creates_live_ref_with_gc() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -953,7 +953,7 @@ mod tests {
     #[test]
     fn live_ref_drop_sends_gc_message() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn live_ref_explicit_release() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1064,7 +1064,7 @@ mod tests {
     fn create_handoff_produces_valid_cert() {
         let mut client = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, _pub_key) = pyana_types::generate_keypair();
+        let (signing_key, _pub_key) = dregg_types::generate_keypair();
         let recipient_pk = [0xFF; 32];
 
         let cert = client.create_handoff(
@@ -1092,8 +1092,8 @@ mod tests {
     fn enliven_with_proof_accepts_valid_cert() {
         let mut introducer = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, intro_pk) = pyana_types::generate_keypair();
-        let (_recipient_sk, recipient_pk) = pyana_types::generate_keypair();
+        let (signing_key, intro_pk) = dregg_types::generate_keypair();
+        let (_recipient_sk, recipient_pk) = dregg_types::generate_keypair();
 
         // Introducer creates a cert for the recipient.
         let cert = introducer.create_handoff(
@@ -1110,7 +1110,7 @@ mod tests {
             federation_id: GroupId([0x11; 32]),
             current_height: 100,
         });
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: introducer.config.federation_id.0,
             cell_id: cell.0,
             swiss: cert.swiss,
@@ -1128,8 +1128,8 @@ mod tests {
     fn enliven_with_proof_rejects_tampered_cert() {
         let mut introducer = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, intro_pk) = pyana_types::generate_keypair();
-        let (_recipient_sk, recipient_pk) = pyana_types::generate_keypair();
+        let (signing_key, intro_pk) = dregg_types::generate_keypair();
+        let (_recipient_sk, recipient_pk) = dregg_types::generate_keypair();
 
         let mut cert = introducer.create_handoff(
             &signing_key,
@@ -1146,7 +1146,7 @@ mod tests {
             federation_id: GroupId([0x11; 32]),
             current_height: 100,
         });
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: introducer.config.federation_id.0,
             cell_id: cell.0,
             swiss: cert.swiss,
@@ -1166,9 +1166,9 @@ mod tests {
     fn enliven_with_proof_rejects_wrong_recipient() {
         let mut introducer = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, intro_pk) = pyana_types::generate_keypair();
-        let (_alice_sk, alice_pk) = pyana_types::generate_keypair();
-        let (_mallory_sk, mallory_pk) = pyana_types::generate_keypair();
+        let (signing_key, intro_pk) = dregg_types::generate_keypair();
+        let (_alice_sk, alice_pk) = dregg_types::generate_keypair();
+        let (_mallory_sk, mallory_pk) = dregg_types::generate_keypair();
 
         // Cert is for Alice.
         let cert = introducer.create_handoff(
@@ -1185,7 +1185,7 @@ mod tests {
             federation_id: GroupId([0x22; 32]),
             current_height: 100,
         });
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: introducer.config.federation_id.0,
             cell_id: cell.0,
             swiss: cert.swiss,
@@ -1205,8 +1205,8 @@ mod tests {
     fn enliven_with_proof_rejects_uri_mismatch() {
         let mut introducer = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, intro_pk) = pyana_types::generate_keypair();
-        let (_recipient_sk, recipient_pk) = pyana_types::generate_keypair();
+        let (signing_key, intro_pk) = dregg_types::generate_keypair();
+        let (_recipient_sk, recipient_pk) = dregg_types::generate_keypair();
 
         let cert = introducer.create_handoff(
             &signing_key,
@@ -1222,7 +1222,7 @@ mod tests {
             current_height: 100,
         });
         // URI with a different cell_id.
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: introducer.config.federation_id.0,
             cell_id: [0x99; 32],
             swiss: cert.swiss,
@@ -1242,8 +1242,8 @@ mod tests {
     fn enliven_with_proof_rejects_expired() {
         let mut introducer = CapTpClient::new(test_config());
         let cell = test_cell();
-        let (signing_key, intro_pk) = pyana_types::generate_keypair();
-        let (_recipient_sk, recipient_pk) = pyana_types::generate_keypair();
+        let (signing_key, intro_pk) = dregg_types::generate_keypair();
+        let (_recipient_sk, recipient_pk) = dregg_types::generate_keypair();
 
         // Cert that expires at height 50.
         let cert = introducer.create_handoff(
@@ -1260,7 +1260,7 @@ mod tests {
             federation_id: GroupId([0x11; 32]),
             current_height: 100,
         });
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: introducer.config.federation_id.0,
             cell_id: cell.0,
             swiss: cert.swiss,
@@ -1275,7 +1275,7 @@ mod tests {
     #[test]
     fn live_ref_send_creates_eventual() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1296,7 +1296,7 @@ mod tests {
     #[test]
     fn live_ref_send_enqueues_wire_message() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1327,7 +1327,7 @@ mod tests {
     #[test]
     fn live_ref_pipeline_enqueues_wire_message() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1376,7 +1376,7 @@ mod tests {
     #[test]
     fn live_ref_drop_emits_drop_remote_ref() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1405,7 +1405,7 @@ mod tests {
     #[test]
     fn live_ref_release_emits_drop_remote_ref() {
         let mut client = CapTpClient::new(test_config());
-        let uri = PyanaUri {
+        let uri = DreggUri {
             federation_id: [0xCC; 32],
             cell_id: [0xDD; 32],
             swiss: [0xEE; 32],
@@ -1430,7 +1430,7 @@ mod tests {
             federation_id: alice_fed,
             current_height: 100,
         });
-        let (signing_key, _intro_pk) = pyana_types::generate_keypair();
+        let (signing_key, _intro_pk) = dregg_types::generate_keypair();
         let recipient_pk = [0xBB; 32]; // bob
         let target_cell = CellId([0x42; 32]);
         let pre_registered_swiss = [0x77; 32];

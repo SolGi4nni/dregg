@@ -1,14 +1,14 @@
 //! Cross-backend checks: same circuit proven via custom STARK and Plonky3, Kimchi, Pickles.
 //!
 //! The Plonky3, Kimchi, and recursive Pickles backends require feature gates on
-//! pyana-circuit. These checks exercise what is available at compile time and
+//! dregg-circuit. These checks exercise what is available at compile time and
 //! skip (with a clear message) what requires optional features.
 
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
-use pyana_commit::poseidon2_tree::Poseidon2MerkleTree;
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::{BabyBear, prove_authorization_stark, verify_authorization_stark};
+use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
 
 use crate::report::{CheckResult, run_check};
 
@@ -22,7 +22,7 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 /// Build a standard test witness for backend comparison.
-fn build_test_witness() -> (pyana_circuit::multi_step_air::MultiStepWitness, BabyBear) {
+fn build_test_witness() -> (dregg_circuit::multi_step_air::MultiStepWitness, BabyBear) {
     let mut tree = Poseidon2MerkleTree::with_depth(4);
     let pred = BabyBear::new(500);
     let alice = BabyBear::new(1000);
@@ -97,7 +97,7 @@ fn check_plonky3_backend() -> Result<(), String> {
     // We use the plonky3_prover path if available.
     #[cfg(feature = "plonky3")]
     {
-        // The Plonky3 prover is exercised via pyana_circuit::plonky3_prover
+        // The Plonky3 prover is exercised via dregg_circuit::plonky3_prover
         // which provides prove/verify for the same AIR. For the preflight,
         // we verify the feature compiles and the STARK path (which uses
         // Plonky3-compatible field arithmetic) works.
@@ -119,11 +119,11 @@ fn check_plonky3_backend() -> Result<(), String> {
 }
 
 fn check_kimchi_backend() -> Result<(), String> {
-    // Kimchi (Mina) backend requires the `mina` feature on pyana-circuit.
+    // Kimchi (Mina) backend requires the `mina` feature on dregg-circuit.
     // When available, we exercise the Kimchi prover for the same logical circuit.
     #[cfg(feature = "mina")]
     {
-        // The Kimchi backend is exercised via pyana_circuit::backends::mina
+        // The Kimchi backend is exercised via dregg_circuit::backends::mina
         // For the preflight, we verify our custom STARK produces valid proofs
         // that would have the same semantic content as a Kimchi proof.
         let (witness, _) = build_test_witness();
@@ -145,8 +145,8 @@ fn check_pickles_recursive() -> Result<(), String> {
     // Recursive STARK verification (Pickles-style wrapping) is available
     // via the recursion feature. For the preflight, we verify IVC which
     // is the recursive proof composition mechanism.
-    use pyana_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
-    use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+    use dregg_circuit::fold_air::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
 
     let initial_root = BabyBear::new(99999);
     let deltas: Vec<FoldDelta> = (0..2)

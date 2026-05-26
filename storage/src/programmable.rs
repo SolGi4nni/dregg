@@ -1,13 +1,13 @@
 //! Programmable queues: queues with attached DSL programs that validate every operation.
 //!
-//! # DEPRECATED — migrate to `pyana_storage_templates::programmable_queue`
+//! # DEPRECATED — migrate to `dregg_storage_templates::programmable_queue`
 //!
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §3.2 this module's
 //! [`ProgrammableQueue`] / [`QueueProgram`] / [`QueueConstraint`] /
 //! [`QueueFactory`] / [`ValidationContext`] surface is the legacy
 //! operator-side enforcement loop. The canonical replacement is the
 //! cell-program template
-//! [`pyana_storage_templates::programmable_queue`], whose
+//! [`dregg_storage_templates::programmable_queue`], whose
 //! `programmable_queue_factory_descriptor()` exports a
 //! `FactoryDescriptor` with operation-scoped
 //! [`CellProgram::Cases`] enforced by the executor on every
@@ -48,12 +48,12 @@ use crate::queue::{DequeueProof, MerkleQueue, QueueEntry, QueueError};
 //
 // Per `SLOT-CAVEATS-DESIGN.md` §5 Option A, the canonical
 // transition-aware constraint vocabulary lives in
-// `pyana_cell::program::StateConstraint`. The storage crate re-exports
+// `dregg_cell::program::StateConstraint`. The storage crate re-exports
 // it here under the alias `LiftedQueueConstraint` (alongside the legacy
 // `QueueConstraint` enum below, which remains for back-compat). New
 // constructions should reach for the lifted enum; downstream
 // consumers using `QueueConstraint` continue to compile unchanged.
-pub use pyana_cell::program::{
+pub use dregg_cell::program::{
     AuthorizedSet as LiftedAuthorizedSet, CustomDescriptor as LiftedCustomDescriptor,
     DeltaRelation as LiftedDeltaRelation, HashKind as LiftedHashKind, ReadSet as LiftedReadSet,
     SimpleStateConstraint as LiftedSimpleConstraint, StateConstraint as LiftedQueueConstraint,
@@ -68,7 +68,7 @@ pub use pyana_cell::program::{
 /// The program is proven in-circuit — invalid operations produce invalid proofs.
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_storage_templates::programmable_queue::programmable_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.2. The cell-program template enforces the queue's constraints via the executor's per-turn evaluator — no parallel storage-side enforcement loop."
+    note = "Use `dregg_storage_templates::programmable_queue::programmable_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.2. The cell-program template enforces the queue's constraints via the executor's per-turn evaluator — no parallel storage-side enforcement loop."
 )]
 #[derive(Debug, Clone)]
 pub struct ProgrammableQueue {
@@ -92,7 +92,7 @@ pub struct ProgrammableQueue {
 /// This is a simplified CircuitDescriptor specialized for queue operations.
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_cell::program::CellProgram::Cases` with `pyana_storage_templates::programmable_queue::programmable_queue_program_with(&cfg)` per STORAGE-AS-CELL-PROGRAMS.md §3.2."
+    note = "Use `dregg_cell::program::CellProgram::Cases` with `dregg_storage_templates::programmable_queue::programmable_queue_program_with(&cfg)` per STORAGE-AS-CELL-PROGRAMS.md §3.2."
 )]
 #[derive(Debug, Clone)]
 pub struct QueueProgram {
@@ -107,7 +107,7 @@ pub struct QueueProgram {
 /// Constraints specific to queue operations.
 #[deprecated(
     since = "0.1.0",
-    note = "Use `pyana_cell::program::StateConstraint` (the lifted 21-variant slot-caveat vocabulary) per STORAGE-AS-CELL-PROGRAMS.md §3.2. The `LiftedQueueConstraint` re-export at the top of this module already aliases the cell-side enum."
+    note = "Use `dregg_cell::program::StateConstraint` (the lifted 21-variant slot-caveat vocabulary) per STORAGE-AS-CELL-PROGRAMS.md §3.2. The `LiftedQueueConstraint` re-export at the top of this module already aliases the cell-side enum."
 )]
 #[derive(Debug, Clone)]
 pub enum QueueConstraint {
@@ -344,7 +344,7 @@ impl ProgrammableQueue {
 /// The factory itself has rules about what programs are allowed.
 #[deprecated(
     since = "0.1.0",
-    note = "Subsumed by `pyana_cell::factory::FactoryDescriptor`. Use `pyana_storage_templates::programmable_queue::programmable_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.2."
+    note = "Subsumed by `dregg_cell::factory::FactoryDescriptor`. Use `dregg_storage_templates::programmable_queue::programmable_queue_factory_descriptor()` per STORAGE-AS-CELL-PROGRAMS.md §3.2."
 )]
 #[derive(Debug, Clone)]
 pub struct QueueFactory {
@@ -816,7 +816,7 @@ pub fn compute_authorized_set_root_dual(
         .iter()
         .map(|k| blake3_with_tag(domain::TAG_AUTHORIZED_KEY_SET, k))
         .collect();
-    let poseidon2_leaves: Vec<[pyana_circuit::field::BabyBear; 4]> =
+    let poseidon2_leaves: Vec<[dregg_circuit::field::BabyBear; 4]> =
         blake3_leaves.iter().map(canonical_32_to_felts_4).collect();
     crate::commitment::MerkleRoot::from_leaves(&blake3_leaves, &poseidon2_leaves)
 }

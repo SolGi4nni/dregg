@@ -178,7 +178,7 @@ For STARK-compatible PIR:
 
 **Difficulty**: VERY HIGH. Requires either FHE (evaluate arbitrary predicates on encrypted data) or garbled circuits (one-time evaluation with constant round complexity).
 
-**Practical alternative for pyana**: If the query space is small (enumerate all possible predicates), use an encrypted index:
+**Practical alternative for dregg**: If the query space is small (enumerate all possible predicates), use an encrypted index:
 - The database publishes Poseidon2 commitments to each entry's attributes.
 - The querier locally evaluates their predicate against the commitments (if they know the data is public, they already have it).
 - The privacy need is only against the database OPERATOR observing access patterns.
@@ -236,7 +236,7 @@ Maintain a running accumulator that tracks "consecutive blocks where predicate P
 
 **Difficulty**: MEDIUM. Requires either:
 - IVC chain of predicate proofs (approach 1): uses existing machinery but O(T) proving time.
-- Accumulator in cell state (approach 2): requires the cell's program to maintain the counter (already possible with pyana programs).
+- Accumulator in cell state (approach 2): requires the cell's program to maintain the counter (already possible with dregg programs).
 
 **Recommended**: Approach 2 for production (accumulators are cheap). Approach 1 for historical queries where the accumulator wasn't maintained.
 
@@ -266,7 +266,7 @@ Maintain a running accumulator that tracks "consecutive blocks where predicate P
 - Embedding the MPC transcript verification in a STARK (novel, research frontier).
 - Communication rounds between parties.
 
-**Practical alternative for pyana**:
+**Practical alternative for dregg**:
 - Each party independently proves their value to a SHARED predicate: "I have balance >= median" or "I'm in the top 10%."
 - This avoids direct comparison but gives useful information.
 - Or: use the cross-party predicate (Class D) with a relay — Alice proves `a >= t` to a mediator, Bob proves `b >= t` to the same mediator. The mediator learns the ordering by binary-searching `t`. This leaks to the mediator but not to Alice/Bob.
@@ -592,7 +592,7 @@ Predicate proofs should NOT be linkable across presentations. With `presentation
 
 The critical insight: Classes A, A+, D, and E are all achievable with the existing STARK/Poseidon2 machinery plus modest protocol extensions. Classes B, C, and F require fundamentally new cryptographic constructions (MPC, OT, PIR, FHE) — but the STARK layer can serve as the VERIFIABILITY wrapper for any of these once the underlying protocol is in place.
 
-Pyana's architecture is well-positioned because:
+`dregg`'s architecture is well-positioned because:
 1. The `PredicateAir` already handles the hard part (range proofs in BabyBear).
 2. The intent system provides natural discovery for cross-party predicates.
 3. The IVC machinery enables temporal predicates without new circuit designs.

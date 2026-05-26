@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>Sharing and Accepting Capabilities (CapTP) — Pyana</title>
+<title>Sharing and Accepting Capabilities (CapTP) — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -57,17 +57,17 @@
 
     <h3>Via the CLI</h3>
     <pre><code># Delegate a capability with restrictions
-pyana cap delegate \
+dregg cap delegate \
   --token $TOKEN_ID \
   --to $RECIPIENT_PUBKEY \
   --restrict service=storage,action=read,budget=1000 \
   --ttl 24h
 
 # The recipient can accept with:
-pyana cap accept --from $YOUR_PUBKEY</code></pre>
+dregg cap accept --from $YOUR_PUBKEY</code></pre>
 
     <h3>Via the SDK (Programmatic)</h3>
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation};
 
 let mut alice = AgentCipherclerk::new();
 let mut bob = AgentCipherclerk::new();
@@ -122,9 +122,9 @@ bob.receive_signed_delegation(
       a message of a certain size was deposited at a certain time.
     </p>
 
-    <pyana-vizzer data-vizzer="inbox-lifecycle" data-count="4">
+    <dregg-vizzer data-vizzer="inbox-lifecycle" data-count="4">
       <div class="vizzer-fallback">MerkleQueue inbox — four sealed messages awaiting decryption.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/inbox-lifecycle.js"></script>
     <p class="viz-caption">Four sealed capabilities sit in the recipient&rsquo;s MerkleQueue.
       The federation can see counts and ciphertext lengths; it cannot see senders, capability
@@ -141,7 +141,7 @@ bob.receive_signed_delegation(
       <li>Bob can now communicate directly with Carol -- no further involvement from Alice.</li>
     </ol>
     <p>
-      This is how new communication paths form in Pyana. There is no global directory;
+      This is how new communication paths form in <code>dregg</code>. There is no global directory;
       all paths are introduced.
     </p>
 
@@ -167,14 +167,14 @@ bob.receive_signed_delegation(
     </ul>
 
     <pre><code># Revoke a specific delegation
-pyana cap revoke --token $TOKEN_ID --delegation $DELEGATION_HASH
+dregg cap revoke --token $TOKEN_ID --delegation $DELEGATION_HASH
 
 # Trip a revocation channel (instant, all subscribers affected)
-pyana cap trip-channel --channel $CHANNEL_ID</code></pre>
+dregg cap trip-channel --channel $CHANNEL_ID</code></pre>
 
     <h2 id="next">Next Steps</h2>
     <ul>
-      <li><a href="cli.html">CLI Reference</a> -- Full command reference for <code>pyana cap</code></li>
+      <li><a href="cli.html">CLI Reference</a> -- Full command reference for <code>dregg cap</code></li>
       <li><a href="/learn/developers/sdk.html">SDK Quickstart</a> -- Programmatic CapTP usage</li>
       <li><a href="/learn/architecture/capabilities.html">Capability Architecture</a> -- How CapTP works internally</li>
     </ul>

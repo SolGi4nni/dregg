@@ -16,8 +16,8 @@
 //! 8. Federation-id binding: two cipherclerks with different federation_ids must
 //!    produce different signatures for the same (target, method, effects) triple.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
-use pyana_turn::action::Authorization;
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use dregg_turn::action::Authorization;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 

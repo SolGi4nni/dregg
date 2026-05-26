@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Build Your First Pyana App: API Key Management Service — Pyana</title>
+<title>Build Your First <code>dregg</code> App: API Key Management Service — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -13,11 +13,11 @@
       <span class="docs-breadcrumb__sep">/</span>
       <span>Tutorial First App</span>
     </nav>
-<h1>Build Your First Pyana App: API Key Management Service</h1>
+<h1>Build Your First <code>dregg</code> App: API Key Management Service</h1>
 
     <p>
       This tutorial walks you through building a working API key management service
-      that demonstrates pyana's core value proposition: <strong>token minting, attenuation,
+      that demonstrates dregg's core value proposition: <strong>token minting, attenuation,
       offline verification, and revocation</strong> -- no ZK proofs required.
     </p>
 
@@ -34,9 +34,9 @@
 
     <ul>
       <li>Rust 1.94+ (<code>rustup update stable</code>)</li>
-      <li>A clone of the pyana repository:
-        <pre><code class="language-bash">git clone https://github.com/emberian/pyana.git
-cd pyana</code></pre>
+      <li>A clone of the dregg repository:
+        <pre><code class="language-bash">git clone https://github.com/emberian/dregg.git
+cd dregg</code></pre>
       </li>
     </ul>
 
@@ -54,7 +54,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pyana-sdk = { path = "../../sdk" }
+dregg-sdk = { path = "../../sdk" }
 token = { path = "../../token", default-features = false, features = ["macaroon", "datalog", "rand-deps"] }
 blake3 = "1"</code></pre>
 
@@ -67,8 +67,8 @@ blake3 = "1"</code></pre>
       <code>"api"</code> service. This root token has full permissions -- it is the master key.
     </p>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation, AuthRequest};
-use pyana_token::{BudgetSpec, RevocationFilter};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation, AuthRequest};
+use dregg_token::{BudgetSpec, RevocationFilter};
 
 fn main() {
     // The admin's 32-byte root secret. In production, generate this once and
@@ -264,8 +264,8 @@ Other customer (not revoked):        true
 
     <p>Here is the full <code>main.rs</code> in one copy-pasteable block:</p>
 
-    <pre><code class="language-rust">use pyana_sdk::{AgentCipherclerk, Attenuation, AuthRequest};
-use pyana_token::{BudgetSpec, RevocationFilter};
+    <pre><code class="language-rust">use dregg_sdk::{AgentCipherclerk, Attenuation, AuthRequest};
+use dregg_token::{BudgetSpec, RevocationFilter};
 
 fn main() {
     let root_key: [u8; 32] = *blake3::hash(b"my-api-service-root-secret").as_bytes();
@@ -378,7 +378,7 @@ fn main() {
       <thead>
         <tr>
           <th>Concern</th>
-          <th>How pyana handles it</th>
+          <th>How dregg handles it</th>
         </tr>
       </thead>
       <tbody>
@@ -406,7 +406,7 @@ fn main() {
     </table>
 
     <p>
-      This is pyana at trust level 0-1 (see <code>docs/web2-trust-integration.md</code>). No
+      This is dregg at trust level 0-1 (see <code>docs/web2-trust-integration.md</code>). No
       ZK circuits, no federation consensus, no blockchain. Just HMAC keys and
       Ed25519 signatures on commodity hardware.
     </p>
@@ -441,7 +441,7 @@ fn main() {
 
     <ul>
       <li><a href="sdk.html">SDK Quickstart</a> -- Full Rust SDK API reference</li>
-      <li><a href="typescript-sdk.html">TypeScript SDK</a> -- Use pyana from Node.js or the browser</li>
+      <li><a href="typescript-sdk.html">TypeScript SDK</a> -- Use dregg from Node.js or the browser</li>
       <li><a href="tokens.html">Token Lifecycle</a> -- Deep dive into the full token lifecycle</li>
       <li><a href="privacy-api.html">Privacy API</a> -- Anonymous auth, private notes, predicates</li>
     </ul>

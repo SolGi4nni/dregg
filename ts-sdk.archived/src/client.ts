@@ -61,9 +61,9 @@ import type {
 
 /** CapTP operations: export, enliven, handoff. */
 export interface CapTpClient {
-  /** Export a cell as a shareable pyana:// sturdy reference URI. */
+  /** Export a cell as a shareable dregg:// sturdy reference URI. */
   export(cellId: string, attenuate?: string): Promise<ExportResult>;
-  /** Enliven a pyana:// sturdy reference URI, returning a live session reference. */
+  /** Enliven a dregg:// sturdy reference URI, returning a live session reference. */
   enliven(uri: string): Promise<EnlivenResult>;
   /** Create a handoff certificate for offline capability delegation. */
   handoff(cellId: string, recipientPk: string): Promise<HandoffResult>;
@@ -133,8 +133,8 @@ export interface QueuesClient {
 // Client Interface
 // ---------------------------------------------------------------------------
 
-/** The full Pyana client interface for interacting with a node. */
-export interface PyanaClient {
+/** The full Dregg client interface for interacting with a node. */
+export interface DreggClient {
   /** CapTP sub-client: export, enliven, handoff. */
   readonly captp: CapTpClient;
   /** Directory sub-client: list, mount, discover. */
@@ -272,12 +272,12 @@ function unwrap<T>(result: ApiResponse<T>, context: string): T {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a Pyana client connected to a node.
+ * Create a Dregg client connected to a node.
  *
- * @param nodeUrl - Base URL of the Pyana node (e.g. "https://devnet.pyana.fg-goose.online")
+ * @param nodeUrl - Base URL of the Dregg node (e.g. "https://devnet.dregg.fg-goose.online")
  * @param apiKey - Optional devnet API key (sent as X-Devnet-Key header)
  */
-export function createClient(nodeUrl: string, apiKey?: string): PyanaClient {
+export function createClient(nodeUrl: string, apiKey?: string): DreggClient {
   const base = nodeUrl;
 
   return {

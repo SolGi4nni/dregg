@@ -6,7 +6,7 @@
 //!
 //! # Architecture
 //!
-//! Since `CircuitDescriptor` lives in `pyana-dsl-runtime` (which depends on this
+//! Since `CircuitDescriptor` lives in `dregg-dsl-runtime` (which depends on this
 //! crate), we define a mirror type [`DslConstraint`] that captures the algebraic
 //! structure of each constraint variant. Callers convert from their
 //! `ConstraintExpr` into `DslConstraint` before invoking the prover.
@@ -106,7 +106,7 @@ pub struct DslPolyTerm {
 }
 
 /// Mirror of `ConstraintExpr` — captures the algebraic structure of each
-/// constraint variant without depending on the `pyana-dsl-runtime` crate.
+/// constraint variant without depending on the `dregg-dsl-runtime` crate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DslConstraint {
     /// col * (col - 1) = 0
@@ -1547,10 +1547,10 @@ pub fn verify_dsl_kimchi(
 
 /// Unified prove function: dispatch to STARK or Kimchi based on backend choice.
 ///
-/// For STARK: delegates to the existing `pyana_circuit::stark::prove` path.
+/// For STARK: delegates to the existing `dregg_circuit::stark::prove` path.
 /// For Kimchi: uses this module's `prove_dsl_kimchi`.
 ///
-/// Note: the STARK path requires a `DslCircuit` which lives in `pyana-dsl-runtime`.
+/// Note: the STARK path requires a `DslCircuit` which lives in `dregg-dsl-runtime`.
 /// Callers using the unified interface should construct the appropriate types
 /// themselves. This function provides the Kimchi path directly.
 pub fn prove_dsl(
@@ -1561,11 +1561,11 @@ pub fn prove_dsl(
 ) -> Result<Vec<u8>, String> {
     match backend {
         DslProofBackend::Stark => {
-            // The STARK path is handled externally via pyana_circuit::stark::prove
+            // The STARK path is handled externally via dregg_circuit::stark::prove
             // with a DslCircuit. We return an error directing callers to use the
             // STARK API directly, since we can't import CircuitDescriptor here.
             Err(
-                "STARK backend must be invoked via pyana_circuit::dsl::CellProgram::prove_transition. \
+                "STARK backend must be invoked via dregg_circuit::dsl::CellProgram::prove_transition. \
                  Use prove_dsl_kimchi() for the Kimchi backend directly.".to_string()
             )
         }
@@ -2038,7 +2038,7 @@ mod tests {
     #[test]
     fn test_both_backends_same_descriptor() {
         // Verify that the same descriptor can produce a valid Kimchi proof.
-        // (STARK path would be tested via pyana-dsl-runtime's CellProgram.)
+        // (STARK path would be tested via dregg-dsl-runtime's CellProgram.)
         let desc = sovereign_transition_descriptor();
 
         // Outgoing transfer

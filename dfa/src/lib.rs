@@ -1,6 +1,6 @@
-//! pyana-dfa: canonical DFA routing engine and userspace dispatch primitive.
+//! dregg-dfa: canonical DFA routing engine and userspace dispatch primitive.
 //!
-//! This crate is the load-bearing home of pyana's DFA pattern dispatch. It exists
+//! This crate is the load-bearing home of dregg's DFA pattern dispatch. It exists
 //! because three earlier implementations
 //! (`wire::dfa_router`, `apps/governed-namespace::routes`, `rbg::routing`) each
 //! solved part of the problem and none subsumed the others.
@@ -27,8 +27,8 @@
 //! Starbridge-apps author a DFA route like this:
 //!
 //! ```rust
-//! use pyana_dfa::{Dfa, RouteTarget, GovernedRouter};
-//! use pyana_dfa::compiler::Pattern;
+//! use dregg_dfa::{Dfa, RouteTarget, GovernedRouter};
+//! use dregg_dfa::compiler::Pattern;
 //!
 //! let table = Dfa::builder()
 //!     .route("/health", RouteTarget::handler("health_check"))

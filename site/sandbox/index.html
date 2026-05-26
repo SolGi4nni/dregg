@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandbox — Pyana</title>
-  <meta name="description" content="Interactive code sandbox for the pyana WASM API. Execute cryptographic operations live in the browser.">
+  <title>Sandbox — <code>dregg</code></title>
+  <meta name="description" content="Interactive code sandbox for the dregg WASM API. Execute cryptographic operations live in the browser.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <style>
     /* ============================================================
-       pyana sandbox — self-contained dark theme
+       dregg sandbox — self-contained dark theme
        ============================================================ */
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
 
@@ -528,7 +528,7 @@
 <!-- Header -->
 <header class="header">
   <span class="header__logo">pi</span>
-  <span class="header__title">pyana <span class="accent">sandbox</span></span>
+  <span class="header__title">dregg <span class="accent">sandbox</span></span>
   <nav class="header__nav">
     <a href="../index.html">Home</a>
     <a href="../apps.html">Apps</a>
@@ -537,7 +537,7 @@
     <a href="../demo.html">Demo</a>
     <a href="../explorer/">Explorer</a>
     <a href="../playground/">Playground</a>
-    <a href="https://github.com/emberian/pyana">GitHub</a>
+    <a href="https://github.com/emberian/dregg">GitHub</a>
   </nav>
   <div class="header__right">
     <span id="run-indicator"></span>
@@ -564,7 +564,7 @@
         </div>
       </div>
       <div class="editor-wrap">
-        <textarea id="editor" spellcheck="false" placeholder="// Write JavaScript that calls the pyana WASM API...&#10;// The 'pyana' object is available with all methods.&#10;&#10;const key = await pyana.generateRootKey();&#10;console.log(key);"></textarea>
+        <textarea id="editor" spellcheck="false" placeholder="// Write JavaScript that calls the dregg WASM API...&#10;// The 'dregg' object is available with all methods.&#10;&#10;const key = await dregg.generateRootKey();&#10;console.log(key);"></textarea>
       </div>
     </div>
 
@@ -594,7 +594,7 @@
     <div class="sidebar-section">
       <div class="sidebar-section__title">Connect as Admin</div>
       <div class="admin-connect">
-        <input type="text" id="admin-key-input" placeholder="PYANA_ROOT_KEY (64 hex chars)" spellcheck="false" autocomplete="off">
+        <input type="text" id="admin-key-input" placeholder="DREGG_ROOT_KEY (64 hex chars)" spellcheck="false" autocomplete="off">
         <button class="admin-btn" id="btn-admin">Connect</button>
         <span class="admin-status" id="admin-status"></span>
       </div>
@@ -626,19 +626,19 @@
     <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
       <div class="sidebar-section__title">API Reference</div>
       <div style="font-family: var(--mono); font-size: 10px; color: var(--text-dim); line-height: 1.8;">
-        <div><span style="color: var(--accent-bright);">pyana.generateRootKey</span>()</div>
-        <div><span style="color: var(--accent-bright);">pyana.mintToken</span>(key, loc)</div>
-        <div><span style="color: var(--accent-bright);">pyana.attenuate</span>(tok, key, svc, act, exp)</div>
-        <div><span style="color: var(--accent-bright);">pyana.verifyToken</span>(tok, key, app, act)</div>
-        <div><span style="color: var(--accent-bright);">pyana.generateStarkProof</span>(leaf, depth)</div>
-        <div><span style="color: var(--accent-bright);">pyana.verifyStarkProof</span>(json)</div>
-        <div><span style="color: var(--accent-bright);">pyana.tamperProof</span>(json)</div>
-        <div><span style="color: var(--accent-bright);">pyana.merkleRoot</span>(leaves[])</div>
-        <div><span style="color: var(--accent-bright);">pyana.merkleMembership</span>(leaves[], target)</div>
-        <div><span style="color: var(--accent-bright);">pyana.evaluateDatalog</span>(facts, req)</div>
-        <div><span style="color: var(--accent-bright);">pyana.demonstrateFold</span>(facts, remove)</div>
-        <div><span style="color: var(--accent-bright);">pyana.computeIntentId</span>(json)</div>
-        <div><span style="color: var(--accent-bright);">pyana.blake3Hash</span>(input)</div>
+        <div><span style="color: var(--accent-bright);">dregg.generateRootKey</span>()</div>
+        <div><span style="color: var(--accent-bright);">dregg.mintToken</span>(key, loc)</div>
+        <div><span style="color: var(--accent-bright);">dregg.attenuate</span>(tok, key, svc, act, exp)</div>
+        <div><span style="color: var(--accent-bright);">dregg.verifyToken</span>(tok, key, app, act)</div>
+        <div><span style="color: var(--accent-bright);">dregg.generateStarkProof</span>(leaf, depth)</div>
+        <div><span style="color: var(--accent-bright);">dregg.verifyStarkProof</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">dregg.tamperProof</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">dregg.merkleRoot</span>(leaves[])</div>
+        <div><span style="color: var(--accent-bright);">dregg.merkleMembership</span>(leaves[], target)</div>
+        <div><span style="color: var(--accent-bright);">dregg.evaluateDatalog</span>(facts, req)</div>
+        <div><span style="color: var(--accent-bright);">dregg.demonstrateFold</span>(facts, remove)</div>
+        <div><span style="color: var(--accent-bright);">dregg.computeIntentId</span>(json)</div>
+        <div><span style="color: var(--accent-bright);">dregg.blake3Hash</span>(input)</div>
       </div>
     </div>
   </aside>

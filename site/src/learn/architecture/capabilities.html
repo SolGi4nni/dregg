@@ -1,5 +1,5 @@
 <layout src="_layouts/viz.html">
-<title>Object-Capability Model — Pyana</title>
+<title>Object-Capability Model — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,7 +16,7 @@
 <h1>Object-Capability Model</h1>
 
     <p>
-      Pyana implements an object-capability discipline: authority flows only through
+      <code>dregg</code> implements an object-capability discipline: authority flows only through
       unforgeable references. There is no ambient authority -- if you do not hold a
       capability reference, you cannot perform the action.
     </p>
@@ -44,7 +44,7 @@
     <h2 id="delegation">Delegation (Attenuation)</h2>
     <p>
       Capabilities are delegated by cryptographic attenuation: each step appends a caveat
-      (a restriction predicate) to the token chain. Pyana supports two wire encodings &mdash;
+      (a restriction predicate) to the token chain. <code>dregg</code> supports two wire encodings &mdash;
       macaroons (HMAC-chained) and biscuits (Ed25519-signed) &mdash; and both fold into the
       same Datalog derivation when presented. The resulting token is strictly less powerful
       than the parent: no caveat can be removed, and presentation proofs check the entire
@@ -57,9 +57,9 @@
       against an attested root&rdquo; &mdash; the verifier never sees the chain itself.
     </p>
 
-    <pyana-vizzer data-vizzer="delegation-envelope-v2" data-nonce="b3a2…">
+    <dregg-vizzer data-vizzer="delegation-envelope-v2" data-nonce="b3a2…">
       <div class="vizzer-fallback">DelegatedToken v2 — issuer, subject, authority policy, caveats, nonce, signature.</div>
-    </pyana-vizzer>
+    </dregg-vizzer>
     <script type="module" src="/playground/visualizers/delegation-envelope-v2.js"></script>
     <p class="viz-caption">A v2 delegation envelope. Every field marked &ldquo;checked&rdquo; is
       re-verified on each authorize call; the nonce binds this specific delegation so a captured
@@ -77,7 +77,7 @@
       For the offline case, <code>HandoffCertificate</code> (signed by the introducer) and
       <code>HandoffPresentation</code> (recipient signs the nonce) carry the introduction
       through store-and-forward delivery. The CapTP layer (see <a href="/learn/users/captp.html">CapTP</a>)
-      makes sturdy refs the durable form: <code>pyana://</code> URIs with swiss numbers
+      makes sturdy refs the durable form: <code>dregg://</code> URIs with swiss numbers
       that survive disconnection, serialization, and process restart.
     </p>
 
@@ -91,7 +91,7 @@
 
     <h2 id="lineage">Lineage</h2>
     <p>
-      Pyana&rsquo;s execution model descends from Mark Miller&rsquo;s E and the broader
+      <code>dregg</code>&rsquo;s execution model descends from Mark Miller&rsquo;s E and the broader
       object-capability lineage (Joe-E, Caja, Cap&rsquo;n Proto, Spritely Goblins, OCapN).
       The contributions on top are: STARK-verifiable presentation; the Effect VM as the
       single proof artifact for a turn; receipt chains as portable state proofs; and

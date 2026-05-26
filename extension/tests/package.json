@@ -1,5 +1,5 @@
 {
-  "name": "pyana-extension-tests",
+  "name": "dregg-extension-tests",
   "private": true,
   "scripts": {
     "test": "playwright test",

@@ -3,14 +3,14 @@
 //! Demonstrates:
 //! 1. Starting two silo servers on localhost
 //! 2. Federation handshake (Hello/Welcome)
-//! 3. Token presentation over TCP with a REAL STARK proof (pyana-circuit)
+//! 3. Token presentation over TCP with a REAL STARK proof (dregg-circuit)
 //! 4. Revocation propagation
 //! 5. Non-membership proof request
 //!
 //! Run with:
-//!   cargo run --bin pyana-network-demo
+//!   cargo run --bin dregg-network-demo
 
-use pyana_wire::prelude::*;
+use dregg_wire::prelude::*;
 use std::time::Instant;
 
 /// Hex-encode the first N bytes of a slice for display.
@@ -33,7 +33,7 @@ fn format_size(bytes: usize) -> String {
 async fn main() {
     println!();
     println!("==========================================================================");
-    println!("  pyana-wire: Cross-Silo Token Presentation & Federation Sync Demo");
+    println!("  dregg-wire: Cross-Silo Token Presentation & Federation Sync Demo");
     println!("==========================================================================");
     println!();
 
@@ -98,7 +98,7 @@ async fn main() {
         ],
     };
 
-    let hello_stats = pyana_wire::codec::FrameStats::for_message(&hello).unwrap();
+    let hello_stats = dregg_wire::codec::FrameStats::for_message(&hello).unwrap();
     println!(
         "  \u{2192} acme.corp \u{2192} partner.org: Hello ({} capabilities, {})",
         3,
@@ -131,7 +131,7 @@ async fn main() {
     // =========================================================================
     println!("[3/5] Token presentation over TCP...");
 
-    // Generate a REAL STARK proof using pyana-circuit
+    // Generate a REAL STARK proof using dregg-circuit
     let proof = generate_real_stark_proof();
     println!(
         "  \u{2192} Generated real STARK proof: {}",
@@ -150,7 +150,7 @@ async fn main() {
         request: request.clone(),
         federation_root,
     };
-    let present_stats = pyana_wire::codec::FrameStats::for_message(&present_msg).unwrap();
+    let present_stats = dregg_wire::codec::FrameStats::for_message(&present_msg).unwrap();
 
     println!(
         "  \u{2192} acme.corp \u{2192} partner.org: PresentToken ({} proof, {} total frame)",
@@ -202,8 +202,8 @@ async fn main() {
     let mut authority_sig_bytes = [0u8; 64];
     authority_sig_bytes[..32].copy_from_slice(sig_hash.as_bytes());
     authority_sig_bytes[32..].copy_from_slice(sig_hash.as_bytes());
-    let authority_sig = pyana_wire::prelude::Signature(authority_sig_bytes);
-    let authority = pyana_wire::prelude::PublicKey([0xAC; 32]);
+    let authority_sig = dregg_wire::prelude::Signature(authority_sig_bytes);
+    let authority = dregg_wire::prelude::PublicKey([0xAC; 32]);
 
     let mut revoke_nonce = [0u8; 16];
     getrandom::fill(&mut revoke_nonce).expect("getrandom failed");
@@ -337,7 +337,7 @@ async fn main() {
     println!();
 }
 
-/// Generate a real STARK proof using pyana-circuit.
+/// Generate a real STARK proof using dregg-circuit.
 ///
 /// This produces a cryptographically valid Merkle membership proof that will pass
 /// full STARK verification (Merkle commitments, FRI low-degree test, Fiat-Shamir).
@@ -345,10 +345,10 @@ async fn main() {
 /// Uses the collision-resistant Poseidon2-based DSL circuit (migrated away from
 /// the deprecated linear-binding `MerkleStarkAir`).
 fn generate_real_stark_proof() -> Vec<u8> {
-    use pyana_circuit::BabyBear;
-    use pyana_circuit::stark::{proof_to_bytes, prove};
-    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+    use dregg_circuit::BabyBear;
+    use dregg_circuit::stark::{proof_to_bytes, prove};
+    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     // Create a 4-level Merkle membership witness with Poseidon2 hashing
     let leaf_hash = BabyBear::new(12345);

@@ -1,6 +1,6 @@
-# Pyana Bounty Board
+# `dregg` Bounty Board
 
-A privacy-preserving bounty marketplace built on the pyana federation protocol.
+A privacy-preserving bounty marketplace built on the dregg federation protocol.
 
 Issuers post bounties with reward escrows and qualification requirements. Workers claim bounties by proving they meet the requirements **without revealing their identity** to the issuer. Payment is released atomically via conditional turns when work is approved.
 
@@ -32,23 +32,23 @@ All verification is cryptographic (STARK-based). The bounty board never accepts 
 
 ```bash
 # Generate devnet genesis with 3 validators
-pyana-node genesis --validators 3 --output /tmp/pyana-devnet
+dregg-node genesis --validators 3 --output /tmp/dregg-devnet
 
 # Start node 0 (runs the HTTP API on port 8420 by default)
-pyana-node run --data-dir /tmp/pyana-devnet --key-file node-0.key --gossip-port 9420 &
+dregg-node run --data-dir /tmp/dregg-devnet --key-file node-0.key --gossip-port 9420 &
 ```
 
 ### 2. Start the bounty board
 
 ```bash
 # Connects to node at http://127.0.0.1:8420 by default
-cargo run -p pyana-bounty-board
+cargo run -p dregg-bounty-board
 
 # Or specify a different node URL
-cargo run -p pyana-bounty-board -- --node-url http://127.0.0.1:8420
+cargo run -p dregg-bounty-board -- --node-url http://127.0.0.1:8420
 
 # Or provide an explicit federation root (skips node fetch)
-cargo run -p pyana-bounty-board -- --federation-root <64-hex-chars>
+cargo run -p dregg-bounty-board -- --federation-root <64-hex-chars>
 
 ```
 
@@ -132,16 +132,16 @@ curl -X POST http://127.0.0.1:3030/bounties/<id>/claim \
   }'
 ```
 
-The proof is generated client-side using the `pyana-circuit` crate's ring membership prover. On the devnet, you can use the constraint prover for testing.
+The proof is generated client-side using the `dregg-circuit` crate's ring membership prover. On the devnet, you can use the constraint prover for testing.
 
 ## Configuration
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--node-url` | `PYANA_NODE_URL` | `http://127.0.0.1:8420` | Node to fetch federation root from |
-| `--federation-root` | `PYANA_FEDERATION_ROOT` | (fetched from node) | Explicit federation root (64 hex chars) |
-| `--listen` | `PYANA_LISTEN` | `127.0.0.1:3030` | HTTP listen address |
-| `--sync-interval` | `PYANA_SYNC_INTERVAL` | `30` | Root sync interval in seconds |
+| `--node-url` | `DREGG_NODE_URL` | `http://127.0.0.1:8420` | Node to fetch federation root from |
+| `--federation-root` | `DREGG_FEDERATION_ROOT` | (fetched from node) | Explicit federation root (64 hex chars) |
+| `--listen` | `DREGG_LISTEN` | `127.0.0.1:3030` | HTTP listen address |
+| `--sync-interval` | `DREGG_SYNC_INTERVAL` | `30` | Root sync interval in seconds |
 
 ## Architecture
 

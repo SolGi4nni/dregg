@@ -14,7 +14,7 @@ use tracing::{error, info};
 use discharge_gateway_service::{ConditionConfig, GatewayConfig, GatewaySettings, build_gateway};
 
 #[derive(Parser, Debug)]
-#[command(name = "discharge-gateway", about = "Pyana discharge macaroon gateway")]
+#[command(name = "discharge-gateway", about = "Dregg discharge macaroon gateway")]
 struct Cli {
     /// Path to TOML configuration file.
     #[arg(short, long)]

@@ -120,7 +120,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             let embed = embeds::warning_embed(
                 "Recipient Has No Cipherclerk",
                 &format!(
-                    "<@{recipient_id}> does not have a pyana cclerk yet. They need to run `/cipherclerk create` first."
+                    "<@{recipient_id}> does not have a dregg cclerk yet. They need to run `/cipherclerk create` first."
                 ),
             );
             let _ = command

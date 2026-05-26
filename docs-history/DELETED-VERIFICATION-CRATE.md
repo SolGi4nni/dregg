@@ -1,4 +1,4 @@
-# Deleted: `verification/` (pyana-verification)
+# Deleted: `verification/` (dregg-verification)
 
 **Date:** 2026-05-24
 **Removed in:** this commit
@@ -7,8 +7,8 @@
 
 ## What the crate was
 
-A standalone Rust binary (`pyana-verification`, ~1850 LOC across
-`lib.rs` + `pyana_model.rs` + `main.rs` + `STAGE-3-AUDIT.md`) that built
+A standalone Rust binary (`dregg-verification`, ~1850 LOC across
+`lib.rs` + `dregg_model.rs` + `main.rs` + `STAGE-3-AUDIT.md`) that built
 an in-memory graph of "proof statements" (EffectVm, IvcFoldChain,
 IssuerMembership, DerivationProof, PresentationProof), declared
 semantic-typed bindings between their public inputs, and ran four

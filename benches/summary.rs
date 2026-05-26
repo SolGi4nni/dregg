@@ -1,7 +1,7 @@
 //! Performance summary: runs key operations and prints a formatted table.
 //!
 //! Run with: `cargo run --release --example summary` (from workspace root)
-//! Or:       `cargo run --release -p pyana-bench-summary`
+//! Or:       `cargo run --release -p dregg-bench-summary`
 
 use std::time::{Duration, Instant};
 
@@ -44,7 +44,7 @@ fn format_size(bytes: usize) -> String {
 fn main() {
     println!();
     println!("=============================================================================");
-    println!("  PYANA Performance Summary");
+    println!("  DREGG Performance Summary");
     println!("=============================================================================");
     println!();
     println!("{:<40} | {:<12} | {:<10}", "Operation", "Time", "Size");
@@ -54,7 +54,7 @@ fn main() {
     // Token Operations (macaroon)
     // -------------------------------------------------------------------------
     {
-        use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+        use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
         let key = {
             let mut k = [0u8; 32];
@@ -65,7 +65,7 @@ fn main() {
         // Macaroon mint
         let d = time_op(
             || {
-                let _ = MacaroonToken::mint(key, b"kid", "pyana.dev");
+                let _ = MacaroonToken::mint(key, b"kid", "dregg.dev");
             },
             10_000,
         );
@@ -77,7 +77,7 @@ fn main() {
         );
 
         // Macaroon verify (no caveats)
-        let token = MacaroonToken::mint(key, b"kid", "pyana.dev");
+        let token = MacaroonToken::mint(key, b"kid", "dregg.dev");
         let request = AuthRequest::default();
         let d = time_op(
             || {
@@ -94,7 +94,7 @@ fn main() {
 
         // Macaroon verify (5 caveats)
         let token5 = {
-            let mut t: Box<dyn AuthToken> = Box::new(MacaroonToken::mint(key, b"kid", "pyana.dev"));
+            let mut t: Box<dyn AuthToken> = Box::new(MacaroonToken::mint(key, b"kid", "dregg.dev"));
             for i in 0..5 {
                 let att = Attenuation {
                     apps: vec![(format!("app-{i}"), "r".into())],
@@ -133,8 +133,8 @@ fn main() {
     // STARK Proof Operations
     // -------------------------------------------------------------------------
     {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
         // 4-level Merkle membership STARK
         let siblings = [
@@ -211,7 +211,7 @@ fn main() {
     // IVC Operations
     // -------------------------------------------------------------------------
     {
-        use pyana_circuit::ivc::{create_test_chain, prove_ivc, verify_ivc};
+        use dregg_circuit::ivc::{create_test_chain, prove_ivc, verify_ivc};
 
         // IVC 5-step
         let (initial_root, deltas) = create_test_chain(5);
@@ -266,8 +266,8 @@ fn main() {
     // Poseidon2 / Field Operations
     // -------------------------------------------------------------------------
     {
-        use pyana_circuit::field::BabyBear;
-        use pyana_circuit::poseidon2::hash_4_to_1;
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_4_to_1;
 
         let input = [
             BabyBear::new(1),
@@ -310,7 +310,7 @@ fn main() {
     // -------------------------------------------------------------------------
     {
         use hints::sign as bls_sign;
-        use pyana_federation::{FederationCommittee, generate_test_committee};
+        use dregg_federation::{FederationCommittee, generate_test_committee};
 
         let (committee, secrets) = generate_test_committee(5, 3).unwrap();
         let msg = b"benchmark-message";
@@ -370,8 +370,8 @@ fn main() {
     // Wire Protocol
     // -------------------------------------------------------------------------
     {
-        use pyana_wire::codec;
-        use pyana_wire::message::{AuthorizationRequest, WireMessage};
+        use dregg_wire::codec;
+        use dregg_wire::message::{AuthorizationRequest, WireMessage};
 
         let msg = WireMessage::PresentToken {
             proof: vec![0xDE; 24 * 1024],

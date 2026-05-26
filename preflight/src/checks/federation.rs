@@ -1,9 +1,9 @@
 //! Federation checks: block advancement, root changes, nullifiers, note tree.
 
-use pyana_cell::{Note, NullifierSet};
-use pyana_circuit::BabyBear;
-use pyana_commit::poseidon2_tree::Poseidon2MerkleTree;
-use pyana_sdk::{EngineConfig, PyanaEngine};
+use dregg_cell::{Note, NullifierSet};
+use dregg_circuit::BabyBear;
+use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
+use dregg_sdk::{EngineConfig, DreggEngine};
 
 use crate::report::{CheckResult, run_check};
 
@@ -25,7 +25,7 @@ pub fn run() -> Vec<CheckResult> {
 }
 
 fn check_bls_threshold_aggregation() -> Result<(), String> {
-    use pyana_federation::threshold::generate_test_committee;
+    use dregg_federation::threshold::generate_test_committee;
     let (committee, members) =
         generate_test_committee(4, 3).map_err(|e| format!("committee creation failed: {e:?}"))?;
     let msg = b"preflight-bls-happy-path";
@@ -44,7 +44,7 @@ fn check_bls_threshold_aggregation() -> Result<(), String> {
 }
 
 fn check_bls_below_threshold_rejects() -> Result<(), String> {
-    use pyana_federation::threshold::generate_test_committee;
+    use dregg_federation::threshold::generate_test_committee;
     let (committee, members) =
         generate_test_committee(4, 3).map_err(|e| format!("committee creation failed: {e:?}"))?;
     let msg = b"preflight-bls-below-threshold";
@@ -60,7 +60,7 @@ fn check_bls_below_threshold_rejects() -> Result<(), String> {
 }
 
 fn check_bls_wrong_message_rejects() -> Result<(), String> {
-    use pyana_federation::threshold::generate_test_committee;
+    use dregg_federation::threshold::generate_test_committee;
     let (committee, members) =
         generate_test_committee(4, 3).map_err(|e| format!("committee creation failed: {e:?}"))?;
     let msg = b"preflight-bls-msg";
@@ -103,7 +103,7 @@ fn check_nullifier_double_spend() -> Result<(), String> {
     // Double spend: should fail
     let result = nullifier_set.insert(nullifier);
     match result {
-        Err(pyana_cell::NoteError::DoubleSpend { .. }) => {
+        Err(dregg_cell::NoteError::DoubleSpend { .. }) => {
             // Correct: double spend prevented
         }
         Ok(()) => return Err("double spend should be rejected".into()),

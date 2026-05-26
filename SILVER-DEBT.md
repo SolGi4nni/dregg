@@ -1,4 +1,4 @@
-# SILVER-DEBT.md — pyana's canonical Silver-vs-Golden debt ledger
+# SILVER-DEBT.md — dregg's canonical Silver-vs-Golden debt ledger
 
 **Date:** 2026-05-25 (STARBRIDGE-FOLLOWUP-03 update)
 **Source audits ingested:** `AIR-SOUNDNESS-AUDIT.md` (ce1e2def, 705 lines),
@@ -19,7 +19,7 @@ tracker status also mirrored in STARBRIDGE-PLAN.md §5.
 
 ## §0. Purpose
 
-This document is **pyana's canonical Silver-vs-Golden debt ledger**.
+This document is **dregg's canonical Silver-vs-Golden debt ledger**.
 
 **What it is.** A per-debt-item ledger listing every place the shipping
 implementation falls short of what the docs / tagline / paper claim, and
@@ -117,7 +117,7 @@ proof against any set by choosing `lower=0x00…, upper=0xFF…,
 tag=0xFE…`.
 
 **Fix (Silver-Sound):** `adjacency_tag` is now derived as
-`BLAKE3("pyana-nonmember-adj-v1" || set_commitment || lower || upper)` —
+`BLAKE3("dregg-nonmember-adj-v1" || set_commitment || lower || upper)` —
 commitment-bound per `(set, lower, upper)` triple. The public constant
 is gone; the forged-tag attack is closed at the Silver level. A full
 Merkle adjacency AIR proof (the Golden lift) remains on the roadmap.
@@ -136,7 +136,7 @@ fail-closed posture. The registry comment documents the old permissive
 behavior explicitly so future readers understand the change.
 
 Production deployments that want real verifiers still need the planned
-`pyana-witnessed-registry-default` crate (T1.4/T2.8 remains in
+`dregg-witnessed-registry-default` crate (T1.4/T2.8 remains in
 SILVER-DEBT as the "get real verifiers wired" story).
 
 ### T3.3 — CLOSED — Custom-effect VK widened to 8 BabyBear felts (2026-05-25, `46a886a5`)
@@ -184,7 +184,7 @@ the closure plan, the blocking severity.
 
 ### T1.1 — "proof-carrying capability mesh" tagline overstates trustless
 
-- **Claim source.** `NEW-WORLD.md:7` — *"pyana is a proof-carrying
+- **Claim source.** `NEW-WORLD.md:7` — *"dregg is a proof-carrying
   capability mesh"*; also `README.md` and `paper/` framing.
 - **Implied semantics.** Every authoritative state transition carries a
   proof that algebraically attests its correctness.
@@ -208,7 +208,7 @@ the closure plan, the blocking severity.
 ### T1.2 — `MockProofVerifier` in the trustless intent path
 
 - **Claim source.** `NEW-WORLD.md:92-101` *"Trustless intent matching …
-  Real STARK proofs via `pyana_circuit::multi_step_air` with
+  Real STARK proofs via `dregg_circuit::multi_step_air` with
   replay-resistant `request_hash` binding."*
 - **Code reality.** `intent/src/trustless.rs:682-698` —
   ```rust
@@ -240,7 +240,7 @@ the closure plan, the blocking severity.
 
 - **Claim source.** `cell/src/vk_v2.rs:213` `canonical_vk_v2` commits to
   `program_bytes || air_fingerprint || verifier_fingerprint.canonical_bytes()
-  || proving_system_id` under BLAKE3 derive-key `"pyana-vk-v2"`. Test
+  || proving_system_id` under BLAKE3 derive-key `"dregg-vk-v2"`. Test
   suite (vk_v2.rs:240-376) covers single-component sensitivity.
 - **Code reality.** `cell/src/cell.rs:36-46`:
   ```rust
@@ -276,7 +276,7 @@ the closure plan, the blocking severity.
 ### T1.4 — `StateConstraint::Witnessed` was "uncreatable in practice"
 
 - **Claim source.** `NEW-WORLD.md:46-53` *"The unifying insight is that
-  pyana has **many places** where 'this thing is allowed' is expressed …
+  dregg has **many places** where 'this thing is allowed' is expressed …
   and they all want the same predicate language. … The
   `WitnessedPredicateKindRegistry` maps `kind` to a verifier. **The same
   predicate vocabulary serves slot caveats and authorization** —
@@ -297,20 +297,20 @@ the closure plan, the blocking severity.
   except `NonMembership` is *rejected by default*. The host must
   manually install real verifiers; no production host wiring is checked
   into the tree (per `cell/src/predicate.rs:628-633`: "the cell crate
-  cannot depend on pyana-circuit (it would close a dependency cycle),
+  cannot depend on dregg-circuit (it would close a dependency cycle),
   so the real per-kind verifiers must be installed by the host at
   startup").
 - **Severity.** MEDIUM — slot caveats and `Authorization::Custom` work
   for `NonMembership` only by default. Everything else needs out-of-tree
   registry plumbing.
-- **Closure plan.** Create a `pyana-witnessed-registry-default` crate
-  that depends on both `pyana-cell` and `pyana-circuit` and exposes
+- **Closure plan.** Create a `dregg-witnessed-registry-default` crate
+  that depends on both `dregg-cell` and `dregg-circuit` and exposes
   `default_with_real_verifiers() -> WitnessedPredicateRegistry`
   populating each kind from its DSL backing (DFA from
   `circuit/src/dsl/circuit.rs:426`, membership from
   `dsl/membership.rs:256/312`, bridge from `bridge/src/present.rs`,
   Pedersen from `value_commitment.rs`). Every host binary
-  (`pyana-node`, `pyana-cli`, `starbridge`, `app-framework::AppServer`)
+  (`dregg-node`, `dregg-cli`, `starbridge`, `app-framework::AppServer`)
   calls `set_witnessed_registry(default_with_real_verifiers())` at
   startup. Add a `WitnessedPredicateRegistry::sanity_check_no_stubs()`
   API and call it under `cfg(production)`. Effort: medium (new crate +
@@ -396,7 +396,7 @@ the closure plan, the blocking severity.
   `FEDERATION-UNIFICATION-DESIGN.md` celebrates the collapse.
 - **Code reality.** `federation/src/lib.rs:84-102` carries an explicit
   in-source comment: *"the Morpheus BFT simulator (`node.rs` +
-  `transport.rs`) is **legally dead** — `pyana-blocklace` is the live
+  `transport.rs`) is **legally dead** — `dregg-blocklace` is the live
   consensus path. The simulator survives as in-crate code only because
   `teasting`, `wasm`, and `demo/sdc-consensus` still import it."* The
   simulator is re-exported as `MorpheusFederation`. ~2515 LOC of dead
@@ -467,10 +467,10 @@ the closure plan, the blocking severity.
   inputs. No default registry installs it (an app must explicitly
   register it), so it is *less dangerous* than the WitnessedPredicate
   default of `with_stubs()`. However, the type lives in the production
-  `pyana-cell` crate's public surface.
+  `dregg-cell` crate's public surface.
 - **Severity.** LOW (unless an app's host wiring uses
   `StubCustomEffectVerifier::new(...)` in production).
-- **Closure plan.** Either (a) move to a `pyana-cell-testing`
+- **Closure plan.** Either (a) move to a `dregg-cell-testing`
   sub-crate, or (b) rename `StubCustomEffectVerifier` →
   `DevelopmentOnlyStubCustomEffectVerifier` and add a
   `#[cfg(not(feature = "production"))]` gate. Effort: small.
@@ -496,7 +496,7 @@ severity, blocked-by relations.
   - `QueueEnqueue`: `queue_len: 0, program_vk: BabyBear::ZERO`
     (executor.rs:3384-3385).
   - `QueueDequeue`: `expected_message_hash` = domain-tagged
-    `BLAKE3("PYANA_DEQUEUE_HEAD/v1" || queue_id)` (executor.rs:3409-3414);
+    `BLAKE3("DREGG_DEQUEUE_HEAD/v1" || queue_id)` (executor.rs:3409-3414);
     not anchored to the actual head.
   - `QueueResize`: `old_capacity: 0` (executor.rs:3434).
   - `QueueAtomicTx`: `combined_old_root = hash_to_bb(cell_id)`
@@ -526,7 +526,7 @@ severity, blocked-by relations.
   `hash_2_to_1(cell_id, hash_2_to_1(random_seed, counter))` is
   self-consistent with any chosen (random_seed, counter). `EnlivenRef`
   derives `expected_cell_id` from
-  `BLAKE3("PYANA_SWISS_TABLE_LOOKUP/v1" || swiss || bearer)`
+  `BLAKE3("DREGG_SWISS_TABLE_LOOKUP/v1" || swiss || bearer)`
   (executor.rs:4017-4020) rather than reading the *target's*
   swiss_table_root from the ledger. `DropRef` projects
   `current_refcount: 1` (executor.rs:4054); the `refcount > 0` check is
@@ -668,7 +668,7 @@ severity, blocked-by relations.
   MerkleMembership / BlindedSet / BridgePredicate / PedersenEquality
   verifier is installed. Production hosts must wire one — and no
   in-tree host does.
-- **Closure design sketch.** See T1.4 — `pyana-witnessed-registry-default`
+- **Closure design sketch.** See T1.4 — `dregg-witnessed-registry-default`
   crate populating all six kinds from their DSL backings.
 - **Severity.** MEDIUM (`Witnessed` slot caveats / preconditions /
   `Authorization::Custom` of every kind except `NonMembership` are
@@ -736,7 +736,7 @@ severity, blocked-by relations.
   per-cell hookup is missing. `TemporalPredicate` needs dispatch to
   `circuit::temporal_predicate_dsl::verify_temporal_predicate` (after
   T1.5 binding fix). `Custom` needs dispatch into the
-  `pyana-dsl-runtime` (the crate exists; the executor never reaches
+  `dregg-dsl-runtime` (the crate exists; the executor never reaches
   it).
 - **Closure design sketch.** Per variant: intercept at executor's
   cell-program evaluation site, dispatch through the appropriate
@@ -804,7 +804,7 @@ severity, blocked-by relations.
   joint outer AIR has not.
 - **Silver check (real).** Phase 1: both sides produce independent
   proofs whose PIs cross-validate via the off-AIR
-  `pyana-verifier bilateral-pair` subcommand.
+  `dregg-verifier bilateral-pair` subcommand.
 - **Missing Golden constraint.** A single outer proof that verifies
   both inner proofs *and* enforces cross-cell agreement
   algebraically. Without Phase 2, multi-cell bilateral consistency is
@@ -955,7 +955,7 @@ Structural smells. Refactor cost: small / medium / large / painful.
   ```rust
   SetVerificationKey {
       cell: CellId,
-      new_vk: Option<pyana_cell::VerificationKey>,
+      new_vk: Option<dregg_cell::VerificationKey>,
   },
   ```
   `turn/src/executor.rs:7256-7261` (handler) checks only the
@@ -982,7 +982,7 @@ Structural smells. Refactor cost: small / medium / large / painful.
 
 - **Site.** No `AirVersion` in PI. `circuit/src/effect_vm.rs`'s AIR
   shape is the ground truth, *of one version*. If the AIR changes, all
-  old VKs silently incompatible. `pyana-dsl-differential` tests
+  old VKs silently incompatible. `dregg-dsl-differential` tests
   *predicates* across encoders but not cell-programs.
 - **Design implication.** Identity is VK-hash; VK-hash is derived from
   AIR shape; AIR shape is `const` at compile time. Houyhnhnm
@@ -1008,11 +1008,11 @@ Structural smells. Refactor cost: small / medium / large / painful.
   no one alive can re-derive what the program *did*. Encoder
   bug-fixes change VKs even for the same program. Houyhnhnm Ch.3 "source
   is canonical, binaries are caches" tenet inverted.
-- **Closure design sketch.** Add `pyana-program-registry`: a
+- **Closure design sketch.** Add `dregg-program-registry`: a
   content-addressed store of source programs keyed by source-hash, with
   `{source, encoder_version, derived_vk_hash}`. `FactoryDescriptor` and
   `Effect::SetVerificationKey` carry the *source-hash*; verifiers
-  derive the vk-hash. Same pattern `pyana-dsl-differential` already
+  derive the vk-hash. Same pattern `dregg-dsl-differential` already
   uses for the predicate sub-language.
 - **Refactor cost.** Large (1-2 weeks for the registry; ongoing for
   per-program-source authoring discipline).
@@ -1020,7 +1020,7 @@ Structural smells. Refactor cost: small / medium / large / painful.
 ### T3.7 — No persistence stream beyond the on-chain ledger
 
 - **Sites.** `wire/` CapTP session state is RAM. Capability handle
-  tables in `pyana-sdk` are not in any log. `intent/src/trustless.rs`
+  tables in `dregg-sdk` are not in any log. `intent/src/trustless.rs`
   holds in-flight ciphertexts and threshold-decryption shares in
   memory until t-of-n. Blocklace mempool is gossip-layer RAM.
   `starbridge/` browser session is WASM heap.
@@ -1254,7 +1254,7 @@ Reflects priorities already established in the source audits
 
 **FOLLOWUP-03 (2026-05-25) addendum (no-cargo progress):** coord sig verification
 confirmed landed (see Recently Retired); thin wasm stubs for snapshot/time-travel
-added in wasm/ (reduces effective gap for JS surfaces per pyana excellence
+added in wasm/ (reduces effective gap for JS surfaces per dregg excellence
 scope creep); precise doc annotations injected at all §5 heavy sites with
 exact PLAN/SILVER cross-refs + refined cargo order (see STARBRIDGE-PLAN §5
 for the 8-step plan with crate/feature/test commands). No §4 table changes
@@ -1268,7 +1268,7 @@ for the 8-step plan with crate/feature/test commands). No §4 table changes
 - T2.9 delete deprecated MultiStepStarkAir; migrate chunked
   derivation (medium).
 - T2.12 / T2.13 trusted-root and BLS aggregate hardening (medium).
-- T1.4 + T2.8 pyana-witnessed-registry-default crate (medium).
+- T1.4 + T2.8 dregg-witnessed-registry-default crate (medium).
 - T2.10 EvalContext sender_epoch_count / revealed_preimage plumbing
   (caveat-correctness lane, medium).
 
@@ -1307,8 +1307,8 @@ the code change (per §5 CI rule).
 ## §7. What's *not* debt
 
 These are explicit non-debt clarifications. Items that look like
-missing inverses but are *the point* of pyana's design. Future readers
-should consult before opening "why doesn't pyana have …" discussions.
+missing inverses but are *the point* of dregg's design. Future readers
+should consult before opening "why doesn't dregg have …" discussions.
 
 ### N7.1 — Revocation is correctly monotone (not "missing un-revoke")
 
@@ -1342,7 +1342,7 @@ for everyone)" are the right shape — the introducer revokes the
 *specific cap* via the existing revocation channel, not the
 *introduction relationship*.
 
-### N7.5 — `pyana` deliberately resists k-ary primitives
+### N7.5 — `dregg` deliberately resists k-ary primitives
 
 Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §12.2`: one-fed and pairwise
 operations are canonical; trilateral (Introduce) is special-cased;
@@ -1356,10 +1356,10 @@ routing bridges (`Effect::BridgeChain` Tier 2).
 
 The houyhnhnm reading (Ch.2 fractal persistence) *would* call this debt
 (see T3.7), but the audits agree that promoting non-ledger persistence
-is *its own protocol design*. Until pyana picks one non-ledger layer
+is *its own protocol design*. Until dregg picks one non-ledger layer
 and commits to extending the persistence stream there, the gap is
 *known and named* (in T3.7) but not framed as a soundness bug. If
-pyana never adds it, the right correction is to *narrow the
+dregg never adds it, the right correction is to *narrow the
 persistence claim*, not to fault the system for failing to live up to
 an unstated claim.
 
@@ -1384,19 +1384,19 @@ ensuring scope-2 callers always supply it (per
 
 ### N7.9 — `WitnessedPredicate` `Custom { vk_hash }` requiring host-side registry installation is correct
 
-The cell crate cannot depend on `pyana-circuit` (dependency cycle).
+The cell crate cannot depend on `dregg-circuit` (dependency cycle).
 The host installing real verifiers at startup is the *right* layering.
 The debt is *the absence of an in-tree default-host crate*
 (T1.4 / T2.8), not the layering itself.
 
-### N7.10 — `pyana-dsl-differential`'s 2 lint-only backends are not debt
+### N7.10 — `dregg-dsl-differential`'s 2 lint-only backends are not debt
 
 The differential test corpus has 40 cases × 5 voting backends; 2
 backends are lint-only. The lint-only role is deliberate (they validate
 syntactic shape but don't produce a vote because the backend cannot
 yet *generate* a proof to compare). This is the right posture during
 backend stabilization; the lint-only status is documented in
-`pyana-dsl-differential`'s README.
+`dregg-dsl-differential`'s README.
 
 ---
 

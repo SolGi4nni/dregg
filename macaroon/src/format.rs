@@ -2,20 +2,20 @@
 //!
 //! Wire format: MsgPack binary, base64url-encoded, with `em2_` prefix.
 //!
-//! - `em2_` = "Pyana Macaroon v2"
+//! - `em2_` = "Dregg Macaroon v2"
 //! - Base64 uses URL-safe alphabet, no padding
-//! - Authorization header: `PyanaV1 em2_<token>,em2_<discharge>,...`
+//! - Authorization header: `DreggV1 em2_<token>,em2_<discharge>,...`
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::error::MacaroonError;
 
-/// Prefix for Pyana Macaroon v2 tokens.
+/// Prefix for Dregg Macaroon v2 tokens.
 pub const TOKEN_PREFIX: &str = "em2_";
 
 /// Authorization header scheme.
-pub const AUTH_SCHEME: &str = "PyanaV1";
+pub const AUTH_SCHEME: &str = "DreggV1";
 
 /// Encode a binary macaroon to the wire format: `em2_<base64url>`.
 pub fn encode_token(binary: &[u8]) -> String {
@@ -39,7 +39,7 @@ pub fn decode_token(token: &str) -> Result<Vec<u8>, MacaroonError> {
 
 /// Format an Authorization header value from permission + discharge tokens.
 ///
-/// Result: `PyanaV1 em2_<permission>,em2_<discharge1>,em2_<discharge2>,...`
+/// Result: `DreggV1 em2_<permission>,em2_<discharge1>,em2_<discharge2>,...`
 pub fn format_auth_header(permission: &[u8], discharges: &[Vec<u8>]) -> String {
     let mut parts = Vec::with_capacity(1 + discharges.len());
     parts.push(encode_token(permission));
@@ -51,7 +51,7 @@ pub fn format_auth_header(permission: &[u8], discharges: &[Vec<u8>]) -> String {
 
 /// Parse an Authorization header value into permission + discharge tokens.
 ///
-/// Expected format: `PyanaV1 em2_<token>,em2_<token>,...`
+/// Expected format: `DreggV1 em2_<token>,em2_<token>,...`
 ///
 /// Returns `(permission_binary, vec_of_discharge_binaries)`.
 pub fn parse_auth_header(header: &str) -> Result<(Vec<u8>, Vec<Vec<u8>>), MacaroonError> {
@@ -99,7 +99,7 @@ mod tests {
         let d2 = vec![0x05, 0x06];
 
         let header = format_auth_header(&perm, &[d1.clone(), d2.clone()]);
-        assert!(header.starts_with("PyanaV1 em2_"));
+        assert!(header.starts_with("DreggV1 em2_"));
 
         let (parsed_perm, parsed_discharges) = parse_auth_header(&header).unwrap();
         assert_eq!(perm, parsed_perm);

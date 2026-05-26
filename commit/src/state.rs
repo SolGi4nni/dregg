@@ -1,6 +1,6 @@
 //! StateCommitment: the token state as a commitment to facts and rules.
 //!
-//! The state of a pyana token is the Merkle root of the combined fact+rule set.
+//! The state of a dregg token is the Merkle root of the combined fact+rule set.
 //! Rules are represented as facts with predicates prefixed by "rule:".
 //! The state commitment is what gets folded during attenuation.
 

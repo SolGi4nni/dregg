@@ -1,13 +1,13 @@
 /**
- * pyana explorer — API client module.
+ * dregg explorer — API client module.
  *
- * Connects to a pyana node's HTTP API and provides typed accessor methods
+ * Connects to a dregg node's HTTP API and provides typed accessor methods
  * for federation state queries. Node URL is configurable via localStorage.
  */
 
-const STORAGE_KEY = 'pyana_node_url';
-const ADMIN_TOKEN_KEY = 'pyana_admin_token';
-const DEFAULT_URL = 'https://devnet.pyana.fg-goose.online';
+const STORAGE_KEY = 'dregg_node_url';
+const ADMIN_TOKEN_KEY = 'dregg_admin_token';
+const DEFAULT_URL = 'https://devnet.dregg.fg-goose.online';
 
 /** Get the configured node URL. */
 export function getNodeUrl() {
@@ -29,17 +29,17 @@ export function getAdminToken() {
   return sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
 }
 
-/** Set the admin bearer token. Fires `pyana:admin-token-changed`. */
+/** Set the admin bearer token. Fires `dregg:admin-token-changed`. */
 export function setAdminToken(token) {
   if (token) sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
   else sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-  window.dispatchEvent(new CustomEvent('pyana:admin-token-changed'));
+  window.dispatchEvent(new CustomEvent('dregg:admin-token-changed'));
 }
 
 /** Clear the admin bearer token. */
 export function clearAdminToken() {
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-  window.dispatchEvent(new CustomEvent('pyana:admin-token-changed'));
+  window.dispatchEvent(new CustomEvent('dregg:admin-token-changed'));
 }
 
 /** Make a GET request to the node API. */
@@ -204,7 +204,7 @@ export async function listNames({ prefix = '', tag = '' } = {}) {
   return get(`/api/names${suffix}`);
 }
 
-/** Resolve a single name to its pyana:// URI + metadata. */
+/** Resolve a single name to its dregg:// URI + metadata. */
 export async function resolveName(name) {
   return get(`/api/names/${encodeURIComponent(name)}`);
 }

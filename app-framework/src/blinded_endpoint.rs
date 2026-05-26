@@ -10,7 +10,7 @@
 //! - `GET /status` — queue status JSON.
 //!
 //! All privacy-preserving mechanics (nullifier uniqueness, Merkle membership) live in
-//! `pyana_storage::blinded`. This module is a thin HTTP skin.
+//! `dregg_storage::blinded`. This module is a thin HTTP skin.
 //!
 //! # Triage (storage→cell-program migration — 2026-05-24)
 //!
@@ -50,7 +50,7 @@
 //! `StarbridgeAppContext::executor()`, surface the resulting receipt
 //! as JSON." That refactor blocks on the cell-program migration
 //! itself; in the interim this module continues to wrap
-//! `pyana_storage::blinded::BlindedQueue` directly.
+//! `dregg_storage::blinded::BlindedQueue` directly.
 //!
 //! When migrating: the existing tests (`commit_and_status_roundtrip`)
 //! become integration tests against the cell-program executor; the
@@ -60,7 +60,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
+//! use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
 //!
 //! let endpoint = FairDistributionEndpoint::new(64)
 //!     .with_distribution(32, current_height + 1000);
@@ -80,7 +80,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use pyana_storage::blinded::{
+use dregg_storage::blinded::{
     BlindedQueue, ConsumeResult, ConsumptionProof, FairDistribution, PrivateConsumptionProof,
 };
 

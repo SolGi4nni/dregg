@@ -35,13 +35,13 @@ export interface VerifyOptions {
 }
 
 /**
- * AgentCipherclerk wraps the pyana macaroon token operations into a stateful,
+ * AgentCipherclerk wraps the dregg macaroon token operations into a stateful,
  * object-oriented interface. It holds a root key and provides methods for
  * the full token lifecycle: mint, attenuate, verify.
  *
  * @example
  * ```ts
- * import { AgentCipherclerk } from "@pyana/sdk";
+ * import { AgentCipherclerk } from "@dregg/sdk";
  *
  * const cclerk = await AgentCipherclerk.create();
  * const token = await cclerk.mint("my-service");
@@ -56,9 +56,9 @@ export interface VerifyOptions {
  */
 export class AgentCipherclerk {
   private rootKey: Uint8Array;
-  private wasm: typeof import("pyana-wasm");
+  private wasm: typeof import("dregg-wasm");
 
-  private constructor(wasm: typeof import("pyana-wasm"), rootKey: Uint8Array) {
+  private constructor(wasm: typeof import("dregg-wasm"), rootKey: Uint8Array) {
     this.wasm = wasm;
     this.rootKey = rootKey;
   }
@@ -66,10 +66,10 @@ export class AgentCipherclerk {
   /**
    * Create a new AgentCipherclerk with a randomly generated root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @returns A new AgentCipherclerk instance with a fresh root key.
    */
-  static async create(wasm: typeof import("pyana-wasm")): Promise<AgentCipherclerk> {
+  static async create(wasm: typeof import("dregg-wasm")): Promise<AgentCipherclerk> {
     const keyResult: KeyResult = wasm.generate_root_key();
     const rootKey = new Uint8Array(keyResult.key_bytes);
     return new AgentCipherclerk(wasm, rootKey);
@@ -78,13 +78,13 @@ export class AgentCipherclerk {
   /**
    * Create an AgentCipherclerk from an existing root key.
    *
-   * @param wasm - The initialized pyana-wasm module.
+   * @param wasm - The initialized dregg-wasm module.
    * @param rootKey - A 32-byte root key (Uint8Array or hex string).
    * @returns A new AgentCipherclerk instance using the provided key.
    * @throws Error if the key is not exactly 32 bytes.
    */
   static fromKey(
-    wasm: typeof import("pyana-wasm"),
+    wasm: typeof import("dregg-wasm"),
     rootKey: Uint8Array | string
   ): AgentCipherclerk {
     const keyBytes =

@@ -7,7 +7,7 @@
 //! This module owns the plain data type so [`crate::peer_exchange`] can
 //! carry it on a [`crate::peer_exchange::PeerStateTransition`]. The
 //! accumulator-side logic (PI projection, kind→salt mapping, Poseidon2
-//! absorb) lives in `pyana_turn::bilateral_schedule` because it depends on
+//! absorb) lives in `dregg_turn::bilateral_schedule` because it depends on
 //! the circuit's PI layout.
 //!
 //! See `CROSS-CELL-CATEGORICAL-ANALYSIS.md` §3.5 for the categorical lens.
@@ -64,7 +64,7 @@ impl UnilateralAttestation {
         effects_hash: &[u8; 32],
     ) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-unilateral-self-state-transition-v1");
+        hasher.update(b"dregg-unilateral-self-state-transition-v1");
         hasher.update(cell_id.as_bytes());
         hasher.update(old_commit);
         hasher.update(new_commit);
@@ -78,7 +78,7 @@ impl UnilateralAttestation {
     /// Canonical helper: a SelfNonceBump attestation over (prev_nonce, new_nonce).
     pub fn self_nonce_bump(cell_id: &CellId, prev_nonce: u64, new_nonce: u64) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-unilateral-self-nonce-bump-v1");
+        hasher.update(b"dregg-unilateral-self-nonce-bump-v1");
         hasher.update(cell_id.as_bytes());
         hasher.update(&prev_nonce.to_be_bytes());
         hasher.update(&new_nonce.to_be_bytes());
@@ -98,7 +98,7 @@ impl UnilateralAttestation {
         signature: &[u8; 64],
     ) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-unilateral-sovereign-witness-v1");
+        hasher.update(b"dregg-unilateral-sovereign-witness-v1");
         hasher.update(cell_id.as_bytes());
         hasher.update(pubkey);
         hasher.update(&sequence.to_be_bytes());

@@ -1,6 +1,6 @@
 /**
  * Merkle tree operations: root computation, membership proofs, and
- * non-membership proofs using pyana's 4-ary BLAKE3 Merkle tree.
+ * non-membership proofs using dregg's 4-ary BLAKE3 Merkle tree.
  */
 
 import type {
@@ -10,14 +10,14 @@ import type {
 } from "./types";
 
 /**
- * MerkleTree provides operations on pyana's authenticated data structure:
+ * MerkleTree provides operations on dregg's authenticated data structure:
  * computing roots from leaf sets, proving membership, and proving non-membership.
  *
  * All operations use the same BLAKE3-based 4-ary Merkle tree as the Rust backend.
  *
  * @example
  * ```ts
- * import { MerkleTree } from "@pyana/sdk";
+ * import { MerkleTree } from "@dregg/sdk";
  *
  * const tree = new MerkleTree(wasm);
  *
@@ -33,9 +33,9 @@ import type {
  * ```
  */
 export class MerkleTree {
-  private wasm: typeof import("pyana-wasm");
+  private wasm: typeof import("dregg-wasm");
 
-  constructor(wasm: typeof import("pyana-wasm")) {
+  constructor(wasm: typeof import("dregg-wasm")) {
     this.wasm = wasm;
   }
 

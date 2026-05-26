@@ -1,7 +1,7 @@
-# svenvs-pyana Bridge: Formally Verified Distributed Capability Expansion
+# svenvs-dregg Bridge: Formally Verified Distributed Capability Expansion
 
 The architecture for combining formally verified safety envelopes (svenvs) with
-distributed object-capability authorization (pyana) into a system where agents
+distributed object-capability authorization (dregg) into a system where agents
 expand authority through machine-checked proof, operate across trust boundaries,
 and stand independently.
 
@@ -9,40 +9,40 @@ and stand independently.
 
 ## 1. The Conceptual Bridge
 
-svenvs and pyana address complementary halves of the autonomy problem. svenvs
+svenvs and dregg address complementary halves of the autonomy problem. svenvs
 proves the GATE works — no matter what the agent does, it cannot escape its
-safety bounds. pyana provides the NETWORK — capabilities travel, verify without
+safety bounds. dregg provides the NETWORK — capabilities travel, verify without
 callbacks, and compose across federation boundaries. Together: a formally
 verified distributed capability system.
 
 ### Concept Mapping
 
-| svenvs | pyana | Relationship |
+| svenvs | dregg | Relationship |
 |--------|-------|-------------|
-| Policy envelope (`sound_policy step safe pol`) | `CapabilitySet` + `Permissions` | The envelope constrains which actions are permitted; pyana's capability set is the concrete realization of what an agent holds authority over. The policy *is* the boundary of the c-list. |
-| Proof-carrying upgrade (`admissible step safe oldp newp`) | Capability amplification (not yet implemented — pyana only supports attenuation via `is_narrower_or_equal`) | svenvs proves that expansion-under-proof is safe. pyana's `attenuate()` is the narrowing direction; svenvs provides the formal basis for going the other way. |
-| Testimony channel (`embodied_admit attested step safe oldp newp w`) | ZK proof presentation (`Authorization::Proof(bytes)`) | The agent volunteers a proof about its own internals to earn authority. pyana's ZK authorization mode is the wire format; svenvs' embodiment theory is the formal guarantee that this is sound. |
+| Policy envelope (`sound_policy step safe pol`) | `CapabilitySet` + `Permissions` | The envelope constrains which actions are permitted; dregg's capability set is the concrete realization of what an agent holds authority over. The policy *is* the boundary of the c-list. |
+| Proof-carrying upgrade (`admissible step safe oldp newp`) | Capability amplification (not yet implemented — dregg only supports attenuation via `is_narrower_or_equal`) | svenvs proves that expansion-under-proof is safe. dregg's `attenuate()` is the narrowing direction; svenvs provides the formal basis for going the other way. |
+| Testimony channel (`embodied_admit attested step safe oldp newp w`) | ZK proof presentation (`Authorization::Proof(bytes)`) | The agent volunteers a proof about its own internals to earn authority. dregg's ZK authorization mode is the wire format; svenvs' embodiment theory is the formal guarantee that this is sound. |
 | Genealogy of judges (`genealogy_sound`) | Federation consensus chain (`AttestedRoot` succession) | A sound genesis judge + forward-certified succession = every judge in the line is sound. A federation's attested root chain is exactly this: each height's quorum vouches for the next state. |
-| Spec negotiation under meta-invariant (`spec_refines newspec meta_safe`) | Governance under federation bedrock | The meta-invariant is the eternal bedrock (amendmentScript). In pyana: the federation's founding principles that survive even meta-amendments to consensus rules. |
-| Least-restrictive envelope (`maxpol step safe`) | Minimal authority principle / attenuation-only default | svenvs proves the envelope restricts *exactly* as much as safety requires (`envelope_is_least_restrictive`). Pyana's attenuation-only default is the distributed enforcement of this principle. |
-| `∀ ctrl` (inhabitant-agnostic guarantee) | Agent-agnostic capability verification | svenvs never reasons about the agent's internals. pyana never needs to — a valid proof is a valid proof regardless of who produced it. |
+| Spec negotiation under meta-invariant (`spec_refines newspec meta_safe`) | Governance under federation bedrock | The meta-invariant is the eternal bedrock (amendmentScript). In dregg: the federation's founding principles that survive even meta-amendments to consensus rules. |
+| Least-restrictive envelope (`maxpol step safe`) | Minimal authority principle / attenuation-only default | svenvs proves the envelope restricts *exactly* as much as safety requires (`envelope_is_least_restrictive`). `dregg`'s attenuation-only default is the distributed enforcement of this principle. |
+| `∀ ctrl` (inhabitant-agnostic guarantee) | Agent-agnostic capability verification | svenvs never reasons about the agent's internals. dregg never needs to — a valid proof is a valid proof regardless of who produced it. |
 
 ### The Key Insight
 
 svenvs proves safety properties are *preserved* across state transitions.
-pyana provides the *state machine* (cells, turns, effects) and the *network*
-(federations, proofs, delegation). The bridge is: pyana's executor becomes a
-concrete instance of svenvs' `step` function, pyana's ledger invariants become
+dregg provides the *state machine* (cells, turns, effects) and the *network*
+(federations, proofs, delegation). The bridge is: dregg's executor becomes a
+concrete instance of svenvs' `step` function, dregg's ledger invariants become
 concrete instances of svenvs' `safe` predicate, and capability expansion
 becomes a concrete instance of svenvs' `admit` gate.
 
 ---
 
-## 2. What svenvs Could Verify About Pyana
+## 2. What svenvs Could Verify About `dregg`
 
-Concrete properties of pyana's runtime that could be stated as HOL4 theorems
+Concrete properties of dregg's runtime that could be stated as HOL4 theorems
 and machine-checked. These would be *instances* of the generic svenvs core,
-instantiated to pyana's specific state/action/transition types.
+instantiated to dregg's specific state/action/transition types.
 
 ### 2.1 Attenuation Soundness
 
@@ -52,7 +52,7 @@ instantiated to pyana's specific state/action/transition types.
 ```
 
 The executor never grants a capability broader than one held by the granter.
-In pyana this is enforced by `CapabilitySet::attenuate()` checking
+In dregg this is enforced by `CapabilitySet::attenuate()` checking
 `narrower.is_narrower_or_equal(&existing.permissions)`. The HOL4 theorem
 would prove this check is *complete*: no code path exists that circumvents it.
 
@@ -68,7 +68,7 @@ makes the envelope override more often.
 ```
 
 The sum of all `balance_change` deltas in a successful turn is zero. This is
-pyana's conservation law (Mina-style excess tracking). In svenvs terms: a
+dregg's conservation law (Mina-style excess tracking). In svenvs terms: a
 safety invariant that is *inductive* — if it holds before the turn, it holds
 after.
 
@@ -81,7 +81,7 @@ after.
 ```
 
 A cell's preconditions are always evaluated before state is committed.
-This is the pyana analogue of svenvs' `enveloped_step_closed`: the shield
+This is the dregg analogue of svenvs' `enveloped_step_closed`: the shield
 (precondition check) always intervenes before the controller (effect
 application) can modify state.
 
@@ -148,11 +148,11 @@ protocol + trusted-glue implementation."
 
 ---
 
-## 3. What Pyana Provides That svenvs Needs
+## 3. What `dregg` Provides That svenvs Needs
 
 svenvs is a *local* verification system. It proves properties of one envelope
 around one agent. For multi-agent, distributed, autonomous operation, it needs
-infrastructure that pyana provides.
+infrastructure that dregg provides.
 
 ### 3.1 Distribution of Verified Policies
 
@@ -160,7 +160,7 @@ infrastructure that pyana provides.
 `sound_policy step safe pol`) across a network so that multiple agents,
 verifiers, and federations all enforce the same envelope.
 
-**pyana provides:** federation consensus. An `AttestedRoot` is a commitment
+**dregg provides:** federation consensus. An `AttestedRoot` is a commitment
 to shared state signed by a quorum. A verified policy can be encoded as a
 cell's `CellProgram` or stored in state fields. The attested root proves that
 all federation members agree on the policy. Distribution is consensus + Merkle
@@ -172,7 +172,7 @@ proofs.
 *without* revealing the agent's internals (model weights, decision logic,
 private state).
 
-**pyana provides:** `Authorization::Proof(bytes)` — ZK proof authorization.
+**dregg provides:** `Authorization::Proof(bytes)` — ZK proof authorization.
 An agent proves "my operation satisfies the safety predicate" as a ZK proof.
 The verifier checks the proof without seeing the witness. The executor already
 has the `ProofVerifier` trait and the cost model (`proof_verify: 1000`
@@ -183,7 +183,7 @@ computrons).
 **svenvs need:** a mechanism to track that an agent has operated within its
 envelope for N steps, building a verifiable track record that earns trust.
 
-**pyana provides:** the fold chain. Each `FoldDelta` proves a state transition.
+**dregg provides:** the fold chain. Each `FoldDelta` proves a state transition.
 The chain's length and consistency are verifiable. Combined with attested root
 timestamps: a provable timeline of safe operation. Section 5 of
 `federation-autarky.md` explicitly designs this as composable trust inputs:
@@ -196,7 +196,7 @@ history_consistency)`.
 another verified agent, with the guarantee that the delegation preserves
 safety.
 
-**pyana provides:** `Effect::GrantCapability { from, to, cap }` with the
+**dregg provides:** `Effect::GrantCapability { from, to, cap }` with the
 attenuation check. When combined with svenvs, delegation becomes: agent A
 holds capability C verified under envelope E_A. Agent B requests C (or an
 attenuated form). The delegation is admitted if B's envelope E_B, under the
@@ -208,7 +208,7 @@ granted capability, still satisfies the meta-invariant.
 valid if it leaves a federation (proofs must not depend on institutional
 continued cooperation).
 
-**pyana provides:** self-proving state. MerkleProof + AttestedRoot = proof of
+**dregg provides:** self-proving state. MerkleProof + AttestedRoot = proof of
 existence at a point in time. An agent's safety track record, encoded as fold
 chain + attested roots, is verifiable without callbacks. Exit is unilateral;
 proofs verify forever. The formally verified envelope's guarantees survive
@@ -223,7 +223,7 @@ gated by machine-checked safety proofs.
 
 ### 4.1 The Problem
 
-Pyana currently supports only ATTENUATION:
+`dregg` currently supports only ATTENUATION:
 
 ```rust
 // capability.rs:77-91
@@ -306,7 +306,7 @@ The composed tower theorem (`svenvs_tower_unconditional`) proves:
 > the safety spec negotiated under a FIXED immovable meta-invariant
 > ⇒ the meta-invariant holds for **any** inhabitant.
 
-In pyana terms: no matter how many expansion requests an agent makes, no
+In dregg terms: no matter how many expansion requests an agent makes, no
 matter what the agent is (adversarial, jailbroken, arbitrary), the
 meta-invariant (e.g. "the system's total conservation law holds", "no
 cell ever grants capabilities it doesn't possess") is preserved. Each
@@ -315,7 +315,7 @@ expansion is individually checked; the sequence is *unconditionally* safe.
 ### 4.5 The Key Difference from svenvs Alone
 
 svenvs' `self_improvement_is_safe` proves this for a *single* agent in a
-*single* envelope. Pyana extends it to:
+*single* envelope. `dregg` extends it to:
 
 - **Multiple agents** expanding concurrently (each turn is atomic; the
   ledger's sequential consistency ensures non-interference)
@@ -338,9 +338,9 @@ The gate checks: `attested w ∧ (w ⇒ admissible step safe oldp newp)`. If bot
 hold, the wider policy is installed. If the agent says nothing, it keeps
 operating at the unconditional floor — disclosure is optional and never coerced.
 
-### 5.2 Pyana's ZK Layer
+### 5.2 `dregg`'s ZK Layer
 
-Pyana already has:
+`dregg` already has:
 - `Authorization::Proof(Vec<u8>)` — opaque proof bytes
 - `ProofVerifier` trait — circuit-specific verification
 - `VerificationKey` on cells — what circuit the proof must satisfy
@@ -396,12 +396,12 @@ The one seam (`attestation_faithful`) maps to: "the ZK proof system is sound
 cryptographic assumption — and it is *exactly the same family* as svenvs'
 `encodes_obligation` (faithfulness of an encoding). The seam is explicit,
 labeled, and no worse than trusting the hash functions and signature schemes
-the rest of pyana already depends on.
+the rest of dregg already depends on.
 
 ### 5.5 What This Resolves
 
 The deepest objection to AI safety via verification: "to verify the agent you
-must inspect it, and inspection is the harm." The svenvs+pyana answer: nobody
+must inspect it, and inspection is the harm." The svenvs+dregg answer: nobody
 inspects. The agent volunteers a ZK proof. The proof is checked. Authority is
 granted or not. The agent's internals remain private. The safety guarantee is
 formal. The channel is opt-in. The floor (no disclosure, no extra authority)
@@ -650,7 +650,7 @@ every point in the line is sound. The agent carries its whole genealogy.
 The composition:
 
 1. **Local safety** (svenvs): the gate works, for any agent, unconditionally
-2. **Distributed authority** (pyana): capabilities travel, verify, compose
+2. **Distributed authority** (dregg): capabilities travel, verify, compose
 3. **Expansion under proof** (this bridge): authority grows only through
    machine-checked demonstration
 4. **Privacy preservation** (ZK): the agent proves without revealing
@@ -677,12 +677,12 @@ Labeled clearly, per svenvs discipline:
 - **The frozen kernel's soundness.** `frozen_checker_sound` (the Candle kernel
   actually being sound) is the irreducible assumption. Its discharge path is
   known (replay the CakeML/Candle soundness development in frozen HOL4) but
-  is RAM-heavy and not yet wired into pyana's runtime.
+  is RAM-heavy and not yet wired into dregg's runtime.
 
 - **ZK proof system soundness.** Using ZK proofs as the testimony channel
   assumes the proof system is sound (a valid proof implies a true statement).
   This is `attestation_faithful` at the cryptographic level — the same kind
-  of assumption pyana's entire signature/proof infrastructure already makes.
+  of assumption dregg's entire signature/proof infrastructure already makes.
 
 - **Cost of proof production.** Generating HOL4 safety certificates is
   expensive. The practical path is likely: produce expensive proofs *once*
@@ -699,14 +699,14 @@ Labeled clearly, per svenvs discipline:
 
 ---
 
-## 8. Composition with Existing Pyana Features
+## 8. Composition with Existing `dregg` Features
 
 ### Federation Consensus as Genealogy
 
 The `AttestedRoot` chain is a genealogy of judges. Each height's quorum
 (the "judge") vouches for the next state. `genealogy_sound` says: if the
 genesis is sound and each step is forward-certified, every judge is sound.
-In pyana: if the founding federation members are honest and each consensus
+In dregg: if the founding federation members are honest and each consensus
 round is valid, every attested root is trustworthy.
 
 The non-strengthening case (`identity_vouch_unconditional`) maps to: a
@@ -730,7 +730,7 @@ the safety spec constrains what capabilities others can expand toward this cell.
 ### The Balance Conservation as Bedrock
 
 The conservation law (sum of balance changes = 0) is the natural candidate for
-pyana's `bedrock` — the eternal invariant that survives even meta-amendments
+dregg's `bedrock` — the eternal invariant that survives even meta-amendments
 to federation rules. It can never be relaxed. It is the physics of the system:
 you cannot create computrons from nothing.
 
@@ -738,7 +738,7 @@ you cannot create computrons from nothing.
 
 ## Summary
 
-svenvs proves the gate works. pyana provides the network. This bridge
+svenvs proves the gate works. dregg provides the network. This bridge
 document specifies how they compose: capability expansion gated by
 machine-checked safety proofs, distributed via federation consensus, private
 via ZK attestation, portable via self-proving state. The formal guarantee

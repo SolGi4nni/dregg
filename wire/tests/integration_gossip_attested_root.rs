@@ -13,7 +13,7 @@
 //!      known-sender path directly via `is_valid`).
 //!   5. Duplicate-signer replay does not count toward quorum.
 
-use pyana_types::{AttestedRoot, FederationId, PublicKey, generate_keypair, sign};
+use dregg_types::{AttestedRoot, FederationId, PublicKey, generate_keypair, sign};
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -26,7 +26,7 @@ fn build_attested_root(
     merkle_root: [u8; 32],
     height: u64,
     timestamp: i64,
-    signers: &[(pyana_types::SigningKey, PublicKey)],
+    signers: &[(dregg_types::SigningKey, PublicKey)],
     threshold: usize,
 ) -> AttestedRoot {
     let mut root = AttestedRoot {

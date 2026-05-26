@@ -262,7 +262,7 @@ fn generate_offer_match_proof(intent: &Intent, mode: VerificationMode) -> Option
         VerificationMode::Trusted => None,
         VerificationMode::Selective | VerificationMode::Private => {
             // Produce a commitment proving we evaluated the offer and determined need.
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-offer-match-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-offer-match-v1");
             hasher.update(&intent.id);
             let mut rand_bytes = [0u8; 32];
             crate::getrandom(&mut rand_bytes);
@@ -549,7 +549,7 @@ fn generate_proof(
             // Issue #3: Include randomness to prevent correlation across matches.
             // Without a nonce, two matches from the same token produce identical
             // hashes, leaking that the same token was used.
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-selective-match-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-selective-match-v1");
             hasher.update(&intent.id);
             hasher.update(token.token_id.as_bytes());
             for action in &token.actions {
@@ -564,7 +564,7 @@ fn generate_proof(
         }
         VerificationMode::Private => {
             // In private mode, we would generate a full STARK proof via
-            // pyana-circuit's prove_authorization_stark. The proof demonstrates:
+            // dregg-circuit's prove_authorization_stark. The proof demonstrates:
             // - There exists a token T in the cclerk
             // - T's Datalog evaluation produces ALLOW for the intent's MatchSpec
             // - T is not expired
@@ -572,7 +572,7 @@ fn generate_proof(
             //
             // For now, produce a commitment (the real circuit integration comes
             // when the multi_step_air is wired up to this matcher).
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-private-match-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-private-match-v1");
             hasher.update(&intent.id);
             hasher.update(token.token_id.as_bytes());
             // Add randomness so the proof doesn't leak token identity across matches

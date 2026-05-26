@@ -1,4 +1,4 @@
-//! # pyana-cell
+//! # dregg-cell
 //!
 //! The agent cell model: capability-secure isolated execution contexts.
 //!
@@ -44,7 +44,7 @@ pub mod state;
 pub mod stealth;
 /// γ.2 unilateral binding (1-arity sibling) — plain data type used by
 /// `peer_exchange` to ship per-cell self-attestations. PI / accumulator
-/// logic lives in `pyana_turn::bilateral_schedule`.
+/// logic lives in `dregg_turn::bilateral_schedule`.
 pub mod unilateral;
 #[cfg(feature = "crypto")]
 pub mod value_commitment;

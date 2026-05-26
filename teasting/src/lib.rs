@@ -1,9 +1,9 @@
-//! `pyana-teasting`: Integration test simulation suite.
+//! `dregg-teasting`: Integration test simulation suite.
 //!
 //! "Tease testing" — if it wasn't a test it would be the live chain.
 //!
 //! This crate provides a multi-node simulation harness for end-to-end testing of
-//! pyana's authorization, consensus, and privacy systems. Unlike the unit tests in
+//! dregg's authorization, consensus, and privacy systems. Unlike the unit tests in
 //! individual crates (circuit, turn, federation), these tests exercise complete flows:
 //!
 //! - Token lifecycle: mint → attenuate → delegate → present → verify

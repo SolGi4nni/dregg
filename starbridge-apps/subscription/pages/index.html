@@ -15,21 +15,21 @@
       time.
 
       Wired-in JS:
-        - /pkg/pyana_wasm.js                                — in-browser node
+        - /pkg/dregg_wasm.js                                — in-browser node
         - /_includes/studio/runtimes.js                     — runtime registry
         - /starbridge-apps/shared/inspectors/index.js       — inspector registry
-        - /starbridge-apps/subscription/inspectors.js       — <pyana-subscription>,
-                                                              <pyana-subscription-publish-form>,
-                                                              <pyana-subscription-feed>
+        - /starbridge-apps/subscription/inspectors.js       — <dregg-subscription>,
+                                                              <dregg-subscription-publish-form>,
+                                                              <dregg-subscription-feed>
         - /starbridge-apps/subscription/turn-builders.js    — publish/consume/grant_*
-                                                              presets (window.pyana.builders.subscription)
+                                                              presets (window.dregg.builders.subscription)
         - /starbridge-apps/shared/turn-builders/index.js    — signed Action presets
     -->
     <link rel="stylesheet" href="/_includes/studio/styles.css" />
   </head>
   <body>
     <header class="starbridge-subscription-chrome">
-      <h1>Pyana Subscription</h1>
+      <h1><code>dregg</code> Subscription</h1>
       <p>Publisher/consumer message queues whose invariants
          (<code>MonotonicSequence</code> on head/tail,
          <code>Immutable</code> on capacity + owner,
@@ -46,17 +46,17 @@
          comparison.</em></p>
     </header>
     <main>
-      <pyana-app
+      <dregg-app
         runtime="in-memory"
         factory-vk="73746172627269646765-73756273637269707469-6f6e2d666163746f7279-21"
-        registry-uri="pyana://cell/subscription-default"
+        registry-uri="dregg://cell/subscription-default"
       >
-        <pyana-subscription slot="primary"></pyana-subscription>
-        <pyana-subscription-publish-form slot="publisher"></pyana-subscription-publish-form>
-        <pyana-subscription-feed slot="consumer"></pyana-subscription-feed>
-      </pyana-app>
+        <dregg-subscription slot="primary"></dregg-subscription>
+        <dregg-subscription-publish-form slot="publisher"></dregg-subscription-publish-form>
+        <dregg-subscription-feed slot="consumer"></dregg-subscription-feed>
+      </dregg-app>
     </main>
-    <script type="module" src="/pkg/pyana_wasm.js"></script>
+    <script type="module" src="/pkg/dregg_wasm.js"></script>
     <script type="module" src="/_includes/studio/runtimes.js"></script>
     <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
     <script type="module" src="/starbridge-apps/subscription/inspectors.js"></script>

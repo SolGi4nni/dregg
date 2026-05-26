@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use pyana_cell::{CellId, Ledger};
+use dregg_cell::{CellId, Ledger};
 
 use crate::budget_gate::DebitDigest;
 use crate::conflict::extract_access_sets;
@@ -422,7 +422,7 @@ pub fn process_fast_path_lock(
 /// - Full mode: `quorum_threshold(n)` (standard BFT threshold)
 /// - Solo mode: `1` (single local node signature is sufficient)
 ///
-/// Use `pyana_federation::effective_quorum_threshold(mode, n)` to compute the
+/// Use `dregg_federation::effective_quorum_threshold(mode, n)` to compute the
 /// correct threshold for the current operating mode.
 pub fn assemble_certificate(
     turn: Turn,
@@ -536,8 +536,8 @@ fn fast_path_signing_message(turn_hash: &[u8; 32]) -> [u8; 32 + FAST_PATH_DOMAIN
     out
 }
 
-/// Domain separator for fast-path signatures (`pyana-fast-path-sign-v2`).
-const FAST_PATH_DOMAIN: &[u8] = b"pyana-fast-path-sign-v2";
+/// Domain separator for fast-path signatures (`dregg-fast-path-sign-v2`).
+const FAST_PATH_DOMAIN: &[u8] = b"dregg-fast-path-sign-v2";
 
 /// Produce an Ed25519 fast-path signature over `turn_hash` from a 32-byte seed.
 ///
@@ -587,7 +587,7 @@ mod tests {
     use super::*;
     use crate::action::{Action, Authorization, Effect};
     use crate::forest::CallForest;
-    use pyana_cell::{Cell, Ledger};
+    use dregg_cell::{Cell, Ledger};
 
     /// Test helper: derive a deterministic Ed25519 keypair from a u8 seed.
     fn keypair_from_seed(seed: u8) -> ([u8; 32], [u8; 32]) {
@@ -640,7 +640,7 @@ mod tests {
     fn make_cross_cell_turn(agent_id: CellId, target_id: CellId) -> Turn {
         use crate::action::DelegationMode;
         use crate::forest::CallTree;
-        use pyana_cell::Preconditions;
+        use dregg_cell::Preconditions;
 
         let action = Action {
             target: target_id,
@@ -921,7 +921,7 @@ mod tests {
     fn make_valid_own_cell_turn(agent_id: CellId) -> Turn {
         use crate::action::DelegationMode;
         use crate::forest::CallTree;
-        use pyana_cell::Preconditions;
+        use dregg_cell::Preconditions;
 
         let action = Action {
             target: agent_id,
@@ -1154,11 +1154,11 @@ mod tests {
         // Old forgery technique: BLAKE3-keyed-hash where the key is the public
         // identity. Anyone who learned the public key could compute this.
         let mut hasher = blake3::Hasher::new_keyed(&validator_pk);
-        hasher.update(b"pyana-fast-path-sign-v1");
+        hasher.update(b"dregg-fast-path-sign-v1");
         hasher.update(&turn_hash);
         let lo = hasher.finalize();
         let mut hasher2 = blake3::Hasher::new_keyed(&validator_pk);
-        hasher2.update(b"pyana-fast-path-sign-v1-ext");
+        hasher2.update(b"dregg-fast-path-sign-v1-ext");
         hasher2.update(&turn_hash);
         let hi = hasher2.finalize();
         let mut forged = [0u8; 64];

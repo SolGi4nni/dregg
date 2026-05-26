@@ -11,9 +11,9 @@
 
 use crate::Invariant;
 use proptest::prelude::*;
-use pyana_cell::CellId;
-use pyana_turn::DelegationMode;
-use pyana_turn::action::{Action, Authorization, BearerCapProof, DelegationProofData};
+use dregg_cell::CellId;
+use dregg_turn::DelegationMode;
+use dregg_turn::action::{Action, Authorization};
 
 pub struct AuthorizationHashDomainSeparation;
 impl Invariant for AuthorizationHashDomainSeparation {
@@ -114,7 +114,7 @@ proptest! {
         let mk = |exp: u64| {
             Authorization::Bearer(BearerCapProof {
                 target,
-                permissions: pyana_cell::AuthRequired::None,
+                permissions: dregg_cell::AuthRequired::None,
                 delegation_proof: DelegationProofData::SignedDelegation {
                     delegator_pk: delegator,
                     signature: [0u8; 64],
@@ -138,8 +138,8 @@ proptest! {
         commit_a in any::<[u8; 32]>(),
         commit_b in any::<[u8; 32]>(),
     ) {
-        use pyana_cell::predicate::WitnessedPredicate;
-        use pyana_cell::InputRef;
+        use dregg_cell::predicate::WitnessedPredicate;
+        use dregg_cell::InputRef;
         prop_assume!(commit_a != commit_b);
         let pa = WitnessedPredicate::dfa(commit_a, InputRef::SigningMessage, 0);
         let pb = WitnessedPredicate::dfa(commit_b, InputRef::SigningMessage, 0);

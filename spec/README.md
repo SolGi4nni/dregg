@@ -1,6 +1,6 @@
-# pyana cell-model spec (TLA+)
+# dregg cell-model spec (TLA+)
 
-A formal specification of pyana's cell-model invariants. The goal is an
+A formal specification of dregg's cell-model invariants. The goal is an
 honest, audit-against-Rust foundation — a reader should be able to point at
 each TLA+ predicate and find the corresponding code in `cell/src/*` and
 `turn/src/*`.
@@ -82,7 +82,7 @@ lattice is partial:
 - The action-level property `NoAmplificationProperty` is the strictly
   stronger statement: every freshly granted cap (in `caps' \ caps`) must
   be derivable by attenuation from the prior state.
-- Rust analog: `pyana_cell::is_attenuation` callsites in
+- Rust analog: `dregg_cell::is_attenuation` callsites in
   `turn/src/executor.rs:4265` and `:5980`.
 
 ### I4. Balance conservation across a turn
@@ -105,7 +105,7 @@ companion action property `TurnConservesBalanceProperty` says the
 conserved quantity (total balance + burned − endowments) is unchanged
 across every step.
 
-Rust analog: `pyana-protocol-tests/src/invariants/balance_conservation.rs`.
+Rust analog: `dregg-protocol-tests/src/invariants/balance_conservation.rs`.
 
 ### I5. Receipt-chain causal soundness
 
@@ -304,6 +304,6 @@ conservation, I5 receipt-chain causal soundness). Remaining priorities:
 | `IdentityIntegrity` invariant    | `pub(crate) id`/`public_key`/`token_id` sealing in `cell/src/cell.rs` |
 | `MonotonicNonce` property        | nonce-replay rejection in `turn/src/executor.rs`        |
 | `AttenuationSoundness` invariant | `is_attenuation` callsites in `turn/src/executor.rs`    |
-| `BalanceConservation` invariant  | `pyana-protocol-tests/src/invariants/balance_conservation.rs` |
+| `BalanceConservation` invariant  | `dregg-protocol-tests/src/invariants/balance_conservation.rs` |
 | `ReceiptChainIntegrity` invariant| `verify_receipt_chain` in `turn/src/`, `previous_receipt_hash` threading in `node/src/mcp.rs` (commit `818bbd62`) |
 | `Hash(r)` / `GenesisPrevHash`    | `BLAKE3` over receipt content / all-zero sentinel in `node/src/mcp.rs` |

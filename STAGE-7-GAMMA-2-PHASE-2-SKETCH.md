@@ -204,7 +204,7 @@ work by ~4× and the on-wire PI by ~12×. For an 8-cell turn (the
   fields as-is; no new bilateral PI slots are introduced. (Only one
   additional `OWNER_CELL_ID_BASE` slot is recommended, see §2.5.)
 - **Phase 1's id derivation.** Same canonical preimages
-  (`pyana-transfer-id-v1`, etc.) — Phase 2 *constrains* them in-AIR
+  (`dregg-transfer-id-v1`, etc.) — Phase 2 *constrains* them in-AIR
   instead of recomputing in Rust.
 - **The cell program's STARK shape.** Per-cell `EffectVmAir` is
   unchanged; Phase 2 only adds an outer wrapper.
@@ -236,7 +236,7 @@ work by ~4× and the on-wire PI by ~12×. For an 8-cell turn (the
    separate AIR if the constraint degree explodes.
 7. **Wire it through the prover** in
    `turn/src/aggregate_bilateral_prover.rs` (new file) and add a
-   `pyana-verifier aggregate-bilateral` subcommand.
+   `dregg-verifier aggregate-bilateral` subcommand.
 
 Estimated effort: 4-6 weeks for an experienced Plonky3 author, mostly
 front-loaded into CG-3 and CG-5 authoring.
@@ -252,7 +252,7 @@ front-loaded into CG-3 and CG-5 authoring.
    (per §8.5 of the Phase 1 design). Cross-federation `Introduce` aggregation
    requires bridge work — outside Phase 2 scope.
 3. **Verifier crate dependencies.** Phase 2 introduces an outer-AIR
-   verification path; `pyana-verifier` will need to deserialize the outer
+   verification path; `dregg-verifier` will need to deserialize the outer
    proof shape. Recommended: a new module `verifier/src/aggregate_bilateral.rs`
    mirroring `bilateral_pair.rs`.
 4. **Recursive-verifier soundness.** The recursive-verifier AIR's

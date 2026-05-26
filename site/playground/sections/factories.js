@@ -138,7 +138,7 @@ export function initFactories(wasm) {
 
     showExplainer(explainerDiv, {
       prover: `Created child cell from "${factory.name}"\nChild VK: ${result.child_vk.slice(0, 20)}...\nParam hash: ${result.param_hash.slice(0, 20)}...\nOwner: ${ownerPubkey.slice(0, 16)}...\n\nchild_vk = derive(factory_vk, param_hash)`,
-      verifier: `Child VK is deterministically derived:\n\nchild_vk = BLAKE3(\n  "pyana-factory-child-vk"\n  || factory_vk\n  || param_hash\n)\n\nThis binding is unforgeable.`,
+      verifier: `Child VK is deterministically derived:\n\nchild_vk = BLAKE3(\n  "dregg-factory-child-vk"\n  || factory_vk\n  || param_hash\n)\n\nThis binding is unforgeable.`,
       delta: `The child cell's VK cryptographically commits to its factory origin. You cannot forge a child VK without knowing the factory's VK. This means provenance verification is trustless — no need to query the factory or any registry.`,
       timing: elapsed,
     });

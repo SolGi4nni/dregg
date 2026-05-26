@@ -16,8 +16,8 @@
 //! are NEVER sufficient. The `dev` feature enables a fallback for local testing without a
 //! live federation, but it is never the default.
 
-use pyana_app_framework::{PredicateType, PyanaEngine};
-use pyana_circuit::{BabyBear, PredicateProof, verify_predicate};
+use dregg_app_framework::{PredicateType, DreggEngine};
+use dregg_circuit::{BabyBear, PredicateProof, verify_predicate};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -86,7 +86,7 @@ impl std::error::Error for QualificationError {}
 /// ALL paths perform real cryptographic verification. If verification cannot be performed
 /// (e.g., no federation root configured), the function fails CLOSED (rejects).
 pub fn verify_compute_qualification(
-    engine: &PyanaEngine,
+    engine: &DreggEngine,
     requirement: &ComputeQualification,
     proof: &[u8],
     federation_root: [u8; 32],
@@ -132,7 +132,7 @@ fn verify_gpu_count_proof(
     })?;
 
     // GPU count proofs must use GTE (>=) predicate.
-    if predicate_proof.op != pyana_circuit::PredicateType::Gte {
+    if predicate_proof.op != dregg_circuit::PredicateType::Gte {
         return Err(QualificationError::ProofRejected(
             "GPU count proof must use >= predicate".to_string(),
         ));
@@ -161,9 +161,9 @@ fn verify_gpu_count_proof(
 
 /// Verify federation membership proof.
 ///
-/// Uses the PyanaEngine's `verify_presentation_against()` to perform real STARK verification.
+/// Uses the DreggEngine's `verify_presentation_against()` to perform real STARK verification.
 fn verify_federation_membership(
-    engine: &PyanaEngine,
+    engine: &DreggEngine,
     proof: &[u8],
     federation_root: [u8; 32],
 ) -> Result<bool, QualificationError> {
@@ -242,14 +242,14 @@ fn verify_predicate_proof(
 }
 
 /// Convert app-framework PredicateType to circuit PredicateType.
-fn to_circuit_predicate_type(pt: PredicateType) -> pyana_circuit::PredicateType {
+fn to_circuit_predicate_type(pt: PredicateType) -> dregg_circuit::PredicateType {
     match pt {
-        PredicateType::Gte => pyana_circuit::PredicateType::Gte,
-        PredicateType::Lte => pyana_circuit::PredicateType::Lte,
-        PredicateType::Gt => pyana_circuit::PredicateType::Gt,
-        PredicateType::Lt => pyana_circuit::PredicateType::Lt,
-        PredicateType::Neq => pyana_circuit::PredicateType::Neq,
-        PredicateType::InRangeLow => pyana_circuit::PredicateType::InRangeLow,
-        PredicateType::InRangeHigh => pyana_circuit::PredicateType::InRangeHigh,
+        PredicateType::Gte => dregg_circuit::PredicateType::Gte,
+        PredicateType::Lte => dregg_circuit::PredicateType::Lte,
+        PredicateType::Gt => dregg_circuit::PredicateType::Gt,
+        PredicateType::Lt => dregg_circuit::PredicateType::Lt,
+        PredicateType::Neq => dregg_circuit::PredicateType::Neq,
+        PredicateType::InRangeLow => dregg_circuit::PredicateType::InRangeLow,
+        PredicateType::InRangeHigh => dregg_circuit::PredicateType::InRangeHigh,
     }
 }

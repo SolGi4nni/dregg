@@ -1,13 +1,13 @@
 //! Withdrawal proof generation: produces SP1-wrapped proofs for on-chain vault withdrawals.
 //!
-//! When a user wants to withdraw tokens from the PyanaVault, they need to prove:
-//! 1. They own a valid note in the pyana note tree (Merkle membership)
+//! When a user wants to withdraw tokens from the DreggVault, they need to prove:
+//! 1. They own a valid note in the dregg note tree (Merkle membership)
 //! 2. The nullifier is correctly derived from the note (prevents double-spend)
 //! 3. The withdrawal amount matches the note's value
 //! 4. The recipient address is bound into the proof (prevents front-running)
 //!
 //! This module generates the STARK proof of these properties, then wraps it in SP1
-//! to produce a Groth16 proof suitable for the `PyanaVault.withdraw()` call.
+//! to produce a Groth16 proof suitable for the `DreggVault.withdraw()` call.
 //!
 //! # Flow
 //!
@@ -94,7 +94,7 @@ pub struct WithdrawalProof {
 
 /// Public values committed by the SP1 guest for withdrawal verification.
 ///
-/// These are checked by the PyanaVault contract after proof verification.
+/// These are checked by the DreggVault contract after proof verification.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WithdrawalPublicValues {
     /// Whether the STARK proof verified successfully.
@@ -177,23 +177,23 @@ pub async fn generate_withdrawal_proof(
 
 /// Derive a withdrawal nullifier from the nullifier key and note commitment.
 ///
-/// `nullifier = blake3("pyana-withdrawal-nullifier-v1", nullifier_key || note_commitment)`
+/// `nullifier = blake3("dregg-withdrawal-nullifier-v1", nullifier_key || note_commitment)`
 ///
-/// # Why this is a separate domain from `pyana_cell::note::Note::nullifier`
+/// # Why this is a separate domain from `dregg_cell::note::Note::nullifier`
 ///
 /// The protocol-internal nullifier (`cell/src/note.rs`) is
 ///
 /// ```text
-/// nullifier = blake3("pyana-note nullifier v1", commitment || spending_key || creation_nonce)
+/// nullifier = blake3("dregg-note nullifier v1", commitment || spending_key || creation_nonce)
 /// ```
 ///
 /// and includes `creation_nonce` so two notes that happen to share an owner +
 /// fields + randomness collision-resistantly resolve to distinct nullifiers
 /// inside the in-protocol AIR.
 ///
-/// This crate (`pyana-chain`) is the **SP1 / EVM withdrawal** boundary. Its
+/// This crate (`dregg-chain`) is the **SP1 / EVM withdrawal** boundary. Its
 /// nullifier matches what the SP1 guest commits as a public output for the
-/// `PyanaVault` contract on EVM — a different circuit with a different
+/// `DreggVault` contract on EVM — a different circuit with a different
 /// public-input layout. Reconciling these into a single derivation would
 /// require:
 ///
@@ -204,16 +204,16 @@ pub async fn generate_withdrawal_proof(
 ///      the EVM contract sees).
 ///
 /// AUDIT-nullifiers.md §6: this is the **intentionally distinct** EVM-side
-/// nullifier domain. The domain separator string `"pyana-withdrawal-nullifier-v1"`
+/// nullifier domain. The domain separator string `"dregg-withdrawal-nullifier-v1"`
 /// makes the separation explicit at the hash-domain level so no proof from one
 /// scheme can be replayed as the other. Callers operating on
-/// `pyana_cell::Note` values MUST use `Note::nullifier`, not this function.
+/// `dregg_cell::Note` values MUST use `Note::nullifier`, not this function.
 pub fn derive_nullifier(nullifier_key: &[u8; 32], note_commitment: &[u8; 32]) -> [u8; 32] {
     let mut input = Vec::with_capacity(64);
     input.extend_from_slice(nullifier_key);
     input.extend_from_slice(note_commitment);
-    // Domain-separated from `pyana-note nullifier v1` (see doc-comment above).
-    blake3::derive_key("pyana-withdrawal-nullifier-v1", &input)
+    // Domain-separated from `dregg-note nullifier v1` (see doc-comment above).
+    blake3::derive_key("dregg-withdrawal-nullifier-v1", &input)
 }
 
 /// Mock implementation of withdrawal proof generation.
@@ -415,13 +415,13 @@ mod tests {
     /// Adversarial: the EVM-side withdrawal nullifier MUST be in a different
     /// hash domain than the in-protocol `Note::nullifier`. Recompute the
     /// in-protocol form locally (the chain crate is a standalone workspace and
-    /// cannot depend on `pyana-cell`, so we replay the formula by hand) and
+    /// cannot depend on `dregg-cell`, so we replay the formula by hand) and
     /// assert it produces a different output even when the input bytes
     /// nominally match.
     ///
     /// This guards against an attacker reusing a withdrawal proof's revealed
     /// nullifier to fake an in-protocol spend (or vice-versa).
-    /// See `pyana_cell::note::Note::nullifier` for the canonical scheme.
+    /// See `dregg_cell::note::Note::nullifier` for the canonical scheme.
     #[test]
     fn test_withdrawal_nullifier_domain_separated_from_in_protocol() {
         let key = [0x42; 32];
@@ -432,13 +432,13 @@ mod tests {
         let evm_nullifier = derive_nullifier(&key, &commitment);
 
         // In-protocol nullifier (cell/src/note.rs), replayed here:
-        //   blake3::derive_key("pyana-note nullifier v1",
+        //   blake3::derive_key("dregg-note nullifier v1",
         //                      commitment || spending_key || creation_nonce)
         let mut input = Vec::with_capacity(96);
         input.extend_from_slice(&commitment);
         input.extend_from_slice(&key);
         input.extend_from_slice(&creation_nonce);
-        let in_protocol_nullifier = blake3::derive_key("pyana-note nullifier v1", &input);
+        let in_protocol_nullifier = blake3::derive_key("dregg-note nullifier v1", &input);
 
         assert_ne!(
             evm_nullifier, in_protocol_nullifier,
@@ -454,7 +454,7 @@ mod tests {
         input_zero_nonce.extend_from_slice(&key);
         input_zero_nonce.extend_from_slice(&[0u8; 32]);
         let in_protocol_zero =
-            blake3::derive_key("pyana-note nullifier v1", &input_zero_nonce);
+            blake3::derive_key("dregg-note nullifier v1", &input_zero_nonce);
         assert_ne!(
             evm_nullifier, in_protocol_zero,
             "domain separator alone must prevent cross-domain collision"

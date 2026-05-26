@@ -1,11 +1,11 @@
-# AUDIT: pyana federation
+# AUDIT: dregg federation
 
 What it is, what's real, and where the seams creak.
 
 Read-only. Read `AUDIT-morpheus-federation-blocklace.md` first — it draws the
 boundary between the **dead Morpheus BFT simulator** in
-`pyana_federation::{node, transport}` and the **live primitives** in
-`pyana_federation::{solo, threshold, threshold_decrypt, checkpoint, revocation,
+`dregg_federation::{node, transport}` and the **live primitives** in
+`dregg_federation::{solo, threshold, threshold_decrypt, checkpoint, revocation,
 epoch, receipt, types}`. This audit is about the *live* primitives.
 
 Files inspected (absolute paths):
@@ -37,9 +37,9 @@ word is overloaded across at least four disjoint definitions.
 
 | Name                                              | Where                                            | What it is                                              |
 | ------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
-| `pyana_federation::node::Federation`              | `federation/src/node.rs:900–`                    | Morpheus simulator harness. Dead path (see prior audit) |
-| `pyana_federation::threshold::FederationCommittee`| `federation/src/threshold.rs:37`                 | Live BLS threshold context (members + KZG universe)     |
-| `pyana_federation::FederationMode { Full, Solo }` | `federation/src/solo.rs:34`                      | Runtime mode flag                                       |
+| `dregg_federation::node::Federation`              | `federation/src/node.rs:900–`                    | Morpheus simulator harness. Dead path (see prior audit) |
+| `dregg_federation::threshold::FederationCommittee`| `federation/src/threshold.rs:37`                 | Live BLS threshold context (members + KZG universe)     |
+| `dregg_federation::FederationMode { Full, Solo }` | `federation/src/solo.rs:34`                      | Runtime mode flag                                       |
 | `federation_id: [u8; 32]`                         | `turn::TurnReceipt`, `federation::FederationReceipt`, `cclerk`, `executor` | Opaque tag identifying *which* federation |
 
 The closest thing to a canonical "this is a federation" is the **pair**
@@ -81,7 +81,7 @@ configuration.
      bundling adds/removes + a *placeholder* QC attestation (line 245:
      `votes: Vec::new()`).
   3. Old-epoch validators sign `EpochTransition::signing_message`
-     (line 86 — `pyana-epoch-transition-v1 || from_epoch || to_epoch ||
+     (line 86 — `dregg-epoch-transition-v1 || from_epoch || to_epoch ||
      new_threshold || added... || removed...`).
   4. `verify_epoch_transition` (line 314) checks the QC's *count* ≥
      `old_config.threshold` AND each vote's Ed25519 signature against the
@@ -108,7 +108,7 @@ next epoch boundary when the transition QC carries it.
 ### Expulsion
 
 **Not in the federation crate at all.** Equivocation / Byzantine-fault
-detection lives in `pyana-blocklace`: `blocklace/src/constitution.rs:11`
+detection lives in `dregg-blocklace`: `blocklace/src/constitution.rs:11`
 documents "Auto-eviction: equivocation proofs immediately remove the
 equivocator." `federation/src/` has zero references to `slash`,
 `equivocation`, or `expel`. So expulsion is owned by the blocklace
@@ -218,7 +218,7 @@ AttestedRoot {
 Signed message (`signing_message`, `types/src/lib.rs:308`):
 
 ```
-"pyana-attested-root-v1" || merkle_root
+"dregg-attested-root-v1" || merkle_root
                          || (0x00 | 0x01 || note_tree_root)
                          || (0x00 | 0x01 || nullifier_set_root)
                          || height_le || timestamp_le
@@ -235,9 +235,9 @@ wall-clock time**. It does **not** include:
 
 Notable subtlety: `federation/src/node.rs:854–866` (`update_attested_root`)
 mints the `AttestedRoot` *separately* from the consensus QC: the QC was over
-the **vote_message** `pyana-federation-vote-v1 || block_hash || height ||
+the **vote_message** `dregg-federation-vote-v1 || block_hash || height ||
 view`, but the `AttestedRoot` signatures must be over the
-`pyana-attested-root-v1` message. The comment (lines 832–845) explicitly
+`dregg-attested-root-v1` message. The comment (lines 832–845) explicitly
 says callers must collect a *fresh* set of signatures over the attested-root
 signing message — they cannot reuse the consensus votes. This is
 implementation-correct, but it means an `AttestedRoot` is a **second,
@@ -249,13 +249,13 @@ parallel attestation** that costs an extra signing round on top of consensus.
 
 These are **disjoint types** at different layers.
 
-### `pyana_turn::TurnReceipt` (`turn/src/turn.rs:337–409`)
+### `dregg_turn::TurnReceipt` (`turn/src/turn.rs:337–409`)
 
 Produced **per turn** by the local executor. Bound fields (in `receipt_hash`,
 lines 414–479):
 
 ```
-"pyana-receipt-v2" || turn_hash || forest_hash || pre_state_hash
+"dregg-receipt-v2" || turn_hash || forest_hash || pre_state_hash
                   || post_state_hash || timestamp || effects_hash
                   || computrons_used || action_count || agent
                   || federation_id      // <-- bound!
@@ -279,7 +279,7 @@ asserted in the receipt body. The mitigation, per the comment, is that
 verifiers should reconstruct `receipt_hash` and check its consistency
 elsewhere; but the *signature* alone is federation-agnostic. See F2.
 
-### `pyana_federation::FederationReceipt` (`federation/src/receipt.rs:122–227`)
+### `dregg_federation::FederationReceipt` (`federation/src/receipt.rs:122–227`)
 
 Produced when the **federation as a whole** wants to attest "we, the
 committee, ratify the (turn, pre→post) state transition for this agent".
@@ -293,7 +293,7 @@ FederationReceiptBody {
 }
 ```
 
-`body_hash` (line 67) is BLAKE3-derive-key("pyana-fed-receipt-body-v1", ...).
+`body_hash` (line 67) is BLAKE3-derive-key("dregg-fed-receipt-body-v1", ...).
 The QC (BLS `ThresholdQC` or Ed25519 fallback) signs **`body_hash`**.
 
 Critical: `FederationReceipt` carries `federation_id` and `committee_epoch`
@@ -359,7 +359,7 @@ T6 (`EXECUTOR-HONESTY-AUDIT.md:128`): "replay a turn from another federation".
 `TurnExecutor::compute_signing_message` (`turn/src/executor.rs:4445`):
 
 ```rust
-hasher.update(b"pyana-action-v1:");
+hasher.update(b"dregg-action-v1:");
 hasher.update(federation_id);
 // ... action fields
 ```
@@ -407,7 +407,7 @@ There is one real cross-federation scenario in the code, exercised by
 - B builds a `Witnessed` envelope, signs with B's committee, returns.
 - A finalizes. Phase log on both sides converges.
 
-The bridge envelope (`pyana_cell::note_bridge::BridgeReceiptEnvelope`)
+The bridge envelope (`dregg_cell::note_bridge::BridgeReceiptEnvelope`)
 carries `src_federation`, `dst_federation`, and
 `previous_phase_receipt_hash`. The phase log enforces monotone advancement
 (test `cross_federation_replay_rejected_after_finalize`).
@@ -525,7 +525,7 @@ Adversarial tests *missing*:
   parameter and never checks `committee ↔ federation_id`. There is no
   `CommitteeRegistry: HashMap<(federation_id, committee_epoch),
   FederationCommittee>` and no API on `FederationCommittee` to compute
-  its canonical id. **Fix**: derive `federation_id = BLAKE3("pyana-fed-id-v1"
+  its canonical id. **Fix**: derive `federation_id = BLAKE3("dregg-fed-id-v1"
   || serialize(committee.universe.verifier_key) || committee_epoch)` and
   enforce on verify.
 
@@ -578,7 +578,7 @@ Adversarial tests *missing*:
   primitives do not.
 
 - **F9 — Crate naming is misleading.** Per the prior morpheus audit,
-  the crate should be split into `pyana-federation-utils` (live) and
+  the crate should be split into `dregg-federation-utils` (live) and
   the Morpheus simulator (dead/test-only). Today `lib.rs:60` still
   re-exports `ConsensusOrchestrator`, `Federation`, etc., which gives
   the impression these are part of the live federation API. They are

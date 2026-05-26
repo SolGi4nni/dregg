@@ -1,5 +1,5 @@
 [package]
-name = "pyana-hints"
+name = "dregg-hints"
 version = "0.0.5"
 authors = [ "hints authors", "ember arlynx <ember@hellas.ai>" ]
 description = "A library for computing weighted threshold signatures"

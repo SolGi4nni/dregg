@@ -2,8 +2,8 @@
 //!
 //! Storage layout:
 //! ```text
-//! ~/.pyana/secrets/<namespace>/<key>.enc
-//! ~/.pyana/secrets/<namespace>/<key>.meta
+//! ~/.dregg/secrets/<namespace>/<key>.enc
+//! ~/.dregg/secrets/<namespace>/<key>.meta
 //! ```
 //!
 //! File format (.enc):
@@ -38,7 +38,7 @@ impl EncryptedFileStore {
         }
     }
 
-    /// Create with the default base directory (`~/.pyana/secrets/`).
+    /// Create with the default base directory (`~/.dregg/secrets/`).
     pub fn with_default_dir(master_key: [u8; 32]) -> Result<Self, SecretStoreError> {
         let dir = default_secrets_dir()?;
         Ok(Self::new(dir, master_key))
@@ -203,7 +203,7 @@ impl SecretStore for EncryptedFileStore {
 
 /// Get the default secrets directory.
 fn default_secrets_dir() -> Result<PathBuf, SecretStoreError> {
-    let proj = directories::ProjectDirs::from("dev", "pyana", "pyana")
+    let proj = directories::ProjectDirs::from("dev", "dregg", "dregg")
         .ok_or_else(|| SecretStoreError::StorePath("could not determine home directory".into()))?;
     Ok(proj.data_dir().join("secrets"))
 }
@@ -256,7 +256,7 @@ mod tests {
     fn temp_store() -> EncryptedFileStore {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = env::temp_dir().join(format!("pyana-secrets-test-{}-{}", std::process::id(), id));
+        let dir = env::temp_dir().join(format!("dregg-secrets-test-{}-{}", std::process::id(), id));
         let _ = fs::remove_dir_all(&dir);
         let mut key = [0u8; 32];
         getrandom::fill(&mut key).unwrap();

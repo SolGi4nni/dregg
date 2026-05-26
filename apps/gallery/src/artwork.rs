@@ -1,15 +1,15 @@
 //! Artwork registration, metadata management, and cell representation.
 //!
-//! Each artwork is represented as a pyana cell with fields:
+//! Each artwork is represented as a dregg cell with fields:
 //! - title, artist, current_owner, image_hash
 //!
 //! Registration creates the cell and mints an ownership capability.
 
-use pyana_app_framework::store::ContentStore;
-use pyana_app_framework::{CellId, PyanaEngine};
-use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
-use pyana_turn::forest::{CallForest, CallTree};
-use pyana_turn::turn::Turn;
+use dregg_app_framework::store::ContentStore;
+use dregg_app_framework::{CellId, DreggEngine};
+use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::forest::{CallForest, CallTree};
+use dregg_turn::turn::Turn;
 
 use crate::{Artwork, ArtworkId, ArtworkSummary, compute_artwork_id, id_to_hex};
 
@@ -32,7 +32,7 @@ impl ArtworkRegistry {
     /// Returns the artwork ID on success.
     pub async fn register(
         &self,
-        engine: &mut PyanaEngine,
+        engine: &mut DreggEngine,
         title: String,
         description: String,
         image_hash: [u8; 32],

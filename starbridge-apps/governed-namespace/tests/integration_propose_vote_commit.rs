@@ -14,11 +14,11 @@
 //! enforcement of `MonotonicSequence(VERSION_SLOT)` or
 //! `Monotonic(DISPUTE_WINDOW_HEIGHT_SLOT)`.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
-use pyana_cell::permissions::{AuthRequired, Permissions};
-use pyana_cell::program::{CellProgram, StateConstraint};
-use pyana_cell::state::CellState;
-use pyana_dfa::RouteTarget;
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use dregg_cell::permissions::{AuthRequired, Permissions};
+use dregg_cell::program::{CellProgram, StateConstraint};
+use dregg_cell::state::CellState;
+use dregg_dfa::RouteTarget;
 use starbridge_governed_namespace::{
     DISPUTE_WINDOW_HEIGHT_SLOT, GOVERNANCE_COMMITTEE_ROOT_SLOT, PENDING_PROPOSAL_ROOT_SLOT,
     ROUTE_TABLE_ROOT_SLOT, THRESHOLD_SLOT, VERSION_SLOT, VoteKind, blake3_field,
@@ -99,7 +99,7 @@ fn init_namespace_cell(executor: &EmbeddedExecutor, cell_id: CellId) {
 fn ensure_voter_cell(executor: &EmbeddedExecutor, voter: &AppCipherclerk) {
     let pk = voter.public_key().0;
     let token_id = *blake3::hash(b"default").as_bytes();
-    let cell = pyana_cell::Cell::with_balance(pk, token_id, 1_000_000);
+    let cell = dregg_cell::Cell::with_balance(pk, token_id, 1_000_000);
     executor.ensure_cell(cell).expect("insert voter cell");
 }
 
@@ -425,7 +425,7 @@ fn executor_two_sequential_register_service_calls_both_accepted() {
 /// documented invariants.
 #[test]
 fn governance_factory_descriptor_state_constraints_match_documented_invariants() {
-    use pyana_cell::StateConstraint;
+    use dregg_cell::StateConstraint;
     use starbridge_governed_namespace::{
         DISPUTE_WINDOW_HEIGHT_SLOT, GOVERNANCE_COMMITTEE_ROOT_SLOT, RESERVED_SLOT_6,
         RESERVED_SLOT_7, THRESHOLD_SLOT,

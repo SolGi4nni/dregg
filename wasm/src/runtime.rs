@@ -1,6 +1,6 @@
-//! PyanaRuntime: full in-browser distributed system simulation.
+//! DreggRuntime: full in-browser distributed system simulation.
 //!
-//! Encapsulates a complete pyana environment with:
+//! Encapsulates a complete dregg environment with:
 //! - A Ledger (cells + Merkle state)
 //! - A TurnExecutor
 //! - A NullifierSet (note double-spend tracking)
@@ -16,36 +16,36 @@ use zeroize::Zeroizing;
 
 use crate::{hex_encode, js_sys_now_secs};
 
-use pyana_cell::CellMode;
-use pyana_cell::factory::{FactoryCreationParams, FactoryDescriptor};
-use pyana_cell::{
+use dregg_cell::CellMode;
+use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor};
+use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Note, NoteCommitment, Nullifier, NullifierSet,
     PeerExchange, RevocationChannel, RevocationChannelSet,
 };
-use pyana_intent::matcher::{HeldCapability, MatchResult, Sensitivity, match_intent};
-use pyana_intent::{
+use dregg_intent::matcher::{HeldCapability, MatchResult, Sensitivity, match_intent};
+use dregg_intent::{
     ActionPattern, CommitmentId, Constraint, Intent, IntentKind, MatchSpec, VerificationMode,
 };
-use pyana_sdk::AgentCipherclerk;
-use pyana_turn::action::Authorization;
-use pyana_turn::builder::ActionBuilder;
-use pyana_turn::conditional::{ConditionalTurn, ProofCondition};
-use pyana_turn::forest::CallTree;
-use pyana_turn::{
+use dregg_sdk::AgentCipherclerk;
+use dregg_turn::action::Authorization;
+use dregg_turn::builder::ActionBuilder;
+use dregg_turn::conditional::{ConditionalTurn, ProofCondition};
+use dregg_turn::forest::CallTree;
+use dregg_turn::{
     ComputronCosts, Effect, Turn, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
 };
 
 // Observability live feed (STARBRIDGE-03 Task #30). Emitter provides the
 // canonical EventLog; we surface snapshots via the `events` field for
 // wasm-bindgen + JS signal caching. No JS reimplementation per substrate rule.
-use pyana_observability::{
+use dregg_observability::{
     Emitter, EventBody, EventEnvelope, EventLog, TraceEvent, TurnLifecyclePayload,
 };
 
 /// Cell-ID domain shared by every wasm-sim agent. AgentCipherclerk derives the
 /// CellId deterministically as `f(public_key, domain)` so this string is part
 /// of the agent's identity surface.
-const WASM_SIM_DOMAIN: &str = "pyana-wasm-default-domain";
+const WASM_SIM_DOMAIN: &str = "dregg-wasm-default-domain";
 
 /// Fee charged on the system turn that mints a new cell from the genesis
 /// agent. Must cover the computron cost of `Effect::CreateCellFromFactory`
@@ -60,10 +60,10 @@ const GENESIS_MINT_FEE: u64 = 2000;
 /// provenance points at the same VK. The VK string is part of the
 /// agent's identity surface; changing it changes the factory hash and
 /// invalidates any test fixtures that pin the factory VK.
-const WASM_DEFAULT_FACTORY_DOMAIN: &str = "pyana-wasm-default-test-cclerk-factory-v1";
+const WASM_DEFAULT_FACTORY_DOMAIN: &str = "dregg-wasm-default-test-cclerk-factory-v1";
 
 /// Build the default "test cipherclerk" `FactoryDescriptor` used by
-/// [`PyanaRuntime`] when an agent is created without an explicit factory.
+/// [`DreggRuntime`] when an agent is created without an explicit factory.
 ///
 /// The descriptor is intentionally permissive:
 /// - `child_program_vk = None` and `child_vk_strategy = None` —
@@ -84,8 +84,8 @@ const WASM_DEFAULT_FACTORY_DOMAIN: &str = "pyana-wasm-default-test-cclerk-factor
 /// The `factory_vk` field is BLAKE3 derived from
 /// [`WASM_DEFAULT_FACTORY_DOMAIN`], so it is deterministic and
 /// reproducible across browser sessions. Apps that want their own
-/// factory can deploy one via [`PyanaRuntime::deploy_factory`] and
-/// pass its VK to [`PyanaRuntime::try_create_agent_with_factory`].
+/// factory can deploy one via [`DreggRuntime::deploy_factory`] and
+/// pass its VK to [`DreggRuntime::try_create_agent_with_factory`].
 pub fn default_cipherclerk_factory_descriptor() -> FactoryDescriptor {
     let factory_vk: [u8; 32] = *blake3::Hasher::new_derive_key(WASM_DEFAULT_FACTORY_DOMAIN)
         .update(b"factory-vk")
@@ -107,12 +107,12 @@ pub fn default_cipherclerk_factory_descriptor() -> FactoryDescriptor {
 // Internal state types
 // ============================================================================
 
-/// An agent in the wasm runtime: a real `pyana_sdk::AgentCipherclerk` plus the
+/// An agent in the wasm runtime: a real `dregg_sdk::AgentCipherclerk` plus the
 /// auxiliary state we need for in-browser scenarios (cached cell_id, an
 /// intent-matcher-shaped token list, a commitment id, a counter for token-id
 /// generation, and a friendly name).
 ///
-/// `held_tokens` here is the `pyana_intent::matcher::HeldCapability` shape
+/// `held_tokens` here is the `dregg_intent::matcher::HeldCapability` shape
 /// used by the intent matcher — distinct from `cclerk.tokens()` which is
 /// the SDK's macaroon-backed `HeldToken`. Both legitimately coexist.
 pub struct SimAgent {
@@ -131,7 +131,7 @@ pub struct SimAgent {
     pub peer_exchange: PeerExchange,
 }
 
-// Federation is wired via the canonical `pyana_federation::Federation`
+// Federation is wired via the canonical `dregg_federation::Federation`
 // (attestation context, no simulator). The async TCP transport and the old
 // Morpheus BFT simulator (`node.rs` / `transport.rs`) are native-only and
 // have been deleted. The wasm runtime keeps a lightweight local consensus
@@ -160,14 +160,14 @@ pub struct FinalizedBlock {
 }
 
 /// A named in-browser federation. The handle the JS UI uses to address a
-/// federation is its index in `PyanaRuntime::federations`; the friendly name
-/// is informational only (used by `<pyana-federation>` for display).
+/// federation is its index in `DreggRuntime::federations`; the friendly name
+/// is informational only (used by `<dregg-federation>` for display).
 pub struct SimFederation {
     pub name: String,
-    /// Canonical `pyana_federation::Federation` — owns the committee pubkeys,
+    /// Canonical `dregg_federation::Federation` — owns the committee pubkeys,
     /// epoch, threshold, and derived federation_id. Every `AttestedRoot` built
     /// by this sim carries the federation's real id and threshold.
-    pub federation: pyana_federation::Federation,
+    pub federation: dregg_federation::Federation,
     /// Number of simulated nodes in this federation (committee size).
     pub node_count: usize,
     /// Revoked token ids accumulated since the last consensus round.
@@ -181,7 +181,7 @@ pub struct SimFederation {
     /// Ordered history of finalized rounds; replaces `node::Federation::finalized_history`.
     pub finalized_blocks: Vec<FinalizedBlock>,
     /// History of `propose_block` calls: one entry per call, each a list of
-    /// token IDs that were *submitted*. Used by `<pyana-block>` so the
+    /// token IDs that were *submitted*. Used by `<dregg-block>` so the
     /// inspector can surface input intent alongside the canonical
     /// `RevocationBlock`.
     pub submitted_token_ids: Vec<Vec<String>>,
@@ -218,12 +218,12 @@ fn hex32(bytes: &[u8; 32]) -> String {
 }
 
 // ============================================================================
-// PyanaRuntime: the core state container
+// DreggRuntime: the core state container
 // ============================================================================
 
 /// The main runtime struct holding all simulation state.
 /// NOT exposed directly via wasm_bindgen (we use an index-based handle instead).
-pub struct PyanaRuntime {
+pub struct DreggRuntime {
     pub ledger: Ledger,
     pub executor: TurnExecutor,
     pub nullifier_set: NullifierSet,
@@ -240,7 +240,7 @@ pub struct PyanaRuntime {
     /// `get_receipt_chain` can surface per-action authorization details
     /// (Refactor 3 / Studio bindings enrichment).
     pub turns: Vec<Turn>,
-    /// `pyana_federation::Federation` instances (attestation contexts), addressed
+    /// `dregg_federation::Federation` instances (attestation contexts), addressed
     /// by index. Each `SimFederation` pairs the canonical committee context with
     /// a lightweight local consensus stub — see `SimFederation` for details.
     pub federations: Vec<SimFederation>,
@@ -252,15 +252,15 @@ pub struct PyanaRuntime {
     /// `STUDIO-REFACTOR-PICKUP.md`).
     pub default_factory_vk: [u8; 32],
 
-    /// pyana-observability Emitter (internal; drives seq + timestamps for trace events).
+    /// dregg-observability Emitter (internal; drives seq + timestamps for trace events).
     emitter: Emitter,
     /// Snapshot of the event log (populated on turn lifecycle results for
     /// Committed/Rejected/Expired). Exposed to bindings for get_trace_events_json
-    /// and JS <pyana-activity> live feed. Canonical Rust types only (substrate rule).
+    /// and JS <dregg-activity> live feed. Canonical Rust types only (substrate rule).
     pub events: EventLog,
 }
 
-impl PyanaRuntime {
+impl DreggRuntime {
     pub fn new() -> Self {
         let costs = ComputronCosts::default_costs();
         let mut executor = TurnExecutor::new(costs);
@@ -278,7 +278,7 @@ impl PyanaRuntime {
         let default_factory = default_cipherclerk_factory_descriptor();
         let default_factory_vk = executor.deploy_factory(default_factory);
 
-        PyanaRuntime {
+        DreggRuntime {
             ledger: Ledger::new(),
             executor,
             nullifier_set: NullifierSet::new(),
@@ -319,20 +319,20 @@ impl PyanaRuntime {
 
     /// Create a new federation with `num_nodes` nodes named `<name>-<idx>`.
     ///
-    /// Builds a real `pyana_federation::Federation` committee: each node gets a
+    /// Builds a real `dregg_federation::Federation` committee: each node gets a
     /// deterministic Ed25519 keypair derived from its name. The federation_id,
     /// threshold (n − ⌊n/3⌋), and member pubkeys are all canonical. Returns
     /// the new federation's index.
     pub fn create_federation(&mut self, name: &str, num_nodes: usize) -> usize {
-        use pyana_federation::{Federation, LocalSeat};
-        use pyana_types::{PublicKey as FedPublicKey, SigningKey};
+        use dregg_federation::{Federation, LocalSeat};
+        use dregg_types::{PublicKey as FedPublicKey, SigningKey};
 
         let mut members: Vec<FedPublicKey> = Vec::with_capacity(num_nodes);
         let mut local_sk: Option<SigningKey> = None;
 
         for i in 0..num_nodes {
             // Deterministic seed: BLAKE3(name || "-" || i)
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-fed-node-key-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-wasm-fed-node-key-v1");
             hasher.update(name.as_bytes());
             hasher.update(b"-");
             hasher.update(&(i as u64).to_le_bytes());
@@ -347,10 +347,10 @@ impl PyanaRuntime {
 
         // BFT threshold: n − ⌊n/3⌋ (same formula as the deleted node.rs).
         let threshold = (num_nodes - num_nodes / 3) as u32;
-        // `LocalSeat::bls_secret` is gated on `pyana-federation/runtime`; that
+        // `LocalSeat::bls_secret` is gated on `dregg-federation/runtime`; that
         // feature is unified-on across the workspace (e.g. `node/` enables
         // it), so the field is always present in any cargo invocation that
-        // also builds pyana-wasm.
+        // also builds dregg-wasm.
         let local_seat = local_sk.map(|sk| LocalSeat {
             index: 0,
             signing_key: sk,
@@ -396,7 +396,7 @@ impl PyanaRuntime {
         fed.height += 1;
 
         // Block hash = BLAKE3(height || view || each pending token id in order).
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-consensus-block-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-wasm-consensus-block-v1");
         hasher.update(&fed.height.to_le_bytes());
         hasher.update(&fed.view.to_le_bytes());
         for tid in &fed.pending_revocations {
@@ -429,7 +429,7 @@ impl PyanaRuntime {
         fed.height += 1;
         let num_events = fed.pending_revocations.len();
 
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-consensus-block-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-wasm-consensus-block-v1");
         hasher.update(&fed.height.to_le_bytes());
         hasher.update(&fed.view.to_le_bytes());
         for tid in &fed.pending_revocations {
@@ -463,7 +463,7 @@ impl PyanaRuntime {
     /// from (name, idx) so a reproducible browser session can replay an
     /// identical history. The derivation is BLAKE3-of-name-and-index for the
     /// seed; the rest of the agent — public key, cell id, signing — comes
-    /// from `pyana_sdk::AgentCipherclerk`, the same cipherclerk implementation used by native callers.
+    /// from `dregg_sdk::AgentCipherclerk`, the same cipherclerk implementation used by native callers.
     /// This is not a sim-shaped reimplementation; the cipherclerk IS the canonical
     /// implementation, just constructed with a deterministic seed for
     /// reproducibility.
@@ -471,7 +471,7 @@ impl PyanaRuntime {
     /// # Cell birth
     ///
     /// The **first** agent (idx 0) is the genesis agent: its cell is inserted
-    /// directly into the ledger. This mirrors `pyana_node::genesis`'s
+    /// directly into the ledger. This mirrors `dregg_node::genesis`'s
     /// `initial_cells` field — there must be at least one cell before any turn
     /// can run, because a turn is always issued by some existing cell.
     ///
@@ -505,7 +505,7 @@ impl PyanaRuntime {
     /// signer yet, so the executor cannot accept a turn. Genesis is the
     /// canonical bootstrap; the factory binding only governs subsequent
     /// agents. Genesis's provenance is `Provenance::genesis` per
-    /// `pyana_cell::factory`.
+    /// `dregg_cell::factory`.
     ///
     /// **Subsequent agents** are minted via
     /// `Effect::CreateCellFromFactory` — the canonical constructor
@@ -521,7 +521,7 @@ impl PyanaRuntime {
         let idx = self.agents.len();
 
         // Deterministic Ed25519 seed.
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-agent-key");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-wasm-agent-key");
         hasher.update(name.as_bytes());
         hasher.update(&(idx as u64).to_le_bytes());
         let key_hash = hasher.finalize();
@@ -529,7 +529,7 @@ impl PyanaRuntime {
 
         // CommitmentId derivation needs the raw seed; compute it before the
         // seed is moved into the cipherclerk (where it's zeroized).
-        let commitment_id = CommitmentId::derive(&seed_bytes, "pyana-wasm-commitment");
+        let commitment_id = CommitmentId::derive(&seed_bytes, "dregg-wasm-commitment");
 
         let cclerk = AgentCipherclerk::from_key_bytes(Zeroizing::new(seed_bytes));
         let public_key = cclerk.public_key().0;
@@ -538,7 +538,7 @@ impl PyanaRuntime {
 
         if idx == 0 {
             // Genesis: insert the root cell directly. This is the same pattern
-            // pyana-node uses (see node/src/genesis.rs::initial_cells).
+            // dregg-node uses (see node/src/genesis.rs::initial_cells).
             // Genesis cannot itself be born from a factory because no signer
             // exists yet — this is the canonical "Provenance::genesis"
             // bootstrap point.
@@ -808,10 +808,10 @@ impl PyanaRuntime {
         let result = self.executor.execute(&turn, &mut self.ledger);
 
         // Wire Emitter (STARBRIDGE §4.4 Task #30) into the three result paths
-        // that the Studio <pyana-activity> live feed cares about. Other 6 event
+        // that the Studio <dregg-activity> live feed cares about. Other 6 event
         // kinds (Authorization etc) require deeper hooks into TurnExecutor/apply
         // (future work); here we at least anchor every turn with lifecycle.
-        // All construction uses canonical pyana_observability types (substrate).
+        // All construction uses canonical dregg_observability types (substrate).
         {
             let (seq, ts) = self.emitter.next_envelope_seed();
             let mut env = EventEnvelope::new(seq, ts)
@@ -873,7 +873,7 @@ impl PyanaRuntime {
         fields[1] = value;
         let randomness = agent
             .cclerk
-            .derive_symmetric_key("pyana-wasm-note-randomness");
+            .derive_symmetric_key("dregg-wasm-note-randomness");
         let note = Note::with_randomness(agent.public_key, fields, randomness);
         note.commitment()
     }
@@ -893,10 +893,10 @@ impl PyanaRuntime {
         fields[1] = value;
         let randomness = agent
             .cclerk
-            .derive_symmetric_key("pyana-wasm-note-randomness");
+            .derive_symmetric_key("dregg-wasm-note-randomness");
         let spending = agent
             .cclerk
-            .derive_symmetric_key("pyana-wasm-note-spending");
+            .derive_symmetric_key("dregg-wasm-note-spending");
         let note = Note::with_randomness(agent.public_key, fields, randomness);
         let nullifier = note.nullifier(&spending);
         self.nullifier_set
@@ -907,7 +907,7 @@ impl PyanaRuntime {
 
     // create_federation / propose_block / simulate_consensus_round are
     // defined above (alongside the federations field initializer) and
-    // delegate to the real `pyana_federation::Federation` API.
+    // delegate to the real `dregg_federation::Federation` API.
 
     /// Create an intent.
     pub fn create_intent(
@@ -977,7 +977,7 @@ impl PyanaRuntime {
         let turn = builder.build();
         let turn_hash = turn.hash();
 
-        let deposit_amount = pyana_turn::compute_conditional_deposit(
+        let deposit_amount = dregg_turn::compute_conditional_deposit(
             self.current_height + timeout_blocks,
             self.current_height,
         );
@@ -1040,7 +1040,7 @@ impl PyanaRuntime {
     // =========================================================================
     // PeerExchange (canonical sovereign-cell peer protocol)
     //
-    // These methods are thin facades over `pyana_cell::PeerExchange` stored on
+    // These methods are thin facades over `dregg_cell::PeerExchange` stored on
     // each `SimAgent`. The bindings layer doesn't reach into the agent's
     // `peer_exchange` field directly — it goes through these. All cryptography
     // and protocol logic lives inside the canonical `PeerExchange` type, no
@@ -1109,14 +1109,14 @@ impl PyanaRuntime {
         agent_idx: usize,
         transition_bytes: &[u8],
         peer_pubkey: [u8; 32],
-    ) -> Result<pyana_cell::PeerCellView, (String, String)> {
+    ) -> Result<dregg_cell::PeerCellView, (String, String)> {
         let agent = self.agents.get_mut(agent_idx).ok_or_else(|| {
             (
                 "InvalidAgent".to_string(),
                 format!("invalid agent index: {agent_idx}"),
             )
         })?;
-        let transition: pyana_cell::PeerStateTransition = postcard::from_bytes(transition_bytes)
+        let transition: dregg_cell::PeerStateTransition = postcard::from_bytes(transition_bytes)
             .map_err(|e| {
                 (
                     "DecodeError".to_string(),
@@ -1141,7 +1141,7 @@ impl PyanaRuntime {
         &self,
         agent_idx: usize,
         peer_cell_id: CellId,
-    ) -> Result<Option<pyana_cell::PeerCellView>, String> {
+    ) -> Result<Option<dregg_cell::PeerCellView>, String> {
         let agent = self
             .agents
             .get(agent_idx)
@@ -1216,7 +1216,7 @@ impl PyanaRuntime {
 
         let now = js_sys_now_secs() as u64;
         let stub = SnapshotStub {
-            schema: "pyana-runtime-snapshot-v0-stub".to_string(),
+            schema: "dregg-runtime-snapshot-v0-stub".to_string(),
             exported_at: now,
             current_height: self.current_height,
             num_agents: self.agents.len(),
@@ -1275,8 +1275,8 @@ impl PyanaRuntime {
 /// Map a `PeerExchangeError` to its variant name (without payload), used by
 /// the bindings to surface a typed error code to JS alongside the
 /// human-readable message.
-fn peer_exchange_error_variant(e: &pyana_cell::PeerExchangeError) -> String {
-    use pyana_cell::PeerExchangeError as E;
+fn peer_exchange_error_variant(e: &dregg_cell::PeerExchangeError) -> String {
+    use dregg_cell::PeerExchangeError as E;
     match e {
         E::InvalidSignature => "InvalidSignature",
         E::CommitmentMismatch { .. } => "CommitmentMismatch",
@@ -1290,7 +1290,7 @@ fn peer_exchange_error_variant(e: &pyana_cell::PeerExchangeError) -> String {
 
 /// One-shot summary of a finalized consensus round, suitable for JS-side
 /// rendering. The fields surface what's actually on the
-/// `pyana_federation::RevocationBlock` + `QuorumCertificate` returned from
+/// `dregg_federation::RevocationBlock` + `QuorumCertificate` returned from
 /// `Federation::run_consensus_round` — no inferred values.
 #[derive(Clone, Debug, Serialize)]
 pub struct ConsensusRoundResult {

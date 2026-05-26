@@ -28,20 +28,20 @@
 
 use std::sync::Arc;
 
-use pyana_cell::predicate::{
+use dregg_cell::predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateRegistry, WitnessedPredicateVerifier as WpVerifier,
 };
-use pyana_federation::threshold_decrypt::{
+use dregg_federation::threshold_decrypt::{
     KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
     threshold_encrypt,
 };
-use pyana_intent::solver::{RingTrade, Settlement};
-use pyana_intent::trustless::{
+use dregg_intent::solver::{RingTrade, Settlement};
+use dregg_intent::trustless::{
     BatchState, DEFAULT_MIN_SOLVER_BOND, EncryptedIntent, EngineError, SolverSubmission,
     TrustlessIntentEngine, WitnessedProofVerifier,
 };
-use pyana_intent::{ActionPattern, CommitmentId, Intent, IntentId, IntentKind, MatchSpec};
+use dregg_intent::{ActionPattern, CommitmentId, Intent, IntentId, IntentKind, MatchSpec};
 
 // ============================================================================
 // Shared helpers (mirrors the inline helpers in trustless.rs unit tests)
@@ -187,7 +187,7 @@ fn stub_registry_accepts_garbage_proof_without_predicate() {
 
 #[test]
 fn strict_verifier_rejects_submission_without_predicate() {
-    use pyana_intent::trustless::WitnessedProofVerifier;
+    use dregg_intent::trustless::WitnessedProofVerifier;
 
     let reg = WitnessedPredicateRegistry::with_stubs();
     let (key, shares) = make_keys(2, 3);

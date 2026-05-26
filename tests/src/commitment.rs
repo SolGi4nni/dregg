@@ -6,7 +6,7 @@
 //! - Non-membership proof forgery
 //! - State collision attacks
 
-use pyana_commit::{
+use dregg_commit::{
     Fact, FactSet, FieldElement, FoldDelta, FoldDeltaBuilder, FoldVerification, MerkleProof,
     MerkleTree, NonMembershipProof, StateCommitment, SurvivalWitness, TokenState, hash_leaf,
     hash_node, verify_fold_chain,
@@ -165,7 +165,7 @@ fn empty_path_proof_rejected() {
     let root = fs.root();
 
     // Construct a bogus proof with empty path
-    let fake_proof = pyana_commit::MerkleProof {
+    let fake_proof = dregg_commit::MerkleProof {
         leaf_hash: hash_leaf(&fact.to_bytes()),
         path_indices: vec![],
         siblings: vec![],

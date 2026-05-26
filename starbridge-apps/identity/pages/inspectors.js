@@ -4,34 +4,34 @@
 // All policy lives in Rust (starbridge-apps/identity/src/lib.rs); the
 // JS is the thinnest possible UX layer.
 //
-//   <pyana-credential uri="pyana://credential/..."/>
+//   <dregg-credential uri="dregg://credential/..."/>
 //     Read-only credential view: schema, holder id, status, claim list
 //     (the holder's local cleartext copy — public network sees only
 //     commitments), expiry countdown, revoke button when the viewer is
 //     the issuer.
 //
-//   <pyana-credential-issue-form issuer-uri="pyana://cell/..." schema="kyc-v1"/>
+//   <dregg-credential-issue-form issuer-uri="dregg://cell/..." schema="kyc-v1"/>
 //     Issuer UI: schema picker, dynamic claim inputs, subject pk,
 //     signed-turn submission via the cipherclerk-named
-//     `window.pyana.builders.identity.issue_credential(...)` builder.
+//     `window.dregg.builders.identity.issue_credential(...)` builder.
 //
-//   <pyana-credential-present-form credential-uri="pyana://credential/..."/>
+//   <dregg-credential-present-form credential-uri="dregg://credential/..."/>
 //     Holder UI: per-claim selective-disclosure checklist, predicate
 //     builder ("verification_level Gte 1"), anonymous toggle, emits a
 //     signed presentation.
 //
-//   <pyana-credential-verifier verifier-uri="pyana://cell/..."/>
+//   <dregg-credential-verifier verifier-uri="dregg://cell/..."/>
 //     Verifier UI: paste a presentation, configure expectations, see
 //     accept/reject + revealed facts.
 //
-// CSS classes are namespaced .pyana-identity-* so peer apps don't
+// CSS classes are namespaced .dregg-identity-* so peer apps don't
 // collide.
 
 const TAGS = [
-  'pyana-credential',
-  'pyana-credential-issue-form',
-  'pyana-credential-present-form',
-  'pyana-credential-verifier',
+  'dregg-credential',
+  'dregg-credential-issue-form',
+  'dregg-credential-present-form',
+  'dregg-credential-verifier',
 ];
 
 const POLL_INTERVAL_MS = 7_000;
@@ -86,9 +86,9 @@ const SCHEMA_DEFS = {
   'employment-v1': ['employer', 'role', 'start_date'],
 };
 
-// ─── <pyana-credential> ──────────────────────────────────────────────────
+// ─── <dregg-credential> ──────────────────────────────────────────────────
 
-class PyanaCredentialElement extends HTMLElement {
+class DreggCredentialElement extends HTMLElement {
   static get observedAttributes() { return ['uri']; }
 
   constructor() {
@@ -134,47 +134,47 @@ class PyanaCredentialElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-identity-credential-card {
+        .dregg-identity-credential-card {
           border: 1px solid #ddd;
           border-radius: 6px;
           padding: 1rem;
           background: linear-gradient(180deg, #fff 0%, #fafbff 100%);
           max-width: 480px;
         }
-        .pyana-identity-credential-schema {
+        .dregg-identity-credential-schema {
           font-size: 0.75rem;
           color: #557;
           text-transform: uppercase;
           letter-spacing: 0.08em;
         }
-        .pyana-identity-credential-row {
+        .dregg-identity-credential-row {
           display: flex;
           justify-content: space-between;
           gap: 0.5rem;
           padding: 0.25rem 0;
         }
-        .pyana-identity-credential-label { color: #555; }
+        .dregg-identity-credential-label { color: #555; }
         code { font-family: ui-monospace, monospace; }
-        .pyana-identity-credential-status-ok  { color: #2a8a3e; font-weight: 600; }
-        .pyana-identity-credential-status-bad { color: #c43030; font-weight: 600; }
-        .pyana-identity-credential-claims {
+        .dregg-identity-credential-status-ok  { color: #2a8a3e; font-weight: 600; }
+        .dregg-identity-credential-status-bad { color: #c43030; font-weight: 600; }
+        .dregg-identity-credential-claims {
           margin-top: 0.6rem;
           border-top: 1px solid #eee;
           padding-top: 0.6rem;
         }
-        .pyana-identity-credential-claim {
+        .dregg-identity-credential-claim {
           display: flex;
           justify-content: space-between;
           gap: 0.5rem;
           padding: 0.2rem 0;
           font-size: 0.9rem;
         }
-        .pyana-identity-credential-claim code {
+        .dregg-identity-credential-claim code {
           background: #eef;
           padding: 0.05rem 0.35rem;
           border-radius: 3px;
         }
-        .pyana-identity-credential-actions {
+        .dregg-identity-credential-actions {
           margin-top: 0.6rem;
           display: flex;
           gap: 0.4rem;
@@ -188,7 +188,7 @@ class PyanaCredentialElement extends HTMLElement {
           cursor: pointer;
         }
         button[disabled] { opacity: 0.5; cursor: not-allowed; }
-        .pyana-identity-credential-error {
+        .dregg-identity-credential-error {
           color: #a02020;
           background: #fff0f0;
           padding: 0.5rem;
@@ -196,61 +196,61 @@ class PyanaCredentialElement extends HTMLElement {
           border-radius: 4px;
         }
       </style>
-      <div class="pyana-identity-credential-card">
-        ${this._error ? `<div class="pyana-identity-credential-error">${escapeHtml(this._error)}</div>` : ''}
+      <div class="dregg-identity-credential-card">
+        ${this._error ? `<div class="dregg-identity-credential-error">${escapeHtml(this._error)}</div>` : ''}
         ${this._loading
-          ? `<pyana-status-bar state="loading" message="fetching credential…"></pyana-status-bar>`
+          ? `<dregg-status-bar state="loading" message="fetching credential…"></dregg-status-bar>`
           : ''}
-        <div class="pyana-identity-credential-schema">${escapeHtml(d.schema || '(no schema)')}</div>
+        <div class="dregg-identity-credential-schema">${escapeHtml(d.schema || '(no schema)')}</div>
         <h3 style="margin: 0.2rem 0 0.5rem 0;">Credential ${escapeHtml(shortId(d.id || d.id_short || uri))}</h3>
-        <div class="pyana-identity-credential-row">
-          <span class="pyana-identity-credential-label">Holder</span>
+        <div class="dregg-identity-credential-row">
+          <span class="dregg-identity-credential-label">Holder</span>
           <code>${escapeHtml(shortId(d.holder_id))}</code>
         </div>
-        <div class="pyana-identity-credential-row">
-          <span class="pyana-identity-credential-label">Issued</span>
+        <div class="dregg-identity-credential-row">
+          <span class="dregg-identity-credential-label">Issued</span>
           <span>${escapeHtml(fmtTime(d.issued_at))}</span>
         </div>
-        <div class="pyana-identity-credential-row">
-          <span class="pyana-identity-credential-label">Expires</span>
+        <div class="dregg-identity-credential-row">
+          <span class="dregg-identity-credential-label">Expires</span>
           <span>${escapeHtml(fmtTime(d.not_after))}${expiresCountdown ? ` <em>(${escapeHtml(expiresCountdown)})</em>` : ''}</span>
         </div>
-        <div class="pyana-identity-credential-row">
-          <span class="pyana-identity-credential-label">Status</span>
-          <span class="${revoked ? 'pyana-identity-credential-status-bad' : 'pyana-identity-credential-status-ok'}">
+        <div class="dregg-identity-credential-row">
+          <span class="dregg-identity-credential-label">Status</span>
+          <span class="${revoked ? 'dregg-identity-credential-status-bad' : 'dregg-identity-credential-status-ok'}">
             ${revoked ? 'REVOKED' : 'VALID'}
           </span>
         </div>
         ${attrs.length ? `
-          <div class="pyana-identity-credential-claims">
+          <div class="dregg-identity-credential-claims">
             <strong>Claims (${attrs.length})</strong>
             ${attrs.map((a) => `
-              <div class="pyana-identity-credential-claim">
+              <div class="dregg-identity-credential-claim">
                 <span>${escapeHtml(a.name)}</span>
                 <code>${escapeHtml(a.value ?? '')}</code>
               </div>
             `).join('')}
           </div>
         ` : ''}
-        <div class="pyana-identity-credential-actions">
+        <div class="dregg-identity-credential-actions">
           <button data-action="present" ${revoked ? 'disabled' : ''}>Present…</button>
           <button data-action="revoke" ${revoked ? 'disabled' : ''}>Revoke</button>
           <button data-action="refresh">↻</button>
         </div>
-        <pyana-status-bar
+        <dregg-status-bar
           state="${this._busy ? 'loading' : (this._lastReceipt ? 'success' : 'idle')}"
           message="${escapeHtml(this._busy?.message ?? (this._lastReceipt ? 'submitted' : ''))}"
           receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
-        ></pyana-status-bar>
+        ></dregg-status-bar>
         ${this._lastReceipt ? `
           <div style="margin-top:0.5rem;">
-            <pyana-token-cap
+            <dregg-token-cap
               kind="receipt"
               label="credential-action"
               target="${escapeHtml(uri)}"
               action="${escapeHtml(this._lastReceipt.method || '')}"
               tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
-            ></pyana-token-cap>
+            ></dregg-token-cap>
           </div>
         ` : ''}
       </div>
@@ -271,7 +271,7 @@ class PyanaCredentialElement extends HTMLElement {
   }
 
   async #onRevoke(credentialUri) {
-    const builder = window.pyana?.builders?.identity?.revoke_credential;
+    const builder = window.dregg?.builders?.identity?.revoke_credential;
     if (!builder) {
       this.dispatchEvent(new CustomEvent('revoke-requested', {
         bubbles: true, composed: true, detail: { uri: credentialUri },
@@ -301,11 +301,11 @@ class PyanaCredentialElement extends HTMLElement {
 
   async #fetch(uri) {
     if (typeof window === 'undefined') return null;
-    if (window.pyana?.fetchCredential) {
-      return await window.pyana.fetchCredential(uri);
+    if (window.dregg?.fetchCredential) {
+      return await window.dregg.fetchCredential(uri);
     }
-    if (window.pyana?.credentials?.read) {
-      return await window.pyana.credentials.read(uri);
+    if (window.dregg?.credentials?.read) {
+      return await window.dregg.credentials.read(uri);
     }
     // No runtime helper — return a marker so the UI shows "(no
     // credential)" rather than fake data.
@@ -313,9 +313,9 @@ class PyanaCredentialElement extends HTMLElement {
   }
 }
 
-// ─── <pyana-credential-issue-form> ───────────────────────────────────────
+// ─── <dregg-credential-issue-form> ───────────────────────────────────────
 
-class PyanaCredentialIssueFormElement extends HTMLElement {
+class DreggCredentialIssueFormElement extends HTMLElement {
   static get observedAttributes() { return ['issuer-uri', 'schema']; }
 
   constructor() {
@@ -336,23 +336,23 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-identity-issue-form {
+        .dregg-identity-issue-form {
           display: grid;
           gap: 0.75rem;
           max-width: 420px;
         }
-        .pyana-identity-issue-form label {
+        .dregg-identity-issue-form label {
           display: grid;
           gap: 0.25rem;
         }
-        .pyana-identity-issue-form input,
-        .pyana-identity-issue-form select {
+        .dregg-identity-issue-form input,
+        .dregg-identity-issue-form select {
           padding: 0.4rem;
           font: inherit;
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-identity-issue-form button[type=submit] {
+        .dregg-identity-issue-form button[type=submit] {
           padding: 0.55rem;
           font-weight: 600;
           background: #3956c8;
@@ -361,16 +361,16 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-identity-issue-form button[type=submit][disabled] {
+        .dregg-identity-issue-form button[type=submit][disabled] {
           opacity: 0.5; cursor: wait;
         }
-        .pyana-identity-issue-form-target {
+        .dregg-identity-issue-form-target {
           font-size: 0.85rem;
           color: #666;
         }
       </style>
-      <form class="pyana-identity-issue-form">
-        <div class="pyana-identity-issue-form-target">
+      <form class="dregg-identity-issue-form">
+        <div class="dregg-identity-issue-form-target">
           Issuer cell: <code>${escapeHtml(issuerUri)}</code>
         </div>
         <label>
@@ -392,21 +392,21 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
           ${this._busy ? 'issuing…' : 'Issue credential'}
         </button>
       </form>
-      <pyana-status-bar
+      <dregg-status-bar
         state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
         message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'credential issued' : ''))}"
         receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
-      ></pyana-status-bar>
+      ></dregg-status-bar>
       ${this._lastReceipt ? `
         <div style="margin-top:0.5rem;">
-          <pyana-token-cap
+          <dregg-token-cap
             kind="credential"
             label="${escapeHtml(this._lastReceipt.credential?.schema || schemaName)}"
             target="${escapeHtml(issuerUri)}"
             action="issue_credential"
             tag="${escapeHtml(this._lastReceipt.credential?.id || this._lastReceipt.id || '')}"
             issuer="${escapeHtml(shortId(issuerUri))}"
-          ></pyana-token-cap>
+          ></dregg-token-cap>
         </div>
       ` : ''}
     `;
@@ -435,7 +435,7 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
     this._lastError = null;
     this._lastReceipt = null;
     this.render();
-    const builder = window.pyana?.builders?.identity?.issue_credential;
+    const builder = window.dregg?.builders?.identity?.issue_credential;
     if (!builder) {
       this._busy = null;
       this._lastError = 'no issue_credential builder loaded (check turn-builders.js)';
@@ -461,9 +461,9 @@ class PyanaCredentialIssueFormElement extends HTMLElement {
   }
 }
 
-// ─── <pyana-credential-present-form> ─────────────────────────────────────
+// ─── <dregg-credential-present-form> ─────────────────────────────────────
 
-class PyanaCredentialPresentFormElement extends HTMLElement {
+class DreggCredentialPresentFormElement extends HTMLElement {
   static get observedAttributes() { return ['credential-uri']; }
 
   constructor() {
@@ -491,40 +491,40 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-identity-present-form {
+        .dregg-identity-present-form {
           display: grid;
           gap: 0.75rem;
           max-width: 540px;
         }
-        .pyana-identity-present-form fieldset {
+        .dregg-identity-present-form fieldset {
           border: 1px solid #ddd;
           border-radius: 4px;
           padding: 0.75rem;
           background: #fafbff;
         }
-        .pyana-identity-present-form legend {
+        .dregg-identity-present-form legend {
           font-weight: 600;
           padding: 0 0.4rem;
         }
-        .pyana-identity-present-form-row {
+        .dregg-identity-present-form-row {
           display: flex;
           gap: 0.5rem;
           align-items: center;
           padding: 0.2rem 0;
         }
-        .pyana-identity-present-form-predicate {
+        .dregg-identity-present-form-predicate {
           display: grid;
           grid-template-columns: 1fr 80px 1fr;
           gap: 0.4rem;
         }
-        .pyana-identity-present-form input,
-        .pyana-identity-present-form select {
+        .dregg-identity-present-form input,
+        .dregg-identity-present-form select {
           padding: 0.4rem;
           font: inherit;
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-identity-present-form button[type=submit] {
+        .dregg-identity-present-form button[type=submit] {
           padding: 0.55rem;
           font-weight: 600;
           background: #3956c8;
@@ -533,13 +533,13 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-identity-present-form button[type=submit][disabled] {
+        .dregg-identity-present-form button[type=submit][disabled] {
           opacity: 0.5; cursor: wait;
         }
-        .pyana-identity-present-form-empty {
+        .dregg-identity-present-form-empty {
           color: #888; font-style: italic;
         }
-        .pyana-identity-present-form-output {
+        .dregg-identity-present-form-output {
           margin-top: 0.6rem;
           padding: 0.6rem;
           background: #f7f7fa;
@@ -552,17 +552,17 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
           word-break: break-all;
         }
       </style>
-      <form class="pyana-identity-present-form">
+      <form class="dregg-identity-present-form">
         <div>Credential: <code>${escapeHtml(credentialUri || '(none)')}</code></div>
         ${this._loading
-          ? `<pyana-status-bar state="loading" message="loading credential…"></pyana-status-bar>`
+          ? `<dregg-status-bar state="loading" message="loading credential…"></dregg-status-bar>`
           : ''}
         <fieldset>
           <legend>Selective disclosure</legend>
           ${attrs.length === 0
-            ? `<div class="pyana-identity-present-form-empty">(no attributes available)</div>`
+            ? `<div class="dregg-identity-present-form-empty">(no attributes available)</div>`
             : attrs.map((a) => `
-              <label class="pyana-identity-present-form-row">
+              <label class="dregg-identity-present-form-row">
                 <input type="checkbox" name="disclose_${escapeHtml(a.name)}" />
                 <span>${escapeHtml(a.name)}</span>
                 <code style="margin-left:auto">${escapeHtml(a.value ?? '')}</code>
@@ -571,7 +571,7 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
         </fieldset>
         <fieldset>
           <legend>Predicate (zero-knowledge range proof)</legend>
-          <div class="pyana-identity-present-form-predicate">
+          <div class="dregg-identity-present-form-predicate">
             <select name="pred_attr">
               <option value="">(no predicate)</option>
               ${attrs.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('')}
@@ -584,7 +584,7 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
             <input name="pred_val" type="number" placeholder="value" />
           </div>
         </fieldset>
-        <label class="pyana-identity-present-form-row">
+        <label class="dregg-identity-present-form-row">
           <input type="checkbox" name="anonymous" />
           <span>Anonymous (unlinkable multi-show)</span>
         </label>
@@ -592,19 +592,19 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
           ${this._busy ? 'generating…' : 'Generate presentation'}
         </button>
       </form>
-      <pyana-status-bar
+      <dregg-status-bar
         state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._presentation ? 'success' : 'idle'))}"
         message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._presentation ? 'presentation generated' : ''))}"
-      ></pyana-status-bar>
+      ></dregg-status-bar>
       ${this._presentation ? `
-        <div class="pyana-identity-present-form-output">${escapeHtml(JSON.stringify(this._presentation, null, 2))}</div>
-        <pyana-token-cap
+        <div class="dregg-identity-present-form-output">${escapeHtml(JSON.stringify(this._presentation, null, 2))}</div>
+        <dregg-token-cap
           kind="presentation"
           label="${escapeHtml(this._credential?.schema || 'credential-presentation')}"
           target="${escapeHtml(credentialUri)}"
           action="present_credential"
           tag="${escapeHtml((this._presentation.id || '').toString().slice(0, 16))}"
-        ></pyana-token-cap>
+        ></dregg-token-cap>
       ` : ''}
     `;
 
@@ -632,8 +632,8 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
 
   async #loadCredential(uri) {
     if (typeof window === 'undefined') return null;
-    if (window.pyana?.fetchCredential) {
-      try { return await window.pyana.fetchCredential(uri); } catch { return null; }
+    if (window.dregg?.fetchCredential) {
+      try { return await window.dregg.fetchCredential(uri); } catch { return null; }
     }
     return null;
   }
@@ -643,7 +643,7 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
     this._lastError = null;
     this._presentation = null;
     this.render();
-    const builder = window.pyana?.builders?.identity?.present_credential;
+    const builder = window.dregg?.builders?.identity?.present_credential;
     if (!builder) {
       this._busy = null;
       this._lastError = 'no present_credential builder loaded';
@@ -668,9 +668,9 @@ class PyanaCredentialPresentFormElement extends HTMLElement {
   }
 }
 
-// ─── <pyana-credential-verifier> ─────────────────────────────────────────
+// ─── <dregg-credential-verifier> ─────────────────────────────────────────
 
-class PyanaCredentialVerifierElement extends HTMLElement {
+class DreggCredentialVerifierElement extends HTMLElement {
   static get observedAttributes() { return ['verifier-uri']; }
 
   constructor() {
@@ -689,16 +689,16 @@ class PyanaCredentialVerifierElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .pyana-identity-verifier-form {
+        .dregg-identity-verifier-form {
           display: grid;
           gap: 0.75rem;
           max-width: 540px;
         }
-        .pyana-identity-verifier-form label {
+        .dregg-identity-verifier-form label {
           display: grid;
           gap: 0.25rem;
         }
-        .pyana-identity-verifier-form textarea {
+        .dregg-identity-verifier-form textarea {
           width: 100%;
           min-height: 7rem;
           font: 0.85rem ui-monospace, monospace;
@@ -706,13 +706,13 @@ class PyanaCredentialVerifierElement extends HTMLElement {
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-identity-verifier-form input {
+        .dregg-identity-verifier-form input {
           padding: 0.4rem;
           font: inherit;
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-identity-verifier-form button[type=submit] {
+        .dregg-identity-verifier-form button[type=submit] {
           padding: 0.55rem;
           font-weight: 600;
           background: #3956c8;
@@ -721,21 +721,21 @@ class PyanaCredentialVerifierElement extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-identity-verifier-form button[type=submit][disabled] {
+        .dregg-identity-verifier-form button[type=submit][disabled] {
           opacity: 0.5; cursor: wait;
         }
-        .pyana-identity-verifier-result {
+        .dregg-identity-verifier-result {
           border: 1px solid #ddd;
           padding: 0.75rem;
           border-radius: 4px;
           background: #fafbfc;
         }
-        .pyana-identity-verifier-accept {
+        .dregg-identity-verifier-accept {
           color: #1f6b30;
           font-weight: 700;
           font-size: 1.05rem;
         }
-        .pyana-identity-verifier-reject {
+        .dregg-identity-verifier-reject {
           color: #a02020;
           font-weight: 700;
           font-size: 1.05rem;
@@ -748,7 +748,7 @@ class PyanaCredentialVerifierElement extends HTMLElement {
           max-height: 14rem;
         }
       </style>
-      <form class="pyana-identity-verifier-form">
+      <form class="dregg-identity-verifier-form">
         <div>Verifier cell: <code>${escapeHtml(verifierUri)}</code></div>
         <label>
           Presentation (wire JSON)
@@ -770,13 +770,13 @@ class PyanaCredentialVerifierElement extends HTMLElement {
           ${this._busy ? 'verifying…' : 'Verify'}
         </button>
       </form>
-      <pyana-status-bar
+      <dregg-status-bar
         state="${this._busy ? 'loading' : (this._error ? 'error' : (result ? 'success' : 'idle'))}"
         message="${escapeHtml(this._busy?.message ?? this._error ?? '')}"
-      ></pyana-status-bar>
+      ></dregg-status-bar>
       ${result ? `
-        <div class="pyana-identity-verifier-result">
-          <div class="${result.accept ? 'pyana-identity-verifier-accept' : 'pyana-identity-verifier-reject'}">
+        <div class="dregg-identity-verifier-result">
+          <div class="${result.accept ? 'dregg-identity-verifier-accept' : 'dregg-identity-verifier-reject'}">
             ${result.accept ? 'ACCEPT ✓' : 'REJECT ✗'}
           </div>
           ${result.error ? `<div><em>${escapeHtml(result.error)}</em></div>` : ''}
@@ -784,13 +784,13 @@ class PyanaCredentialVerifierElement extends HTMLElement {
             <h4 style="margin: 0.6rem 0 0.3rem 0;">Revealed</h4>
             <pre>${escapeHtml(JSON.stringify(result.disclosed, null, 2))}</pre>
           ` : ''}
-          <pyana-token-cap
+          <dregg-token-cap
             kind="${result.accept ? 'verified' : 'rejected'}"
             label="${result.accept ? 'ACCEPT' : 'REJECT'}"
             target="${escapeHtml(verifierUri)}"
             action="verify_presentation"
             tag="${escapeHtml(result.commitment ?? '')}"
-          ></pyana-token-cap>
+          ></dregg-token-cap>
         </div>
       ` : ''}
     `;
@@ -814,7 +814,7 @@ class PyanaCredentialVerifierElement extends HTMLElement {
     this._error = null;
     this._result = null;
     this.render();
-    const builder = window.pyana?.builders?.identity?.verify_presentation;
+    const builder = window.dregg?.builders?.identity?.verify_presentation;
     if (!builder) {
       this._busy = null;
       this._error = 'no verify_presentation builder loaded';
@@ -842,26 +842,26 @@ class PyanaCredentialVerifierElement extends HTMLElement {
 // ─── Registration ────────────────────────────────────────────────────────
 
 const COMPONENTS = {
-  'pyana-credential':              PyanaCredentialElement,
-  'pyana-credential-issue-form':   PyanaCredentialIssueFormElement,
-  'pyana-credential-present-form': PyanaCredentialPresentFormElement,
-  'pyana-credential-verifier':     PyanaCredentialVerifierElement,
+  'dregg-credential':              DreggCredentialElement,
+  'dregg-credential-issue-form':   DreggCredentialIssueFormElement,
+  'dregg-credential-present-form': DreggCredentialPresentFormElement,
+  'dregg-credential-verifier':     DreggCredentialVerifierElement,
 };
 
 for (const [tag, ctor] of Object.entries(COMPONENTS)) {
   if (typeof customElements !== 'undefined' && !customElements.get(tag)) {
     customElements.define(tag, ctor);
   }
-  if (typeof window !== 'undefined' && window.pyana?.register) {
-    window.pyana.register(tag, ctor);
+  if (typeof window !== 'undefined' && window.dregg?.register) {
+    window.dregg.register(tag, ctor);
   }
 }
 
 export {
-  PyanaCredentialElement,
-  PyanaCredentialIssueFormElement,
-  PyanaCredentialPresentFormElement,
-  PyanaCredentialVerifierElement,
+  DreggCredentialElement,
+  DreggCredentialIssueFormElement,
+  DreggCredentialPresentFormElement,
+  DreggCredentialVerifierElement,
   TAGS,
   SCHEMA_COMMITMENT_SLOT,
   ISSUANCE_COUNTER_SLOT,

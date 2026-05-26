@@ -14,10 +14,10 @@
 //!   2. Adversarial — tampered proof / wrong commitment rejected.
 //!   3. Registry lookup — unknown kind rejected.
 
-use pyana_cell::predicate::{
+use dregg_cell::predicate::{
     WitnessedPredicate, WitnessedPredicateKind, WitnessedPredicateRegistry,
 };
-use pyana_cell::{InputRef, ProgramError};
+use dregg_cell::{InputRef, ProgramError};
 
 // ---------------------------------------------------------------------------
 // Helpers / shared concerns

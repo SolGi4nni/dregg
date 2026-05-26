@@ -61,7 +61,7 @@ async fn submit(cfg: &Config, ctx: &Context, file: &str) -> Result<(), Box<dyn s
     let status_str = data["status"].as_str().unwrap_or("submitted");
     ctx.success(&format!("Turn submitted: {}", abbrev_hex(turn_id, 8, 4)));
     ctx.kv("Status", status_str);
-    ctx.info("  Check progress with: pyana turn status <turn-id>");
+    ctx.info("  Check progress with: dregg turn status <turn-id>");
 
     Ok(())
 }
@@ -331,7 +331,7 @@ async fn build(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::Er
         }
         "EnlivenRef" => {
             let uri: String = Input::new()
-                .with_prompt("Sturdy reference URI (pyana://...)")
+                .with_prompt("Sturdy reference URI (dregg://...)")
                 .interact_text()?;
             serde_json::json!({
                 "type": "EnlivenRef",

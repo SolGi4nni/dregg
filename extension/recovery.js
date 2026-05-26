@@ -1,4 +1,4 @@
-// Pyana Cipherclerk Recovery — handles mnemonic input validation and cipherclerk restore.
+// Dregg Cipherclerk Recovery — handles mnemonic input validation and cipherclerk restore.
 
 const wordGrid = document.getElementById('wordGrid');
 const pasteBtn = document.getElementById('pasteBtn');
@@ -119,7 +119,7 @@ recoverBtn.addEventListener('click', async () => {
   try {
     const id = `recovery_${Date.now()}`;
     const response = await chrome.runtime.sendMessage({
-      type: 'pyana:recover',
+      type: 'dregg:recover',
       id,
       mnemonic,
       passphrase,

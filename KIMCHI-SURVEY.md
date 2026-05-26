@@ -2,7 +2,7 @@
 
 Written 2026-05-24, branch `main`. Read-only inventory of the code we already
 have and what each of the two options would actually require, as a basis for
-choosing the outer recursive layer for pyana's per-cell Effect VM STARKs.
+choosing the outer recursive layer for dregg's per-cell Effect VM STARKs.
 
 The question framed in `THOUGHTS-AND-DREAMS.md` §Q1 / §3:
 
@@ -28,7 +28,7 @@ each at a very different maturity level, gated behind the `mina` feature
 ### 1.1 `circuit/src/backends/kimchi_native/` — ~9 700 LOC
 
 This is the largest of the three. It is the **circuit-author surface**: a
-collection of native Kimchi circuits that re-prove pyana's per-statement
+collection of native Kimchi circuits that re-prove dregg's per-statement
 predicates using Pasta/Vesta + IPA, mirroring shape-for-shape what the
 BabyBear STARK backend proves.
 
@@ -40,7 +40,7 @@ BabyBear STARK backend proves.
 | `tests.rs`           | 2 202 | tests                                                          |
 | `predicates.rs`      | 1 195 | arithmetic / relational / temporal / compound predicate gates  |
 | `presentation.rs`    |   915 | full composed authorization proof                              |
-| `from_dsl.rs`        |   824 | adapter from the `pyana-dsl` IR                                |
+| `from_dsl.rs`        |   824 | adapter from the `dregg-dsl` IR                                |
 | `fold.rs`            |   686 | fold-step (capability attenuation) circuit                     |
 | `non_membership.rs`  |   491 | accumulator-polynomial non-revocation                          |
 | `ivc.rs`             |   281 | bounded-depth IVC composition                                  |
@@ -48,9 +48,9 @@ BabyBear STARK backend proves.
 It builds on the upstream o1-labs crates (`kimchi`, `poly-commitment`,
 `mina-curves`, `mina-poseidon`, `groupmap`, all pinned to
 `o1-labs/proof-systems#36a8b510` — see `circuit/Cargo.toml:53-58`). It is the
-**consumer** of `pyana-dsl`'s `gen_kimchi` module:
+**consumer** of `dregg-dsl`'s `gen_kimchi` module:
 
-- `pyana-dsl/src/gen_kimchi.rs` (250 LOC) is a code-generator (proc-macro
+- `dregg-dsl/src/gen_kimchi.rs` (250 LOC) is a code-generator (proc-macro
   helper) that emits a `KimchiCircuitDescriptor` from the IR.
 - That descriptor is rebuilt at runtime via the
   `kimchi_native::dsl_backend::prove_dsl_kimchi(desc, trace, public_inputs)`
@@ -70,7 +70,7 @@ multiple still-vacuous sites. The whole module is downgraded to
 
 What this code **does** right today, independent of the soundness issue:
 
-- Generates and verifies a real Kimchi proof for each pyana predicate over
+- Generates and verifies a real Kimchi proof for each dregg predicate over
   Vesta (~5-10 KiB, ~1-2s prove time).
 - Round-trips through the same upstream `kimchi::verifier::verify` that
   Mina uses on-chain.
@@ -181,7 +181,7 @@ gaps" caveat that the rest of the Kimchi tree carries.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ pyana-dsl / gen_kimchi.rs    ── (codegen) ──→ KimchiCircuitDescriptor │
+│ dregg-dsl / gen_kimchi.rs    ── (codegen) ──→ KimchiCircuitDescriptor │
 │                                                       │            │
 │                                                       ▼            │
 │ circuit/src/backends/kimchi_native/                                │
@@ -225,10 +225,10 @@ Three distinct surfaces:
 - **Non-membership** (`prove_non_membership`): an element-not-in-set proof
   against a polynomial-accumulator root.
 - **Predicates** (arithmetic / relational / temporal / compound): the four
-  caveat predicate families from pyana-dsl.
+  caveat predicate families from dregg-dsl.
 - **Presentation**: a full composed authorization proof.
 - **Generic DSL constraint** (`prove_dsl_kimchi`): anything emitted by
-  pyana-dsl as a `CircuitDescriptor` — equality, polynomial degree ≤ 2,
+  dregg-dsl as a `CircuitDescriptor` — equality, polynomial degree ≤ 2,
   PI binding, gated, transition, conditional-nonzero, AtLeastOne. Hash
   gates are marked `TODO`.
 
@@ -366,7 +366,7 @@ It is genuinely a 33-line stub. Verbatim (modulo doc-comment formatting):
 //! the types needed by `ivc::recursive_ivc`.
 
 use crate::field::BabyBear;
-use crate::plonky3_prover::PyanaProof;
+use crate::plonky3_prover::DreggProof;
 
 /// Recursion strategy selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -379,14 +379,14 @@ pub enum RecursionMode {
 
 /// An IVC step proof using recursive verification.
 pub struct RecursiveIvcStep {
-    pub proof: PyanaProof,
+    pub proof: DreggProof,
     pub public_inputs: Vec<BabyBear>,
     pub step_number: u32,
 }
 
 /// Build a recursive IVC chain (currently unavailable).
 pub fn build_recursive_ivc_chain(
-    _fold_proofs: &[(&PyanaProof, &[BabyBear])],
+    _fold_proofs: &[(&DreggProof, &[BabyBear])],
 ) -> Result<RecursiveIvcStep, String> {
     Err(
         "recursive verification is unavailable: RecursiveVerifierAir is a non-functional placeholder"
@@ -423,7 +423,7 @@ the codebase is split across two files:
 So the work for option (A) is **not** "write `plonky3_verifier_air.rs`
 from scratch." It is "generalise `plonky3_recursion_impl.rs` from
 `P3MerklePoseidon2Air` to the Effect VM AIR shape." The infrastructure
-(`PyanaRecursionConfig`, `create_recursion_backend`,
+(`DreggRecursionConfig`, `create_recursion_backend`,
 `prove_recursive_layer`, `verify_recursive_layer`) is wired up to the
 fork; the missing piece is making the inner AIR be Effect VM (width
 105, all its constraints, Stage-7 PI layout) rather than the toy
@@ -520,7 +520,7 @@ would still be sound.
 - Option (B): post-quantum inner (STARK), classical outer (Pasta/IPA).
   Mina is in the same position.
 
-For pyana's threat model — issuing capability proofs that need to
+For dregg's threat model — issuing capability proofs that need to
 hold up over years — this is the most meaningful asymmetry between
 the two options. PQ-safe-by-default is a property worth several
 weeks of engineering all by itself.
@@ -548,7 +548,7 @@ Honest accounting from the docs and module headers:
 
 ---
 
-## 7. Recursive depth: which topology suits pyana's witnessed-receipt chain?
+## 7. Recursive depth: which topology suits dregg's witnessed-receipt chain?
 
 Per `THOUGHTS-AND-DREAMS.md` §8 (the "golden vision" articulation):
 
@@ -565,7 +565,7 @@ the call_forest tree"):
 > using a Nova-style folding scheme (or Plonky3's recursive verifier
 > as the IVC step)."*
 
-The shape pyana actually wants:
+The shape dregg actually wants:
 
 ```
                  root proof  (whole turn or whole DAG cut)
@@ -630,7 +630,7 @@ What I can say from our own code:
   (BLAKE3 emulation in Kimchi) for ~12 rows (native Poseidon gate). It
   is the difference between "fits in domain 2^15" and "doesn't fit at
   all."
-- No other pyana-internal Plonky3→Kimchi bridge exists.
+- No other dregg-internal Plonky3→Kimchi bridge exists.
 
 What the ecosystem has done, from prior reading (not freshly verified
 this session):
@@ -681,7 +681,7 @@ Reasoning in summary:
    Pickles assisted-recursion is linear by default; standalone is
    not production-ready.
 
-4. **PQ stays.** pyana's threat horizon is years; capability proofs
+4. **PQ stays.** dregg's threat horizon is years; capability proofs
    need to hold up. Option (A) keeps the full stack PQ-safe.
 
 5. **Maintenance posture.** The
@@ -699,7 +699,7 @@ The case for option (B) doesn't disappear:
   `THOUGHTS-AND-DREAMS.md` §4 and Mina's own docs).
 - ~5 800 LOC of `circuit/src/backends/mina/` exists; throwing it
   away is real cost.
-- For *external* settlement (e.g. anchoring a pyana commit on
+- For *external* settlement (e.g. anchoring a dregg commit on
   Mina or another curve-based L1), a Kimchi/Pickles proof is what
   the receiving chain can verify. Option (A) does not give us
   that.
@@ -753,7 +753,7 @@ question in `THOUGHTS-AND-DREAMS.md` §Q1 into a decision.
 - The cross-chain settlement bridge (option B's strongest case) is
   worth its own investigation — specifically, whether Midnight (per
   `project-midnight-strategy.md`) needs Pickles compatibility or
-  whether a `pyana-verifier` standalone covers it.
+  whether a `dregg-verifier` standalone covers it.
 - The fabricated-Mangrove correction in `THOUGHTS-AND-DREAMS.md` §1
   affects neither (A) nor (B); the ζ doc's chunking intuition is
   separate from the choice of outer recursive substrate.
@@ -786,7 +786,7 @@ Primary code paths referenced in this survey, all under
   concept)
 - `circuit/src/proof_tier.rs:154` — `kimchi_native_tier() →
   ProofTier::Experimental`
-- `pyana-dsl/src/gen_kimchi.rs` — the codegen feeding the
+- `dregg-dsl/src/gen_kimchi.rs` — the codegen feeding the
   Kimchi backend
 - `circuit/Cargo.toml:53-58` — o1-labs commit pin
   `36a8b510`

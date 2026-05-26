@@ -87,7 +87,7 @@ Upgrades:
 - **Dataflow pipelines**: job_submission -> qualification_check -> matching -> execution -> delivery_proof -> settlement. Full pipeline from job to payment.
 - **Ring trade solver**: Compute bartering. "I have spare A100 time, want H100 time." "I have H100 time, want storage." "I have storage, want A100 time." Ring trade settles all three atomically.
 - **DFA routing**: /providers/h100/*, /providers/a100/* routing with access control. Tiered access: verified enterprise gets priority routing to premium GPUs.
-- **Nameservice**: Providers register as `compute.h100.acme.pyana` for discovery. Consumers resolve names instead of tracking cell IDs.
+- **Nameservice**: Providers register as `compute.h100.acme.dregg` for discovery. Consumers resolve names instead of tracking cell IDs.
 - **Unified blocklace**: Cross-federation compute markets. Federation A's consumers access Federation B's GPU providers through unified order matching.
 
 Priority: HIGH
@@ -102,7 +102,7 @@ Upgrades:
 - **Blinded queues**: TRUE Vickrey auctions. Currently bids are committed but the auction operator can see reveal order. With blinded queues: bids enter a blinded queue, withdrawal reveals winner without operator learning intermediate bids. STRICTLY stronger privacy than commit-reveal.
 - **Programmable queues**: Bid validation queue. Queue only accepts bids that provably have sufficient escrow backing (circuit-validated). No "bid then fail to fund" scenario.
 - **Store-and-forward inboxes**: Auction notifications for offline bidders. "You were outbid" or "You won! Claim within 50 blocks." Messages wait in inbox.
-- **Nameservice**: Artists register as `gallery.artist-name.pyana`. Galleries register collections. Makes art discovery human-friendly.
+- **Nameservice**: Artists register as `gallery.artist-name.dregg`. Galleries register collections. Makes art discovery human-friendly.
 - **Ring trade solver**: Art-for-art trades. "I have Piece A, want something from Collection X." "I have Piece X, want something from Collection Y." "I have Piece Y, want Piece A." Three-way trade settles atomically. Enables non-monetary art exchanges.
 - **CapTP provable effects**: Provenance as capability chain. Each transfer is a CapTP delegation: artist -> collector1 -> collector2. The provenance chain IS the capability chain. Proof of authenticity = proof you hold the capability.
 - **Multi-asset fees**: Auction fees payable in any accepted token. Commission in ETH, USDC, or the gallery's own token.
@@ -122,7 +122,7 @@ Upgrades:
 - **Executor delegation**: Workers delegate proof generation for qualification STARKs to compute providers. "Prove I have standing >= 5 without revealing my identity" is expensive; delegate to GPU executor.
 - **Store-and-forward inboxes**: Delivery notifications for offline issuers. Worker completes, submits to issuer's inbox. Issuer reviews when available, approves, payment releases.
 - **Programmable queues**: Submission review queue with deadline enforcement. Queue rejects submissions after deadline. Circuit-validated: late submissions cannot enter.
-- **Nameservice**: Bounty boards register as `bounties.rust-dev.pyana` or `bounties.design.pyana`. Workers discover boards by category.
+- **Nameservice**: Bounty boards register as `bounties.rust-dev.dregg` or `bounties.design.dregg`. Workers discover boards by category.
 - **Multi-asset fees**: Bounties payable in any token. "500 USDC for a logo" or "0.1 ETH for a smart contract audit."
 - **CapTP provable effects**: Work delivery as capability chain. Worker proves "I performed action X on cell Y at time T" via effect proof. Stronger than receipt chains -- the proof IS the delivery.
 - **Dataflow pipelines**: bounty_creation -> qualification_filter -> worker_match -> submission -> review -> payment. Automated pipeline for simple bounties.
@@ -140,7 +140,7 @@ Upgrades:
 - **Store-and-forward inboxes**: Credential delivery to offline holders. Issuer issues credential, it arrives in holder's inbox. Verification requests also arrive offline.
 - **CapTP provable effects**: Credentials AS capabilities. A credential IS a capability token. "Holding credential X grants capability Y." The ZK presentation IS the capability invocation. Natural unification of identity and authorization.
 - **DFA routing**: Credential-gated DFA routing. "Access to /services/premium/* requires credential with attribute premium=true." The DFA checks presentation proofs as route guards.
-- **Nameservice**: Issuers register as `issuer.university.pyana`, `issuer.employer.pyana`. Verifiers can look up issuers by name instead of raw public key hashes.
+- **Nameservice**: Issuers register as `issuer.university.dregg`, `issuer.employer.dregg`. Verifiers can look up issuers by name instead of raw public key hashes.
 - **Blinded queues**: Anonymous credential distribution. University issues 1000 alumni credentials to a blinded queue. Each alumnus withdraws one without the university knowing which credential maps to which student.
 - **Executor delegation**: Delegated presentation generation. Mobile holder delegates to a cloud service: "generate presentations on my behalf for requests matching pattern X." The executor holds derived keys, not master keys.
 - **Programmable queues**: Revocation queue with circuit validation. Revocations enter a validated queue; only the original issuer's signature can enqueue a revocation.
@@ -224,9 +224,9 @@ These upgrades create interactions between apps that didn't exist before:
    - Creates a circular economy: DeFi protocols pay for proving, provers earn DeFi yields
 
 4. **Nameservice + All Apps (Unified Discovery)**
-   - `swap.eth-usdc.amm.pyana` resolves to AMM pool endpoint
-   - `lend.usdc.market.pyana` resolves to lending market
-   - `gpu.h100.compute.pyana` resolves to compute provider
+   - `swap.eth-usdc.amm.dregg` resolves to AMM pool endpoint
+   - `lend.usdc.market.dregg` resolves to lending market
+   - `gpu.h100.compute.dregg` resolves to compute provider
    - Human-readable URLs replace content-addressed cell IDs everywhere
 
 5. **Bounty Board + Identity + Compute (Reputation Pipeline)**

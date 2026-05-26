@@ -62,12 +62,12 @@ use serde::{Deserialize, Serialize};
 use crate::id::CellId;
 
 /// Domain key for the canonical ring encoding hash.
-const RING_CLOSURE_CANONICAL_KEY: &str = "pyana-ring-closure-canonical-v1";
+const RING_CLOSURE_CANONICAL_KEY: &str = "dregg-ring-closure-canonical-v1";
 
 /// Domain key for the per-leg PI digest used inside the canonical
 /// encoding. Each leg contributes one digest derived from the leg's
 /// bilateral γ.2 PIs.
-const RING_CLOSURE_LEG_PI_KEY: &str = "pyana-ring-closure-leg-pi-v1";
+const RING_CLOSURE_LEG_PI_KEY: &str = "dregg-ring-closure-leg-pi-v1";
 
 /// The Silver-Vision proof kind: a 32-byte BLAKE3 keyed commitment.
 /// Golden Vision adds a `Stark { ... }` variant that carries STARK
@@ -103,7 +103,7 @@ pub struct RingLegPi {
     /// `participants[(leg_index + 1) % N]` (the ring is cyclic).
     pub receiver_cell: CellId,
     /// The canonical γ.2 `transfer_id` for this leg.
-    /// `H("pyana-transfer-id-v1", sender, receiver, amount, nonce)`
+    /// `H("dregg-transfer-id-v1", sender, receiver, amount, nonce)`
     /// — must equal `transfer_ids[leg_index]`.
     pub transfer_id: [u8; 32],
     /// Domain-tagged digest of the leg's full PI vector (amount
@@ -395,7 +395,7 @@ impl RingClosureAttestation {
 
 /// Compute the Silver-Vision canonical commitment for a ring closure.
 ///
-/// `BLAKE3_keyed("pyana-ring-closure-canonical-v1",
+/// `BLAKE3_keyed("dregg-ring-closure-canonical-v1",
 ///   u64(N) || cell_0 || transfer_id_0 || pi_digest_0
 ///           || cell_1 || transfer_id_1 || pi_digest_1
 ///           || ...)`.

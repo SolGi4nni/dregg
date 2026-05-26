@@ -1,6 +1,6 @@
 // Provision popup script — nonce-bound.
 // P0-1/P0-2: token data is no longer in the URL; it's fetched from the
-// background via pyana:getPendingDecision using the per-popup nonce
+// background via dregg:getPendingDecision using the per-popup nonce
 // passed in the URL hash. The decision message must include the nonce.
 
 function parseNonce() {
@@ -79,7 +79,7 @@ async function init() {
   }
   try {
     const resp = await chrome.runtime.sendMessage({
-      type: 'pyana:getPendingDecision',
+      type: 'dregg:getPendingDecision',
       nonce: NONCE,
     });
     if (resp && resp.result && resp.result.payload && resp.result.payload.tokenData) {
@@ -99,7 +99,7 @@ async function init() {
 function sendDecision(accepted) {
   if (!NONCE) return;
   chrome.runtime.sendMessage({
-    type: 'pyana:provisionDecision',
+    type: 'dregg:provisionDecision',
     nonce: NONCE,
     accepted,
   });

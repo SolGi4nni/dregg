@@ -1,10 +1,10 @@
 //! AI Agent MCP Workflow — Capability-Gated Tool Use with Selective Disclosure
 //!
-//! **Story**: An AI agent (simulating Claude) connects to a pyana node via MCP,
+//! **Story**: An AI agent (simulating Claude) connects to a dregg node via MCP,
 //! receives a capability token, uses it to authorize an API call with selective
 //! disclosure, then delegates a sub-capability to a tool-use agent.
 //!
-//! This demonstrates pyana as "a home for AI" — the infrastructure that gives
+//! This demonstrates dregg as "a home for AI" — the infrastructure that gives
 //! AI agents cryptographically-bounded authority over real resources.
 //!
 //! Since we can't run MCP over stdio in a unit example, we simulate the JSON-RPC
@@ -18,12 +18,12 @@
 //! - Delegation to sub-agent (attenuated token with budget constraint)
 //! - The "home for AI" narrative: real crypto behind simple tool calls
 //!
-//! Run with: cargo run --release -p pyana-demo-agent --example ai_agent_mcp_workflow
+//! Run with: cargo run --release -p dregg-demo-agent --example ai_agent_mcp_workflow
 
 use std::time::Instant;
 
-use pyana_sdk::{AgentCipherclerk, AuthorizationPresentation, FactIndex, VerificationMode};
-use pyana_token::{Attenuation, AuthRequest, BudgetSpec};
+use dregg_sdk::{AgentCipherclerk, AuthorizationPresentation, FactIndex, VerificationMode};
+use dregg_token::{Attenuation, AuthRequest, BudgetSpec};
 
 /// Format a JSON-RPC request the way it would appear on the wire.
 fn format_jsonrpc_request(id: u64, method: &str, params: &serde_json::Value) -> String {
@@ -63,7 +63,7 @@ fn main() {
     println!("  Capability-Gated Tool Use with Selective Disclosure");
     println!("===============================================================================");
     println!();
-    println!("  Scenario: Claude connects to a pyana node via MCP (Model Context Protocol).");
+    println!("  Scenario: Claude connects to a dregg node via MCP (Model Context Protocol).");
     println!("  The node grants Claude a scoped capability token. Claude uses it to access");
     println!("  an API, then delegates a sub-capability to a tool-use agent.");
     println!();
@@ -99,7 +99,7 @@ fn main() {
         &serde_json::json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": { "listChanged": false } },
-            "serverInfo": { "name": "pyana-node", "version": "0.1.0" }
+            "serverInfo": { "name": "dregg-node", "version": "0.1.0" }
         }),
     );
 
@@ -119,7 +119,7 @@ fn main() {
         &serde_json::json!({
             "tools": [
                 {
-                    "name": "pyana_authorize",
+                    "name": "dregg_authorize",
                     "description": "Obtain a scoped capability token for API access",
                     "inputSchema": {
                         "type": "object",
@@ -131,7 +131,7 @@ fn main() {
                     }
                 },
                 {
-                    "name": "pyana_delegate",
+                    "name": "dregg_delegate",
                     "description": "Delegate an attenuated sub-capability to another agent",
                     "inputSchema": {
                         "type": "object",
@@ -143,7 +143,7 @@ fn main() {
                     }
                 },
                 {
-                    "name": "pyana_prove",
+                    "name": "dregg_prove",
                     "description": "Generate a ZK proof of authorization (selective disclosure)",
                     "inputSchema": {
                         "type": "object",
@@ -162,9 +162,9 @@ fn main() {
     println!();
 
     // =========================================================================
-    // PHASE 2: OBTAIN CAPABILITY TOKEN — Agent calls pyana_authorize
+    // PHASE 2: OBTAIN CAPABILITY TOKEN — Agent calls dregg_authorize
     // =========================================================================
-    println!("--- Phase 2: OBTAIN CAPABILITY TOKEN (tools/call: pyana_authorize) ---");
+    println!("--- Phase 2: OBTAIN CAPABILITY TOKEN (tools/call: dregg_authorize) ---");
     println!();
 
     // The agent requests a scoped token for API access
@@ -172,7 +172,7 @@ fn main() {
         3,
         "tools/call",
         &serde_json::json!({
-            "name": "pyana_authorize",
+            "name": "dregg_authorize",
             "arguments": {
                 "services": ["api/v1/users", "api/v1/billing", "api/v1/admin"],
                 "budget_computrons": 10000,
@@ -180,14 +180,14 @@ fn main() {
             }
         }),
     );
-    println!("  Agent -> Node (pyana_authorize):");
+    println!("  Agent -> Node (dregg_authorize):");
     println!("  {}", indent(&authorize_call, 4));
     println!();
 
     // --- Simulate the actual token minting (what the MCP handler does) ---
-    let issuer_key = *blake3::hash(b"pyana-node:issuer:mcp-root-key-v1").as_bytes();
+    let issuer_key = *blake3::hash(b"dregg-node:issuer:mcp-root-key-v1").as_bytes();
     let mut cclerk = AgentCipherclerk::new();
-    let root_token = cclerk.mint_token(&issuer_key, "pyana-mcp-gateway");
+    let root_token = cclerk.mint_token(&issuer_key, "dregg-mcp-gateway");
 
     // Attenuate to the requested scope (using apps dimension which is well-tested)
     let agent_attenuation = Attenuation {
@@ -251,7 +251,7 @@ fn main() {
     // =========================================================================
     // PHASE 3: SELECTIVE DISCLOSURE — Prove access without revealing full scope
     // =========================================================================
-    println!("--- Phase 3: SELECTIVE DISCLOSURE (tools/call: pyana_prove) ---");
+    println!("--- Phase 3: SELECTIVE DISCLOSURE (tools/call: dregg_prove) ---");
     println!();
     println!("  The agent wants to prove to a THIRD-PARTY API that it can access");
     println!("  'api/v1/users' — WITHOUT revealing it also has billing and admin access.");
@@ -262,7 +262,7 @@ fn main() {
         4,
         "tools/call",
         &serde_json::json!({
-            "name": "pyana_prove",
+            "name": "dregg_prove",
             "arguments": {
                 "token_id": token_id,
                 "action": "rw",
@@ -271,7 +271,7 @@ fn main() {
             }
         }),
     );
-    println!("  Agent -> Node (pyana_prove):");
+    println!("  Agent -> Node (dregg_prove):");
     println!("  {}", indent(&prove_call, 4));
     println!();
 
@@ -350,7 +350,7 @@ fn main() {
     // =========================================================================
     // PHASE 4: DELEGATION — Agent spawns a sub-agent with attenuated capability
     // =========================================================================
-    println!("--- Phase 4: DELEGATION TO SUB-AGENT (tools/call: pyana_delegate) ---");
+    println!("--- Phase 4: DELEGATION TO SUB-AGENT (tools/call: dregg_delegate) ---");
     println!();
     println!("  Claude needs to call a data enrichment tool that only needs read access");
     println!("  to the users API. It delegates a NARROWER capability to the tool agent.");
@@ -360,7 +360,7 @@ fn main() {
         5,
         "tools/call",
         &serde_json::json!({
-            "name": "pyana_delegate",
+            "name": "dregg_delegate",
             "arguments": {
                 "parent_token_id": token_id,
                 "services": ["api/v1/users"],
@@ -370,7 +370,7 @@ fn main() {
             }
         }),
     );
-    println!("  Agent -> Node (pyana_delegate):");
+    println!("  Agent -> Node (dregg_delegate):");
     println!("  {}", indent(&delegate_call, 4));
     println!();
 
@@ -444,7 +444,7 @@ fn main() {
     println!("    - No proof of what was accessed (audit gap)");
     println!("    - Revocation is all-or-nothing");
     println!();
-    println!("  Pyana capability approach (this demo):");
+    println!("  Dregg capability approach (this demo):");
     println!("    - Token scoped to EXACT services needed (least privilege)");
     println!("    - Budget enforced cryptographically (overspend impossible)");
     println!("    - Delegation is monotonically narrowing (can't escalate)");
@@ -453,9 +453,9 @@ fn main() {
     println!("    - User confinement (cross-session attacks impossible)");
     println!();
     println!("  The MCP integration makes this invisible to the AI agent:");
-    println!("    - Agent calls 'pyana_authorize' tool -> gets a token");
-    println!("    - Agent calls 'pyana_delegate' tool -> spawns sub-agent");
-    println!("    - Agent calls 'pyana_prove' tool -> generates ZK proof");
+    println!("    - Agent calls 'dregg_authorize' tool -> gets a token");
+    println!("    - Agent calls 'dregg_delegate' tool -> spawns sub-agent");
+    println!("    - Agent calls 'dregg_prove' tool -> generates ZK proof");
     println!("    - All the cryptography happens behind clean JSON-RPC calls.");
     println!();
 
@@ -470,9 +470,9 @@ fn main() {
     println!();
     println!("  Protocol flow:");
     println!("    1. Agent discovers tools via MCP (tools/list)");
-    println!("    2. Agent obtains scoped token (pyana_authorize)");
-    println!("    3. Agent proves access to third party (pyana_prove, selective disclosure)");
-    println!("    4. Agent delegates narrower capability to sub-agent (pyana_delegate)");
+    println!("    2. Agent obtains scoped token (dregg_authorize)");
+    println!("    3. Agent proves access to third party (dregg_prove, selective disclosure)");
+    println!("    4. Agent delegates narrower capability to sub-agent (dregg_delegate)");
     println!();
     println!("  Security properties:");
     println!("    [x] Least privilege: token scoped to exact services");
@@ -487,7 +487,7 @@ fn main() {
         total_time.as_secs_f64() * 1000.0
     );
     println!();
-    println!("  This is pyana's value proposition for AI: cryptographic capability");
+    println!("  This is dregg's value proposition for AI: cryptographic capability");
     println!("  tokens that give agents BOUNDED, PROVABLE, DELEGABLE authority —");
     println!("  accessible through the same tool-calling interface they already use.");
     println!("===============================================================================");

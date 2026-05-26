@@ -19,4 +19,4 @@
 //! Status: nearly every test is `#[ignore]`'d on a specific lane. Until
 //! the substrate lands, this file provides the scenario shapes — when
 //! the lane lands the unblock is to remove the ignore + flesh out the
-//! body (the harness pieces exist in `pyana_teasting::*`).
+//! body (the harness pieces exist in `dregg_teasting::*`).

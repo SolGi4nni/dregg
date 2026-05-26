@@ -245,7 +245,7 @@ a chain.
 ### 3.1 `transfer_id`
 
 ```
-preimage = b"pyana-transfer-id-v1" 
+preimage = b"dregg-transfer-id-v1" 
         || from_cell_id (32 bytes)
         || to_cell_id   (32 bytes)
         || amount_be    (8 bytes)
@@ -266,7 +266,7 @@ transfer_id = Commitment4::from_poseidon2(preimage)  // 4 BabyBear felts
 ### 3.2 `grant_id`
 
 ```
-preimage = b"pyana-grant-id-v1"
+preimage = b"dregg-grant-id-v1"
         || from_cell_id (grantor, 32 bytes)
         || to_cell_id   (grantee, 32 bytes)
         || cap_entry_hash (32 bytes — Poseidon2 of cap fields)
@@ -287,7 +287,7 @@ grant_id = Commitment4::from_poseidon2(preimage)
 ### 3.3 `intro_id`
 
 ```
-preimage = b"pyana-intro-id-v1"
+preimage = b"dregg-intro-id-v1"
         || introducer_cell_id (32 bytes)
         || recipient_cell_id  (32 bytes)
         || target_cell_id     (32 bytes)
@@ -561,7 +561,7 @@ Constraint (selector-gated by `s_transfer`):
 
 ```
 TRANSFER_ID = Poseidon2(
-    domain_separator("pyana-transfer-id-v1"),
+    domain_separator("dregg-transfer-id-v1"),
     from_cell_id_felts,   // 8 felts, cell-id-decomposed
     to_cell_id_felts,     // 8 felts
     amount_lo, amount_hi, // 2 felts (full u64, requires W-6 widening — 

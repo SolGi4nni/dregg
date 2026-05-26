@@ -1,5 +1,5 @@
 /**
- * PyanaRuntime: Full distributed system simulation wrapper.
+ * DreggRuntime: Full distributed system simulation wrapper.
  *
  * Provides a high-level API over the WASM runtime bindings for simulating
  * agents, cells, turns, federations, intents, notes, capabilities, and
@@ -46,7 +46,7 @@ import type {
 } from "./types";
 
 /**
- * PyanaRuntime wraps the WASM runtime simulation, managing a handle to
+ * DreggRuntime wraps the WASM runtime simulation, managing a handle to
  * the underlying runtime instance and providing type-safe methods for
  * all distributed system operations.
  *
@@ -55,9 +55,9 @@ import type {
  *
  * @example
  * ```ts
- * import { PyanaRuntime } from "@pyana/sdk";
+ * import { DreggRuntime } from "@dregg/sdk";
  *
- * const runtime = new PyanaRuntime(wasm);
+ * const runtime = new DreggRuntime(wasm);
  *
  * // Create agents
  * const alice = await runtime.createAgent("alice", 1000);
@@ -73,12 +73,12 @@ import type {
  * runtime.destroy();
  * ```
  */
-export class PyanaRuntime {
-  private wasm: typeof import("pyana-wasm");
+export class DreggRuntime {
+  private wasm: typeof import("dregg-wasm");
   private handle: number;
   private destroyed = false;
 
-  constructor(wasm: typeof import("pyana-wasm")) {
+  constructor(wasm: typeof import("dregg-wasm")) {
     this.wasm = wasm;
     this.handle = (wasm as any).create_runtime() as number;
   }

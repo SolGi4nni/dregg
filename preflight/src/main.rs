@@ -1,4 +1,4 @@
-//! Pyana Golden Master Preflight
+//! Dregg Golden Master Preflight
 //!
 //! End-to-end integration test gate for devnet -> testnet -> mainnet promotion.
 //! Exercises EVERY major subsystem: federation boot, cell lifecycle, turn execution,
@@ -6,10 +6,10 @@
 //! proof composition, federation state, sovereign cells, and cross-backend proofs.
 //!
 //! Run as a binary:
-//!   cargo run -p pyana-preflight
+//!   cargo run -p dregg-preflight
 //!
 //! Run as a test:
-//!   cargo test -p pyana-preflight
+//!   cargo test -p dregg-preflight
 
 mod checks;
 mod report;

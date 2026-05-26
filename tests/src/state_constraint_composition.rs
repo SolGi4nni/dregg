@@ -12,9 +12,9 @@
 //! require pieces of the caveat-correctness lane to land carry an
 //! `#[ignore = "..."]` with unblock label.
 
-use pyana_cell::predicate::WitnessedPredicate;
-use pyana_cell::program::SimpleStateConstraint;
-use pyana_cell::{
+use dregg_cell::predicate::WitnessedPredicate;
+use dregg_cell::program::SimpleStateConstraint;
+use dregg_cell::{
     CellProgram, CellState, EvalContext, InputRef, ProgramError, StateConstraint, field_from_u64,
 };
 

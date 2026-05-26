@@ -3,13 +3,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use pyana_tokenizer::client::TokenizerClient;
-use pyana_tokenizer::service::{KeyRing, ServiceConfig, TokenizerService};
+use dregg_tokenizer::client::TokenizerClient;
+use dregg_tokenizer::service::{KeyRing, ServiceConfig, TokenizerService};
 
 /// Create a temp socket path for testing.
 fn temp_socket_path() -> PathBuf {
     let dir = std::env::temp_dir();
-    dir.join(format!("pyana-tokenizer-test-{}.sock", std::process::id()))
+    dir.join(format!("dregg-tokenizer-test-{}.sock", std::process::id()))
 }
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn test_seal_unseal_roundtrip() {
     let socket_path = temp_socket_path();
     let config = ServiceConfig {
         socket_path: socket_path.clone(),
-        key_store_path: PathBuf::from("/tmp/pyana-test-keys-1"),
+        key_store_path: PathBuf::from("/tmp/dregg-test-keys-1"),
     };
     let keyring = KeyRing::generate();
     let service = TokenizerService::new(config, keyring);
@@ -54,12 +54,12 @@ async fn test_seal_unseal_roundtrip() {
 #[tokio::test]
 async fn test_get_public_key() {
     let socket_path = std::env::temp_dir().join(format!(
-        "pyana-tokenizer-test-pk-{}.sock",
+        "dregg-tokenizer-test-pk-{}.sock",
         std::process::id()
     ));
     let config = ServiceConfig {
         socket_path: socket_path.clone(),
-        key_store_path: PathBuf::from("/tmp/pyana-test-keys-2"),
+        key_store_path: PathBuf::from("/tmp/dregg-test-keys-2"),
     };
     let keyring = KeyRing::generate();
     let service = TokenizerService::new(config, keyring);
@@ -88,12 +88,12 @@ async fn test_get_public_key() {
 #[tokio::test]
 async fn test_key_rotation() {
     let socket_path = std::env::temp_dir().join(format!(
-        "pyana-tokenizer-test-rotate-{}.sock",
+        "dregg-tokenizer-test-rotate-{}.sock",
         std::process::id()
     ));
     let config = ServiceConfig {
         socket_path: socket_path.clone(),
-        key_store_path: PathBuf::from("/tmp/pyana-test-keys-3"),
+        key_store_path: PathBuf::from("/tmp/dregg-test-keys-3"),
     };
     let keyring = KeyRing::generate();
     let service = TokenizerService::new(config, keyring);
@@ -139,12 +139,12 @@ async fn test_key_rotation() {
 #[tokio::test]
 async fn test_unseal_wrong_data_returns_error() {
     let socket_path = std::env::temp_dir().join(format!(
-        "pyana-tokenizer-test-err-{}.sock",
+        "dregg-tokenizer-test-err-{}.sock",
         std::process::id()
     ));
     let config = ServiceConfig {
         socket_path: socket_path.clone(),
-        key_store_path: PathBuf::from("/tmp/pyana-test-keys-4"),
+        key_store_path: PathBuf::from("/tmp/dregg-test-keys-4"),
     };
     let keyring = KeyRing::generate();
     let service = TokenizerService::new(config, keyring);
@@ -173,12 +173,12 @@ async fn test_unseal_wrong_data_returns_error() {
 #[tokio::test]
 async fn test_multiple_operations_same_connection() {
     let socket_path = std::env::temp_dir().join(format!(
-        "pyana-tokenizer-test-multi-{}.sock",
+        "dregg-tokenizer-test-multi-{}.sock",
         std::process::id()
     ));
     let config = ServiceConfig {
         socket_path: socket_path.clone(),
-        key_store_path: PathBuf::from("/tmp/pyana-test-keys-5"),
+        key_store_path: PathBuf::from("/tmp/dregg-test-keys-5"),
     };
     let keyring = KeyRing::generate();
     let service = TokenizerService::new(config, keyring);

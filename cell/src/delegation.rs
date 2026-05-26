@@ -116,7 +116,7 @@ impl DelegatedRef {
     /// `CapabilitySet` (or `Vec<CapabilityRef>`) at the time of delegation.
     /// This is domain-separated to prevent cross-protocol confusion.
     pub fn compute_clist_commitment(serialized_clist: &[u8]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-delegation-clist-commitment-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-delegation-clist-commitment-v1");
         hasher.update(serialized_clist);
         *hasher.finalize().as_bytes()
     }
@@ -124,13 +124,13 @@ impl DelegatedRef {
     /// Compute the message that the parent signs for this delegation.
     ///
     /// The signed message is:
-    /// `BLAKE3_derive_key("pyana-delegation-sig-v1", clist_commitment || delegation_epoch_le || child_cell_id_bytes)`
+    /// `BLAKE3_derive_key("dregg-delegation-sig-v1", clist_commitment || delegation_epoch_le || child_cell_id_bytes)`
     pub fn signing_message(
         clist_commitment: &[u8; 32],
         delegation_epoch: u64,
         child_cell_id: &CellId,
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-delegation-sig-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-delegation-sig-v1");
         hasher.update(clist_commitment);
         hasher.update(&delegation_epoch.to_le_bytes());
         hasher.update(child_cell_id.as_bytes());

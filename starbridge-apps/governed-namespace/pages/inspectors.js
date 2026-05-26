@@ -2,19 +2,19 @@
 //
 // Web components for the starbridge-governed-namespace app:
 //
-//   <pyana-namespace uri="...">             — live cell summary
-//   <pyana-namespace-route-table uri="..."> — DFA route table viewer +
+//   <dregg-namespace uri="...">             — live cell summary
+//   <dregg-namespace-route-table uri="..."> — DFA route table viewer +
 //                                             editor (add/remove rows)
-//   <pyana-namespace-proposal uri="...">    — propose / vote / commit /
+//   <dregg-namespace-proposal uri="...">    — propose / vote / commit /
 //                                             register UI with status,
 //                                             vote-tally visualization,
 //                                             and per-step receipts
-//   <pyana-namespace-dispatch uri="...">    — path → target lookup form
+//   <dregg-namespace-dispatch uri="...">    — path → target lookup form
 //
 // All policy lives in Rust (starbridge-apps/governed-namespace/src/lib.rs);
 // JS is the thinnest UX layer. Mutations route through
-// `window.pyanaTurnBuilders['governed-namespace']` (the cipherclerk-
-// named builder presets) which terminate in window.pyana.signTurn.
+// `window.dreggTurnBuilders['governed-namespace']` (the cipherclerk-
+// named builder presets) which terminate in window.dregg.signTurn.
 //
 // Slot indices mirror constants in src/lib.rs:
 //   ROUTE_TABLE_ROOT_SLOT          = 0
@@ -84,8 +84,8 @@ function isZero(bytes) {
 }
 
 async function blake3Field(input) {
-  if (typeof window !== 'undefined' && window.pyana?.blake3) {
-    return window.pyana.blake3(input);
+  if (typeof window !== 'undefined' && window.dregg?.blake3) {
+    return window.dregg.blake3(input);
   }
   const enc = typeof input === 'string' ? new TextEncoder().encode(input) : input;
   const buf = await crypto.subtle.digest('SHA-256', enc);
@@ -107,7 +107,7 @@ function describeTarget(target) {
 }
 
 // =========================================================================
-// <pyana-namespace> — browse view
+// <dregg-namespace> — browse view
 // =========================================================================
 
 class NamespaceInspector extends HTMLElement {
@@ -133,13 +133,13 @@ class NamespaceInspector extends HTMLElement {
 
   async refresh() {
     const uri = this.getAttribute('uri');
-    if (!uri || !window.pyana?.readCell) {
+    if (!uri || !window.dregg?.readCell) {
       this._loading = false;
       this.render();
       return;
     }
     try {
-      const cell = await window.pyana.readCell(uri);
+      const cell = await window.dregg.readCell(uri);
       this._state = cell?.state ?? null;
       this._error = null;
     } catch (e) {
@@ -166,37 +166,37 @@ class NamespaceInspector extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: monospace; padding: 1em; }
-        .pyana-namespace-summary {
+        .dregg-namespace-summary {
           display: grid;
           grid-template-columns: max-content 1fr;
           gap: 0.4em 1em;
           max-width: 720px;
         }
-        .pyana-namespace-summary dt { font-weight: bold; color: #335; }
-        .pyana-namespace-summary dd { margin: 0; }
-        .pyana-namespace-error { color: #b00; }
-        .pyana-namespace-badge {
+        .dregg-namespace-summary dt { font-weight: bold; color: #335; }
+        .dregg-namespace-summary dd { margin: 0; }
+        .dregg-namespace-error { color: #b00; }
+        .dregg-namespace-badge {
           display: inline-block;
           padding: 0.1em 0.5em;
           border-radius: 3px;
           font-size: 0.85em;
           font-weight: 700;
         }
-        .pyana-namespace-badge-pending {
+        .dregg-namespace-badge-pending {
           background: #ffe7ab;
           color: #6b4500;
         }
-        .pyana-namespace-badge-quiet {
+        .dregg-namespace-badge-quiet {
           background: #e5e7eb;
           color: #444;
         }
       </style>
       <h2>Governed Namespace</h2>
-      ${this._loading ? `<pyana-status-bar state="loading" message="loading cell…"></pyana-status-bar>` : ''}
-      ${this._error ? `<div class="pyana-namespace-error">${escapeHtml(this._error)}</div>` : ''}
-      <dl class="pyana-namespace-summary">
+      ${this._loading ? `<dregg-status-bar state="loading" message="loading cell…"></dregg-status-bar>` : ''}
+      ${this._error ? `<div class="dregg-namespace-error">${escapeHtml(this._error)}</div>` : ''}
+      <dl class="dregg-namespace-summary">
         <dt>state</dt><dd>
-          <span class="pyana-namespace-badge ${hasPending ? 'pyana-namespace-badge-pending' : 'pyana-namespace-badge-quiet'}">
+          <span class="dregg-namespace-badge ${hasPending ? 'dregg-namespace-badge-pending' : 'dregg-namespace-badge-quiet'}">
             ${hasPending ? 'PROPOSAL PENDING' : 'STABLE'}
           </span>
         </dd>
@@ -212,7 +212,7 @@ class NamespaceInspector extends HTMLElement {
 }
 
 // =========================================================================
-// <pyana-namespace-route-table> — DFA route table viewer + editor
+// <dregg-namespace-route-table> — DFA route table viewer + editor
 // =========================================================================
 
 class RouteTableInspector extends HTMLElement {
@@ -239,18 +239,18 @@ class RouteTableInspector extends HTMLElement {
 
   async refresh() {
     const uri = this.getAttribute('uri');
-    if (!uri || !window.pyana?.readCell) {
+    if (!uri || !window.dregg?.readCell) {
       this._loading = false;
       this.render();
       return;
     }
     try {
-      const cell = await window.pyana.readCell(uri);
+      const cell = await window.dregg.readCell(uri);
       const root = cell?.state?.fields?.[ROUTE_TABLE_ROOT_SLOT];
       if (!root || isZero(root)) {
         this._table = { routes: [] };
-      } else if (window.pyana.resolveRouteTable) {
-        this._table = await window.pyana.resolveRouteTable(root);
+      } else if (window.dregg.resolveRouteTable) {
+        this._table = await window.dregg.resolveRouteTable(root);
       } else {
         this._table = { root_hex: hex(root), routes: null };
       }
@@ -281,30 +281,30 @@ class RouteTableInspector extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: monospace; padding: 1em; }
-        .pyana-namespace-routes-table {
+        .dregg-namespace-routes-table {
           width: 100%;
           border-collapse: collapse;
           max-width: 720px;
         }
-        .pyana-namespace-routes-table th,
-        .pyana-namespace-routes-table td {
+        .dregg-namespace-routes-table th,
+        .dregg-namespace-routes-table td {
           text-align: left;
           padding: 0.3em 0.6em;
           border-bottom: 1px solid #ddd;
         }
-        .pyana-namespace-routes-table th {
+        .dregg-namespace-routes-table th {
           background: #f3f5fb;
           font-weight: 600;
         }
-        .pyana-namespace-routes-error { color: #b00; }
-        .pyana-namespace-routes-editor {
+        .dregg-namespace-routes-error { color: #b00; }
+        .dregg-namespace-routes-editor {
           margin-top: 0.6em;
           display: grid;
           grid-template-columns: 1fr 1fr auto;
           gap: 0.4em;
           max-width: 720px;
         }
-        .pyana-namespace-routes-editor input {
+        .dregg-namespace-routes-editor input {
           padding: 0.3em;
           font: inherit;
           border: 1px solid #ccc;
@@ -318,16 +318,16 @@ class RouteTableInspector extends HTMLElement {
           border-radius: 3px;
           cursor: pointer;
         }
-        .pyana-namespace-routes-actions {
+        .dregg-namespace-routes-actions {
           margin-top: 0.5em;
           display: flex;
           gap: 0.4em;
         }
       </style>
       <h2>Route Table</h2>
-      ${this._loading ? `<pyana-status-bar state="loading" message="resolving route table…"></pyana-status-bar>` : ''}
-      ${this._error ? `<div class="pyana-namespace-routes-error">${escapeHtml(this._error)}</div>` : ''}
-      <table class="pyana-namespace-routes-table">
+      ${this._loading ? `<dregg-status-bar state="loading" message="resolving route table…"></dregg-status-bar>` : ''}
+      ${this._error ? `<div class="dregg-namespace-routes-error">${escapeHtml(this._error)}</div>` : ''}
+      <table class="dregg-namespace-routes-table">
         <thead>
           <tr>
             <th>path</th>
@@ -338,12 +338,12 @@ class RouteTableInspector extends HTMLElement {
         <tbody>${rows}</tbody>
       </table>
       ${editable ? `
-        <div class="pyana-namespace-routes-editor">
+        <div class="dregg-namespace-routes-editor">
           <input id="new-path" placeholder="/public/*" />
           <input id="new-target" placeholder='{"Handler": "public"}' />
           <button data-action="add">+ Add</button>
         </div>
-        <div class="pyana-namespace-routes-actions">
+        <div class="dregg-namespace-routes-actions">
           <button data-action="reset" ${this._draftRoutes ? '' : 'disabled'}>Reset draft</button>
           <button data-action="emit-draft" ${this._draftRoutes ? '' : 'disabled'}>Emit draft JSON…</button>
         </div>
@@ -384,7 +384,7 @@ class RouteTableInspector extends HTMLElement {
 }
 
 // =========================================================================
-// <pyana-namespace-proposal> — propose / vote / commit / register UI
+// <dregg-namespace-proposal> — propose / vote / commit / register UI
 // =========================================================================
 
 class ProposalInspector extends HTMLElement {
@@ -418,9 +418,9 @@ class ProposalInspector extends HTMLElement {
 
   async refreshCell() {
     const uri = this.getAttribute('uri');
-    if (!uri || !window.pyana?.readCell) return;
+    if (!uri || !window.dregg?.readCell) return;
     try {
-      const cell = await window.pyana.readCell(uri);
+      const cell = await window.dregg.readCell(uri);
       this._cellState = cell?.state ?? null;
       if (this._cellState?.fields) {
         this._voteTally.threshold = fieldToU64BE(this._cellState.fields[THRESHOLD_SLOT]);
@@ -443,13 +443,13 @@ class ProposalInspector extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: monospace; padding: 1em; }
-        .pyana-namespace-proposal-tabs {
+        .dregg-namespace-proposal-tabs {
           display: flex;
           gap: 0.3em;
           border-bottom: 1px solid #ccc;
           margin-bottom: 0.6em;
         }
-        .pyana-namespace-proposal-tab {
+        .dregg-namespace-proposal-tab {
           padding: 0.4em 0.8em;
           background: #f3f5fb;
           border: 1px solid #ccc;
@@ -458,16 +458,16 @@ class ProposalInspector extends HTMLElement {
           cursor: pointer;
           font: inherit;
         }
-        .pyana-namespace-proposal-tab[aria-selected=true] {
+        .dregg-namespace-proposal-tab[aria-selected=true] {
           background: #fff;
           font-weight: 600;
           color: #3956c8;
         }
-        .pyana-namespace-proposal-panel {
+        .dregg-namespace-proposal-panel {
           display: grid;
           gap: 0.6em;
         }
-        .pyana-namespace-proposal-panel label {
+        .dregg-namespace-proposal-panel label {
           display: grid;
           gap: 0.2em;
         }
@@ -480,7 +480,7 @@ class ProposalInspector extends HTMLElement {
           border: 1px solid #ccc;
           border-radius: 3px;
         }
-        .pyana-namespace-proposal-panel button[type=submit] {
+        .dregg-namespace-proposal-panel button[type=submit] {
           padding: 0.5em 1em;
           background: #3956c8;
           color: #fff;
@@ -489,10 +489,10 @@ class ProposalInspector extends HTMLElement {
           font-weight: 600;
           cursor: pointer;
         }
-        .pyana-namespace-proposal-panel button[disabled] {
+        .dregg-namespace-proposal-panel button[disabled] {
           opacity: 0.5; cursor: wait;
         }
-        .pyana-namespace-proposal-tally {
+        .dregg-namespace-proposal-tally {
           display: grid;
           gap: 0.4em;
           margin-bottom: 0.6em;
@@ -501,24 +501,24 @@ class ProposalInspector extends HTMLElement {
           border: 1px solid #d8dcee;
           border-radius: 4px;
         }
-        .pyana-namespace-proposal-bar {
+        .dregg-namespace-proposal-bar {
           height: 1.1em;
           background: #eee;
           border-radius: 3px;
           overflow: hidden;
           position: relative;
         }
-        .pyana-namespace-proposal-bar-fill {
+        .dregg-namespace-proposal-bar-fill {
           height: 100%;
           transition: width 0.3s ease;
         }
-        .pyana-namespace-proposal-bar-approve .pyana-namespace-proposal-bar-fill {
+        .dregg-namespace-proposal-bar-approve .dregg-namespace-proposal-bar-fill {
           background: linear-gradient(90deg, #66bb6a, #2e7d32);
         }
-        .pyana-namespace-proposal-bar-reject .pyana-namespace-proposal-bar-fill {
+        .dregg-namespace-proposal-bar-reject .dregg-namespace-proposal-bar-fill {
           background: linear-gradient(90deg, #ef5350, #b71c1c);
         }
-        .pyana-namespace-proposal-bar-label {
+        .dregg-namespace-proposal-bar-label {
           position: absolute;
           inset: 0;
           display: grid;
@@ -532,50 +532,50 @@ class ProposalInspector extends HTMLElement {
       <h2>Governance</h2>
       <p>Target: <code>${escapeHtml(uri || '(no uri attribute set)')}</code></p>
 
-      <div class="pyana-namespace-proposal-tally">
+      <div class="dregg-namespace-proposal-tally">
         <strong>${hasPending ? `Pending proposal: ${escapeHtml(pendingRoot)}` : 'No pending proposal'}</strong>
         <div>
           <div>Approve weight: ${approve} / ${threshold}</div>
-          <div class="pyana-namespace-proposal-bar pyana-namespace-proposal-bar-approve">
-            <div class="pyana-namespace-proposal-bar-fill" style="width:${approvePct}%"></div>
-            <div class="pyana-namespace-proposal-bar-label">${approvePct}%</div>
+          <div class="dregg-namespace-proposal-bar dregg-namespace-proposal-bar-approve">
+            <div class="dregg-namespace-proposal-bar-fill" style="width:${approvePct}%"></div>
+            <div class="dregg-namespace-proposal-bar-label">${approvePct}%</div>
           </div>
         </div>
         <div>
           <div>Reject weight: ${reject} / ${threshold}</div>
-          <div class="pyana-namespace-proposal-bar pyana-namespace-proposal-bar-reject">
-            <div class="pyana-namespace-proposal-bar-fill" style="width:${rejectPct}%"></div>
-            <div class="pyana-namespace-proposal-bar-label">${rejectPct}%</div>
+          <div class="dregg-namespace-proposal-bar dregg-namespace-proposal-bar-reject">
+            <div class="dregg-namespace-proposal-bar-fill" style="width:${rejectPct}%"></div>
+            <div class="dregg-namespace-proposal-bar-label">${rejectPct}%</div>
           </div>
         </div>
       </div>
 
-      <div class="pyana-namespace-proposal-tabs" role="tablist">
+      <div class="dregg-namespace-proposal-tabs" role="tablist">
         ${['propose','vote','commit','register'].map((t) => `
-          <button class="pyana-namespace-proposal-tab" role="tab" data-tab="${t}"
+          <button class="dregg-namespace-proposal-tab" role="tab" data-tab="${t}"
                   aria-selected="${this._activeTab === t}">${t}</button>
         `).join('')}
       </div>
 
       ${this.#renderPanel()}
 
-      <pyana-status-bar
+      <dregg-status-bar
         state="${this._busy ? 'loading' : (this._error ? 'error' : (this._receipt ? 'success' : 'idle'))}"
         message="${escapeHtml(this._busy?.message ?? this._error ?? (this._receipt ? `${this._lastMethod} submitted` : ''))}"
         receipt="${escapeHtml(this._receipt ?? '')}"
-      ></pyana-status-bar>
+      ></dregg-status-bar>
       ${this._receipt ? `
-        <pyana-token-cap
+        <dregg-token-cap
           kind="receipt"
           label="${escapeHtml(this._lastMethod)}"
           target="${escapeHtml(uri)}"
           action="${escapeHtml(this._lastMethod)}"
           tag="${escapeHtml(this._receipt)}"
-        ></pyana-token-cap>
+        ></dregg-token-cap>
       ` : ''}
     `;
 
-    this.shadowRoot.querySelectorAll('.pyana-namespace-proposal-tab').forEach((b) => {
+    this.shadowRoot.querySelectorAll('.dregg-namespace-proposal-tab').forEach((b) => {
       b.addEventListener('click', () => {
         this._activeTab = b.dataset.tab;
         this.render();
@@ -603,7 +603,7 @@ class ProposalInspector extends HTMLElement {
     switch (this._activeTab) {
       case 'propose':
         return `
-          <form id="propose-form" class="pyana-namespace-proposal-panel">
+          <form id="propose-form" class="dregg-namespace-proposal-panel">
             <label>Proposed routes (JSON)
               <textarea name="routes" rows="5">[
   {"path": "/public/*", "target": {"Handler": "public"}},
@@ -622,7 +622,7 @@ class ProposalInspector extends HTMLElement {
           </form>`;
       case 'vote':
         return `
-          <form id="vote-form" class="pyana-namespace-proposal-panel">
+          <form id="vote-form" class="dregg-namespace-proposal-panel">
             <label>Prior pending proposal root (hex)
               <input name="prior" placeholder="(auto from cell)" />
             </label>
@@ -641,7 +641,7 @@ class ProposalInspector extends HTMLElement {
           </form>`;
       case 'commit':
         return `
-          <form id="commit-form" class="pyana-namespace-proposal-panel">
+          <form id="commit-form" class="dregg-namespace-proposal-panel">
             <label>Committed route table (JSON — must match the proposal)
               <textarea name="routes" rows="5">[
   {"path": "/public/*", "target": {"Handler": "public"}},
@@ -663,12 +663,12 @@ class ProposalInspector extends HTMLElement {
           </form>`;
       case 'register':
         return `
-          <form id="register-form" class="pyana-namespace-proposal-panel">
+          <form id="register-form" class="dregg-namespace-proposal-panel">
             <label>Path
               <input name="path" value="/treasury/main"/>
             </label>
             <label>Target cell URI
-              <input name="target" value="pyana://cell/..."/>
+              <input name="target" value="dregg://cell/..."/>
             </label>
             <button type="submit" ${this._busy ? 'disabled' : ''}>
               ${this._busy?.mode === 'register' ? 'registering…' : 'Register service'}
@@ -692,11 +692,11 @@ class ProposalInspector extends HTMLElement {
     this._lastMethod = method;
     this.render();
     try {
-      const builders = window.pyanaTurnBuilders?.['governed-namespace'];
+      const builders = window.dreggTurnBuilders?.['governed-namespace'];
       if (!builders) throw new Error('namespace turn-builders not loaded');
       const turn = await builders[method]({ target: uri, ...args });
-      const signed = await window.pyana.signTurn(turn);
-      const receipt = await window.pyana.submitTurn?.(signed) ?? signed;
+      const signed = await window.dregg.signTurn(turn);
+      const receipt = await window.dregg.submitTurn?.(signed) ?? signed;
       const hashHex = receipt?.hash_hex
         ?? receipt?.id
         ?? receipt?.turnId
@@ -771,7 +771,7 @@ class ProposalInspector extends HTMLElement {
 }
 
 // =========================================================================
-// <pyana-namespace-dispatch>
+// <dregg-namespace-dispatch>
 // =========================================================================
 
 class DispatchInspector extends HTMLElement {
@@ -792,12 +792,12 @@ class DispatchInspector extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: monospace; padding: 1em; }
-        .pyana-namespace-dispatch-form {
+        .dregg-namespace-dispatch-form {
           display: grid;
           gap: 0.6em;
           max-width: 540px;
         }
-        .pyana-namespace-dispatch-form input {
+        .dregg-namespace-dispatch-form input {
           padding: 0.4em;
           font: inherit;
           font-family: ui-monospace, monospace;
@@ -814,8 +814,8 @@ class DispatchInspector extends HTMLElement {
           cursor: pointer;
         }
         button[disabled] { opacity: 0.5; cursor: wait; }
-        .pyana-namespace-dispatch-error { color: #b00; }
-        .pyana-namespace-dispatch-result {
+        .dregg-namespace-dispatch-error { color: #b00; }
+        .dregg-namespace-dispatch-result {
           margin-top: 0.6em;
           padding: 0.6em;
           background: #fafbff;
@@ -825,7 +825,7 @@ class DispatchInspector extends HTMLElement {
       </style>
       <h2>Dispatch lookup</h2>
       <p>Classify an input path against the live route table.</p>
-      <form class="pyana-namespace-dispatch-form">
+      <form class="dregg-namespace-dispatch-form">
         <label>Path
           <input id="path" name="path" value="/treasury/transfer" />
         </label>
@@ -833,9 +833,9 @@ class DispatchInspector extends HTMLElement {
           ${this._busy ? 'classifying…' : 'Classify'}
         </button>
       </form>
-      ${this._error ? `<div class="pyana-namespace-dispatch-error">${escapeHtml(this._error)}</div>` : ''}
+      ${this._error ? `<div class="dregg-namespace-dispatch-error">${escapeHtml(this._error)}</div>` : ''}
       ${this._result ? `
-        <div class="pyana-namespace-dispatch-result">
+        <div class="dregg-namespace-dispatch-result">
           <h3 style="margin-top: 0;">Result</h3>
           <p>target: <strong>${describeTarget(this._result.target)}</strong></p>
           <p>matched_prefix: <code>${escapeHtml(this._result.matched_prefix ?? '(empty)')}</code></p>
@@ -862,13 +862,13 @@ class DispatchInspector extends HTMLElement {
     this._result = null;
     this.render();
     try {
-      if (!window.pyana?.classifyNamespacePath) {
+      if (!window.dregg?.classifyNamespacePath) {
         throw new Error(
           'classifyNamespacePath helper not exposed by runtime; ' +
           'see starbridge-governed-namespace::dispatch for the server-side equivalent',
         );
       }
-      this._result = await window.pyana.classifyNamespacePath(uri, path);
+      this._result = await window.dregg.classifyNamespacePath(uri, path);
     } catch (e) {
       this._error = String(e);
     }
@@ -882,17 +882,17 @@ class DispatchInspector extends HTMLElement {
 // =========================================================================
 
 const COMPONENTS = {
-  'pyana-namespace':             NamespaceInspector,
-  'pyana-namespace-route-table': RouteTableInspector,
-  'pyana-namespace-proposal':    ProposalInspector,
-  'pyana-namespace-dispatch':    DispatchInspector,
+  'dregg-namespace':             NamespaceInspector,
+  'dregg-namespace-route-table': RouteTableInspector,
+  'dregg-namespace-proposal':    ProposalInspector,
+  'dregg-namespace-dispatch':    DispatchInspector,
 };
 
 if (typeof customElements !== 'undefined') {
   for (const [tag, ctor] of Object.entries(COMPONENTS)) {
     if (!customElements.get(tag)) customElements.define(tag, ctor);
-    if (typeof window !== 'undefined' && window.pyana?.register) {
-      window.pyana.register(tag, ctor);
+    if (typeof window !== 'undefined' && window.dregg?.register) {
+      window.dregg.register(tag, ctor);
     }
   }
 }

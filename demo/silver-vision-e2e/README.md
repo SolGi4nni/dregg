@@ -54,11 +54,11 @@ AUTHORIZATION-CUSTOM-DESIGN: Auth::Custom executor dispatch through registry wit
 When the above lanes land:
 
 1. Write `run.sh` following the same pattern as `demo/two-ai-handoff/run.sh`:
-   - Build pyana-node + pyana-verifier + silver-helper (or new harness binary).
+   - Build dregg-node + dregg-verifier + silver-helper (or new harness binary).
    - Spin up two in-process federations (F_A, F_B) via the node CLI.
    - Drive Alice's sovereign cell init, introduce, bilateral transfer, slot caveat
      exercises, Auth::Custom dispatch, CapTP delivery, Dave's offline verification.
-   - Shell to `pyana-verifier` for each proof check.
+   - Shell to `dregg-verifier` for each proof check.
    - Compare results against `expected.json` must_pass / must_not_pass.
 
 2. Follow the `improve_dont_degrade` principle: as each blocked lane lands,

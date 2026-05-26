@@ -1,5 +1,5 @@
 /**
- * Deploy the PyanaFederation zkApp to Mina testnet.
+ * Deploy the DreggFederation zkApp to Mina testnet.
  *
  * Usage:
  *   DEPLOYER_KEY=<base58-private-key> \
@@ -23,7 +23,7 @@ import {
   Poseidon,
   fetchAccount,
 } from 'o1js';
-import { PyanaFederation } from '../src/PyanaFederation';
+import { DreggFederation } from '../src/DreggFederation';
 
 // ---------------------------------------------------------------------------
 // Configuration from environment
@@ -53,7 +53,7 @@ const CONSTITUTION_HASH = process.env.CONSTITUTION_HASH
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log('=== PyanaFederation Deployment ===\n');
+  console.log('=== DreggFederation Deployment ===\n');
 
   // Connect to Mina network
   console.log(`Connecting to: ${MINA_ENDPOINT}`);
@@ -77,9 +77,9 @@ async function main() {
   console.log('\n  !!! SAVE THE PRIVATE KEY - YOU NEED IT FOR UPGRADES !!!\n');
 
   // Compile the zkApp
-  console.log('Compiling PyanaFederation...');
+  console.log('Compiling DreggFederation...');
   const startCompile = Date.now();
-  const { verificationKey } = await PyanaFederation.compile();
+  const { verificationKey } = await DreggFederation.compile();
   const compileTime = ((Date.now() - startCompile) / 1000).toFixed(1);
   console.log(`  Compiled in ${compileTime}s`);
   console.log(`  Verification key hash: ${verificationKey.hash.toString().slice(0, 20)}...`);
@@ -93,7 +93,7 @@ async function main() {
     { sender: deployerAccount, fee: 300_000_000 }, // 0.3 MINA fee
     async () => {
       AccountUpdate.fundNewAccount(deployerAccount);
-      await new PyanaFederation(zkAppAddress).deploy({ verificationKey });
+      await new DreggFederation(zkAppAddress).deploy({ verificationKey });
     },
   );
   await deployTxn.prove();
@@ -109,7 +109,7 @@ async function main() {
   console.log(`  Constitution: ${CONSTITUTION_HASH.toString()}`);
   console.log(`  Relay authority: ${relayPubKeyHash.toString().slice(0, 20)}...`);
 
-  const zkApp = new PyanaFederation(zkAppAddress);
+  const zkApp = new DreggFederation(zkAppAddress);
   const initTxn = await Mina.transaction(
     { sender: deployerAccount, fee: 200_000_000 },
     async () => {

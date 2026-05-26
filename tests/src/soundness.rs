@@ -4,14 +4,14 @@
 //! and replayed proofs. A sound proof system must never accept a proof for
 //! a false statement.
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::fold_air::{FoldAir, FoldWitness, RemovedFact};
-use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
-use pyana_circuit::mock_prover::{MockProof, MockProver};
-use pyana_circuit::presentation::{
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::fold_air::{FoldAir, FoldWitness, RemovedFact};
+use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+use dregg_circuit::mock_prover::{MockProof, MockProver};
+use dregg_circuit::presentation::{
     PresentationAir, PresentationVerification, PresentationWitness, create_test_presentation,
 };
-use pyana_circuit::stark::{
+use dregg_circuit::stark::{
     MerkleStarkAir, StarkProof, generate_merkle_trace, proof_from_bytes, proof_to_bytes, prove,
     verify,
 };

@@ -36,15 +36,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use pyana_cell::CellId;
-use pyana_cell::predicate::{
+use dregg_cell::CellId;
+use dregg_cell::predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
     WitnessedPredicateRegistry,
 };
-use pyana_federation::threshold_decrypt::{
+use dregg_federation::threshold_decrypt::{
     ThresholdCiphertext, ThresholdDecryptError, combine_shares,
 };
-use pyana_turn::action::Authorization;
+use dregg_turn::action::Authorization;
 use serde::{Deserialize, Serialize};
 
 use crate::bond::{BondEscrow, BondKey};
@@ -53,7 +53,7 @@ use crate::solver::RingTrade;
 use crate::{CommitmentId, Intent, IntentId};
 
 /// Canonical decryption share type, re-exported from
-/// `pyana_federation::threshold_decrypt`. The intent engine no longer
+/// `dregg_federation::threshold_decrypt`. The intent engine no longer
 /// carries its own opaque-bytes placeholder; shares are real Shamir-
 /// over-GF(256) values whose MACs are verified at combine time.
 ///
@@ -61,7 +61,7 @@ use crate::{CommitmentId, Intent, IntentId};
 /// `ThresholdCiphertext`), not by `batch_id`. The engine validates
 /// that every contributed share's `ciphertext_id` matches one of the
 /// submitted encrypted intents in the current batch.
-pub use pyana_federation::threshold_decrypt::DecryptionShare;
+pub use dregg_federation::threshold_decrypt::DecryptionShare;
 
 // =============================================================================
 // Configuration constants
@@ -227,7 +227,7 @@ impl EncryptedIntent {
     /// is sufficient but we also bind the creator + submission height
     /// for additional uniqueness when the same ciphertext is replayed.
     pub fn content_id(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-intent-id-v2");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-intent-id-v2");
         hasher.update(&self.ciphertext.ciphertext_id());
         hasher.update(&self.creator_commitment.0);
         hasher.update(&self.submitted_at.to_le_bytes());
@@ -541,7 +541,7 @@ impl WitnessedProofVerifier {
     pub fn compute_batch_binding(decrypted_intents: &[Intent]) -> [u8; 32] {
         let mut ids: Vec<IntentId> = decrypted_intents.iter().map(|i| i.id).collect();
         ids.sort();
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-trustless-batch-binding-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-trustless-batch-binding-v1");
         hasher.update(&(ids.len() as u64).to_le_bytes());
         for id in &ids {
             hasher.update(id);
@@ -752,7 +752,7 @@ impl TrustlessIntentEngine {
     ///   canonical registry. Built-in kinds (`Dfa`, `Temporal`,
     ///   `MerkleMembership`, `BlindedSet`, `BridgePredicate`,
     ///   `PedersenEquality`) are wired to
-    ///   [`pyana_cell::predicate::WitnessedPredicateRegistry::default_builtins`],
+    ///   [`dregg_cell::predicate::WitnessedPredicateRegistry::default_builtins`],
     ///   which installs `NotYetWiredVerifier` for kinds whose real algebra
     ///   adapter has not been registered on the host. These verifiers
     ///   **reject** with a "not yet wired" reason — they do not silently
@@ -763,14 +763,14 @@ impl TrustlessIntentEngine {
     ///
     /// Production deployments wishing to verify real proofs must install
     /// adapters via
-    /// [`pyana_cell::predicate::WitnessedPredicateRegistry::register_builtin`]
+    /// [`dregg_cell::predicate::WitnessedPredicateRegistry::register_builtin`]
     /// before handing the registry to [`Self::with_verifier`].
     ///
     /// Tests that depend on the prior permissive-stub behavior should use
     /// [`Self::with_stub_verifier`] (or construct an explicit verifier and
     /// pass it to [`Self::with_verifier`]).
     ///
-    /// STARBRIDGE-FOLLOWUP-03 (§5.8): Real STARK wiring (pyana-witnessed-registry-default
+    /// STARBRIDGE-FOLLOWUP-03 (§5.8): Real STARK wiring (dregg-witnessed-registry-default
     /// crate + circuit adapters for Dfa etc) remains BLOCKED ON HUMAN per
     /// SILVER-DEBT T1.2/T2.8. `NotYetWiredVerifier` is the correct fail-closed
     /// default now; wasm stays mock-limited. Precise: trustless.rs:749 default
@@ -1264,7 +1264,7 @@ impl TrustlessIntentEngine {
 
         // Compute proof hash for binding.
         let proof_hash = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-solution-proof-hash-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-solution-proof-hash-v1");
             hasher.update(&winner.validity_proof);
             *hasher.finalize().as_bytes()
         };
@@ -1403,7 +1403,7 @@ mod tests {
     use super::*;
     use crate::solver::{RingTrade, Settlement};
     use crate::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec};
-    use pyana_federation::threshold_decrypt::{
+    use dregg_federation::threshold_decrypt::{
         KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
         threshold_encrypt,
     };
@@ -1936,7 +1936,7 @@ mod tests {
             assert_eq!(root.action.effects.len(), 1);
             assert!(matches!(
                 root.action.effects[0],
-                pyana_turn::action::Effect::Transfer { .. }
+                dregg_turn::action::Effect::Transfer { .. }
             ));
         }
 
@@ -2439,7 +2439,7 @@ mod tests {
     #[test]
     fn witnessed_verifier_accepts_registered_custom_vk_hash() {
         // Register a custom kind, then submit with the matching vk_hash.
-        use pyana_cell::predicate::{
+        use dregg_cell::predicate::{
             PredicateInput, WitnessedPredicateError, WitnessedPredicateVerifier as WpVerifier,
         };
         use std::sync::Arc;

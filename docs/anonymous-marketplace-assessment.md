@@ -1,6 +1,6 @@
 # Anonymous Marketplace Assessment
 
-Assessment of pyana's infrastructure for a TRUE anonymous marketplace (buyer/seller identity hidden, amounts hidden, purchases hidden, unlinkable, disputable without deanonymization, private price discovery).
+Assessment of dregg's infrastructure for a TRUE anonymous marketplace (buyer/seller identity hidden, amounts hidden, purchases hidden, unlinkable, disputable without deanonymization, private price discovery).
 
 ## 1. Buyer Anonymity
 
@@ -85,4 +85,4 @@ Assessment of pyana's infrastructure for a TRUE anonymous marketplace (buyer/sel
 
 ## Summary
 
-Pyana has approximately 60-70% of the cryptographic primitives needed. The core gaps are integration, not invention: Pedersen commitments exist but the executor ignores them; OT and sealed boxes exist but the marketplace uses cleartext; ring membership proofs exist but offerings/settlements identify parties directly. The hardest missing piece is the range proof implementation (needed to prevent hidden inflation with committed values). The architectural gap is larger than the cryptographic gap: the compute-exchange app was built for correctness and liveness, not for privacy, and would need a near-complete rewrite of its data model to achieve true anonymity.
+`dregg` has approximately 60-70% of the cryptographic primitives needed. The core gaps are integration, not invention: Pedersen commitments exist but the executor ignores them; OT and sealed boxes exist but the marketplace uses cleartext; ring membership proofs exist but offerings/settlements identify parties directly. The hardest missing piece is the range proof implementation (needed to prevent hidden inflation with committed values). The architectural gap is larger than the cryptographic gap: the compute-exchange app was built for correctness and liveness, not for privacy, and would need a near-complete rewrite of its data model to achieve true anonymity.

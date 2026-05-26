@@ -3,7 +3,7 @@
 # target incompatibility (riscv32im-succinct-zkvm-elf vs native).
 
 [package]
-name = "pyana-datalog-evaluation-guest"
+name = "dregg-datalog-evaluation-guest"
 version = "0.2.0"
 edition = "2021"
 # SP1 guest programs require edition 2021 for zkVM ABI compatibility.
@@ -22,6 +22,6 @@ serde = { version = "1", features = ["derive"] }
 blake3 = { version = "1", default-features = false }
 # Real evaluation logic from the workspace crates, compiled without crypto/randomness deps.
 token = { path = "../../token", default-features = false, features = ["zkvm"] }
-pyana-cell = { path = "../../cell", default-features = false, features = ["zkvm"] }
+dregg-cell = { path = "../../cell", default-features = false, features = ["zkvm"] }
 rmp-serde = "1.3"
 globset = "0.4"

@@ -4,7 +4,7 @@
 //! `circuit/tests/integration_*.rs` files.  Keep this module light:
 //! only types and functions that multiple integration test files share.
 
-use pyana_circuit::{
+use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{EffectVmContext, generate_effect_vm_trace, generate_effect_vm_trace_ext},
     stark::{self, StarkAir, proof_from_bytes, proof_to_bytes},

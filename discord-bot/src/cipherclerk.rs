@@ -1,15 +1,15 @@
 //! Custodial cclerk: deterministic per-user cipherclerks backed by the canonical
-//! `pyana_app_framework::AppCipherclerk` (and underneath, `pyana_sdk::AgentCipherclerk`).
+//! `dregg_app_framework::AppCipherclerk` (and underneath, `dregg_sdk::AgentCipherclerk`).
 //!
 //! Each Discord user maps to a deterministic 32-byte seed:
 //!
 //! ```text
-//! seed = BLAKE3_derive_key("pyana-discord-bot-v1", bot_secret || discord_user_id)
+//! seed = BLAKE3_derive_key("dregg-discord-bot-v1", bot_secret || discord_user_id)
 //! ```
 //!
 //! The seed is fed into `AgentCipherclerk::from_key_bytes` to produce a real
 //! Ed25519 signing identity. The Discord user's `CellId` is then
-//! `AppCipherclerk::cell_id()` — the canonical pyana derivation (public_key +
+//! `AppCipherclerk::cell_id()` — the canonical dregg derivation (public_key +
 //! BLAKE3(domain)). No bespoke key derivation, no parallel cell-id
 //! derivation: the bot is a peer of the SDK rather than a separate
 //! implementation.
@@ -28,8 +28,8 @@
 //! Once the devnet wire format moves to canonical actions, that field
 //! and its accessor should be deleted in favor of `AppCipherclerk::sign_action`.
 
-use pyana_app_framework::AppCipherclerk;
-use pyana_sdk::AgentCipherclerk;
+use dregg_app_framework::AppCipherclerk;
+use dregg_sdk::AgentCipherclerk;
 use zeroize::Zeroizing;
 
 /// A deterministic per-user cclerk handle.
@@ -58,7 +58,7 @@ impl UserCipherclerk {
     /// * `bot_secret` — the bot's master secret (32 bytes from env).
     /// * `discord_user_id` — the Discord snowflake id.
     /// * `federation_id` — the federation this bot binds signed
-    ///   actions to (the bot's configured pyana node group). Used by
+    ///   actions to (the bot's configured dregg node group). Used by
     ///   `AppCipherclerk` to bind action signatures against cross-federation
     ///   replay.
     pub fn derive(bot_secret: &[u8; 32], discord_user_id: u64, federation_id: [u8; 32]) -> Self {
@@ -68,7 +68,7 @@ impl UserCipherclerk {
         let mut input = Vec::with_capacity(32 + 8);
         input.extend_from_slice(bot_secret);
         input.extend_from_slice(&user_id_bytes);
-        let seed = blake3::derive_key("pyana-discord-bot-v1", &input);
+        let seed = blake3::derive_key("dregg-discord-bot-v1", &input);
 
         // Step 2: build a canonical AgentCipherclerk from the seed. Wrapping
         // the secret in `Zeroizing` here ensures the temporary copy

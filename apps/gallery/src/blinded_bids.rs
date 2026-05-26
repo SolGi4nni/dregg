@@ -30,7 +30,7 @@
 //! | POST | `/queue/bids/consume-private` | Consume with a ZK spending proof (hides ordering) |
 //! | GET  | `/queue/bids/status` | Queue status (root, consumed count, remaining) |
 
-use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
+use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
 
 /// Default capacity of the blinded bid queue (number of bids per auction window).
 pub const BLINDED_BID_QUEUE_CAPACITY: usize = 256;
@@ -53,7 +53,7 @@ pub mod tests {
     use axum::http::{Method, Request, StatusCode};
     use tower::util::ServiceExt;
 
-    use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
+    use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
 
     fn hex64(seed: u64) -> String {
         format!("{seed:064x}")

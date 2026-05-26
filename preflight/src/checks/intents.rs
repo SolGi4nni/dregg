@@ -1,13 +1,13 @@
 //! Intent system checks: post, match, commit-reveal, partial fill.
 
-use pyana_circuit::BabyBear;
-use pyana_intent::commit_reveal_fulfillment::FulfillmentRegistry;
-use pyana_intent::gossip::{AutoFulfillPolicy, IntentPool, IntentPoolConfig};
-use pyana_intent::matcher::HeldCapability;
-use pyana_intent::partial_fill::{
+use dregg_circuit::BabyBear;
+use dregg_intent::commit_reveal_fulfillment::FulfillmentRegistry;
+use dregg_intent::gossip::{AutoFulfillPolicy, IntentPool, IntentPoolConfig};
+use dregg_intent::matcher::HeldCapability;
+use dregg_intent::partial_fill::{
     CumulativeFillTracker, check_fill_amount, create_residual_intent,
 };
-use pyana_intent::{CommitmentId, FillConstraints, Intent, IntentKind, MatchSpec};
+use dregg_intent::{CommitmentId, FillConstraints, Intent, IntentKind, MatchSpec};
 
 use crate::report::{CheckResult, run_check};
 
@@ -59,11 +59,11 @@ fn check_post_intent() -> Result<(), String> {
 fn check_match_intent() -> Result<(), String> {
     // Create a pool with held capabilities that can satisfy the intent.
     // Use `receive_local_intent` which doesn't require stake proof.
-    use pyana_intent::matcher::Sensitivity;
+    use dregg_intent::matcher::Sensitivity;
     let held = vec![HeldCapability {
         token_id: "test-token".to_string(),
         actions: vec!["read".into(), "write".into()],
-        resource: "compute.pyana.dev".into(),
+        resource: "compute.dregg.dev".into(),
         app_id: None,
         service: Some("compute".into()),
         user_id: None,

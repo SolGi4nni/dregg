@@ -1,4 +1,4 @@
-//! Standard DSL circuit descriptors for pyana proof generation and verification.
+//! Standard DSL circuit descriptors for dregg proof generation and verification.
 //!
 //! This module provides factory functions for all production DSL circuits:
 //! - [`merkle_poseidon2_descriptor`] / [`merkle_poseidon2_circuit`]
@@ -22,19 +22,19 @@ use crate::dsl::circuit::{
 // ============================================================================
 
 /// AIR name for Effect VM proofs (sovereign transitions).
-pub const EFFECT_VM_AIR_NAME: &str = "pyana-effect-vm-v1";
+pub const EFFECT_VM_AIR_NAME: &str = "dregg-effect-vm-v1";
 
 /// AIR name for standard Merkle Poseidon2 membership proofs.
-pub const MERKLE_POSEIDON2_AIR_NAME: &str = "pyana-merkle-poseidon2-v1";
+pub const MERKLE_POSEIDON2_AIR_NAME: &str = "dregg-merkle-poseidon2-v1";
 
 /// AIR name for blinded (ring) Merkle membership proofs.
-pub const BLINDED_MERKLE_AIR_NAME: &str = "pyana-blinded-merkle-v1";
+pub const BLINDED_MERKLE_AIR_NAME: &str = "dregg-blinded-merkle-v1";
 
 /// AIR name for non-revocation proofs.
-pub const NON_REVOCATION_AIR_NAME: &str = "pyana-non-revocation-v1";
+pub const NON_REVOCATION_AIR_NAME: &str = "dregg-non-revocation-v1";
 
 /// AIR name for derivation proofs.
-pub const DERIVATION_AIR_NAME: &str = "pyana-derivation-v1";
+pub const DERIVATION_AIR_NAME: &str = "dregg-derivation-v1";
 
 // ============================================================================
 // Merkle Poseidon2
@@ -661,13 +661,13 @@ pub fn derivation_circuit() -> DslCircuit {
 }
 
 /// AIR name for DSL base predicate proofs.
-pub const PREDICATE_DSL_AIR_NAME: &str = "pyana-predicate-dsl-v2";
+pub const PREDICATE_DSL_AIR_NAME: &str = "dregg-predicate-dsl-v2";
 
 /// AIR name for DSL relational predicate proofs.
-pub const RELATIONAL_PREDICATE_DSL_AIR_NAME: &str = "pyana-relational-predicate-dsl-v2";
+pub const RELATIONAL_PREDICATE_DSL_AIR_NAME: &str = "dregg-relational-predicate-dsl-v2";
 
 /// AIR name for DSL compound predicate proofs.
-pub const COMPOUND_PREDICATE_DSL_AIR_NAME: &str = "pyana-compound-predicate-dsl-v2";
+pub const COMPOUND_PREDICATE_DSL_AIR_NAME: &str = "dregg-compound-predicate-dsl-v2";
 
 /// Returns `true` if the given AIR name matches any of the standard DSL circuits.
 ///

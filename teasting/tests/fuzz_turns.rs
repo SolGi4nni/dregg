@@ -5,9 +5,9 @@
 
 use std::collections::HashMap;
 
-use pyana_cell::state::{FieldElement, STATE_SLOTS};
-use pyana_cell::{Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Nullifier, NullifierSet};
-use pyana_teasting::assertions::{
+use dregg_cell::state::{FieldElement, STATE_SLOTS};
+use dregg_cell::{Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Nullifier, NullifierSet};
+use dregg_teasting::assertions::{
     assert_conservation_invariant, assert_no_double_spend, assert_nonce_monotonicity,
 };
 

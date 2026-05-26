@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-stealth-address> inspector.
+ * Playwright ad-hoc test for <dregg-stealth-address> inspector.
  *
  * Run with:
  *   node tests/studio/stealth-address.mjs
@@ -8,13 +8,13 @@
  *   npx serve . -l 8080
  *
  * What this test does:
- *  1. Navigates to /studio (has wasm + in-memory runtime + pyana-app#app)
- *  2. Waits for pyana:ready and runtime attachment
+ *  1. Navigates to /studio (has wasm + in-memory runtime + dregg-app#app)
+ *  2. Waits for dregg:ready and runtime attachment
  *  3. Injects stealth-address.js module
  *  4. Verifies custom element registration
  *
  *  Test A — default (read) mode:
- *    Mount with a plausible pyana://stealth/<hex> URI.
+ *    Mount with a plausible dregg://stealth/<hex> URI.
  *    Verify: header "stealth address" kind badge, KV rows for spend/view/meta keys.
  *    Verify: received panel renders (empty is fine).
  *
@@ -54,44 +54,44 @@ async function run() {
   console.log('[test] Navigating to /studio …');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  await page.waitForFunction(() => !!window.pyanaUi, { timeout: 20000 });
-  console.log('[test] pyanaUi:ready fired.');
+  await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
+  console.log('[test] dreggUi:ready fired.');
 
   await page.waitForFunction(() => {
     const app = document.getElementById('app');
     return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
   }, { timeout: 20000 });
-  console.log('[test] runtime attached to <pyana-app#app>.');
+  console.log('[test] runtime attached to <dregg-app#app>.');
 
   // Inject the stealth-address inspector module
   await page.addScriptTag({
     url: `${BASE}/_includes/studio/inspectors/stealth-address.js`,
     type: 'module',
   });
-  await page.waitForFunction(() => !!customElements.get('pyana-stealth-address'), { timeout: 8000 });
-  console.log('[test] <pyana-stealth-address> custom element registered.');
+  await page.waitForFunction(() => !!customElements.get('dregg-stealth-address'), { timeout: 8000 });
+  console.log('[test] <dregg-stealth-address> custom element registered.');
 
   // ─── Test A: default (read) mode ─────────────────────────────────────────
 
   // A plausible 128-hex meta address (spend_pub || view_pub each 32 bytes)
   const META_HEX = 'a'.repeat(64) + 'b'.repeat(64);
   await page.evaluate((metaHex) => {
-    const el = document.createElement('pyana-stealth-address');
-    el.setAttribute('uri', `pyana://stealth/${metaHex}`);
+    const el = document.createElement('dregg-stealth-address');
+    el.setAttribute('uri', `dregg://stealth/${metaHex}`);
     el.setAttribute('id', 'test-stealth-default');
     document.getElementById('app').appendChild(el);
   }, META_HEX);
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-default');
-    return el && el.querySelector('.pyana-stealth');
+    return el && el.querySelector('.dregg-stealth');
   }, { timeout: 8000 });
   console.log('[test A] Element rendered.');
 
   // Kind badge
   const kindText = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-default');
-    const badge = el && el.querySelector('.pyana-stealth__kind');
+    const badge = el && el.querySelector('.dregg-stealth__kind');
     return badge ? badge.textContent.trim() : '';
   });
   if (!kindText.includes('stealth')) {
@@ -102,7 +102,7 @@ async function run() {
   // Privacy badge
   const privacyBadge = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-default');
-    const b = el && el.querySelector('.pyana-stealth__badge');
+    const b = el && el.querySelector('.dregg-stealth__badge');
     return b ? b.textContent.trim() : '';
   });
   const validLevels = ['Fully Private', 'Selective', 'Trusted'];
@@ -114,7 +114,7 @@ async function run() {
   // KV grid should have spend pubkey and view pubkey rows
   const kvDts = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-default');
-    return Array.from(el.querySelectorAll('.pyana-stealth__kv dt')).map(dt => dt.textContent.trim());
+    return Array.from(el.querySelectorAll('.dregg-stealth__kv dt')).map(dt => dt.textContent.trim());
   });
   if (!kvDts.includes('spend pubkey')) {
     throw new Error(`[test A] FAIL: 'spend pubkey' dt not found. Got: ${JSON.stringify(kvDts)}`);
@@ -127,7 +127,7 @@ async function run() {
   // Received panel
   const hasReceivedPanel = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-default');
-    return !!el.querySelector('.pyana-stealth__received');
+    return !!el.querySelector('.dregg-stealth__received');
   });
   if (!hasReceivedPanel) {
     throw new Error('[test A] FAIL: received panel missing');
@@ -137,7 +137,7 @@ async function run() {
   // ─── Test B: demo mode ────────────────────────────────────────────────────
 
   await page.evaluate(() => {
-    const el = document.createElement('pyana-stealth-address');
+    const el = document.createElement('dregg-stealth-address');
     el.setAttribute('mode', 'demo');
     el.setAttribute('id', 'test-stealth-demo');
     document.getElementById('app').appendChild(el);
@@ -145,14 +145,14 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    return el && el.querySelector('.pyana-stealth-demo__step');
+    return el && el.querySelector('.dregg-stealth-demo__step');
   }, { timeout: 8000 });
   console.log('[test B] Demo element rendered.');
 
   // All 5 step panels should be present
   const stepCount = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    return el.querySelectorAll('.pyana-stealth-demo__step').length;
+    return el.querySelectorAll('.dregg-stealth-demo__step').length;
   });
   if (stepCount !== 5) {
     throw new Error(`[test B] FAIL: expected 5 step panels, got ${stepCount}`);
@@ -163,20 +163,20 @@ async function run() {
   await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
     // Click the first primary button (Derive Keys)
-    const btns = el.querySelectorAll('.pyana-stealth-demo__btn--primary');
+    const btns = el.querySelectorAll('.dregg-stealth-demo__btn--primary');
     if (btns[0]) btns[0].click();
   });
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    const kv = el && el.querySelectorAll('.pyana-stealth-demo__kv');
+    const kv = el && el.querySelectorAll('.dregg-stealth-demo__kv');
     return kv && kv.length > 0;
   }, { timeout: 5000 });
   console.log('[test B] Step 1 result KV rendered.');
 
   const step1KvDts = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    return Array.from(el.querySelectorAll('.pyana-stealth-demo__kv dt')).map(dt => dt.textContent.trim());
+    return Array.from(el.querySelectorAll('.dregg-stealth-demo__kv dt')).map(dt => dt.textContent.trim());
   });
   if (!step1KvDts.includes('view pubkey') && !step1KvDts.includes('spend pubkey')) {
     throw new Error(`[test B] FAIL: step 1 KV rows missing. Got: ${JSON.stringify(step1KvDts)}`);
@@ -193,13 +193,13 @@ async function run() {
       amountInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
     // Click second primary button (Send Private Transfer)
-    const btns = el.querySelectorAll('.pyana-stealth-demo__btn--primary');
+    const btns = el.querySelectorAll('.dregg-stealth-demo__btn--primary');
     if (btns[1]) btns[1].click();
   });
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    const dts = Array.from(el.querySelectorAll('.pyana-stealth-demo__kv dt')).map(d => d.textContent.trim());
+    const dts = Array.from(el.querySelectorAll('.dregg-stealth-demo__kv dt')).map(d => d.textContent.trim());
     return dts.includes('one-time pubkey') || dts.includes('commitment');
   }, { timeout: 5000 });
   console.log('[test B] Step 2 result rendered (one-time pubkey / commitment).');
@@ -207,13 +207,13 @@ async function run() {
   // Step 3: Click "Generate Range Proof"
   await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    const btns = el.querySelectorAll('.pyana-stealth-demo__btn--primary');
+    const btns = el.querySelectorAll('.dregg-stealth-demo__btn--primary');
     if (btns[2]) btns[2].click();
   });
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    const dts = Array.from(el.querySelectorAll('.pyana-stealth-demo__kv dt')).map(d => d.textContent.trim());
+    const dts = Array.from(el.querySelectorAll('.dregg-stealth-demo__kv dt')).map(d => d.textContent.trim());
     return dts.includes('proof size') || dts.includes('range');
   }, { timeout: 5000 });
   console.log('[test B] Step 3 result rendered (proof size).');
@@ -221,20 +221,20 @@ async function run() {
   // Step 4: Click "Scan Announcements"
   await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    const btns = el.querySelectorAll('.pyana-stealth-demo__btn--primary');
+    const btns = el.querySelectorAll('.dregg-stealth-demo__btn--primary');
     if (btns[3]) btns[3].click();
   });
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    const dts = Array.from(el.querySelectorAll('.pyana-stealth-demo__kv dt')).map(d => d.textContent.trim());
+    const dts = Array.from(el.querySelectorAll('.dregg-stealth-demo__kv dt')).map(d => d.textContent.trim());
     return dts.includes('scanned') || dts.includes('owned');
   }, { timeout: 5000 });
   console.log('[test B] Step 4 result rendered (scan results).');
 
   const scanDts = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    return Array.from(el.querySelectorAll('.pyana-stealth-demo__kv dt')).map(d => d.textContent.trim());
+    return Array.from(el.querySelectorAll('.dregg-stealth-demo__kv dt')).map(d => d.textContent.trim());
   });
   if (!scanDts.includes('scanned')) {
     throw new Error(`[test B] FAIL: scan result KV missing 'scanned'. Got: ${JSON.stringify(scanDts)}`);
@@ -244,19 +244,19 @@ async function run() {
   // Step 5: Click "Verify Conservation"
   await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    const btns = el.querySelectorAll('.pyana-stealth-demo__btn--primary');
+    const btns = el.querySelectorAll('.dregg-stealth-demo__btn--primary');
     if (btns[4]) btns[4].click();
   });
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-stealth-demo');
-    return !!el.querySelector('.pyana-stealth-demo__conservation');
+    return !!el.querySelector('.dregg-stealth-demo__conservation');
   }, { timeout: 5000 });
   console.log('[test B] Step 5 conservation panel rendered.');
 
   const conservText = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    const div = el.querySelector('.pyana-stealth-demo__conservation');
+    const div = el.querySelector('.dregg-stealth-demo__conservation');
     return div ? div.textContent.trim() : '';
   });
   if (!conservText) {
@@ -267,7 +267,7 @@ async function run() {
   // Privacy badge in demo mode
   const demoPrivacyBadge = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    const b = el && el.querySelector('.pyana-stealth__badge');
+    const b = el && el.querySelector('.dregg-stealth__badge');
     return b ? b.textContent.trim() : '';
   });
   if (!validLevels.includes(demoPrivacyBadge)) {
@@ -278,7 +278,7 @@ async function run() {
   // Timeline details present
   const hasTimeline = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    return !!el.querySelector('.pyana-stealth-demo__timeline');
+    return !!el.querySelector('.dregg-stealth-demo__timeline');
   });
   if (!hasTimeline) {
     throw new Error('[test B] FAIL: timeline not rendered after completing steps');
@@ -287,7 +287,7 @@ async function run() {
 
   const timelineEntries = await page.evaluate(() => {
     const el = document.getElementById('test-stealth-demo');
-    return el.querySelectorAll('.pyana-stealth-demo__timeline-entry').length;
+    return el.querySelectorAll('.dregg-stealth-demo__timeline-entry').length;
   });
   if (timelineEntries === 0) {
     throw new Error('[test B] FAIL: timeline has no entries');
@@ -297,8 +297,8 @@ async function run() {
   // ─── Test C: compact mode ─────────────────────────────────────────────────
 
   await page.evaluate(() => {
-    const el = document.createElement('pyana-stealth-address');
-    el.setAttribute('uri', 'pyana://stealth/ccccdddd1234abcd');
+    const el = document.createElement('dregg-stealth-address');
+    el.setAttribute('uri', 'dregg://stealth/ccccdddd1234abcd');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-stealth-compact');
     document.getElementById('app').appendChild(el);

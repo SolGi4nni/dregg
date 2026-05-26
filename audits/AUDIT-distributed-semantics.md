@@ -1,4 +1,4 @@
-# AUDIT: pyana CapTP / distributed-semantics layer
+# AUDIT: dregg CapTP / distributed-semantics layer
 
 **Scope.** `captp/` (whole crate), `wire/src/server.rs` CapTP handlers, `wire/src/captp_routing.rs`, `wire/src/message.rs` CapTP variants, `sdk/src/captp_client.rs`. Read-only.
 
@@ -13,8 +13,8 @@ The `HandoffCertificate` / `HandoffPresentation` pair is implemented carefully a
 ### The data structures (captp/src/handoff.rs)
 
 - `HandoffCertificate` (handoff.rs:104–134): introducer-signed bearer-shaped statement naming `target_federation`, `target_cell`, `recipient_pk`, `permissions`, `allowed_effects`, optional `expires_at` / `max_uses`, a 32-byte `nonce`, and the pre-registered `swiss` number at the target.
-- `signing_message` (handoff.rs:183–231) is properly domain-separated (`b"pyana-handoff-cert-v1"`) and covers every load-bearing field. The `AUDIT[P2]` comment at handoff.rs:98–103 acknowledges public-field tampering risk but correctly notes the verify-and-consume flow protects against it.
-- `HandoffPresentation` (handoff.rs:295–336) wraps the cert with a recipient-signed `presentation_message` that includes nonce + target_cell + target_federation, domain-separated `b"pyana-handoff-present-v1"`. This binds the recipient's key to *this* cert, defeating cert-theft.
+- `signing_message` (handoff.rs:183–231) is properly domain-separated (`b"dregg-handoff-cert-v1"`) and covers every load-bearing field. The `AUDIT[P2]` comment at handoff.rs:98–103 acknowledges public-field tampering risk but correctly notes the verify-and-consume flow protects against it.
+- `HandoffPresentation` (handoff.rs:295–336) wraps the cert with a recipient-signed `presentation_message` that includes nonce + target_cell + target_federation, domain-separated `b"dregg-handoff-present-v1"`. This binds the recipient's key to *this* cert, defeating cert-theft.
 - `validate_handoff` (handoff.rs:366–414) performs all five checks in order: introducer sig → recipient sig → introducer-is-known → expiry → swiss-enliven (which also handles max-uses via `SwissTable::enliven`).
 
 ### The sequence, as wired
@@ -116,7 +116,7 @@ It discards every field. Receipt of `PipelinedMsg` is effectively a no-op except
 
 ## 3. Swiss tables / sturdy refs — bearer or attested?
 
-**Plain sturdy refs are pure bearer.** A `PyanaUri` is `{federation_id, cell_id, swiss}` (uri.rs:71–77). Enlivening is just a lookup:
+**Plain sturdy refs are pure bearer.** A `DreggUri` is `{federation_id, cell_id, swiss}` (uri.rs:71–77). Enlivening is just a lookup:
 
 ```rust
 // server.rs:2350
@@ -193,7 +193,7 @@ Evidence:
 
 - `CapTpClient::create_handoff` hardcodes `target_federation = self.config.federation_id` (captp_client.rs:482–483). No cross-federation cert can be created via the SDK.
 - `EventualRef::target_federation` is stored (captp_client.rs:67–71) but never used to route a wire send — there's no wire send at all (§2).
-- `PyanaUri::federation_id` exists in the URI (uri.rs:74) but `EnlivenSturdyRef` arrives at whichever node received the TCP connection and is enlivened against *that* node's `swiss_table` (server.rs:2333, 2350). There is no router that says "this URI is for federation X, forward it." If you connect to the wrong node, you get `NotFound` regardless of whether the URI is valid at some peer node.
+- `DreggUri::federation_id` exists in the URI (uri.rs:74) but `EnlivenSturdyRef` arrives at whichever node received the TCP connection and is enlivened against *that* node's `swiss_table` (server.rs:2333, 2350). There is no router that says "this URI is for federation X, forward it." If you connect to the wrong node, you get `NotFound` regardless of whether the URI is valid at some peer node.
 - `known_federations` (server.rs:906) is the only cross-fed primitive in the wire layer, and it's used solely for `validate_handoff` to gate introducer trust. It's a `Vec` with no provisioning code visible in this audit's scope.
 
 The trust-model docstring at lib.rs:5–15 acknowledges this: it describes federations as plural but the integration is single-node.

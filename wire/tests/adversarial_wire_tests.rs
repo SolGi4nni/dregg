@@ -40,14 +40,14 @@
 //!     cells whose 32-byte ids share the first 8 bytes get DISTINCT
 //!     promise ids from the registry (the counter, not a truncation).
 
-use pyana_captp::{
+use dregg_captp::{
     CapSession, CrossFedPipelineBridge, FederationId, HandoffCertificate, HandoffError,
     HandoffPresentation, PipelineRegistry, PipelinedAction, SwissTable, validate_handoff,
 };
-use pyana_cell::AuthRequired;
-use pyana_types::{CellId, PublicKey, Signature, generate_keypair};
-use pyana_wire::message::WireMessage;
-use pyana_wire::prelude::CapTpState;
+use dregg_cell::AuthRequired;
+use dregg_types::{CellId, PublicKey, Signature, generate_keypair};
+use dregg_wire::message::WireMessage;
+use dregg_wire::prelude::CapTpState;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -366,7 +366,7 @@ fn attested_root_push_from_unknown_federation_is_dropped() {
 
 #[test]
 fn attested_root_push_from_known_federation_is_enqueued() {
-    use pyana_wire::server::PendingAttestedRoot;
+    use dregg_wire::server::PendingAttestedRoot;
 
     let mut state = CapTpState::new();
     let peer = FederationId([0xAB; 32]);

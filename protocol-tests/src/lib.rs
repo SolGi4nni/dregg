@@ -1,8 +1,8 @@
-//! # pyana-protocol-tests
+//! # dregg-protocol-tests
 //!
-//! Protocol-invariant property tests for pyana.
+//! Protocol-invariant property tests for dregg.
 //!
-//! The thesis (from `dev-philosophy/02-testing.md`): pyana has thousands of
+//! The thesis (from `dev-philosophy/02-testing.md`): dregg has thousands of
 //! unit and integration tests, but the audit-discovered bugs were
 //! *protocol-level* — invariants that hold across the input space, not in
 //! the specific scenarios someone happened to write tests for.

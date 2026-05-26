@@ -1,9 +1,9 @@
-//! Production-grade HTTP read surface for the Discord bot as a first-class pyana peer.
+//! Production-grade HTTP read surface for the Discord bot as a first-class dregg peer.
 //!
 //! Implements the exact surface from STARBRIDGE-PLAN §4.7 so that Starbridge
 //! `RemoteRuntime` (and humans/agents) can target the bot:
 //!   GET /api/cells
-//!   GET /api/cell/<id>   (CellStateView-compatible shape for <pyana-cell> inspectors)
+//!   GET /api/cell/<id>   (CellStateView-compatible shape for <dregg-cell> inspectors)
 //!   GET /api/receipts/recent
 //!   GET /api/federations
 //!   GET /observability/stream (SSE, live activity)
@@ -48,7 +48,7 @@ use crate::BotState;
 use crate::devnet::{CellDetails, DevnetError};
 
 /// Bot's view of a cell, shaped to be compatible with the wasm CellStateView
-/// binding so RemoteRuntime + <pyana-cell> inspectors "just work".
+/// binding so RemoteRuntime + <dregg-cell> inspectors "just work".
 #[derive(Serialize, Clone, Debug)]
 pub struct BotCellView {
     pub id: String,
@@ -133,7 +133,7 @@ pub async fn start(state: Arc<BotState>) {
         .expect("invalid HTTP listen address in config");
     let app = build_router(state);
 
-    info!(%addr, "Starting production HTTP read surface for pyana Discord bot (Starbridge RemoteRuntime target)");
+    info!(%addr, "Starting production HTTP read surface for dregg Discord bot (Starbridge RemoteRuntime target)");
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -173,7 +173,7 @@ async fn list_cells(
     // For now return an empty list or a synthetic entry; extend via devnet search
     // in follow-up iterations without increasing attack surface.
     //
-    // To demonstrate the shape expected by RemoteRuntime / <pyana-cell>:
+    // To demonstrate the shape expected by RemoteRuntime / <dregg-cell>:
     let _ = &state.nullifier_set; // touch the soft-federation state (real usage in note-spend ordering)
 
     // Placeholder response (safe, no PII leak). Production bots would populate
@@ -269,7 +269,7 @@ async fn observability_stream(
             let event = if seq == 1 {
                 Event::default()
                     .event("hello")
-                    .data(format!(r#"{{"bot_cell":"{}","nullifiers":{},"msg":"pyana-discord-bot observability stream live (soft-federation peer)"}}"#, bot_cell, nullifier_count))
+                    .data(format!(r#"{{"bot_cell":"{}","nullifiers":{},"msg":"dregg-discord-bot observability stream live (soft-federation peer)"}}"#, bot_cell, nullifier_count))
             } else {
                 Event::default().event("ping").data(format!(
                     r#"{{"seq":{},"ts":"{}","nullifiers":{}}}"#,

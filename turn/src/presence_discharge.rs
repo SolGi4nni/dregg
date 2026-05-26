@@ -1,4 +1,4 @@
-//! Presence attestation discharge verification for pyana capability caveats.
+//! Presence attestation discharge verification for dregg capability caveats.
 //!
 //! This module allows any part of the system to verify that a presence attestation
 //! (issued by the Discord bot or any trusted presence oracle) satisfies a presence
@@ -42,7 +42,7 @@ pub struct PresenceCaveat {
 pub struct PresenceDischarge {
     /// The user being attested.
     pub user_id: u64,
-    /// Their pyana cell ID.
+    /// Their dregg cell ID.
     pub cell_id: [u8; 32],
     /// The claim being attested (encoded as a tag byte).
     pub claim_tag: u8,

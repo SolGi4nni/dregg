@@ -126,7 +126,7 @@ async fn write_file(
     ctx.success("File stored:");
     ctx.kv("Hash", hash);
     ctx.kv("Size", &format!("{} bytes", format_number(stored_size)));
-    ctx.info(&format!("  Retrieve with: pyana storage read {}", hash));
+    ctx.info(&format!("  Retrieve with: dregg storage read {}", hash));
 
     Ok(())
 }
@@ -272,7 +272,7 @@ async fn quota_show(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::erro
     ctx.kv("Remaining", &format_number(computrons_remaining));
 
     if usage_pct > 90 {
-        ctx.warn("Storage quota nearly exhausted! Use `pyana storage quota top-up` to add more.");
+        ctx.warn("Storage quota nearly exhausted! Use `dregg storage quota top-up` to add more.");
     }
 
     Ok(())

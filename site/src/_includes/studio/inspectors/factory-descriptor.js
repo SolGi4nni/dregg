@@ -1,23 +1,23 @@
 /**
- * <pyana-factory-descriptor uri="pyana://factory/<vk>" | data-factory="...">
+ * <dregg-factory-descriptor uri="dregg://factory/<vk>" | data-factory="...">
  *
- * Inspector for pyana_cell::factory::FactoryDescriptor — the constructor
+ * Inspector for dregg_cell::factory::FactoryDescriptor — the constructor
  * transparency record. Renders the factory's identity, child program (via
- * embedded <pyana-cell-program>), allowed cap templates, field/state
+ * embedded <dregg-cell-program>), allowed cap templates, field/state
  * constraints, mode, and provenance notes.
  *
  * Heavy reuse of platform vocabulary (per Houyhnhnm / STARBRIDGE-PLAN §4.5):
- *   - Embeds <pyana-cell-program> for the child program + its StateConstraints
+ *   - Embeds <dregg-cell-program> for the child program + its StateConstraints
  *     (the storage-as-cell-program patterns live here: MonotonicSequence +
  *     WriteOnce + SenderAuthorized etc for queues/inboxes).
- *   - Composes with <pyana-cell> for owner deeplinks in provenance.
+ *   - Composes with <dregg-cell> for owner deeplinks in provenance.
  *
  * Aligns with STORAGE-AS-CELL-PROGRAMS.md Phase 1 (WitnessedPredicate registry
  * + cell-program migrations): factories declare the perpetual StateConstraints
  * that turn storage primitives into inspectable cell programs. The descriptor
  * VK is the stable name for the pattern.
  *
- * URI form (future): pyana://factory/<32-byte-vk-hex>
+ * URI form (future): dregg://factory/<32-byte-vk-hex>
  * Data form (today, for inline from deploy_factory result or app manifests):
  *   data-factory='{"factory_vk":"...","child_program_vk":null,"state_constraints":[...],...}'
  *
@@ -43,9 +43,9 @@ function modeLabel(m) {
   return String(m).toLowerCase() === 'sovereign' ? 'sovereign' : 'hosted';
 }
 
-// --- <pyana-factory-descriptor> --------------------------------------------
+// --- <dregg-factory-descriptor> --------------------------------------------
 
-class PyanaFactoryDescriptor extends InspectorBase {
+class DreggFactoryDescriptor extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -62,7 +62,7 @@ class PyanaFactoryDescriptor extends InspectorBase {
       try {
         descriptor = JSON.parse(dataAttr);
       } catch (e) {
-        this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">bad data-factory JSON: ${esc(e.message)}</div>`;
+        this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">bad data-factory JSON: ${esc(e.message)}</div>`;
         return;
       }
     } else if (refAttr) {
@@ -79,10 +79,10 @@ class PyanaFactoryDescriptor extends InspectorBase {
     const Component = () => {
       if (!descriptor) {
         return html`
-          <div class="pyana-inspector pyana-inspector--factory pfd">
+          <div class="dregg-inspector dregg-inspector--factory pfd">
             <div class="pfd__header">
-              <span class="pyana-inspector__kind">factory-descriptor</span>
-              ${parsed ? html`<code class="pyana-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 16)}</code>` : ''}
+              <span class="dregg-inspector__kind">factory-descriptor</span>
+              ${parsed ? html`<code class="dregg-inspector__id" title=${parsed.id}>${shortHex(parsed.id, 16)}</code>` : ''}
             </div>
             <div class="pfd__placeholder" style="font-size:0.82rem;color:var(--fg-dim);padding:8px 0;">
               awaiting wasm binding for deployed factories (deploy_factory_descriptor exists; get/list pending per §5.7/STORAGE-AS-CELL-PROGRAMS Phase 1).<br>
@@ -106,8 +106,8 @@ class PyanaFactoryDescriptor extends InspectorBase {
 
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact pfd pfd--compact" title=${'factory ' + shortHex(vk, 8)}>
-            <span class="pyana-inspector__kind">factory</span>
+          <span class="dregg-inspector dregg-inspector--compact pfd pfd--compact" title=${'factory ' + shortHex(vk, 8)}>
+            <span class="dregg-inspector__kind">factory</span>
             <code>${shortHex(vk, 8)}</code>
             · ${defMode}
             · ${stateConstraints.length} constraints
@@ -116,10 +116,10 @@ class PyanaFactoryDescriptor extends InspectorBase {
       }
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pfd" data-testid="pfd-root">
+        <div class="dregg-inspector dregg-inspector--cell pfd" data-testid="pfd-root">
           <header class="pfd__header">
-            <span class="pyana-inspector__kind">factory-descriptor</span>
-            <code class="pyana-inspector__id" title=${vk}>${shortHex(vk, 24)}</code>
+            <span class="dregg-inspector__kind">factory-descriptor</span>
+            <code class="dregg-inspector__id" title=${vk}>${shortHex(vk, 24)}</code>
             <span class="pfd__mode-badge">${defMode}</span>
           </header>
 
@@ -161,7 +161,7 @@ class PyanaFactoryDescriptor extends InspectorBase {
             <summary class="pfd__summary">Child cell program (perpetual StateConstraints)</summary>
             <div class="pfd__sub">
               ${progData
-                ? html`<pyana-cell-program data-program=${progData} mode="default"></pyana-cell-program>`
+                ? html`<dregg-cell-program data-program=${progData} mode="default"></dregg-cell-program>`
                 : html`<div style="color:var(--fg-dim);font-size:0.82rem;">No inline child program view. Constraints shown via state_constraints above (storage patterns: WriteOnce + MonotonicSequence + SenderAuthorized etc per STORAGE-AS-CELL-PROGRAMS §3).</div>`}
               ${stateConstraints.length > 0 ? html`
                 <div style="margin-top:6px;font-size:0.75rem;color:var(--fg-dim);">
@@ -182,15 +182,15 @@ class PyanaFactoryDescriptor extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-factory-descriptor')) {
-  customElements.define('pyana-factory-descriptor', PyanaFactoryDescriptor);
+if (!customElements.get('dregg-factory-descriptor')) {
+  customElements.define('dregg-factory-descriptor', DreggFactoryDescriptor);
 }
 
 // Inject minimal styles (idempotent)
 (function inject() {
-  if (document.getElementById('pyana-factory-descriptor-styles')) return;
+  if (document.getElementById('dregg-factory-descriptor-styles')) return;
   const s = document.createElement('style');
-  s.id = 'pyana-factory-descriptor-styles';
+  s.id = 'dregg-factory-descriptor-styles';
   s.textContent = `
 .pfd { font-family: var(--font-mono, ui-monospace, monospace); font-size:0.85rem; }
 .pfd--compact { display:inline-flex; gap:6px; align-items:center; padding:2px 8px; background:var(--bg-raised); border:1px solid var(--line); border-radius:3px; }

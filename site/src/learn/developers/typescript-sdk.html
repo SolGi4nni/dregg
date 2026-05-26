@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>TypeScript SDK — Pyana</title>
+<title>TypeScript SDK — <code>dregg</code></title>
 
 <div class="docs-layout">
   <aside class="docs-sidebar">
@@ -16,16 +16,16 @@
 <h1>TypeScript SDK</h1>
 
     <p>
-      The <code>@pyana/sdk</code> package provides ergonomic, type-safe TypeScript APIs for
+      The <code>@dregg/sdk</code> package provides ergonomic, type-safe TypeScript APIs for
       token management, zero-knowledge proofs, Merkle trees, Datalog authorization,
-      and full runtime simulation. It wraps the <code>pyana-wasm</code> module (compiled from
+      and full runtime simulation. It wraps the <code>dregg-wasm</code> module (compiled from
       the Rust codebase) into idiomatic async APIs.
     </p>
 
     <div class="callout callout--note">
       <p>
         <strong>Canonical source:</strong> <code>sdk-ts/</code> in the breadstuffs repo.
-        A prior package at <code>ts-sdk/</code> shared the same <code>@pyana/sdk</code> name
+        A prior package at <code>ts-sdk/</code> shared the same <code>@dregg/sdk</code> name
         but had no WASM coupling and has been archived as <code>ts-sdk.archived/</code>
         (2026-05-25). Do not reference <code>ts-sdk/</code> in new code.
       </p>
@@ -51,11 +51,11 @@
     <h2 id="installation">Installation</h2>
 
     <pre><code class="language-bash"># Not yet available on npm — build from source for now
-npm install @pyana/sdk pyana-wasm</code></pre>
+npm install @dregg/sdk dregg-wasm</code></pre>
 
     <p>
-      Both packages will be required: <code>@pyana/sdk</code> provides the TypeScript API layer,
-      while <code>pyana-wasm</code> provides the compiled cryptographic core.
+      Both packages will be required: <code>@dregg/sdk</code> provides the TypeScript API layer,
+      while <code>dregg-wasm</code> provides the compiled cryptographic core.
     </p>
 
     <h2 id="quick-start">Quick Start</h2>
@@ -65,12 +65,12 @@ npm install @pyana/sdk pyana-wasm</code></pre>
       (mint, attenuate, verify) in a few lines:
     </p>
 
-    <pre><code class="language-javascript">import init from "pyana-wasm";
-import { PyanaClient } from "@pyana/sdk";
+    <pre><code class="language-javascript">import init from "dregg-wasm";
+import { DreggClient } from "@dregg/sdk";
 
 // Initialize WASM and create client
 const wasm = await init();
-const client = await PyanaClient.init(wasm);
+const client = await DreggClient.init(wasm);
 
 // Mint a token
 const token = await client.cclerk.mint("api-gateway");
@@ -168,7 +168,7 @@ console.log(result.allowed); // true</code></pre>
     <h2 id="runtime">Runtime Simulation</h2>
 
     <p>
-      The <code>PyanaRuntime</code> class provides a full distributed system simulation: agents, transfers,
+      The <code>DreggRuntime</code> class provides a full distributed system simulation: agents, transfers,
       federations, block proposals, and intents.
     </p>
 
@@ -211,7 +211,7 @@ runtime.destroy();</code></pre>
       </thead>
       <tbody>
         <tr>
-          <td><code>PyanaClient</code></td>
+          <td><code>DreggClient</code></td>
           <td>Main entry point combining all subsystems</td>
         </tr>
         <tr>
@@ -235,15 +235,15 @@ runtime.destroy();</code></pre>
           <td>Datalog authorization engine</td>
         </tr>
         <tr>
-          <td><code>PyanaRuntime</code></td>
+          <td><code>DreggRuntime</code></td>
           <td>Full distributed system simulation: agents, cells, turns, federations, intents, peer exchange, block history</td>
         </tr>
       </tbody>
     </table>
 
-    <h3 id="new-runtime-surface">New in PyanaRuntime (Refactors 3-7)</h3>
+    <h3 id="new-runtime-surface">New in DreggRuntime (Refactors 3-7)</h3>
 
-    <p>The following methods were added to <code>PyanaRuntime</code> to match current WASM exports:</p>
+    <p>The following methods were added to <code>DreggRuntime</code> to match current WASM exports:</p>
 
     <table class="comparison">
       <thead>
@@ -335,13 +335,13 @@ runtime.destroy();</code></pre>
     <h2 id="wasm-relationship">Relationship to WASM</h2>
 
     <p>
-      The TypeScript SDK is a convenience layer over the <code>pyana-wasm</code> package:
+      The TypeScript SDK is a convenience layer over the <code>dregg-wasm</code> package:
     </p>
 
     <ul>
-      <li><code>pyana-wasm</code> is compiled from the Rust workspace using <code>wasm-pack</code>. It exposes
+      <li><code>dregg-wasm</code> is compiled from the Rust workspace using <code>wasm-pack</code>. It exposes
         low-level functions that operate on raw bytes and JSON-serialized structures.</li>
-      <li><code>@pyana/sdk</code> wraps those functions into typed async methods, handles WASM
+      <li><code>@dregg/sdk</code> wraps those functions into typed async methods, handles WASM
         initialization, manages memory lifecycle, and provides builder patterns for
         complex operations.</li>
       <li>All cryptographic operations (HMAC chains, STARK proving/verifying, Merkle hashing)

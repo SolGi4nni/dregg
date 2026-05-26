@@ -1,12 +1,12 @@
-# HOUYHNHNM ↔ pyana — A Deep Critique
+# HOUYHNHNM ↔ dregg — A Deep Critique
 
 **Date:** 2026-05-25
 **Companion to:** `HOUYHNHNM-COMPARISON.md` (diplomatic). This is the
-sharp version: what pyana is fooling itself about, where the code
+sharp version: what dregg is fooling itself about, where the code
 contradicts its own marketing, and the smallest fixes that would let
 it stop pretending.
 **Stance:** I am holding the houyhnhnm worldview as load-bearing,
-not as decoration. If pyana wants to be a *Houyhnhnm-style*
+not as decoration. If dregg wants to be a *Houyhnhnm-style*
 computing-mesh — and large parts of `NEW-WORLD.md` very much want
 to claim that lineage — then it has to be evaluated by the
 houyhnhnm yardstick, not graded on a curve against Ethereum.
@@ -21,9 +21,9 @@ houyhnhnm yardstick, not graded on a curve against Ethereum.
 
 ---
 
-## §1 — The Houyhnhnm worldview I am holding pyana to
+## §1 — The Houyhnhnm worldview I am holding dregg to
 
-Before evaluating pyana, I need to be honest about which Ann I'm
+Before evaluating dregg, I need to be honest about which Ann I'm
 channelling. The previous lane summarised her diplomatically.
 Here is the un-diplomatic version, taken at full strength.
 
@@ -205,20 +205,20 @@ The most operationally pointed chapter is Ch.10. Its core is:
    bug introduced or 'shortcut' taken, the entire Nock VM becomes
    a sham."
 
-This is the test pyana has to pass. Pyana *does* have
+This is the test dregg has to pass. `dregg` *does* have
 crypto-currency-style mutual verification, so the first defense
 doesn't apply. But the third and fourth absolutely do, and we
-will see below that pyana flunks them on multiple counts today.
+will see below that dregg flunks them on multiple counts today.
 
 ---
 
 ## §2 — Lines of attack
 
-Each section below pairs a houyhnhnm citation, a pyana citation
+Each section below pairs a houyhnhnm citation, a dregg citation
 (code or doc), the failure, why it matters, and the smallest fix.
 I am not pulling punches; I am citing files.
 
-### 2.1 Code-and-data-as-one-history vs. pyana's binary/source split
+### 2.1 Code-and-data-as-one-history vs. dregg's binary/source split
 
 **Houyhnhnm (Ch.5):**
 > "Houyhnhnm systems, since they remember the history of type
@@ -226,11 +226,11 @@ I am not pulling punches; I am citing files.
 > accompanied by a well-typed upgrade function, taking an object
 > in the old type and returning an object in the new type."
 
-**pyana:** `turn/src/action.rs:524` defines
+**dregg:** `turn/src/action.rs:524` defines
 ```rust
 SetVerificationKey {
     cell: CellId,
-    new_vk: Option<pyana_cell::VerificationKey>,
+    new_vk: Option<dregg_cell::VerificationKey>,
 },
 ```
 The executor handler (`turn/src/executor.rs:7256-7261`) checks
@@ -251,7 +251,7 @@ Houyhnhnm framing presses on this" — that is too gentle. There is
 no upgrade story at all.
 
 **Why it matters:**
-The whole shape of pyana — "proof-carrying capability mesh,
+The whole shape of dregg — "proof-carrying capability mesh,
 WitnessedReceipt chain as the persistence stream" — collapses
 silently if the *program* underneath a state can change without
 the change itself being a first-class, typed, replayable event.
@@ -260,7 +260,7 @@ sees today's `vk_v2` and the algebra-of-receipts says nothing
 about what happened in between. The cell's history has a cliff in
 it that the system doesn't see.
 
-This is also pyana's worst Urbit-trap: an attacker who controls
+This is also dregg's worst Urbit-trap: an attacker who controls
 the `SetVerificationKey` capability can re-author the rules of a
 cell out from under outstanding capabilities granted against the
 old rules. The bearer of an old cap still has an attenuated cap
@@ -280,14 +280,14 @@ lineage; verifiers can refuse to chain across program-transitions
 they don't understand.
 
 **Reality check:** This is a *small structural fix* that ports a
-critical Houyhnhnm tenet — typed schema upgrade — onto pyana's
+critical Houyhnhnm tenet — typed schema upgrade — onto dregg's
 existing receipt chain. It costs almost nothing and closes a
 class of "old cap exercised after silent program swap" attacks
 that the current threat ledger does not enumerate.
 
 ---
 
-### 2.2 Persistence as system-wide protocol vs. pyana's "ledger is the log"
+### 2.2 Persistence as system-wide protocol vs. dregg's "ledger is the log"
 
 **Houyhnhnm (Ch.2):**
 > "Houyhnhnm computing systems make data persistence the default,
@@ -298,17 +298,17 @@ that the current threat ledger does not enumerate.
 > instead, Houyhnhnms have a number of libraries to manage
 > transience."
 
-**pyana:** the system that *is* persistent is the
+**dregg:** the system that *is* persistent is the
 ledger + WitnessedReceipt chain + blocklace DAG. The system that
 is *not* persistent includes:
 
 - **CapTP session state.** `wire/` runs sessions in memory. A
-  pyana node that crashes mid-session loses all sturdy-ref
+  dregg node that crashes mid-session loses all sturdy-ref
   resolutions in flight, all promise-pipelining state, all
   half-completed three-party handoffs.
 - **Capability handle tables** inside live processes. The c-list
   on a cell is part of state, fine — but the *handles* held by
-  client code in pyana-sdk are not in any log; if a client
+  client code in dregg-sdk are not in any log; if a client
   process dies, what it knew about cap-graph reachability is
   gone.
 - **Pending intent state.** The trustless intent engine in
@@ -328,7 +328,7 @@ is *not* persistent includes:
 This is exactly fractal transience as Ch.2 names it: "this
 fundamental design difference between Human and Houyhnhnm
 computing systems is observable at every level of these systems."
-Pyana has *gotten one layer right* — the on-chain ledger /
+`dregg` has *gotten one layer right* — the on-chain ledger /
 receipt chain — and inherited transience everywhere else.
 
 **Why it matters:**
@@ -337,7 +337,7 @@ stream" (§2 of `HOUYHNHNM-COMPARISON.md`). But under the
 houyhnhnm yardstick, persistence has to extend up *and out* — to
 the IDE, to the cclerk handle, to the in-flight intent. If the
 persistence story bottoms out at "the chain remembers", then
-pyana is *exactly* a fancy database server with crypto — the
+dregg is *exactly* a fancy database server with crypto — the
 shape Ch.2 was savaging.
 
 **Smallest fix (~1 week per layer; pick one):**
@@ -348,7 +348,7 @@ every decryption-share contribution, and every state transition
 of the share-collection state-machine becomes a recorded event,
 written into a per-federation event journal (or into the
 blocklace itself as a "gossip-meta" event class). Then publish
-the *protocol* — say "pyana's persistence stream now covers
+the *protocol* — say "dregg's persistence stream now covers
 intents" — and treat the others as follow-on lanes (CapTP next,
 Studio last). Until that's done, do not say "WitnessedReceipt is
 *the* persistence layer". Say "WitnessedReceipt is *a*
@@ -369,7 +369,7 @@ exists in the comparison doc; promote it to the design narrative.
 > an upgrade operator, you must explicitly drop any data that you
 > don't care about anymore."
 
-**pyana:** balance is a `u64` field on `CellState`
+**dregg:** balance is a `u64` field on `CellState`
 (`cell/src/state.rs`). Effects can move it (`Transfer`), create
 it (`CreateCell { balance }`, `BridgeMint`), or destroy it
 (burns implicit in `BridgeLock`). Conservation is enforced by a
@@ -412,13 +412,13 @@ but, on the truncated variants, lies about it on the high bits.
 Linear logic exists precisely so that you can prove "no resource
 was duplicated by mistake or omission" *by examining the type*,
 not by running the program and seeing whether the runtime sweep
-fires. Pyana's resource discipline is the *opposite shape*: a
+fires. `dregg`'s resource discipline is the *opposite shape*: a
 flat enum where every variant has free access to balance fields,
 plus a centralized executor sweep that you'd better hope is
 complete, plus an AIR that algebraically endorses a truncated
 view.
 
-This is also where pyana most directly cheats vs. its
+This is also where dregg most directly cheats vs. its
 EXECUTOR-HONESTY-AUDIT marketing. T12 in that audit ("Lie about
 balance deltas") is marked "closed" because
 `compute_balance_delta_from_effects` derives the delta from the
@@ -455,7 +455,7 @@ proof):**
 > subsystems and subsubsystems, each written in as high-level a
 > language as makes sense for its purpose."
 
-**pyana:** `wc -l turn/src/executor.rs` → **13,905 lines**. This
+**dregg:** `wc -l turn/src/executor.rs` → **13,905 lines**. This
 single file contains:
 
 - `TurnExecutor` struct and its associated `impl`
@@ -486,7 +486,7 @@ emission flows. It is precisely the artifact Ch.6 was savaging:
 from scratch or become a big security liability whenever it's
 exposed to a hostile environment".
 
-Pyana's pseudo-polycentrism — multiple "cells" each with
+`dregg`'s pseudo-polycentrism — multiple "cells" each with
 "programs" — is a polycentrism *of state*, not of *enforcement*.
 The state lives in many cells; the enforcement lives in one
 executor. The same monolith is the only thing that knows how to
@@ -495,7 +495,7 @@ statements in one file. A change to authorization touches the
 same file. A change to receipt shape touches the same file. A
 change to conservation rules touches the same file.
 
-`HOUYHNHNM-COMPARISON.md §3.3` claims pyana achieves
+`HOUYHNHNM-COMPARISON.md §3.3` claims dregg achieves
 polycentrism: "the executor is a participant, not a kernel; the
 cell-programs constrain what may happen; the federation
 constrains which history is canonical." This is *partly* true
@@ -511,9 +511,9 @@ runtime model can be polycentric; the codebase is not.
    meta-level intervention". With one giant executor, the
    surface of attack is *the entire executor*. A logic error
    anywhere in 13,905 lines is potentially a
-   pyana-mesh-wide soundness break. This was the whole point of
+   dregg-mesh-wide soundness break. This was the whole point of
    the Urbit critique: not Nock-the-language-is-bad, but
-   Nock-the-formalism-cannot-protect-against-u3's-bugs. Pyana's
+   Nock-the-formalism-cannot-protect-against-u3's-bugs. `dregg`'s
    AIR-the-formalism cannot protect against the executor's
    bugs. The audit-ledger documents this implicitly by listing
    T1–T15 mostly in terms of *the executor* doing-or-not-doing
@@ -532,7 +532,7 @@ runtime model can be polycentric; the codebase is not.
    the re-export list at `turn/src/lib.rs:120-170`.
 
 **Smallest fix (~2 weeks of refactor, breaks zero behavior):**
-Split `TurnExecutor` along the only real seam pyana has:
+Split `TurnExecutor` along the only real seam dregg has:
 *per-effect-family handlers*. The structural move:
 
 - `turn/src/effects/transfer.rs` — owns `Transfer`, `Bridge*`,
@@ -550,7 +550,7 @@ The 12 match-on-effect blocks collapse to one trait method per
 family. Conservation, authorization, AIR-projection move *into
 each family's module*. The executor itself drops to ~1500 lines
 and becomes auditable. This is the houyhnhnm "polycentric
-kernel" applied where pyana hasn't.
+kernel" applied where dregg hasn't.
 
 **Reality-check on the cost:** this is not a soundness change;
 it is purely a re-arrangement of code. The four executor-trusted
@@ -570,7 +570,7 @@ each lives in a 200-line module instead of being entangled with
 > functionality... In Houyhnhnm computing systems, there are no
 > applications and no 'save' buttons."
 
-**pyana:** there's a directory called `starbridge-apps/` with a
+**dregg:** there's a directory called `starbridge-apps/` with a
 plan called `STARBRIDGE-APPS-PLAN.md`. The slop-list (`amm`,
 `lending`, `orderbook`, `stablecoin`, `dao-treasury`,
 `prediction-market`) was deleted — good. The replacements
@@ -600,7 +600,7 @@ is "no — those are different apps". The houyhnhnm shape would be
 "yes — both are platform extensions exposing typed methods over
 typed state; the platform's renderer composes them".
 
-Pyana's `pyana-credentials` and `pyana-directory` micro-crates
+`dregg`'s `dregg-credentials` and `dregg-directory` micro-crates
 (promoted from app code, per `NEW-WORLD.md`'s inventory) are
 exactly the right direction — promote functionality from
 apps-as-silos to platform-extensions. But the *naming* and the
@@ -610,7 +610,7 @@ named `starbridge-apps/<name>`.
 
 **Why it matters:**
 This is mostly a *cultural* failure, not a structural one.
-Pyana has the substrate (factories, FactoryDescriptors, the cap
+`dregg` has the substrate (factories, FactoryDescriptors, the cap
 system, the inspector registry hinted at in StarbridgeAppContext)
 to be a Houyhnhnm-style platform. But it's been organised under
 the wrong noun. The naming will shape the architecture: a
@@ -626,10 +626,10 @@ remaining directory would be too.
 Rename `starbridge-apps/` → `starbridge-modules/` (or
 `platform-extensions/`). Update `STARBRIDGE-APPS-PLAN.md` to
 articulate the houyhnhnm framing: "each module declares its
-typed extensions to the pyana vocabulary; the platform composes
+typed extensions to the dregg vocabulary; the platform composes
 them; there is no app-shaped silo". Promote the *next two*
 reusable surfaces (presentation/inspector? credential-render?)
-to micro-crates in `pyana-<thing>/` so the migration pattern
+to micro-crates in `dregg-<thing>/` so the migration pattern
 becomes visible. This is a *naming-led architecture change* that
 moves a culture, not just a directory.
 
@@ -641,12 +641,12 @@ moves a culture, not just a directory.
 > "All sources of non-determinism are either eliminated or
 > recorded."
 
-**pyana:** the system claims determinism for the *verifier* —
+**dregg:** the system claims determinism for the *verifier* —
 given the same `(turn, proof, PI)`, the verifier returns the
 same accept/reject. That part is real. What's *not* claimed
 anywhere clearly: determinism for the *prover*.
 
-Probable non-determinism sources in pyana's prover today,
+Probable non-determinism sources in dregg's prover today,
 based on a survey of `circuit/`:
 
 - **FRI commitment blinding** in the STARK backend. The Fiat-Shamir
@@ -672,7 +672,7 @@ complete — there are bytes (the random blindings) that exist in
 the prover's RAM at moment t but are *not* in any log. Ch.3 is
 crisp: "this however, requires that all sources of
 non-determinism are either eliminated or recorded — which
-Houyhnhnm computing systems do by construction." Pyana's claim
+Houyhnhnm computing systems do by construction." `dregg`'s claim
 to be a verifiable mesh requires the same.
 
 Note this isn't actually a soundness bug for *verification* — the
@@ -700,7 +700,7 @@ This shows up the moment anyone wants to:
 - Apply the houyhnhnm "monitor" pattern (Ch.3): re-execute from
   the persistence log and *expect bit-for-bit identity*
 
-Pyana's documents about the prover are silent on this. The
+`dregg`'s documents about the prover are silent on this. The
 audit ledger is silent. The verifier docs cover their side
 correctly but the prover is treated as a black box. The opacity
 *itself* is the violation.
@@ -714,7 +714,7 @@ nondeterministic (a violation to be fixed). Where the
 Pedersen-blinding `r` comes from the prover's secret seed, *put
 the seed (under encryption to the prover's own future self) in
 the WitnessBundle*. The houyhnhnm rule: "all sources of
-non-determinism are either *eliminated* or *recorded*". Pyana
+non-determinism are either *eliminated* or *recorded*". `dregg`
 needs to enforce that as a property, with a CI test.
 
 ---
@@ -727,7 +727,7 @@ needs to enforce that as a property, with a CI test.
 > that a good decision of theirs could have avoided the bad
 > outcome."
 
-**pyana:** `EXECUTOR-HONESTY-AUDIT.md` enumerates T1–T15 and
+**dregg:** `EXECUTOR-HONESTY-AUDIT.md` enumerates T1–T15 and
 maps each to a defense layer. Look at T9 (skip sovereign-witness
 verification):
 
@@ -764,7 +764,7 @@ Ch.11's framing of this: "in a joint decision between the two of
 us, where either of our strong objection could have had a 80%
 chance of averting the bad outcome, then we are each 80% [to
 blame] for the outcome, though our joint blame is only 100%."
-The pyana threat ledger has no apparatus for representing this.
+The dregg threat ledger has no apparatus for representing this.
 Sub-additive blame requires *recording who could have caught
 it*. The current ledger records *who did catch it*.
 
@@ -795,7 +795,7 @@ teeth: not just "caught at" but "could-have-caught".
 
 Then, as a follow-on: ban coalitions of size 1 from succeeding
 on any threat. Every threat must require at least 2 colluding
-layers to break the invariant. That gives pyana an *algebraic
+layers to break the invariant. That gives dregg an *algebraic
 property* of its blame distribution — every invariant has at
 least two independent defenders — which is the natural
 sub-additive structural rule.
@@ -811,7 +811,7 @@ sub-additive structural rule.
 > systems, where the source... is text files that are compiled,
 > disconnected from the state of the system."
 
-**pyana:** `VK-AS-RE-EXECUTION-RECIPE.md` (a real doc in the
+**dregg:** `VK-AS-RE-EXECUTION-RECIPE.md` (a real doc in the
 repo) frames the verification key as "what you need to re-execute
 this turn". Combined with the encoder (the function that turns a
 program into its AIR shape), the VK + encoder + program-source
@@ -838,12 +838,12 @@ that requires *understandability*.
 This is also the Urbit-test most squarely applied: Ch.10's
 "Nock-is-a-sham" argument was *exactly* that Nock VM identity
 hashes don't bind the high-level semantics anyone actually
-writes. Pyana's `vk_hash` is in danger of becoming the same:
+writes. `dregg`'s `vk_hash` is in danger of becoming the same:
 identity that doesn't bind source.
 
 **Why it matters:**
 - **Source recoverability after vendor death.** A contract
-  authored by a vendor that subsequently disappears: pyana
+  authored by a vendor that subsequently disappears: dregg
   remembers the `vk_hash`, the federation enforces it, but no
   one alive can re-derive what the program *did*. The contract
   becomes a sham: a hash that everyone enforces but nobody
@@ -853,19 +853,19 @@ identity that doesn't bind source.
   bug-fix in the encoder spuriously breaks existing
   capabilities. If source is identity and VK is cache, the
   encoder can be re-run.
-- **Pyana's own multi-backend differential testing** is
+- **`dregg`'s own multi-backend differential testing** is
   *exactly* the encoder-as-cache pattern at the DSL layer
-  (`pyana-dsl-differential`). The infrastructure exists for the
+  (`dregg-dsl-differential`). The infrastructure exists for the
   *predicate* sub-language. Promoting that pattern to the
   whole cell-program layer would close this gap.
 
 **Smallest fix (1–2 weeks; really a registry change):**
-Add a `pyana-program-registry` crate: a content-addressed store
+Add a `dregg-program-registry` crate: a content-addressed store
 of source programs, where each program is keyed by *source-hash*
 and stores `{source, encoder_version, derived_vk_hash}`.
 `FactoryDescriptor` and `Effect::SetVerificationKey` carry the
 *source-hash*, not the *vk-hash*. Verifiers derive the vk-hash
-on demand. Adopt the same pattern `pyana-dsl-differential`
+on demand. Adopt the same pattern `dregg-dsl-differential`
 already uses for the predicate sublanguage. The pattern then
 generalizes to the cell-program layer. The Urbit-trap closes:
 identity *is* source; vk-hash is a derived view; encoder bugs
@@ -887,7 +887,7 @@ fix without invalidating cells.
 > embrace the fact that technologies especially will evolve over
 > the long run."
 
-**pyana:** `NEW-WORLD.md` opens by *naming* this distinction:
+**dregg:** `NEW-WORLD.md` opens by *naming* this distinction:
 
 > **Silver Vision** is the *pre-algebraic* form — every component
 > integrates, every loop closes, every receipt is signed and
@@ -951,7 +951,7 @@ present*.
 **Why it matters:**
 The houyhnhnm test of low-time-preference is: "the temporary
 version stops shipping the moment the permanent version is
-viable." Pyana has been shipping Silver for some unknown number
+viable." `dregg` has been shipping Silver for some unknown number
 of "seasons" (the NEW-WORLD.md uses the word "season" 8+
 times). The Golden Vision substrate landed (Plonky3 recursion
 Block 1) but the *application* of it to close the executor-
@@ -975,7 +975,7 @@ Three operational consequences:
 3. **When an external auditor or user reads "proof-carrying
    capability mesh", they reasonably take this as a *claim*.**
    Under the houyhnhnm framing — toolsmith-blame is real and
-   load-bearing — pyana's authors are *currently* on the hook
+   load-bearing — dregg's authors are *currently* on the hook
    for any incident where a reader trusted that tagline.
 
 **Smallest fix (1 day for the audit; ongoing for the discipline):**
@@ -999,7 +999,7 @@ discharge.
 
 ---
 
-### 2.10 The Urbit-trap, revisited: does pyana actually escape it?
+### 2.10 The Urbit-trap, revisited: does dregg actually escape it?
 
 **Houyhnhnm (Ch.10):**
 > "Where Urbit distinguishes itself from other VM-based systems...
@@ -1017,8 +1017,8 @@ discharge.
 > at the first bug introduced or 'shortcut' taken, the entire
 > Nock VM becomes a sham."
 
-**pyana:** `HOUYHNHNM-COMPARISON.md §4.15` does the comparison
-honestly: pyana's Effect VM AIR is "a particular fixed semantic
+**dregg:** `HOUYHNHNM-COMPARISON.md §4.15` does the comparison
+honestly: dregg's Effect VM AIR is "a particular fixed semantic
 encoding" similar in shape to Nock-as-frozen-VM. The mitigation
 claimed is *VK versioning + the executor honesty audit*.
 
@@ -1047,8 +1047,8 @@ incompatible. The system has no protocol for handling this.
 
 **Test 3: Is the encoder honest?**
 The encoder is the function that, given a program, produces the
-VK. For pyana's `CellProgram`, this is somewhere in the
-`circuit/src/dsl/circuit.rs` layer. `pyana-dsl-differential`
+VK. For dregg's `CellProgram`, this is somewhere in the
+`circuit/src/dsl/circuit.rs` layer. `dregg-dsl-differential`
 tests *predicates* across encoders. There is *no equivalent test
 for the cell-program encoder*. A bug in the encoder — say, a
 mis-translation of `Cases([...])` semantics into AIR — would
@@ -1064,7 +1064,7 @@ is no enumeration of "threats we didn't think of". The
 exhaustiveness claim is by hand. (See `EXECUTOR-HONESTY-AUDIT.md`
 explicitly: it says T1–T15, not T1–T∞.)
 
-Verdict on the Urbit-trap: **pyana is walking into it slower
+Verdict on the Urbit-trap: **dregg is walking into it slower
 than Urbit, but it is on the same path.** The mitigations
 (VK-versioning, honesty audit) *exist as documents and partial
 infrastructure*. They are **not enforced in code** and they do
@@ -1078,7 +1078,7 @@ layers below (u3) or above (Arvo, Ames)." Replace "Nock" with
 with "the federation+blocklace layer". The mapping is direct.
 
 **Why it matters:**
-This is the *deepest* failure-mode pyana is exposed to. Every
+This is the *deepest* failure-mode dregg is exposed to. Every
 specific threat above (placeholder PI variants, 30-bit
 truncations, executor trust on T9/T12/bridge) is an *instance*
 of the Urbit-trap: a fixed formalism that doesn't actually
@@ -1093,7 +1093,7 @@ infrastructure manipulate the AIR shape at runtime?** A Houyhnhnm
 computing system would be able to upgrade its AIR shape
 *without invalidating existing cells* by providing a typed
 upgrade function from old-AIR-shape to new-AIR-shape and
-replaying old turns through the new shape. Pyana cannot do this
+replaying old turns through the new shape. `dregg` cannot do this
 today. There is no *protocol* for it. There is no AIR-shape
 lineage. There is no test that says "any pre-1.5 turn re-proven
 under 1.5 produces a receipt compatible with its 1.4 receipt".
@@ -1120,22 +1120,22 @@ under 1.5 produces a receipt compatible with its 1.4 receipt".
 
 ---
 
-## §3 — What pyana believes about itself that isn't true
+## §3 — What dregg believes about itself that isn't true
 
-This section is the most direct one. A list of claims pyana
+This section is the most direct one. A list of claims dregg
 makes in its own documents that the code doesn't honor.
 
 ### 3.1 "Proof-carrying capability mesh"
 
 *Tagline of `NEW-WORLD.md`.*
 
-What's true: pyana ships proofs *for some* turns. The proofs are
-real. The verifier is standalone and works (`pyana-verifier` is
+What's true: dregg ships proofs *for some* turns. The proofs are
+real. The verifier is standalone and works (`dregg-verifier` is
 real per `NEW-WORLD.md`, demo'd in `SILVER-VISION-E2E-VERIFICATION.md`).
 
 What's not true: "proof-carrying" implies *every authoritative
 state transition carries a proof that algebraically attests its
-correctness*. Pyana has:
+correctness*. `dregg` has:
 
 - Three executor-trusted boundary cuts (T9, bridge proof-to-action,
   BudgetCoordinator).
@@ -1182,7 +1182,7 @@ What's not true: the unification is complete. From
 
 > NOTE (FEDERATION-UNIFICATION-DESIGN.md §6 step 6): the Morpheus
 > BFT simulator (`node.rs` + `transport.rs`) is **legally dead**
-> — `pyana-blocklace` is the live consensus path. The simulator
+> — `dregg-blocklace` is the live consensus path. The simulator
 > survives as in-crate code only because `teasting`, `wasm`, and
 > `demo/sdc-consensus` still import it.
 
@@ -1248,7 +1248,7 @@ the runtime doesn't actually honor.
 
 ### 3.6 "Slop-list deleted"
 
-*Framing of `NEW-WORLD.md` §"Starbridge — pyana's IDE/runtime".*
+*Framing of `NEW-WORLD.md` §"Starbridge — dregg's IDE/runtime".*
 
 This one is actually mostly true. `amm`, `lending`, `orderbook`,
 `stablecoin`, `dao-treasury`, `prediction-market` — all gone.
@@ -1274,7 +1274,7 @@ host, implementation does not yet algebraically enforce). The
 vocabulary is a *rustdoc convention*, not a new type system."
 
 So nine documented inconsistencies, and the discipline is by
-*convention*, not by *type*. The honest framing: pyana has a
+*convention*, not by *type*. The honest framing: dregg has a
 *vocabulary* for thinking about boundaries; the *enforcement* is
 nine items short.
 
@@ -1284,9 +1284,9 @@ but the marketing should not say "discipline" if it means
 
 ---
 
-## §4 — Where pyana is genuinely Houyhnhnmoid
+## §4 — Where dregg is genuinely Houyhnhnmoid
 
-Fairness section. Pyana does meet, and in some places exceed,
+Fairness section. `dregg` does meet, and in some places exceed,
 the houyhnhnm bar.
 
 ### 4.1 Capability-secure substrate
@@ -1308,36 +1308,36 @@ For the layer it covers (state transitions on the ledger),
 WitnessedReceipt does what Ch.2's orthogonal persistence
 prescribes: every state-changing event is in a log; the log is
 replayable; the log carries cryptographic provenance. The fact
-that pyana arrived at this from cryptographic-correctness
+that dregg arrived at this from cryptographic-correctness
 requirements while Houyhnhnms arrived at it from ergonomic
 requirements is the *convergence-as-validation* that
 HOUYHNHNM-COMPARISON.md correctly names.
 
 ### 4.3 Multi-backend differential testing
 
-`pyana-dsl-differential` (40 cases × 5 voting backends; 2
+`dregg-dsl-differential` (40 cases × 5 voting backends; 2
 lint-only) is *exactly* the houyhnhnm "if you have an
 implementation strategy, it must preserve the semantics of the
 high-level language" pattern from Ch.4 — automated and tested.
 This is *more* than Ann would have demanded; she would have
-considered it a *minimum* but pyana has *built* it. Promote
-this pattern to the cell-program layer (see §2.8) and pyana is
+considered it a *minimum* but dregg has *built* it. Promote
+this pattern to the cell-program layer (see §2.8) and dregg is
 ahead of the bar in that dimension.
 
 ### 4.4 Determinism of the verifier
 
 The verifier is genuinely deterministic and standalone
-(`pyana-verifier` binary). Anyone holding the public information
+(`dregg-verifier` binary). Anyone holding the public information
 about a federation can verify a third party's claim. This is the
 Houyhnhnm test for "is this part of a computing system or just
-a vendor's database?". Pyana passes for this slice.
+a vendor's database?". `dregg` passes for this slice.
 
 ### 4.5 Federation-bypass via `peer_exchange`
 
 The ability for two sovereign cells to interact without a
 federation in the trust path — `cell::peer_exchange::PeerExchange`
 — is *exactly* Ch.10's "Houyhnhnms each... want to ensure the
-persistence of their own data and that data only". Pyana
+persistence of their own data and that data only". `dregg`
 realises this in code. This is excellent.
 
 ### 4.6 Honesty about the gap
@@ -1348,7 +1348,7 @@ the `NEW-WORLD.md` §"What's not done" section, and the GPT
 session's `PROTOCOL-CATEGORICAL-ANALYSIS.md` — these documents
 demonstrate a culture of writing down what's broken. Houyhnhnm's
 Ch.11 anti-blame-game posture *requires* this kind of honest
-inventory. Pyana has it; many systems don't. The §3 ("what pyana
+inventory. `dregg` has it; many systems don't. The §3 ("what dregg
 believes about itself that isn't true") above is *only possible
 to write* because the system has documented its own
 inconsistencies enough that they can be found. That itself is a
@@ -1360,18 +1360,18 @@ Six apps deleted as the wrong shape (amm, lending, orderbook,
 stablecoin, dao-treasury, prediction-market) is *exactly* the
 houyhnhnm deletion discipline from Ch.2: "Deletion (as opposed
 to mere de-indexing), while possible, gets more expensive as
-the data you want to delete gets older". Pyana paid the cost
+the data you want to delete gets older". `dregg` paid the cost
 *early* on these. Most projects never do. Houyhnhnms would
 respect this.
 
-### 4.8 `pyana-dsl` as a real DSL discipline
+### 4.8 `dregg-dsl` as a real DSL discipline
 
-Pyana actually has a DSL (`pyana-dsl`) with seven backends and
+`dregg` actually has a DSL (`dregg-dsl`) with seven backends and
 differential testing. Per Ch.10's critique of Urbit's
 DSL-rejection ("Martians officially rejects abstraction... they
 designed languages that superficially allow any random...
 enthusiast to understand each of the steps of the program, by
-making those steps very simple, minute and detailed"), pyana's
+making those steps very simple, minute and detailed"), dregg's
 *acceptance* of DSL is a houyhnhnm move. The cross-backend
 differential test is the test Ann would demand.
 
@@ -1398,7 +1398,7 @@ audited (`HOUYHNHNM-COMPARISON.md §4.1`).
 ## §5 — The credit-card-debt: Silver-as-shipping
 
 This is the most operationally important section. Below is a
-concrete enumeration of *every place* pyana ships the "Silver"
+concrete enumeration of *every place* dregg ships the "Silver"
 (trust-based) version into production while *labelling* the
 result as if it were the "Golden" (algebraically-attested) one.
 
@@ -1457,14 +1457,14 @@ fundamental shape-bets that haven't yet been delivered:
 | Morpheus retirement Block 6 (physical deletion) | `NEW-WORLD.md` §"What's not done" item 7 | Dead code 2515 LOC still in tree |
 | Token caveat modernization | `NEW-WORLD.md` §"What's not done" item 9 | "Discard the 12 ancient caveat types"; still in tree |
 
-**The total picture:** pyana is at the moment a *demo of the
+**The total picture:** dregg is at the moment a *demo of the
 Silver Vision* (correctly per its own description) that is being
 *written about as if it were the Golden Vision*. The houyhnhnm
 test from Ch.11 — *what tool would you choose for the long run
 if you knew the long run was coming?* — sharpens this. Silver
 is the right tool for *demonstrating the substrate is in place*.
 It is *not* the right tool for *shipping to external auditors
-who will trust the tagline*. The choice of which mode pyana is
+who will trust the tagline*. The choice of which mode dregg is
 currently in needs to be louder.
 
 ---
@@ -1539,7 +1539,7 @@ Do this once, and a year's worth of follow-on refactoring
 becomes possible. Don't do this, and every refactor is blocked
 by the 13,905-line file.
 
-### #4 — Introduce `AirVersion` into PI, with a `pyana-air-registry` of accepted versions (2 weeks; closes the Urbit-trap)
+### #4 — Introduce `AirVersion` into PI, with a `dregg-air-registry` of accepted versions (2 weeks; closes the Urbit-trap)
 
 *Addresses §2.10 (the Urbit-trap) and §3.4 (architectural debt on AIR shape evolution).*
 
@@ -1549,7 +1549,7 @@ When the AIR shape changes (new effect variant, new placeholder
 gets resolved, new range-check gadget), the version bumps. Old
 proofs continue to verify under the stored old verifier.
 
-This is the protocol layer that *makes pyana's AIR shape
+This is the protocol layer that *makes dregg's AIR shape
 evolvable without invalidating cells*. Without it, every AIR
 change is a wreck. With it, AIR evolution is a normal protocol
 event. This is the difference between the houyhnhnm answer and
@@ -1567,10 +1567,10 @@ discipline before any actual incompatible shape lands.)
 program_transition: ProgramTransition }` where `ProgramTransition
 = { from_vk, to_vk, upgrade_witness: WitnessedPredicate,
 state_diff_kind: StateDiffKind }`. Receipts cover it. A new
-`pyana-program-lineage` micro-crate tracks the lineage of each
+`dregg-program-lineage` micro-crate tracks the lineage of each
 cell's program changes.
 
-This is the closest pyana can come to Ch.5's "every type
+This is the closest dregg can come to Ch.5's "every type
 modification is accompanied by a well-typed upgrade function"
 without rebuilding the whole runtime. It costs almost nothing
 and removes the "silent program swap" attack surface entirely.
@@ -1579,14 +1579,14 @@ and removes the "silent program swap" attack surface entirely.
 
 ## Closing
 
-The three deepest things wrong with pyana, viewed from
+The three deepest things wrong with dregg, viewed from
 houyhnhnm:
 
 1. **The 13,905-line executor is the kernel, full stop.** Every
    houyhnhnm-test about polycentric kernels, about
    meta-programming, about the Urbit-trap, fails immediately at
-   the size of this file. The pyana runtime model is
-   *polycentric*; the pyana implementation is monolithic. The
+   the size of this file. The dregg runtime model is
+   *polycentric*; the dregg implementation is monolithic. The
    gap is not a documentation flaw; it is a structural one.
 
 2. **The Silver-vs-Golden distinction is doing too much work.**
@@ -1600,19 +1600,19 @@ houyhnhnm:
    Ch.11 applied to a soundness budget.
 
 3. **Identity is the VK, but the VK is not source.** This is
-   the Urbit-trap, walking. Pyana arrived at the same shape
+   the Urbit-trap, walking. `dregg` arrived at the same shape
    Urbit did (a fixed semantic encoding with identity rooted in
    the encoded artifact, not the source) and the same failure
    modes are starting to accrue (encoder bugs are catastrophic;
    no upgrade story; no lineage; no AIR-version protocol). The
-   mitigation pyana claims (VK-versioning + honesty audit) is
+   mitigation dregg claims (VK-versioning + honesty audit) is
    *named* but *not enforced*; the threat is real.
 
-The one thing pyana genuinely got right that Ann would respect:
+The one thing dregg genuinely got right that Ann would respect:
 **the honesty inventory itself.** The fact that
 `EXECUTOR-HONESTY-AUDIT.md` and `CAVEAT-LAYER-COVERAGE.md` and
 `SILVER-VISION-E2E-VERIFICATION.md` and `NEW-WORLD.md` §"What's
-not done" *all exist* means pyana has the *culture* required to
+not done" *all exist* means dregg has the *culture* required to
 fix the structural failures. Ann would not have written this
 critique about a project that didn't already have those
 inventory documents to draw from.
@@ -1629,7 +1629,7 @@ one with the standing and the duty to fix the tools.
 > catastrophically, fools blame the user who operated the tool;
 > wise men blame the toolsmiths who built the tool."
 
-The toolsmith — pyana itself, plural — has a window of low cost
+The toolsmith — dregg itself, plural — has a window of low cost
 to fix this now, before any external user is in a position to
 be hurt by the gap between the tagline and the implementation.
 After that window, the blame-game from Ch.11 becomes operational.

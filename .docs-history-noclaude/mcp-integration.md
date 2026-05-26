@@ -1,33 +1,33 @@
-# Pyana MCP Integration
+# `dregg` MCP Integration
 
-Pyana exposes its full agent/token/federation capabilities as an MCP (Model Context Protocol) server. AI assistants like Claude Code can discover and invoke these tools over stdio JSON-RPC.
+`dregg` exposes its full agent/token/federation capabilities as an MCP (Model Context Protocol) server. AI assistants like Claude Code can discover and invoke these tools over stdio JSON-RPC.
 
 ## Quick Start
 
 ### 1. Initialize the data directory
 
 ```bash
-cargo run --release -p pyana-node -- init --data-dir .pyana-data
+cargo run --release -p dregg-node -- init --data-dir .dregg-data
 ```
 
 ### 2. Connect from Claude Code
 
-The project root contains `.mcp.json` which Claude Code auto-discovers. No manual configuration needed — just open the project and the `pyana` MCP server will be available.
+The project root contains `.mcp.json` which Claude Code auto-discovers. No manual configuration needed — just open the project and the `dregg` MCP server will be available.
 
 To manually invoke:
 
 ```
-/mcp pyana
+/mcp dregg
 ```
 
 ### 3. Pre-built binary (production)
 
 ```bash
 # Build once
-cargo build --release -p pyana-node
+cargo build --release -p dregg-node
 
 # The .mcp.json already points to cargo run, but you can override:
-./target/release/pyana-node mcp --data-dir ~/.pyana
+./target/release/dregg-node mcp --data-dir ~/.dregg
 ```
 
 ## Architecture
@@ -46,51 +46,51 @@ Protocol flow:
 
 | Tool | Description |
 |------|-------------|
-| `pyana_get_status` | Get node health, height, peer count |
-| `pyana_read_cell` | Read a cell's state (balance, fields) |
-| `pyana_get_receipt_chain` | Get auditable action history |
+| `dregg_get_status` | Get node health, height, peer count |
+| `dregg_read_cell` | Read a cell's state (balance, fields) |
+| `dregg_get_receipt_chain` | Get auditable action history |
 
 ### Identity & Authorization
 
 | Tool | Description |
 |------|-------------|
-| `pyana_create_agent` | Create a new agent identity with cclerk |
-| `pyana_authorize` | Prove authorization for an action (ZK proof) |
-| `pyana_check_capabilities` | List all held capabilities/tokens |
+| `dregg_create_agent` | Create a new agent identity with cclerk |
+| `dregg_authorize` | Prove authorization for an action (ZK proof) |
+| `dregg_check_capabilities` | List all held capabilities/tokens |
 
 ### Actions & Turns
 
 | Tool | Description |
 |------|-------------|
-| `pyana_submit_turn` | Submit an atomic set of actions for execution |
-| `pyana_grant_capability` | Grant a capability to another agent |
-| `pyana_revoke_capability` | Revoke a previously granted capability |
-| `pyana_delegate` | Delegate a bounded sub-capability |
+| `dregg_submit_turn` | Submit an atomic set of actions for execution |
+| `dregg_grant_capability` | Grant a capability to another agent |
+| `dregg_revoke_capability` | Revoke a previously granted capability |
+| `dregg_delegate` | Delegate a bounded sub-capability |
 
 ### Intent Marketplace
 
 | Tool | Description |
 |------|-------------|
-| `pyana_post_intent` | Post a request for a capability/service |
-| `pyana_fulfill_intent` | Fulfill a matching intent |
+| `dregg_post_intent` | Post a request for a capability/service |
+| `dregg_fulfill_intent` | Fulfill a matching intent |
 
 ### Encryption & Bridging
 
 | Tool | Description |
 |------|-------------|
-| `pyana_seal_data` | Encrypt data for a specific recipient |
-| `pyana_unseal_data` | Decrypt sealed data addressed to this agent |
-| `pyana_bridge_note` | Bridge a note to another federation |
+| `dregg_seal_data` | Encrypt data for a specific recipient |
+| `dregg_unseal_data` | Decrypt sealed data addressed to this agent |
+| `dregg_bridge_note` | Bridge a note to another federation |
 
 ## Tool Reference
 
-### pyana_get_status
+### dregg_get_status
 
 No parameters required.
 
 ```json
 // Request
-{"name": "pyana_get_status", "arguments": {}}
+{"name": "dregg_get_status", "arguments": {}}
 
 // Response
 {
@@ -103,7 +103,7 @@ No parameters required.
 }
 ```
 
-### pyana_create_agent
+### dregg_create_agent
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -111,18 +111,18 @@ No parameters required.
 
 ```json
 // Request
-{"name": "pyana_create_agent", "arguments": {"name": "dns-reader"}}
+{"name": "dregg_create_agent", "arguments": {"name": "dns-reader"}}
 
 // Response
 {
   "name": "dns-reader",
   "public_key": "a1b2c3d4e5f6...64 hex chars",
   "created": true,
-  "note": "Agent identity generated. Use pyana_check_capabilities to see held tokens."
+  "note": "Agent identity generated. Use dregg_check_capabilities to see held tokens."
 }
 ```
 
-### pyana_authorize
+### dregg_authorize
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -132,7 +132,7 @@ No parameters required.
 
 ```json
 // Request
-{"name": "pyana_authorize", "arguments": {"action": "read", "resource": "dns.example.com", "mode": "selective"}}
+{"name": "dregg_authorize", "arguments": {"action": "read", "resource": "dns.example.com", "mode": "selective"}}
 
 // Response
 {
@@ -144,7 +144,7 @@ No parameters required.
 }
 ```
 
-### pyana_submit_turn
+### dregg_submit_turn
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -155,7 +155,7 @@ No parameters required.
 
 ```json
 // Request
-{"name": "pyana_submit_turn", "arguments": {"target_cell": "abcd...64hex", "method": "transfer", "fee": 100, "memo": "payment"}}
+{"name": "dregg_submit_turn", "arguments": {"target_cell": "abcd...64hex", "method": "transfer", "fee": 100, "memo": "payment"}}
 
 // Response
 {
@@ -165,7 +165,7 @@ No parameters required.
 }
 ```
 
-### pyana_grant_capability
+### dregg_grant_capability
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -173,13 +173,13 @@ No parameters required.
 | `target_cell` | string | yes | Hex-encoded cell ID |
 | `permissions` | string | yes | Comma-separated permissions |
 
-### pyana_revoke_capability
+### dregg_revoke_capability
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `cap_slot` | integer | yes | Capability slot number to revoke |
 
-### pyana_post_intent
+### dregg_post_intent
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -190,7 +190,7 @@ No parameters required.
 
 ```json
 // Request
-{"name": "pyana_post_intent", "arguments": {"action": "write", "resource": "documents/*", "max_fee": 500, "expiry_blocks": 50}}
+{"name": "dregg_post_intent", "arguments": {"action": "write", "resource": "documents/*", "max_fee": 500, "expiry_blocks": 50}}
 
 // Response
 {
@@ -202,13 +202,13 @@ No parameters required.
 }
 ```
 
-### pyana_fulfill_intent
+### dregg_fulfill_intent
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `intent_id` | string | yes | Hex-encoded 32-byte intent ID |
 
-### pyana_delegate
+### dregg_delegate
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -217,7 +217,7 @@ No parameters required.
 | `restrictions` | object | no | Restriction constraints |
 | `max_staleness` | integer | no | Max staleness in blocks |
 
-### pyana_check_capabilities
+### dregg_check_capabilities
 
 No parameters required.
 
@@ -235,32 +235,32 @@ No parameters required.
 }
 ```
 
-### pyana_read_cell
+### dregg_read_cell
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `cell_id` | string | yes | Hex-encoded 32-byte cell ID |
 
-### pyana_get_receipt_chain
+### dregg_get_receipt_chain
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `limit` | integer | no | Max receipts to return (default: 50) |
 
-### pyana_seal_data
+### dregg_seal_data
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `data` | string | yes | Plaintext data to seal |
 | `recipient` | string | yes | Recipient's hex-encoded public key |
 
-### pyana_unseal_data
+### dregg_unseal_data
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sealed_box` | string | yes | Hex-encoded sealed box bytes |
 
-### pyana_bridge_note
+### dregg_bridge_note
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -269,23 +269,23 @@ No parameters required.
 
 ## Example Session: AI Agent Workflow
 
-Below is a transcript of an AI agent using pyana MCP tools to create an identity, authorize actions, and delegate to a sub-agent.
+Below is a transcript of an AI agent using dregg MCP tools to create an identity, authorize actions, and delegate to a sub-agent.
 
 ```
 User: "Set up an agent that can read DNS records and delegate that to a sub-agent"
 
 Claude: I'll create an agent, authorize DNS access, and set up delegation.
 
-[calls pyana_get_status]
+[calls dregg_get_status]
 → {"healthy": true, "peer_count": 3, "latest_height": 1042, "unlocked": true}
 
-[calls pyana_create_agent with name: "dns-orchestrator"]
+[calls dregg_create_agent with name: "dns-orchestrator"]
 → {"name": "dns-orchestrator", "public_key": "7a3f...c8e1", "created": true}
 
-[calls pyana_authorize with action: "read", resource: "dns.example.com"]
+[calls dregg_authorize with action: "read", resource: "dns.example.com"]
 → {"authorized": true, "action": "read", "resource": "dns.example.com", "token_id": "tok_dns_01"}
 
-[calls pyana_check_capabilities]
+[calls dregg_check_capabilities]
 → {"public_key": "7a3f...c8e1", "token_count": 2, "tokens": [
     {"slot": 0, "id": "tok_root", "label": "root", "can_mint": true},
     {"slot": 1, "id": "tok_dns_01", "label": "dns-read", "service": "dns.*", "can_mint": false}
@@ -294,10 +294,10 @@ Claude: I'll create an agent, authorize DNS access, and set up delegation.
 Claude: The orchestrator agent is set up with DNS read access. Now I'll create a
 sub-agent and delegate bounded access.
 
-[calls pyana_create_agent with name: "dns-worker"]
+[calls dregg_create_agent with name: "dns-worker"]
 → {"name": "dns-worker", "public_key": "b2e4...9f17", "created": true}
 
-[calls pyana_delegate with capability: 1, to_agent: "b2e4...9f17"]
+[calls dregg_delegate with capability: 1, to_agent: "b2e4...9f17"]
 → {"delegated": true, "from_token": "tok_dns_01", "to_agent": "b2e4...9f17"}
 
 Claude: Done. I've created two agents:
@@ -314,12 +314,12 @@ User: "Mint a token for document access and post an intent for write access"
 
 Claude: I'll authorize document access and post a marketplace intent.
 
-[calls pyana_authorize with action: "write", resource: "documents/report.pdf"]
+[calls dregg_authorize with action: "write", resource: "documents/report.pdf"]
 → {"authorized": false, "action": "write", "resource": "documents/report.pdf", "token_id": null}
 
 Claude: No existing token grants write access. I'll post an intent to the marketplace.
 
-[calls pyana_post_intent with action: "write", resource: "documents/*", max_fee: 200]
+[calls dregg_post_intent with action: "write", resource: "documents/*", max_fee: 200]
 → {"intent_id": "ef82...a301", "stored": true, "expiry_height": 1142}
 
 Claude: I've posted intent ef82...a301 requesting document write access. When another
@@ -327,7 +327,7 @@ agent fulfills it, I'll have the capability. The intent expires at block 1142.
 
 [later, after fulfillment...]
 
-[calls pyana_submit_turn with target_cell: "abcd...1234", method: "write_document", memo: "quarterly report"]
+[calls dregg_submit_turn with target_cell: "abcd...1234", method: "write_document", memo: "quarterly report"]
 → {"accepted": true, "turn_hash": "9f01...bc42", "signer": "7a3f...c8e1"}
 
 Claude: Turn submitted and accepted (hash: 9f01...bc42). The document write is now
@@ -342,27 +342,27 @@ git clone <repo>
 cd breadstuffs
 
 # Initialize a local data directory
-cargo run -p pyana-node -- init --data-dir .pyana-data
+cargo run -p dregg-node -- init --data-dir .dregg-data
 
 # Run MCP server manually (for testing)
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | \
-  cargo run -p pyana-node -- mcp --data-dir .pyana-data
+  cargo run -p dregg-node -- mcp --data-dir .dregg-data
 
 # Run with debug logging
-RUST_LOG=pyana_node=debug cargo run -p pyana-node -- mcp --data-dir .pyana-data
+RUST_LOG=dregg_node=debug cargo run -p dregg-node -- mcp --data-dir .dregg-data
 ```
 
 ## Production Setup
 
 ```bash
 # Build release binary
-cargo build --release -p pyana-node
+cargo build --release -p dregg-node
 
 # Initialize persistent data directory
-./target/release/pyana-node init --data-dir /var/lib/pyana
+./target/release/dregg-node init --data-dir /var/lib/dregg
 
 # MCP server (invoked by Claude Code automatically via .mcp.json)
-./target/release/pyana-node mcp --data-dir /var/lib/pyana --federation-peers node1:4200,node2:4200
+./target/release/dregg-node mcp --data-dir /var/lib/dregg --federation-peers node1:4200,node2:4200
 ```
 
 ## Protocol Compatibility Notes

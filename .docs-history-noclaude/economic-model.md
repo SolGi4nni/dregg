@@ -1,4 +1,4 @@
-# Pyana Economic Model
+# `dregg` Economic Model
 
 Design document for sustainable federation economics.
 
@@ -410,7 +410,7 @@ This means slashing is enforced at spend-time (like a lien), not at slash-time. 
 
 ## 6. Comparison to Relevant Systems
 
-| Property | Pyana (proposed) | Cosmos/Tendermint | Mina Protocol | Ethereum L2 (Rollup) |
+| Property | `dregg` (proposed) | Cosmos/Tendermint | Mina Protocol | Ethereum L2 (Rollup) |
 |----------|-----------------|-------------------|---------------|----------------------|
 | **Committee size** | 3-20 (federated) | 100-175 (PoS) | ~1000 (Ouroboros) | 1 sequencer (centralized) |
 | **Fee destination** | 50/30/20 split | 100% to proposer+stakers | 100% burned | 100% to sequencer |
@@ -425,11 +425,11 @@ This means slashing is enforced at spend-time (like a lien), not at slash-time. 
 
 ### Key Differences from Each
 
-**vs. Cosmos:** Pyana is not inflationary. No block rewards beyond fee distribution. This works because federations are small and operators have aligned interests (they're building on the platform). Cosmos needs inflation because validator sets are large and operators are pure infrastructure providers.
+**vs. Cosmos:** `dregg` is not inflationary. No block rewards beyond fee distribution. This works because federations are small and operators have aligned interests (they're building on the platform). Cosmos needs inflation because validator sets are large and operators are pure infrastructure providers.
 
-**vs. Mina:** Mina burns fees and relies on inflation to pay validators. Pyana's split model means validators earn from fees directly, making the system viable without inflation. Mina's staking is transparent; Pyana's is private via range proofs.
+**vs. Mina:** Mina burns fees and relies on inflation to pay validators. `dregg`'s split model means validators earn from fees directly, making the system viable without inflation. Mina's staking is transparent; `dregg`'s is private via range proofs.
 
-**vs. Ethereum L2s:** L2 sequencers extract all value and have no accountability. Pyana's committee is decentralized (BFT) with slashing. The tradeoff: L2s are faster (single sequencer), Pyana has higher latency but genuine decentralization within the federation.
+**vs. Ethereum L2s:** L2 sequencers extract all value and have no accountability. `dregg`'s committee is decentralized (BFT) with slashing. The tradeoff: L2s are faster (single sequencer), `dregg` has higher latency but genuine decentralization within the federation.
 
 ---
 

@@ -1,16 +1,16 @@
 /**
- * <pyana-witnessed-predicate data="..." | uri="pyana://witnessed-predicate/...">
+ * <dregg-witnessed-predicate data="..." | uri="dregg://witnessed-predicate/...">
  * Unified dispatcher per NEW-WORLD "Predicates everywhere" + cell::predicate::WitnessedPredicate.
- * Renders kind-specific using platform <pyana-*> where available (dfa), visible
+ * Renders kind-specific using platform <dregg-*> where available (dfa), visible
  * Placeholders for others (temporal, blinded-set, merkle, pedersen, custom, bridge).
  * Follows _base + data= + signals + reuse (no JS reimpl of predicate eval).
- * Used inside <pyana-authorization> Custom, cell-program caveats etc.
+ * Used inside <dregg-authorization> Custom, cell-program caveats etc.
  * Trust tier surface via kind badges (Placeholder for missing sub-inspectors).
  */
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaWitnessedPredicate extends InspectorBase {
+class DreggWitnessedPredicate extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -36,35 +36,35 @@ class PyanaWitnessedPredicate extends InspectorBase {
     this.appendChild(root);
 
     const Component = () => {
-      if (!wp) return html`<div class="pyana-inspector pyana-inspector--empty">no witnessed-predicate data</div>`;
+      if (!wp) return html`<div class="dregg-inspector dregg-inspector--empty">no witnessed-predicate data</div>`;
       const kind = wp.predicate_kind || wp.kind || wp.type || 'Custom';
       const lower = kind.toLowerCase();
 
       let sub;
       if (lower.includes('dfa')) {
-        sub = html`<pyana-dfa data-dfa=${JSON.stringify(wp)} mode="compact"></pyana-dfa>`;
+        sub = html`<dregg-dfa data-dfa=${JSON.stringify(wp)} mode="compact"></dregg-dfa>`;
       } else if (lower.includes('temporal')) {
-        sub = html`<span class="pyana-inspector--placeholder">⏳ &lt;pyana-temporal&gt; (Placeholder)</span>`;
+        sub = html`<span class="dregg-inspector--placeholder">⏳ &lt;dregg-temporal&gt; (Placeholder)</span>`;
       } else if (lower.includes('blinded') || lower.includes('set')) {
-        sub = html`<span class="pyana-inspector--placeholder">⏳ &lt;pyana-blinded-set&gt; (Placeholder for ${kind})</span>`;
+        sub = html`<span class="dregg-inspector--placeholder">⏳ &lt;dregg-blinded-set&gt; (Placeholder for ${kind})</span>`;
       } else if (lower.includes('merkle') || lower.includes('membership')) {
-        sub = html`<span class="pyana-inspector--placeholder">⏳ &lt;pyana-merkle-membership&gt; (Placeholder; see &lt;pyana-merkle-tree&gt;)</span>`;
+        sub = html`<span class="dregg-inspector--placeholder">⏳ &lt;dregg-merkle-membership&gt; (Placeholder; see &lt;dregg-merkle-tree&gt;)</span>`;
       } else if (lower.includes('pedersen')) {
-        sub = html`<span class="pyana-inspector--placeholder">⏳ &lt;pyana-pedersen-commitment&gt; (Placeholder; see stealth value-commit)</span>`;
+        sub = html`<span class="dregg-inspector--placeholder">⏳ &lt;dregg-pedersen-commitment&gt; (Placeholder; see stealth value-commit)</span>`;
       } else if (lower.includes('bridge')) {
-        sub = html`<span class="pyana-inspector--placeholder">⏳ BridgePredicate (Placeholder)</span>`;
+        sub = html`<span class="dregg-inspector--placeholder">⏳ BridgePredicate (Placeholder)</span>`;
       } else {
         sub = html`<code>${shortHex(wp.commitment || '', 8)}</code> (custom vk: ${shortHex(wp.vk_hash || '', 8)})`;
       }
 
       if (mode === 'compact') {
-        return html`<span class="pyana-inspector pyana-inspector--compact">W(${kind}) ${sub}</span>`;
+        return html`<span class="dregg-inspector dregg-inspector--compact">W(${kind}) ${sub}</span>`;
       }
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pyana-witnessed-predicate">
+        <div class="dregg-inspector dregg-inspector--cell dregg-witnessed-predicate">
           <header>
-            <span class="pyana-inspector__kind">witnessed-predicate</span>
-            <span class="pyana-inspector__id">${kind}</span>
+            <span class="dregg-inspector__kind">witnessed-predicate</span>
+            <span class="dregg-inspector__id">${kind}</span>
           </header>
           <div style="font-size:0.8rem;">${sub}</div>
           <div style="font-size:0.65rem;color:var(--fg-dim);margin-top:4px;">
@@ -76,4 +76,4 @@ class PyanaWitnessedPredicate extends InspectorBase {
     this._dispose = effect(() => render(h(Component, {}), root));
   }
 }
-if (!customElements.get('pyana-witnessed-predicate')) customElements.define('pyana-witnessed-predicate', PyanaWitnessedPredicate);
+if (!customElements.get('dregg-witnessed-predicate')) customElements.define('dregg-witnessed-predicate', DreggWitnessedPredicate);

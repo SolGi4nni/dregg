@@ -1,5 +1,5 @@
 [package]
-name = "pyana-bridge"
+name = "dregg-bridge"
 version.workspace = true
 edition.workspace = true
 
@@ -7,16 +7,16 @@ edition.workspace = true
 default = ["turn"]
 turn = []
 test-utils = []
-mina = ["pyana-circuit/mina"]
+mina = ["dregg-circuit/mina"]
 
 [dependencies]
-pyana-commit = { path = "../commit" }
-pyana-trace = { path = "../trace" }
-pyana-circuit = { path = "../circuit" }
-pyana-turn = { path = "../turn" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
-pyana-macaroon = { path = "../macaroon" }
+dregg-commit = { path = "../commit" }
+dregg-trace = { path = "../trace" }
+dregg-circuit = { path = "../circuit" }
+dregg-turn = { path = "../turn" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-macaroon = { path = "../macaroon" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 postcard = { version = "1", features = ["use-std"] }
@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 [dev-dependencies]
 criterion = { workspace = true }
 tokio = { version = "1", features = ["full"] }
-pyana-bridge = { path = ".", features = ["test-utils"] }
+dregg-bridge = { path = ".", features = ["test-utils"] }
 
 [[bench]]
 name = "presentation_bench"

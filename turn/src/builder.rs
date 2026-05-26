@@ -34,8 +34,8 @@
 //! identity that holds a long-lived key.
 //!
 //! ```
-//! use pyana_turn::builder::ActionBuilder;
-//! use pyana_cell::CellId;
+//! use dregg_turn::builder::ActionBuilder;
+//! use dregg_cell::CellId;
 //!
 //! let caller = CellId::from_bytes([1u8; 32]);
 //! let target = CellId::from_bytes([2u8; 32]);
@@ -58,8 +58,8 @@
 //! cell self-attestations, capability-by-proof.
 //!
 //! ```
-//! use pyana_turn::builder::ActionBuilder;
-//! use pyana_cell::CellId;
+//! use dregg_turn::builder::ActionBuilder;
+//! use dregg_cell::CellId;
 //!
 //! let caller = CellId::from_bytes([3u8; 32]);
 //! let target = CellId::from_bytes([4u8; 32]);
@@ -72,20 +72,20 @@
 //!     .build();
 //! assert!(matches!(
 //!     action.authorization,
-//!     pyana_turn::action::Authorization::Proof { .. }
+//!     dregg_turn::action::Authorization::Proof { .. }
 //! ));
 //! ```
 //!
 //! ## Breadstuff (capability token)
 //!
-//! A 32-byte capability token (the "breadstuff" — Pyana's hash-anchored
+//! A 32-byte capability token (the "breadstuff" — Dregg's hash-anchored
 //! bearer credential). The executor looks the token up in the target's
 //! capability table and rejects if absent / revoked. Use for delegated
 //! authority where the bearer holds nothing but the token bytes.
 //!
 //! ```
-//! use pyana_turn::builder::ActionBuilder;
-//! use pyana_cell::CellId;
+//! use dregg_turn::builder::ActionBuilder;
+//! use dregg_cell::CellId;
 //!
 //! let caller = CellId::from_bytes([5u8; 32]);
 //! let target = CellId::from_bytes([6u8; 32]);
@@ -98,7 +98,7 @@
 //!     .build();
 //! assert!(matches!(
 //!     action.authorization,
-//!     pyana_turn::action::Authorization::Breadstuff(_)
+//!     dregg_turn::action::Authorization::Breadstuff(_)
 //! ));
 //! ```
 //!
@@ -111,10 +111,10 @@
 //! cross-federation introduction).
 //!
 //! ```
-//! use pyana_turn::builder::ActionBuilder;
-//! use pyana_turn::action::BearerCapProof;
-//! use pyana_turn::action::DelegationProofData;
-//! use pyana_cell::{CellId, AuthRequired};
+//! use dregg_turn::builder::ActionBuilder;
+//! use dregg_turn::action::BearerCapProof;
+//! use dregg_turn::action::DelegationProofData;
+//! use dregg_cell::{CellId, AuthRequired};
 //!
 //! let caller = CellId::from_bytes([7u8; 32]);
 //! let target = CellId::from_bytes([8u8; 32]);
@@ -138,7 +138,7 @@
 //!     .build();
 //! assert!(matches!(
 //!     action.authorization,
-//!     pyana_turn::action::Authorization::Bearer(_)
+//!     dregg_turn::action::Authorization::Bearer(_)
 //! ));
 //! ```
 //!
@@ -158,8 +158,8 @@
 
 use std::marker::PhantomData;
 
-use pyana_cell::state::FieldElement;
-use pyana_cell::{CapabilityRef, CellId, Preconditions};
+use dregg_cell::state::FieldElement;
+use dregg_cell::{CapabilityRef, CellId, Preconditions};
 
 use crate::action::{
     Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event, symbol,
@@ -651,7 +651,7 @@ impl<S> ActionBuilder<S> {
         introducer: CellId,
         recipient: CellId,
         target: CellId,
-        permissions: pyana_cell::AuthRequired,
+        permissions: dregg_cell::AuthRequired,
     ) -> Self {
         self.effects.push(Effect::Introduce {
             introducer,
@@ -691,7 +691,7 @@ impl<S> ActionBuilder<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn effect_note_spend(
         mut self,
-        nullifier: pyana_cell::Nullifier,
+        nullifier: dregg_cell::Nullifier,
         note_tree_root: [u8; 32],
         value: u64,
         asset_type: u64,
@@ -712,7 +712,7 @@ impl<S> ActionBuilder<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn effect_note_create(
         mut self,
-        commitment: pyana_cell::NoteCommitment,
+        commitment: dregg_cell::NoteCommitment,
         value: u64,
         asset_type: u64,
         encrypted_note: Vec<u8>,
@@ -750,7 +750,7 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_unseal(mut self, sealed_box: pyana_cell::SealedBox, recipient: CellId) -> Self {
+    pub fn effect_unseal(mut self, sealed_box: dregg_cell::SealedBox, recipient: CellId) -> Self {
         self.effects.push(Effect::Unseal {
             sealed_box,
             recipient,
@@ -779,7 +779,7 @@ impl<S> ActionBuilder<S> {
         factory_vk: [u8; 32],
         owner_pubkey: [u8; 32],
         token_id: [u8; 32],
-        params: pyana_cell::FactoryCreationParams,
+        params: dregg_cell::FactoryCreationParams,
     ) -> Self {
         self.effects.push(Effect::CreateCellFromFactory {
             factory_vk,
@@ -798,7 +798,7 @@ impl<S> ActionBuilder<S> {
     pub fn effect_set_permissions(
         mut self,
         cell: CellId,
-        new_permissions: pyana_cell::Permissions,
+        new_permissions: dregg_cell::Permissions,
     ) -> Self {
         self.effects.push(Effect::SetPermissions {
             cell,
@@ -810,7 +810,7 @@ impl<S> ActionBuilder<S> {
     pub fn effect_set_verification_key(
         mut self,
         cell: CellId,
-        new_vk: Option<pyana_cell::VerificationKey>,
+        new_vk: Option<dregg_cell::VerificationKey>,
     ) -> Self {
         self.effects
             .push(Effect::SetVerificationKey { cell, new_vk });
@@ -847,7 +847,7 @@ impl<S> ActionBuilder<S> {
 
     pub fn effect_bridge_mint(
         mut self,
-        portable_proof: pyana_cell::note_bridge::PortableNoteProof,
+        portable_proof: dregg_cell::note_bridge::PortableNoteProof,
     ) -> Self {
         self.effects.push(Effect::BridgeMint { portable_proof });
         self
@@ -877,7 +877,7 @@ impl<S> ActionBuilder<S> {
     pub fn effect_bridge_finalize(
         mut self,
         nullifier: [u8; 32],
-        receipt: pyana_cell::note_bridge::BridgeReceipt,
+        receipt: dregg_cell::note_bridge::BridgeReceipt,
     ) -> Self {
         self.effects
             .push(Effect::BridgeFinalize { nullifier, receipt });
@@ -896,7 +896,7 @@ impl<S> ActionBuilder<S> {
         beneficiary: CellId,
         condition: crate::conditional::ProofCondition,
         deadline_height: u64,
-        stake: pyana_cell::NoteCommitment,
+        stake: dregg_cell::NoteCommitment,
         stake_amount: u64,
     ) -> Self {
         self.effects.push(Effect::CreateObligation {
@@ -965,7 +965,7 @@ impl<S> ActionBuilder<S> {
         mut self,
         creator_commitment: [u8; 32],
         recipient_commitment: [u8; 32],
-        value_commitment: pyana_cell::ValueCommitmentBytes,
+        value_commitment: dregg_cell::ValueCommitmentBytes,
         condition_commitment: [u8; 32],
         timeout_height: u64,
         escrow_id: [u8; 32],

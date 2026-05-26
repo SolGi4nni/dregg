@@ -1,5 +1,5 @@
 [package]
-name = "pyana-node"
+name = "dregg-node"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,28 +10,28 @@ repository.workspace = true
 description = "Federation node daemon — hosts an agent cipherclerk, participates in consensus, and serves a localhost API"
 
 [dependencies]
-pyana-types = { path = "../types" }
-pyana-cell = { path = "../cell" }
-pyana-turn = { path = "../turn" }
-pyana-persist = { path = "../persist" }
-pyana-federation = { path = "../federation" }
-pyana-sdk = { path = "../sdk" }
-pyana-intent = { path = "../intent" }
-pyana-circuit = { path = "../circuit" }
-pyana-commit = { path = "../commit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-coord = { path = "../coord" }
-pyana-net = { path = "../net" }
-pyana-blocklace = { path = "../blocklace" }
-pyana-storage = { path = "../storage" }
-pyana-captp = { path = "../captp" }
-pyana-app-framework = { path = "../app-framework" }
-pyana-credentials = { path = "../credentials" }
+dregg-types = { path = "../types" }
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-persist = { path = "../persist" }
+dregg-federation = { path = "../federation" }
+dregg-sdk = { path = "../sdk" }
+dregg-intent = { path = "../intent" }
+dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+dregg-coord = { path = "../coord" }
+dregg-net = { path = "../net" }
+dregg-blocklace = { path = "../blocklace" }
+dregg-storage = { path = "../storage" }
+dregg-captp = { path = "../captp" }
+dregg-app-framework = { path = "../app-framework" }
+dregg-credentials = { path = "../credentials" }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
 starbridge-subscription = { path = "../starbridge-apps/subscription" }
 starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
-pyana-macaroon = { workspace = true, features = ["crypto"] }
+dregg-macaroon = { workspace = true, features = ["crypto"] }
 ark-serialize = { workspace = true }
 ark-std = "0.5.0"
 
@@ -60,7 +60,7 @@ metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 
 # Dev-deps for future router-level adversarial tests (Stage 0c followup once
-# pyana-turn/pyana-cell rebuild lands from Stages 0a/0b). Currently the
+# dregg-turn/dregg-cell rebuild lands from Stages 0a/0b). Currently the
 # unit-style tests in api.rs / relay_service.rs do not need them, but keeping
 # them declared keeps the followup PR trivial.
 [dev-dependencies]
@@ -71,7 +71,7 @@ x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 
 [[bin]]
-name = "pyana-node"
+name = "dregg-node"
 path = "src/main.rs"
 
 [lints]

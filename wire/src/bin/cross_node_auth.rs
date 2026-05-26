@@ -1,4 +1,4 @@
-//! Cross-node authorization demo: Two separate pyana-node instances communicating
+//! Cross-node authorization demo: Two separate dregg-node instances communicating
 //! over real TCP, proving the DISTRIBUTED part works.
 //!
 //! Scenario:
@@ -14,13 +14,13 @@
 //! 10. Print timing: proof generation time, network round-trip, verification time
 //!
 //! Run with:
-//!   cargo run -p pyana-wire --bin cross_node_auth
+//!   cargo run -p dregg-wire --bin cross_node_auth
 
-use pyana_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
-use pyana_circuit::BabyBear;
-use pyana_circuit::poseidon2;
-use pyana_token::{AuthRequest, MacaroonToken};
-use pyana_wire::prelude::*;
+use dregg_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
+use dregg_circuit::BabyBear;
+use dregg_circuit::poseidon2;
+use dregg_token::{AuthRequest, MacaroonToken};
+use dregg_wire::prelude::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -55,28 +55,28 @@ struct Poseidon2StarkVerifier;
 
 impl ProofVerifier for Poseidon2StarkVerifier {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String> {
-        let proof = pyana_circuit::stark::proof_from_bytes(proof_bytes)?;
-        let public_inputs: Vec<pyana_circuit::BabyBear> = proof
+        let proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)?;
+        let public_inputs: Vec<dregg_circuit::BabyBear> = proof
             .public_inputs
             .iter()
-            .map(|&v| pyana_circuit::BabyBear::new(v))
+            .map(|&v| dregg_circuit::BabyBear::new(v))
             .collect();
 
         // Verify action binding: the proof must contain the canonical 4-element
         // commitment to (action, resource) at pi[2..6], computed via `compute_action_binding`.
-        let expected_binding = pyana_circuit::compute_action_binding(action, resource);
-        if public_inputs.len() < 2 + pyana_circuit::ACTION_BINDING_WIDTH {
+        let expected_binding = dregg_circuit::compute_action_binding(action, resource);
+        if public_inputs.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return Ok(false);
         }
-        for i in 0..pyana_circuit::ACTION_BINDING_WIDTH {
+        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
             if public_inputs[2 + i] != expected_binding[i] {
                 return Ok(false); // Proof not bound to this (action, resource)
             }
         }
 
         // Production verification uses the DSL Merkle Poseidon2 circuit.
-        let circuit = pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit();
-        match pyana_circuit::stark::verify(&circuit, &proof, &public_inputs) {
+        let circuit = dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit();
+        match dregg_circuit::stark::verify(&circuit, &proof, &public_inputs) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -117,7 +117,7 @@ fn compute_federation_root(issuer_key: &[u8; 32]) -> (BabyBear, [u8; 32]) {
 async fn main() {
     println!();
     println!("==========================================================================");
-    println!("  pyana: Cross-Node Authorization Demo (2 nodes, real TCP, real STARK)");
+    println!("  dregg: Cross-Node Authorization Demo (2 nodes, real TCP, real STARK)");
     println!("==========================================================================");
     println!();
 

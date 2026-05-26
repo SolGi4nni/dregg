@@ -6,7 +6,7 @@
 //! This is pedagogical code — the production system uses Plonky3.
 //! Kept as a readable, annotated example of how FRI works from first principles.
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -203,7 +203,7 @@ struct Transcript {
 impl Transcript {
     fn new(domain_sep: &[u8]) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-stark-v1:");
+        hasher.update(b"dregg-stark-v1:");
         hasher.update(domain_sep);
         Self { hasher, counter: 0 }
     }
@@ -339,7 +339,7 @@ impl StarkAir for MerkleStarkAir {
         4
     }
     fn air_name(&self) -> &'static str {
-        "pyana-merkle-v1"
+        "dregg-merkle-v1"
     }
     fn eval_constraints(
         &self,
@@ -963,5 +963,5 @@ fn main() {
 
     println!();
     println!("=== Done. This implementation is for educational purposes. ===");
-    println!("=== Production pyana uses Plonky3 for real STARK proofs.   ===");
+    println!("=== Production dregg uses Plonky3 for real STARK proofs.   ===");
 }

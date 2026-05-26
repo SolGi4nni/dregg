@@ -207,7 +207,7 @@ impl NullifierLog {
         height: u64,
     ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_keyed(key);
-        hasher.update(b"pyana-nullifier-log-entry-v1");
+        hasher.update(b"dregg-nullifier-log-entry-v1");
         hasher.update(nullifier);
         hasher.update(turn_hash);
         hasher.update(&sequence.to_le_bytes());
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_solo_mode_single_node_processes_turn_tentative() {
         // Scenario: Solo mode node processes a turn, receipt has Tentative finality.
-        use pyana_turn::Finality;
+        use dregg_turn::Finality;
 
         let key = [0xCC; 32];
         let mut state = SoloConsensusState::new(key);
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn test_mode_upgrade_solo_to_full() {
         // Scenario: Start solo, peer joins, switch to multi-node operation.
-        use pyana_turn::Finality;
+        use dregg_turn::Finality;
 
         let key = [0xDD; 32];
         let mut state = SoloConsensusState::new(key);
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_tentative_distinct_from_final() {
         // Scenario: API consumers can distinguish Tentative from Final.
-        use pyana_turn::Finality;
+        use dregg_turn::Finality;
 
         let tentative = Finality::Tentative;
         let final_ = Finality::Final;

@@ -8,7 +8,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use pyana_circuit::non_membership::{NonMembershipProver, NonMembershipCheck};
+//! use dregg_circuit::non_membership::{NonMembershipProver, NonMembershipCheck};
 //!
 //! // Create a prover for a given set
 //! let suspended_users = vec![hash_a, hash_b, hash_c];

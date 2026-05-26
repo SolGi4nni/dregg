@@ -1,5 +1,5 @@
 /**
- * Playwright ad-hoc test for <pyana-cell-program> and <pyana-state-constraint>.
+ * Playwright ad-hoc test for <dregg-cell-program> and <dregg-state-constraint>.
  *
  * Run from site/ root:
  *   node tests/cell-program-test.mjs
@@ -21,9 +21,9 @@ async function run() {
   console.log('[test] Navigating to studio...');
   await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
 
-  // Wait for pyana:ready (wasm + inspector bundle loaded)
-  await page.waitForFunction(() => !!window.pyana, { timeout: 15000 });
-  console.log('[test] pyana:ready fired.');
+  // Wait for dregg:ready (wasm + inspector bundle loaded)
+  await page.waitForFunction(() => !!window.dregg, { timeout: 15000 });
+  console.log('[test] dregg:ready fired.');
 
   // Inject cell-program.js as an ES module (it uses `import` for _base.js)
   await page.addScriptTag({
@@ -34,15 +34,15 @@ async function run() {
 
   // Wait for custom element registration (module evaluation is async)
   await page.waitForFunction(() =>
-    !!customElements.get('pyana-cell-program') &&
-    !!customElements.get('pyana-state-constraint'),
+    !!customElements.get('dregg-cell-program') &&
+    !!customElements.get('dregg-state-constraint'),
     { timeout: 10000 }
   );
   console.log('[test] custom elements registered.');
 
   // ─── Test 1: compact mode — None ────────────────────────────────────────────
   await page.evaluate(() => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-cp-none');
     document.body.appendChild(el);
@@ -70,7 +70,7 @@ async function run() {
   };
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-cp-pred-compact');
     document.body.appendChild(el);
@@ -85,7 +85,7 @@ async function run() {
 
   // ─── Test 3: default mode — Predicate, each constraint rendered ─────────────
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-cp-pred-default');
     document.body.appendChild(el);
@@ -94,24 +94,24 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-pred-default');
-    return el && el.querySelectorAll('pyana-state-constraint').length >= 3;
+    return el && el.querySelectorAll('dregg-state-constraint').length >= 3;
   }, { timeout: 5000 });
 
   const scCount = await page.$eval('#test-cp-pred-default', el =>
-    el.querySelectorAll('pyana-state-constraint').length
+    el.querySelectorAll('dregg-state-constraint').length
   );
   console.log('[test 3] Constraint elements rendered:', scCount);
-  if (scCount < 3) throw new Error(`TEST FAILED: expected 3 pyana-state-constraint, got ${scCount}`);
+  if (scCount < 3) throw new Error(`TEST FAILED: expected 3 dregg-state-constraint, got ${scCount}`);
 
   // Verify chips are present
   const chipCount = await page.$eval('#test-cp-pred-default', el =>
-    el.querySelectorAll('.pyana-sc__chip').length
+    el.querySelectorAll('.dregg-sc__chip').length
   );
   console.log('[test 3] Chips rendered:', chipCount);
   if (chipCount < 3) throw new Error(`TEST FAILED: expected ≥3 chips, got ${chipCount}`);
 
   // Check that FieldEquals chip text is correct
-  const chipTexts = await page.$$eval('#test-cp-pred-default .pyana-sc__chip', chips =>
+  const chipTexts = await page.$$eval('#test-cp-pred-default .dregg-sc__chip', chips =>
     chips.map(c => c.textContent.trim())
   );
   console.log('[test 3] Chip labels:', chipTexts);
@@ -160,7 +160,7 @@ async function run() {
   };
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-cp-all-variants');
     document.body.appendChild(el);
@@ -169,10 +169,10 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-all-variants');
-    return el && el.querySelectorAll('pyana-state-constraint').length >= 28;
+    return el && el.querySelectorAll('dregg-state-constraint').length >= 28;
   }, { timeout: 5000 });
 
-  const allVariantChips = await page.$$eval('#test-cp-all-variants .pyana-sc__chip', chips =>
+  const allVariantChips = await page.$$eval('#test-cp-all-variants .dregg-sc__chip', chips =>
     chips.map(c => c.textContent.trim())
   );
   console.log('[test 4] All variant chips:', allVariantChips);
@@ -213,7 +213,7 @@ async function run() {
   };
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-cp-cases-compact');
     document.body.appendChild(el);
@@ -226,7 +226,7 @@ async function run() {
   if (!casesCompact.includes('3'))     throw new Error('TEST FAILED: Cases compact missing count "3"');
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-cp-cases-default');
     document.body.appendChild(el);
@@ -235,16 +235,16 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-cases-default');
-    return el && el.querySelectorAll('.pyana-cp__case').length >= 3;
+    return el && el.querySelectorAll('.dregg-cp__case').length >= 3;
   }, { timeout: 5000 });
 
   const caseCount = await page.$eval('#test-cp-cases-default', el =>
-    el.querySelectorAll('.pyana-cp__case').length
+    el.querySelectorAll('.dregg-cp__case').length
   );
   console.log('[test 5b] Case divs:', caseCount);
   if (caseCount < 3) throw new Error(`TEST FAILED: Expected 3 case divs, got ${caseCount}`);
 
-  const guardTexts = await page.$$eval('#test-cp-cases-default .pyana-cp__guard-tag', els =>
+  const guardTexts = await page.$$eval('#test-cp-cases-default .dregg-cp__guard-tag', els =>
     els.map(e => e.textContent.trim())
   );
   console.log('[test 5b] Guard labels:', guardTexts);
@@ -259,7 +259,7 @@ async function run() {
   };
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'compact');
     el.setAttribute('id', 'test-cp-circuit-compact');
     document.body.appendChild(el);
@@ -271,7 +271,7 @@ async function run() {
   if (!circuitCompact.includes('Circuit')) throw new Error('TEST FAILED: Circuit compact missing "Circuit"');
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-cp-circuit-default');
     document.body.appendChild(el);
@@ -280,10 +280,10 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-circuit-default');
-    return el && el.querySelector('.pyana-cp__circuit-hash');
+    return el && el.querySelector('.dregg-cp__circuit-hash');
   }, { timeout: 5000 });
 
-  const circuitHashText = await page.$eval('#test-cp-circuit-default .pyana-cp__circuit-hash', el => el.textContent.trim());
+  const circuitHashText = await page.$eval('#test-cp-circuit-default .dregg-cp__circuit-hash', el => el.textContent.trim());
   console.log('[test 6b] Circuit hash displayed:', circuitHashText);
   if (!circuitHashText.includes('aabbccdd')) throw new Error('TEST FAILED: Circuit hash not shown');
   console.log('[test 6] PASS: Circuit program renders VK hash.');
@@ -291,7 +291,7 @@ async function run() {
   // ─── Test 7: data-program attribute (JSON passthrough) ──────────────────────
   await page.evaluate(() => {
     const prog = { kind: 'Predicate', constraints: [{ kind: 'Immutable', index: 0 }] };
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'compact');
     el.setAttribute('data-program', JSON.stringify(prog));
     el.setAttribute('id', 'test-cp-attr');
@@ -321,7 +321,7 @@ async function run() {
   };
 
   await page.evaluate((prog) => {
-    const el = document.createElement('pyana-cell-program');
+    const el = document.createElement('dregg-cell-program');
     el.setAttribute('mode', 'default');
     el.setAttribute('id', 'test-cp-anyof');
     document.body.appendChild(el);
@@ -330,10 +330,10 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-anyof');
-    return el && el.querySelector('.pyana-sc__anyof');
+    return el && el.querySelector('.dregg-sc__anyof');
   }, { timeout: 5000 });
 
-  const anyofItems = await page.$eval('#test-cp-anyof .pyana-sc__anyof', ul =>
+  const anyofItems = await page.$eval('#test-cp-anyof .dregg-sc__anyof', ul =>
     ul.querySelectorAll('li').length
   );
   console.log('[test 8] AnyOf inline items:', anyofItems);

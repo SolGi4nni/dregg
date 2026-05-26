@@ -1,7 +1,7 @@
 /**
- * <pyana-witnessed-receipt uri="pyana://receipt/<hex32>"> — unified receipt view.
+ * <dregg-witnessed-receipt uri="dregg://receipt/<hex32>"> — unified receipt view.
  *
- * Composes <pyana-receipt> + <pyana-proof> and surfaces the scope-0/1/2 distinction
+ * Composes <dregg-receipt> + <dregg-proof> and surfaces the scope-0/1/2 distinction
  * prominently.
  *
  * Scope determination (from NEW-WORLD.md + STARBRIDGE-PLAN.md § 4.5):
@@ -12,7 +12,7 @@
  *   Scope-2 — proof_view present AND receipt carries an inline witness_bundle
  *              field: any verifier can re-execute the AIR end-to-end.
  *
- * Trust-tier badge is derived by the same heuristic as <pyana-proof>:
+ * Trust-tier badge is derived by the same heuristic as <dregg-proof>:
  *   Placeholder — scope-0
  *   Silver      — proof present, bilateral_pi absent
  *   Golden      — proof present, bilateral_pi fully populated (6 roots)
@@ -118,10 +118,10 @@ const BADGE_BASE = [
 ].join(';') + ';';
 
 // ---------------------------------------------------------------------------
-// <pyana-witnessed-receipt>
+// <dregg-witnessed-receipt>
 // ---------------------------------------------------------------------------
 
-class PyanaWitnessedReceipt extends InspectorBase {
+class DreggWitnessedReceipt extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -174,7 +174,7 @@ class PyanaWitnessedReceipt extends InspectorBase {
         h('div', {
           style: 'color:var(--fg-dim);font-size:0.78rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;',
         }, 'Inline WitnessBundle'),
-        h('dl', { class: 'pyana-inspector__kv', style: 'font-size:0.78rem;' },
+        h('dl', { class: 'dregg-inspector__kv', style: 'font-size:0.78rem;' },
           ...entries.map(([k, v]) => [
             h('dt', null, _esc(k)),
             h('dd', null, h('code', null, _esc(String(v)).slice(0, 64))),
@@ -206,20 +206,20 @@ class PyanaWitnessedReceipt extends InspectorBase {
       const r = sig.value;
 
       if (!r) {
-        return html`<div class="pyana-inspector pyana-inspector--empty">
+        return html`<div class="dregg-inspector dregg-inspector--empty">
           witnessed-receipt not found: <code>${shortHex(parsed.id, 16)}</code>
         </div>`;
       }
 
       const scope = receiptScope(r);
       const tier = trustTier(r.proof_view || null);
-      const proofUri = `pyana://receipt/${r.turn_hash}`;
+      const proofUri = `dregg://receipt/${r.turn_hash}`;
 
       // ── Compact mode ───────────────────────────────────────────────────
 
       if (mode === 'compact') {
         return h('span', {
-          class: 'pyana-inspector pyana-inspector--compact pwr pwr--compact',
+          class: 'dregg-inspector dregg-inspector--compact pwr pwr--compact',
           title: SCOPE_META[scope].title,
         },
           h(ScopeBadge, { scope }),
@@ -232,11 +232,11 @@ class PyanaWitnessedReceipt extends InspectorBase {
 
       // ── Default mode ───────────────────────────────────────────────────
 
-      return h('div', { class: 'pyana-inspector pyana-inspector--cell pwr' },
+      return h('div', { class: 'dregg-inspector dregg-inspector--cell pwr' },
         // ── Header ──────────────────────────────────────────────────────
         h('header', { class: 'pwr__header' },
-          h('span', { class: 'pyana-inspector__kind' }, 'Receipt'),
-          h('code', { class: 'pyana-inspector__id', title: parsed.id }, shortHex(parsed.id, 24)),
+          h('span', { class: 'dregg-inspector__kind' }, 'Receipt'),
+          h('code', { class: 'dregg-inspector__id', title: parsed.id }, shortHex(parsed.id, 24)),
           h(ScopeBadge, { scope }),
           h(TierBadge, { tier })
         ),
@@ -256,11 +256,11 @@ class PyanaWitnessedReceipt extends InspectorBase {
         h('details', { class: 'pwr__details', open: true },
           h('summary', { class: 'pwr__summary' }, 'Receipt fields'),
           h('div', { class: 'pwr__sub-pane' },
-            // Embed <pyana-receipt> — the existing inspector handles its own
+            // Embed <dregg-receipt> — the existing inspector handles its own
             // signal subscription and re-render cycle.  Passing uri= as an
             // attribute keeps the element self-contained and avoids a
             // second getReceipt() call (they share the same signal).
-            h('pyana-receipt', { uri: `pyana://receipt/${parsed.id}`, mode: 'default' })
+            h('dregg-receipt', { uri: `dregg://receipt/${parsed.id}`, mode: 'default' })
           )
         ),
 
@@ -268,9 +268,9 @@ class PyanaWitnessedReceipt extends InspectorBase {
         h('details', { class: 'pwr__details', style: 'margin-top:6px;', open: scope > 0 },
           h('summary', { class: 'pwr__summary' }, 'Proof'),
           h('div', { class: 'pwr__sub-pane' },
-            // <pyana-proof> uses the turn_hash as its receipt id, matching
+            // <dregg-proof> uses the turn_hash as its receipt id, matching
             // how proof.js resolves proof_view.
-            h('pyana-proof', { uri: proofUri, mode: 'default' })
+            h('dregg-proof', { uri: proofUri, mode: 'default' })
           )
         )
       );
@@ -280,8 +280,8 @@ class PyanaWitnessedReceipt extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-witnessed-receipt')) {
-  customElements.define('pyana-witnessed-receipt', PyanaWitnessedReceipt);
+if (!customElements.get('dregg-witnessed-receipt')) {
+  customElements.define('dregg-witnessed-receipt', DreggWitnessedReceipt);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,11 +303,11 @@ function _esc(s) {
 // ---------------------------------------------------------------------------
 
 (function injectStyles() {
-  if (document.getElementById('pyana-witnessed-receipt-styles')) return;
+  if (document.getElementById('dregg-witnessed-receipt-styles')) return;
   const s = document.createElement('style');
-  s.id = 'pyana-witnessed-receipt-styles';
+  s.id = 'dregg-witnessed-receipt-styles';
   s.textContent = `
-/* ---- <pyana-witnessed-receipt> ---- */
+/* ---- <dregg-witnessed-receipt> ---- */
 .pwr {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;

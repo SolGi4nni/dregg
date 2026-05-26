@@ -1,4 +1,4 @@
-# Network-Layer Privacy for pyana-net
+# Network-Layer Privacy for dregg-net
 
 ## Problem
 

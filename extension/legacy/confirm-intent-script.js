@@ -16,7 +16,7 @@ document.getElementById('options').textContent = JSON.stringify(options, null, 2
 
 document.getElementById('acceptBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:intentConfirmation',
+    type: 'dregg:intentConfirmation',
     confirmed: true,
   });
   window.close();
@@ -24,7 +24,7 @@ document.getElementById('acceptBtn').addEventListener('click', () => {
 
 document.getElementById('rejectBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:intentConfirmation',
+    type: 'dregg:intentConfirmation',
     confirmed: false,
   });
   window.close();
@@ -32,7 +32,7 @@ document.getElementById('rejectBtn').addEventListener('click', () => {
 
 window.addEventListener('beforeunload', () => {
   chrome.runtime.sendMessage({
-    type: 'pyana:intentConfirmation',
+    type: 'dregg:intentConfirmation',
     confirmed: false,
   });
 });

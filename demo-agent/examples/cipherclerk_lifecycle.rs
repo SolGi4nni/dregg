@@ -8,7 +8,7 @@
 //! 5. Export the receipt chain as proof of state (federation exit scenario)
 //! 6. Show: another party can verify the agent's state from just the receipt chain
 
-use pyana_sdk::{
+use dregg_sdk::{
     AgentCipherclerk, CellId, TurnReceipt, verify_receipt_chain, verify_receipt_chain_head,
 };
 
@@ -33,21 +33,21 @@ fn short_hex(bytes: &[u8]) -> String {
 fn simulate_turn_execution(agent: CellId, turn_number: u64, pre_state: [u8; 32]) -> TurnReceipt {
     // Deterministic state transition: hash the pre-state with the turn number.
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-demo-state-transition");
+    hasher.update(b"dregg-demo-state-transition");
     hasher.update(&pre_state);
     hasher.update(&turn_number.to_le_bytes());
     let post_state = *hasher.finalize().as_bytes();
 
     // Deterministic turn hash.
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-demo-turn");
+    hasher.update(b"dregg-demo-turn");
     hasher.update(agent.as_bytes());
     hasher.update(&turn_number.to_le_bytes());
     let turn_hash = *hasher.finalize().as_bytes();
 
     // Deterministic effects hash.
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-demo-effects");
+    hasher.update(b"dregg-demo-effects");
     hasher.update(&turn_number.to_le_bytes());
     let effects_hash = *hasher.finalize().as_bytes();
 
@@ -88,7 +88,7 @@ fn item(msg: &str) {
 fn main() {
     println!();
     println!("  {}", "=".repeat(60));
-    println!("  PYANA WALLET LIFECYCLE DEMO");
+    println!("  DREGG WALLET LIFECYCLE DEMO");
     println!("  Receipt Chain as Proof-Carrying State");
     println!("  {}", "=".repeat(60));
 

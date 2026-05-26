@@ -2,11 +2,11 @@
 //!
 //! The [`BudgetGate`] is an optional component of the [`TurnExecutor`] that checks
 //! a per-silo budget slice before allowing turn execution. This connects the
-//! executor to the Stingray bounded-counter budget coordinator (in `pyana-coord`)
+//! executor to the Stingray bounded-counter budget coordinator (in `dregg-coord`)
 //! without introducing a circular dependency.
 //!
 //! The gate holds a local copy of the silo's budget slice. The StingrayCounter
-//! in `pyana-coord` manages distribution and rebalancing at a higher level.
+//! in `dregg-coord` manages distribution and rebalancing at a higher level.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub type DebitDigest = [u8; 32];
 ///
 /// This is the turn-crate-local representation of a budget slice. The full
 /// lifecycle (distribution, rebalancing, certificates) is managed by
-/// `StingrayCounter` in `pyana-coord`. This struct carries just enough state
+/// `StingrayCounter` in `dregg-coord`. This struct carries just enough state
 /// to gate individual turn executions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetSlice {
@@ -169,7 +169,7 @@ impl BudgetGate {
 
     /// Compute a debit digest from a turn hash.
     pub fn compute_debit_digest(turn_hash: &[u8; 32]) -> DebitDigest {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-budget-gate debit-digest v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-budget-gate debit-digest v1");
         hasher.update(turn_hash);
         *hasher.finalize().as_bytes()
     }

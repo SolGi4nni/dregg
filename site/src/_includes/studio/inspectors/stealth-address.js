@@ -1,16 +1,16 @@
 /**
- * <pyana-stealth-address> — stealth address inspector + demo (FOLLOWUP-14).
+ * <dregg-stealth-address> — stealth address inspector + demo (FOLLOWUP-14).
  *
  * Strictly follows _base.js + cell patterns: data= support, signals for state,
- * <pyana-*> reuse where avail (placeholders for pedersen etc), ZERO JS reimplementation
- * of pyana stealth/privacy logic (all crypto via wasm privacy fns or explicit
+ * <dregg-*> reuse where avail (placeholders for pedersen etc), ZERO JS reimplementation
+ * of dregg stealth/privacy logic (all crypto via wasm privacy fns or explicit
  * "stub - placeholder" visible badges; no DH, no blake sims in fallbacks).
  *
  * Two modes:
  *   Read (uri=...) + data attrs for announcements/view keys.
  *   Demo (mode=demo): progressive steps calling wasm only (derive, create_stealth,
  *     create_value_commitment, scan, verify_conservation). Range/conservation show
- *     visible Placeholder when wasm stub (per plan: use <pyana-pedersen-commitment>
+ *     visible Placeholder when wasm stub (per plan: use <dregg-pedersen-commitment>
  *     when it lands).
  *
  * Privacy badges adjusted toward Placeholder/Silver (no fake "Fully Private" on sims).
@@ -94,7 +94,7 @@ function privacyLevel(stubCount, total) {
 // ---------------------------------------------------------------------------
 
 const STYLES = `
-.pyana-stealth {
+.dregg-stealth {
   font-family: ui-monospace, monospace;
   font-size: 0.875rem;
   background: var(--bg-raised, #0d1410);
@@ -102,7 +102,7 @@ const STYLES = `
   border-radius: 8px;
   overflow: hidden;
 }
-.pyana-stealth__header {
+.dregg-stealth__header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -110,7 +110,7 @@ const STYLES = `
   border-bottom: 1px solid var(--line, #2a302d);
   flex-wrap: wrap;
 }
-.pyana-stealth__kind {
+.dregg-stealth__kind {
   padding: 2px 8px;
   background: var(--accent, #5b8a5a);
   color: #0a0f0d;
@@ -120,7 +120,7 @@ const STYLES = `
   letter-spacing: 0.05em;
   font-weight: 700;
 }
-.pyana-stealth__badge {
+.dregg-stealth__badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 3px;
@@ -129,12 +129,12 @@ const STYLES = `
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.pyana-stealth__meta-addr {
+.dregg-stealth__meta-addr {
   color: var(--fg-dim, #6a8070);
   font-size: 0.8rem;
   margin-left: auto;
 }
-.pyana-stealth__body {
+.dregg-stealth__body {
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -142,23 +142,23 @@ const STYLES = `
 }
 
 /* KV grid */
-.pyana-stealth__kv {
+.dregg-stealth__kv {
   display: grid;
   grid-template-columns: 130px 1fr;
   gap: 5px 14px;
   margin: 0;
 }
-.pyana-stealth__kv dt { color: var(--fg-dim, #6a8070); }
-.pyana-stealth__kv dd { margin: 0; word-break: break-all; }
-.pyana-stealth__kv code { font-size: 0.8rem; word-break: break-all; }
+.dregg-stealth__kv dt { color: var(--fg-dim, #6a8070); }
+.dregg-stealth__kv dd { margin: 0; word-break: break-all; }
+.dregg-stealth__kv code { font-size: 0.8rem; word-break: break-all; }
 
 /* Received panel */
-.pyana-stealth__received {
+.dregg-stealth__received {
   border: 1px solid var(--line, #2a302d);
   border-radius: 5px;
   overflow: hidden;
 }
-.pyana-stealth__received-header {
+.dregg-stealth__received-header {
   padding: 6px 10px;
   background: var(--bg, #0a0f0d);
   border-bottom: 1px solid var(--line, #2a302d);
@@ -168,7 +168,7 @@ const STYLES = `
   align-items: center;
   gap: 8px;
 }
-.pyana-stealth__received-count {
+.dregg-stealth__received-count {
   padding: 1px 6px;
   border-radius: 3px;
   background: #1a2e1a;
@@ -176,12 +176,12 @@ const STYLES = `
   font-size: 0.7rem;
   font-weight: 700;
 }
-.pyana-stealth__received-list {
+.dregg-stealth__received-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.pyana-stealth__received-item {
+.dregg-stealth__received-item {
   padding: 7px 10px;
   border-bottom: 1px solid var(--line, #2a302d);
   display: flex;
@@ -189,15 +189,15 @@ const STYLES = `
   gap: 10px;
   font-size: 0.8rem;
 }
-.pyana-stealth__received-item:last-child { border-bottom: none; }
-.pyana-stealth__received-item--hidden {
+.dregg-stealth__received-item:last-child { border-bottom: none; }
+.dregg-stealth__received-item--hidden {
   color: var(--fg-dim, #6a8070);
   font-style: italic;
 }
-.pyana-stealth__received-item--ours {
+.dregg-stealth__received-item--ours {
   color: #a0d4a0;
 }
-.pyana-stealth__detected-badge {
+.dregg-stealth__detected-badge {
   padding: 1px 5px;
   border-radius: 2px;
   background: #1a3a1a;
@@ -208,7 +208,7 @@ const STYLES = `
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
-.pyana-stealth__hidden-badge {
+.dregg-stealth__hidden-badge {
   padding: 1px 5px;
   border-radius: 2px;
   background: #1e1208;
@@ -219,7 +219,7 @@ const STYLES = `
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
-.pyana-stealth__empty-received {
+.dregg-stealth__empty-received {
   padding: 14px 10px;
   color: var(--fg-dim, #6a8070);
   font-size: 0.8rem;
@@ -227,20 +227,20 @@ const STYLES = `
 }
 
 /* Demo mode */
-.pyana-stealth-demo {
+.dregg-stealth-demo {
   font-family: ui-monospace, monospace;
   font-size: 0.875rem;
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-.pyana-stealth-demo__step {
+.dregg-stealth-demo__step {
   border: 1px solid var(--line, #2a302d);
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 10px;
 }
-.pyana-stealth-demo__step-header {
+.dregg-stealth-demo__step-header {
   padding: 8px 12px;
   background: var(--bg-raised, #0d1410);
   border-bottom: 1px solid var(--line, #2a302d);
@@ -248,7 +248,7 @@ const STYLES = `
   align-items: center;
   gap: 10px;
 }
-.pyana-stealth-demo__step-num {
+.dregg-stealth-demo__step-num {
   padding: 1px 7px;
   background: #2a302d;
   color: var(--fg-dim, #6a8070);
@@ -256,33 +256,33 @@ const STYLES = `
   font-size: 0.7rem;
   font-weight: 700;
 }
-.pyana-stealth-demo__step-num--done {
+.dregg-stealth-demo__step-num--done {
   background: #1a3a1a;
   color: #5b8a5a;
 }
-.pyana-stealth-demo__step-num--err {
+.dregg-stealth-demo__step-num--err {
   background: #3a1818;
   color: #d4685c;
 }
-.pyana-stealth-demo__step-title {
+.dregg-stealth-demo__step-title {
   font-size: 0.82rem;
   color: var(--fg, #c8d4cc);
 }
-.pyana-stealth-demo__step-body {
+.dregg-stealth-demo__step-body {
   padding: 10px 12px;
   background: var(--bg, #0a0f0d);
 }
-.pyana-stealth-demo__kv {
+.dregg-stealth-demo__kv {
   display: grid;
   grid-template-columns: 140px 1fr;
   gap: 4px 12px;
   margin: 0;
   font-size: 0.8rem;
 }
-.pyana-stealth-demo__kv dt { color: var(--fg-dim, #6a8070); }
-.pyana-stealth-demo__kv dd { margin: 0; word-break: break-all; }
-.pyana-stealth-demo__kv code { font-size: 0.77rem; }
-.pyana-stealth-demo__controls {
+.dregg-stealth-demo__kv dt { color: var(--fg-dim, #6a8070); }
+.dregg-stealth-demo__kv dd { margin: 0; word-break: break-all; }
+.dregg-stealth-demo__kv code { font-size: 0.77rem; }
+.dregg-stealth-demo__controls {
   padding: 10px 12px;
   background: var(--bg-raised, #0d1410);
   border-top: 1px solid var(--line, #2a302d);
@@ -291,7 +291,7 @@ const STYLES = `
   gap: 10px;
   flex-wrap: wrap;
 }
-.pyana-stealth-demo__btn {
+.dregg-stealth-demo__btn {
   padding: 6px 14px;
   border: 1px solid var(--line, #2a302d);
   border-radius: 4px;
@@ -302,15 +302,15 @@ const STYLES = `
   cursor: pointer;
   transition: border-color 0.12s;
 }
-.pyana-stealth-demo__btn:hover:not(:disabled) { border-color: var(--accent, #5b8a5a); color: #a0d4a0; }
-.pyana-stealth-demo__btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.pyana-stealth-demo__btn--primary {
+.dregg-stealth-demo__btn:hover:not(:disabled) { border-color: var(--accent, #5b8a5a); color: #a0d4a0; }
+.dregg-stealth-demo__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.dregg-stealth-demo__btn--primary {
   background: #1a3a1a;
   border-color: #3a5a3a;
   color: #a0d4a0;
 }
-.pyana-stealth-demo__btn--primary:hover:not(:disabled) { background: #244a24; border-color: #5b8a5a; }
-.pyana-stealth-demo__input {
+.dregg-stealth-demo__btn--primary:hover:not(:disabled) { background: #244a24; border-color: #5b8a5a; }
+.dregg-stealth-demo__input {
   padding: 5px 9px;
   border: 1px solid var(--line, #2a302d);
   border-radius: 4px;
@@ -319,13 +319,13 @@ const STYLES = `
   font: inherit;
   font-size: 0.82rem;
 }
-.pyana-stealth-demo__input:focus { outline: none; border-color: var(--accent, #5b8a5a); }
-.pyana-stealth-demo__label {
+.dregg-stealth-demo__input:focus { outline: none; border-color: var(--accent, #5b8a5a); }
+.dregg-stealth-demo__label {
   font-size: 0.78rem;
   color: var(--fg-dim, #6a8070);
   white-space: nowrap;
 }
-.pyana-stealth-demo__stub-warn {
+.dregg-stealth-demo__stub-warn {
   font-size: 0.75rem;
   color: #a07830;
   background: #1e1208;
@@ -334,25 +334,25 @@ const STYLES = `
   padding: 3px 7px;
   margin-top: 6px;
 }
-.pyana-stealth-demo__conservation {
+.dregg-stealth-demo__conservation {
   padding: 8px 10px;
   border-radius: 4px;
   font-size: 0.82rem;
 }
-.pyana-stealth-demo__conservation--valid   { background: #0d200d; border: 1px solid #3a5a3a; color: #a0d4a0; }
-.pyana-stealth-demo__conservation--stub    { background: #1e1208; border: 1px solid #6a4020; color: #d4a060; }
-.pyana-stealth-demo__conservation--invalid { background: #200d0d; border: 1px solid #6a2020; color: #d4908c; }
-.pyana-stealth-demo__timeline {
+.dregg-stealth-demo__conservation--valid   { background: #0d200d; border: 1px solid #3a5a3a; color: #a0d4a0; }
+.dregg-stealth-demo__conservation--stub    { background: #1e1208; border: 1px solid #6a4020; color: #d4a060; }
+.dregg-stealth-demo__conservation--invalid { background: #200d0d; border: 1px solid #6a2020; color: #d4908c; }
+.dregg-stealth-demo__timeline {
   display: flex;
   flex-direction: column;
   gap: 3px;
   font-size: 0.78rem;
 }
-.pyana-stealth-demo__timeline-entry { display: flex; gap: 8px; }
-.pyana-stealth-demo__timeline-entry--info    { color: var(--fg-dim, #6a8070); }
-.pyana-stealth-demo__timeline-entry--success { color: #a0d4a0; }
-.pyana-stealth-demo__timeline-entry--warn    { color: #d4a060; }
-.pyana-stealth-demo__timeline-actor {
+.dregg-stealth-demo__timeline-entry { display: flex; gap: 8px; }
+.dregg-stealth-demo__timeline-entry--info    { color: var(--fg-dim, #6a8070); }
+.dregg-stealth-demo__timeline-entry--success { color: #a0d4a0; }
+.dregg-stealth-demo__timeline-entry--warn    { color: #d4a060; }
+.dregg-stealth-demo__timeline-actor {
   min-width: 80px;
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -360,7 +360,7 @@ const STYLES = `
   padding-top: 1px;
   flex-shrink: 0;
 }
-.pyana-stealth-demo__range-proof {
+.dregg-stealth-demo__range-proof {
   font-size: 0.78rem;
   color: var(--fg-dim, #6a8070);
   padding: 4px 0;
@@ -372,7 +372,7 @@ function injectStyles() {
   if (_stylesInjected) return;
   _stylesInjected = true;
   const el = document.createElement('style');
-  el.id = 'pyana-stealth-address-styles';
+  el.id = 'dregg-stealth-address-styles';
   el.textContent = STYLES;
   document.head.appendChild(el);
 }
@@ -404,7 +404,7 @@ function makeDemoState() {
   return {
     step: 0,            // 0=idle, 1=keysReady, 2=addrReady, 3=commitReady, 4=scanned, 5=conservation
     mnemonic: 'correct horse battery staple',
-    passphrase: 'pyana-demo',
+    passphrase: 'dregg-demo',
     amount: 500,
     stubCount: 0,
     callCount: 0,
@@ -426,7 +426,7 @@ function makeDemoState() {
 // Custom element
 // ---------------------------------------------------------------------------
 
-class PyanaStealth extends InspectorBase {
+class DreggStealth extends InspectorBase {
   constructor() {
     super();
     this._demoState = null; // lazily created in demo mode
@@ -460,10 +460,10 @@ class PyanaStealth extends InspectorBase {
   // -------------------------------------------------------------------------
   _renderCompact(h, render, effect, wasm) {
     const refAttr = this.getAttribute('uri') || '';
-    // Extract meta_address from URI segment (pyana://stealth/<meta_address>)
+    // Extract meta_address from URI segment (dregg://stealth/<meta_address>)
     let metaAddr = '';
     try {
-      const m = /^pyana:\/\/stealth\/([^/?#]+)/.exec(refAttr.trim());
+      const m = /^dregg:\/\/stealth\/([^/?#]+)/.exec(refAttr.trim());
       if (m) metaAddr = m[1];
     } catch {}
 
@@ -471,8 +471,8 @@ class PyanaStealth extends InspectorBase {
     this.appendChild(root);
 
     const Component = () =>
-      h('span', { class: 'pyana-inspector pyana-inspector--compact' },
-        h('span', { class: 'pyana-inspector__kind' }, 'stealth'),
+      h('span', { class: 'dregg-inspector dregg-inspector--compact' },
+        h('span', { class: 'dregg-inspector__kind' }, 'stealth'),
         ' ',
         metaAddr
           ? h('code', { title: metaAddr }, 'meta=' + shortHex(metaAddr, 8) + '…')
@@ -491,7 +491,7 @@ class PyanaStealth extends InspectorBase {
     const refAttr = this.getAttribute('uri') || '';
     let metaAddr = '';
     try {
-      const m = /^pyana:\/\/stealth\/([^/?#]+)/.exec(refAttr.trim());
+      const m = /^dregg:\/\/stealth\/([^/?#]+)/.exec(refAttr.trim());
       if (m) metaAddr = m[1];
     } catch {}
 
@@ -561,18 +561,18 @@ class PyanaStealth extends InspectorBase {
     const ReceivedItem = ({ item }) => {
       if (!item.ours) {
         return h('li', {
-          class: 'pyana-stealth__received-item pyana-stealth__received-item--hidden',
+          class: 'dregg-stealth__received-item dregg-stealth__received-item--hidden',
         },
-          h('span', { class: 'pyana-stealth__hidden-badge' }, 'hidden'),
+          h('span', { class: 'dregg-stealth__hidden-badge' }, 'hidden'),
           'ephemeral ',
           h('code', { title: item.ephemeralPubHex }, shortHex(item.ephemeralPubHex, 12)),
           ' — not addressed to this key'
         );
       }
       return h('li', {
-        class: 'pyana-stealth__received-item pyana-stealth__received-item--ours',
+        class: 'dregg-stealth__received-item dregg-stealth__received-item--ours',
       },
-        h('span', { class: 'pyana-stealth__detected-badge' }, 'detected'),
+        h('span', { class: 'dregg-stealth__detected-badge' }, 'detected'),
         'ephemeral ',
         h('code', { title: item.ephemeralPubHex }, shortHex(item.ephemeralPubHex, 12)),
         ' — ownership confirmed'
@@ -580,35 +580,35 @@ class PyanaStealth extends InspectorBase {
     };
 
     const ReceivedPanel = () => {
-      return h('div', { class: 'pyana-stealth__received' },
-        h('div', { class: 'pyana-stealth__received-header' },
+      return h('div', { class: 'dregg-stealth__received' },
+        h('div', { class: 'dregg-stealth__received-header' },
           'received',
-          h('span', { class: 'pyana-stealth__received-count' }, String(ownedCount))
+          h('span', { class: 'dregg-stealth__received-count' }, String(ownedCount))
         ),
         receivedItems.length === 0
-          ? h('div', { class: 'pyana-stealth__empty-received' }, 'no announcements to scan')
-          : h('ul', { class: 'pyana-stealth__received-list' },
+          ? h('div', { class: 'dregg-stealth__empty-received' }, 'no announcements to scan')
+          : h('ul', { class: 'dregg-stealth__received-list' },
               ...receivedItems.map(item => h(ReceivedItem, { key: item.index, item }))
             )
       );
     };
 
     const Component = () =>
-      h('div', { class: 'pyana-inspector pyana-stealth' },
-        h('div', { class: 'pyana-stealth__header' },
-          h('span', { class: 'pyana-stealth__kind' }, 'stealth address'),
+      h('div', { class: 'dregg-inspector dregg-stealth' },
+        h('div', { class: 'dregg-stealth__header' },
+          h('span', { class: 'dregg-stealth__kind' }, 'stealth address'),
           h('span', {
-            class: 'pyana-stealth__badge',
+            class: 'dregg-stealth__badge',
             title: privMeta.title,
             style: `background:${privMeta.color};color:${privMeta.textColor};`,
           }, privMeta.label),
           metaAddr
-            ? h('code', { class: 'pyana-stealth__meta-addr', title: metaAddr },
+            ? h('code', { class: 'dregg-stealth__meta-addr', title: metaAddr },
                 shortHex(metaAddr, 16))
             : null
         ),
-        h('div', { class: 'pyana-stealth__body' },
-          h('dl', { class: 'pyana-stealth__kv' },
+        h('div', { class: 'dregg-stealth__body' },
+          h('dl', { class: 'dregg-stealth__kv' },
             h('dt', null, 'spend pubkey'),
             h('dd', null, h('code', { title: spendPubHex }, shortHex(spendPubHex, 24))),
             h('dt', null, 'view pubkey'),
@@ -848,20 +848,20 @@ class PyanaStealth extends InspectorBase {
 
       const StepBadge = ({ n }) =>
         h('span', {
-          class: 'pyana-stealth-demo__step-num' + (stepDone(n) ? ' pyana-stealth-demo__step-num--done' : ''),
+          class: 'dregg-stealth-demo__step-num' + (stepDone(n) ? ' dregg-stealth-demo__step-num--done' : ''),
         }, stepDone(n) ? '✓ ' + n : String(n));
 
       const Timeline = () => {
         if (!s.timeline.length) return null;
-        return h('div', { class: 'pyana-stealth-demo__timeline' },
+        return h('div', { class: 'dregg-stealth-demo__timeline' },
           ...s.timeline.map((entry, i) =>
             h('div', {
               key: i,
-              class: 'pyana-stealth-demo__timeline-entry pyana-stealth-demo__timeline-entry--' + entry.type,
+              class: 'dregg-stealth-demo__timeline-entry dregg-stealth-demo__timeline-entry--' + entry.type,
             },
               entry.actor
-                ? h('span', { class: 'pyana-stealth-demo__timeline-actor' }, '[' + entry.actor + ']')
-                : h('span', { class: 'pyana-stealth-demo__timeline-actor' }),
+                ? h('span', { class: 'dregg-stealth-demo__timeline-actor' }, '[' + entry.actor + ']')
+                : h('span', { class: 'dregg-stealth-demo__timeline-actor' }),
               h('span', null, entry.text)
             )
           )
@@ -869,18 +869,18 @@ class PyanaStealth extends InspectorBase {
       };
 
       const StubWarn = ({ msg }) =>
-        h('div', { class: 'pyana-stealth-demo__stub-warn' }, msg);
+        h('div', { class: 'dregg-stealth-demo__stub-warn' }, msg);
 
       // --- Step 1: Derive Keys ---
       const Step1 = () =>
-        h('div', { class: 'pyana-stealth-demo__step' },
-          h('div', { class: 'pyana-stealth-demo__step-header' },
+        h('div', { class: 'dregg-stealth-demo__step' },
+          h('div', { class: 'dregg-stealth-demo__step-header' },
             h(StepBadge, { n: 1 }),
-            h('span', { class: 'pyana-stealth-demo__step-title' }, 'Derive Stealth Keys')
+            h('span', { class: 'dregg-stealth-demo__step-title' }, 'Derive Stealth Keys')
           ),
-          h('div', { class: 'pyana-stealth-demo__step-body' },
+          h('div', { class: 'dregg-stealth-demo__step-body' },
             s.recipientKeys
-              ? h('dl', { class: 'pyana-stealth-demo__kv' },
+              ? h('dl', { class: 'dregg-stealth-demo__kv' },
                   h('dt', null, 'view pubkey'),
                   h('dd', null, h('code', { title: bytesToHex(s.recipientKeys.viewPub) },
                     shortHex(bytesToHex(s.recipientKeys.viewPub), 24))),
@@ -893,25 +893,25 @@ class PyanaStealth extends InspectorBase {
               : h('div', { style: 'color:var(--fg-dim);font-size:0.8rem;' },
                   'Enter a mnemonic + passphrase to derive the recipient\'s key pair.')
           ),
-          h('div', { class: 'pyana-stealth-demo__controls' },
-            h('span', { class: 'pyana-stealth-demo__label' }, 'mnemonic'),
+          h('div', { class: 'dregg-stealth-demo__controls' },
+            h('span', { class: 'dregg-stealth-demo__label' }, 'mnemonic'),
             h('input', {
-              class: 'pyana-stealth-demo__input',
+              class: 'dregg-stealth-demo__input',
               style: 'width:240px;',
               value: s.mnemonic,
               spellcheck: 'false',
               onInput: (e) => { s.mnemonic = e.target.value; },
             }),
-            h('span', { class: 'pyana-stealth-demo__label' }, 'passphrase'),
+            h('span', { class: 'dregg-stealth-demo__label' }, 'passphrase'),
             h('input', {
-              class: 'pyana-stealth-demo__input',
+              class: 'dregg-stealth-demo__input',
               style: 'width:100px;',
               value: s.passphrase,
               spellcheck: 'false',
               onInput: (e) => { s.passphrase = e.target.value; },
             }),
             h('button', {
-              class: 'pyana-stealth-demo__btn pyana-stealth-demo__btn--primary',
+              class: 'dregg-stealth-demo__btn dregg-stealth-demo__btn--primary',
               onClick: doStep1,
             }, 'Derive Keys')
           )
@@ -919,15 +919,15 @@ class PyanaStealth extends InspectorBase {
 
       // --- Step 2: Create Stealth Address + Commitment ---
       const Step2 = () =>
-        h('div', { class: 'pyana-stealth-demo__step' },
-          h('div', { class: 'pyana-stealth-demo__step-header' },
+        h('div', { class: 'dregg-stealth-demo__step' },
+          h('div', { class: 'dregg-stealth-demo__step-header' },
             h(StepBadge, { n: 2 }),
-            h('span', { class: 'pyana-stealth-demo__step-title' },
+            h('span', { class: 'dregg-stealth-demo__step-title' },
               'Create Stealth Address + Value Commitment')
           ),
-          h('div', { class: 'pyana-stealth-demo__step-body' },
+          h('div', { class: 'dregg-stealth-demo__step-body' },
             s.stealthAddr && s.commitment
-              ? h('dl', { class: 'pyana-stealth-demo__kv' },
+              ? h('dl', { class: 'dregg-stealth-demo__kv' },
                   h('dt', null, 'one-time pubkey'),
                   h('dd', null, h('code', { title: bytesToHex(s.stealthAddr.oneTimePubkey) },
                     shortHex(bytesToHex(s.stealthAddr.oneTimePubkey), 24))),
@@ -945,10 +945,10 @@ class PyanaStealth extends InspectorBase {
                     ? 'Ready — sender derives a one-time address and commits the transfer amount.'
                     : 'Complete step 1 first.')
           ),
-          h('div', { class: 'pyana-stealth-demo__controls' },
-            h('span', { class: 'pyana-stealth-demo__label' }, 'amount'),
+          h('div', { class: 'dregg-stealth-demo__controls' },
+            h('span', { class: 'dregg-stealth-demo__label' }, 'amount'),
             h('input', {
-              class: 'pyana-stealth-demo__input',
+              class: 'dregg-stealth-demo__input',
               style: 'width:80px;',
               type: 'number',
               min: '1',
@@ -957,7 +957,7 @@ class PyanaStealth extends InspectorBase {
               onInput: (e) => { s.amount = parseInt(e.target.value) || 500; },
             }),
             h('button', {
-              class: 'pyana-stealth-demo__btn pyana-stealth-demo__btn--primary',
+              class: 'dregg-stealth-demo__btn dregg-stealth-demo__btn--primary',
               disabled: !stepDone(1),
               onClick: doStep2,
             }, 'Send Private Transfer')
@@ -966,15 +966,15 @@ class PyanaStealth extends InspectorBase {
 
       // --- Step 3: Range Proof ---
       const Step3 = () =>
-        h('div', { class: 'pyana-stealth-demo__step' },
-          h('div', { class: 'pyana-stealth-demo__step-header' },
+        h('div', { class: 'dregg-stealth-demo__step' },
+          h('div', { class: 'dregg-stealth-demo__step-header' },
             h(StepBadge, { n: 3 }),
-            h('span', { class: 'pyana-stealth-demo__step-title' }, 'Generate Range Proof')
+            h('span', { class: 'dregg-stealth-demo__step-title' }, 'Generate Range Proof')
           ),
-          h('div', { class: 'pyana-stealth-demo__step-body' },
+          h('div', { class: 'dregg-stealth-demo__step-body' },
             s.rangeProof
               ? h('div', null,
-                  h('dl', { class: 'pyana-stealth-demo__kv' },
+                  h('dl', { class: 'dregg-stealth-demo__kv' },
                     h('dt', null, 'proof size'),
                     h('dd', null, h('code', null, s.rangeProof.bytes.length + ' bytes')),
                     h('dt', null, 'range'),
@@ -991,9 +991,9 @@ class PyanaStealth extends InspectorBase {
                     ? 'Ready — prove amount is in [0, 2^64) without revealing value.'
                     : 'Complete step 2 first.')
           ),
-          h('div', { class: 'pyana-stealth-demo__controls' },
+          h('div', { class: 'dregg-stealth-demo__controls' },
             h('button', {
-              class: 'pyana-stealth-demo__btn pyana-stealth-demo__btn--primary',
+              class: 'dregg-stealth-demo__btn dregg-stealth-demo__btn--primary',
               disabled: !stepDone(2),
               onClick: doStep3,
             }, 'Generate Range Proof')
@@ -1002,14 +1002,14 @@ class PyanaStealth extends InspectorBase {
 
       // --- Step 4: Recipient Scan ---
       const Step4 = () =>
-        h('div', { class: 'pyana-stealth-demo__step' },
-          h('div', { class: 'pyana-stealth-demo__step-header' },
+        h('div', { class: 'dregg-stealth-demo__step' },
+          h('div', { class: 'dregg-stealth-demo__step-header' },
             h(StepBadge, { n: 4 }),
-            h('span', { class: 'pyana-stealth-demo__step-title' }, 'Recipient Scans Announcements')
+            h('span', { class: 'dregg-stealth-demo__step-title' }, 'Recipient Scans Announcements')
           ),
-          h('div', { class: 'pyana-stealth-demo__step-body' },
+          h('div', { class: 'dregg-stealth-demo__step-body' },
             s.scanResult
-              ? h('dl', { class: 'pyana-stealth-demo__kv' },
+              ? h('dl', { class: 'dregg-stealth-demo__kv' },
                   h('dt', null, 'scanned'),
                   h('dd', null, h('code', null, String(s.announcements.length))),
                   h('dt', null, 'owned'),
@@ -1024,9 +1024,9 @@ class PyanaStealth extends InspectorBase {
                     ? 'Ready — recipient scans with view key to detect owned payments.'
                     : 'Complete step 2 first.')
           ),
-          h('div', { class: 'pyana-stealth-demo__controls' },
+          h('div', { class: 'dregg-stealth-demo__controls' },
             h('button', {
-              class: 'pyana-stealth-demo__btn pyana-stealth-demo__btn--primary',
+              class: 'dregg-stealth-demo__btn dregg-stealth-demo__btn--primary',
               disabled: !stepDone(2),
               onClick: doStep4,
             }, 'Scan Announcements')
@@ -1037,26 +1037,26 @@ class PyanaStealth extends InspectorBase {
       const Step5 = () => {
         const cr = s.conservResult;
         const conservClass = !cr ? ''
-          : cr.not_implemented ? 'pyana-stealth-demo__conservation--stub'
-          : cr.valid ? 'pyana-stealth-demo__conservation--valid'
-          : 'pyana-stealth-demo__conservation--invalid';
+          : cr.not_implemented ? 'dregg-stealth-demo__conservation--stub'
+          : cr.valid ? 'dregg-stealth-demo__conservation--valid'
+          : 'dregg-stealth-demo__conservation--invalid';
 
-        return h('div', { class: 'pyana-stealth-demo__step' },
-          h('div', { class: 'pyana-stealth-demo__step-header' },
+        return h('div', { class: 'dregg-stealth-demo__step' },
+          h('div', { class: 'dregg-stealth-demo__step-header' },
             h(StepBadge, { n: 5 }),
-            h('span', { class: 'pyana-stealth-demo__step-title' }, 'Verify Conservation (Sum-to-Zero)')
+            h('span', { class: 'dregg-stealth-demo__step-title' }, 'Verify Conservation (Sum-to-Zero)')
           ),
-          h('div', { class: 'pyana-stealth-demo__step-body' },
+          h('div', { class: 'dregg-stealth-demo__step-body' },
             cr
               ? h('div', null,
-                  h('div', { class: 'pyana-stealth-demo__conservation ' + conservClass },
+                  h('div', { class: 'dregg-stealth-demo__conservation ' + conservClass },
                     cr.not_implemented
                       ? 'STUB — verify_conservation_proof not yet implemented in wasm; sum-to-zero check deferred'
                       : (cr.valid
                           ? `VALID — inputs (${cr.input_count}) == outputs (${cr.output_count}); no value created`
                           : `INVALID — conservation check failed (${cr.input_count}→${cr.output_count})`)
                   ),
-                  h('dl', { class: 'pyana-stealth-demo__kv', style: 'margin-top:8px;' },
+                  h('dl', { class: 'dregg-stealth-demo__kv', style: 'margin-top:8px;' },
                     h('dt', null, 'input commits'),  h('dd', null, h('code', null, String(cr.input_count ?? 1))),
                     h('dt', null, 'output commits'), h('dd', null, h('code', null, String(cr.output_count ?? 2))),
                     h('dt', null, 'property'), h('dd', null, h('code', null, 'Pedersen homomorphic sum'))
@@ -1067,9 +1067,9 @@ class PyanaStealth extends InspectorBase {
                     ? 'Ready — verifier checks that inputs == outputs without seeing amounts.'
                     : 'Complete step 2 first.')
           ),
-          h('div', { class: 'pyana-stealth-demo__controls' },
+          h('div', { class: 'dregg-stealth-demo__controls' },
             h('button', {
-              class: 'pyana-stealth-demo__btn pyana-stealth-demo__btn--primary',
+              class: 'dregg-stealth-demo__btn dregg-stealth-demo__btn--primary',
               disabled: !stepDone(2),
               onClick: doStep5,
             }, 'Verify Conservation')
@@ -1079,10 +1079,10 @@ class PyanaStealth extends InspectorBase {
 
       // --- Timeline + Privacy summary ---
       const SummaryHeader = () =>
-        h('div', { class: 'pyana-stealth__header', style: 'border-radius:8px 8px 0 0;border-bottom:1px solid var(--line,#2a302d);' },
-          h('span', { class: 'pyana-stealth__kind' }, 'stealth address'),
+        h('div', { class: 'dregg-stealth__header', style: 'border-radius:8px 8px 0 0;border-bottom:1px solid var(--line,#2a302d);' },
+          h('span', { class: 'dregg-stealth__kind' }, 'stealth address'),
           h('span', {
-            class: 'pyana-stealth__badge',
+            class: 'dregg-stealth__badge',
             title: privMeta.title,
             style: `background:${privMeta.color};color:${privMeta.textColor};`,
           }, privMeta.label),
@@ -1090,10 +1090,10 @@ class PyanaStealth extends InspectorBase {
             `${s.callCount} crypto ops · ${s.stubCount} stub${s.stubCount !== 1 ? 's' : ''}`)
         );
 
-      return h('div', { class: 'pyana-inspector pyana-stealth' },
+      return h('div', { class: 'dregg-inspector dregg-stealth' },
         h(SummaryHeader, {}),
-        h('div', { class: 'pyana-stealth__body' },
-          h('div', { class: 'pyana-stealth-demo' },
+        h('div', { class: 'dregg-stealth__body' },
+          h('div', { class: 'dregg-stealth-demo' },
             h(Step1, {}),
             h(Step2, {}),
             h(Step3, {}),
@@ -1115,6 +1115,6 @@ class PyanaStealth extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-stealth-address')) {
-  customElements.define('pyana-stealth-address', PyanaStealth);
+if (!customElements.get('dregg-stealth-address')) {
+  customElements.define('dregg-stealth-address', DreggStealth);
 }

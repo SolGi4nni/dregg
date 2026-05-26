@@ -481,7 +481,7 @@ pub fn verify_effect_action(
 ///           cap_allowed_effects_hash (32B)]
 /// amounts = [cap_slot (u32 → u64)]
 pub const SCHEMA_GRANT_CAPABILITY: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-grant-capability-v1",
+    kind_name: "dregg-effect-grant-capability-v1",
     field_count: 3,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -491,7 +491,7 @@ pub const SCHEMA_GRANT_CAPABILITY: EffectActionSchema = EffectActionSchema {
 /// fields = [cell_id (32B)]
 /// amounts = [slot (u32 → u64)]
 pub const SCHEMA_REVOKE_CAPABILITY: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-revoke-capability-v1",
+    kind_name: "dregg-effect-revoke-capability-v1",
     field_count: 1,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -501,7 +501,7 @@ pub const SCHEMA_REVOKE_CAPABILITY: EffectActionSchema = EffectActionSchema {
 /// fields = [topic (32B), data_hash (32B = BLAKE3 of full event.data)]
 /// amounts = [data_len (u64)]
 pub const SCHEMA_EMIT_EVENT: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-emit-event-v1",
+    kind_name: "dregg-effect-emit-event-v1",
     field_count: 2,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -511,7 +511,7 @@ pub const SCHEMA_EMIT_EVENT: EffectActionSchema = EffectActionSchema {
 /// fields = [public_key (32B), token_id (32B)]
 /// amounts = [balance (u64)]
 pub const SCHEMA_CREATE_CELL: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-cell-v1",
+    kind_name: "dregg-effect-create-cell-v1",
     field_count: 2,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -521,7 +521,7 @@ pub const SCHEMA_CREATE_CELL: EffectActionSchema = EffectActionSchema {
 /// fields = [cell_id (32B), permissions_hash (32B = BLAKE3 of postcard(perm))]
 /// amounts = []
 pub const SCHEMA_SET_PERMISSIONS: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-set-permissions-v1",
+    kind_name: "dregg-effect-set-permissions-v1",
     field_count: 2,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -531,7 +531,7 @@ pub const SCHEMA_SET_PERMISSIONS: EffectActionSchema = EffectActionSchema {
 /// fields = [cell_id (32B), vk_hash (32B; all-zero for None)]
 /// amounts = []
 pub const SCHEMA_SET_VERIFICATION_KEY: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-set-verification-key-v1",
+    kind_name: "dregg-effect-set-verification-key-v1",
     field_count: 2,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -542,7 +542,7 @@ pub const SCHEMA_SET_VERIFICATION_KEY: EffectActionSchema = EffectActionSchema {
 ///           permissions_vk_hash (32B; zero for non-Custom)]
 /// amounts = [permissions_discriminant (u64; 0..=5)]
 pub const SCHEMA_INTRODUCE: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-introduce-v1",
+    kind_name: "dregg-effect-introduce-v1",
     field_count: 4,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -552,7 +552,7 @@ pub const SCHEMA_INTRODUCE: EffectActionSchema = EffectActionSchema {
 /// fields = [sealer_holder (32B), unsealer_holder (32B)]
 /// amounts = []
 pub const SCHEMA_CREATE_SEAL_PAIR: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-seal-pair-v1",
+    kind_name: "dregg-effect-create-seal-pair-v1",
     field_count: 2,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -562,7 +562,7 @@ pub const SCHEMA_CREATE_SEAL_PAIR: EffectActionSchema = EffectActionSchema {
 /// fields = [nullifier (32B), receipt_hash (32B = BLAKE3 of postcard(receipt))]
 /// amounts = []
 pub const SCHEMA_BRIDGE_FINALIZE: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-bridge-finalize-v1",
+    kind_name: "dregg-effect-bridge-finalize-v1",
     field_count: 2,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -572,7 +572,7 @@ pub const SCHEMA_BRIDGE_FINALIZE: EffectActionSchema = EffectActionSchema {
 /// fields = [nullifier (32B)]
 /// amounts = []
 pub const SCHEMA_BRIDGE_CANCEL: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-bridge-cancel-v1",
+    kind_name: "dregg-effect-bridge-cancel-v1",
     field_count: 1,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -582,7 +582,7 @@ pub const SCHEMA_BRIDGE_CANCEL: EffectActionSchema = EffectActionSchema {
 /// fields = [child (32B)]
 /// amounts = []
 pub const SCHEMA_REVOKE_DELEGATION: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-revoke-delegation-v1",
+    kind_name: "dregg-effect-revoke-delegation-v1",
     field_count: 1,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -592,7 +592,7 @@ pub const SCHEMA_REVOKE_DELEGATION: EffectActionSchema = EffectActionSchema {
 /// fields = [child_public_key (32B), child_token_id (32B)]
 /// amounts = [max_staleness (u64)]
 pub const SCHEMA_SPAWN_WITH_DELEGATION: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-spawn-with-delegation-v1",
+    kind_name: "dregg-effect-spawn-with-delegation-v1",
     field_count: 2,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -607,7 +607,7 @@ pub const SCHEMA_SPAWN_WITH_DELEGATION: EffectActionSchema = EffectActionSchema 
 /// and refund lives in the AIR kind_name domain separator — distinct kind
 /// names mean a release proof cannot replay as a refund proof.
 pub const SCHEMA_RELEASE_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-release-escrow-v1",
+    kind_name: "dregg-effect-release-escrow-v1",
     field_count: 2,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -617,7 +617,7 @@ pub const SCHEMA_RELEASE_ESCROW: EffectActionSchema = EffectActionSchema {
 /// fields = [escrow_id (32B)]
 /// amounts = []
 pub const SCHEMA_REFUND_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-refund-escrow-v1",
+    kind_name: "dregg-effect-refund-escrow-v1",
     field_count: 1,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -632,7 +632,7 @@ pub const SCHEMA_REFUND_ESCROW: EffectActionSchema = EffectActionSchema {
 /// hash. Combined with the chained hash, this gives full integrity over
 /// the inner effects list.
 pub const SCHEMA_EXERCISE_VIA_CAPABILITY: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-exercise-via-capability-v1",
+    kind_name: "dregg-effect-exercise-via-capability-v1",
     field_count: 1,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -642,7 +642,7 @@ pub const SCHEMA_EXERCISE_VIA_CAPABILITY: EffectActionSchema = EffectActionSchem
 /// fields = [beneficiary (32B), condition_hash (32B), stake_commitment (32B)]
 /// amounts = [deadline_height (u64), stake_amount (u64)]
 pub const SCHEMA_CREATE_OBLIGATION: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-obligation-v1",
+    kind_name: "dregg-effect-create-obligation-v1",
     field_count: 3,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -652,7 +652,7 @@ pub const SCHEMA_CREATE_OBLIGATION: EffectActionSchema = EffectActionSchema {
 /// fields = [recipient (32B), condition_hash (32B), escrow_id (32B)]
 /// amounts = [amount (u64), timeout_height (u64)]
 pub const SCHEMA_CREATE_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-escrow-v1",
+    kind_name: "dregg-effect-create-escrow-v1",
     field_count: 3,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -662,7 +662,7 @@ pub const SCHEMA_CREATE_ESCROW: EffectActionSchema = EffectActionSchema {
 /// fields = [source_turn (32B), action_hash (32B)]
 /// amounts = [output_slot (u64)]
 pub const SCHEMA_PIPELINED_SEND: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-pipelined-send-v1",
+    kind_name: "dregg-effect-pipelined-send-v1",
     field_count: 2,
     amount_count: 1,
     algebraic: AlgebraicConstraint::None,
@@ -673,7 +673,7 @@ pub const SCHEMA_PIPELINED_SEND: EffectActionSchema = EffectActionSchema {
 ///           params_hash (32B = BLAKE3 of postcard(params))]
 /// amounts = []
 pub const SCHEMA_CREATE_CELL_FROM_FACTORY: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-cell-from-factory-v1",
+    kind_name: "dregg-effect-create-cell-from-factory-v1",
     field_count: 4,
     amount_count: 0,
     algebraic: AlgebraicConstraint::None,
@@ -693,7 +693,7 @@ pub const SCHEMA_CREATE_CELL_FROM_FACTORY: EffectActionSchema = EffectActionSche
 /// (the executor verifies the commitment+range_proof match the amount
 /// off-AIR).
 pub const SCHEMA_CREATE_COMMITTED_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-create-committed-escrow-v1",
+    kind_name: "dregg-effect-create-committed-escrow-v1",
     field_count: 6,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -731,7 +731,7 @@ pub const SCHEMA_CREATE_COMMITTED_ESCROW: EffectActionSchema = EffectActionSchem
 /// in the spend proof (or its replacement); only the binding role
 /// migrates here.
 pub const SCHEMA_NOTE_SPEND: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-note-spend-v1",
+    kind_name: "dregg-effect-note-spend-v1",
     field_count: 4,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -754,7 +754,7 @@ pub const SCHEMA_NOTE_SPEND: EffectActionSchema = EffectActionSchema {
 /// parameters. Recommend deprecating the legacy AIR in favor of the
 /// schema-based generalized AIR.
 pub const SCHEMA_NOTE_CREATE: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-note-create-v1",
+    kind_name: "dregg-effect-note-create-v1",
     field_count: 4,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
@@ -777,7 +777,7 @@ pub const SCHEMA_NOTE_CREATE: EffectActionSchema = EffectActionSchema {
 /// `lock_hash`, with `timeout_height` and the `value_commitment`
 /// unbound. Now every parameter is pinned at full fidelity.
 pub const SCHEMA_BRIDGE_LOCK: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-bridge-lock-v1",
+    kind_name: "dregg-effect-bridge-lock-v1",
     field_count: 4,
     amount_count: 3,
     algebraic: AlgebraicConstraint::None,
@@ -817,7 +817,7 @@ pub const SCHEMA_BRIDGE_LOCK: EffectActionSchema = EffectActionSchema {
 /// Once Burn is extended to multi-slot, add a `slot (u64)` amount to the
 /// schema.
 pub const SCHEMA_BURN: EffectActionSchema = EffectActionSchema {
-    kind_name: "pyana-effect-burn-v1",
+    kind_name: "dregg-effect-burn-v1",
     field_count: 1,
     amount_count: 4,
     algebraic: AlgebraicConstraint::Burn,

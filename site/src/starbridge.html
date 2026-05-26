@@ -1,5 +1,5 @@
 <layout src="_layouts/default.html">
-<title>Starbridge — Pyana Studio</title>
+<title>Starbridge — <code>dregg</code> Studio</title>
 
 <link rel="stylesheet" href="/_includes/studio/starbridge.css">
 
@@ -15,7 +15,7 @@
       <label class="sb__field sb__field--grow">
         <span class="sb__field-label">URI</span>
         <input id="sb-uri" class="sb__input" type="text"
-               placeholder="pyana://cell/abc123…" autocomplete="off"
+               placeholder="dregg://cell/abc123…" autocomplete="off"
                spellcheck="false">
       </label>
       <button id="sb-go" class="sb__btn">Go</button>
@@ -33,7 +33,7 @@
     </div>
   </header>
 
-  <pyana-app id="sb-app">
+  <dregg-app id="sb-app">
     <div class="sb__panes">
       <aside class="sb__pane sb__pane--tree" aria-label="Object tree">
         <h2 class="sb__pane-title">Objects</h2>
@@ -43,14 +43,14 @@
           </h3>
           <ul id="sb-cell-list" class="sb__list"></ul>
         </section>
-        <!-- Apps tab / browser (STARBRIDGE-PLAN §4.8): <pyana-app-list> reads
+        <!-- Apps tab / browser (STARBRIDGE-PLAN §4.8): <dregg-app-list> reads
              starbridge-apps/*/manifest.json (Q3 format). First e2e demo is
              the nameservice (mounts its inspectors + typed turn-builders). -->
         <section class="sb__section">
           <h3 class="sb__section-title">
             Apps <span id="sb-app-count" class="sb__count">0</span>
           </h3>
-          <pyana-app-list id="sb-app-list"></pyana-app-list>
+          <dregg-app-list id="sb-app-list"></dregg-app-list>
         </section>
         <details class="sb__section sb__section--placeholder">
           <summary>Turns</summary>
@@ -87,7 +87,7 @@
         <pre id="sb-raw" class="sb__raw">no object selected</pre>
       </section>
     </div>
-  </pyana-app>
+  </dregg-app>
 </main>
 
 <script type="module" src="/_includes/runtime-bootstrap.js"></script>

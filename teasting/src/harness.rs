@@ -6,8 +6,8 @@
 //!
 //! # Consensus engine
 //!
-//! `SimFederation` is now backed by `pyana_blocklace::finality::Blocklace` instances
-//! (one per node) rather than the deleted `pyana_federation::node::Federation`
+//! `SimFederation` is now backed by `dregg_blocklace::finality::Blocklace` instances
+//! (one per node) rather than the deleted `dregg_federation::node::Federation`
 //! (Morpheus BFT simulator). The public API is unchanged; the internal simulation
 //! follows the demo/sdk-consensus pattern: nodes propose blocks, gossip them to
 //! online peers, and `tau` produces a total order.
@@ -16,15 +16,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ed25519_dalek::SigningKey as DalekSigningKey;
-use pyana_blocklace::finality::{Blocklace, Payload};
-use pyana_captp::{FederationId as GroupId, PyanaUri};
-use pyana_cell::{AuthRequired, Ledger};
-use pyana_federation::{
+use dregg_blocklace::finality::{Blocklace, Payload};
+use dregg_captp::{FederationId as GroupId, DreggUri};
+use dregg_cell::{AuthRequired, Ledger};
+use dregg_federation::{
     Federation, FederationReceipt, FederationReceiptBody, KnownFederations, LocalSeat,
 };
-use pyana_turn::executor::{ComputronCosts, TurnExecutor};
-use pyana_turn::{Turn, TurnReceipt, TurnResult};
-use pyana_types::{AttestedRoot, CellId, PublicKey as FedPublicKey, SigningKey};
+use dregg_turn::executor::{ComputronCosts, TurnExecutor};
+use dregg_turn::{Turn, TurnReceipt, TurnResult};
+use dregg_types::{AttestedRoot, CellId, PublicKey as FedPublicKey, SigningKey};
 
 use crate::captp_sim::SimCapTpSession;
 
@@ -105,8 +105,8 @@ impl SimNode {
 // SimFederation
 // =============================================================================
 
-/// A simulated federation wrapping `pyana_blocklace::finality::Blocklace`
-/// instances (one per node) + the canonical `pyana_federation::Federation`
+/// A simulated federation wrapping `dregg_blocklace::finality::Blocklace`
+/// instances (one per node) + the canonical `dregg_federation::Federation`
 /// attestation context.
 pub struct SimFederation {
     /// Canonical committee context: committee pubkeys, epoch, threshold,
@@ -134,7 +134,7 @@ impl SimFederation {
 
         for i in 0..num_nodes {
             // Deterministic seed from (name, index).
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-teasting-sim-node-key-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-teasting-sim-node-key-v1");
             hasher.update(name.as_bytes());
             hasher.update(b"-");
             hasher.update(&(i as u64).to_le_bytes());
@@ -148,15 +148,15 @@ impl SimFederation {
         // Canonical federation: node 0 holds the local seat.
         // Re-derive node 0's seed to construct the LocalSeat signing key.
         let local_sk = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-teasting-sim-node-key-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-teasting-sim-node-key-v1");
             hasher.update(name.as_bytes());
             hasher.update(b"-");
             hasher.update(&0u64.to_le_bytes());
             let seed: [u8; 32] = *hasher.finalize().as_bytes();
             SigningKey::from_bytes(&seed)
         };
-        // `LocalSeat::bls_secret` is gated by `pyana_federation`'s `runtime`
-        // feature. `pyana-teasting` depends on federation with default features
+        // `LocalSeat::bls_secret` is gated by `dregg_federation`'s `runtime`
+        // feature. `dregg-teasting` depends on federation with default features
         // (which includes `runtime`), so we must include it.
         let local_seat = LocalSeat {
             index: 0,
@@ -208,7 +208,7 @@ impl SimFederation {
         }
 
         // Collect pending revocations and have each online node propose a block.
-        let mut proposed: Vec<(usize, pyana_blocklace::finality::Block)> = Vec::new();
+        let mut proposed: Vec<(usize, dregg_blocklace::finality::Block)> = Vec::new();
         for &i in &online_indices {
             let pending = std::mem::take(&mut self.nodes[i].pending);
             if !pending.is_empty() {
@@ -234,7 +234,7 @@ impl SimFederation {
         }
 
         // Each online node acknowledges received proposals.
-        let mut acks: Vec<(usize, pyana_blocklace::finality::Block)> = Vec::new();
+        let mut acks: Vec<(usize, dregg_blocklace::finality::Block)> = Vec::new();
         for &i in &online_indices {
             let ack = self.nodes[i].blocklace.add_block(Payload::Ack);
             acks.push((i, ack));
@@ -257,7 +257,7 @@ impl SimFederation {
             .collect();
 
         let ordering_lace = build_ordering_blocklace(&self.nodes[leader_idx].blocklace);
-        let finalized_ids = pyana_blocklace::ordering::tau(&ordering_lace, &participants);
+        let finalized_ids = dregg_blocklace::ordering::tau(&ordering_lace, &participants);
 
         if finalized_ids.is_empty() {
             return false;
@@ -396,17 +396,17 @@ impl SimFederation {
 /// Mirrors `demo/sdk-consensus::build_ordering_blocklace` — the production seam
 /// between the signed, equivocation-aware finality DAG and the simple ordering
 /// DAG that `tau` consumes.
-fn build_ordering_blocklace(finality_lace: &Blocklace) -> pyana_blocklace::Blocklace {
-    let mut ordering_lace = pyana_blocklace::Blocklace::new();
-    let mut f2o: HashMap<pyana_blocklace::finality::BlockId, pyana_blocklace::BlockId> =
+fn build_ordering_blocklace(finality_lace: &Blocklace) -> dregg_blocklace::Blocklace {
+    let mut ordering_lace = dregg_blocklace::Blocklace::new();
+    let mut f2o: HashMap<dregg_blocklace::finality::BlockId, dregg_blocklace::BlockId> =
         HashMap::new();
 
     // BFS from tips to collect all reachable finality blocks.
     let mut all: Vec<(
-        pyana_blocklace::finality::BlockId,
-        pyana_blocklace::finality::Block,
+        dregg_blocklace::finality::BlockId,
+        dregg_blocklace::finality::Block,
     )> = Vec::new();
-    let mut frontier: Vec<pyana_blocklace::finality::BlockId> =
+    let mut frontier: Vec<dregg_blocklace::finality::BlockId> =
         finality_lace.tips().values().copied().collect();
     let mut seen = HashSet::new();
 
@@ -426,7 +426,7 @@ fn build_ordering_blocklace(finality_lace: &Blocklace) -> pyana_blocklace::Block
     all.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
 
     for (fid, block) in all {
-        let predecessors: Vec<pyana_blocklace::BlockId> = block
+        let predecessors: Vec<dregg_blocklace::BlockId> = block
             .predecessors
             .iter()
             .filter_map(|p| f2o.get(p).copied())
@@ -437,7 +437,7 @@ fn build_ordering_blocklace(finality_lace: &Blocklace) -> pyana_blocklace::Block
             _ => vec![],
         };
         let ordering_block =
-            pyana_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
+            dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
         let oid = ordering_block.id();
         let _ = ordering_lace.insert(ordering_block);
         f2o.insert(fid, oid);
@@ -463,7 +463,7 @@ fn parse_data_payload(payload: &[u8]) -> Option<Vec<String>> {
 /// Derive a deterministic Merkle-like root from a list of revoked token ids.
 /// Uses BLAKE3 chaining — sufficient for test-harness consistency checks.
 fn compute_revocation_root(token_ids: &[String]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-teasting-revocation-root-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-teasting-revocation-root-v1");
     for tid in token_ids {
         hasher.update(tid.as_bytes());
         hasher.update(b"\0");
@@ -502,7 +502,7 @@ pub struct SimulationHarness {
 impl SimulationHarness {
     /// Derive a deterministic GroupId from a federation name.
     fn derive_federation_id(name: &str) -> GroupId {
-        let hash = blake3::derive_key("pyana-teasting-federation-id-v1", name.as_bytes());
+        let hash = blake3::derive_key("dregg-teasting-federation-id-v1", name.as_bytes());
         GroupId(hash)
     }
 
@@ -651,7 +651,7 @@ impl SimulationHarness {
         fed_idx: usize,
         cell_id: CellId,
         target_fed_idx: usize,
-    ) -> PyanaUri {
+    ) -> DreggUri {
         let key = if fed_idx < target_fed_idx {
             (fed_idx, target_fed_idx)
         } else {
@@ -679,7 +679,7 @@ impl SimulationHarness {
     pub fn enliven_sturdy(
         &mut self,
         fed_idx: usize,
-        uri: &PyanaUri,
+        uri: &DreggUri,
         source_fed_idx: usize,
     ) -> Result<CellId, String> {
         let key = if fed_idx < source_fed_idx {
@@ -792,12 +792,12 @@ impl SimulationHarness {
         let threshold = fed.canonical.threshold_usize();
         let sorted_keys = fed.all_signing_keys_canonical_order();
         let members = fed.canonical.members();
-        let mut votes: Vec<(FedPublicKey, pyana_types::Signature)> = Vec::new();
+        let mut votes: Vec<(FedPublicKey, dregg_types::Signature)> = Vec::new();
         for (sk, pk) in sorted_keys.iter().zip(members.iter()) {
             if votes.len() >= threshold {
                 break;
             }
-            let sig = pyana_types::sign(sk, &body_hash);
+            let sig = dregg_types::sign(sk, &body_hash);
             votes.push((pk.clone(), sig));
         }
 
@@ -823,7 +823,7 @@ impl SimulationHarness {
         let block_height = self.clock.block_height;
         // Use a deterministic mock block_id: H("mock-block" || height || fed_idx).
         let block_id = {
-            let mut h = blake3::Hasher::new_derive_key("pyana-teasting-mock-block-id-v1");
+            let mut h = blake3::Hasher::new_derive_key("dregg-teasting-mock-block-id-v1");
             h.update(&block_height.to_le_bytes());
             h.update(&(fed_idx as u64).to_le_bytes());
             *h.finalize().as_bytes()

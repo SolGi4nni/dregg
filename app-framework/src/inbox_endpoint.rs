@@ -8,7 +8,7 @@
 //! - `GET /next` — owner reads the next queued entry.
 //! - `GET /status` — inbox status JSON.
 //!
-//! All spam-prevention and Merkle accounting lives in `pyana_storage::inbox::CapInbox`.
+//! All spam-prevention and Merkle accounting lives in `dregg_storage::inbox::CapInbox`.
 //! This module is a thin HTTP skin.
 //!
 //! # Triage (storage→cell-program migration — 2026-05-24)
@@ -38,12 +38,12 @@
 //! to "produce signed `Action` carrying queue-state effects, submit
 //! through `StarbridgeAppContext::executor()`, surface the receipt as
 //! JSON." Blocks on the cell-program migration; in the interim this
-//! module continues to wrap `pyana_storage::inbox::CapInbox` directly.
+//! module continues to wrap `dregg_storage::inbox::CapInbox` directly.
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use pyana_app_framework::inbox_endpoint::InboxEndpoint;
+//! use dregg_app_framework::inbox_endpoint::InboxEndpoint;
 //!
 //! let endpoint = InboxEndpoint::new(256, 100).ttl_blocks(1000);
 //! let app = AppServer::new(config)
@@ -62,7 +62,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use pyana_storage::{
+use dregg_storage::{
     QuotaId,
     inbox::{CapInbox, InboxMessage},
 };
@@ -332,7 +332,7 @@ mod tests {
         let body = serde_json::json!({
             "sender_hex": make_sender_hex(),
             "deposit": 0u64,
-            "uri": "pyana://test/ref"
+            "uri": "dregg://test/ref"
         });
         let req = Request::builder()
             .method(Method::POST)

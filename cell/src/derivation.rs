@@ -1,7 +1,7 @@
 //! Capability Derivation Tree (CDT) — tracks provenance of every capability.
 //!
 //! Inspired by seL4's CDT, adapted for the distributed case. In seL4 the CDT
-//! enables complete revocation (revoke all descendants of a cap). In pyana
+//! enables complete revocation (revoke all descendants of a cap). In dregg
 //! (distributed, no kernel), we track derivation provenance and enable
 //! VERIFIABLE revocation claims:
 //!
@@ -34,7 +34,7 @@
 //!
 //! 1. Commit each derivation node to a Poseidon2 leaf:
 //!    `leaf = Poseidon2(cell_id || slot || parent_hash || derivation_type)`
-//! 2. Insert all derivation nodes into a Poseidon2MerkleTree (from pyana-commit).
+//! 2. Insert all derivation nodes into a Poseidon2MerkleTree (from dregg-commit).
 //! 3. To prove valid ancestry: provide a chain of membership proofs from the
 //!    leaf (your cap) up through each ancestor to the minting root, each with
 //!    a valid Poseidon2MerkleProof.
@@ -86,7 +86,7 @@ impl DerivationEdge {
     /// Compute a BLAKE3 hash of this edge for use in receipts and proofs.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-derivation-edge-v1");
+        hasher.update(b"dregg-derivation-edge-v1");
         hasher.update(self.source_cell.as_bytes());
         hasher.update(&self.source_slot.to_le_bytes());
         hasher.update(&[self.derivation_type_tag()]);
@@ -127,7 +127,7 @@ impl DerivationNode {
     /// Compute a BLAKE3 hash of this node for inclusion in Merkle structures.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-derivation-node-v1");
+        hasher.update(b"dregg-derivation-node-v1");
         hasher.update(self.cell.as_bytes());
         hasher.update(&self.slot.to_le_bytes());
         match &self.parent {
@@ -317,7 +317,7 @@ impl DerivationTree {
     /// Matches the domain separation used by the nullifier set so that
     /// ZK non-membership proofs are compatible.
     pub fn revocation_hash(cell: &CellId, slot: u32) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-cdt-revocation-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-cdt-revocation-v1");
         hasher.update(cell.as_bytes());
         hasher.update(&slot.to_le_bytes());
         *hasher.finalize().as_bytes()
@@ -379,7 +379,7 @@ impl DerivationTree {
         // Hash from root to leaf (accumulate).
         let mut acc = [0u8; 32];
         for node in path.iter().rev() {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-cdt-path-v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-cdt-path-v1");
             hasher.update(&node.hash());
             hasher.update(&acc);
             acc = *hasher.finalize().as_bytes();
@@ -410,7 +410,7 @@ impl DerivationRecord {
     /// Compute a BLAKE3 hash of this record for receipt inclusion.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-derivation-record-v1");
+        hasher.update(b"dregg-derivation-record-v1");
         hasher.update(self.target_cell.as_bytes());
         hasher.update(&self.target_slot.to_le_bytes());
         hasher.update(&self.edge.hash());

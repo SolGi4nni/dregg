@@ -1,13 +1,13 @@
 [package]
-name = "pyana-commit"
+name = "dregg-commit"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
-pyana-circuit = { path = "../circuit" }
-pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
+dregg-circuit = { path = "../circuit" }
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 
 [lints]
 workspace = true

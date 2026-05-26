@@ -307,7 +307,7 @@ fn decompress_point(bytes: &[u8; 32]) -> Option<EdwardsPoint> {
 
 /// Derive a symmetric key from a DH shared secret using BLAKE3's KDF mode.
 fn derive_ot_key(shared_point_bytes: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-ot-key-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ot-key-v1");
     hasher.update(shared_point_bytes);
     *hasher.finalize().as_bytes()
 }
@@ -348,13 +348,13 @@ fn decrypt_message(key: &[u8; 32], data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Combine per-bit keys for a given index j using BLAKE3.
-/// The combined key is: BLAKE3("pyana-ot-combine-v1", key_{bit0(j)} || key_{bit1(j)} || ...).
+/// The combined key is: BLAKE3("dregg-ot-combine-v1", key_{bit0(j)} || key_{bit1(j)} || ...).
 fn combine_keys_for_index(
     index: usize,
     key_pairs: &[([u8; 32], [u8; 32])],
     num_bits: usize,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-ot-combine-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ot-combine-v1");
     for bit_idx in 0..num_bits {
         let bit = (index >> bit_idx) & 1;
         if bit == 0 {
@@ -372,7 +372,7 @@ fn combine_keys_for_index_receiver(
     receiver_keys: &[[u8; 32]],
     num_bits: usize,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-ot-combine-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ot-combine-v1");
     for bit_idx in 0..num_bits {
         // The receiver obtained key_{choice_bit_i} for each bit position.
         // We just hash them in order — the bit value is implicit in which key was received.

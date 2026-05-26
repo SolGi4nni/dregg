@@ -8,7 +8,7 @@ use std::any::Any;
 
 /// Represents a request that caveats are checked against.
 ///
-/// Domain-specific implementations (e.g., `PyanaAccess`) provide the
+/// Domain-specific implementations (e.g., `DreggAccess`) provide the
 /// actual fields. Caveats downcast to the concrete type they understand.
 ///
 /// This is intentionally minimal — the macaroon library doesn't prescribe

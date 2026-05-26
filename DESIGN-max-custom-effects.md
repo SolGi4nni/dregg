@@ -71,7 +71,7 @@ Take `N` = the per-cell value we eventually pick (currently the workspace consta
 
 ## 3. Actual upper bounds
 
-- **BabyBear field on PI elements.** None — PI is `Vec<BabyBear>`, no fixed cap in `pyana_circuit`. Each element is ~31 bits (4 bytes serialized canonically).
+- **BabyBear field on PI elements.** None — PI is `Vec<BabyBear>`, no fixed cap in `dregg_circuit`. Each element is ~31 bits (4 bytes serialized canonically).
 - **Plonky3 PI handling.** Plonky3 does not impose a PI length limit; PI is folded into the transcript and used in the STARK boundary system. No architectural ceiling within tested ranges (single-digit to a few hundred elements is routine).
 - **Network MTU.** `MAX_BLOCKS_PER_PUSH = 100` (`blocklace/src/dissemination.rs:32`) limits gossip batch size in *block count*, not bytes. No per-turn byte cap was found in `turn/`, `wire/`, or `blocklace/`. Network is not a binding constraint at our scale.
 - **Cipherclerk effects-per-turn.** No explicit `max_effects_per_turn` constant found in `sdk/`, `intent/`, or `turn/`. The implicit cap is `EffectVmAir::new(max_effects)`, which must be a power of 2 — current code paths construct AIRs with heights up to a few hundred rows.
@@ -83,7 +83,7 @@ Take `N` = the per-cell value we eventually pick (currently the workspace consta
 
 ## 4. Per-cell-program: what does it mean?
 
-The user wants the cap to come from the cell's program declaration, not from `pyana_circuit`. The natural place:
+The user wants the cap to come from the cell's program declaration, not from `dregg_circuit`. The natural place:
 
 - Sovereign cells already carry a `SovereignRegistration` with `verification_key_hash` (referenced at `turn/src/executor.rs:1268`).
 - `CellProgram` in `circuit/src/dsl/circuit.rs:931` carries program metadata.

@@ -23,10 +23,10 @@
 //!
 //! Per `DESIGN-receipts.md` §5 (per-phase) plus §4 (federation QC):
 //!
-//! - **Body**: `BridgeReceiptEnvelope` (`pyana-cell::note_bridge`). Carries
+//! - **Body**: `BridgeReceiptEnvelope` (`dregg-cell::note_bridge`). Carries
 //!   `(version, phase, bridge_id, src_federation, dst_federation,
 //!   block_height, previous_phase_receipt_hash, payload)`. Hash:
-//!   `body_hash()` = BLAKE3_derive_key("pyana-bridge-envelope-v1", ...).
+//!   `body_hash()` = BLAKE3_derive_key("dregg-bridge-envelope-v1", ...).
 //! - **Signature**: a `FederationCommittee::aggregate` BLS threshold
 //!   signature over `body_hash()`, wrapped in a `ThresholdQC`. Both
 //!   federations register each other's committees out of band (the trust
@@ -35,10 +35,10 @@
 //!   `body_hash()`. The `BridgePhaseLog` enforces this on admission and
 //!   rejects any replay or non-monotone advancement.
 
-use pyana_cell::note_bridge::{
+use dregg_cell::note_bridge::{
     BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope, compute_bridge_id,
 };
-use pyana_federation::threshold::{
+use dregg_federation::threshold::{
     FederationCommittee, MemberSecret, ThresholdQC, generate_test_committee,
 };
 
@@ -250,7 +250,7 @@ fn cross_federation_replay_rejected_after_finalize() {
     let err = log_b
         .admit(&late_refund)
         .expect_err("late refund must be rejected after finalize");
-    use pyana_cell::note_bridge::BridgePhaseError;
+    use dregg_cell::note_bridge::BridgePhaseError;
     assert!(
         matches!(
             err,

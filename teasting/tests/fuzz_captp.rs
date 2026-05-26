@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 
-use pyana_captp::sturdy::SwissTable;
-use pyana_captp::{
+use dregg_captp::sturdy::SwissTable;
+use dregg_captp::{
     CapSession, ExportGcManager, FederationId, HandoffCertificate, HandoffPresentation,
     validate_handoff,
 };
-use pyana_cell::{AuthRequired, CellId};
-use pyana_teasting::assertions::assert_gc_consistency;
-use pyana_types::{PublicKey, Signature};
+use dregg_cell::{AuthRequired, CellId};
+use dregg_teasting::assertions::assert_gc_consistency;
+use dregg_types::{PublicKey, Signature};
 
 // =============================================================================
 // Deterministic PRNG (xorshift64)
@@ -512,7 +512,7 @@ fn test_captp_valid_operations_succeed() {
         let result = export_gc.process_drop(cell_id, fed_id);
         assert_eq!(
             result,
-            pyana_captp::DropResult::CanRevoke,
+            dregg_captp::DropResult::CanRevoke,
             "Drop after single export should yield CanRevoke"
         );
     }
@@ -535,19 +535,19 @@ fn test_captp_invalid_operations_fail() {
     let result = export_gc.process_drop(cell_id, fed_b);
     assert_eq!(
         result,
-        pyana_captp::DropResult::Invalid,
+        dregg_captp::DropResult::Invalid,
         "Drop from wrong federation should be Invalid"
     );
 
     // Valid drop.
     let result = export_gc.process_drop(cell_id, fed_a);
-    assert_eq!(result, pyana_captp::DropResult::CanRevoke);
+    assert_eq!(result, dregg_captp::DropResult::CanRevoke);
 
     // Double-drop: cell no longer has entry (already at zero, was cleaned).
     let result = export_gc.process_drop(cell_id, fed_a);
     assert_eq!(
         result,
-        pyana_captp::DropResult::Invalid,
+        dregg_captp::DropResult::Invalid,
         "Double-drop should be Invalid"
     );
 }

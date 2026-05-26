@@ -11,16 +11,16 @@
 //!
 //! # Findings documented inline where behavior reveals design gaps.
 
-use pyana_storage::inbox::InboxMessage;
-use pyana_storage::multi_asset::{ExchangeRate, FeeError, FeePayment, FeePolicy};
-use pyana_storage::operator::{DeliveryDispute, DisputeOutcome, RelayOperator};
-use pyana_storage::programmable::{ProgramError, ProgrammableQueue, ValidationContext, programs};
-use pyana_storage::pubsub::PubSubTopic;
-use pyana_storage::queue::{MerkleQueue, QueueEntry, empty_queue_root, verify_dequeue_proof};
-use pyana_storage::relay::RelayError;
-use pyana_teasting::fault::{FaultConfig, FaultyNetwork, MessageBuffer};
-use pyana_teasting::harness::SimulationHarness;
-use pyana_wire::message::WireMessage;
+use dregg_storage::inbox::InboxMessage;
+use dregg_storage::multi_asset::{ExchangeRate, FeeError, FeePayment, FeePolicy};
+use dregg_storage::operator::{DeliveryDispute, DisputeOutcome, RelayOperator};
+use dregg_storage::programmable::{ProgramError, ProgrammableQueue, ValidationContext, programs};
+use dregg_storage::pubsub::PubSubTopic;
+use dregg_storage::queue::{MerkleQueue, QueueEntry, empty_queue_root, verify_dequeue_proof};
+use dregg_storage::relay::RelayError;
+use dregg_teasting::fault::{FaultConfig, FaultyNetwork, MessageBuffer};
+use dregg_teasting::harness::SimulationHarness;
+use dregg_wire::message::WireMessage;
 
 // =============================================================================
 // Helpers
@@ -156,7 +156,7 @@ fn relay_crash_with_pending_drain_recoverable_if_checkpointed() {
     net.recover_node(
         0,
         0,
-        pyana_teasting::fault::SavedState {
+        dregg_teasting::fault::SavedState {
             node_idx: 0,
             federation_idx: 0,
             height_at_crash: harness.clock.block_height,
@@ -1146,7 +1146,7 @@ fn operator_bond_invariant_holds_under_faults() {
 /// This proves the system does not double-spend queue contents.
 #[test]
 fn atomic_tx_concurrent_dequeue_conflict_second_fails() {
-    use pyana_storage::atomic::{QueueOp, QueueTransaction, TxError};
+    use dregg_storage::atomic::{QueueOp, QueueTransaction, TxError};
     use std::collections::HashMap;
 
     let queue_a_id = [0x0A; 32];
@@ -1194,7 +1194,7 @@ fn atomic_tx_concurrent_dequeue_conflict_second_fails() {
         matches!(
             result_bob,
             Err(TxError::QueueError {
-                error: pyana_storage::queue::QueueError::Empty,
+                error: dregg_storage::queue::QueueError::Empty,
                 ..
             })
         ),
@@ -1220,7 +1220,7 @@ fn atomic_tx_concurrent_dequeue_conflict_second_fails() {
 /// the state AFTER the other has committed.
 #[test]
 fn atomic_tx_cross_queue_no_deadlock_sequential() {
-    use pyana_storage::atomic::QueueTransaction;
+    use dregg_storage::atomic::QueueTransaction;
     use std::collections::HashMap;
 
     let queue_a_id = [0x0A; 32];
@@ -1273,7 +1273,7 @@ fn atomic_tx_cross_queue_no_deadlock_sequential() {
 /// This must be rejected.
 #[test]
 fn atomic_tx_stale_root_assertion_rejected() {
-    use pyana_storage::atomic::{QueueTransaction, TxError};
+    use dregg_storage::atomic::{QueueTransaction, TxError};
     use std::collections::HashMap;
 
     let queue_a_id = [0x0A; 32];
@@ -1328,13 +1328,13 @@ fn atomic_tx_stale_root_assertion_rejected() {
 /// The circuit must reject (constraint: old_f4 == combined_old_root param).
 #[test]
 fn circuit_atomic_tx_wrong_old_root_rejected() {
-    use pyana_circuit::effect_vm::{
+    use dregg_circuit::effect_vm::{
         CellState, Effect, EffectVmAir, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
         generate_effect_vm_trace, param, state,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2::hash_2_to_1;
-    use pyana_circuit::stark::StarkAir;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2::hash_2_to_1;
+    use dregg_circuit::stark::StarkAir;
 
     let mut cell_state = CellState::new(10_000, 0);
     let actual_root = hash_2_to_1(BabyBear::new(0x11), BabyBear::new(0x22));
@@ -1378,13 +1378,13 @@ fn circuit_atomic_tx_wrong_old_root_rejected() {
 /// With net_deposit=0, ANY balance change is rejected.
 #[test]
 fn circuit_atomic_tx_balance_change_rejected() {
-    use pyana_circuit::effect_vm::{
+    use dregg_circuit::effect_vm::{
         AUX_BASE, CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, STATE_AFTER_BASE, aux_off,
         generate_effect_vm_trace, state,
     };
-    use pyana_circuit::field::BabyBear;
-    use pyana_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
-    use pyana_circuit::stark::StarkAir;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
+    use dregg_circuit::stark::StarkAir;
 
     let mut cell_state = CellState::new(10_000, 0);
     let combined_old = hash_2_to_1(BabyBear::new(0x11), BabyBear::new(0x22));
@@ -1406,7 +1406,7 @@ fn circuit_atomic_tx_balance_change_rejected() {
 
     // Tamper: change balance in state_after (try to steal 1000 computrons).
     // new_balance = 11000 instead of 10000. With net_deposit=0, this must fail.
-    let (tampered_lo, tampered_hi) = pyana_circuit::effect_vm::split_u64(11_000);
+    let (tampered_lo, tampered_hi) = dregg_circuit::effect_vm::split_u64(11_000);
     trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = tampered_lo;
     trace[0][STATE_AFTER_BASE + state::BALANCE_HI] = tampered_hi;
 
@@ -1454,7 +1454,7 @@ fn circuit_atomic_tx_balance_change_rejected() {
 /// Deposits from the first op must be returned.
 #[test]
 fn atomic_tx_partial_failure_rollback_preserves_state() {
-    use pyana_storage::atomic::{QueueTransaction, TxError};
+    use dregg_storage::atomic::{QueueTransaction, TxError};
     use std::collections::HashMap;
 
     let queue_a_id = [0x0A; 32];
@@ -1477,7 +1477,7 @@ fn atomic_tx_partial_failure_rollback_preserves_state() {
         matches!(
             result,
             Err(TxError::QueueError {
-                error: pyana_storage::queue::QueueError::Empty,
+                error: dregg_storage::queue::QueueError::Empty,
                 ..
             })
         ),

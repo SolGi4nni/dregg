@@ -1,5 +1,5 @@
 /**
- * <pyana-receipt-list> — list of receipts.
+ * <dregg-receipt-list> — list of receipts.
  *
  * Optional `agent` attribute (numeric agent_index) is currently a no-op
  * because the wasm runtime does not expose per-agent filtering; we always
@@ -9,7 +9,7 @@
 
 import { InspectorBase } from './_base.js';
 
-class PyanaReceiptList extends InspectorBase {
+class DreggReceiptList extends InspectorBase {
   static get observedAttributes() { return ['uri', 'mode', 'agent']; }
   _render() {
     const { h, render, html, effect } = this._api;
@@ -24,13 +24,13 @@ class PyanaReceiptList extends InspectorBase {
 
     const Component = () => {
       const rs = sig.value || [];
-      if (!rs.length) return html`<div class="pyana-inspector pyana-inspector--empty">no receipts yet</div>`;
+      if (!rs.length) return html`<div class="dregg-inspector dregg-inspector--empty">no receipts yet</div>`;
       return html`
-        <div class="pyana-inspector pyana-inspector--cell-list">
+        <div class="dregg-inspector dregg-inspector--cell-list">
           <header>${rs.length} receipt${rs.length === 1 ? '' : 's'}${agentIdx != null ? ` (agent #${agentIdx})` : ''}</header>
           <ul>
             ${rs.map(r => html`
-              <li><pyana-receipt uri=${`pyana://receipt/${r.turn_hash}`} mode="compact"></pyana-receipt></li>
+              <li><dregg-receipt uri=${`dregg://receipt/${r.turn_hash}`} mode="compact"></dregg-receipt></li>
             `)}
           </ul>
         </div>`;
@@ -38,4 +38,4 @@ class PyanaReceiptList extends InspectorBase {
     this._dispose = effect(() => { render(h(Component, {}), root); });
   }
 }
-if (!customElements.get('pyana-receipt-list')) customElements.define('pyana-receipt-list', PyanaReceiptList);
+if (!customElements.get('dregg-receipt-list')) customElements.define('dregg-receipt-list', DreggReceiptList);

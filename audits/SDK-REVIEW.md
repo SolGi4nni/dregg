@@ -1,10 +1,10 @@
-# SDK Review — `pyana-sdk` audit toward the pyanascript bottom-up surface
+# SDK Review — `dregg-sdk` audit toward the dreggscript bottom-up surface
 
 Written 2026-05-24 against `sdk/src/` HEAD. Scope: identify the API gap
-between `pyana-sdk` as it stands today and the hypothetical method-chain
-runtime API that `pyanascript` (the design in `pyanascript/`) would
+between `dregg-sdk` as it stands today and the hypothetical method-chain
+runtime API that `dreggscript` (the design in `dreggscript/`) would
 compile to. See `THOUGHTS-AND-DREAMS.md` §6 (two-language model), §Q5
-(bottom-up discipline), and `pyanascript/README.md` §Q1 (the method-chain
+(bottom-up discipline), and `dreggscript/README.md` §Q1 (the method-chain
 shape).
 
 This is a design audit followed by a small bounded improvement pass.
@@ -20,11 +20,11 @@ absorb.
 
 | File | LoC | Role |
 |---|---|---|
-| `cipherclerk.rs` | 7149 | `AgentCipherclerk` — identity, tokens, receipt chain, sovereign cells, queues, sealed dispatch onto `pyana_turn`/`pyana_cell`/`pyana_captp` |
+| `cipherclerk.rs` | 7149 | `AgentCipherclerk` — identity, tokens, receipt chain, sovereign cells, queues, sealed dispatch onto `dregg_turn`/`dregg_cell`/`dregg_captp` |
 | `captp_client.rs` | 1000 | `CapTpClient`, `LiveRef`, `EventualRef` — three-vat reference plumbing |
 | `names.rs` | 1120 | `PetnameDb`, `NameResolver` — local petname mapping |
 | `committed_turn.rs` | 665 | `CommittedTurnBuilder` — Pedersen-commitment transfers |
-| `embed.rs` | 956 | `PyanaEngine`, `WireCodec` — no-IO embed layer for hosts |
+| `embed.rs` | 956 | `DreggEngine`, `WireCodec` — no-IO embed layer for hosts |
 | `privacy.rs` | 979 | Anonymous presentation / non-revocation / nullifier-set proofs |
 | `verify.rs` | 936 | Standalone verifier entry points |
 | `full_turn_proof.rs` | 833 | Composed full-turn proof types |
@@ -40,13 +40,13 @@ Two structural observations up front:
 
 1. **`AgentCipherclerk` is 107 `pub` methods on one type**, spread across
    ~7150 lines. It is the *de facto* runtime surface — apps that don't
-   reach past the SDK reach into `AgentCipherclerk`. Anything pyanascript
+   reach past the SDK reach into `AgentCipherclerk`. Anything dreggscript
    compiles to lives here (or has to be put here).
 2. **Apps mostly bypass the SDK.** Surveyed `apps/nameservice/src/`,
    `apps/orderbook/src/`, `apps/prediction-market/src/`: zero
-   `use pyana_sdk` lines. They import `pyana_turn::action::{Effect,
-   Action, Authorization}`, `pyana_turn::builder::ActionBuilder`,
-   `pyana_cell::CellId`, `pyana_types::CellId`. The SDK is being
+   `use dregg_sdk` lines. They import `dregg_turn::action::{Effect,
+   Action, Authorization}`, `dregg_turn::builder::ActionBuilder`,
+   `dregg_cell::CellId`, `dregg_types::CellId`. The SDK is being
    stepped *around*, not *through*. This is the canonical signal that
    the SDK isn't currently expressing what apps want to express.
 
@@ -131,12 +131,12 @@ exact; types abbreviated.
 
 107 pub methods on a single type. Verdict: not bad given the surface
 this layer is asked to cover; bad as a *programming model* for
-pyanascript to compile to. The grouping above is already the latent
+dreggscript to compile to. The grouping above is already the latent
 shape of the SDK we want.
 
-## Mapping to pyanascript's hypothetical `Cell::*` API
+## Mapping to dreggscript's hypothetical `Cell::*` API
 
-`pyanascript/README.md` §Q1 names the shape:
+`dreggscript/README.md` §Q1 names the shape:
 
 ```rust
 let cell = Cell::new(cclerk)
@@ -149,14 +149,14 @@ cell.spawn_child_with_behavior(child_spec)?;
 cell.on_receive(|state, msg, caps| { ... });
 ```
 
-| pyanascript primitive | Today in `pyana-sdk` | Verdict |
+| dreggscript primitive | Today in `dregg-sdk` | Verdict |
 |---|---|---|
-| `Cell::new(cclerk)` | `cclerk.cell_id(domain)` + `pyana_cell::Cell::new_hosted(...)` separately | **partial.** Two-step, you build `CellId` from the cclerk and then `Cell` from `pyana_cell` directly. No SDK type that owns "this cipherclerk's logical cell". |
-| `.with_state(s)` | `pyana_cell::Cell::with_balance/with_program/...` builder exists, but is on the *cell* type, not on a cclerk-bound handle | **partial.** Exists structurally on `Cell`, missing on the SDK handle. |
+| `Cell::new(cclerk)` | `cclerk.cell_id(domain)` + `dregg_cell::Cell::new_hosted(...)` separately | **partial.** Two-step, you build `CellId` from the cclerk and then `Cell` from `dregg_cell` directly. No SDK type that owns "this cipherclerk's logical cell". |
+| `.with_state(s)` | `dregg_cell::Cell::with_balance/with_program/...` builder exists, but is on the *cell* type, not on a cclerk-bound handle | **partial.** Exists structurally on `Cell`, missing on the SDK handle. |
 | `.with_behavior(handler)` | `deploy_program` (async, HTTP) lands a `CircuitDescriptor` against the federation; `execute_with_program` reuses it. There is no in-process handler concept. | **missing.** Behavior is "a deployed STARK program," not "a closure." Mapping closures onto programs is non-trivial — likely a CapTP-resolver pattern. |
 | `cell.send(target_cap, msg)` | `LiveRef::send(action) -> EventualRef` exists on `captp_client::LiveRef`, but the `_action` parameter is *literally ignored* by the current implementation (returns a fresh promise without enqueuing). | **stub-shaped.** The shape is right, the implementation is a TODO. |
 | `cell.exercise(cap, args).await` | `cclerk.fulfill_and_collect(...)` for intent fulfillment; no direct `exercise` on a capability ref | **missing.** There is no single-call "exercise this cap with these args, await the receipt" primitive. |
-| `cell.attenuate_cap(cap, narrower)` | `cclerk.attenuate(token, restrictions)` (macaroon caps), `pyana_cell::AttenuatedCap`, `is_attenuation(...)` (cell caps) | **partial / fragmented.** Two parallel "cap" notions live side by side: macaroon-backed tokens vs `CapabilityRef`/`AttenuatedCap` from `pyana-cell`. No unified attenuation surface. |
+| `cell.attenuate_cap(cap, narrower)` | `cclerk.attenuate(token, restrictions)` (macaroon caps), `dregg_cell::AttenuatedCap`, `is_attenuation(...)` (cell caps) | **partial / fragmented.** Two parallel "cap" notions live side by side: macaroon-backed tokens vs `CapabilityRef`/`AttenuatedCap` from `dregg-cell`. No unified attenuation surface. |
 | `cell.spawn_child_with_behavior(spec)` | `cclerk.create_from_factory(...)`, `Cell::spawn_child(...)` on the cell type, `cclerk.deploy_program(...)` for behavior | **partial.** Three different mechanisms; no composed spawn-with-behavior call. |
 | `cell.on_receive(handler)` | nothing — there is no concept of a "handler the SDK runs when a message arrives" | **missing entirely.** The runtime today is one-shot: build turn, execute turn, append receipt. There is no event loop. |
 
@@ -164,7 +164,7 @@ cell.on_receive(|state, msg, caps| { ... });
 
 ### `apps/nameservice/src/effects.rs`
 
-Goes straight to `pyana_turn::builder::ActionBuilder::new(...).signed_by([0u8; 64]).effect_emit_event(...).effect_set_field(...).build()`. Pain:
+Goes straight to `dregg_turn::builder::ActionBuilder::new(...).signed_by([0u8; 64]).effect_emit_event(...).effect_set_field(...).build()`. Pain:
 - `signed_by(placeholder_sig)` — the app *literally encodes a zero
   signature* and leaves a TODO because **the SDK has no
   "build-this-action-and-sign-it-with-my-cclerk" call.** `build_authorized_turn` exists but presumes a `HeldToken`. There is no equivalent "self-signed action" helper that fills `Authorization::Signature(sig)` with the cipherclerk's own key.
@@ -179,7 +179,7 @@ Builds `Effect::CreateEscrow {...}` and `Effect::RefundEscrow {...}` directly. P
 
 ### `apps/prediction-market/src/server.rs`
 
-Server logic talks to `pyana_app_framework::*` and `pyana_storage::*` directly. Doesn't touch `pyana-sdk` at all. The framework crate has accumulated the "real app authoring layer" the SDK aspired to be. The SDK is currently relevant only to the *client-of-an-app* path (cclerk, signing, presentation), not the *authoring-an-app* path.
+Server logic talks to `dregg_app_framework::*` and `dregg_storage::*` directly. Doesn't touch `dregg-sdk` at all. The framework crate has accumulated the "real app authoring layer" the SDK aspired to be. The SDK is currently relevant only to the *client-of-an-app* path (cclerk, signing, presentation), not the *authoring-an-app* path.
 
 ## Confusion / inconsistency findings
 
@@ -193,9 +193,9 @@ These are low-stakes but cumulatively expensive.
 
 **C-3. Two parallel "cap" languages.**
 - `HeldToken` / `MacaroonToken` / `Attenuation` (macaroon-backed bearer caps; cclerk methods: `mint_token`, `attenuate`, `delegate`)
-- `CapabilityRef` / `AttenuatedCap` / `AuthRequired` (cell-resident caps; live in `pyana_cell::capability`)
+- `CapabilityRef` / `AttenuatedCap` / `AuthRequired` (cell-resident caps; live in `dregg_cell::capability`)
 
-Both are reachable through the SDK. Neither documents how to convert one to the other (or whether to). The pyanascript `cell.attenuate_cap` API can't be implemented without first deciding which one is the canonical "capability."
+Both are reachable through the SDK. Neither documents how to convert one to the other (or whether to). The dreggscript `cell.attenuate_cap` API can't be implemented without first deciding which one is the canonical "capability."
 
 **C-4. `share_capability` / `accept_capability` / `delegate_offline` all start with the same five lines** — `let client = self.captp_client.as_mut().ok_or_else(|| SdkError::Wire("CapTP client not configured; call set_captp_client() first".into()))?;`. The `SdkError::Wire` variant is wrong — this is a configuration error, not a wire error. There should be a `SdkError::CapTpNotConfigured` variant, and probably a private `fn captp(&mut self) -> Result<&mut CapTpClient, SdkError>` helper.
 
@@ -203,7 +203,7 @@ Both are reachable through the SDK. Neither documents how to convert one to the 
 
 **C-6. `submit_pipeline` returns `Vec<Result<TurnReceipt, PipelineError>>` — not `Result<Vec<TurnReceipt>, _>` or `Vec<(idx, Result)>`.** The caller can't tell from the result which inputs failed without zipping with the original pipeline. *Fix:* return a struct `PipelineResults { receipts: Vec<TurnReceipt>, failures: Vec<(usize, PipelineError)> }`.
 
-**C-7. `eventual_ref` is an associated `fn`, not a method.** Stylistically odd — why is it on `AgentCipherclerk`? It uses none of the cipherclerk's state. *Fix:* move to a free fn at module scope, or to `pyana_turn::EventualRef::for_slot(turn, slot)`.
+**C-7. `eventual_ref` is an associated `fn`, not a method.** Stylistically odd — why is it on `AgentCipherclerk`? It uses none of the cipherclerk's state. *Fix:* move to a free fn at module scope, or to `dregg_turn::EventualRef::for_slot(turn, slot)`.
 
 **C-8. `domain: &str` is threaded through `cell_id(domain)`, `peer_exchange(domain)`, `peer_exchange_session(domain)`, `private_transfer(..., domain, ...)`, `build_committed_transfer(..., domain, ...)`.** A cclerk does not have a single "current domain" — every call has to know the string. *Default-domain convenience layer missing.* Internally `cell_id("default")` is the magic string used in `allocate_queue` et al. *Fix:* add `cclerk.default_domain()` getter and `cclerk.set_default_domain(s)`, then provide `cell_id_default()` and overloads that don't ask for a domain.
 
@@ -279,23 +279,23 @@ These are the ones the audit identifies as gaps but that **shouldn't be implemen
 
 **P2 — research:**
 10. Design pass on the unified `Capability` type (closes C-3).
-11. Design pass on `Cell::send` / `Cell::on_receive` semantics (this is the pyanascript runtime, not a small fix).
-12. Macro-layer prototype that wraps the Tier-0 helpers into `cell.send(cap, msg)`-shaped chains, validates on a re-implemented nameservice, *then* informs the pyanascript grammar.
+11. Design pass on `Cell::send` / `Cell::on_receive` semantics (this is the dreggscript runtime, not a small fix).
+12. Macro-layer prototype that wraps the Tier-0 helpers into `cell.send(cap, msg)`-shaped chains, validates on a re-implemented nameservice, *then* informs the dreggscript grammar.
 
 ## Honest verdict
 
 **Yes-with-named-gaps.** The SDK is structurally well-positioned: 107
 methods on `AgentCipherclerk` cover the right concerns (identity, tokens,
 receipt chain, sovereign cells, queues, CapTP), and the categories
-align with what pyanascript will want to compile to. But:
+align with what dreggscript will want to compile to. But:
 
-- The `Cell::*` shape pyanascript proposes does not exist as a type. Constructing it on top of `AgentCipherclerk` is a design exercise, not a wrapping exercise.
+- The `Cell::*` shape dreggscript proposes does not exist as a type. Constructing it on top of `AgentCipherclerk` is a design exercise, not a wrapping exercise.
 - Two parallel capability languages must be unified before `attenuate_cap` can have one signature.
 - The CapTP send path is currently stubbed; production cell-to-cell messaging through the SDK is not yet there.
-- Apps reach past the SDK into `pyana_turn` and `pyana_cell` because the SDK doesn't currently express what they want to express. This is the most diagnostic signal: the SDK should be the path of least resistance and is not.
+- Apps reach past the SDK into `dregg_turn` and `dregg_cell` because the SDK doesn't currently express what they want to express. This is the most diagnostic signal: the SDK should be the path of least resistance and is not.
 
 None of this is a "rewrite the SDK" verdict. It is a "the SDK has the
-parts, they are not yet composed into the layer pyanascript wants to
+parts, they are not yet composed into the layer dreggscript wants to
 sit on" verdict. Phase 2 of this review lands four targeted helpers
 that close some of the highest-friction gaps. The rest is honest
 design work the audit could not preempt.

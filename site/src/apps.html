@@ -1,11 +1,11 @@
 <layout src="_layouts/default.html">
-<title>Applications — Pyana</title>
+<title>Applications — <code>dregg</code></title>
 
 <main class="wrap main--compact">
   <div class="page-header">
     <h1>Applications</h1>
     <p>
-      A growing catalog of apps built on the Pyana runtime &mdash; each exercises a
+      A growing catalog of apps built on the <code>dregg</code> runtime &mdash; each exercises a
       different slice of the stack: private DeFi, anonymous credentials, federated
       compute markets, governance, namespacing. All generate real STARK proofs.
       All are runnable from the repo. Maturity varies; treat the list as a working
@@ -188,19 +188,19 @@
       Every app has runnable examples. Here are a few to get started:
     </p>
     <pre><code class="language-bash"># Stablecoin CDP lifecycle
-cargo run -p pyana-stablecoin --example demo
+cargo run -p dregg-stablecoin --example demo
 
 # AMM swap with STARK proof
-cargo run -p pyana-amm --example swap_demo
+cargo run -p dregg-amm --example swap_demo
 
 # Identity selective disclosure
-cargo run -p pyana-identity --example kyc_demo
+cargo run -p dregg-identity --example kyc_demo
 
 # Orderbook trading
-cargo run -p pyana-orderbook --example trading_demo
+cargo run -p dregg-orderbook --example trading_demo
 
 # Full gallery auction
-cargo run -p pyana-gallery --example devnet_gallery</code></pre>
+cargo run -p dregg-gallery --example devnet_gallery</code></pre>
     <p style="margin-top: var(--s4);">
       See <code>apps/*/examples/</code> and <code>demo-agent/examples/</code> for the full catalog.
       The Discord bot (<code>apps/discord-bot</code>) also exposes 30+ slash commands for

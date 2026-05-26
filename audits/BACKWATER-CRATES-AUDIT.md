@@ -20,10 +20,10 @@
 |------|-----|------|
 | `lib.rs` | 63 | Module wiring + re-exports |
 | `authorize.rs` | 639 | Token state → `AuthorizationTrace` via Datalog |
-| `convert.rs` | 680 | Token caveats → `FactSet` (delegates to `pyana_token::factset`) |
+| `convert.rs` | 680 | Token caveats → `FactSet` (delegates to `dregg_token::factset`) |
 | `delta.rs` | 424 | Attenuation → `FoldDelta` |
 | `present.rs` | **4161** | Presentation builder, `Predicate` enum, STARK prove/verify entry points |
-| `verifier.rs` | 724 | `pyana_turn::ProofVerifier` impl (cfg `turn`) |
+| `verifier.rs` | 724 | `dregg_turn::ProofVerifier` impl (cfg `turn`) |
 | `midnight.rs` | 895 | Midnight bridge wire types + validation |
 | `midnight_observer.rs` | 739 | Async task watching finalised Midnight blocks |
 | `mina.rs` | 1351 | Mina bridge (proof-carrying via Pickles) |
@@ -40,19 +40,19 @@
     `WirePresentationProof`, `FederationRegistry` trait, plus the
     constellation of `prove_predicate_*`/`verify_predicate_*` and
     `verify_presentation_*` entry points.
-  - `verifier::StarkProofVerifier` — concrete `pyana_turn::ProofVerifier`
+  - `verifier::StarkProofVerifier` — concrete `dregg_turn::ProofVerifier`
     impl. Without this crate the executor has no real proof verifier.
   - `midnight::{MidnightBridgeConfig, FederationAttestation,
-    PyanaToMidnightMessage, MidnightToPyanaMessage}` + `validate_*`.
+    DreggToMidnightMessage, MidnightToDreggMessage}` + `validate_*`.
   - `midnight_observer::run_observer` — async task watching finalised
-    Midnight blocks and feeding events to the pyana federation.
+    Midnight blocks and feeding events to the dregg federation.
   - `mina::{MinaBridgeState, StateAdvance, MinaFederationPresence}` —
     Pickles/Pasta proof-carrying bridge state for Mina.
   - `convert::{macaroon_to_factset, grant_to_facts}`,
     `delta::{attenuation_to_delta, further_attenuation_delta}`,
     `authorize::authorize_with_trace`.
 - **Integration status.** Heavily depended on. Reverse deps:
-  `circuit` (Mina dependency cycle via `pyana-circuit/mina` feature),
+  `circuit` (Mina dependency cycle via `dregg-circuit/mina` feature),
   `sdk`, `wire`, `preflight`, `teasting`, `tests`, `demo-agent`. This is
   the load-bearing connector between the token layer and the prover.
 - **Dormant / load-bearing.** **Load-bearing core**, with one important
@@ -61,9 +61,9 @@
   but the actual cross-chain submission/verification on the foreign chain
   is described in the doc comments rather than executed here (Midnight is
   observer-pattern with on-chain pieces external; Mina would land on a
-  zkApp). The pyana-side validators are real.
+  zkApp). The dregg-side validators are real.
 - **Surprises.**
-  - There is a hidden `mina` feature on `pyana-circuit` that activates the
+  - There is a hidden `mina` feature on `dregg-circuit` that activates the
     Mina-side path. Without it most of `bridge/src/mina.rs` is "just
     types".
   - `present.rs` is 4.1k LOC in a single file — the entire presentation
@@ -93,7 +93,7 @@
 | `lib.rs` | 68 | Module wiring + re-exports |
 | `atomic.rs` | 1113 | 2PC: `AtomicForest`, `Coordinator`, `Participant`, votes |
 | `budget.rs` | 1237 | Bounded counter / `BudgetCoordinator` / `FastUnlockManager` |
-| `causal.rs` | 408 | Layer 1 causal chaining (wraps `pyana_types::CausalDag`) |
+| `causal.rs` | 408 | Layer 1 causal chaining (wraps `dregg_types::CausalDag`) |
 | `error.rs` | 221 | `CoordError` enum + `From` impls |
 | `serde_sig.rs` | 25 | Serde adapter for ed25519 signatures inside coord messages |
 | `shared_budget.rs` | 1897 | `SharedResourceBudget` (Stingray pre-allocative) |
@@ -109,7 +109,7 @@
   - `atomic::{AtomicForest, Coordinator, Participant, ProposeMessage,
     Vote, Decision, CommitMessage, AbortMessage}` — the 2PC state machine.
   - `causal::{CausalTurn, CausalDag, CausalLedger}` — Layer-1 DAG. The
-    `CausalDag` itself is re-exported from `pyana_types`; this crate adds
+    `CausalDag` itself is re-exported from `dregg_types`; this crate adds
     the turn-aware wrappers.
   - `budget::{BudgetCoordinator, BudgetSlice, FastUnlockManager,
     UnlockCertificate, UnlockRequest}` — distributed bounded counter à
@@ -166,7 +166,7 @@
   the audit log.
 - **Key types/functions.**
   - `event::{UsageEvent, AuditReceipt, InclusionProof}`
-  - `log::{AuditLog, LogSnapshot}` — backed by `pyana_commit::hash`'s
+  - `log::{AuditLog, LogSnapshot}` — backed by `dregg_commit::hash`'s
     4-ary Merkle primitives (tree depth 12 → 16M event cap).
   - `proofs::{BudgetProof, ConsistencyProof, CountProof, RangeProof,
     LastUseProof}` — each independently verifiable from the published
@@ -183,7 +183,7 @@
   for an integration that hasn't happened.
 - **Surprises.**
   - The naming collision with the AUDIT-*.md document set is hostile.
-    `pyana-audit` is the *budget/usage* audit log, not a self-audit
+    `dregg-audit` is the *budget/usage* audit log, not a self-audit
     framework.
   - The crate predates `coord::budget::BudgetCoordinator`. There are
     now **two** "BudgetEnforcer/Coordinator"-shaped types in the
@@ -232,7 +232,7 @@
   files. The differential module's `#[ignore]`d tests need follow-up
   whenever the Effect-VM AIR grows.
 - **Recommendation.** Keep. Update the stale STUB comments. Add a CI job
-  that runs `cargo test -p pyana-protocol-tests -- --include-ignored`
+  that runs `cargo test -p dregg-protocol-tests -- --include-ignored`
   weekly so passthrough-gap tripwires don't drift.
 
 ## `observability/` (1 file, 378 LOC, binary only)
@@ -275,7 +275,7 @@
 | File | LOC | Role |
 |------|-----|------|
 | `lib.rs` | 645 | `PersistentStore`, `StoreError`, hex helpers, note-insertion API |
-| `audit.rs` | 303 | `StoredAuditEvent` (mirror of `pyana_audit::event`) |
+| `audit.rs` | 303 | `StoredAuditEvent` (mirror of `dregg_audit::event`) |
 | `blocklace_store.rs` | 224 | `BlocklaceMeta` + incremental block persistence |
 | `checkpoint.rs` | 186 | Periodic checkpoint scheduling |
 | `federation.rs` | 330 | `StoredAttestedRoot`, revocation set persistence |
@@ -310,7 +310,7 @@
   - `audit::StoredAuditEvent` (audit-bridge feature).
   - `tokens::{TokenChain, StoredFoldStep}`.
 - **Integration status.** Used by `node` (real), `wire` (one type),
-  `teasting`. `node/src/state.rs` does both `pyana_store::PersistentStore`
+  `teasting`. `node/src/state.rs` does both `dregg_store::PersistentStore`
   and `Poseidon2NoteTree` — this is the live persistence path.
 - **Dormant / load-bearing.** Load-bearing for `node`. The `audit-bridge`
   feature is the only thing keeping `audit/` alive as a non-test dep.
@@ -331,7 +331,7 @@
 
 ## `cod/` (21 LOC, single stub fn)
 
-- **Purpose.** Doc comment: "Closable Overspending Detector for pyana
+- **Purpose.** Doc comment: "Closable Overspending Detector for dregg
   shared resources." Acronym belongs with `coord::shared_budget` —
   COD = close → open → debit, the reactive complement to the
   pre-allocative bounded-counter scheme.
@@ -357,7 +357,7 @@
 ## `discharge-gateway/` (~460 LOC, lib + binary)
 
 - **Purpose.** Standalone HTTP service that wraps
-  `pyana_macaroon::DischargeGateway` and exposes three axum routes:
+  `dregg_macaroon::DischargeGateway` and exposes three axum routes:
   `POST /discharge`, `GET /conditions`, `GET /health`. Loads its
   evaluator stack (allowlist, payment, rate-limit, proof-required,
   time-window, etc.) from a TOML config or CLI args.
@@ -375,17 +375,17 @@
   that no other workspace crate launches it; it's a deployable artifact.
   The underlying logic in `macaroon/` is load-bearing.
 - **Surprises.**
-  - The crate name has no `pyana-` prefix, breaking the convention used
-    by `pyana-bridge`, `pyana-coord`, etc.
+  - The crate name has no `dregg-` prefix, breaking the convention used
+    by `dregg-bridge`, `dregg-coord`, etc.
   - The lib target is `discharge_gateway_service` (with underscore) but
     the binary is `discharge-gateway` (with hyphen). Workable but
     confusing.
-  - Imports from `pyana_macaroon` even though the crate name is just
+  - Imports from `dregg_macaroon` even though the crate name is just
     `macaroon` — i.e. the crate uses the rust-name alias.
 - **Open issues.** None obvious in the code; the gap is that no
   deployment doc references this binary.
 - **Recommendation.** Keep as a deployable binary, but either rename to
-  `pyana-discharge-gateway` for naming consistency or document why it's
+  `dregg-discharge-gateway` for naming consistency or document why it's
   exempt from the prefix rule. Add a deploy/ entry.
 
 ## `commit/` (~5.4K LOC, 11 modules)
@@ -430,7 +430,7 @@
   proves anything.
 - **Surprises.**
   - `accumulator.rs` (984 LOC) implements a *separate* BabyBear^4
-    extension field arithmetic stack from the one in `pyana-circuit`.
+    extension field arithmetic stack from the one in `dregg-circuit`.
     Two extension-field implementations for the same field is a
     soundness footgun if they ever diverge.
   - The doc comment notes "Currently uses BLAKE3 as a placeholder for
@@ -446,7 +446,7 @@
   consolidation candidate.
 - **Recommendation.** Keep. **Audit-deeper** the BabyBear4 duplication
   (cross-check `commit::accumulator::BabyBear4` against
-  `pyana-circuit`'s extension field for behavioural equivalence). Promote
+  `dregg-circuit`'s extension field for behavioural equivalence). Promote
   the dual-form Commitment framework adoption (it's defined but
   underused).
 
@@ -467,7 +467,7 @@
 - **Purpose.** Datalog derivation traces — the data model that captures
   *how* an authorization decision was reached, suitable for ZK proving.
   Standalone reference evaluator (`Evaluator`), a verifier
-  (`verify_trace`), the canonical pyana policy rule set
+  (`verify_trace`), the canonical dregg policy rule set
   (`standard_policy`, `secure_policy`), and the check evaluator.
 - **Key types/functions.**
   - `types::{Term, Fact, Rule, BodyAtom, AuthorizationRequest,
@@ -475,7 +475,7 @@
   - `eval::Evaluator` — bottom-up Datalog with proof recording.
   - `verify::{verify_trace, verify_trace_with_request}`.
   - `policy::{standard_policy, secure_policy, rule_ids}` — 12 named
-    pyana policy rules (`APP_ACTION`, `SERVICE_ACTION_SECURE`,
+    dregg policy rules (`APP_ACTION`, `SERVICE_ACTION_SECURE`,
     `NOT_BEFORE_DENY`, `BUDGET_OK`, `REVOCATION_DENY`, etc.).
   - `check::eval_check` — guard evaluation (e.g. `MemberOf`, time
     comparisons).
@@ -487,13 +487,13 @@
 - **Surprises.**
   - `policy.rs` is 1.2k LOC of named rules with deeply specific
     semantics (BUDGET_OK, NOT_BEFORE_DENY, REVOCATION_DENY, etc.).
-    This is effectively pyana's *policy language* — and it lives in a
+    This is effectively dregg's *policy language* — and it lives in a
     rules constructor function, not a configuration file.
   - There are *two* policies (`standard_policy` and `secure_policy`)
     where the secure one uses exact hash matching (`MemberOf`) and the
     standard one uses substring matching (`Contains`). The default
     should be obviously secure.
-  - The crate has *no* dependency on `pyana-commit` or any other pyana
+  - The crate has *no* dependency on `dregg-commit` or any other dregg
     crate — only `blake3` + `serde`. This is the cleanest reusable
     module in the auth stack.
 - **Open issues.** None obvious. The policy duality (standard vs
@@ -516,14 +516,14 @@
 | `error.rs` | 53 | `TokenError` enum |
 | `macaroon_backend.rs` | 254 | `MacaroonToken` (cfg `macaroon` + `rand-deps`) |
 | `biscuit_backend.rs` | 400 | `BiscuitToken` (cfg `biscuit`) |
-| `pyana.rs` | 538 | Pyana-specific token semantics, `pyana` re-export module |
-| `pyana_caveats.rs` | 1603 | 16 typed pyana caveat IDs + `verify_caveats` collective check |
+| `dregg.rs` | 538 | `dregg`-specific token semantics, `dregg` re-export module |
+| `dregg_caveats.rs` | 1603 | 16 typed dregg caveat IDs + `verify_caveats` collective check |
 | `factset.rs` | 422 | Canonical caveat → FactSet/SymbolTable encoder |
 | `datalog_verify.rs` | **2897** | Canonical Datalog verification path (sole source of truth) |
 | `revocation.rs` | 999 | `RevocationRegistry` (sorted Merkle) + deprecated cuckoo filter |
 
 - **Purpose.** Unified abstraction over two token formats (HMAC
-  macaroons and Ed25519 biscuits) plus the *canonical* pyana caveat set,
+  macaroons and Ed25519 biscuits) plus the *canonical* dregg caveat set,
   the *canonical* Datalog verification path (which subsumes the older
   imperative `verify_caveats`), and the revocation registry.
 - **Key types/functions.**
@@ -531,7 +531,7 @@
     Attenuation, BudgetSpec, TokenClearance, FeatureGlobSpec}`.
   - `MacaroonToken` (in `macaroon_backend.rs`), `BiscuitToken` (in
     `biscuit_backend.rs`).
-  - `pyana_caveats::{verify_caveats, PyanaGrant, ...}` — 16 typed pyana
+  - `dregg_caveats::{verify_caveats, DreggGrant, ...}` — 16 typed dregg
     caveat IDs (App, Service, Feature, ValidityWindow, ConfineUser,
     OAuthProvider, OAuthScope, FromMachine, Command, FeatureGlob,
     Budget, Revocable, Organization).
@@ -556,10 +556,10 @@
   - `revocation.rs` retains the legacy cuckoo `RevocationFilter` even
     though it's `#[deprecated]` — to provide a pre-filter for high-
     throughput deployments. Documented but easy to misuse.
-  - Crate name is just `token` (no `pyana-` prefix), library name is
-    `pyana_token`. Matches the inconsistency with `macaroon`,
+  - Crate name is just `token` (no `dregg-` prefix), library name is
+    `dregg_token`. Matches the inconsistency with `macaroon`,
     `tokenizer`, `secrets`, `hints`.
-  - 16 caveat IDs in `pyana_caveats.rs` — this is the canonical pyana
+  - 16 caveat IDs in `dregg_caveats.rs` — this is the canonical dregg
     permission vocabulary, but it's table-formatted in a doc comment
     not a registry.
 - **Open issues.** Deprecated cuckoo filter is still default-on (rand-
@@ -584,14 +584,14 @@
   - `protocol::{Request, Response}` — over postcard.
 - **Integration status.** Reverse deps: workspace root `[workspace.
   dependencies]` only. Nothing actually `use`s it. The binary
-  `pyana-tokenizer` exists; nothing in tree spawns it.
+  `dregg-tokenizer` exists; nothing in tree spawns it.
 - **Dormant / load-bearing.** **Dormant.** Compiles, has tests, has a
   binary, but nothing in the rest of the workspace imports it. The
   conceptual seam ("guests can't see secrets") is good architecture
   that isn't wired up.
 - **Surprises.**
   - The name "tokenizer" is highly confusing in any ML-adjacent context.
-    Renaming to `pyana-sealer` or `pyana-secret-daemon` would clarify.
+    Renaming to `dregg-sealer` or `dregg-secret-daemon` would clarify.
   - The protocol is over local TCP — there's no in-process API. If you
     wanted to use this from `node` you'd need to spawn a daemon.
   - This *parallels* the role of `secrets` (which is in-process secret
@@ -620,7 +620,7 @@
 | `macaroon.rs` | 626 | Core `Macaroon` type: create/attenuate/verify/bind/discharge |
 | `resource.rs` | 173 | `ResourceSet<ID, Action>` typed permission map |
 
-- **Purpose.** Pyana's *Fly.io-flavoured* macaroon implementation.
+- **Purpose.** `dregg`'s *Fly.io-flavoured* macaroon implementation.
   HMAC-chained bearer tokens with first-party caveats, third-party
   caveats (ticket/discharge with XChaCha20-Poly1305 sealing),
   attenuation, and a 1100-LOC `discharge_gateway` module of pluggable
@@ -660,7 +660,7 @@
 ## `secrets/` (~830 LOC, 4 modules + integration tests)
 
 - **Purpose.** Pluggable secret storage. Two backends: encrypted file
-  store (AES-256-GCM, `~/.pyana/secrets/`, 0600 perms) and OS keychain
+  store (AES-256-GCM, `~/.dregg/secrets/`, 0600 perms) and OS keychain
   (via `keyring`). `CompositeStore` tries keychain first, falls back
   to files.
 - **Key types/functions.**
@@ -669,11 +669,11 @@
   - `KeychainStore` (117 LOC, feature-gated).
   - `CompositeStore` — try-then-fallback wrapper.
 - **Integration status.** Reverse deps: workspace root only. No `use
-  pyana_secrets` outside the crate's own tests. Zero in-tree consumers.
+  dregg_secrets` outside the crate's own tests. Zero in-tree consumers.
 - **Dormant / load-bearing.** **Dormant.** Like `tokenizer`, this is a
   well-formed credential-handling primitive that nothing wires into.
 - **Surprises.**
-  - The crate name is `secrets` (no prefix), library name `pyana_secrets`.
+  - The crate name is `secrets` (no prefix), library name `dregg_secrets`.
   - This *overlaps in role* with `tokenizer` (which seals secrets via
     a daemon) — but the threat models differ. `secrets` is "secret at
     rest"; `tokenizer` is "secret never decrypted in guest memory".
@@ -716,10 +716,10 @@
   `[profile.test]` override is workspace-wide via cascading and can
   confuse other crates' debug-test workflows.
 - **Recommendation.** Keep. Audit the edition-2021 island; consider
-  whether forking it as `pyana-hints` and upstreaming patches is worth
+  whether forking it as `dregg-hints` and upstreaming patches is worth
   the unification.
 
-## `net/` (~4.5K LOC, 5 modules + demo bin) — `pyana-net`
+## `net/` (~4.5K LOC, 5 modules + demo bin) — `dregg-net`
 
 ### File-level breakdown
 
@@ -730,13 +730,13 @@
 | `gossip.rs` | **2602** | Plumtree eager/lazy push gossip (single file) |
 | `message.rs` | 452 | `PeerMessage` enum (PublishTurn / RequestTurn / AttestedRoot / RevocationGossip / cell-sync) |
 | `causal.rs` | 403 | `CausalDag` for happened-before of turns |
-| `bin/demo.rs` | — | `pyana-p2p-demo` standalone runner |
+| `bin/demo.rs` | — | `dregg-p2p-demo` standalone runner |
 
 
 
 - **Purpose.** P2P networking via QUIC (quinn). Implements direct mTLS
   QUIC connections (`PeerNode`), Plumtree-inspired hybrid eager/lazy-
-  push gossip (`GossipNetwork`), pyana wire protocol (`PeerMessage`),
+  push gossip (`GossipNetwork`), dregg wire protocol (`PeerMessage`),
   and a causal DAG of turn dependencies (`CausalDag`).
 - **Key types/functions.**
   - `PeerNode`, `PeerNodeConfig`, `PeerConnection`, `NodeId`,
@@ -749,7 +749,7 @@
 - **Integration status.** Reverse deps: `node`, `teasting`, workspace
   root.
 - **Dormant / load-bearing.** **Load-bearing for `node`.** This is how
-  pyana nodes talk to each other.
+  dregg nodes talk to each other.
 - **Surprises.**
   - The crate documents "designed for iroh, but iroh 0.96 has pre-
     release dependency conflicts (ed25519-dalek 3.0.0-pre.1 vs pkcs8)"
@@ -757,12 +757,12 @@
     substitution.
   - `gossip.rs` is 2.6k LOC of single-file Plumtree. Worth a dedicated
     audit.
-  - The CausalDag here is *separate* from `pyana_types::CausalDag`
+  - The CausalDag here is *separate* from `dregg_types::CausalDag`
     (which `coord/src/causal.rs` re-exports). Two CausalDag types in
     the workspace, possibly redundant.
 - **Open issues.** iroh return path. Two CausalDags.
 - **Recommendation.** Keep. Audit-deeper the gossip.rs (security
-  surface). Reconcile `net::CausalDag` vs `pyana_types::CausalDag`.
+  surface). Reconcile `net::CausalDag` vs `dregg_types::CausalDag`.
 
 ## `preflight/` (~6.3K LOC, 26 check modules + report + main)
 
@@ -781,7 +781,7 @@
 | `composition.rs` | 272 | AND composition, IVC chain, aggregation |
 | `sovereign.rs` | 263 | Factory deploy, peer exchange, multi-party atomic, IVC history |
 | `captp.rs` | 259 | CapTP session exercise |
-| `apps.rs` | 254 | Gated by `apps-sdk` feature (pyana-sdk broken) |
+| `apps.rs` | 254 | Gated by `apps-sdk` feature (dregg-sdk broken) |
 | `privacy.rs` | 231 | Privacy invariants |
 | `intents.rs` | 195 | Intent solver |
 | `wire.rs` | 191 | Wire-format checks |
@@ -820,7 +820,7 @@
   turns (466), proofs (387), effect_vm (399), solver (337), blocklace
   (324), caps (319), storage (300).
 - **Surprises.**
-  - The `apps-sdk` feature gates `pyana-gallery` because *pyana-sdk
+  - The `apps-sdk` feature gates `dregg-gallery` because *dregg-sdk
     is currently broken* ("missing `custom_program_proofs` field in
     Turn"). Preflight documents the breakage in its own Cargo.toml.
   - `relay.rs` (148 LOC) checks `MeteredRelay` and `SpaceBank` from
@@ -834,7 +834,7 @@
 - **Open issues.** SDK-broken comment is the largest in-tree TODO
   signal; preflight can run without it via `--no-default-features`.
 - **Recommendation.** Keep. Treat preflight as the canonical "what is
-  pyana made of" manifest — `main.rs::run_all_subsystems` is the most
+  dregg made of" manifest — `main.rs::run_all_subsystems` is the most
   useful single file for onboarding.
 
 ## `teasting/` (~15K LOC, 9 src modules + 29 integration test files)
@@ -851,7 +851,7 @@
 | `fault.rs` | 760 | `FaultyNetwork` + `CrashableNode` + `Partition` (seeded RNG) |
 | `federation.rs` | 31 | `quick_federation`, `dual_federation`, `drive_to_finalization` |
 | `mesh_sim.rs` | 371 | In-process service mesh wrapping the real DFA router |
-| `router_sim.rs` | 183 | `SimRouter` wrapping `pyana_wire::dfa_router::GovernedRouter` |
+| `router_sim.rs` | 183 | `SimRouter` wrapping `dregg_wire::dfa_router::GovernedRouter` |
 
 ### Test catalogue (tests/)
 
@@ -879,7 +879,7 @@ storage_faults, storage_lifecycle, storage_with_captp, token_lifecycle
     seeded fault injection (drop / reorder / duplicate / delay /
     crash / partition). Deterministic by seed.
   - `mesh_sim`, `router_sim` (wraps `GovernedRouter` from
-    `pyana_wire::dfa_router`), `assertions`, `agent`.
+    `dregg_wire::dfa_router`), `assertions`, `agent`.
   - 29 integration test files including: captp_sessions, dfa_routing,
     consensus_liveness, cross_federation, escrow_lifecycle, fault_*
     (byzantine/crash/ordering/partition), fuzz_captp/governance/turns,
@@ -890,16 +890,16 @@ storage_faults, storage_lifecycle, storage_with_captp, token_lifecycle
 - **Dormant / load-bearing.** **Load-bearing for correctness.** This is
   the workspace's largest test surface (~15K LOC, more than any single
   production crate). The integration tests in teasting/tests/ are the
-  closest pyana has to a system test.
+  closest dregg has to a system test.
 - **Surprises.**
   - `fault.rs` (760 LOC) is a fully seeded deterministic fault injector
     — same seed → same failure sequence. Eliminates flaky tests by
     construction if the production code is deterministic.
   - `captp_sim.rs` (400 LOC) reuses *real* `CapSession`/`SwissTable`/
-    `ExportGcManager`/`ImportGcManager` from `pyana-captp` — only the
+    `ExportGcManager`/`ImportGcManager` from `dregg-captp` — only the
     transport is simulated. This is the right move: gives you E2E
     coverage of GC and refcounting without a TCP socket.
-  - The test file list is the most informative tour of pyana's
+  - The test file list is the most informative tour of dregg's
     correctness claims — read `ls teasting/tests/` for the contract.
 - **Open issues.** None obvious. The test file naming convention
   (fault_byzantine vs fault_crash vs fault_ordering vs fault_partition)
@@ -1007,13 +1007,13 @@ The five most critical crates in this audit's scope:
    Without `verifier.rs` the executor has no real `ProofVerifier`.
    Also hosts the cross-chain bridges (Midnight, Mina).
 3. **`token/`** — 8K LOC unified token abstraction, the canonical
-   pyana caveat set, the canonical Datalog verification path. The
+   dregg caveat set, the canonical Datalog verification path. The
    actual user-facing auth model.
 4. **`coord/`** — Multi-party turn atomicity (2PC), Stingray-style
    bounded counters, fast unlock. Node consumes it. No `AUDIT-coord.md`.
-5. **`trace/`** — Datalog derivation traces and the canonical pyana
+5. **`trace/`** — Datalog derivation traces and the canonical dregg
    policy ruleset (`secure_policy`, 12 named rules). Has no other
-   pyana deps; very clean.
+   dregg deps; very clean.
 
 Honourable mentions: **`macaroon/`** (discharge gateway evaluator stack
 lives here), **`net/`** (P2P transport for `node`), **`hints/`** (BLS
@@ -1035,14 +1035,14 @@ threshold sigs for federation QCs).
    not exist.** Self-documented as "the seed crate for the in-browser
    turn explorer". The seed has been planted; the tree has not grown.
 5. **There are two `CausalDag` types in the workspace** —
-   `net::CausalDag` and `pyana_types::CausalDag` (the latter
+   `net::CausalDag` and `dregg_types::CausalDag` (the latter
    re-exported by `coord::causal`). Possibly redundant.
 6. **There are two BabyBear^4 implementations** —
-   `commit::accumulator::BabyBear4` and the one in `pyana-circuit`.
+   `commit::accumulator::BabyBear4` and the one in `dregg-circuit`.
    Soundness footgun if they ever diverge.
 7. **`hints/` is edition 2021 and overrides `[profile.test]
    opt-level = 2`**. An island in an otherwise edition-2024 workspace.
-8. **`preflight/Cargo.toml` admits `pyana-sdk` is broken.** It
+8. **`preflight/Cargo.toml` admits `dregg-sdk` is broken.** It
    feature-gates the gallery app behind `apps-sdk` because the SDK
    is missing a `custom_program_proofs` field on `Turn`. This is the
    loudest in-tree "things are not quite finished" signal.
@@ -1060,17 +1060,17 @@ threshold sigs for federation QCs).
   records into either the in-memory bounded-counter ledger
   (coord-style) or the persistent Merkle log (audit-style) depending
   on configuration.
-- **`net::CausalDag` ↔ `pyana_types::CausalDag`.** Two implementations
+- **`net::CausalDag` ↔ `dregg_types::CausalDag`.** Two implementations
   of the same data structure. Pick one; have `net::` use the canonical
-  type from `pyana_types`.
-- **`commit::accumulator::BabyBear4` ↔ `pyana-circuit`'s BabyBear4.**
+  type from `dregg_types`.
+- **`commit::accumulator::BabyBear4` ↔ `dregg-circuit`'s BabyBear4.**
   Likely the same field with two arithmetic implementations. Audit
   for behavioural equivalence; merge if equivalent.
 - **`store/` and `storage/` should NOT merge,** despite the name
   collision. They have legitimately different roles: `store/` =
   node-internal persistence (redb-backed), `storage/` = user-facing
   programmable queues with KZG sampling. But one of them should
-  rename. `store/` → `pyana-persist` would be clearer.
+  rename. `store/` → `dregg-persist` would be clearer.
 - **`tokenizer/` and `secrets/` should be unified or one should be
   deleted.** Both are credential-handling primitives with different
   threat models. If both are kept, document the boundary explicitly.
@@ -1079,7 +1079,7 @@ threshold sigs for federation QCs).
   evaluator stack from `macaroon`. The split is by deployment shape,
   not by abstraction.
 
-## §6. Composition with the rest of pyana
+## §6. Composition with the rest of dregg
 
 In Silver Vision terms ("E2E from intent to receipt"):
 
@@ -1125,24 +1125,24 @@ The composition is dense at the core (circuit / commit / trace / token
 
 - `audit/` into `coord::budget` OR wire its usage-event hooks into the
   token presentation path. Pick a story.
-- `net::CausalDag` ↔ `pyana_types::CausalDag` — pick one.
-- `commit::accumulator::BabyBear4` ↔ `pyana-circuit::BabyBear4` —
+- `net::CausalDag` ↔ `dregg_types::CausalDag` — pick one.
+- `commit::accumulator::BabyBear4` ↔ `dregg-circuit::BabyBear4` —
   cross-audit and merge if equivalent.
 
 **Rename:**
 
-- `store/` → `pyana-persist` (or similar) to disambiguate from
+- `store/` → `dregg-persist` (or similar) to disambiguate from
   `storage/`.
-- `discharge-gateway/` → `pyana-discharge-gateway` for naming
+- `discharge-gateway/` → `dregg-discharge-gateway` for naming
   consistency.
-- `tokenizer/` → `pyana-sealer` if kept.
+- `tokenizer/` → `dregg-sealer` if kept.
 
 **Promote (write a dedicated AUDIT-*.md):**
 
 - `coord/` — multi-party 2PC + Stingray budgets are live in node, zero
   audit doc. **Highest priority.**
 - `bridge/` — the STARK-verifier seam plus two cross-chain protocols.
-- `trace/` — policy.rs defines the de facto pyana policy language.
+- `trace/` — policy.rs defines the de facto dregg policy language.
 - `net/` — Plumtree gossip security surface.
 - `teasting/tests/` — index the integration test contract.
 
@@ -1159,11 +1159,11 @@ The composition is dense at the core (circuit / commit / trace / token
 **Document:**
 
 - `preflight/src/main.rs::run_all_subsystems` is the most useful
-  single-file inventory of pyana's surface. Link it from CLAUDE.md.
-- The 16 caveat IDs in `token::pyana_caveats` are the canonical pyana
+  single-file inventory of dregg's surface. Link it from CLAUDE.md.
+- The 16 caveat IDs in `token::dregg_caveats` are the canonical dregg
   permission vocabulary. Lock the IDs.
 - The 12 named policy rules in `trace::policy::rule_ids` are the
-  canonical pyana policy language. Lock the rule IDs.
+  canonical dregg policy language. Lock the rule IDs.
 
 ## §8. Open questions for designer
 
@@ -1180,17 +1180,17 @@ The composition is dense at the core (circuit / commit / trace / token
    meant to be spawned by `node`, run as a sidecar, or be a per-user
    foreground process? Without a hook in `node` or `sdk`, it's
    architecture-as-aspiration.
-5. **Why is `pyana-sdk` "currently broken"?** Preflight's Cargo.toml
+5. **Why is `dregg-sdk` "currently broken"?** Preflight's Cargo.toml
    says so. Is this acknowledged elsewhere, or is the SDK quietly
    rotting?
 6. **Two CausalDags — which is canonical?** `net::CausalDag` vs
-   `pyana_types::CausalDag`. The former predates or postdates the
+   `dregg_types::CausalDag`. The former predates or postdates the
    latter; which lives?
 7. **Two BabyBear4s — which is canonical?** Same question, soundness
    stakes higher.
 8. **Is the `hints/` fork upstreamable?** Edition 2021 island, fork
    authorship. Is the plan to merge back, or to keep a divergent
-   `pyana-hints`?
+   `dregg-hints`?
 9. **`store/` vs `storage/`: who renames?** Both names are taken and
    both crates are live. This is going to confuse a new contributor
    approximately monthly forever.
@@ -1248,7 +1248,7 @@ AUDIT-*.md should focus first."
 ### `commit/`
 
 - `accumulator.rs` defines `BabyBear^4` (quartic extension field)
-  independently of `pyana-circuit::field`'s `BabyBear` operations.
+  independently of `dregg-circuit::field`'s `BabyBear` operations.
   Cross-check for arithmetic equivalence. If they diverge, the
   polynomial accumulator's non-membership proofs may verify in one
   crate and reject in another.
@@ -1356,7 +1356,7 @@ not in `deploy/`.
 | STARK prove (presentation) | `bridge` + `circuit` | `present::prove_predicate_program_full` |
 | STARK verify (executor) | `bridge` | `verifier::StarkProofVerifier` |
 | 2PC multi-party atomic | `coord` | `atomic::Coordinator` |
-| Causal turn DAG | `coord` + `pyana_types` | `coord::causal::CausalLedger` |
+| Causal turn DAG | `coord` + `dregg_types` | `coord::causal::CausalLedger` |
 | Bounded counter (Stingray) | `coord` | `budget::BudgetCoordinator` |
 | Shared-resource budget | `coord` | `shared_budget::SharedResourceBudget` |
 | Threshold QC (BLS) | `federation` + `hints` | `federation::threshold::FederationCommittee` |
@@ -1389,35 +1389,35 @@ Inconsistency you should know about:
 
 | Workspace member | `[package].name` | `[lib].name` |
 |------------------|------------------|--------------|
-| `bridge/` | `pyana-bridge` | (default) |
-| `coord/` | `pyana-coord` | (default) |
-| `audit/` | `pyana-audit` | (default) |
-| `commit/` | `pyana-commit` | (default) |
-| `trace/` | `pyana-trace` | (default) |
-| `store/` | `pyana-store` | `pyana_store` |
-| `net/` | `pyana-net` | (default) |
-| `preflight/` | `pyana-preflight` | (default) |
-| `protocol-tests/` | `pyana-protocol-tests` | (default) |
-| `observability/` | `pyana-observability` | bin only |
-| `teasting/` | `pyana-teasting` | (default) |
+| `bridge/` | `dregg-bridge` | (default) |
+| `coord/` | `dregg-coord` | (default) |
+| `audit/` | `dregg-audit` | (default) |
+| `commit/` | `dregg-commit` | (default) |
+| `trace/` | `dregg-trace` | (default) |
+| `store/` | `dregg-store` | `dregg_store` |
+| `net/` | `dregg-net` | (default) |
+| `preflight/` | `dregg-preflight` | (default) |
+| `protocol-tests/` | `dregg-protocol-tests` | (default) |
+| `observability/` | `dregg-observability` | bin only |
+| `teasting/` | `dregg-teasting` | (default) |
 | `cod/` | `cod` | (default) |
 | `discharge-gateway/` | `discharge-gateway` | `discharge_gateway_service` (lib), `discharge-gateway` (bin) |
-| `token/` | `token` | `pyana_token` |
-| `tokenizer/` | `tokenizer` | `pyana_tokenizer` |
-| `macaroon/` | `macaroon` | `pyana_macaroon` |
-| `secrets/` | `secrets` | `pyana_secrets` |
+| `token/` | `token` | `dregg_token` |
+| `tokenizer/` | `tokenizer` | `dregg_tokenizer` |
+| `macaroon/` | `macaroon` | `dregg_macaroon` |
+| `secrets/` | `secrets` | `dregg_secrets` |
 | `hints/` | `hints` | (default) |
 
-The split between "pyana-X with default lib" and "X with pyana_X
+The split between "dregg-X with default lib" and "X with dregg_X
 library name" follows no obvious rule. `hints/`, `token/`,
 `tokenizer/`, `macaroon/`, `secrets/`, `cod/`, `discharge-gateway/`
-all break the convention `pyana-bridge`/`pyana-coord`/etc. follow.
+all break the convention `dregg-bridge`/`dregg-coord`/etc. follow.
 
 ---
 
 # Annex C — Reading order for a new contributor
 
-If you're new to pyana and want to understand the system bottom-up,
+If you're new to dregg and want to understand the system bottom-up,
 read the workspace crates in this order:
 
 1. `types/` (excluded from this audit) — primitive types and IDs.
@@ -1443,7 +1443,7 @@ If you only have time for the surprising parts, jump to:
 - `cod/src/lib.rs` (21 LOC) — read in 30 seconds, learn a lot.
 - `observability/src/main.rs` — read in 5 minutes, see how a turn
   becomes a JSON document.
-- `preflight/src/main.rs` — read in 2 minutes, learn what pyana
+- `preflight/src/main.rs` — read in 2 minutes, learn what dregg
   thinks it is.
 
 

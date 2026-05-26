@@ -13,9 +13,9 @@
 //! according to routing policy P" without revealing the message content or
 //! the full routing table, only a commitment to the table and the final state.
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
-use pyana_circuit::stark::{self, BoundaryConstraint, StarkAir};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
+use dregg_circuit::stark::{self, BoundaryConstraint, StarkAir};
 
 // =============================================================================
 // DFA Definition
@@ -146,7 +146,7 @@ impl StarkAir for DfaRoutingAir {
     }
 
     fn air_name(&self) -> &'static str {
-        "pyana-dfa-routing-v1"
+        "dregg-dfa-routing-v1"
     }
 
     fn has_chain_continuity(&self) -> bool {

@@ -9,15 +9,15 @@
 //! authorizer, and a rejecting authorizer must cause every operation to
 //! fail with `EscrowError::AuthorizationFailed`.
 
-use pyana_app_framework::authorizer::{AuthError, RejectingAuthorizer};
-use pyana_app_framework::escrow::{EscrowError, EscrowManager};
-use pyana_sdk::embed::{EngineConfig, PyanaEngine};
-use pyana_turn::escrow::EscrowCondition;
-use pyana_types::CellId;
+use dregg_app_framework::authorizer::{AuthError, RejectingAuthorizer};
+use dregg_app_framework::escrow::{EscrowError, EscrowManager};
+use dregg_sdk::embed::{EngineConfig, DreggEngine};
+use dregg_turn::escrow::EscrowCondition;
+use dregg_types::CellId;
 
 #[test]
 fn rejecting_authorizer_blocks_all_escrow_operations() {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
+    let mut engine = DreggEngine::new(EngineConfig::for_testing());
     let auth = Box::new(RejectingAuthorizer::new("no escrows allowed (test)"));
     let mut mgr = EscrowManager::new(&mut engine, auth);
 

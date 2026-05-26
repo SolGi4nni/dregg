@@ -10,7 +10,7 @@ use crate::state::{CellState, FieldElement};
 /// canonical struct via the [`Preconditions::builder`] entry-point and
 /// [`PreconditionsBuilder`]. The clause-shaped surface lives here as
 /// [`Precondition`]; the parallel `turn/src/preconditions.rs` module
-/// no longer exists — userspace imports `pyana_cell::Precondition`
+/// no longer exists — userspace imports `dregg_cell::Precondition`
 /// directly.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preconditions {
@@ -105,7 +105,7 @@ impl TimeRange {
 /// `{ current_height, current_epoch, sender, sender_epoch_count,
 /// revealed_preimage }`. Per `SLOT-CAVEATS-EVALUATION.md` §7.3 open
 /// question 1, those fields were folded into the **existing**
-/// `pyana_cell::preconditions::EvalContext` instead of creating a
+/// `dregg_cell::preconditions::EvalContext` instead of creating a
 /// parallel `StateConstraintCtx`. The original
 /// `{ block_height, timestamp }` fields are preserved; the additions
 /// default to safe sentinels so older callers compile unchanged.
@@ -157,7 +157,7 @@ impl Default for EvalContext {
 ///
 /// Per PREDICATE-INVENTORY §4.3 case 1, this is the canonical home for
 /// what was previously a duplicate enum at
-/// `pyana_turn::preconditions::Precondition`. The turn-side module
+/// `dregg_turn::preconditions::Precondition`. The turn-side module
 /// no longer exists; userspace constructs preconditions via this enum
 /// and [`Preconditions::builder`] directly.
 ///
@@ -247,7 +247,7 @@ impl PreconditionsBuilder {
 
 impl Preconditions {
     /// Entry-point for ergonomic clause-shaped construction. Replaces
-    /// the deleted `pyana_turn::preconditions::build` / `extend`
+    /// the deleted `dregg_turn::preconditions::build` / `extend`
     /// helpers from the pre-collapse era.
     pub fn builder() -> PreconditionsBuilder {
         PreconditionsBuilder::new()
@@ -272,7 +272,7 @@ impl Preconditions {
             && self.valid_while.is_none()
             && self.witnessed.is_empty()
         {
-            return blake3::derive_key("pyana-empty-preconditions-v1", b"");
+            return blake3::derive_key("dregg-empty-preconditions-v1", b"");
         }
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"preconditions-v1");
@@ -486,7 +486,7 @@ pub enum PreconditionError {
 #[cfg(test)]
 mod clause_tests {
     //! Clause-shaped construction tests (migrated from the deleted
-    //! `pyana_turn::preconditions` module per PREDICATE-INVENTORY §4.3
+    //! `dregg_turn::preconditions` module per PREDICATE-INVENTORY §4.3
     //! case 1). Verifies that `Precondition::{SlotEquals, SlotZero,
     //! NonceAtLeast, Witnessed}` lower correctly onto the canonical
     //! [`Preconditions`] fields and round-trip through

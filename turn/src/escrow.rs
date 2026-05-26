@@ -19,8 +19,8 @@
 //! (via signed statements in this initial implementation; full ZK release
 //! requires a presentation proof bound to the escrow_id).
 
-use pyana_cell::CellId;
-use pyana_cell::ValueCommitmentBytes;
+use dregg_cell::CellId;
+use dregg_cell::ValueCommitmentBytes;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Serde helper for `[u8; 64]` (Ed25519 signatures — serde doesn't support arrays > 32).
@@ -80,11 +80,11 @@ pub struct EscrowRecord {
 ///
 /// # Commitment scheme
 ///
-/// - **Identity commitments**: `BLAKE3("pyana-escrow-identity-v1:" || cell_id || blinding)`
+/// - **Identity commitments**: `BLAKE3("dregg-escrow-identity-v1:" || cell_id || blinding)`
 ///   where `blinding` is a 32-byte random nonce known only to the committer.
-/// - **Value commitment**: Pedersen commitment `v*V + r*R` (see [`pyana_cell::ValueCommitment`]).
+/// - **Value commitment**: Pedersen commitment `v*V + r*R` (see [`dregg_cell::ValueCommitment`]).
 ///   Accompanied by a range proof to prevent negative-value inflation.
-/// - **Condition commitment**: `BLAKE3("pyana-escrow-condition-v1:" || condition_bytes || nonce)`
+/// - **Condition commitment**: `BLAKE3("dregg-escrow-condition-v1:" || condition_bytes || nonce)`
 ///   where `condition_bytes` is the serialized condition and `nonce` is a 32-byte random value.
 ///
 /// # Release protocol (initial implementation)
@@ -160,7 +160,7 @@ impl CommittedEscrow {
     /// Compute the deterministic escrow ID from the commitment fields.
     ///
     /// ```text
-    /// escrow_id = BLAKE3("pyana-committed-escrow-id-v1:"
+    /// escrow_id = BLAKE3("dregg-committed-escrow-id-v1:"
     ///     || creator_commitment || recipient_commitment
     ///     || value_commitment || condition_commitment
     ///     || timeout_height_le)
@@ -172,7 +172,7 @@ impl CommittedEscrow {
         condition_commitment: &[u8; 32],
         timeout_height: u64,
     ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-committed-escrow-id-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-committed-escrow-id-v1");
         hasher.update(creator_commitment);
         hasher.update(recipient_commitment);
         hasher.update(&value_commitment.0);
@@ -197,13 +197,13 @@ impl CommittedEscrow {
 /// Compute an identity commitment for use in a committed escrow.
 ///
 /// ```text
-/// commitment = BLAKE3("pyana-escrow-identity-v1:" || cell_id_bytes || blinding)
+/// commitment = BLAKE3("dregg-escrow-identity-v1:" || cell_id_bytes || blinding)
 /// ```
 ///
 /// The `blinding` must be a cryptographically random 32-byte value, kept secret
 /// by the committer until they need to claim the escrow.
 pub fn compute_identity_commitment(cell_id: &CellId, blinding: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-escrow-identity-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-escrow-identity-v1");
     hasher.update(cell_id.as_bytes());
     hasher.update(blinding);
     *hasher.finalize().as_bytes()
@@ -212,14 +212,14 @@ pub fn compute_identity_commitment(cell_id: &CellId, blinding: &[u8; 32]) -> [u8
 /// Compute a condition commitment for use in a committed escrow.
 ///
 /// ```text
-/// commitment = BLAKE3("pyana-escrow-condition-v1:" || condition_bytes || nonce)
+/// commitment = BLAKE3("dregg-escrow-condition-v1:" || condition_bytes || nonce)
 /// ```
 ///
 /// The `condition_bytes` should be the deterministic serialization of the condition
 /// (e.g., via postcard). The `nonce` prevents rainbow-table attacks against common
 /// condition patterns.
 pub fn compute_condition_commitment(condition_bytes: &[u8], nonce: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-escrow-condition-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-escrow-condition-v1");
     hasher.update(condition_bytes);
     hasher.update(nonce);
     *hasher.finalize().as_bytes()

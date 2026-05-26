@@ -1,15 +1,15 @@
 //! Integration: sturdy-ref serialization → wire transmission → restore at recipient.
 //!
 //! Covers:
-//! - Serialize a PyanaUri (pyana:// format), transmit as bytes, parse at receiver,
+//! - Serialize a DreggUri (dregg:// format), transmit as bytes, parse at receiver,
 //!   reconstruct the original swiss entry by re-presenting to the SwissTable
 //! - Verify the receiver gets the same cell_id and permissions
 //! - Verify tampered URI (wrong swiss) fails to enliven
 //! - Verify corrupt base58 is rejected by the parser
 
-use pyana_captp::{PyanaUri, SwissTable};
-use pyana_cell::AuthRequired;
-use pyana_types::CellId;
+use dregg_captp::{DreggUri, SwissTable};
+use dregg_cell::AuthRequired;
+use dregg_types::CellId;
 
 fn cell(b: u8) -> CellId {
     CellId([b; 32])
@@ -29,16 +29,16 @@ fn sturdy_ref_serialize_transmit_restore_enlivens() {
     let swiss = sender_table.export(cap_cell, AuthRequired::Signature, 1, None);
     let uri = sender_table.make_uri(fed_id, &swiss).unwrap();
 
-    // Serialize to the canonical pyana:// string (wire representation).
+    // Serialize to the canonical dregg:// string (wire representation).
     let wire_string = uri.to_uri_string();
-    assert!(wire_string.starts_with("pyana://"));
+    assert!(wire_string.starts_with("dregg://"));
 
     // Simulate transmission: convert to bytes and back to string.
     let wire_bytes = wire_string.as_bytes().to_vec();
     let received_str = std::str::from_utf8(&wire_bytes).unwrap();
 
     // Receiver parses the URI.
-    let parsed = PyanaUri::parse(received_str).expect("valid URI must parse");
+    let parsed = DreggUri::parse(received_str).expect("valid URI must parse");
     assert_eq!(parsed.federation_id, fed_id);
     assert_eq!(parsed.cell_id, cap_cell.0);
     assert_eq!(parsed.swiss, swiss);
@@ -65,13 +65,13 @@ fn tampered_swiss_fails_to_enliven() {
     let swiss = table.export(c, AuthRequired::Signature, 1, None);
 
     // Construct a URI with a valid-format but wrong swiss (all 0xFF).
-    let tampered = PyanaUri {
+    let tampered = DreggUri {
         federation_id: fed_id,
         cell_id: c.0,
         swiss: [0xFF; 32],
     };
     let tampered_str = tampered.to_uri_string();
-    let parsed = PyanaUri::parse(&tampered_str).unwrap();
+    let parsed = DreggUri::parse(&tampered_str).unwrap();
 
     // swiss in parsed != our registered swiss
     assert_ne!(parsed.swiss, swiss);
@@ -79,7 +79,7 @@ fn tampered_swiss_fails_to_enliven() {
     let err = table
         .enliven(&parsed.swiss, 1)
         .expect_err("tampered swiss must not enliven");
-    assert_eq!(err, pyana_captp::EnlivenError::NotFound);
+    assert_eq!(err, dregg_captp::EnlivenError::NotFound);
 }
 
 // =============================================================================
@@ -89,9 +89,9 @@ fn tampered_swiss_fails_to_enliven() {
 #[test]
 fn corrupt_base58_rejected_by_parser() {
     // '0', 'O', 'I', 'l' are not valid base58 characters.
-    let bad_uri = "pyana://0INVALID_BASE58/validpart/validpart";
-    let err = PyanaUri::parse(bad_uri).expect_err("corrupt base58 must fail");
-    assert!(matches!(err, pyana_captp::UriError::Base58Decode { .. }));
+    let bad_uri = "dregg://0INVALID_BASE58/validpart/validpart";
+    let err = DreggUri::parse(bad_uri).expect_err("corrupt base58 must fail");
+    assert!(matches!(err, dregg_captp::UriError::Base58Decode { .. }));
 }
 
 // =============================================================================
@@ -112,10 +112,10 @@ fn wrong_segment_count_rejected() {
         parts.pop();
         parts.join("/")
     };
-    let err = PyanaUri::parse(&two_seg).expect_err("two-segment URI must fail");
+    let err = DreggUri::parse(&two_seg).expect_err("two-segment URI must fail");
     assert!(matches!(
         err,
-        pyana_captp::UriError::WrongSegmentCount { .. }
+        dregg_captp::UriError::WrongSegmentCount { .. }
     ));
 }
 
@@ -125,8 +125,8 @@ fn wrong_segment_count_rejected() {
 
 #[test]
 fn wrong_scheme_rejected() {
-    let err = PyanaUri::parse("https://example.com/a/b/c").expect_err("wrong scheme must fail");
-    assert_eq!(err, pyana_captp::UriError::InvalidScheme);
+    let err = DreggUri::parse("https://example.com/a/b/c").expect_err("wrong scheme must fail");
+    assert_eq!(err, dregg_captp::UriError::InvalidScheme);
 }
 
 // =============================================================================

@@ -2,7 +2,7 @@
 //!
 //! ## Why this file exists
 //!
-//! `crate::effect_vm::EffectVmAir` implements pyana's local `StarkAir` trait,
+//! `crate::effect_vm::EffectVmAir` implements dregg's local `StarkAir` trait,
 //! which evaluates folded constraints as a concrete `BabyBear` value. The
 //! `p3-recursion` library (via its blanket `RecursiveAir` impl) requires an
 //! AIR that implements `p3-air::Air<AB>` — i.e. one that emits *symbolic*

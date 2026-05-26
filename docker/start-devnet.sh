@@ -7,7 +7,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 echo "Generating devnet configuration..."
-cargo run --release -p pyana-node -- genesis --validators 3 --output docker/devnet-config/
+cargo run --release -p dregg-node -- genesis --validators 3 --output docker/devnet-config/
 
 echo ""
 echo "Building Docker image..."

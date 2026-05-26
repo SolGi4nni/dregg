@@ -11,7 +11,7 @@
 The designer asked: in cryptographic distributed systems there is a
 fundamental tension between participants *inside* (who know things by
 construction) and participants *outside* (who can only see or verify
-certain things). In pyana, where is that boundary? Is it implicit?
+certain things). In dregg, where is that boundary? Is it implicit?
 
 The honest answer is: the boundary is **implicit, plural, and
 sometimes inconsistent**. There is no single declaration in the code or
@@ -19,7 +19,7 @@ the docs of who knows what. Multiple boundaries coexist; they
 sometimes contradict; the codebase has been growing privacy-preserving
 primitives at the periphery faster than it has been declaring,
 centrally, who they exclude. This document does not propose a new type
-system. It *names* the boundaries pyana already has, declares for each
+system. It *names* the boundaries dregg already has, declares for each
 subsystem who's inside, who's outside, and what primitive enforces the
 boundary, and surfaces the inconsistencies.
 
@@ -62,7 +62,7 @@ question with different filling:
 - **Threshold signatures** — the committee members are inside the
   signing relation; anyone who verifies a signature is outside. The
   enforcing primitive is the joint algebra of the secret shares
-  (Shamir + DKG, or for pyana, the per-party BLS keys composed via
+  (Shamir + DKG, or for dregg, the per-party BLS keys composed via
   weighted-threshold aggregation).
 - **Object capabilities and the E language** — only the holder of a
   reference is *inside* the right to invoke; reference unforgeability
@@ -80,14 +80,14 @@ or the runtime-unforgeable reference." Outside means "has only what
 the primitive lets through" — usually a commitment, a verification
 key, or a yes/no acceptance signal.
 
-In a system like pyana, which tries to combine a dozen of these
+In a system like dregg, which tries to combine a dozen of these
 primitives in one substrate, the question "where is the boundary"
 fractures: there is one for each subsystem, and they are not always
 nested. The rest of this document walks each one.
 
 ---
 
-## §2. Pyana's boundaries (enumerated)
+## §2. `dregg`'s boundaries (enumerated)
 
 Each subsection states the boundary, who's inside, who's outside, the
 enforcing primitive, the code site, and the failure mode if the
@@ -96,7 +96,7 @@ load-bearing in production today and proceed outward.
 
 ### §2.1. Federation membership
 
-**Boundary.** Who is a member of a given pyana federation (committee)
+**Boundary.** Who is a member of a given dregg federation (committee)
 versus who is not.
 
 **Inside.** The participants whose BLS keys are aggregated into the
@@ -143,7 +143,7 @@ the algebra would not notice. Lane D's fix derives
 
 ### §2.2. Cap-holder vs non-holder (swiss-number gating)
 
-**Boundary.** Holders of a sturdy reference (a `PyanaUri` containing a
+**Boundary.** Holders of a sturdy reference (a `DreggUri` containing a
 swiss number) can enliven a capability; non-holders cannot.
 
 **Inside.** Anyone in possession of the swiss bytes. The trust model
@@ -304,7 +304,7 @@ field, regardless of the visibility tag. The visibility tag is a
 **publication policy**, not a confidentiality primitive.
 
 **Inconsistency to name.** This is the most common misreading of
-pyana's privacy story. `FieldVisibility::Committed` reads as
+dregg's privacy story. `FieldVisibility::Committed` reads as
 "hidden field." It is hidden from **external readers via
 `public_field_view`** — and only there. The executor, the host node,
 and anything mid-pipeline with ledger-read authority all see
@@ -383,7 +383,7 @@ additionally holds the trace bundle to re-derive scope 2.
 
 **Inside (scope 1, proof-only audience).** Anyone with
 `(proof_bytes, public_inputs, air_name)`. They can call
-`pyana::verifier::verify_effect_vm_proof` and accept/reject.
+`dregg::verifier::verify_effect_vm_proof` and accept/reject.
 
 **Inside (scope 2, trace replay).** Anyone with the proof + the
 `WitnessBundle` (trace rows + witness_hash). They can re-derive the
@@ -417,13 +417,13 @@ the prover plus whoever the prover chose to share with. No
 mechanism enforces or even names this.
 
 **Reframe (2026-05-25).** Per `HOUYHNHNM-COMPARISON.md`'s closing
-insight, the WitnessedReceipt chain *is* pyana's canonical persistence
+insight, the WitnessedReceipt chain *is* dregg's canonical persistence
 stream — not an auxiliary observability log. State is *derived* from
-the receipt stream; the persistent database (`pyana_persist`) is a
+the receipt stream; the persistent database (`dregg_persist`) is a
 cache. This reframes the scope-1/scope-2 boundary as a *replication-
 of-persistence* boundary: scope-2 holders can reconstruct the
 persistence layer from the wire; scope-1 holders can only verify it.
-The operator-side retention discipline (`pyana_node::config::
+The operator-side retention discipline (`dregg_node::config::
 RetentionPolicy`, default `Forever`) declares which suffix of the
 canonical stream this operator commits to *serving*, and the wire-
 level `WireMessage::RequestReceipt` / `ReceiptResponse` carries the
@@ -596,7 +596,7 @@ linkability is therefore open.
 
 **Inconsistency to name.** The README's "Trusted | Selective
 Disclosure | Fully Private" table reads as if it describes the
-**whole pyana stack**'s privacy mode. It describes only this
+**whole dregg stack**'s privacy mode. It describes only this
 boundary — the credential-presentation proof's verifier learnings.
 The surrounding turn, the gossip-broadcast intent, the cleartext
 executor state, and the wire IP all still leak.
@@ -690,8 +690,8 @@ produce a valid `HandoffPresentation`.
 
 **Enforcing primitive.** `HandoffCertificate` signed by the
 introducer + `HandoffPresentation` signed by the recipient.
-Domain-separated `b"pyana-handoff-cert-v1"` and
-`b"pyana-handoff-present-v1"`. Cert binds
+Domain-separated `b"dregg-handoff-cert-v1"` and
+`b"dregg-handoff-present-v1"`. Cert binds
 `target_federation || target_cell || recipient_pk || permissions ||
 allowed_effects || expires_at || max_uses || nonce || swiss`.
 Presentation binds nonce + target_cell + target_federation.
@@ -1169,7 +1169,7 @@ When boundaries **union** — e.g. a datum is sealable to either of
 two recipients, or unlockable by either of two keys — the **larger**
 union is the effective inside.
 
-**Concrete composition examples in pyana:**
+**Concrete composition examples in dregg:**
 
 - A sovereign cell's state is *commitment-inside* the federation
   (only the commitment is persisted), but *cleartext-inside* the
@@ -1300,7 +1300,7 @@ Things the codebase does not unambiguously answer.
    Today: anyone with the file. Is the boundary an operational
    choice (signed audit-key gate) or a cryptographic one
    (sealed bundle, addressed to a chosen verifier)? The
-   former is cheaper; the latter aligns with the rest of pyana's
+   former is cheaper; the latter aligns with the rest of dregg's
    sealing primitives.
 
 5. **What is the deployment plan for `EncryptedTurn`?** The
@@ -1424,8 +1424,8 @@ it is forward-looking.
 ## §10. Connection to Studio/Starbridge
 
 Studio runs an in-browser node via `wasm/src/runtime.rs`. The
-runtime is a real `pyana_sdk::AgentCipherclerk` + real
-`pyana_cell::Ledger` + real `pyana_turn::TurnExecutor` etc., all
+runtime is a real `dregg_sdk::AgentCipherclerk` + real
+`dregg_cell::Ledger` + real `dregg_turn::TurnExecutor` etc., all
 in browser linear memory.
 
 The boundary "in-browser" affects the cleartext-inside /
@@ -1440,7 +1440,7 @@ commitment-inside cuts thus:
 - **The browser is not the federation.** A wasm node does not
   hold BLS shares; it cannot produce `ThresholdQC`s. It is
   acceptance-inside the federation boundary at best — it accepts
-  attested roots, it cannot mint them. `pyana_federation` does
+  attested roots, it cannot mint them. `dregg_federation` does
   not cross-compile to wasm32 (per `STARBRIDGE-APPS-PLAN.md
   §1.2`), so federation operations are remote-only.
 
@@ -1490,7 +1490,7 @@ contributors who want to act on it:
   primitive and the failure mode.
 
 - **If you are reading code with a privacy claim**, walk the four
-  populations explicitly. The frequent mismatch in pyana is that
+  populations explicitly. The frequent mismatch in dregg is that
   the docstring describes the boundary against external readers
   while the relevant adversary in the deployment is the executor
   or a mid-pipeline node.
@@ -1506,7 +1506,7 @@ contributors who want to act on it:
   the enforcing primitive does *and what it does not*. The "does
   not" half is the part that has been costing us in audits.
 
-The intent of this doc is to make the boundaries pyana already
+The intent of this doc is to make the boundaries dregg already
 has explicit and consistent in our vocabulary. It is not a
 type-system proposal. It is naming.
 

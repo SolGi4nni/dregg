@@ -2,7 +2,7 @@
 //!
 //! This module defines the on-wire shape for carrying per-effect
 //! full-fidelity binding proofs alongside a `Turn`. Each binding proof
-//! is a sidecar STARK produced by `pyana_circuit::effect_action_air`
+//! is a sidecar STARK produced by `dregg_circuit::effect_action_air`
 //! (or the dedicated sibling AIRs `bridge_action_air` /
 //! `bridge_lock_action_air`) that pins every typed parameter of one
 //! runtime `Effect` at full fidelity:
@@ -32,7 +32,7 @@
 //! effect's typed parameters, and verifies the STARK against that PI.
 //! Any disagreement on any limb fails verification.
 
-use pyana_circuit::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
 /// A sidecar binding proof for one runtime `Effect`.
@@ -50,12 +50,12 @@ pub struct EffectBindingProof {
     pub effect_index: u32,
     /// Schema identifier — matches the `kind_name` field of one of the
     /// `EffectActionSchema` constants in
-    /// `pyana_circuit::effect_action_air`. Used to look up the schema
+    /// `dregg_circuit::effect_action_air`. Used to look up the schema
     /// for PI reconstruction and to verify cross-effect kind separation
     /// (a proof for kind A must not verify as kind B).
     pub schema_id: String,
     /// Serialized STARK proof bytes (postcard-encoded via
-    /// `pyana_circuit::stark::proof_to_bytes`).
+    /// `dregg_circuit::stark::proof_to_bytes`).
     pub proof_bytes: Vec<u8>,
     /// Canonical public-input vector this proof commits to. Encoded as
     /// raw u32 BabyBear values for stable wire format. The verifier
@@ -171,7 +171,7 @@ mod tests {
     fn effect_binding_proof_roundtrip_serde() {
         let bp = EffectBindingProof {
             effect_index: 3,
-            schema_id: "pyana-effect-note-spend-v1".to_string(),
+            schema_id: "dregg-effect-note-spend-v1".to_string(),
             proof_bytes: vec![0x01, 0x02, 0x03],
             public_inputs: vec![10, 20, 30],
         };

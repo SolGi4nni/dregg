@@ -1,7 +1,7 @@
-//! # pyana-app-framework
+//! # dregg-app-framework
 //!
-//! Production-grade application framework for pyana apps. Extracts and unifies
-//! the shared patterns that every pyana HTTP service needs:
+//! Production-grade application framework for dregg apps. Extracts and unifies
+//! the shared patterns that every dregg HTTP service needs:
 //!
 //! - **Server infrastructure** (`server`): [`AppConfig`](server::AppConfig) for
 //!   env-based configuration, [`AppServer`](server::AppServer) builder with health,
@@ -11,19 +11,19 @@
 //! - **Persistence** (`persistence`): [`JsonPersistence`](persistence::JsonPersistence)
 //!   for atomic write-then-rename state snapshots.
 //! - **Proof verification middleware** (`middleware`): Axum extractors for verifying
-//!   pyana presentation proofs from HTTP headers.
+//!   dregg presentation proofs from HTTP headers.
 //! - **Generic content store** (`store`): Thread-safe async CRUD store keyed by
 //!   32-byte identifiers.
 //! - **Escrow lifecycle helpers** (`escrow`): High-level wrappers for creating,
-//!   releasing, and refunding escrows via `PyanaEngine`.
+//!   releasing, and refunding escrows via `DreggEngine`.
 //! - **Hex utilities** (`hex`): Encode/decode 32-byte arrays to/from hex strings.
 //!
 //! # Quick Start
 //!
 //! ```ignore
-//! use pyana_app_framework::server::{AppConfig, AppServer};
-//! use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
-//! use pyana_app_framework::persistence::JsonPersistence;
+//! use dregg_app_framework::server::{AppConfig, AppServer};
+//! use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+//! use dregg_app_framework::persistence::JsonPersistence;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -42,7 +42,7 @@
 //! # Re-exports
 //!
 //! Commonly needed types from sub-crates are re-exported so apps can import from
-//! a single dependency instead of reaching into `pyana-intent`, `pyana-turn`, etc.
+//! a single dependency instead of reaching into `dregg-intent`, `dregg-turn`, etc.
 
 pub mod auth;
 pub mod authorizer;
@@ -68,7 +68,7 @@ pub mod store;
 pub mod vk;
 
 /// Legacy module alias — `cipherclerk` was renamed to `cipherclerk`. This
-/// alias keeps `pyana_app_framework::cipherclerk::...` callers compiling
+/// alias keeps `dregg_app_framework::cipherclerk::...` callers compiling
 /// during the migration. New code should reach for `cipherclerk`.
 #[doc(hidden)]
 pub mod cclerk {
@@ -84,25 +84,25 @@ pub mod cclerk {
 // =============================================================================
 
 /// Fill constraints for partial intent fulfillment.
-pub use pyana_intent::FillConstraints;
+pub use dregg_intent::FillConstraints;
 
 /// Escrow condition and record types from the turn crate.
-pub use pyana_turn::escrow::{EscrowCondition, EscrowRecord};
+pub use dregg_turn::escrow::{EscrowCondition, EscrowRecord};
 
 /// Predicate types for qualification proofs.
-pub use pyana_circuit::PredicateType;
+pub use dregg_circuit::PredicateType;
 
 /// Commit-reveal fulfillment protocol types.
-pub use pyana_intent::commit_reveal_fulfillment::{
+pub use dregg_intent::commit_reveal_fulfillment::{
     CommitRevealFulfiller, CommitRevealFulfillmentError, FulfillmentCommitment,
     FulfillmentRegistry, FulfillmentResult, compute_commitment_hash,
 };
 
 // Re-export the SDK engine for convenience.
-pub use pyana_sdk::embed::{EngineConfig, PyanaEngine};
+pub use dregg_sdk::embed::{EngineConfig, DreggEngine};
 
 // Re-export CellId since nearly all app code uses it.
-pub use pyana_types::CellId;
+pub use dregg_types::CellId;
 
 // Re-export server and auth types at crate root for ergonomics.
 pub use auth::{AdminAuth, AdminMode, AdminToken, HasAdminToken};
@@ -124,20 +124,20 @@ pub use cipherclerk::AppCipherclerk as AppCClerk;
 // pub use cipherclerk::AppCipherclerk as AppCipherclerk; // already re-exported above
 
 // Re-export common action / effect types so apps build effects through
-// the framework rather than reaching into `pyana_turn` directly.
-pub use pyana_cell::state::FieldElement;
-pub use pyana_turn::Turn;
-pub use pyana_turn::action::{Action, Authorization, DelegationMode, Effect, Event, symbol};
+// the framework rather than reaching into `dregg_turn` directly.
+pub use dregg_cell::state::FieldElement;
+pub use dregg_turn::Turn;
+pub use dregg_turn::action::{Action, Authorization, DelegationMode, Effect, Event, symbol};
 
 // Re-export the SDK cipherclerk at the framework root so applications
 // that need to *construct* one (typically in `main`) don't have to add
-// `pyana-sdk` to their Cargo.toml. App code outside `main` should
+// `dregg-sdk` to their Cargo.toml. App code outside `main` should
 // reach for [`AppCipherclerk`] (the narrow handle), not
 // [`AgentCipherclerk`].
-pub use pyana_sdk::AgentCipherclerk;
+pub use dregg_sdk::AgentCipherclerk;
 
 /// Legacy alias for [`AgentCipherclerk`], re-exported from the SDK.
-// pub use pyana_sdk::AgentCipherclerk as AgentCipherclerk; // already re-exported above
+// pub use dregg_sdk::AgentCipherclerk as AgentCipherclerk; // already re-exported above
 
 // Re-export dispute framework types for apps implementing optimistic settlement.
 pub use dispute::BlindedDisputable;
@@ -166,18 +166,18 @@ pub use starbridge::{
 // to a StarbridgeAppContext.
 pub use cipherclerk::{EmbeddedExecutor, ExecutorSubmitError};
 
-// Re-export FactoryDescriptor from pyana-cell at the framework root
-// so starbridge-apps only need pyana-app-framework in their Cargo.toml
+// Re-export FactoryDescriptor from dregg-cell at the framework root
+// so starbridge-apps only need dregg-app-framework in their Cargo.toml
 // to construct factory descriptors.
-pub use pyana_cell::{
+pub use dregg_cell::{
     AuthRequired, CapGrant, CapTarget, CapTemplate, CellMode, CellProgram, ChildVkStrategy,
     FactoryDescriptor, FieldConstraint, ProvingSystemId, StateConstraint, VerifierFingerprint,
     VkComponents, canonical_vk_v2,
 };
 // Re-export the types needed to build non-trivial CellProgram::Cases — previously
-// every app had to add pyana-cell to its own Cargo.toml just to get these.
-pub use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
-pub use pyana_cell::program::{AuthorizedSet, TransitionCase, TransitionGuard};
+// every app had to add dregg-cell to its own Cargo.toml just to get these.
+pub use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+pub use dregg_cell::program::{AuthorizedSet, TransitionCase, TransitionGuard};
 
 // Re-export the canonical field-element encoding helpers so apps can use them
 // without duplicating these in every crate.
@@ -186,7 +186,7 @@ pub use fields::{field_from_bytes, field_from_u64, hex_encode_32};
 // VK v2: re-export the layered VK encoders from `vk` module at the
 // framework root. These *shadow* the cell crate's v1 `canonical_program_vk`
 // / `canonical_predicate_vk` re-exports — apps that import from
-// `pyana_app_framework` automatically pick up the v2 layered hashes,
+// `dregg_app_framework` automatically pick up the v2 layered hashes,
 // closing the "same spec, different AIR" gap that v1 left open.
 // (`VK-AS-RE-EXECUTION-RECIPE.md` §v2.)
 pub use vk::{

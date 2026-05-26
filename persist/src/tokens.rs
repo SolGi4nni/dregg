@@ -33,7 +33,7 @@ pub struct StoredFoldStep {
     pub old_root: [u8; 32],
     /// The Merkle root after this step.
     pub new_root: [u8; 32],
-    /// The serialized FoldDelta (opaque bytes from pyana-commit).
+    /// The serialized FoldDelta (opaque bytes from dregg-commit).
     pub delta_bytes: Vec<u8>,
     /// Unix timestamp (seconds) when this step was applied.
     pub timestamp: i64,

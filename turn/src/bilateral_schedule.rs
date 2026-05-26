@@ -21,9 +21,9 @@
 //!
 //! Every bilateral id is the 4-felt Poseidon2 of a canonical preimage:
 //!
-//! - `transfer_id = Poseidon2("pyana-transfer-id-v1" || from || to || amount_be || nonce_be)`
-//! - `grant_id    = Poseidon2("pyana-grant-id-v1"    || from || to || cap_hash || nonce_be)`
-//! - `intro_id    = Poseidon2("pyana-intro-id-v1"    || introducer || recipient || target ||
+//! - `transfer_id = Poseidon2("dregg-transfer-id-v1" || from || to || amount_be || nonce_be)`
+//! - `grant_id    = Poseidon2("dregg-grant-id-v1"    || from || to || cap_hash || nonce_be)`
+//! - `intro_id    = Poseidon2("dregg-intro-id-v1"    || introducer || recipient || target ||
 //!                             permissions_bits || nonce_be)`
 //!
 //! ## Accumulator update
@@ -43,19 +43,19 @@
 use crate::action::Effect;
 use crate::forest::CallTree;
 use crate::turn::Turn;
-use pyana_cell::AuthRequired;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_4_to_1;
-use pyana_commit::typed::canonical_32_to_felts_4;
-use pyana_types::CellId;
+use dregg_cell::AuthRequired;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::hash_4_to_1;
+use dregg_commit::typed::canonical_32_to_felts_4;
+use dregg_types::CellId;
 
 // ---------------------------------------------------------------------------
 // Domain separators
 // ---------------------------------------------------------------------------
 
-const TRANSFER_DOMAIN: &[u8] = b"pyana-transfer-id-v1";
-const GRANT_DOMAIN: &[u8] = b"pyana-grant-id-v1";
-const INTRO_DOMAIN: &[u8] = b"pyana-intro-id-v1";
+const TRANSFER_DOMAIN: &[u8] = b"dregg-transfer-id-v1";
+const GRANT_DOMAIN: &[u8] = b"dregg-grant-id-v1";
+const INTRO_DOMAIN: &[u8] = b"dregg-intro-id-v1";
 
 // Distinct accumulator-update salts per kind/direction. Each ensures that
 // (e.g.) an outbound transfer accumulator cannot be confused with an inbound
@@ -117,7 +117,7 @@ fn poseidon2_id_from_bytes(domain: &[u8], payload: &[u8]) -> [BabyBear; 4] {
 
 /// Compute `transfer_id` from canonical surface data.
 ///
-/// `transfer_id = Poseidon2( "pyana-transfer-id-v1" || from || to || amount_be || nonce_be )`
+/// `transfer_id = Poseidon2( "dregg-transfer-id-v1" || from || to || amount_be || nonce_be )`
 ///
 /// This matches §3.1 of `STAGE-7-GAMMA-2-PI-DESIGN.md`.
 pub fn derive_transfer_id(
@@ -138,9 +138,9 @@ pub fn derive_transfer_id(
 ///
 /// Projects (target, slot, permissions_bits, expiry, breadstuff?) into a
 /// stable 32-byte commitment. Used as a component of `grant_id`.
-pub fn compute_cap_entry_hash(cap: &pyana_cell::CapabilityRef) -> [u8; 32] {
+pub fn compute_cap_entry_hash(cap: &dregg_cell::CapabilityRef) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-cap-entry-v1");
+    hasher.update(b"dregg-cap-entry-v1");
     hasher.update(cap.target.as_bytes());
     hasher.update(&cap.slot.to_le_bytes());
     hasher.update(&[permissions_to_bits(&cap.permissions) as u8]);
@@ -161,7 +161,7 @@ pub fn compute_cap_entry_hash(cap: &pyana_cell::CapabilityRef) -> [u8; 32] {
 
 /// Compute `grant_id` from canonical surface data.
 ///
-/// `grant_id = Poseidon2( "pyana-grant-id-v1" || grantor || grantee || cap_entry_hash || nonce_be )`
+/// `grant_id = Poseidon2( "dregg-grant-id-v1" || grantor || grantee || cap_entry_hash || nonce_be )`
 pub fn derive_grant_id(
     grantor: &CellId,
     grantee: &CellId,
@@ -197,7 +197,7 @@ pub fn permissions_to_bits(p: &AuthRequired) -> u32 {
 
 /// Compute `intro_id` from canonical surface data.
 ///
-/// `intro_id = Poseidon2( "pyana-intro-id-v1" || introducer || recipient || target ||
+/// `intro_id = Poseidon2( "dregg-intro-id-v1" || introducer || recipient || target ||
 ///                        permissions_bits || nonce_be )`
 pub fn derive_intro_id(
     introducer: &CellId,
@@ -220,7 +220,7 @@ pub fn derive_intro_id(
 // ---------------------------------------------------------------------------
 
 /// Absorb one 4-felt block into a 4-felt accumulator state. Component-wise
-/// pairing pattern (same shape as `pyana_commit::typed::absorb_4`).
+/// pairing pattern (same shape as `dregg_commit::typed::absorb_4`).
 fn absorb_4(chain: [BabyBear; 4], block: [BabyBear; 4]) -> [BabyBear; 4] {
     [
         hash_4_to_1(&[chain[0], block[0], chain[1], block[1]]),
@@ -289,17 +289,17 @@ impl GrantEntry {
 // Unilateral binding (γ.2 1-arity sibling of bilateral)
 // ---------------------------------------------------------------------------
 //
-// The plain data type lives in `pyana_cell::unilateral` so it can be
-// embedded in `pyana_cell::peer_exchange::PeerStateTransition`. This module
+// The plain data type lives in `dregg_cell::unilateral` so it can be
+// embedded in `dregg_cell::peer_exchange::PeerStateTransition`. This module
 // owns the *accumulator-side* logic: the kind→PI tag projection, the
 // kind→salt mapping, and the per-cell Poseidon2 fold.
 
-pub use pyana_cell::{UnilateralAttestation, UnilateralAttestationKind};
+pub use dregg_cell::{UnilateralAttestation, UnilateralAttestationKind};
 
 /// Projection to the PI kind tag (BabyBear-canonical u32). Folded into the
 /// `UNILATERAL_ATTESTATIONS_ROOT` accumulator alongside the data block.
 pub fn unilateral_pi_tag(kind: &UnilateralAttestationKind) -> u32 {
-    use pyana_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::pi;
     match kind {
         UnilateralAttestationKind::SelfStateTransition => {
             pi::UNILATERAL_ATTESTATION_KIND_SELF_STATE_TRANSITION
@@ -622,7 +622,7 @@ impl Default for BilateralRoots {
 /// writes slots 38..73 (counts + roots) and leaves IS_AGENT_CELL untouched
 /// (the executor decides that separately).
 pub fn project_into_pi(pi: &mut [BabyBear], counts: &BilateralCounts, roots: &BilateralRoots) {
-    use pyana_circuit::effect_vm::pi as p;
+    use dregg_circuit::effect_vm::pi as p;
 
     pi[p::OUTBOUND_TRANSFER_COUNT] = BabyBear::new(counts.outbound_transfer);
     pi[p::INBOUND_TRANSFER_COUNT] = BabyBear::new(counts.inbound_transfer);
@@ -651,7 +651,7 @@ pub fn project_into_pi(pi: &mut [BabyBear], counts: &BilateralCounts, roots: &Bi
 
 /// Extract the γ.2 bilateral counts + roots from a PI vector.
 pub fn extract_from_pi(pi: &[BabyBear]) -> (BilateralCounts, BilateralRoots) {
-    use pyana_circuit::effect_vm::pi as p;
+    use dregg_circuit::effect_vm::pi as p;
     let counts = BilateralCounts {
         outbound_transfer: pi[p::OUTBOUND_TRANSFER_COUNT].as_u32(),
         inbound_transfer: pi[p::INBOUND_TRANSFER_COUNT].as_u32(),
@@ -903,7 +903,7 @@ mod tests {
 
     #[test]
     fn unilateral_project_extract_roundtrip() {
-        use pyana_circuit::effect_vm::pi as p;
+        use dregg_circuit::effect_vm::pi as p;
         let mut sched = ExpectedBilateral::default();
         sched.push_unilateral(
             cid(7),

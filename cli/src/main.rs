@@ -1,8 +1,8 @@
-//! `pyana` -- the user-facing CLI for interacting with pyana federation nodes.
+//! `dregg` -- the user-facing CLI for interacting with dregg federation nodes.
 //!
 //! This tool provides ergonomic commands for inspecting cells, building turns,
 //! managing capabilities, and monitoring federation health. It communicates with
-//! a running pyana-node over HTTP.
+//! a running dregg-node over HTTP.
 
 mod commands;
 mod config;
@@ -16,7 +16,7 @@ use commands::{
     turn,
 };
 
-/// Pyana -- sovereign cell-based compute substrate.
+/// Dregg -- sovereign cell-based compute substrate.
 ///
 /// Interact with cells, turns, capabilities, and federation nodes.
 ///
@@ -25,36 +25,36 @@ use commands::{
 /// federation, receipts, blocklace checkpoints, etc.).
 ///
 /// Examples:
-///   pyana --node-url http://localhost:8420 cell create --label demo
-///   pyana cipherclerk transfer <recipient-cell> 1000 --memo "pay"
-///   pyana cap export <cell-id>
-///   pyana doctor
-///   pyana node blocklace-checkpoint
-///   pyana turn build   # interactive effectful turn
+///   dregg --node-url http://localhost:8420 cell create --label demo
+///   dregg cipherclerk transfer <recipient-cell> 1000 --memo "pay"
+///   dregg cap export <cell-id>
+///   dregg doctor
+///   dregg node blocklace-checkpoint
+///   dregg turn build   # interactive effectful turn
 #[derive(Parser)]
 #[command(
-    name = "pyana",
+    name = "dregg",
     version,
-    about = "Pyana CLI -- manage cells, turns, capabilities, and federation nodes (full SDK client)",
-    long_about = "Pyana CLI (pyana-cli crate) -- hardened, expanded client with better errors, confirms for dangerous ops, blocklace support, doctor diagnostics, and parity targets from wasm bindings (federation, receipts, observability).\n\nSee subcommand --help for details. All POST shapes now match current node/api.rs handlers (no more 422 skews on cell/cipherclerk/cap).",
+    about = "Dregg CLI -- manage cells, turns, capabilities, and federation nodes (full SDK client)",
+    long_about = "Dregg CLI (dregg-cli crate) -- hardened, expanded client with better errors, confirms for dangerous ops, blocklace support, doctor diagnostics, and parity targets from wasm bindings (federation, receipts, observability).\n\nSee subcommand --help for details. All POST shapes now match current node/api.rs handlers (no more 422 skews on cell/cipherclerk/cap).",
     propagate_version = true,
     arg_required_else_help = true
 )]
 struct Cli {
     /// Node URL to connect to (overrides config).
-    #[arg(long, global = true, env = "PYANA_NODE_URL")]
+    #[arg(long, global = true, env = "DREGG_NODE_URL")]
     node_url: Option<String>,
 
     /// Output format: color, plain, json.
-    #[arg(long, global = true, env = "PYANA_OUTPUT")]
+    #[arg(long, global = true, env = "DREGG_OUTPUT")]
     output: Option<String>,
 
-    /// Path to config file (default: ~/.pyana/config.toml).
-    #[arg(long, global = true, env = "PYANA_CONFIG")]
+    /// Path to config file (default: ~/.dregg/config.toml).
+    #[arg(long, global = true, env = "DREGG_CONFIG")]
     config: Option<String>,
 
     /// Enable verbose output (show HTTP request/response details).
-    #[arg(long, short, global = true, env = "PYANA_VERBOSE")]
+    #[arg(long, short, global = true, env = "DREGG_VERBOSE")]
     verbose: bool,
 
     #[command(subcommand)]
@@ -150,7 +150,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ConfigCommand {
-    /// Initialize ~/.pyana/config.toml with defaults.
+    /// Initialize ~/.dregg/config.toml with defaults.
     Init,
     /// Show current configuration.
     Show,
@@ -205,7 +205,7 @@ async fn main() {
         }
         Commands::Completions { shell } => {
             let mut cmd = <Cli as clap::CommandFactory>::command();
-            clap_complete::generate(shell, &mut cmd, "pyana", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut cmd, "dregg", &mut std::io::stdout());
             Ok(())
         }
         Commands::Config { command } => run_config(command, &cfg, &ctx),
@@ -221,12 +221,12 @@ fn print_version(ctx: &output::Context) {
     let version = env!("CARGO_PKG_VERSION");
     if ctx.mode == output::Mode::Json {
         let j = serde_json::json!({
-            "name": "pyana",
+            "name": "dregg",
             "version": version,
         });
         ctx.json_stdout(&j);
     } else {
-        eprintln!("pyana {}", version);
+        eprintln!("dregg {}", version);
         eprintln!("  Sovereign cell-based compute substrate CLI");
     }
 }
@@ -241,7 +241,7 @@ fn run_config(
             let path = config::config_path();
             if path.exists() {
                 ctx.warn(&format!("Config already exists: {}", path.display()));
-                ctx.info("Use `pyana config show` to view, or `pyana config set` to modify.");
+                ctx.info("Use `dregg config show` to view, or `dregg config set` to modify.");
                 return Ok(());
             }
             config::Config::write_default(&path)?;

@@ -130,7 +130,7 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
     match state.db.get_leaderboard(10).await {
         Ok(entries) => {
             if entries.is_empty() {
-                let embed = embeds::pyana_embed("Leaderboard")
+                let embed = embeds::dregg_embed("Leaderboard")
                     .description("No transactions recorded yet. Be the first to use `/faucet`!");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -157,7 +157,7 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
                 ));
             }
 
-            let embed = embeds::pyana_embed("Leaderboard").description(description);
+            let embed = embeds::dregg_embed("Leaderboard").description(description);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -193,7 +193,7 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
         Ok(txs) => {
             if txs.is_empty() {
                 let embed =
-                    embeds::pyana_embed("Transaction History").description("No transactions yet.");
+                    embeds::dregg_embed("Transaction History").description("No transactions yet.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                     .await;
@@ -220,7 +220,7 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
                 description.push_str(&format!("{direction}\n<t:{}:R>\n\n", tx.timestamp));
             }
 
-            let embed = embeds::pyana_embed("Transaction History").description(description);
+            let embed = embeds::dregg_embed("Transaction History").description(description);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

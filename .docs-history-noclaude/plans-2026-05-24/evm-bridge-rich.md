@@ -1,15 +1,15 @@
-# Rich EVM Bridge: Solidity Contracts as Pyana Participants
+# Rich EVM Bridge: Solidity Contracts as `dregg` Participants
 
 ## Executive Summary
 
-The current EVM bridge (`PyanaVault` + `PyanaCredentialGate`) treats Ethereum as
+The current EVM bridge (`DreggVault` + `DreggCredentialGate`) treats Ethereum as
 a deposit/withdraw endpoint. This design elevates EVM contracts to **first-class
-pyana participants**: they can hold sovereign state, route capabilities, register
-in the namespace, verify arbitrary Effect VM turns, and emit pyana-bound effects.
+dregg participants**: they can hold sovereign state, route capabilities, register
+in the namespace, verify arbitrary Effect VM turns, and emit dregg-bound effects.
 
 The key enabler: SP1 wraps our BabyBear STARK to Groth16/BN254, which EVM can
 verify natively. This path is already working for withdrawals. We generalize it
-to arbitrary Effect VM proofs, making the EVM verifier as powerful as a pyana node.
+to arbitrary Effect VM proofs, making the EVM verifier as powerful as a dregg node.
 
 ---
 
@@ -17,15 +17,15 @@ to arbitrary Effect VM proofs, making the EVM verifier as powerful as a pyana no
 
 ```
 chain/contracts/
-  PyanaVault.sol              (EXISTS -- deposit/withdraw with SP1 proof)
-  PyanaCredentialGate.sol     (EXISTS -- gate access with credential proofs)
-  IPyanaVault.sol             (EXISTS -- vault interface)
-  IPyanaCredentialGate.sol    (EXISTS -- credential gate interface)
-  PyanaSovereignCell.sol      (NEW -- EVM-hosted sovereign cell)
-  PyanaCapRouter.sol          (NEW -- CapTP capability routing on EVM)
-  PyanaNameRegistry.sol       (NEW -- mirror pyana namespace on EVM)
-  PyanaDisputeBridge.sol      (NEW -- optimistic bridge with dispute)
-  IPyanaBridge.sol            (NEW -- unified bridge interface)
+  DreggVault.sol              (EXISTS -- deposit/withdraw with SP1 proof)
+  DreggCredentialGate.sol     (EXISTS -- gate access with credential proofs)
+  IDreggVault.sol             (EXISTS -- vault interface)
+  IDreggCredentialGate.sol    (EXISTS -- credential gate interface)
+  DreggSovereignCell.sol      (NEW -- EVM-hosted sovereign cell)
+  DreggCapRouter.sol          (NEW -- CapTP capability routing on EVM)
+  DreggNameRegistry.sol       (NEW -- mirror dregg namespace on EVM)
+  DreggDisputeBridge.sol      (NEW -- optimistic bridge with dispute)
+  IDreggBridge.sol            (NEW -- unified bridge interface)
 ```
 
 ---
@@ -39,21 +39,21 @@ chain/contracts/
 | Proof scope | "This note is valid" | "This Effect VM turn happened correctly" |
 | Capability model | None | Swiss numbers as storage slots, handoff verification |
 | Discovery | None | Governed namespace mirrored on-chain |
-| Direction | Pyana -> EVM (withdraw) only | Bidirectional (events -> turns, proofs -> actions) |
+| Direction | `dregg` -> EVM (withdraw) only | Bidirectional (events -> turns, proofs -> actions) |
 | Trust model | SP1 proof per withdrawal | SP1 proof per state transition + optimistic dispute |
 
 ---
 
-## 1. PyanaSovereignCell: EVM-Hosted Sovereign Cell
+## 1. DreggSovereignCell: EVM-Hosted Sovereign Cell
 
 ### Concept
 
-A sovereign cell on pyana holds committed state and requires proofs for transitions.
-A `PyanaSovereignCell` on EVM does the same thing -- it stores a `bytes32 stateCommitment`
+A sovereign cell on dregg holds committed state and requires proofs for transitions.
+A `DreggSovereignCell` on EVM does the same thing -- it stores a `bytes32 stateCommitment`
 and only advances state when a valid SP1 proof of Effect VM execution is presented.
 
-From the pyana side, this contract IS a cell. It can be referenced via sturdy refs.
-The bridge relay translates pyana turn messages into EVM transactions (and vice versa).
+From the dregg side, this contract IS a cell. It can be referenced via sturdy refs.
+The bridge relay translates dregg turn messages into EVM transactions (and vice versa).
 
 ### Design Principles
 
@@ -77,7 +77,7 @@ The bridge relay translates pyana turn messages into EVM transactions (and vice 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IPyanaSovereignCell {
+interface IDreggSovereignCell {
     /// Emitted on successful state transition.
     event StateTransition(
         uint256 indexed turnNumber,
@@ -119,17 +119,17 @@ interface IPyanaSovereignCell {
 }
 ```
 
-### Implementation Sketch: PyanaSovereignCell.sol
+### Implementation Sketch: DreggSovereignCell.sol
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title PyanaSovereignCell
-/// @notice An EVM contract that acts as a pyana sovereign cell.
+/// @title DreggSovereignCell
+/// @notice An EVM contract that acts as a dregg sovereign cell.
 ///
 /// Holds a state commitment and requires SP1 proofs of Effect VM execution to
-/// advance state. From pyana's perspective, this IS a cell -- it can be referenced
+/// advance state. From dregg's perspective, this IS a cell -- it can be referenced
 /// via sturdy refs, it processes turns, and it emits effects.
 ///
 /// The SP1 guest program (effect-vm-turn) verifies:
@@ -142,7 +142,7 @@ pragma solidity ^0.8.20;
 ///   1. Updates stateCommitment to newCommitment
 ///   2. Increments turnNumber
 ///   3. Executes on-chain effects (token transfers, cross-contract calls)
-contract PyanaSovereignCell {
+contract DreggSovereignCell {
     // ─── Immutables ─────────────────────────────────────────────────────
     address public immutable sp1Verifier;
     bytes32 public immutable effectVmVkey;
@@ -372,9 +372,9 @@ contract PyanaSovereignCell {
 }
 ```
 
-### How This Maps to Pyana Concepts
+### How This Maps to `dregg` Concepts
 
-| Pyana Concept | EVM Representation |
+| `dregg` Concept | EVM Representation |
 |---------------|-------------------|
 | Cell state | `bytes32 stateCommitment` |
 | Turn execution | `transitionState()` with SP1 proof |
@@ -385,11 +385,11 @@ contract PyanaSovereignCell {
 
 ---
 
-## 2. PyanaCapRouter: CapTP on EVM
+## 2. DreggCapRouter: CapTP on EVM
 
 ### Concept
 
-Capabilities in pyana are opaque 32-byte swiss numbers. CapTP uses handoff certificates
+Capabilities in dregg are opaque 32-byte swiss numbers. CapTP uses handoff certificates
 to transfer capabilities between parties. On EVM, we can:
 
 1. Store swiss numbers as capability tokens (mapping from address to swiss[])
@@ -401,14 +401,14 @@ The key insight: from EVM's perspective, a swiss number IS the capability. Posse
 of the swiss number (stored in a contract's storage) IS authority. The SP1 proof
 of a valid handoff certificate is how you GET that swiss number on-chain.
 
-### Solidity Implementation: PyanaCapRouter.sol
+### Solidity Implementation: DreggCapRouter.sol
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title PyanaCapRouter
-/// @notice Routes capabilities between EVM contracts and pyana cells.
+/// @title DreggCapRouter
+/// @notice Routes capabilities between EVM contracts and dregg cells.
 ///
 /// Implements CapTP semantics on EVM:
 ///   - Swiss numbers as capability tokens (32-byte storage slots)
@@ -419,9 +419,9 @@ pragma solidity ^0.8.20;
 /// The router is the EVM-side CapTP node. It:
 ///   1. Accepts handoff certificates (proven valid via SP1)
 ///   2. Stores capabilities for EVM addresses
-///   3. Routes invocations from EVM to pyana (via events)
-///   4. Routes invocations from pyana to EVM (via proven effects)
-contract PyanaCapRouter {
+///   3. Routes invocations from EVM to dregg (via events)
+///   4. Routes invocations from dregg to EVM (via proven effects)
+contract DreggCapRouter {
     // ─── Immutables ─────────────────────────────────────────────────────
     address public immutable sp1Verifier;
     bytes32 public immutable handoffVkey; // SP1 program that verifies handoff certs
@@ -440,17 +440,17 @@ contract PyanaCapRouter {
     /// Used handoff nonces (replay prevention).
     mapping(bytes32 => bool) public usedHandoffNonces;
 
-    /// Registered PyanaSovereignCell contracts (for routing).
+    /// Registered DreggSovereignCell contracts (for routing).
     mapping(address => bool) public registeredCells;
 
     // ─── Types ──────────────────────────────────────────────────────────
 
     struct CapTarget {
-        /// The target type: 0 = pyana cell (off-chain), 1 = EVM contract.
+        /// The target type: 0 = dregg cell (off-chain), 1 = EVM contract.
         uint8 targetType;
-        /// For EVM targets: the contract address. For pyana: bytes32 cell ID.
+        /// For EVM targets: the contract address. For dregg: bytes32 cell ID.
         address evmTarget;
-        bytes32 pyanaCellId;
+        bytes32 dreggCellId;
         /// Permission level granted by this capability.
         uint8 permissionLevel;
         /// Effect mask (which effects can be triggered).
@@ -466,8 +466,8 @@ contract PyanaCapRouter {
         bytes32 introducerFederation
     );
 
-    /// A capability was invoked (EVM -> pyana direction).
-    /// The relay observes this and submits the invocation as a turn on pyana.
+    /// A capability was invoked (EVM -> dregg direction).
+    /// The relay observes this and submits the invocation as a turn on dregg.
     event CapabilityInvoked(
         bytes32 indexed swiss,
         address indexed invoker,
@@ -564,7 +564,7 @@ contract PyanaCapRouter {
         capabilityTargets[swiss] = CapTarget({
             targetType: targetType,
             evmTarget: evmTarget,
-            pyanaCellId: targetCellId,
+            dreggCellId: targetCellId,
             permissionLevel: permLevel,
             allowedEffects: effectMask
         });
@@ -579,9 +579,9 @@ contract PyanaCapRouter {
     /// If the target is an EVM contract (targetType == 1):
     ///   Routes the message directly to the target contract.
     ///
-    /// If the target is a pyana cell (targetType == 0):
+    /// If the target is a dregg cell (targetType == 0):
     ///   Emits a CapabilityInvoked event. The relay observes this and submits
-    ///   the message as a turn on the pyana side.
+    ///   the message as a turn on the dregg side.
     ///
     /// @param swiss The capability being exercised.
     /// @param message The message to deliver to the target.
@@ -604,7 +604,7 @@ contract PyanaCapRouter {
             );
             if (!success) revert EffectExecutionFailed();
         } else {
-            // Pyana routing: emit event for relay to observe.
+            // Dregg routing: emit event for relay to observe.
             bytes32 messageHash = keccak256(message);
             emit CapabilityInvoked(swiss, msg.sender, messageHash, message);
         }
@@ -638,7 +638,7 @@ contract PyanaCapRouter {
 
     // ─── Cell Registration ──────────────────────────────────────────────
 
-    /// Register an EVM PyanaSovereignCell as a routable target.
+    /// Register an EVM DreggSovereignCell as a routable target.
     function registerCell(address cell) external {
         // In production: governance-gated.
         registeredCells[cell] = true;
@@ -673,14 +673,14 @@ contract PyanaCapRouter {
 
 ---
 
-## 3. PyanaNameRegistry: Namespace on EVM
+## 3. DreggNameRegistry: Namespace on EVM
 
 ### Concept
 
-Pyana's governed namespace (`/bridges/evm/uniswap-pool`) can be mirrored on EVM so that:
-- EVM contracts can discover pyana services
-- Pyana can discover EVM contracts registered via the bridge
-- Cross-chain resolution: a pyana path resolves to an EVM address
+`dregg`'s governed namespace (`/bridges/evm/uniswap-pool`) can be mirrored on EVM so that:
+- EVM contracts can discover dregg services
+- `dregg` can discover EVM contracts registered via the bridge
+- Cross-chain resolution: a dregg path resolves to an EVM address
 
 ### Design
 
@@ -688,29 +688,29 @@ Pyana's governed namespace (`/bridges/evm/uniswap-pool`) can be mirrored on EVM 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title PyanaNameRegistry
-/// @notice Mirrors the pyana governed namespace on EVM.
+/// @title DreggNameRegistry
+/// @notice Mirrors the dregg governed namespace on EVM.
 ///
 /// Registration is governance-gated (only approved operators can register names).
 /// Resolution is permissionless (anyone can look up a name).
 ///
 /// Names are paths like "/bridges/evm/uniswap-pool" mapped to:
 ///   - An EVM contract address (for EVM-native targets)
-///   - A bytes32 cell ID (for pyana-native targets)
+///   - A bytes32 cell ID (for dregg-native targets)
 ///   - A swiss number (for capability-gated targets)
 ///
-/// The registry is updated via SP1 proofs of pyana governance decisions.
-/// When pyana governance mounts a new service at a path, a relay submits
+/// The registry is updated via SP1 proofs of dregg governance decisions.
+/// When dregg governance mounts a new service at a path, a relay submits
 /// the proof to this contract, which updates the on-chain registry.
-contract PyanaNameRegistry {
+contract DreggNameRegistry {
     address public immutable sp1Verifier;
     bytes32 public immutable governanceVkey; // SP1 program proving governance decisions
 
     struct NameEntry {
         address evmAddress;      // EVM contract address (if EVM target)
-        bytes32 pyanaCellId;     // Pyana cell ID (if pyana target)
+        bytes32 dreggCellId;     // Dregg cell ID (if dregg target)
         bytes32 swissNumber;     // Swiss number for capability-gated access
-        uint8 entryType;         // 0=pyana, 1=evm, 2=hybrid
+        uint8 entryType;         // 0=dregg, 1=evm, 2=hybrid
         string serviceKind;      // "bridge", "oracle", "defi", etc.
         uint256 registeredAt;    // Block number of registration
         bool active;             // Whether the entry is currently live
@@ -727,7 +727,7 @@ contract PyanaNameRegistry {
         bytes32 indexed pathHash,
         string path,
         address evmAddress,
-        bytes32 pyanaCellId,
+        bytes32 dreggCellId,
         string serviceKind
     );
 
@@ -744,11 +744,11 @@ contract PyanaNameRegistry {
     }
 
     /// Register a name via governance proof.
-    /// The SP1 proof attests that pyana governance approved this registration.
+    /// The SP1 proof attests that dregg governance approved this registration.
     function registerWithProof(
         string calldata path,
         address evmAddress,
-        bytes32 pyanaCellId,
+        bytes32 dreggCellId,
         bytes32 swissNumber,
         uint8 entryType,
         string calldata serviceKind,
@@ -772,7 +772,7 @@ contract PyanaNameRegistry {
         bytes32 pathHash = keccak256(bytes(path));
         entries[pathHash] = NameEntry({
             evmAddress: evmAddress,
-            pyanaCellId: pyanaCellId,
+            dreggCellId: dreggCellId,
             swissNumber: swissNumber,
             entryType: entryType,
             serviceKind: serviceKind,
@@ -780,7 +780,7 @@ contract PyanaNameRegistry {
             active: true
         });
 
-        emit NameRegistered(pathHash, path, evmAddress, pyanaCellId, serviceKind);
+        emit NameRegistered(pathHash, path, evmAddress, dreggCellId, serviceKind);
     }
 
     /// Resolve a name (permissionless).
@@ -802,12 +802,12 @@ contract PyanaNameRegistry {
 
 ---
 
-## 4. PyanaDisputeBridge: Optimistic Bridge with Dispute
+## 4. DreggDisputeBridge: Optimistic Bridge with Dispute
 
 ### Concept
 
 Same model as the Midnight bridge (see `plans/midnight-bridge-production.md`) but for EVM:
-- Relay posts pyana state claims to EVM with a bond
+- Relay posts dregg state claims to EVM with a bond
 - Challenge window allows anyone to dispute with an SP1 fraud proof
 - If unchallenged: claim finalizes and EVM actions execute
 - If challenged and fraud proven: relay is slashed
@@ -818,11 +818,11 @@ Same model as the Midnight bridge (see `plans/midnight-bridge-production.md`) bu
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IPyanaDisputeBridge {
+interface IDreggDisputeBridge {
     enum ClaimStatus { Pending, Challenged, Finalized, Slashed }
 
     struct BridgeClaim {
-        bytes32 pyanaStateRoot;    // The pyana state this claim is about
+        bytes32 dreggStateRoot;    // The dregg state this claim is about
         bytes32 actionHash;        // What EVM action should execute on finality
         address relay;             // Who submitted the claim
         uint256 bond;              // ETH bonded by the relay
@@ -831,14 +831,14 @@ interface IPyanaDisputeBridge {
         ClaimStatus status;
     }
 
-    event ClaimSubmitted(bytes32 indexed claimId, address indexed relay, bytes32 pyanaStateRoot);
+    event ClaimSubmitted(bytes32 indexed claimId, address indexed relay, bytes32 dreggStateRoot);
     event ClaimChallenged(bytes32 indexed claimId, address indexed challenger);
     event ClaimFinalized(bytes32 indexed claimId);
     event ClaimSlashed(bytes32 indexed claimId, address indexed challenger, uint256 slashAmount);
 
     /// Submit a bridge claim with a bond.
     function submitClaim(
-        bytes32 pyanaStateRoot,
+        bytes32 dreggStateRoot,
         bytes32 actionHash,
         bytes calldata federationAttestation
     ) external payable;
@@ -859,17 +859,17 @@ interface IPyanaDisputeBridge {
 
 ---
 
-## 5. IPyanaBridge: Unified Bridge Interface
+## 5. IDreggBridge: Unified Bridge Interface
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title IPyanaBridge
-/// @notice Unified interface for all pyana bridge operations on EVM.
+/// @title IDreggBridge
+/// @notice Unified interface for all dregg bridge operations on EVM.
 ///
 /// Aggregates: sovereign cells, capability routing, namespace, and disputes.
-interface IPyanaBridge {
+interface IDreggBridge {
     /// Submit a proven state transition to a sovereign cell.
     function submitTransition(
         address cell,
@@ -885,7 +885,7 @@ interface IPyanaBridge {
     /// Invoke a capability (route message to target).
     function invokeCapability(bytes32 swiss, bytes calldata message) external;
 
-    /// Resolve a name from the pyana namespace.
+    /// Resolve a name from the dregg namespace.
     function resolveName(string calldata path) external view returns (address evmAddress, bytes32 cellId);
 
     /// Submit a bridge claim (optimistic).
@@ -904,12 +904,12 @@ interface IPyanaBridge {
 
 | Guest Program | What It Proves | EVM Consumer |
 |---------------|---------------|--------------|
-| `effect-vm-turn` | Effect VM correctly executed a turn | PyanaSovereignCell |
-| `handoff-verify` | Handoff certificate has valid Ed25519 signature | PyanaCapRouter |
-| `governance-decision` | Pyana governance approved a namespace registration | PyanaNameRegistry |
-| `withdrawal` | Note is valid and unspent (existing) | PyanaVault |
-| `credential` | Anonymous credential is valid (existing) | PyanaCredentialGate |
-| `fraud-proof` | A relay's claim is inconsistent with pyana state | PyanaDisputeBridge |
+| `effect-vm-turn` | Effect VM correctly executed a turn | DreggSovereignCell |
+| `handoff-verify` | Handoff certificate has valid Ed25519 signature | DreggCapRouter |
+| `governance-decision` | `dregg` governance approved a namespace registration | DreggNameRegistry |
+| `withdrawal` | Note is valid and unspent (existing) | DreggVault |
+| `credential` | Anonymous credential is valid (existing) | DreggCredentialGate |
+| `fraud-proof` | A relay's claim is inconsistent with dregg state | DreggDisputeBridge |
 | `datalog-eval` | A Datalog query is derivable from committed state | Any contract (generic) |
 
 ### SP1 Program Public Values Format
@@ -937,7 +937,7 @@ fraud-proof:
 ### SP1 Pipeline: BabyBear STARK -> Groth16/BN254 -> EVM
 
 ```
-1. Pyana computes a turn (Effect VM execution)
+1. Dregg computes a turn (Effect VM execution)
 2. SP1 guest re-executes the turn inside RISC-V zkVM
 3. SP1 produces a STARK proof of correct execution
 4. SP1 compresses the STARK via recursion
@@ -951,13 +951,13 @@ fraud-proof:
 
 ## 7. Message Flows
 
-### Flow A: Pyana -> EVM (Proven State Transition)
+### Flow A: `dregg` -> EVM (Proven State Transition)
 
 ```
-1. Pyana cell executes a turn that affects EVM state
+1. Dregg cell executes a turn that affects EVM state
 2. Effect VM produces: (newState, effects[])
 3. SP1 proves the turn: STARK -> Groth16
-4. Relay submits to PyanaSovereignCell.transitionState():
+4. Relay submits to DreggSovereignCell.transitionState():
    - newCommitment (new state hash)
    - effectsHash (keccak256 of effects)
    - effects (encoded on-chain actions)
@@ -966,46 +966,46 @@ fraud-proof:
 6. Effects may include: token transfers, cross-contract calls, swiss registration
 ```
 
-### Flow B: EVM -> Pyana (Event Observation)
+### Flow B: EVM -> `dregg` (Event Observation)
 
 ```
 1. EVM contract emits an event (e.g., CapabilityInvoked, IntentEmitted)
 2. Relay/watcher observes the event via Ethereum RPC
-3. Relay submits the event as a turn on pyana:
+3. Relay submits the event as a turn on dregg:
    - Include Ethereum storage proof (state proof against block hash)
-   - Pyana verifies the proof (trustless if block hash is trusted)
-   - Turn executes on pyana side
+   - Dregg verifies the proof (trustless if block hash is trusted)
+   - Turn executes on dregg side
 4. Result flows back via Flow A if needed
 ```
 
 ### Flow C: Handoff Certificate Crossing the Bridge
 
 ```
-1. Pyana introducer creates HandoffCertificate (Ed25519 signed)
+1. Dregg introducer creates HandoffCertificate (Ed25519 signed)
 2. SP1 proves the signature is valid (Ed25519 in RISC-V)
-3. Groth16 proof submitted to PyanaCapRouter.acceptHandoff()
+3. Groth16 proof submitted to DreggCapRouter.acceptHandoff()
 4. Contract verifies proof, stores capability for msg.sender
 5. msg.sender can now invoke() the capability:
    - If target is EVM: direct contract call
-   - If target is pyana: event emitted, relay delivers to pyana
+   - If target is dregg: event emitted, relay delivers to dregg
 ```
 
 ### Flow D: Namespace Resolution
 
 ```
-1. Pyana governance approves: mount "/bridges/evm/uniswap-pool" -> 0x1234...
+1. Dregg governance approves: mount "/bridges/evm/uniswap-pool" -> 0x1234...
 2. SP1 proves the governance decision
-3. Relay submits to PyanaNameRegistry.registerWithProof()
+3. Relay submits to DreggNameRegistry.registerWithProof()
 4. Any EVM contract can resolve("/bridges/evm/uniswap-pool") -> 0x1234...
-5. Cross-chain composability: Uniswap pool accessible via pyana namespace
+5. Cross-chain composability: Uniswap pool accessible via dregg namespace
 ```
 
 ### Flow E: Optimistic Claim with Dispute
 
 ```
-1. Relay posts claim: "pyana state S implies EVM action A"
+1. Relay posts claim: "dregg state S implies EVM action A"
    - Includes: federation attestation, bond (ETH)
-   - PyanaDisputeBridge records claim, starts dispute window
+   - DreggDisputeBridge records claim, starts dispute window
 2. Dispute window (configurable: 7 days for L1, 1 hour for L2):
    - Any watcher can challenge by submitting SP1 fraud proof
    - Fraud proof: "state S does NOT imply action A" (STARK proven)
@@ -1016,21 +1016,21 @@ fraud-proof:
 
 ---
 
-## 8. Example: DeFi Protocol Using Pyana Capabilities
+## 8. Example: DeFi Protocol Using `dregg` Capabilities
 
 ### Scenario: Uniswap Pool with Anonymous Credential Gating
 
-A Uniswap V4 hook contract gates LP access behind pyana anonymous credentials:
+A Uniswap V4 hook contract gates LP access behind dregg anonymous credentials:
 "Only users with a valid KYC credential from a trusted federation can add liquidity."
 
 ```solidity
-contract PyanaGatedUniswapHook {
-    PyanaCapRouter public immutable capRouter;
-    PyanaCredentialGate public immutable credentialGate;
+contract DreggGatedUniswapHook {
+    DreggCapRouter public immutable capRouter;
+    DreggCredentialGate public immutable credentialGate;
     bytes32 public immutable requiredFederation;
     bytes32 public immutable kycPredicate; // keccak256("kyc_status == approved")
 
-    /// Before adding liquidity, verify the user has a pyana capability
+    /// Before adding liquidity, verify the user has a dregg capability
     /// AND a valid KYC credential.
     function beforeAddLiquidity(address sender, ...) external {
         // Check 1: sender holds a capability for this pool (via CapRouter)
@@ -1055,11 +1055,11 @@ contract PyanaGatedUniswapHook {
 ### How the user gets access:
 
 ```
-1. User obtains KYC credential from pyana federation (off-chain)
+1. User obtains KYC credential from dregg federation (off-chain)
 2. User gets handoff certificate for the pool capability (from pool operator)
-3. User submits handoff proof to PyanaCapRouter.acceptHandoff()
+3. User submits handoff proof to DreggCapRouter.acceptHandoff()
    -> Now has poolSwiss capability on EVM
-4. User submits KYC credential proof to PyanaCredentialGate.verifyCredential()
+4. User submits KYC credential proof to DreggCredentialGate.verifyCredential()
    -> Nullifier recorded (sybil resistance)
 5. User adds liquidity to Uniswap -- hook verifies both checks
 ```
@@ -1083,9 +1083,9 @@ contract PyanaGatedUniswapHook {
 | Current status | Level 1.5 (optimistic) | Level 1 (vault+credentials) -> Level 2 (this plan) |
 | CapTP transport | Substrate RPC + observer | Events + relay + SP1 proofs |
 | Namespace | Governed, proven via DFA | Mirrored on-chain via governance proofs |
-| Dispute | pyana-side dispute framework | EVM-side dispute contract |
-| Sovereign cells | N/A (Midnight has own model) | PyanaSovereignCell (this plan) |
-| Value transfer | Bond-based optimistic | Existing PyanaVault (working) |
+| Dispute | dregg-side dispute framework | EVM-side dispute contract |
+| Sovereign cells | N/A (Midnight has own model) | DreggSovereignCell (this plan) |
+| Value transfer | Bond-based optimistic | Existing DreggVault (working) |
 
 The EVM bridge has a STRUCTURAL ADVANTAGE over Midnight: SP1 natively outputs BN254/Groth16,
 which EVM can verify directly. No curve conversion needed. This means Level 2 (proof-carrying)
@@ -1097,28 +1097,28 @@ is achievable NOW on EVM, while Midnight is stuck at Level 1.5 until BLS12-381 w
 
 ### Phase 1: Sovereign Cell (2 weeks)
 
-- Deploy `PyanaSovereignCell` with effect-vm-turn SP1 program
+- Deploy `DreggSovereignCell` with effect-vm-turn SP1 program
 - Single cell holding state; relay submits proven turns
 - Effects: ERC-20 transfer only (simplest effect type)
 - Test: end-to-end state transition with real SP1 proof
 
 ### Phase 2: Capability Routing (2 weeks)
 
-- Deploy `PyanaCapRouter` with handoff-verify SP1 program
-- Test: cross-bridge handoff (pyana -> EVM capability grant)
-- Integrate with existing `PyanaSovereignCell` for routing
+- Deploy `DreggCapRouter` with handoff-verify SP1 program
+- Test: cross-bridge handoff (dregg -> EVM capability grant)
+- Integrate with existing `DreggSovereignCell` for routing
 
 ### Phase 3: Namespace + Dispute (3 weeks)
 
-- Deploy `PyanaNameRegistry` with governance SP1 program
-- Deploy `PyanaDisputeBridge` with fraud-proof SP1 program
-- Wire existing `PyanaVault` as the bonding escrow
+- Deploy `DreggNameRegistry` with governance SP1 program
+- Deploy `DreggDisputeBridge` with fraud-proof SP1 program
+- Wire existing `DreggVault` as the bonding escrow
 - Test: full optimistic bridge claim lifecycle
 
 ### Phase 4: DeFi Integration (4 weeks)
 
 - Uniswap V4 hook example (credential-gated LP)
-- Aave borrowing with pyana credit score (anonymous proof of creditworthiness)
+- Aave borrowing with dregg credit score (anonymous proof of creditworthiness)
 - Cross-chain atomic swaps via sovereign cell effects
 
 ---
@@ -1131,13 +1131,13 @@ is achievable NOW on EVM, while Midnight is stuck at Level 1.5 until BLS12-381 w
 | transitionState (no effects) | ~300K | Proof verify + state update |
 | transitionState (1 ERC-20 transfer) | ~350K | + token transfer |
 | acceptHandoff | ~300K | Proof verify + storage writes |
-| invoke (pyana target) | ~50K | Event emission only |
+| invoke (dregg target) | ~50K | Event emission only |
 | invoke (EVM target) | ~100K+ | Depends on target contract |
 | registerWithProof | ~350K | Proof verify + string storage |
 | submitClaim | ~100K | State write + bond accounting |
 | challengeClaim | ~300K | Proof verify + slash logic |
 
-Total for a pyana turn executing on EVM with one effect: ~350K gas.
+Total for a dregg turn executing on EVM with one effect: ~350K gas.
 At 30 gwei base fee on Ethereum L1: ~$3-5 per turn.
 On Base L2: ~$0.01 per turn.
 
@@ -1148,7 +1148,7 @@ On Base L2: ~$0.01 per turn.
 ### SP1 Program Correctness
 
 The security of the entire bridge reduces to: "Are the SP1 guest programs correct?"
-If the effect-vm-turn guest faithfully re-executes pyana's Effect VM logic, then
+If the effect-vm-turn guest faithfully re-executes dregg's Effect VM logic, then
 the EVM contract cannot be tricked into an invalid state transition.
 
 Key properties that must hold:
@@ -1162,7 +1162,7 @@ Key properties that must hold:
 - For sovereign cells: TRUSTLESS (SP1 proof required for every transition)
 - For namespace: Semi-trusted (governance proof required, but governance is off-chain)
 - For disputes: 1-of-N honest watcher (same as Midnight bridge)
-- For EVM->pyana direction: relay trust for liveness, Ethereum state proofs for safety
+- For EVM->dregg direction: relay trust for liveness, Ethereum state proofs for safety
 
 ### Capability Security
 
@@ -1180,7 +1180,7 @@ need to be in the capability's facet).
 
 ### Reentrancy
 
-`PyanaSovereignCell._executeEffects()` makes external calls (EFFECT_CROSS_CALL).
+`DreggSovereignCell._executeEffects()` makes external calls (EFFECT_CROSS_CALL).
 Reentrancy is mitigated by:
 1. State is already updated before effects execute (checks-effects-interactions)
 2. Turn counter prevents re-execution of the same turn

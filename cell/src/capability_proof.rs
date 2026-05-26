@@ -89,7 +89,7 @@ pub enum CapabilityProofData {
 
 /// An effect that can be requested via peer-to-peer capability exercise.
 ///
-/// This is a restricted subset of the full `Effect` enum (which lives in `pyana-turn`).
+/// This is a restricted subset of the full `Effect` enum (which lives in `dregg-turn`).
 /// Only effects that make sense for a remote capability holder to request on a target
 /// cell are included here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -240,7 +240,7 @@ impl CapabilityProof {
     /// Compute the signing message for this proof (everything except the signature itself).
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::with_capacity(256);
-        msg.extend_from_slice(b"pyana-cap-proof-v1:");
+        msg.extend_from_slice(b"dregg-cap-proof-v1:");
         msg.extend_from_slice(self.holder_cell.as_bytes());
         msg.extend_from_slice(&self.holder_commitment);
         msg.extend_from_slice(self.target_cell.as_bytes());

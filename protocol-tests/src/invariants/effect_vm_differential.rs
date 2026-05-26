@@ -30,14 +30,14 @@
 use std::collections::HashMap;
 
 use proptest::prelude::*;
-use pyana_cell::{AuthRequired, AuthRequired::None as AuthNone, Cell, CellId, Ledger, Permissions};
-use pyana_circuit::effect_vm::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger};
+use dregg_circuit::effect_vm::{
     CellState as VmCellState, Effect as VmEffect, extract_net_delta, generate_effect_vm_trace,
     state as vm_state,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
+use dregg_circuit::field::BabyBear;
+use dregg_turn::{
+    Action, Authorization, CallForest, DelegationMode, Effect,
     turn::Turn,
 };
 
@@ -142,12 +142,12 @@ fn fresh_ledger() -> (Ledger, Vec<CellId>) {
 /// `VmEffect::NoOp`.
 fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
     fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
-        let v = u32::from_le_bytes([h[0], h[1], h[2], h[3]]) % pyana_circuit::field::BABYBEAR_P;
+        let v = u32::from_le_bytes([h[0], h[1], h[2], h[3]]) % dregg_circuit::field::BABYBEAR_P;
         BabyBear::new(v)
     }
     fn field_to_bb(v: &[u8; 32]) -> BabyBear {
         let val_u32 =
-            u32::from_le_bytes([v[0], v[1], v[2], v[3]]) % pyana_circuit::field::BABYBEAR_P;
+            u32::from_le_bytes([v[0], v[1], v[2], v[3]]) % dregg_circuit::field::BABYBEAR_P;
         BabyBear::new(val_u32)
     }
 
@@ -204,7 +204,7 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                             let off = i * 4;
                             let v =
                                 u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-                            out[i] = BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                            out[i] = BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
                         }
                         out
                     }
@@ -410,7 +410,7 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     // projection).
     for i in 0..8 {
         if let Some(f) = actor_cell.state.get_field(i) {
-            let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]]) % pyana_circuit::field::BABYBEAR_P;
+            let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]]) % dregg_circuit::field::BABYBEAR_P;
             vm_initial.fields[i] = BabyBear::new(v);
         }
     }
@@ -422,21 +422,21 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     // Last row's state_after columns give the AIR's claimed final state.
     let last_row = trace.last().expect("non-empty trace");
     let final_balance_lo =
-        last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_LO].0 as u64;
+        last_row[dregg_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_LO].0 as u64;
     let final_balance_hi =
-        last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_HI].0 as u64;
-    let final_cap_root = last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::CAP_ROOT];
+        last_row[dregg_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_HI].0 as u64;
+    let final_cap_root = last_row[dregg_circuit::effect_vm::STATE_AFTER_BASE + vm_state::CAP_ROOT];
     let initial_cap_root =
-        trace[0][pyana_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::CAP_ROOT];
+        trace[0][dregg_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::CAP_ROOT];
     let mut final_fields = [BabyBear::ZERO; 8];
     for i in 0..8 {
         final_fields[i] =
-            last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::FIELD_BASE + i];
+            last_row[dregg_circuit::effect_vm::STATE_AFTER_BASE + vm_state::FIELD_BASE + i];
     }
     let mut initial_fields = [BabyBear::ZERO; 8];
     for i in 0..8 {
         initial_fields[i] =
-            trace[0][pyana_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::FIELD_BASE + i];
+            trace[0][dregg_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::FIELD_BASE + i];
     }
 
     AirClaim {
@@ -520,7 +520,7 @@ proptest! {
             cell: actor,
             recipient,
             amount,
-            condition: pyana_turn::EscrowCondition::SignedByAll { signers: vec![] },
+            condition: dregg_turn::EscrowCondition::SignedByAll { signers: vec![] },
             timeout_height: u64::MAX,
             escrow_id,
         };
@@ -617,12 +617,12 @@ fn differential_bridge_mint() {
     let nonce = actor_cell.state.nonce();
 
     let value: u64 = 4321;
-    let portable_proof = pyana_cell::PortableNoteProof {
+    let portable_proof = dregg_cell::PortableNoteProof {
         nullifier: [3u8; 32],
-        destination_commitment: pyana_cell::NoteCommitment([4u8; 32]),
+        destination_commitment: dregg_cell::NoteCommitment([4u8; 32]),
         value,
         asset_type: 0,
-        source_root: pyana_types::AttestedRoot {
+        source_root: dregg_types::AttestedRoot {
             merkle_root: [0u8; 32],
             note_tree_root: None,
             nullifier_set_root: None,
@@ -633,7 +633,7 @@ fn differential_bridge_mint() {
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
-            federation_id: pyana_types::FederationId::PLACEHOLDER,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
             receipt_stream_root: None,
         },
         destination_federation: [0u8; 32],
@@ -664,7 +664,7 @@ fn differential_grant_cap() {
     let before = CellSnapshot::of(actor_cell);
     let nonce = actor_cell.state.nonce();
 
-    let cap = pyana_cell::CapabilityRef {
+    let cap = dregg_cell::CapabilityRef {
         target,
         slot: 0,
         permissions: AuthNone,
@@ -842,7 +842,7 @@ proptest! {
         let after = CellSnapshot::of(ledger.get(&actor).unwrap());
 
         // AIR's field[idx] should match runtime's field[idx] (mod truncation).
-        let expected_bb = BabyBear::new(v0 % pyana_circuit::field::BABYBEAR_P);
+        let expected_bb = BabyBear::new(v0 % dregg_circuit::field::BABYBEAR_P);
         prop_assert_eq!(
             claim.final_fields[idx], expected_bb,
             "SetField: AIR final field[{}] should be {:?} (got {:?})",
@@ -885,7 +885,7 @@ fn differential_emit_event_passthrough_gap() {
 
     let effect = Effect::EmitEvent {
         cell: actor,
-        event: pyana_turn::Event {
+        event: dregg_turn::Event {
             topic: [0u8; 32],
             data: vec![],
         },
@@ -1135,7 +1135,7 @@ fn differential_bridge_finalize_passthrough() {
     let actor_cell = ledger.get(&actor).unwrap();
     let nonce = actor_cell.state.nonce();
 
-    let receipt = pyana_cell::BridgeReceipt {
+    let receipt = dregg_cell::BridgeReceipt {
         nullifier: [6u8; 32],
         destination_federation: [0u8; 32],
         mint_height: 0,
@@ -1251,7 +1251,7 @@ fn differential_pipelined_send_passthrough() {
         witness_blobs: vec![],
     };
     let effect = Effect::PipelinedSend {
-        target: pyana_turn::eventual::EventualRef {
+        target: dregg_turn::eventual::EventualRef {
             source_turn: [0u8; 32],
             output_slot: 0,
             federation_id: None,

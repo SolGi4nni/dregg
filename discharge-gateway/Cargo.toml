@@ -1,5 +1,5 @@
 [package]
-name = "pyana-discharge-gateway"
+name = "dregg-discharge-gateway"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,10 +7,10 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Standalone HTTP discharge gateway for pyana third-party macaroon caveats"
+description = "Standalone HTTP discharge gateway for dregg third-party macaroon caveats"
 
 [dependencies]
-pyana-macaroon = { path = "../macaroon" }
+dregg-macaroon = { path = "../macaroon" }
 
 axum = { version = "0.8" }
 base64 = { workspace = true }

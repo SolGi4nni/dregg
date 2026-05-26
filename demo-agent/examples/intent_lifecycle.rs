@@ -9,26 +9,26 @@
 //! 5. Service verifies the fulfillment
 //! 6. Attack resistance: frontrunning, probing, authority-exceed all fail
 //!
-//! This uses the real `pyana-intent` crate (matcher, fulfillment, gossip pool
+//! This uses the real `dregg-intent` crate (matcher, fulfillment, gossip pool
 //! with commit-reveal). The STARK proof uses the mock path for speed but would
 //! be a real proof in production.
 
-use pyana_circuit::BabyBear;
-use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_commit::{Poseidon2MerkleTree, commitment_to_field};
-use pyana_intent::fulfillment::{self, FulfillOptions, Fulfillment};
-use pyana_intent::gossip::{
+use dregg_circuit::BabyBear;
+use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use dregg_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::poseidon2::hash_fact;
+use dregg_commit::{Poseidon2MerkleTree, commitment_to_field};
+use dregg_intent::fulfillment::{self, FulfillOptions, Fulfillment};
+use dregg_intent::gossip::{
     AutoFulfillPolicy, CommitRevealError, FulfillmentReveal, IntentPool, IntentPoolConfig,
 };
-use pyana_intent::matcher::{self, HeldCapability, MatchResult, Sensitivity};
-use pyana_intent::{
+use dregg_intent::matcher::{self, HeldCapability, MatchResult, Sensitivity};
+use dregg_intent::{
     ActionPattern, CommitmentId, Intent, IntentKind, Match, MatchSpec, StakeProof, VerificationMode,
 };
 
 fn main() {
-    println!("=== Pyana Intent Lifecycle Demo ===");
+    println!("=== Dregg Intent Lifecycle Demo ===");
     println!("Complete flow: posting -> matching -> commitment -> fulfillment -> verification\n");
 
     // =========================================================================
@@ -43,7 +43,7 @@ fn main() {
     let service_commitment = CommitmentId::derive(b"treasury-service-secret", "service-identity");
 
     // Build a real Poseidon2 note tree for stake proofs
-    let stake_commitment = pyana_cell::NoteCommitment([0xAB; 32]);
+    let stake_commitment = dregg_cell::NoteCommitment([0xAB; 32]);
     let mut note_tree = Poseidon2MerkleTree::with_depth(4);
     // Populate with some other notes
     for i in 0..5u8 {
@@ -373,11 +373,11 @@ fn main() {
 
     // Check 1: Verify the real STARK proof cryptographically
     let proof_valid = if let Some(proof_bytes) = fulfillment.proof.as_ref() {
-        match pyana_circuit::stark::proof_from_bytes(proof_bytes) {
+        match dregg_circuit::stark::proof_from_bytes(proof_bytes) {
             Ok(proof) => {
                 let conclusion = BabyBear(proof.public_inputs[2]);
                 let acc_hash = BabyBear(proof.public_inputs[4]);
-                pyana_circuit::multi_step_air::verify_authorization_stark(
+                dregg_circuit::multi_step_air::verify_authorization_stark(
                     conclusion, acc_hash, &proof,
                 )
                 .is_ok()

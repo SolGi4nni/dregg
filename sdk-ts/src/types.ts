@@ -1,6 +1,6 @@
 // ============================================================================
-// Core type definitions for the pyana TypeScript SDK.
-// These map directly to the JSON structures returned by pyana-wasm exports.
+// Core type definitions for the dregg TypeScript SDK.
+// These map directly to the JSON structures returned by dregg-wasm exports.
 // ============================================================================
 
 /** Result of minting a new root macaroon token. */

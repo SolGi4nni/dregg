@@ -1,12 +1,12 @@
 /**
- * <pyana-encrypted-intent uri="pyana://encrypted-intent/<intent-id>" data="...">
+ * <dregg-encrypted-intent uri="dregg://encrypted-intent/<intent-id>" data="...">
  *
  * Per-validator share status + reveal-progress bar for threshold-encrypted intents.
  *
  * Canonical: EncryptedIntent + threshold-decryption flow (intent crate).
  * Paste-friendly for cross-tab reveal coordination.
  *
- * URI: pyana://encrypted-intent/<id>
+ * URI: dregg://encrypted-intent/<id>
  * data=: { intent_id, shares: [{validator, received, share_ct?}], threshold, progress, ... }
  *
  * Modes: compact (progress bar + count) | default (full share grid + reveal demo)
@@ -15,12 +15,12 @@
  * No JS crypto; delegates to wasm.decrypt_share etc when wired.
  *
  * Per STARBRIDGE-PLAN §4.5 + NEW-WORLD "encrypted intent" + §5.8.
- * Composes <pyana-proof> for reveal proofs when available.
+ * Composes <dregg-proof> for reveal proofs when available.
  */
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaEncryptedIntent extends InspectorBase {
+class DreggEncryptedIntent extends InspectorBase {
   _render() {
     const { h, render, html, effect, signal } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -56,8 +56,8 @@ class PyanaEncryptedIntent extends InspectorBase {
 
       if (mode === 'compact') {
         return html`
-          <span class="pyana-inspector pyana-inspector--compact">
-            <span class="pyana-inspector__kind">encrypted-intent</span>
+          <span class="dregg-inspector dregg-inspector--compact">
+            <span class="dregg-inspector__kind">encrypted-intent</span>
             <code>${shortHex(intent.intent_id, 8)}</code>
             <span style="display:inline-block;width:60px;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;">
               <span style="display:block;height:100%;width:${prog}%;background:#3b82f6;"></span>
@@ -83,10 +83,10 @@ class PyanaEncryptedIntent extends InspectorBase {
       ` : html`<div style="font-size:0.7rem;color:var(--fg-dim);">read-only — no reveal</div>`;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--eintent">
+        <div class="dregg-inspector dregg-inspector--eintent">
           <header>
-            <span class="pyana-inspector__kind">encrypted-intent</span>
-            <code class="pyana-inspector__id">${shortHex(intent.intent_id || '', 20)}</code>
+            <span class="dregg-inspector__kind">encrypted-intent</span>
+            <code class="dregg-inspector__id">${shortHex(intent.intent_id || '', 20)}</code>
           </header>
           <div style="margin:4px 0;">
             Progress: ${s.shares.length}/${intent.threshold || 2} shares
@@ -101,7 +101,7 @@ class PyanaEncryptedIntent extends InspectorBase {
           </table>
           ${form}
           <div style="font-size:0.65rem;color:var(--fg-dim);margin-top:4px;">
-            Threshold decryption. Placeholder until real STARK verifier (§5.8). Reveal emits proof for <pyana-proof>.
+            Threshold decryption. Placeholder until real STARK verifier (§5.8). Reveal emits proof for <dregg-proof>.
           </div>
         </div>`;
     };
@@ -121,7 +121,7 @@ class PyanaEncryptedIntent extends InspectorBase {
         try {
           const res = wasm.reveal_encrypted_intent ? wasm.reveal_encrypted_intent(0, (data && data.intent_id) || 'demo') : { revealed: true, proof: 'demo' };
           demoState.value = { ...demoState.value, error: null };
-          console.log('[pyana-encrypted-intent] reveal demo', res);
+          console.log('[dregg-encrypted-intent] reveal demo', res);
           if (this._runtime?.version) this._runtime.version.value++;
         } catch (err) {
           demoState.value = { ...demoState.value, error: 'reveal failed (wasm not fully wired): ' + err };
@@ -130,4 +130,4 @@ class PyanaEncryptedIntent extends InspectorBase {
     });
   }
 }
-if (!customElements.get('pyana-encrypted-intent')) customElements.define('pyana-encrypted-intent', PyanaEncryptedIntent);
+if (!customElements.get('dregg-encrypted-intent')) customElements.define('dregg-encrypted-intent', DreggEncryptedIntent);

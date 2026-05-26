@@ -3,11 +3,11 @@
 //! Exercises operator bonding, inbox hosting, message receive/drain,
 //! GC fee mechanics, underbonding, delivery disputes, and offline resilience.
 
-use pyana_storage::inbox::InboxMessage;
-use pyana_storage::operator::{DeliveryDispute, DisputeOutcome, RelayOperator};
-use pyana_storage::queue::verify_dequeue_proof;
-use pyana_storage::relay::RelayError;
-use pyana_teasting::harness::SimulationHarness;
+use dregg_storage::inbox::InboxMessage;
+use dregg_storage::operator::{DeliveryDispute, DisputeOutcome, RelayOperator};
+use dregg_storage::queue::verify_dequeue_proof;
+use dregg_storage::relay::RelayError;
+use dregg_teasting::harness::SimulationHarness;
 
 /// Deterministic identity from a seed byte.
 fn identity(n: u8) -> [u8; 32] {

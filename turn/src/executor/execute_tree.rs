@@ -111,7 +111,7 @@ impl TurnExecutor {
                         );
                         if let Some(ancestor_id) = found_ancestor {
                             let ancestor = ledger.get(&ancestor_id).unwrap();
-                            let snapshot: Vec<pyana_cell::CapabilityRef> =
+                            let snapshot: Vec<dregg_cell::CapabilityRef> =
                                 ancestor.capabilities.iter().cloned().collect();
                             let delegation_epoch = ancestor.state.delegation_epoch();
                             let now = self.current_timestamp as u64;
@@ -125,10 +125,10 @@ impl TurnExecutor {
                                 let clist_bytes =
                                     postcard::to_allocvec(&snapshot).unwrap_or_default();
                                 let clist_commitment =
-                                    pyana_cell::DelegatedRef::compute_clist_commitment(
+                                    dregg_cell::DelegatedRef::compute_clist_commitment(
                                         &clist_bytes,
                                     );
-                                child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
+                                child_cell.delegation = Some(dregg_cell::DelegatedRef::new(
                                     ancestor_id,
                                     *parent_cell,
                                     snapshot,
@@ -290,7 +290,7 @@ impl TurnExecutor {
         // against its (old, new) pair — closing the "B was mutated
         // from action targeting A, but B's program was never checked"
         // gap codex flagged.
-        let mut old_cell_states: std::collections::HashMap<CellId, pyana_cell::CellState> =
+        let mut old_cell_states: std::collections::HashMap<CellId, dregg_cell::CellState> =
             std::collections::HashMap::new();
         for cell_id in Self::collect_touched_cells(action) {
             if let Some(c) = ledger.get(&cell_id) {
@@ -475,32 +475,32 @@ impl TurnExecutor {
             .effects
             .iter()
             .fold(0u32, |acc, e| acc | e.effect_kind_mask());
-        let meta = pyana_cell::program::TransitionMeta::new(action.method, effects_mask);
-        let witness_views: Vec<pyana_cell::program::WitnessBlobView<'_>> = action
+        let meta = dregg_cell::program::TransitionMeta::new(action.method, effects_mask);
+        let witness_views: Vec<dregg_cell::program::WitnessBlobView<'_>> = action
             .witness_blobs
             .iter()
-            .map(|wb| pyana_cell::program::WitnessBlobView {
+            .map(|wb| dregg_cell::program::WitnessBlobView {
                 kind: match wb.kind {
                     crate::action::WitnessKind::Preimage32 => {
-                        pyana_cell::program::WitnessKindTag::Preimage32
+                        dregg_cell::program::WitnessKindTag::Preimage32
                     }
                     crate::action::WitnessKind::MerklePath => {
-                        pyana_cell::program::WitnessKindTag::MerklePath
+                        dregg_cell::program::WitnessKindTag::MerklePath
                     }
                     crate::action::WitnessKind::RateLimitCount => {
-                        pyana_cell::program::WitnessKindTag::RateLimitCount
+                        dregg_cell::program::WitnessKindTag::RateLimitCount
                     }
                     crate::action::WitnessKind::ProofBytes => {
-                        pyana_cell::program::WitnessKindTag::ProofBytes
+                        dregg_cell::program::WitnessKindTag::ProofBytes
                     }
                     crate::action::WitnessKind::Cleartext => {
-                        pyana_cell::program::WitnessKindTag::Cleartext
+                        dregg_cell::program::WitnessKindTag::Cleartext
                     }
                 },
                 bytes: &wb.bytes,
             })
             .collect();
-        let witnesses = pyana_cell::program::WitnessBundle {
+        let witnesses = dregg_cell::program::WitnessBundle {
             blobs: &witness_views,
             registry: self.witnessed_registry.as_ref(),
         };
@@ -533,7 +533,7 @@ impl TurnExecutor {
             // sender) counter slot. Until a real counter slot lands
             // (deferred), leave at 0 and let the witness blob (a
             // RateLimitCount blob) supply the count.
-            let ctx = pyana_cell::EvalContext {
+            let ctx = dregg_cell::EvalContext {
                 block_height: self.block_height,
                 timestamp: self.current_timestamp,
                 current_epoch: self.block_height.saturating_div(1024),
@@ -753,9 +753,9 @@ impl TurnExecutor {
     /// with the verifier's diagnostic.
     pub(super) fn dispatch_witnessed_clause(
         &self,
-        wp: &pyana_cell::WitnessedPredicate,
+        wp: &dregg_cell::WitnessedPredicate,
         action: &Action,
-        target_state: &pyana_cell::CellState,
+        target_state: &dregg_cell::CellState,
         sender_pk: Option<&[u8; 32]>,
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {

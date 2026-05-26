@@ -1,5 +1,5 @@
 /**
- * <pyana-block-dag uri="pyana://federation/<idx>"> — DAG visualizer for a
+ * <dregg-block-dag uri="dregg://federation/<idx>"> — DAG visualizer for a
  * federation's blocklace.
  *
  * Reads ACTUAL federation block data via the wasm bindings exposed by
@@ -18,8 +18,8 @@
  *   - QC threshold indicator ("3/4") with green outline when finalized, amber
  *     when pending, red when failed.
  *   - Hover: tooltip with full hash + proposer pubkey + signature count + events.
- *   - Click: emits pyana:navigate CustomEvent with
- *     detail: { uri: "pyana://block/<fed_idx>/<height>" }
+ *   - Click: emits dregg:navigate CustomEvent with
+ *     detail: { uri: "dregg://block/<fed_idx>/<height>" }
  *
  * Compact mode: text summary "H=42 · 4 nodes · last-finalized=39" + small
  * thumbnail SVG of the DAG shape.
@@ -222,7 +222,7 @@ function buildDAGSvg(blocks, fedIdx, opts = {}) {
       `status: ${status}`,
     ];
     const tooltip = tooltipParts.join(' | ').replace(/"/g, '&quot;');
-    const navUri  = `pyana://block/${fedIdx}/${b.height}`;
+    const navUri  = `dregg://block/${fedIdx}/${b.height}`;
 
     return `<g class="bdag-block" data-tooltip="${tooltip}" data-uri="${navUri}" style="cursor:pointer">
       <rect x="${x}" y="${y}" width="${BLOCK_W}" height="${BLOCK_H}" rx="4"
@@ -333,7 +333,7 @@ function buildThumbnailSVG(blocks) {
 // Custom element
 // ---------------------------------------------------------------------------
 
-class PyanaBlockDag extends InspectorBase {
+class DreggBlockDag extends InspectorBase {
   static get observedAttributes() { return ['uri', 'mode']; }
 
   _render() {
@@ -365,7 +365,7 @@ class PyanaBlockDag extends InspectorBase {
     this.replaceChildren();
 
     if (!fedState) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--empty">federation #${fedIdx} not found</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--empty">federation #${fedIdx} not found</div>`;
       return;
     }
 
@@ -377,7 +377,7 @@ class PyanaBlockDag extends InspectorBase {
         this._runtime._handle, fedIdx
       ) || [];
     } catch (e) {
-      this.innerHTML = `<div class="pyana-inspector pyana-inspector--err">list_federation_blocks: ${e.message}</div>`;
+      this.innerHTML = `<div class="dregg-inspector dregg-inspector--err">list_federation_blocks: ${e.message}</div>`;
       return;
     }
 
@@ -413,7 +413,7 @@ class PyanaBlockDag extends InspectorBase {
       `H=${fedState.height} · ${fedState.num_nodes} nodes · last-finalized=${lastFinalHeight}`;
 
     const wrapper = document.createElement('span');
-    wrapper.className = 'pyana-inspector pyana-inspector--compact bdag-compact';
+    wrapper.className = 'dregg-inspector dregg-inspector--compact bdag-compact';
     wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:10px;';
     wrapper.innerHTML =
       buildThumbnailSVG(blocks) +
@@ -423,7 +423,7 @@ class PyanaBlockDag extends InspectorBase {
 
   _renderDefault(fedIdx, fedState, blocks) {
     const container = document.createElement('div');
-    container.className = 'pyana-inspector pyana-inspector--cell bdag-container';
+    container.className = 'dregg-inspector dregg-inspector--cell bdag-container';
     container.style.cssText = 'padding:0;overflow:hidden;';
 
     // Header
@@ -431,7 +431,7 @@ class PyanaBlockDag extends InspectorBase {
     header.style.cssText = 'padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline;';
     const lastFinalized = blocks.filter(b => qcStatus(b) === 'finalized');
     header.innerHTML =
-      `<span class="pyana-inspector__kind" style="background:var(--accent,#5b8a5a);color:#0a0f0d;` +
+      `<span class="dregg-inspector__kind" style="background:var(--accent,#5b8a5a);color:#0a0f0d;` +
         `padding:2px 8px;border-radius:3px;font-size:0.75rem;text-transform:uppercase;` +
         `letter-spacing:0.04em;">block dag</span>` +
       `<span style="font-size:0.8rem;color:var(--fg-dim,#8a948f);font-family:ui-monospace,monospace;">` +
@@ -443,7 +443,7 @@ class PyanaBlockDag extends InspectorBase {
 
     if (blocks.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'pyana-inspector pyana-inspector--empty';
+      empty.className = 'dregg-inspector dregg-inspector--empty';
       empty.style.cssText = 'margin:0;border-radius:0 0 6px 6px;';
       empty.textContent = 'no blocks finalized yet — propose a block to populate the DAG';
       container.appendChild(empty);
@@ -506,7 +506,7 @@ class PyanaBlockDag extends InspectorBase {
       svgEl.addEventListener('click', ev => {
         const g = ev.target.closest('.bdag-block');
         if (!g || !g.dataset.uri) return;
-        this.dispatchEvent(new CustomEvent('pyana:navigate', {
+        this.dispatchEvent(new CustomEvent('dregg:navigate', {
           bubbles: true,
           composed: true,
           detail: { uri: g.dataset.uri },
@@ -533,6 +533,6 @@ class PyanaBlockDag extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-block-dag')) {
-  customElements.define('pyana-block-dag', PyanaBlockDag);
+if (!customElements.get('dregg-block-dag')) {
+  customElements.define('dregg-block-dag', DreggBlockDag);
 }

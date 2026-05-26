@@ -71,8 +71,8 @@
 
 use std::collections::HashMap;
 
-use pyana_blocklace::finality::{Block as BlocBlock, BlockId as BlocBlockId, Blocklace, Payload};
-use pyana_cell::CellId;
+use dregg_blocklace::finality::{Block as BlocBlock, BlockId as BlocBlockId, Blocklace, Payload};
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::budget::{BudgetVersion, DebitDigest, ResourceAmount};
@@ -455,7 +455,7 @@ impl SharedResourceBudget {
     /// is not in Open state or if the debit would exceed the agent's allowance,
     /// triggering escalation to Tier 3 ordering.
     ///
-    /// This is the method that `PyanaBlocklaceBridge` calls on the hot path:
+    /// This is the method that `DreggBlocklaceBridge` calls on the hot path:
     /// - `true` → debit recorded, agent can proceed without waiting for ordering.
     /// - `false` → the debit needs Tier 3 (tau ordering) to resolve.
     ///

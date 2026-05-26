@@ -1,5 +1,5 @@
 /**
- * <pyana-proof uri="pyana://receipt/<hex32>"> — per-receipt proof metadata + γ.2 bilateral PI.
+ * <dregg-proof uri="dregg://receipt/<hex32>"> — per-receipt proof metadata + γ.2 bilateral PI.
  *
  * Reads the `proof_view` field on a receipt from `get_receipt_chain(handle)`.
  *
@@ -13,9 +13,9 @@
  * The 9 PI placeholder variants and 3 executor-trusted boundary cuts are the reason this
  * badge must be visible: the UI must not hide scope-reduction.
  *
- * URI: the <id> segment is the turn_hash hex (same as pyana-receipt).
+ * URI: the <id> segment is the turn_hash hex (same as dregg-receipt).
  * Attributes:
- *   uri  — pyana://receipt/<turn_hash>
+ *   uri  — dregg://receipt/<turn_hash>
  *   mode — default | compact
  */
 
@@ -49,7 +49,7 @@ const TIER_META = {
 
 const BADGE_STYLE = 'display:inline-block;padding:2px 10px;border-radius:3px;font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#0a0f0d;';
 
-class PyanaProof extends InspectorBase {
+class DreggProof extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -69,7 +69,7 @@ class PyanaProof extends InspectorBase {
     const TierBadge = ({ tier }) => {
       const meta = TIER_META[tier] || TIER_META.Placeholder;
       return h('span', {
-        class: 'pyana-proof__tier-badge pyana-proof__tier-badge--' + tier.toLowerCase(),
+        class: 'dregg-proof__tier-badge dregg-proof__tier-badge--' + tier.toLowerCase(),
         title: meta.title,
         style: BADGE_STYLE + 'background:' + meta.color + ';',
       }, meta.label + ' tier');
@@ -77,17 +77,17 @@ class PyanaProof extends InspectorBase {
 
     const BilateralPiSection = ({ bp }) => {
       if (!bp) {
-        return h('div', { class: 'pyana-proof__bilateral-absent', style: 'color:var(--fg-dim);font-size:0.8rem;margin-top:8px;' },
+        return h('div', { class: 'dregg-proof__bilateral-absent', style: 'color:var(--fg-dim);font-size:0.8rem;margin-top:8px;' },
           'bilateral PI: ',
           h('em', null, 'absent'),
           ' — cross-cell accumulator roots not present'
         );
       }
-      return h('div', { class: 'pyana-proof__bilateral', style: 'margin-top:8px;' },
-        h('div', { class: 'pyana-proof__bilateral-label', style: 'color:var(--fg-dim);font-size:0.8rem;margin-bottom:4px;' },
+      return h('div', { class: 'dregg-proof__bilateral', style: 'margin-top:8px;' },
+        h('div', { class: 'dregg-proof__bilateral-label', style: 'color:var(--fg-dim);font-size:0.8rem;margin-bottom:4px;' },
           'γ.2 bilateral PI'
         ),
-        h('dl', { class: 'pyana-inspector__kv', style: 'font-size:0.8rem;' },
+        h('dl', { class: 'dregg-inspector__kv', style: 'font-size:0.8rem;' },
           h('dt', null, 'outgoing transfer'), h('dd', null, h('code', { title: bp.outgoing_transfer_root }, shortHex(bp.outgoing_transfer_root, 16))),
           h('dt', null, 'incoming transfer'), h('dd', null, h('code', { title: bp.incoming_transfer_root }, shortHex(bp.incoming_transfer_root, 16))),
           h('dt', null, 'outgoing grant'),    h('dd', null, h('code', { title: bp.outgoing_grant_root },    shortHex(bp.outgoing_grant_root, 16))),
@@ -101,7 +101,7 @@ class PyanaProof extends InspectorBase {
     const Scope0Box = ({ tier }) => {
       const meta = TIER_META[tier] || TIER_META.Placeholder;
       return h('div', {
-        class: 'pyana-proof__scope0',
+        class: 'dregg-proof__scope0',
         style: 'padding:12px;border:1px dashed var(--line);border-radius:6px;color:var(--fg-dim);font-size:0.85rem;line-height:1.6;margin-top:8px;',
       },
         h('strong', null, 'No proof — scope-0'),
@@ -129,7 +129,7 @@ class PyanaProof extends InspectorBase {
         : h('span', { style: 'opacity:0.6;' }, '(none)');
 
       return h('div', null,
-        h('dl', { class: 'pyana-inspector__kv', style: 'margin-bottom:12px;' },
+        h('dl', { class: 'dregg-inspector__kv', style: 'margin-bottom:12px;' },
           h('dt', null, 'kind'),           h('dd', null, pv.kind),
           h('dt', null, 'is agent cell'),  h('dd', null, pv.is_agent_cell ? 'yes' : 'no'),
           h('dt', null, 'is sovereign cell'), h('dd', null, pv.is_sovereign_cell ? 'yes' : 'no'),
@@ -142,7 +142,7 @@ class PyanaProof extends InspectorBase {
     const Component = () => {
       const r = sig.value;
       if (!r) return html`
-        <div class="pyana-inspector pyana-inspector--empty">
+        <div class="dregg-inspector dregg-inspector--empty">
           receipt not found: <code>${shortHex(parsed.id, 16)}</code>
         </div>`;
 
@@ -150,8 +150,8 @@ class PyanaProof extends InspectorBase {
       const tier = trustTier(pv);
 
       if (mode === 'compact') {
-        return h('span', { class: 'pyana-inspector pyana-inspector--compact' },
-          h('span', { class: 'pyana-inspector__kind' }, 'proof'),
+        return h('span', { class: 'dregg-inspector dregg-inspector--compact' },
+          h('span', { class: 'dregg-inspector__kind' }, 'proof'),
           ' ',
           h('code', { title: parsed.id }, shortHex(parsed.id)),
           ' · ',
@@ -160,11 +160,11 @@ class PyanaProof extends InspectorBase {
         );
       }
 
-      return h('div', { class: 'pyana-inspector pyana-inspector--cell pyana-proof' },
+      return h('div', { class: 'dregg-inspector dregg-inspector--cell dregg-proof' },
         h('header', null,
-          h('span', { class: 'pyana-inspector__kind' }, 'proof'),
+          h('span', { class: 'dregg-inspector__kind' }, 'proof'),
           ' ',
-          h('code', { class: 'pyana-inspector__id', title: parsed.id }, shortHex(parsed.id, 24)),
+          h('code', { class: 'dregg-inspector__id', title: parsed.id }, shortHex(parsed.id, 24)),
           ' ',
           h(TierBadge, { tier })
         ),
@@ -176,4 +176,4 @@ class PyanaProof extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-proof')) customElements.define('pyana-proof', PyanaProof);
+if (!customElements.get('dregg-proof')) customElements.define('dregg-proof', DreggProof);

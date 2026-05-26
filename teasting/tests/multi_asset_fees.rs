@@ -3,8 +3,8 @@
 //! Exercises computron payments, USDC at configured rate, stale exchange rate
 //! rejection, strict mode enforcement, and meta-transaction solver pattern.
 
-use pyana_storage::multi_asset::{COMPUTRON_ASSET, ExchangeRate, FeeError, FeePayment, FeePolicy};
-use pyana_teasting::harness::SimulationHarness;
+use dregg_storage::multi_asset::{COMPUTRON_ASSET, ExchangeRate, FeeError, FeePayment, FeePolicy};
+use dregg_teasting::harness::SimulationHarness;
 
 /// Deterministic asset ID from a name.
 fn asset_id(name: &str) -> [u8; 32] {

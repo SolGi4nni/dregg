@@ -1,5 +1,5 @@
 /**
- * <pyana-turn-debugger uri="pyana://turn/<hex32>"> — step-by-step Effect VM
+ * <dregg-turn-debugger uri="dregg://turn/<hex32>"> — step-by-step Effect VM
  * trace inspector for a committed turn.
  *
  * Data source: wasm `get_turn_trace(handle, turn_hash_hex)` returns:
@@ -92,7 +92,7 @@ const CSS = `
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-class PyanaTurnDebugger extends InspectorBase {
+class DreggTurnDebugger extends InspectorBase {
   constructor() {
     super();
     this._selectedStep = null;
@@ -132,9 +132,9 @@ class PyanaTurnDebugger extends InspectorBase {
     if (renderParseError(this, refAttr, parsed, 'turn')) return;
 
     // Inject component styles once per document.
-    if (!document.getElementById('pyana-turn-debugger-style')) {
+    if (!document.getElementById('dregg-turn-debugger-style')) {
       const styleEl = document.createElement('style');
-      styleEl.id = 'pyana-turn-debugger-style';
+      styleEl.id = 'dregg-turn-debugger-style';
       styleEl.textContent = CSS;
       document.head.appendChild(styleEl);
     }
@@ -149,13 +149,13 @@ class PyanaTurnDebugger extends InspectorBase {
       const selected = selectedSig.value;
 
       if (!trace) {
-        return html`<div class="pyana-inspector pyana-inspector--empty ptd ptd__empty">loading trace…</div>`;
+        return html`<div class="dregg-inspector dregg-inspector--empty ptd ptd__empty">loading trace…</div>`;
       }
 
       if (mode === 'compact') {
         const n = trace.steps ? trace.steps.length : 0;
         return html`
-          <span class="pyana-inspector pyana-inspector--compact ptd ptd__compact">
+          <span class="dregg-inspector dregg-inspector--compact ptd ptd__compact">
             <code title=${parsed.id}>${shortHex(parsed.id)}</code>
             · ${String(n)} step${n === 1 ? '' : 's'}
             · ${String(trace.computrons_total)} computrons
@@ -165,7 +165,7 @@ class PyanaTurnDebugger extends InspectorBase {
       const steps = trace.steps || [];
       if (!steps.length) {
         return html`
-          <div class="pyana-inspector pyana-inspector--cell ptd">
+          <div class="dregg-inspector dregg-inspector--cell ptd">
             <header class="ptd__header">
               <span class="ptd__kind">turn debugger</span>
               <code class="ptd__id" title=${parsed.id}>${shortHex(parsed.id, 24)}</code>
@@ -180,7 +180,7 @@ class PyanaTurnDebugger extends InspectorBase {
         : `${stepCount} step${stepCount === 1 ? '' : 's'} · ${trace.computrons_total} computrons`;
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell ptd">
+        <div class="dregg-inspector dregg-inspector--cell ptd">
           <header class="ptd__header">
             <span>
               <span class="ptd__kind">turn debugger</span>
@@ -249,6 +249,6 @@ class PyanaTurnDebugger extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-turn-debugger')) {
-  customElements.define('pyana-turn-debugger', PyanaTurnDebugger);
+if (!customElements.get('dregg-turn-debugger')) {
+  customElements.define('dregg-turn-debugger', DreggTurnDebugger);
 }

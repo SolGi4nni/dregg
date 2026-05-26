@@ -6,8 +6,8 @@
 //! - Concurrent usage from multiple verifiers
 //! - Budget race conditions
 
-use pyana_audit::proofs::{BudgetProof, ConsistencyProof, CountProof};
-use pyana_audit::{AuditLog, BudgetEnforcer, BudgetExhausted, BudgetSpec, LogSnapshot, UsageEvent};
+use dregg_audit::proofs::{BudgetProof, ConsistencyProof, CountProof};
+use dregg_audit::{AuditLog, BudgetEnforcer, BudgetExhausted, BudgetSpec, LogSnapshot, UsageEvent};
 
 use std::time::Duration;
 

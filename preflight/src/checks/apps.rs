@@ -32,7 +32,7 @@ pub fn run() -> Vec<CheckResult> {
     }));
 
     // Identity check retired: apps/identity deleted; starbridge-identity has
-    // a different public API (pyana-credentials-backed, no pyana_identity::*).
+    // a different public API (dregg-credentials-backed, no dregg_identity::*).
     checks.push(run_check("identity", || {
         Err(
             "RETIRED: apps/identity deleted in starbridge-apps migration; \

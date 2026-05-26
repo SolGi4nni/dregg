@@ -7,13 +7,13 @@ export function initNotes(wasm) {
   container.innerHTML = `
     <div class="section-header">
       <h2>Private Notes</h2>
-      <!-- §4.9 tiered migration (FOLLOWUP-05): Tier 2 deprecation to <pyana-note> (preserve core demo) -->
+      <!-- §4.9 tiered migration (FOLLOWUP-05): Tier 2 deprecation to <dregg-note> (preserve core demo) -->
       <div style="background:#fff8e6;border:1px solid #f0d080;padding:0.25rem 0.5rem;font-size:0.75rem;margin:0.3rem 0;">
-        <strong>§4.9 Migration:</strong> Superseded by platform <code>&lt;pyana-note&gt;</code> inspector (UTXO lifecycle, nullifiers). Core demo preserved (learn carve-out). 
-        <a href="/starbridge.html?at=pyana://note/demo" target="_blank">Deep-link to Starbridge now →</a>
+        <strong>§4.9 Migration:</strong> Superseded by platform <code>&lt;dregg-note&gt;</code> inspector (UTXO lifecycle, nullifiers). Core demo preserved (learn carve-out). 
+        <a href="/starbridge.html?at=dregg://note/demo" target="_blank">Deep-link to Starbridge now →</a>
       </div>
       <p>
-        Notes are pyana's UTXO-style private value transfer primitive. When you mint a note,
+        Notes are dregg's UTXO-style private value transfer primitive. When you mint a note,
         a cryptographic commitment hides the amount. When you spend it, a nullifier is published
         that prevents double-spending — but reveals nothing about the note's contents.
         Transfers create new notes and consume old ones atomically.

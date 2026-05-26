@@ -1,6 +1,6 @@
 // Disclosure picker popup — nonce-bound.
 // P0-1/P0-2: token facts (which may contain email/userId/org) are fetched
-// from background memory via pyana:getPendingDecision rather than embedded
+// from background memory via dregg:getPendingDecision rather than embedded
 // in the URL. The decision message includes the nonce.
 
 function parseNonce() {
@@ -389,7 +389,7 @@ function sendDecision(authorized) {
   const level = getSelectedLevel();
   const decisions = level === 'selective' ? getFactDecisions() : [];
   const message = {
-    type: 'pyana:disclosureDecision',
+    type: 'dregg:disclosureDecision',
     nonce: NONCE,
     authorized,
     level,
@@ -414,7 +414,7 @@ async function init() {
   }
   try {
     const resp = await chrome.runtime.sendMessage({
-      type: 'pyana:getPendingDecision',
+      type: 'dregg:getPendingDecision',
       nonce: NONCE,
     });
     if (resp && resp.result && resp.result.payload) {

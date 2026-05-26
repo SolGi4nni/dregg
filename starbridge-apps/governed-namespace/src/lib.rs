@@ -2,13 +2,13 @@
 //!
 //! The fourth starbridge-app per `STARBRIDGE-APPS-PLAN.md` §3.3:
 //! **governance-bound atomic route table swaps** on a sovereign cell,
-//! composed from existing pyana primitives only.
+//! composed from existing dregg primitives only.
 //!
-//! A *governed-namespace cell* hosts a [`pyana_dfa::GovernedRouter`]-shaped
+//! A *governed-namespace cell* hosts a [`dregg_dfa::GovernedRouter`]-shaped
 //! route table whose root commits into the cell's state slots, controlled
 //! by a constitutional committee. Updates require a constitutional
 //! threshold-signature carrier riding under
-//! [`pyana_cell::predicate::WitnessedPredicate`] with
+//! [`dregg_cell::predicate::WitnessedPredicate`] with
 //! [`WitnessedPredicateKind::Custom { vk_hash: GOVERNANCE_VK }`][gk] in an
 //! [`Authorization::Custom`] action — the same `commitment` /
 //! `route_table_root` CAS the in-memory `GovernedRouter::update_routes`
@@ -16,7 +16,7 @@
 //! slot-caveat evaluator and the AIR-attestable accept/reject pipeline
 //! cover the table swap end-to-end.
 //!
-//! [gk]: pyana_cell::predicate::WitnessedPredicateKind::Custom
+//! [gk]: dregg_cell::predicate::WitnessedPredicateKind::Custom
 //!
 //! ## Companion docs
 //!
@@ -44,7 +44,7 @@
 //!
 //! | Slot | Name | Caveat | Purpose |
 //! |---:|---|---|---|
-//! | 0 | `route_table_root` | `BoundedBy { witness_index: 1 }` under `commit_table_update`; `Immutable` otherwise | The current [`pyana_dfa::GovernedRouter::commitment`] — BLAKE3 over the canonical serialization of the live route table. |
+//! | 0 | `route_table_root` | `BoundedBy { witness_index: 1 }` under `commit_table_update`; `Immutable` otherwise | The current [`dregg_dfa::GovernedRouter::commitment`] — BLAKE3 over the canonical serialization of the live route table. |
 //! | 1 | `version` | `MonotonicSequence` (`commit_table_update`-scoped); `Immutable` otherwise | Monotonic table-swap counter. Bumps by exactly +1 on every successful `commit_table_update`. |
 //! | 2 | `governance_committee_root` | `Immutable` | Merkle root over the committee members' pubkeys. Set at cell creation; never changes (constitution-level amendment is a separate factory). |
 //! | 3 | `threshold` | `Immutable` | The threshold-signature count required for `commit_table_update`. Set at creation. |
@@ -88,11 +88,11 @@
 //!    `EmitEvent("service-registered", [path_hash, target_cell_id])`.
 //!    No slot mutations beyond an optional `pending_proposal_root`
 //!    re-anchor; this is the *read-then-emit* side of the namespace
-//!    (think `pyana-directory` register; the cell-program does not
+//!    (think `dregg-directory` register; the cell-program does not
 //!    bake the directory map in-slot — it lives in an indexer fed by
 //!    the events).
 //! 5. **`dispatch`** (read-only) — not an action; documented here as
-//!    the `pyana_dfa::Router::classify(input)` walk against the live
+//!    the `dregg_dfa::Router::classify(input)` walk against the live
 //!    `route_table_root` (callers reconstruct the [`Router`] from the
 //!    [`RouteTable`] the app authors via [`build_route_table`]).
 //!
@@ -109,7 +109,7 @@
 //!   verifier. The verifier interprets `commitment` as
 //!   `governance_committee_root` and validates the threshold-sig over
 //!   the `(old_root, new_root, version+1)` triple — exactly the
-//!   shape `pyana_dfa::ThresholdVerifier::verify` already enforces in
+//!   shape `dregg_dfa::ThresholdVerifier::verify` already enforces in
 //!   memory. The `Authorization::Custom { predicate }` carries the
 //!   proof bytes via `predicate.proof_witness_index` →
 //!   `action.witness_blobs`.
@@ -159,22 +159,22 @@
 //! 6. [`register`] — `StarbridgeAppContext` mount hook wiring the
 //!    factory + inspector descriptors into a shared host context.
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, Authorization, AuthorizedSet, CapTarget, CapTemplate,
     CellId, CellMode, CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor,
     FieldConstraint, FieldElement, InputRef, InspectorDescriptor, StarbridgeAppContext,
     StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate, WitnessedPredicateKind,
     field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
-use pyana_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
-use pyana_turn::action::WitnessBlob;
+use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
+use dregg_turn::action::WitnessBlob;
 
 // =============================================================================
 // Slot layout
 // =============================================================================
 
 /// Slot 0 — `route_table_root`. The BLAKE3 commitment of the live
-/// [`pyana_dfa::RouteTable`]. Swap is atomic under `commit_table_update`.
+/// [`dregg_dfa::RouteTable`]. Swap is atomic under `commit_table_update`.
 pub const ROUTE_TABLE_ROOT_SLOT: u8 = 0;
 
 /// Slot 1 — `version`. Monotonic counter; bumps +1 on every commit.
@@ -429,7 +429,7 @@ pub fn governance_program() -> CellProgram {
         //   - The service registration is purely event-bearing: the
         //     `EmitEvent("service-registered", [path_hash, target_cell])`
         //     surface feeds an off-cell indexer that the
-        //     `<pyana-namespace>` web component reads.
+        //     `<dregg-namespace>` web component reads.
         //   - No `SenderAuthorized` constraint here: the route table
         //     itself classifies the caller's access via the DFA, so any
         //     sender may *register* — the route table's
@@ -568,7 +568,7 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 // Route-table helpers (DFA composition)
 // =============================================================================
 
-/// Build a [`pyana_dfa::RouteTable`] from a slice of `(path, target)`
+/// Build a [`dregg_dfa::RouteTable`] from a slice of `(path, target)`
 /// pairs.
 ///
 /// Convenience wrapper around [`RouteTableBuilder`]. The path is a
@@ -611,7 +611,7 @@ pub fn default_kind_registry() -> KindRegistry {
 /// default [`default_kind_registry`] installed.
 ///
 /// This is the read-side dispatch helper the
-/// `<pyana-namespace-dispatch>` component uses to classify input
+/// `<dregg-namespace-dispatch>` component uses to classify input
 /// paths against the live route table. The `update_routes` path on
 /// the returned router is *informational* — the authoritative update
 /// path runs through `commit_table_update`'s
@@ -869,7 +869,7 @@ pub fn build_commit_table_update_action(
 /// The action carries one `EmitEvent("service-registered", ...)`. The
 /// cell-program's `register_service` case freezes every governance
 /// slot — this turn is purely event-bearing; off-chain indexers
-/// (and the `<pyana-namespace>` component) consume the event stream
+/// (and the `<dregg-namespace>` component) consume the event stream
 /// to build a `path → cell_id` view.
 ///
 /// # Parameters
@@ -930,7 +930,7 @@ impl VoteKind {
 /// route-table root, the dispute-window height, and a description
 /// hash.
 ///
-/// Folds together (`pyana-governed-namespace-proposal-v1` ‖
+/// Folds together (`dregg-governed-namespace-proposal-v1` ‖
 /// `proposed_root` ‖ `dispute_window_height_be` ‖
 /// `description_hash`) into a 32-byte BLAKE3 commitment. The format
 /// is keyed-derive so distinct proposals (even with the same
@@ -940,7 +940,7 @@ pub fn compose_proposal_root(
     dispute_window_height: u64,
     description_hash: &FieldElement,
 ) -> FieldElement {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-governed-namespace-proposal-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-governed-namespace-proposal-v1");
     hasher.update(proposed_root);
     hasher.update(&dispute_window_height.to_be_bytes());
     hasher.update(description_hash);
@@ -950,7 +950,7 @@ pub fn compose_proposal_root(
 /// Compose the updated `pending_proposal_root` after folding in a
 /// single vote.
 ///
-/// `pyana-governed-namespace-vote-v1` keyed-derive over
+/// `dregg-governed-namespace-vote-v1` keyed-derive over
 /// (`prior_root` ‖ `voter_pk_hash` ‖ `vote_kind_byte` ‖
 /// `weight_be`). Monotonically advances the root: any two distinct
 /// votes produce distinct roots, and re-folding the same vote
@@ -964,7 +964,7 @@ pub fn compose_vote_update(
     vote_kind: VoteKind,
     vote_weight: u64,
 ) -> FieldElement {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-governed-namespace-vote-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-governed-namespace-vote-v1");
     hasher.update(prior_root);
     hasher.update(voter_pk_hash);
     hasher.update(&[match vote_kind {
@@ -981,9 +981,9 @@ pub fn compose_vote_update(
 
 /// Classify an input path against a [`RouteTable`].
 ///
-/// Convenience wrapper around `pyana_dfa::Router::classify_path`.
+/// Convenience wrapper around `dregg_dfa::Router::classify_path`.
 /// Returns the matched [`RouteTarget`] (if any) and the matched
-/// prefix bytes. Used by the `<pyana-namespace-dispatch>` web
+/// prefix bytes. Used by the `<dregg-namespace-dispatch>` web
 /// component for the lookup form.
 ///
 /// The result is owned so the caller does not have to manage the
@@ -1016,9 +1016,9 @@ pub struct DispatchOutcome {
 /// Wires:
 /// - the factory descriptor (under `GOVERNANCE_FACTORY_VK`);
 /// - the family of inspector descriptors for the four web
-///   components: `<pyana-namespace>` (browse), `<pyana-namespace-
-///   route-table>` (visualize), `<pyana-namespace-proposal>`
-///   (propose/vote/commit), `<pyana-namespace-dispatch>` (lookup).
+///   components: `<dregg-namespace>` (browse), `<dregg-namespace-
+///   route-table>` (visualize), `<dregg-namespace-proposal>`
+///   (propose/vote/commit), `<dregg-namespace-dispatch>` (lookup).
 ///
 /// Returns the registered `factory_vk` so the host can log it.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
@@ -1028,9 +1028,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "namespace".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-namespace",
+            "component": "dregg-namespace",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "summary_fields": [
                 "route_table_root", "version", "governance_committee_root",
                 "threshold", "dispute_window_height", "pending_proposal_root",
@@ -1053,9 +1053,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // Route-table visualization — renders the live DFA accept-map.
     ctx.register_inspector_with("namespace-route-table", || {
         serde_json::json!({
-            "component": "pyana-namespace-route-table",
+            "component": "dregg-namespace-route-table",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
         })
     });
@@ -1063,9 +1063,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // Proposal authoring + vote-casting + commit-submission UI.
     ctx.register_inspector_with("namespace-proposal", || {
         serde_json::json!({
-            "component": "pyana-namespace-proposal",
+            "component": "dregg-namespace-proposal",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
             "builders_module": "/starbridge-apps/governed-namespace/turn-builders.js",
             "methods": [
@@ -1080,9 +1080,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // Lookup form — input path → classified target via the live table.
     ctx.register_inspector_with("namespace-dispatch", || {
         serde_json::json!({
-            "component": "pyana-namespace-dispatch",
+            "component": "dregg-namespace-dispatch",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
         })
     });
@@ -1105,7 +1105,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 //    [`credential_gated_witness_predicate`] as the dispatch shape.
 //
 // 2. **Nameservice-mounted route targets** — a governed namespace can
-//    register a `pyana://<name>` URI whose resolve target is computed
+//    register a `dregg://<name>` URI whose resolve target is computed
 //    via the nameservice's `RESOLVE_TARGET_SLOT` convention. The helper
 //    [`register_nameservice_route_action`] builds the registration so
 //    the route table's target binding matches the nameservice's
@@ -1171,7 +1171,7 @@ pub fn credential_gated_witness_predicate(
 /// pre-computed `nameservice_resolve_target` (the 32-byte hash a
 /// nameservice cell records in its `RESOLVE_TARGET_SLOT`) so the
 /// emitted `service-registered` event carries the same target bytes
-/// downstream consumers (a `pyana_dfa::Router` walking the live route
+/// downstream consumers (a `dregg_dfa::Router` walking the live route
 /// table) see when they resolve the cell.
 ///
 /// `target_cell` is still the canonical cell ID; the
@@ -1205,15 +1205,15 @@ pub fn register_nameservice_route_action(
 
 /// Hash arbitrary bytes into a 32-byte `FieldElement`.
 ///
-/// Deprecated alias for [`pyana_app_framework::field_from_bytes`]; kept
+/// Deprecated alias for [`dregg_app_framework::field_from_bytes`]; kept
 /// `pub` because integration tests import this name directly.
-pub use pyana_app_framework::field_from_bytes as blake3_field;
+pub use dregg_app_framework::field_from_bytes as blake3_field;
 
 /// Encode a `u64` as a big-endian-padded 32-byte `FieldElement`.
 ///
-/// Deprecated alias for [`pyana_app_framework::field_from_u64`]; kept
+/// Deprecated alias for [`dregg_app_framework::field_from_u64`]; kept
 /// `pub` because integration tests import this name directly.
-pub use pyana_app_framework::field_from_u64 as u64_field;
+pub use dregg_app_framework::field_from_u64 as u64_field;
 
 /// Encode a `CellId` as a 32-byte `FieldElement`.
 ///
@@ -1230,8 +1230,8 @@ pub fn cell_id_field(cell_id: CellId) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentCipherclerk, EmbeddedExecutor};
-    use pyana_cell::program::{TransitionGuard, TransitionMeta};
+    use dregg_app_framework::{AgentCipherclerk, EmbeddedExecutor};
+    use dregg_cell::program::{TransitionGuard, TransitionMeta};
 
     fn test_cipherclerk() -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
@@ -1621,7 +1621,7 @@ mod tests {
         assert_eq!(action.witness_blobs[0].bytes, proof);
         assert_eq!(
             action.witness_blobs[0].kind,
-            pyana_turn::action::WitnessKind::ProofBytes
+            dregg_turn::action::WitnessKind::ProofBytes
         );
     }
 
@@ -1883,7 +1883,7 @@ mod tests {
         let meta = TransitionMeta::wildcard();
         let mut always_matched = false;
         let mut method_matched = false;
-        let state = pyana_cell::state::CellState::new(0);
+        let state = dregg_cell::state::CellState::new(0);
         for case in &cases {
             let m = case.guard.matches(&meta, None, &state);
             match &case.guard {
@@ -1948,7 +1948,7 @@ mod tests {
         let cclerk = test_cipherclerk();
         let cell = test_cell();
         let target_cell = CellId::from_bytes([77u8; 32]);
-        let ns_resolve = field_from_bytes(b"pyana://cell/bob.dev-actual-target");
+        let ns_resolve = field_from_bytes(b"dregg://cell/bob.dev-actual-target");
 
         let action =
             register_nameservice_route_action(&cclerk, cell, "/bob.dev", target_cell, ns_resolve);

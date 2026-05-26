@@ -24,10 +24,10 @@ use crate::poseidon2;
 use serde::{Deserialize, Serialize};
 
 /// Domain separation tag for action binding commitments.
-const ACTION_BINDING_DSK: &str = "pyana-action-binding-v1";
+const ACTION_BINDING_DSK: &str = "dregg-action-binding-v1";
 
 /// Domain separation tag for presentation tag commitments.
-const PRESENTATION_TAG_DSK: &str = "pyana-presentation-tag-v1";
+const PRESENTATION_TAG_DSK: &str = "dregg-presentation-tag-v1";
 
 /// Number of BabyBear elements in an action binding commitment.
 /// 4 elements * 31 bits each = 124 bits of collision resistance,

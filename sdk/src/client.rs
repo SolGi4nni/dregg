@@ -1,15 +1,15 @@
-//! Silo client: interaction with a remote pyana silo.
+//! Silo client: interaction with a remote dregg silo.
 //!
 //! The [`SiloClient`] connects to a remote silo over TCP and provides
 //! high-level operations for token presentation, turn submission, and
-//! revocation checking using the pyana wire protocol.
+//! revocation checking using the dregg wire protocol.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pyana_commit::{MerkleTree, NonMembershipProof};
-use pyana_wire::prelude::*;
+use dregg_commit::{MerkleTree, NonMembershipProof};
+use dregg_wire::prelude::*;
 
 use crate::cipherclerk::{AgentCipherclerk, HeldToken};
 use crate::error::SdkError;
@@ -47,7 +47,7 @@ pub struct PresentationResult {
     pub request_digest: [u8; 32],
 }
 
-/// Client for interacting with a remote pyana silo.
+/// Client for interacting with a remote dregg silo.
 ///
 /// Provides async operations for:
 /// - Connecting to a silo over TCP
@@ -58,10 +58,10 @@ pub struct PresentationResult {
 /// # Example
 ///
 /// ```no_run
-/// use pyana_sdk::{AgentCipherclerk, SiloClient};
+/// use dregg_sdk::{AgentCipherclerk, SiloClient};
 /// use std::sync::Arc;
 ///
-/// # async fn example() -> Result<(), pyana_sdk::SdkError> {
+/// # async fn example() -> Result<(), dregg_sdk::SdkError> {
 /// let cipherclerk = Arc::new(AgentCipherclerk::new());
 /// let client = SiloClient::connect("127.0.0.1:9100".parse().unwrap(), cipherclerk).await?;
 /// # Ok(())
@@ -249,7 +249,7 @@ impl SiloClient {
     pub async fn present_token(
         &mut self,
         token: &HeldToken,
-        request: &pyana_token::AuthRequest,
+        request: &dregg_token::AuthRequest,
     ) -> Result<PresentationResult, SdkError> {
         // SECURITY: Use the federation root from the trusted handshake, NOT from
         // the token-derived proof. An attacker who controls the token could choose
@@ -349,7 +349,7 @@ impl SiloClient {
         &mut self,
         token: &HeldToken,
         issuer_key: &[u8; 32],
-        request: &pyana_token::AuthRequest,
+        request: &dregg_token::AuthRequest,
     ) -> Result<PresentationResult, SdkError> {
         let federation_root = self.trusted_federation_root.ok_or_else(|| {
             SdkError::Wire(
@@ -545,8 +545,8 @@ impl SiloClient {
         // SECURITY: Domain-separated signature prevents cross-protocol replay.
         // Without the prefix, a signature over a token_id could be replayed in
         // a different context (e.g., as a message signature or turn signature).
-        let mut revoke_msg = Vec::with_capacity(b"pyana-revoke-v1:".len() + token_id.len());
-        revoke_msg.extend_from_slice(b"pyana-revoke-v1:");
+        let mut revoke_msg = Vec::with_capacity(b"dregg-revoke-v1:".len() + token_id.len());
+        revoke_msg.extend_from_slice(b"dregg-revoke-v1:");
         revoke_msg.extend_from_slice(token_id.as_bytes());
         let sig = self.cclerk.sign_bytes(&revoke_msg);
 

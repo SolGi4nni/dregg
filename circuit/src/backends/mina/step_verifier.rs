@@ -24,7 +24,7 @@ use super::*;
 // **Step circuit** (proves on Vesta, witnesses in Fp):
 //   - Fiat-Shamir transcript replay (Poseidon over Fp — NATIVE)
 //   - b(zeta) challenge polynomial evaluation (field arithmetic over Fp — NATIVE)
-//   - State transition logic (the pyana application logic)
+//   - State transition logic (the dregg application logic)
 //   - DEFERS: the EC operations (outputs challenges, commitment coords, b(zeta)
 //     as public inputs for the wrap circuit to check)
 //

@@ -4,9 +4,9 @@ Scope: every file in `/Users/ember/dev/breadstuffs/intent/src/`, read in full,
 with cross-referencing to the rest of the workspace where the intent crate is
 consumed.
 
-Crate manifest: `pyana-intent` (workspace member at `/intent`). Dependencies:
-`pyana-cell`, `pyana-circuit`, `pyana-commit`, `pyana-token`, `pyana-trace`,
-`pyana-turn`, plus crypto primitives (`blake3`, `curve25519-dalek`,
+Crate manifest: `dregg-intent` (workspace member at `/intent`). Dependencies:
+`dregg-cell`, `dregg-circuit`, `dregg-commit`, `dregg-token`, `dregg-trace`,
+`dregg-turn`, plus crypto primitives (`blake3`, `curve25519-dalek`,
 `x25519-dalek`, `globset`, `postcard`). 16,626 LOC across 16 source files.
 
 Header `lib.rs` openly states: *"This crate is **TRANSITIONING** from
@@ -25,7 +25,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
 - **Key types/functions**
   - `Intent { id, kind, matcher, creator, expiry, stake_proof,
     fill_constraints }` (content-addressed via canonical postcard +
-    BLAKE3 with derived key `pyana-intent-id-v2`).
+    BLAKE3 with derived key `dregg-intent-id-v2`).
   - `IntentKind = Need | Offer | Query`.
   - `MatchSpec { actions, constraints, min_budget, resource_pattern,
     compound, predicate_requirements, strict_resource_matching }`.
@@ -91,7 +91,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
   - Compound depth check is recursive and bounded.
 - **Integration status** — Called from `gossip::IntentPool` (both for
   received and self-broadcast intents) and from `node/src/api.rs`
-  (`pyana_intent::validation::validate_intent`).
+  (`dregg_intent::validation::validate_intent`).
 - **Surprises** — `predicate_requirements` is not validated for size or
   string lengths. A malicious poster could attach thousands of predicate
   requirements with long attribute names.
@@ -159,12 +159,12 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
     *isn't actually generating STARK proofs here* — it's still a
     keyed-BLAKE3 commitment. The real STARK proof is generated through
     `fulfillment::produce_stark_proof` which calls
-    `prove_authorization_stark` from `pyana-circuit`. So the matcher's
+    `prove_authorization_stark` from `dregg-circuit`. So the matcher's
     `mode = Private` produces a placeholder, while the fulfillment
     pipeline produces the real artifact.
 - **Integration status** — Called from `gossip.rs`
   (`IntentPool::receive_intent_checked` and `rematch_all`), from
-  `app-framework`, from the `sdk` discovery layer (via `pyana_intent`
+  `app-framework`, from the `sdk` discovery layer (via `dregg_intent`
   re-exports), and from `apps/compute-exchange`.
 - **Surprises** — `MatchResult::Matched { token_index: usize::MAX, .. }`
   is the sentinel for "Offer matched on absence" — there's no local
@@ -293,7 +293,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
   engine.close_batch\|TrustlessIntentEngine` workspace-wide returns only
   test functions in `intent/src/trustless.rs` itself. The node
   (`node/src/api.rs`, `node/src/state.rs`) maintains a separate
-  `encrypted_intent_pool: HashMap<[u8;32], pyana_intent::sse::EncryptedIntent>`
+  `encrypted_intent_pool: HashMap<[u8;32], dregg_intent::sse::EncryptedIntent>`
   and never invokes the trustless engine — encrypted intent storage
   exists but the batch/decrypt/auction pipeline is not wired into any
   production flow.
@@ -353,7 +353,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
 ## `lowering.rs` (~444 LOC)
 
 - **Purpose** — The deterministic four-layer tower for converting a
-  high-level executable intent into a runtime `pyana_turn::Turn`.
+  high-level executable intent into a runtime `dregg_turn::Turn`.
 - **Key types/functions**
   - `Intent` (NB: **separate type from `crate::Intent`**, the discovery
     one). Variants: `Pay { from, to, amount }`,
@@ -446,7 +446,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
     inline), not by expiry, to avoid the attack of long-expiry intents
     pushing real ones out.
   - Commit-reveal hashes commitment as
-    `BLAKE3_derive_key("pyana-fulfillment-commit-v1", intent_id ||
+    `BLAKE3_derive_key("dregg-fulfillment-commit-v1", intent_id ||
     fulfiller || actions || resource || nonce)`. The reveal must wait
     `COMMIT_REVEAL_WINDOW_SECS = 5s` before being accepted.
   - `fulfilled_intents` is a bounded set with GC (max
@@ -506,7 +506,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
 
 - **Purpose** — Producing and verifying capability fulfillments.
   Trusted mode → real attenuated macaroon. Selective/Private mode →
-  real FRI STARK proof from `pyana_circuit::multi_step_air`. Plus
+  real FRI STARK proof from `dregg_circuit::multi_step_air`. Plus
   cross-party predicate-proof attachment, automatic payment turns,
   and an end-to-end "execute the fulfillment flow" entry point.
 - **Key types/functions**
@@ -668,7 +668,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
   - Failsafe ensures one stuck real reveal eventually flushes even if
     not enough other items arrive.
 - **Integration status** — `node/src/state.rs` constructs
-  `pyana_intent::delay_pool::DelayPool::new(DelayPoolConfig::default())`
+  `dregg_intent::delay_pool::DelayPool::new(DelayPoolConfig::default())`
   per session — so the node *does* hold a delay pool. Whether it's
   actually `tick`ed and the released batch broadcast is something the
   node-side audit would have to confirm; the intent crate only
@@ -810,7 +810,7 @@ trust-critical primitive at its core (threshold encryption) is stubbed.
 
 ## §1. The Intent system, high-level
 
-An **intent** in pyana is a content-addressed declaration of a
+An **intent** in dregg is a content-addressed declaration of a
 capability *shape* — what someone needs, offers, or queries — broadcast
 to a gossip network, matched locally by cipherclerks, and (if matched)
 fulfilled through a verifiable artifact (macaroon, STARK proof, or
@@ -995,7 +995,7 @@ The four-layer tower (per `lowering.rs` header and confirmed in
    `Action` with a real `Authorization` (never `Unchecked`). The
    wrapping `SealedTurn { turn }` newtype enforces the invariant in
    debug builds.
-4. **`pyana_turn::Turn`** — the runtime executable consumed by
+4. **`dregg_turn::Turn`** — the runtime executable consumed by
    `TurnExecutor`.
 
 For a `RingSettlement`:
@@ -1028,7 +1028,7 @@ deserialize and dispatch but find no handler. The lowering layer
 produces a *structurally* valid Turn that isn't *semantically*
 executable today.
 
-## §5. Composition with the rest of pyana
+## §5. Composition with the rest of dregg
 
 - **Intent ↔ Turn**: the seam is `lowering.rs`. Intents and turns are
   separate vocabularies; lowering is the translator. There is *no*
@@ -1055,7 +1055,7 @@ executable today.
   Intents have `predicate_requirements` (for STARK predicate-proof
   attachment); cells/turns have `preconditions`. These are
   parallel mechanisms that haven't been unified. The
-  `PredicateProof` machinery (`pyana_circuit::verify_predicate`)
+  `PredicateProof` machinery (`dregg_circuit::verify_predicate`)
   is shared, but the intent layer attaches them at fulfillment time
   while turns can carry them as preconditions. A future
   consolidation could plausibly express intent predicates as a
@@ -1203,7 +1203,7 @@ collapse under broadcast load.
 To make compute-exchange work *in the current trusted mode*, what
 exists is sufficient — and that appears to be what
 `apps/compute-exchange/src/orderbook.rs` is doing now (it imports
-`pyana_intent::partial_fill::{PartialFillError, check_fill_amount}`
+`dregg_intent::partial_fill::{PartialFillError, check_fill_amount}`
 and nothing more).
 
 ## §8. Privacy story
@@ -1320,7 +1320,7 @@ commitment.
    `MockProofVerifier` as test-only and panic in production). The
    STARK circuit for solver validity is the missing piece — it would
    prove "given the decrypted intent set, the submitted ring set is
-   a valid disjoint cover with the claimed score." `pyana-circuit`
+   a valid disjoint cover with the claimed score." `dregg-circuit`
    already has the AIR machinery to build this.
 
 4. **Implement `settle_ring_leg` on a settlement cell**, or change

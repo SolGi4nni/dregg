@@ -40,7 +40,7 @@ With parameters: target 1M computrons/block, max 2M, minimum base fee 1, maximum
 
 === Deposit-Based Committee Membership
 
-Federation committees are small (3--20 nodes). Rather than heavy proof-of-stake machinery, Pyana uses deposit-based membership:
+Federation committees are small (3--20 nodes). Rather than heavy proof-of-stake machinery, Dregg uses deposit-based membership:
 
 - Joining requires locking a deposit note with value $>=$ `MINIMUM_VALIDATOR_STAKE` (initially 100,000 computrons)
 - The deposit is proven via a STARK range proof (value hidden, threshold satisfaction proven)
@@ -119,7 +119,7 @@ Federations are small and purpose-built. A 5-node federation serving a specific 
   table(
     columns: (auto, auto, auto, auto),
     align: (left, left, left, left),
-    table.header([*Property*], [*Pyana*], [*Cosmos*], [*Mina*]),
+    table.header([*Property*], [*Dregg*], [*Cosmos*], [*Mina*]),
     [Committee size], [3--20], [100--175], [$tilde$1000],
     [Fee destination], [50/30/20 split], [Proposer+stakers], [Burned],
     [Staking model], [Deposit + range proof], [Delegated PoS], [Delegated PoS],
@@ -128,10 +128,10 @@ Federations are small and purpose-built. A 5-node federation serving a specific 
     [Inflation], [None], [Yes (5--20%)], [Yes],
     [Treasury], [30% of fees], [Community pool (2%)], [None],
   ),
-  caption: [Economic model comparison. Pyana is non-inflationary; validators earn from fees.],
+  caption: [Economic model comparison. Dregg is non-inflationary; validators earn from fees.],
 )
 
-The key difference from Cosmos: Pyana does not need inflation because federations are small and operators have aligned interests. Cosmos needs inflation because validator sets are large and operators are pure infrastructure providers.
+The key difference from Cosmos: Dregg does not need inflation because federations are small and operators have aligned interests. Cosmos needs inflation because validator sets are large and operators are pure infrastructure providers.
 
 == Storage Economics <sec-storage-economics>
 

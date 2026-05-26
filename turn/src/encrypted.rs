@@ -39,7 +39,7 @@
 //! that round-trips the current `Turn` schema. (See
 //! `tests::privacy_wiring::encrypted_turn_decrypts_to_original`.)
 
-use pyana_cell::CellId;
+use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::conflict::ConflictSet;
@@ -94,7 +94,7 @@ pub struct EncryptedTurn {
 /// Future phases will add conservation and authorization proofs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TurnValidityProof {
-    /// The STARK proof bytes (serialized StarkProof from pyana-circuit).
+    /// The STARK proof bytes (serialized StarkProof from dregg-circuit).
     pub proof_bytes: Vec<u8>,
 
     /// Public inputs to the STARK (what the verifier checks against):
@@ -137,7 +137,7 @@ impl TurnValidityPublicInputs {
     /// Compute the agent commitment from a CellId.
     pub fn compute_agent_commitment(agent: &CellId) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-agent-commitment-v1");
+        hasher.update(b"dregg-agent-commitment-v1");
         hasher.update(agent.as_bytes());
         *hasher.finalize().as_bytes()
     }
@@ -156,7 +156,7 @@ impl TurnValidityPublicInputs {
 /// Derive the symmetric ChaCha20-Poly1305 key from an X25519 DH shared secret.
 ///
 /// Both encrypt and decrypt sides MUST compute the same key. We use BLAKE3 in
-/// derive_key mode with the domain string `"pyana-encrypted-turn-key v1"`,
+/// derive_key mode with the domain string `"dregg-encrypted-turn-key v1"`,
 /// hashing `shared_secret || ephemeral_public || recipient_public`. Mixing all
 /// three values gives:
 /// - shared_secret: the actual DH output (mutual knowledge of secret)
@@ -168,7 +168,7 @@ fn derive_turn_key(
     ephemeral_public: &[u8; 32],
     recipient_public: &[u8; 32],
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-turn-key v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-key v1");
     hasher.update(shared_secret);
     hasher.update(ephemeral_public);
     hasher.update(recipient_public);
@@ -200,7 +200,7 @@ impl EncryptedTurn {
         let plaintext = serde_json::to_vec(turn)
             .map_err(|e| EncryptedTurnError::SerializationFailed(e.to_string()))?;
         let turn_commitment = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-turn-commitment v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-commitment v1");
             hasher.update(&plaintext);
             *hasher.finalize().as_bytes()
         };
@@ -266,7 +266,7 @@ impl EncryptedTurn {
             .map_err(|_| EncryptedTurnError::DecryptionFailed)?;
 
         let expected_commitment = {
-            let mut hasher = blake3::Hasher::new_derive_key("pyana-encrypted-turn-commitment v1");
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-encrypted-turn-commitment v1");
             hasher.update(&plaintext);
             *hasher.finalize().as_bytes()
         };

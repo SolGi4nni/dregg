@@ -1,7 +1,7 @@
 {
-  "name": "@pyana/sdk",
+  "name": "@dregg/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Pyana network",
+  "description": "TypeScript SDK for the Dregg network",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

@@ -31,8 +31,8 @@
 //! only encodes canonical commitment values; it never submits a turn or
 //! verifies that the executor enforces the credential gate.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
-use pyana_cell::program::AuthorizedSet;
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use dregg_cell::program::AuthorizedSet;
 use starbridge_nameservice::{
     build_register_action, build_register_with_credential_action,
     identity_attested_tier_constraint, identity_attested_witness_predicate, name_hash,
@@ -57,7 +57,7 @@ fn issuer_cell() -> CellId {
 }
 
 fn schema_commitment() -> [u8; 32] {
-    *blake3::hash(b"pyana-kyc-v1-schema").as_bytes()
+    *blake3::hash(b"dregg-kyc-v1-schema").as_bytes()
 }
 
 // =============================================================================
@@ -82,7 +82,7 @@ fn attested_registration_without_credential_rejected_by_executor() {
     let action = build_register_with_credential_action(
         &cipherclerk,
         registry_cell,
-        "frank.pyana",
+        "frank.dregg",
         [0xAAu8; 32], // owner
         10_000,       // expiry
         issuer_cell(),
@@ -117,7 +117,7 @@ fn attested_registration_without_credential_rejected_by_executor() {
 /// executor dispatches both sides of the boundary consistently.
 #[test]
 fn attested_tier_constraint_commitment_matches_authorized_set() {
-    use pyana_cell::StateConstraint;
+    use dregg_cell::StateConstraint;
 
     let issuer = issuer_cell();
     let schema = schema_commitment();
@@ -160,8 +160,8 @@ fn attested_tier_constraint_commitment_matches_authorized_set() {
 /// witness to the right verifier.
 #[test]
 fn witness_predicate_commitment_matches_tier_constraint_commitment() {
-    use pyana_cell::StateConstraint;
-    use pyana_cell::predicate::WitnessedPredicateKind;
+    use dregg_cell::StateConstraint;
+    use dregg_cell::predicate::WitnessedPredicateKind;
 
     let issuer = issuer_cell();
     let schema = schema_commitment();
@@ -213,11 +213,11 @@ fn register_action_and_attested_action_carry_distinct_method_symbols() {
     let cipherclerk = make_cipherclerk(0xB0);
     let cell = CellId::from_bytes([0x01u8; 32]);
 
-    let reg_action = build_register_action(&cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000);
+    let reg_action = build_register_action(&cipherclerk, cell, "alice.dregg", [0xAAu8; 32], 1_000);
     let att_action = build_register_with_credential_action(
         &cipherclerk,
         cell,
-        "alice.pyana",
+        "alice.dregg",
         [0xAAu8; 32],
         1_000,
         issuer_cell(),
@@ -234,7 +234,7 @@ fn register_action_and_attested_action_carry_distinct_method_symbols() {
 
     // Specifically, the attested action must tag the
     // register_name_attested case.
-    use pyana_app_framework::symbol;
+    use dregg_app_framework::symbol;
     assert_eq!(
         att_action.method,
         symbol("register_name_attested"),
@@ -260,11 +260,11 @@ fn attested_action_carries_witness_blob_unattested_does_not() {
     let cipherclerk = make_cipherclerk(0xC0);
     let cell = CellId::from_bytes([0x01u8; 32]);
 
-    let reg_action = build_register_action(&cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000);
+    let reg_action = build_register_action(&cipherclerk, cell, "alice.dregg", [0xAAu8; 32], 1_000);
     let att_action = build_register_with_credential_action(
         &cipherclerk,
         cell,
-        "alice.pyana",
+        "alice.dregg",
         [0xAAu8; 32],
         1_000,
         issuer_cell(),
@@ -292,14 +292,14 @@ fn attested_action_carries_witness_blob_unattested_does_not() {
 // =============================================================================
 
 /// The attested action emits a `name-registered-attested` event whose
-/// first data field must equal `name_hash("alice.pyana")`.  We submit
+/// first data field must equal `name_hash("alice.dregg")`.  We submit
 /// the action through the executor and read the emitted event to confirm.
 #[test]
 fn executor_attested_registration_event_carries_correct_name_hash() {
     let cipherclerk = make_cipherclerk(0xD0);
     let (executor, registry_cell) = make_executor_and_cell(&cipherclerk);
 
-    let name = "grace.pyana";
+    let name = "grace.dregg";
 
     // Use non-empty proof bytes so the executor's witness-blob presence
     // check passes (the BlindedSet verifier rejects empty bytes, but we
@@ -337,7 +337,7 @@ fn executor_attested_registration_event_carries_correct_name_hash() {
             // Fallback: the executor rejected (e.g., BlindedSet verifier not
             // registered in embedded mode). Confirm the action was built
             // correctly by inspecting the effect payload directly.
-            use pyana_app_framework::Effect;
+            use dregg_app_framework::Effect;
             let name_field_in_action = action.effects.iter().find_map(|e| {
                 if let Effect::SetField { index, value, .. } = e {
                     if *index == starbridge_nameservice::NAME_HASH_SLOT {

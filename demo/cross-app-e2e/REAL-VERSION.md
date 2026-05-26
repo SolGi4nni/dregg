@@ -20,28 +20,28 @@
   agreement (e.g. alice's credential id == event-data[0] of her
   issuance event; alice's schema_commitment == bob's
   registration commitment), and (when a verifier binary is
-  available) hands the chain to `pyana-verifier replay-chain` to
+  available) hands the chain to `dregg-verifier replay-chain` to
   confirm the standalone verifier reports `Unwitnessable` (not
   `Rejected`) for each receipt — the correct verdict for receipts
   produced by `EmbeddedExecutor` (which does not run the prover).
 - `run.sh` step 11 — runs both when `cross-app-helper` is available
-  (built via `cargo build -p pyana-demo --bin cross-app-helper`,
+  (built via `cargo build -p dregg-demo --bin cross-app-helper`,
   out-of-band per `BOUNDARIES.md`). The existing structural
   `verify.py` (step 10) is unchanged.
 
 **What's still NOT real here:** the receipts produced by
 `EmbeddedExecutor` carry no STARK proofs. Proof generation lives in
-`pyana-node`'s MCP layer (`generate_effect_vm_proof`).
+`dregg-node`'s MCP layer (`generate_effect_vm_proof`).
 
 ### Issue #106 closure (2026-05-25)
 
 The four MCP tools that the prior status note flagged as missing have
 landed in `node/src/mcp.rs`:
 
-- `pyana_register_name`  — wraps `starbridge_nameservice::build_register_with_credential_action`.
-- `pyana_publish_subscription` — wraps `starbridge_subscription::build_bounty_state_publish_action`.
-- `pyana_issue_credential` — wraps `pyana_credentials::issue` + `starbridge_identity::build_issue_credential_action`.
-- `pyana_register_service` — wraps `starbridge_governed_namespace::build_register_service_action`.
+- `dregg_register_name`  — wraps `starbridge_nameservice::build_register_with_credential_action`.
+- `dregg_publish_subscription` — wraps `starbridge_subscription::build_bounty_state_publish_action`.
+- `dregg_issue_credential` — wraps `dregg_credentials::issue` + `starbridge_identity::build_issue_credential_action`.
+- `dregg_register_service` — wraps `starbridge_governed_namespace::build_register_service_action`.
 
 Each tool drives the action through `TurnExecutor`, projects the
 action's `SetField` effects into Effect-VM domain, and calls
@@ -51,16 +51,16 @@ action's `SetField` effects into Effect-VM domain, and calls
 `demo/two-ai-handoff/grant.proof.json`'s shape.
 
 In-crate tokio integration tests under
-`node/src/mcp.rs::tests::pyana_*_produces_proof_carrying_receipt`
+`node/src/mcp.rs::tests::dregg_*_produces_proof_carrying_receipt`
 drive each tool through `dispatch_tool` against a real NodeState and
 assert the proof / PI / trace / witness-hash are populated. An
 adversarial test (`forged_proof_bytes_fail_to_deserialize`) pins
 the producer-side gate by flipping every byte of a real proof and
-confirming `pyana_circuit::stark::proof_from_bytes` rejects.
+confirming `dregg_circuit::stark::proof_from_bytes` rejects.
 
 ### Coverage gap (intentional, documented in tool body)
 
-`pyana_register_service` wraps an action that emits only
+`dregg_register_service` wraps an action that emits only
 `EmitEvent("service-registered", [path_hash, target])` — no
 `SetField`. The current `EffectVmAir` has no `EmitEvent` row variant,
 so directly projecting the action's effects yields an empty
@@ -93,7 +93,7 @@ verifier. It:
    asserting inequality.
 
 It does **not**:
-- Call `pyana-verifier` or any proof verifier.
+- Call `dregg-verifier` or any proof verifier.
 - Inspect the `proof_hex` / `ProofBytes` blobs in `witness_blobs`.
 - Verify that receipts are signed by a real cell key.
 - Confirm any state transition was actually authorized by the executor.
@@ -122,9 +122,9 @@ verifiable proof.
 """verify_real.py — executor-invoking cross-app-e2e verifier.
 
 Augments verify.py's structural checks with:
-  1. Per-turn STARK proof verification via `pyana-verifier`.
-  2. Receipt signature verification via `pyana-verifier receipt-sig`.
-  3. Replay-chain verification via `pyana-verifier replay-chain`.
+  1. Per-turn STARK proof verification via `dregg-verifier`.
+  2. Receipt signature verification via `dregg-verifier receipt-sig`.
+  3. Replay-chain verification via `dregg-verifier replay-chain`.
   4. Negative tests: tampered proof must REJECT.
 """
 
@@ -140,7 +140,7 @@ def run(argv, stdin=None, timeout=120):
     return p.returncode, out, err
 
 def verify_stark(verifier_bin, proof_hex, pi, vk_hash="auto"):
-    """Call pyana-verifier with a STARK proof and PI; return (ok, reason)."""
+    """Call dregg-verifier with a STARK proof and PI; return (ok, reason)."""
     if not proof_hex:
         return False, "no proof_hex"
     req = json.dumps({"proof_hex": proof_hex, "public_inputs": pi, "vk_hash": vk_hash})
@@ -152,7 +152,7 @@ def verify_stark(verifier_bin, proof_hex, pi, vk_hash="auto"):
     return bool(parsed.get("verified")) and rc == 0, parsed.get("reason", "")
 
 def verify_receipt_sig(verifier_bin, receipt_hash_hex, sig_hex, pk_hex):
-    """Call pyana-verifier receipt-sig to check Ed25519 sig over receipt hash."""
+    """Call dregg-verifier receipt-sig to check Ed25519 sig over receipt hash."""
     req = json.dumps({
         "receipt_hash_hex": receipt_hash_hex,
         "sig_hex": sig_hex,
@@ -166,7 +166,7 @@ def verify_receipt_sig(verifier_bin, receipt_hash_hex, sig_hex, pk_hex):
     return bool(parsed.get("valid")) and rc == 0
 
 def verify_replay_chain(verifier_bin, chain_path):
-    """Call pyana-verifier replay-chain on a WitnessedReceipt chain."""
+    """Call dregg-verifier replay-chain on a WitnessedReceipt chain."""
     rc, out, _ = run([verifier_bin, "replay-chain", str(chain_path)], timeout=120)
     try:
         parsed = json.loads(out)
@@ -179,7 +179,7 @@ def main():
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--expected", required=True)
     parser.add_argument("--verifier-bin", required=True,
-                        help="Path to pyana-verifier binary")
+                        help="Path to dregg-verifier binary")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -334,7 +334,7 @@ When the real verifier is wired, add these to `expected.json`:
 
 ### What the agent scripts must change to support this
 
-Each of `alice.py`, `bob.py`, `carol.py`, `dan.py` must invoke `pyana-node`
+Each of `alice.py`, `bob.py`, `carol.py`, `dan.py` must invoke `dregg-node`
 in a mode that returns:
 - `witness_blobs[0].proof_hex` — actual STARK proof hex.
 - `witness_blobs[0].public_inputs` — field elements.
@@ -342,15 +342,15 @@ in a mode that returns:
 - `sig_hex` — Ed25519 signature over `receipt_hash_hex`.
 - `signing_pk_hex` — the cell's current public key.
 
-The `pyana-node` CLI (or MCP tool) must expose these fields in turn output.
+The `dregg-node` CLI (or MCP tool) must expose these fields in turn output.
 This is the primary unblocking work.
 
 ### Sequencing
 
-1. Confirm `pyana-verifier` accepts `{"proof_hex": "...", "public_inputs":
+1. Confirm `dregg-verifier` accepts `{"proof_hex": "...", "public_inputs":
    [...], "vk_hash": "auto"}` from stdin — this is already the charlie.py
    protocol in `two-ai-handoff`.
-2. Add `receipt-sig` subcommand to `pyana-verifier` (or use existing path).
+2. Add `receipt-sig` subcommand to `dregg-verifier` (or use existing path).
 3. Update agent scripts to emit `proof_hex` + `receipt_hash_hex` + `sig_hex`.
 4. Replace `verify.py` invocation in `run.sh` with `verify_real.py`.
 5. Expand `expected.json` must_pass list as above.

@@ -78,7 +78,7 @@ Legend: ✓ = wired, ~ = partial/synthetic, ✗ = absent, N/A = not applicable
 | 35 | `CreateCellFromFactory` | ✓ | ✓ factory_vk+owner_pk+token_id+params.mode+program_vk+initial_fields+initial_caps (action.rs:2039–2071) | ✓ `VmEffect::CreateCellFromFactory` (bridge:367–376) factory_vk+child_vk_derived | ✗ | |
 | 36 | `QueueAllocate` | ✓ | ✓ capacity+opt_program_vk (action.rs:2072–2087) | ✓ `VmEffect::AllocateQueue` (bridge:93–103) capacity+owner_quota_id+cost_per_slot | ✗ | |
 | 37 | `QueueEnqueue` | ✓ | ✓ queue+message_hash+deposit (action.rs:2088–2097) | ✓ `VmEffect::EnqueueMessage` (bridge:104–141) message_hash+deposit+sender_id+queue_len+program_vk | ✗ | |
-| 38 | `QueueDequeue` | ✓ | ✓ queue (action.rs:2098–2101) | ~ `VmEffect::DequeueMessage` (bridge:143–185) expected_message_hash = synthetic PYANA_DEQUEUE_HEAD/v1 domain tag; BLOCK1-BIND comment notes "CLOSED-PARTIALLY" | ✗ | **Dequeue head hash synthetic; §3** |
+| 38 | `QueueDequeue` | ✓ | ✓ queue (action.rs:2098–2101) | ~ `VmEffect::DequeueMessage` (bridge:143–185) expected_message_hash = synthetic DREGG_DEQUEUE_HEAD/v1 domain tag; BLOCK1-BIND comment notes "CLOSED-PARTIALLY" | ✗ | **Dequeue head hash synthetic; §3** |
 | 39 | `QueueResize` | ✓ | ✓ queue+new_capacity (action.rs:2102–2109) | ✓ `VmEffect::ResizeQueue` (bridge:187–211) new_capacity+queue_id+cost+old_capacity | ✗ | |
 | 40 | `QueueAtomicTx` | ✓ | ✓ operations (action.rs:2110–2131) | ✓ `VmEffect::AtomicQueueTx` (bridge:213–278) tx_hash+combined_old_root+combined_new_root+net_deposit | ✗ | |
 | 41 | `QueuePipelineStep` | ✓ | ✓ pipeline_id+source+sinks (action.rs:2132–2144) | ~ `VmEffect::PipelineStep` (bridge:279–302) source_new/sink_new = synthetic `hash_2_to_1(root, pipeline_id)` placeholder | ✗ | |
@@ -227,7 +227,7 @@ The following 46 effects produce **no wire-level notification**. Apps observing 
 ### Closure 3: Fix `QueueDequeue` synthetic head hash
 
 **Files:** `turn/src/executor/effect_vm_bridge.rs:143–185`  
-**Impact:** The dequeue AIR row proves a synthetic `PYANA_DEQUEUE_HEAD/v1 || queue_id || qlen` hash, not the actual message being dequeued. A prover can dequeue any message and prove a valid dequeue. The bridge comment (lines 148–164) explicitly labels this "CLOSED-PARTIALLY."  
+**Impact:** The dequeue AIR row proves a synthetic `DREGG_DEQUEUE_HEAD/v1 || queue_id || qlen` hash, not the actual message being dequeued. A prover can dequeue any message and prove a valid dequeue. The bridge comment (lines 148–164) explicitly labels this "CLOSED-PARTIALLY."  
 **Effort:** Requires binding the real queue head hash. Path (a) from the comment: store head commitment in `cell.state.fields` slot at enqueue time (executor + AIR co-evolution). This is the architecturally clean fix.
 
 ### Closure 4: Widen NoteSpend/NoteCreate nullifier/commitment from 4 bytes to 8 BabyBears

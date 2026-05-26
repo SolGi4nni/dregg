@@ -269,7 +269,7 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 .map(|v| truncate(v, 16))
                 .unwrap_or_else(|| "None".to_string());
 
-            let embed = embeds::pyana_embed("Cell Details")
+            let embed = embeds::dregg_embed("Cell Details")
                 .field("Cell ID", format!("`{short_id}...`"), false)
                 .field("Mode", &cell.mode, true)
                 .field("Balance", format!("{} PYN", cell.balance), true)
@@ -328,7 +328,7 @@ async fn handle_turn(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            let embed = embeds::pyana_embed("Turn Details")
+            let embed = embeds::dregg_embed("Turn Details")
                 .field("Hash", format!("`{short_hash}...`"), false)
                 .field("Signer", format!("`{short_signer}...`"), true)
                 .field("Fee", format!("{} PYN", turn.fee), true)
@@ -392,7 +392,7 @@ async fn handle_block(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     .join(", ")
             };
 
-            let embed = embeds::pyana_embed(&format!("Block #{}", block.height))
+            let embed = embeds::dregg_embed(&format!("Block #{}", block.height))
                 .field("Height", block.height.to_string(), true)
                 .field("Timestamp", &block.timestamp, true)
                 .field("Proposer", truncate(&block.proposer, 16), true)
@@ -432,7 +432,7 @@ async fn handle_note(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 "\u{274c}" // cross
             };
 
-            let embed = embeds::pyana_embed("Note Status")
+            let embed = embeds::dregg_embed("Note Status")
                 .field("Commitment", format!("`{short_commitment}...`"), false)
                 .field("Status", format!("{status_icon} {}", note.status), true)
                 .field(
@@ -473,7 +473,7 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 "\u{274c}"
             };
 
-            let embed = embeds::pyana_embed("Proof Metadata")
+            let embed = embeds::dregg_embed("Proof Metadata")
                 .field("Hash", format!("`{short_hash}...`"), false)
                 .field("AIR", &proof.air_name, true)
                 .field("Trace Size", proof.trace_size.to_string(), true)
@@ -507,7 +507,7 @@ async fn handle_factory(ctx: &Context, command: &CommandInteraction, state: &Bot
         Ok(factory) => {
             let short_vk = truncate(&factory.vk_hash, 16);
 
-            let embed = embeds::pyana_embed("Factory Details")
+            let embed = embeds::dregg_embed("Factory Details")
                 .field("VK Hash", format!("`{short_vk}...`"), false)
                 .field("Descriptor", &factory.descriptor, false)
                 .field(
@@ -565,7 +565,7 @@ async fn handle_search(ctx: &Context, command: &CommandInteraction, state: &BotS
                 ));
             }
 
-            let embed = embeds::pyana_embed(&format!("Search: {query}"))
+            let embed = embeds::dregg_embed(&format!("Search: {query}"))
                 .description(description)
                 .field("Results", results.len().to_string(), true);
 
@@ -595,7 +595,7 @@ async fn handle_stats(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 "\u{274c} Critical"
             };
 
-            let embed = embeds::pyana_embed("Devnet Stats Dashboard")
+            let embed = embeds::dregg_embed("Devnet Stats Dashboard")
                 .field("Block Height", format!("{}", stats.block_height), true)
                 .field(
                     "Cells",
@@ -671,7 +671,7 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(events) => {
             if events.is_empty() {
                 let embed =
-                    embeds::pyana_embed("Recent Activity").description("No recent activity found.");
+                    embeds::dregg_embed("Recent Activity").description("No recent activity found.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                     .await;
@@ -688,12 +688,12 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
                 if let Some(tx) = &event.tx_hash {
                     let short = truncate(tx, 12);
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.pyana.fg-goose.online/explorer/tx/{tx})\n"
+                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{tx})\n"
                     ));
                 }
             }
 
-            let embed = embeds::pyana_embed("Recent Activity")
+            let embed = embeds::dregg_embed("Recent Activity")
                 .description(description)
                 .field("Showing", format!("{} events", events.len()), true);
 

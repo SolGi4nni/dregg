@@ -43,9 +43,9 @@ pub type GroupId = [u8; 32];
 /// A federation ID (backward compat re-export from the addressing layer).
 /// In the unified model, a FederationId IS just a GroupId with legacy semantics.
 ///
-/// Re-exported from `pyana-types`, the canonical home (see
+/// Re-exported from `dregg-types`, the canonical home (see
 /// `FEDERATION-UNIFICATION-DESIGN.md` step 2).
-pub use pyana_types::FederationId;
+pub use dregg_types::FederationId;
 
 // =============================================================================
 // Fabric Address
@@ -250,7 +250,7 @@ impl GroupCheckpoint {
 
     /// Compute the checkpoint hash (for signing / attestation binding).
     pub fn checkpoint_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("pyana-group-checkpoint-v1");
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-group-checkpoint-v1");
         hasher.update(&self.group_id);
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.state_commitment);

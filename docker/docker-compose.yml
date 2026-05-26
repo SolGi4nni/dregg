@@ -118,7 +118,7 @@ services:
       - "3040:3040"
     environment:
       - RUST_LOG=info
-      - PYANA_NODE_URL=http://node-0:8420
+      - DREGG_NODE_URL=http://node-0:8420
     depends_on:
       node-0:
         condition: service_healthy

@@ -3,21 +3,21 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PYANA="$PROJECT_ROOT/target/release/pyana-node"
+DREGG="$PROJECT_ROOT/target/release/dregg-node"
 
-if [ ! -x "$PYANA" ]; then
-  echo "ERROR: pyana-node binary not found at $PYANA"
-  echo "Run: cargo build --release -p pyana-node"
+if [ ! -x "$DREGG" ]; then
+  echo "ERROR: dregg-node binary not found at $DREGG"
+  echo "Run: cargo build --release -p dregg-node"
   exit 1
 fi
 
-echo "=== Pyana Devnet Cluster Test ==="
+echo "=== Dregg Devnet Cluster Test ==="
 echo ""
 
 # Generate fresh devnet genesis
 DEVNET_DIR=$(mktemp -d)
 echo "Generating 3-validator devnet in $DEVNET_DIR ..."
-"$PYANA" genesis --validators 3 --output "$DEVNET_DIR"
+"$DREGG" genesis --validators 3 --output "$DEVNET_DIR"
 
 echo "Genesis generated. Contents:"
 ls "$DEVNET_DIR"
@@ -32,7 +32,7 @@ for i in 0 1 2; do
   cp "$DEVNET_DIR/node-$i.key" "$NODE_DIR/node.key"
 done
 
-BOUNTY_BOARD="$PROJECT_ROOT/target/release/pyana-bounty-board"
+BOUNTY_BOARD="$PROJECT_ROOT/target/release/dregg-bounty-board"
 COMPUTE_EXCHANGE="$PROJECT_ROOT/target/release/compute-exchange"
 
 cleanup() {
@@ -51,7 +51,7 @@ trap cleanup EXIT
 # once they are available (the gossip layer retries).
 
 echo "Starting Node 0 (HTTP :8420, gossip :9420) ..."
-"$PYANA" run \
+"$DREGG" run \
   --data-dir "$DEVNET_DIR/run-node-0" \
   --key-file node.key \
   --node-index 0 \
@@ -67,7 +67,7 @@ PID0=$!
 sleep 1
 
 echo "Starting Node 1 (HTTP :8421, gossip :9421) ..."
-"$PYANA" run \
+"$DREGG" run \
   --data-dir "$DEVNET_DIR/run-node-1" \
   --key-file node.key \
   --node-index 1 \
@@ -79,7 +79,7 @@ echo "Starting Node 1 (HTTP :8421, gossip :9421) ..."
 PID1=$!
 
 echo "Starting Node 2 (HTTP :8422, gossip :9422) ..."
-"$PYANA" run \
+"$DREGG" run \
   --data-dir "$DEVNET_DIR/run-node-2" \
   --key-file node.key \
   --node-index 2 \
@@ -137,7 +137,7 @@ if [ -x "$BOUNTY_BOARD" ]; then
     echo "  bounty-board: FAILED (HTTP $BB_CODE)"
   fi
 else
-  echo "  bounty-board binary not found, skipping (build with: cargo build --release -p pyana-bounty-board)"
+  echo "  bounty-board binary not found, skipping (build with: cargo build --release -p dregg-bounty-board)"
   PID_BB=""
 fi
 

@@ -233,7 +233,7 @@ const POLY1305_TAG_LEN: usize = 16;
 
 /// Derive a 32-byte symmetric key from a DH shared secret using BLAKE3.
 fn derive_symmetric_key(shared_secret: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-store-forward-v1-key");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-store-forward-v1-key");
     hasher.update(shared_secret);
     *hasher.finalize().as_bytes()
 }
@@ -928,7 +928,7 @@ impl StoreForwardClient {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlocklaceEnvelope {
     /// Magic bytes for identifying store-forward payloads in the blocklace.
-    /// Always `b"pysf"` (pyana store-forward).
+    /// Always `b"pysf"` (dregg store-forward).
     pub magic: [u8; 4],
     /// The intended recipient (so nodes know which blocks to attempt decryption on).
     pub destination: FederationId,

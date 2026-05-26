@@ -87,21 +87,21 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signer as _, SigningKey as DalekSigningKey};
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_cell::{UnilateralAttestation, UnilateralAttestationKind};
-use pyana_circuit::{
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_cell::{UnilateralAttestation, UnilateralAttestationKind};
+use dregg_circuit::{
     BabyBear, CellState as VmCellState, Effect as VmEffect, EffectVmAir,
     effect_vm::pi as vm_pi,
     generate_effect_vm_trace,
     stark::{self, proof_to_bytes},
 };
-use pyana_commit::typed::canonical_32_to_felts_4;
-use pyana_turn::{
+use dregg_commit::typed::canonical_32_to_felts_4;
+use dregg_turn::{
     ActionBuilder, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect, Turn,
     TurnExecutor, TurnReceipt, TurnResult,
 };
-use pyana_types::{AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes};
-use pyana_verifier::{
+use dregg_types::{AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes};
+use dregg_verifier::{
     ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle, replay_chain,
 };
 
@@ -358,7 +358,7 @@ fn build_attested_root(
 // with kind=Custom { kind_tag: CROSS_FED_RECEIPT_CITE }.
 //
 // The attestation_data preimage encodes:
-//   blake3("pyana-cross-fed-receipt-cite-v1" || f1_federation_id || t2_receipt_hash)
+//   blake3("dregg-cross-fed-receipt-cite-v1" || f1_federation_id || t2_receipt_hash)
 //
 // This domain-separates the cross-fed citation from any intra-fed
 // UnilateralAttestation::Custom entry, and binds the citing cell to a
@@ -374,7 +374,7 @@ fn cross_fed_receipt_cite(
     cited_receipt_hash: &[u8; 32],
 ) -> UnilateralAttestation {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"pyana-cross-fed-receipt-cite-v1");
+    hasher.update(b"dregg-cross-fed-receipt-cite-v1");
     hasher.update(citing_cell_id.as_bytes());
     hasher.update(source_federation_id);
     hasher.update(cited_receipt_hash);
@@ -429,7 +429,7 @@ fn silver_vision_multi_fed_graph_e2e() {
     f1_executor.set_treasury_cell(f1_treas_id);
 
     let credential_value = *blake3::hash(b"multi-fed-silver-credential-v1").as_bytes();
-    let name_value = *blake3::hash(b"alice.pyana.multifed").as_bytes();
+    let name_value = *blake3::hash(b"alice.dregg.multifed").as_bytes();
 
     // t1: Cell A (F1) issues a credential.
     let pre_a = f1_ledger.get(&f1_ids[0]).unwrap().state.balance();
@@ -724,7 +724,7 @@ fn silver_vision_multi_fed_graph_e2e() {
     // F2's verifier confirms:
     //   1. t2_receipt_hash appears in F1's AttestedRoot via receipt_stream_root.
     //   2. The UnilateralAttestation::Custom data on t3 encodes exactly
-    //      blake3("pyana-cross-fed-receipt-cite-v1" || C.cell_id || f1_id || t2_receipt_hash).
+    //      blake3("dregg-cross-fed-receipt-cite-v1" || C.cell_id || f1_id || t2_receipt_hash).
     //
     // This is the structural F2-cites-F1 binding. In production the verifier
     // additionally checks that F1's AttestedRoot was obtained via an

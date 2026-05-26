@@ -1,5 +1,5 @@
-//! `pyana-credentials` — Verifiable credentials for pyana, lifted from
-//! `bridge::present` + `macaroon` (PYANA-FLAWS-FROM-APPS.md G31).
+//! `dregg-credentials` — Verifiable credentials for dregg, lifted from
+//! `bridge::present` + `macaroon` (DREGG-FLAWS-FROM-APPS.md G31).
 //!
 //! # Why this crate exists
 //!
@@ -10,14 +10,14 @@
 //! already implements the *correct* shape — federation-bound issuer membership,
 //! real STARK presentation proof, selective disclosure, predicate proofs,
 //! unlinkable multi-show — but was buried under a name that didn't advertise
-//! "this is the credential primitive". `PYANA-FLAWS-FROM-APPS.md` G31 calls
+//! "this is the credential primitive". `DREGG-FLAWS-FROM-APPS.md` G31 calls
 //! out the promotion explicitly:
 //!
-//! > Promote `bridge::present` to a top-level "Pyana credentials" module.
+//! > Promote `bridge::present` to a top-level "Dregg credentials" module.
 //! > `BridgePresentationBuilder` + `macaroon/` already implement what
 //! > `apps/identity/` claims to do, *correctly*, with federation-bound issuer
 //! > membership and real STARK presentation. The identity app reinvents a
-//! > strict subset, badly. Promote this to documented `pyana-credentials` and
+//! > strict subset, badly. Promote this to documented `dregg-credentials` and
 //! > deprecate the app's reinvention.
 //!
 //! # Public surface
@@ -38,7 +38,7 @@
 //! # What this crate is NOT
 //!
 //! - It is not a new circuit. All ZK heavy lifting routes through
-//!   `pyana-bridge` and `pyana-circuit` exactly as before. This crate is
+//!   `dregg-bridge` and `dregg-circuit` exactly as before. This crate is
 //!   the ergonomic surface, not a parallel cryptosystem.
 //! - It is not a cclerk. Key custody is the caller's problem; this crate
 //!   accepts already-minted `MacaroonToken`s or root keys.
@@ -74,9 +74,9 @@ pub use verification::{
 };
 
 // Re-export underlying types so callers don't need to depend on
-// `pyana-bridge` directly when composing their own flows. This is the
+// `dregg-bridge` directly when composing their own flows. This is the
 // "promote to dedicated module" goal of G31.
-pub use pyana_bridge::present::{
+pub use dregg_bridge::present::{
     BridgePresentationProof, FederationRegistry, Predicate, WirePresentationProof,
 };
 

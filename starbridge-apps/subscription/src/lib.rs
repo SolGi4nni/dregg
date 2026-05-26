@@ -5,7 +5,7 @@
 //! `STORAGE-AS-CELL-PROGRAMS.md`**.
 //!
 //! The original `apps/subscription/` used
-//! `pyana_storage::inbox::CapInbox` as an operator-process data
+//! `dregg_storage::inbox::CapInbox` as an operator-process data
 //! structure with HTTP shims around it (`app-framework::inbox_endpoint`).
 //! Per `STORAGE-AS-CELL-PROGRAMS.md` §1 that arrangement has five
 //! distinct failure modes, the headline one being **the executor
@@ -82,9 +82,9 @@
 //!
 //! The spec in `STORAGE-AS-CELL-PROGRAMS.md` §3.1 talks about per-message
 //! `WriteOnce` slots as an *idealized* surface. The cell substrate has
-//! `STATE_SLOTS = 8` total (`pyana_cell::state::STATE_SLOTS`), which is
+//! `STATE_SLOTS = 8` total (`dregg_cell::state::STATE_SLOTS`), which is
 //! not enough to host an unbounded message ring. The actual data path
-//! is the same one `MerkleQueue::root` uses today in `pyana_storage`:
+//! is the same one `MerkleQueue::root` uses today in `dregg_storage`:
 //! a root commitment in slot 6, with the per-message tuples stored
 //! out-of-band (in an off-cell content store keyed by the root). The
 //! `WriteOnce` semantic at the *individual-message* level is enforced
@@ -151,7 +151,7 @@
 //! operation-scoped semantics regardless of the executor's wiring
 //! state. See the README for the dependency note.
 
-use pyana_app_framework::{
+use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
     CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
@@ -745,7 +745,7 @@ impl BountyState {
 
 /// Compute the canonical payload hash for a bounty-state transition.
 ///
-/// `blake3_derive_key("pyana-bounty-state-v1") || bounty_id ||
+/// `blake3_derive_key("dregg-bounty-state-v1") || bounty_id ||
 /// prior_state.tag() || new_state.tag() || actor_pk_hash`. Distinct
 /// (bounty_id, prior, new, actor) tuples produce distinct payload
 /// hashes — replay-safe at the commitment level. The matching
@@ -760,7 +760,7 @@ pub fn bounty_state_payload_hash(
     new_state: BountyState,
     actor_pk_hash: &[u8; 32],
 ) -> FieldElement {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bounty-state-v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-bounty-state-v1");
     hasher.update(bounty_id);
     hasher.update(&[prior_state.tag()]);
     hasher.update(&[new_state.tag()]);
@@ -803,7 +803,7 @@ pub fn build_bounty_state_publish_action(
 /// Register this starbridge-app on a [`StarbridgeAppContext`].
 ///
 /// Wires the subscription factory descriptor and the
-/// `<pyana-subscription>` family of inspector descriptors into the
+/// `<dregg-subscription>` family of inspector descriptors into the
 /// shared host registry. Returns the registered `factory_vk` so the
 /// host can log it.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
@@ -813,9 +813,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     ctx.register_inspector(InspectorDescriptor {
         kind: "subscription".into(),
         descriptor: serde_json::json!({
-            "component": "pyana-subscription",
+            "component": "dregg-subscription",
             "module": "/starbridge-apps/subscription/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "summary_fields": [
                 "seq_head", "seq_tail", "capacity",
                 "publishers_root", "consumers_root", "message_root",
@@ -830,9 +830,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // Studio can mount a different React component.
     ctx.register_inspector_with("subscription-publish-form", || {
         serde_json::json!({
-            "component": "pyana-subscription-publish-form",
+            "component": "dregg-subscription-publish-form",
             "module": "/starbridge-apps/subscription/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "factory_vk_hex": hex_encode_32(&SUBSCRIPTION_FACTORY_VK),
         })
     });
@@ -840,9 +840,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // Consumer's live feed view (the head-of-queue stream).
     ctx.register_inspector_with("subscription-feed", || {
         serde_json::json!({
-            "component": "pyana-subscription-feed",
+            "component": "dregg-subscription-feed",
             "module": "/starbridge-apps/subscription/inspectors.js",
-            "uri_prefix": "pyana://cell/",
+            "uri_prefix": "dregg://cell/",
             "factory_vk_hex": hex_encode_32(&SUBSCRIPTION_FACTORY_VK),
         })
     });
@@ -857,7 +857,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
+    use dregg_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
     fn test_cipherclerk() -> AppCipherclerk {
         AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
@@ -905,7 +905,7 @@ mod tests {
     fn subscription_child_program_vk_is_canonical_recipe() {
         // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1: validators with
         // `subscription_program()` in scope re-derive the VK and re-execute.
-        let expected = pyana_app_framework::canonical_program_vk(&subscription_program());
+        let expected = dregg_app_framework::canonical_program_vk(&subscription_program());
         assert_eq!(
             subscription_child_program_vk(),
             expected,
@@ -929,7 +929,7 @@ mod tests {
         // must differ from the v1 program-bytes-only hash.
         let program = subscription_program();
         let v2 = subscription_child_program_vk();
-        let v1 = pyana_app_framework::canonical_program_bytes_hash(&program);
+        let v1 = dregg_app_framework::canonical_program_bytes_hash(&program);
         assert_ne!(
             v2, v1,
             "v2 layered hash must differ from v1 program-bytes-only hash"
@@ -943,7 +943,7 @@ mod tests {
         // verifier + Plonky3 proving system).
         let d = subscription_factory_descriptor();
         let program = subscription_program();
-        pyana_app_framework::validate_child_vk_canonical(&d, &program)
+        dregg_app_framework::validate_child_vk_canonical(&d, &program)
             .expect("descriptor's child_program_vk must bind to subscription_program() under v2");
     }
 

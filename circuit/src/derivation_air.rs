@@ -400,7 +400,7 @@ impl crate::stark::StarkAir for DerivationStarkAir {
         2
     }
     fn air_name(&self) -> &'static str {
-        "pyana-derivation-v1"
+        "dregg-derivation-v1"
     }
     fn has_chain_continuity(&self) -> bool {
         false

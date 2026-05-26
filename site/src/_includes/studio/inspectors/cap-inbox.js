@@ -1,12 +1,12 @@
 /**
- * <pyana-cap-inbox uri="pyana://cell/<id>"> or data-inbox="..."
+ * <dregg-cap-inbox uri="dregg://cell/<id>"> or data-inbox="..."
  *
  * Storage-as-cell-program inspector for CapInbox pattern (STORAGE-AS-CELL-PROGRAMS.md §3.1).
  * Renders a cell whose program uses WriteOnce + MonotonicSequence (head/tail) + SenderAuthorized
  * + FieldLte (capacity) + conservation as a verifiable inbox.
  *
  * Timed with Phase 1 (WitnessedPredicate) + Phase 3 migration.
- * Reuses heavily: <pyana-cell>, <pyana-cell-program>, <pyana-state-constraint> (via program tab).
+ * Reuses heavily: <dregg-cell>, <dregg-cell-program>, <dregg-state-constraint> (via program tab).
  *
  * Slots (per design): 0=head_seq, 1=tail_seq, 2=capacity, 3=min_deposit, 4=owner_pk_hash,
  * 5=sender_set_root, 6=total_deposits, 7=message_root.
@@ -18,7 +18,7 @@
 import { parseRef } from '../uri.js';
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
 
-class PyanaCapInbox extends InspectorBase {
+class DreggCapInbox extends InspectorBase {
   _render() {
     const { h, render, html, effect } = this._api;
     const refAttr = this.getAttribute('uri');
@@ -49,7 +49,7 @@ class PyanaCapInbox extends InspectorBase {
       }
 
       if (!cell) {
-        return html`<div class="pyana-inspector pyana-inspector--empty">cap-inbox cell not found (supply uri to real cell or data-inbox)</div>`;
+        return html`<div class="dregg-inspector dregg-inspector--empty">cap-inbox cell not found (supply uri to real cell or data-inbox)</div>`;
       }
 
       const fields = cell.fields || [];
@@ -65,14 +65,14 @@ class PyanaCapInbox extends InspectorBase {
       const prog = cell.program;
 
       if (mode === 'compact') {
-        return html`<span class="pyana-inspector pyana-inspector--compact">inbox H=${head} T=${tail} cap=${cap}</span>`;
+        return html`<span class="dregg-inspector dregg-inspector--compact">inbox H=${head} T=${tail} cap=${cap}</span>`;
       }
 
       return html`
-        <div class="pyana-inspector pyana-inspector--cell pci">
+        <div class="dregg-inspector dregg-inspector--cell pci">
           <header>
-            <span class="pyana-inspector__kind">cap-inbox</span>
-            <pyana-cell uri=${`pyana://cell/${cell.cell_id || parsed?.id}`} mode="compact"></pyana-cell>
+            <span class="dregg-inspector__kind">cap-inbox</span>
+            <dregg-cell uri=${`dregg://cell/${cell.cell_id || parsed?.id}`} mode="compact"></dregg-cell>
           </header>
 
           <dl class="pci__kv">
@@ -88,7 +88,7 @@ class PyanaCapInbox extends InspectorBase {
 
           <details open>
             <summary style="cursor:pointer;font-size:0.8rem;color:var(--fg-dim);">Cell program (enforces inbox invariants)</summary>
-            ${prog ? html`<pyana-cell-program data-program=${JSON.stringify(prog)} mode="default"></pyana-cell-program>`
+            ${prog ? html`<dregg-cell-program data-program=${JSON.stringify(prog)} mode="default"></dregg-cell-program>`
               : html`<div style="font-size:0.8rem;">no program (any change allowed — post-migration this cell declares WriteOnce/MonotonicSequence/SenderAuthorized etc)</div>`}
           </details>
 
@@ -103,6 +103,6 @@ class PyanaCapInbox extends InspectorBase {
   }
 }
 
-if (!customElements.get('pyana-cap-inbox')) {
-  customElements.define('pyana-cap-inbox', PyanaCapInbox);
+if (!customElements.get('dregg-cap-inbox')) {
+  customElements.define('dregg-cap-inbox', DreggCapInbox);
 }

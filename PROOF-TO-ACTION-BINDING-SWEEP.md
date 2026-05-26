@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-24. **Status:** in-flight (implementation lane). **Scope:**
 every variant of `turn::action::Effect`, with attention to whether the
-executor's projection into `pyana_circuit::effect_vm::Effect` and the AIR's
+executor's projection into `dregg_circuit::effect_vm::Effect` and the AIR's
 public inputs together provide *algebraic*, *full-fidelity* binding of the
 action parameters.
 
