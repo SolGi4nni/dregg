@@ -62,6 +62,14 @@ class PyanaFederationList extends InspectorBase {
                   <li style="margin:4px 0;padding:4px 8px;border:1px solid var(--line);border-radius:3px;">
                     <pyana-federation uri=${`pyana://federation/${f.fed_index}`} mode="compact"></pyana-federation>
                     <pyana-block-dag uri=${`pyana://federation/${f.fed_index}`} mode="compact" style="margin-left:8px;"></pyana-block-dag>
+                    <!-- Cluster B integration (FOLLOWUP-15): real blocklace DAG via block-dag (pyana-blocklace + pyana_federation);
+                         educational sim + config (constitution threshold/timeout/routes_commitment DFA) via blocklace-sim;
+                         delegation graph, merkle (for receipts/ARs), DFA routing (constitution.routes_commitment), factory descriptors for cell minting in fed. -->
+                    <div style="margin-top:4px;font-size:0.65rem;color:var(--fg-dim);">
+                      <pyana-delegation-graph mode="compact" style="margin-right:6px;"></pyana-delegation-graph>
+                      <pyana-dfa mode="compact" data-dfa=${JSON.stringify({name:'route-sample', states:[{id:0,dead:true},{id:1}], transitions:[{from:0,to:1,byte:47}]})} style="margin-right:6px;"></pyana-dfa>
+                      <span title="blocklace constitution + dfa routes + factories govern cell creation & routing in this fed (see blocklace/src/constitution.rs, dfa/src/router.rs, cell/src/factory.rs)">+ blocklace/DFA/factory config</span>
+                    </div>
                   </li>`)}
               </ul>`}
           <div class="pfl__note" style="font-size:0.7rem;color:var(--fg-dim);margin-top:6px;">

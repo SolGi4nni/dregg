@@ -217,8 +217,27 @@ fn cross_fed_receipt_lift_seam6() {
         .capabilities
         .grant(id_c, AuthRequired::None);
 
-    let executor_f1 = TurnExecutor::new(ComputronCosts::default_costs());
-    let executor_f2 = TurnExecutor::new(ComputronCosts::default_costs());
+    let mut executor_f1 = TurnExecutor::new(ComputronCosts::default_costs());
+    let mut executor_f2 = TurnExecutor::new(ComputronCosts::default_costs());
+
+    // Exercise fee shares + FederationReceiptBody / AR / post_hash consistency (cross-fed lift test).
+    // F1 (t1,t2): 600 fee → 300/180 shares; F2 (t3,t4): same.
+    let f1p = permissive_cell("cfl-f1-prop", 0);
+    let f1p_id = f1p.id();
+    ledger_f1.insert_cell(f1p).unwrap();
+    executor_f1.set_proposer_cell(f1p_id);
+    let f1t = permissive_cell("cfl-f1-treas", 0);
+    let f1t_id = f1t.id();
+    ledger_f1.insert_cell(f1t).unwrap();
+    executor_f1.set_treasury_cell(f1t_id);
+    let f2p = permissive_cell("cfl-f2-prop", 0);
+    let f2p_id = f2p.id();
+    ledger_f2.insert_cell(f2p).unwrap();
+    executor_f2.set_proposer_cell(f2p_id);
+    let f2t = permissive_cell("cfl-f2-treas", 0);
+    let f2t_id = f2t.id();
+    ledger_f2.insert_cell(f2t).unwrap();
+    executor_f2.set_treasury_cell(f2t_id);
 
     // ── 3. t1: A (F1) issues a credential ────────────────────────────────
     let credential_value = *blake3::hash(b"cross-fed-credential-v1").as_bytes();
@@ -264,6 +283,18 @@ fn cross_fed_receipt_lift_seam6() {
         ledger_f1.get(&id_b).unwrap().state.fields[0],
         name_value,
         "t2 must set B's field[0]"
+    );
+
+    // F1 fee shares visible (incl. in r2 post_state_hash and the lifted FederationReceiptBody).
+    assert_eq!(
+        ledger_f1.get(&f1p_id).unwrap().state.balance(),
+        300,
+        "F1 prop share"
+    );
+    assert_eq!(
+        ledger_f1.get(&f1t_id).unwrap().state.balance(),
+        180,
+        "F1 treas share"
     );
 
     // ── 5. Seam 6 lift: r2 → FederationReceipt from F1 ───────────────────
@@ -355,6 +386,18 @@ fn cross_fed_receipt_lift_seam6() {
         ledger_f2.get(&id_c).unwrap().state.balance(),
         pre_c_balance - bounty_amount,
         "t4 must debit C's balance"
+    );
+
+    // F2 fee shares visible (in receipts/ARs/FederationReceipts for the lift path).
+    assert_eq!(
+        ledger_f2.get(&f2p_id).unwrap().state.balance(),
+        300,
+        "F2 prop share"
+    );
+    assert_eq!(
+        ledger_f2.get(&f2t_id).unwrap().state.balance(),
+        180,
+        "F2 treas share"
     );
 
     // ── 9. Consensus on both federations + AttestedRoot binding ──────────

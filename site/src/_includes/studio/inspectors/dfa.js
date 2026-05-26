@@ -16,6 +16,7 @@
  */
 
 import { InspectorBase, renderParseError, shortHex } from './_base.js';
+import { parseRef } from '../uri.js';
 
 class PyanaDfa extends InspectorBase {
   _render() {
@@ -48,7 +49,13 @@ class PyanaDfa extends InspectorBase {
         return html`
           <div class="pyana-inspector pyana-inspector--dfa pdfa">
             <div class="pdfa__header"><span class="pyana-inspector__kind">dfa</span> ${parsed ? shortHex(parsed.id, 12) : ''}</div>
-            <div style="color:var(--fg-dim);font-size:0.8rem;">awaiting DFA data (data-dfa JSON or wasm get_dfa / compile_to_air binding). See dfa crate + DFA-RATIONALIZATION-DESIGN.md.</div>
+            <div style="color:var(--fg-dim);font-size:0.8rem;margin:4px 0;">
+              awaiting DFA data (data-dfa JSON or wasm compile_dfa / get_dfa binding from pyana_dfa crate).
+              <button class="pbs__btn" style="margin-left:8px;font-size:0.7rem;padding:1px 6px;" id="dfa-load-sample">Load sample (pyana_dfa compiler example)</button>
+            </div>
+            <div style="font-size:0.7rem;color:var(--fg-dim);">
+              Ties to blocklace Constitution.routes_commitment (BLAKE3 of RouteTable). See dfa/{compiler,router}.rs + DFA-RATIONALIZATION-DESIGN.md + blocklace/src/constitution.rs:54.
+            </div>
           </div>`;
       }
 
@@ -59,36 +66,55 @@ class PyanaDfa extends InspectorBase {
         return html`<span class="pyana-inspector pyana-inspector--compact">DFA ${states.length} states · ${trans.length} trans</span>`;
       }
 
-      // Simple SVG visualization (reuses playground spirit but canonical)
+      // Improved SVG visualization (layered layout + proper edges, following delegation-graph/merkle patterns; no JS reimpl of DFA semantics)
+      const stateCount = states.length || 4;
+      const cols = Math.min(5, Math.max(1, Math.ceil(Math.sqrt(stateCount))));
+      const boxW = 520, boxH = 160;
+      const nodeR = 12;
+      const nodeW = 58, nodeH = 24;
+
       const svgNodes = states.map((s, i) => {
-        const x = 40 + (i % 6) * 70;
-        const y = 30 + Math.floor(i / 6) * 55;
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = 30 + col * (nodeW + 24);
+        const y = 28 + row * 42;
+        const isDead = s.dead || s.id === 0 /* convention from DEAD_STATE in dfa::compiler */;
         return h('g', {},
-          h('circle', { cx: x, cy: y, r: 14, fill: s.dead ? '#f87171' : '#4ade80', stroke: 'var(--line)' }),
-          h('text', { x, y: y+4, 'text-anchor': 'middle', 'font-size': '9px', fill: '#0a0f0d' }, String(s.id || i))
+          h('rect', {
+            x: x - nodeW/2, y: y - nodeH/2, width: nodeW, height: nodeH, rx: 4,
+            fill: isDead ? '#3a1a1a' : '#1a2e1a', stroke: isDead ? '#f87171' : '#4ade80', 'stroke-width': 1.5
+          }),
+          h('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': '8px', fill: '#e4ddd0', 'font-family': 'ui-monospace,monospace' }, String(s.id ?? i))
+        );
+      });
+
+      const svgEdges = trans.slice(0, 30).map((t) => {
+        const fi = (t.from ?? 0);
+        const ti = (t.to ?? 1);
+        const fcol = fi % cols, frow = Math.floor(fi / cols);
+        const tcol = ti % cols, trow = Math.floor(ti / cols);
+        const fx = 30 + fcol * (nodeW + 24), fy = 28 + frow * 42;
+        const tx = 30 + tcol * (nodeW + 24), ty = 28 + trow * 42;
+        // simple line + label (first byte or '*')
+        const label = t.byte != null ? String(t.byte) : (t.pattern ? '*' : '?');
+        return h('g', {},
+          h('line', { x1: fx + 8, y1: fy, x2: tx - 8, y2: ty, stroke: '#60a5fa', 'stroke-width': 1, opacity: 0.7 }),
+          h('text', { x: (fx+tx)/2, y: (fy+ty)/2 - 2, 'font-size': '6px', fill: '#94a3b8' }, label)
         );
       });
 
       return html`
         <div class="pyana-inspector pyana-inspector--cell pdfa">
-          <header><span class="pyana-inspector__kind">dfa</span> ${dfaData.name || shortHex(dfaData.hash || '', 8)}</header>
-          <svg width="460" height="140" style="border:1px solid var(--line);background:var(--bg);border-radius:4px;">
+          <header><span class="pyana-inspector__kind">dfa</span> ${dfaData.name || shortHex(dfaData.hash || dfaData.routes_commitment || '', 8)}</header>
+          <svg width="${boxW}" height="${boxH}" style="border:1px solid var(--line);background:var(--bg);border-radius:4px;">
+            ${svgEdges}
             ${svgNodes}
-            ${trans.slice(0, 20).map((t, idx) => {
-              // crude edges
-              const from = (t.from || 0) % 6;
-              const to = (t.to || 1) % 6;
-              return h('line', {
-                x1: 40 + from*70, y1: 30 + Math.floor((t.from||0)/6)*55,
-                x2: 40 + to*70, y2: 30 + Math.floor((t.to||0)/6)*55,
-                stroke: 'var(--accent)', 'stroke-width': 1, opacity: 0.6
-              });
-            })}
           </svg>
           <div style="font-size:0.75rem;margin-top:4px;color:var(--fg-dim);">
-            ${states.length} states · ${trans.length} transitions. Use for RelayOperator dispatch, topic filters (PubSub), CapTP routing.
+            ${states.length} states · ${trans.length} transitions (from pyana_dfa::compiler / RouteTable). Use for RelayOperator, PubSubTopicFilter, CapTP pre-filters, governed routing.
           </div>
-          ${dfaData.air_fingerprint ? html`<div style="font-size:0.7rem;">AIR fp: ${shortHex(dfaData.air_fingerprint, 8)}</div>` : ''}
+          ${dfaData.air_fingerprint || dfaData.routes_commitment ? html`<div style="font-size:0.65rem;">commit / AIR: ${shortHex(dfaData.air_fingerprint || dfaData.routes_commitment || '', 10)}</div>` : ''}
+          <div style="font-size:0.65rem;margin-top:2px;color:#6a8070;">Sample or data-dfa from dfa crate; real compile_dfa stub in wasm/bindings.rs:1136 (see pyana_dfa::router::GovernedRouter + blocklace constitution link).</div>
         </div>`;
     };
 

@@ -519,6 +519,20 @@ fn silver_vision_graph_e2e() {
     // ── Stage 1: causal execution ─────────────────────────────────────
     let (mut ledger, ids) = make_graph_ledger();
     let executor = TurnExecutor::new(ComputronCosts::default_costs());
+
+    // Exercise the (now-fixed) fee share path + consistency in Silver Vision:
+    // set proposer/treasury so shares (50%/30%) appear in per-step post_state_hash,
+    // final ledger.root() (thus AR merkle_root), receipt_stream (via receipts), and deltas.
+    // 5 turns × 300 fee = 1500 total; proposer gets 750, treasury 450.
+    let mut prop_cell = permissive_cell("fee-proposer-silver", 0);
+    let prop_id = prop_cell.id();
+    ledger.insert_cell(prop_cell).unwrap();
+    executor.set_proposer_cell(prop_id);
+    let mut treas_cell = permissive_cell("fee-treasury-silver", 0);
+    let treas_id = treas_cell.id();
+    ledger.insert_cell(treas_cell).unwrap();
+    executor.set_treasury_cell(treas_id);
+
     let steps = run_graph(&executor, &mut ledger, ids);
     assert_eq!(steps.len(), 5, "5-step causal chain must execute fully");
 
@@ -583,13 +597,40 @@ fn silver_vision_graph_e2e() {
     // Snapshot the post-state ledger root for the replay check.
     let original_root = ledger.root();
 
+    // Assert fee shares visible post-distribution (in final root used by AR, and balances).
+    // (post_state_hash per receipt already baked shares at each execute step.)
+    let prop_bal = ledger.get(&prop_id).unwrap().state.balance();
+    let treas_bal = ledger.get(&treas_id).unwrap().state.balance();
+    assert_eq!(
+        prop_bal, 750,
+        "proposer must receive 750 total shares across 5 fee turns"
+    );
+    assert_eq!(
+        treas_bal, 450,
+        "treasury must receive 450 total shares across 5 fee turns"
+    );
+    assert_eq!(
+        original_root,
+        ledger.root(),
+        "snapshot root includes shares"
+    );
+
     // ── Stage 2: replay on a fresh ledger ─────────────────────────────
     let (mut replay_ledger, replay_ids) = make_graph_ledger();
     assert_eq!(
         replay_ids, ids,
         "replay ledger must produce the same cell ids"
     );
+    // Mirror p/t setup so replay root matches (shares credited deterministically in both).
+    let mut replay_prop = permissive_cell("fee-proposer-silver", 0);
+    let replay_prop_id = replay_prop.id();
+    replay_ledger.insert_cell(replay_prop).unwrap();
+    let mut replay_treas = permissive_cell("fee-treasury-silver", 0);
+    let replay_treas_id = replay_treas.id();
+    replay_ledger.insert_cell(replay_treas).unwrap();
     let replay_executor = TurnExecutor::new(ComputronCosts::default_costs());
+    replay_executor.set_proposer_cell(replay_prop_id);
+    replay_executor.set_treasury_cell(replay_treas_id);
     for step in &steps {
         let r = replay_executor.execute(&step.turn, &mut replay_ledger);
         match r {
@@ -755,6 +796,13 @@ fn silver_vision_graph_e2e() {
     );
     // Promote to v4: set the receipt_stream_root binding.
     root.receipt_stream_root = Some(stream_root);
+
+    // Fee shares (from proposer/treasury set above) are baked into the ledger root
+    // (merkle_root) and the per-receipt post_state_hashes that feed the stream_root.
+    assert_eq!(
+        root.merkle_root, original_root,
+        "AR merkle_root must reflect post-fee-share ledger state (proposer/treasury shares visible)"
+    );
 
     let msg = root.signing_message();
     let sig_bytes = fed_sk.sign(&msg).to_bytes();

@@ -28,7 +28,7 @@ use crate::composer::{ComposeError, SignedFragment, TurnComposer};
 use crate::error::TurnError;
 use crate::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
 use crate::forest::{CallForest, CallTree};
-use crate::turn::Turn;
+use crate::turn::{Turn, TurnResult};
 
 // =============================================================================
 // Test helpers
@@ -5988,6 +5988,61 @@ fn test_fee_distribution() {
                 "case {}: treasury balance mismatch",
                 case.name
             );
+        }
+
+        // Added coverage for fee share consistency (post-fix for proof path timing too):
+        // shares visible in post_state_hash (== ledger.root() after dist), deltas (for ARs/cross-fed),
+        // and TurnReceipt. (FederationReceiptBody exercised in teasting vision tests.)
+        // This covers the gap: fee + set_proposer/treasury + post_hash/AR/receipt/delta asserts.
+        if case.expect_committed {
+            if let TurnResult::Committed {
+                receipt,
+                ledger_delta: delta,
+                ..
+            } = &result
+            {
+                let post_root = ledger.root();
+                assert_eq!(
+                    receipt.post_state_hash, post_root,
+                    "case {}: receipt.post_state_hash must match ledger.root() after proposer/treasury fee shares",
+                    case.name
+                );
+                // Delta must reflect Phase-1 payer debit + Phase-3 share credits (matches compute_delta_from_journal_with_fee + proof-arm logic).
+                let agent_debit = delta.updated.iter().find(|(id, _d)| *id == agent_id);
+                assert!(
+                    agent_debit.map_or(false, |(_, d)| d.balance_change == -(case.fee as i64)
+                        && d.nonce_increment),
+                    "case {}: delta must show agent fee debit + nonce inc",
+                    case.name
+                );
+                if let Some(pid) = proposer_id {
+                    if case.proposer_exists {
+                        let pshare = case.fee / 2;
+                        let pcredit = delta.updated.iter().find(|(id, _d)| *id == pid);
+                        assert!(
+                            pcredit.map_or(false, |(_, d)| d.balance_change == pshare as i64),
+                            "case {}: delta must include proposer share credit {}",
+                            case.name,
+                            pshare
+                        );
+                    }
+                }
+                if let Some(tid) = treasury_id {
+                    let tshare = case.fee * 3 / 10;
+                    let tcredit = delta.updated.iter().find(|(id, _d)| *id == tid);
+                    assert!(
+                        tcredit.map_or(false, |(_, d)| d.balance_change == tshare as i64),
+                        "case {}: delta must include treasury share credit {}",
+                        case.name,
+                        tshare
+                    );
+                }
+            } else {
+                panic!(
+                    "case {}: expected Committed for delta/receipt asserts",
+                    case.name
+                );
+            }
         }
     }
 }

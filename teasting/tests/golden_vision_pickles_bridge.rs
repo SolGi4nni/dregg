@@ -166,6 +166,9 @@ mod golden_pickles {
         ids: [CellId; 5],
     ) -> Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>, EffectVmAir)> {
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
+        // Minimal fee share exercise for golden (shares to settlement/worker cells; post hashes/receipts in run reflect them).
+        executor.set_proposer_cell(ids[4]);
+        executor.set_treasury_cell(ids[3]);
         let mut results = Vec::new();
 
         // We build the steps sequentially because depends_on chains on prior turn hashes.

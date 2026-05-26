@@ -86,6 +86,19 @@ fn test_atomic_swap_across_federations() {
 
     let token_id = [0u8; 32];
 
+    // Minimal fee share + harness AR exercise for cross_federation (builds on low-value harness issues classification).
+    // Shares on harness executor/ledger (used for consensus/ARs); locals below use zero-cost mostly.
+    let mut hp = Cell::with_balance([0xF1; 32], token_id, 0);
+    hp.permissions = open_permissions();
+    let hpid = hp.id();
+    harness.ledger.insert_cell(hp).unwrap();
+    harness.executor.set_proposer_cell(hpid);
+    let mut ht = Cell::with_balance([0xF2; 32], token_id, 0);
+    ht.permissions = open_permissions();
+    let htid = ht.id();
+    harness.ledger.insert_cell(ht).unwrap();
+    harness.executor.set_treasury_cell(htid);
+
     // --- Setup: independent ledgers for each federation ---
     let mut fed_a_ledger = Ledger::new();
     let mut fed_b_ledger = Ledger::new();

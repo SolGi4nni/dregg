@@ -1349,9 +1349,7 @@ pub fn get_pending_conditionals(handle: usize) -> Result<JsValue, JsError> {
                     ProofCondition::HashPreimage { .. } => "HashPreimage",
                     ProofCondition::TurnExecuted { .. } => "TurnExecuted",
                     ProofCondition::RemoteProof { .. } => "RemoteProof",
-                    ProofCondition::And(_, _) => "And",
-                    ProofCondition::Or(_, _) => "Or",
-                    ProofCondition::Not(_) => "Not",
+                    ProofCondition::LocalProof { .. } => "LocalProof",
                 }
                 .to_string();
                 CondView {
@@ -1648,19 +1646,29 @@ pub fn is_channel_active(handle: usize, channel_id_hex: &str) -> Result<JsValue,
     })
 }
 
-/// List all known revocation channels (ids + active state). Stub list for now (returns [] pending
-/// RevocationChannelSet exposing an iterator in pyana-cell); enables <pyana-revocation-channel> URI list views.
+/// List all known revocation channels (ids + active state). Now uses real
+/// RevocationChannelSet::iter() (the TODO is resolved; inspector cluster A).
+/// Enables <pyana-revocation-channel> list + URI views with live state.
 #[wasm_bindgen]
 pub fn list_revocation_channels(handle: usize) -> Result<JsValue, JsError> {
     with_runtime_ref(handle, |rt| {
-        // TODO: once RevocationChannelSet has pub iter or len+get_all, populate real list.
-        // For now empty to unblock inspector without larger crate changes.
         #[derive(Serialize)]
         struct ChanView {
             channel_id: String,
             active: bool,
+            revoker: String,
+            created_at: u64,
         }
-        let chans: Vec<ChanView> = vec![];
+        let chans: Vec<ChanView> = rt
+            .revocation_channels
+            .iter()
+            .map(|(id, ch)| ChanView {
+                channel_id: hex_encode(id),
+                active: ch.is_active(),
+                revoker: hex_encode(ch.revoker.as_bytes()),
+                created_at: ch.created_at,
+            })
+            .collect();
         serde_wasm_bindgen::to_value(&chans).map_err(|e| e.to_string())
     })
 }

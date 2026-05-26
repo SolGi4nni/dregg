@@ -418,6 +418,16 @@ fn silver_vision_multi_fed_graph_e2e() {
     let mut f1_executor = TurnExecutor::new(ComputronCosts::default_costs());
     f1_executor.set_local_federation_id(f1_id);
 
+    // Fee shares + AR/receipt consistency for multi-fed Silver (F1 subchain).
+    let mut f1_prop = permissive_cell("mf-f1-proposer", 0);
+    let f1_prop_id = f1_prop.id();
+    f1_ledger.insert_cell(f1_prop).unwrap();
+    f1_executor.set_proposer_cell(f1_prop_id);
+    let mut f1_treas = permissive_cell("mf-f1-treasury", 0);
+    let f1_treas_id = f1_treas.id();
+    f1_ledger.insert_cell(f1_treas).unwrap();
+    f1_executor.set_treasury_cell(f1_treas_id);
+
     let credential_value = *blake3::hash(b"multi-fed-silver-credential-v1").as_bytes();
     let name_value = *blake3::hash(b"alice.pyana.multifed").as_bytes();
 
@@ -476,11 +486,33 @@ fn silver_vision_multi_fed_graph_e2e() {
         "t2 must depend on t1 by turn hash"
     );
 
+    // Fee shares visible for F1 (2 turns): post shares in bals + will be in its AR merkle.
+    assert_eq!(
+        f1_ledger.get(&f1_prop_id).unwrap().state.balance(),
+        300,
+        "F1 proposer 300 shares"
+    );
+    assert_eq!(
+        f1_ledger.get(&f1_treas_id).unwrap().state.balance(),
+        180,
+        "F1 treasury 180 shares"
+    );
+
     // ── Stage 2: F2 sub-chain (t3, t4) ──────────────────────────────────
     let (mut f2_ledger, f2_ids) = make_f2_ledger();
     let f2_id = fed_id(FED2_SEED);
     let mut f2_executor = TurnExecutor::new(ComputronCosts::default_costs());
     f2_executor.set_local_federation_id(f2_id);
+
+    // Fee shares for F2 subchain (symmetric to F1; exercises shares in its AR/receipts).
+    let mut f2_prop = permissive_cell("mf-f2-proposer", 0);
+    let f2_prop_id = f2_prop.id();
+    f2_ledger.insert_cell(f2_prop).unwrap();
+    f2_executor.set_proposer_cell(f2_prop_id);
+    let mut f2_treas = permissive_cell("mf-f2-treasury", 0);
+    let f2_treas_id = f2_treas.id();
+    f2_ledger.insert_cell(f2_treas).unwrap();
+    f2_executor.set_treasury_cell(f2_treas_id);
 
     // The cross-fed citation: C in F2 cites t2's receipt by hash.
     let t2_receipt_hash = r2.receipt_hash();
@@ -558,6 +590,18 @@ fn silver_vision_multi_fed_graph_e2e() {
     assert!(
         t4.depends_on.contains(&t3_hash),
         "t4 must depend on t3 by turn hash"
+    );
+
+    // Fee shares visible for F2 (2 turns).
+    assert_eq!(
+        f2_ledger.get(&f2_prop_id).unwrap().state.balance(),
+        300,
+        "F2 proposer 300 shares"
+    );
+    assert_eq!(
+        f2_ledger.get(&f2_treas_id).unwrap().state.balance(),
+        180,
+        "F2 treasury 180 shares"
     );
 
     // ── Stage 3: Build F1's AttestedRoot over {t1, t2} ───────────────────

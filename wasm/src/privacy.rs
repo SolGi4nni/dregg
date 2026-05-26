@@ -709,6 +709,10 @@ pub fn verify_bearer_cap(
 /// Create a *real* `BearerCapProof` (SignedDelegation variant) usable in
 /// canonical turns / `Authorization::Bearer`.
 ///
+/// Extended (FOLLOWUP-14 inspector cluster): supports optional revocation_channel
+/// and allowed_effects facet mask for full capability model integration with
+/// <pyana-revocation-channel> and facet attenuation. Empty rev hex or mask=0 means absent.
+///
 /// Returns JSON-serialized BearerCapProof (matches the shape already
 /// surfaced in AuthorizationView and TurnReceipt actions).
 #[wasm_bindgen]
@@ -719,8 +723,10 @@ pub fn create_bearer_cap_proof(
     bearer_pubkey_hex: &str,
     expires_at: u64,
     federation_id_hex: &str,
+    revocation_channel_hex: &str, // "" or 64-hex for Some
+    allowed_effects_mask: u32,    // 0 for None, else Some(mask) per cell::facet::EffectMask
 ) -> Result<JsValue, JsError> {
-    use ed25519_dalek::Signer;
+    use ed25519_dalek::{Signer, SigningKey};
     use pyana_cell::{AuthRequired, CellId};
     use pyana_turn::action::{BearerCapProof, DelegationProofData};
     use pyana_turn::executor::TurnExecutor;
@@ -748,6 +754,17 @@ pub fn create_bearer_cap_proof(
     let delegator_pk = signing_key.verifying_key().to_bytes();
     let signature = signing_key.sign(&message).to_bytes();
 
+    let rev_channel: Option<[u8; 32]> = if revocation_channel_hex.is_empty() {
+        None
+    } else {
+        Some(hex_decode_32(revocation_channel_hex)?)
+    };
+    let allowed: Option<pyana_cell::EffectMask> = if allowed_effects_mask == 0 {
+        None
+    } else {
+        Some(allowed_effects_mask)
+    };
+
     let proof = BearerCapProof {
         target,
         permissions: auth_req,
@@ -757,8 +774,8 @@ pub fn create_bearer_cap_proof(
             bearer_pk,
         },
         expires_at,
-        revocation_channel: None,
-        allowed_effects: None,
+        revocation_channel: rev_channel,
+        allowed_effects: allowed,
     };
 
     Ok(serde_wasm_bindgen::to_value(&proof)?)

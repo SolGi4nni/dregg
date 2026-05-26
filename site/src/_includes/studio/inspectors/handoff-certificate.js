@@ -28,8 +28,8 @@ class PyanaHandoffCertificate extends InspectorBase {
     if (!data && refAttr) {
       try { parsed = parseRef(refAttr); } catch {}
       if (renderParseError(this, refAttr, parsed, 'handoff-certificate')) return;
-      // For uri-only, show placeholder or expect data; real fetch not in bindings yet.
-      data = { nonce: parsed.id, introducer_federation: 'unknown', recipient_pk: 'unknown' };
+      // uri fallback: minimal placeholder shape (full HandoffCertificate oversized; summary is canonical for inspectors)
+      data = { handoff_cert_summary: { nonce: parsed.id, introducer_federation: 'unknown', recipient_pk: 'unknown' } };
     }
 
     const root = document.createElement('div');
@@ -59,11 +59,13 @@ class PyanaHandoffCertificate extends InspectorBase {
             <dt>introducer federation</dt><dd><code title=${cert.introducer_federation}>${shortHex(cert.introducer_federation, 16)}</code></dd>
             <dt>recipient pk</dt><dd><code title=${cert.recipient_pk}>${shortHex(cert.recipient_pk, 16)}</code></dd>
             <dt>nonce</dt><dd><code title=${cert.nonce}>${shortHex(cert.nonce, 16)}</code></dd>
+            ${cert.introducer_pk ? html`<dt>introducer pk</dt><dd><code>${shortHex(cert.introducer_pk, 12)}</code></dd>` : ''}
           </dl>
           <div style="font-size:0.7rem;color:var(--fg-dim);">
             HandoffCertificate enables 3-party CapTP handoff (introducer → recipient). See Authorization::CapTpDelivered + pyana_captp handoff.
-            Paste-friendly compact form: pyana-handoff:...
+            Paste-friendly compact form: pyana-handoff:... (summary only; full cert oversized by design).
           </div>
+          <div style="font-size:0.6rem;color:#888;margin-top:2px;">(visible placeholder: full cert fields not surfaced in wasm summary)</div>
         </div>`;
     };
 

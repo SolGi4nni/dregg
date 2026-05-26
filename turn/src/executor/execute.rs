@@ -4,6 +4,32 @@
 
 use super::*;
 
+/// Common helper for fee share distribution (50% proposer, 30% treasury, 20% burned).
+/// Extracted to eliminate duplication between proof-carrying sovereign fast path
+/// and normal forest path (excellence item from conservation followup).
+/// Ensures consistent credit timing and logic for post_state_hash / receipt / delta / AR consumers.
+fn distribute_fee_shares(
+    ledger: &mut Ledger,
+    proposer: Option<&CellId>,
+    treasury: Option<&CellId>,
+    fee: u64,
+) {
+    let proposer_share = fee / 2;
+    let treasury_share = fee * 3 / 10;
+    if let Some(pid) = proposer {
+        if let Some(p) = ledger.get_mut(pid) {
+            p.state.set_balance(p.state.balance() + proposer_share);
+        }
+        // missing cell => burned (documented)
+    }
+    if let Some(tid) = treasury {
+        if let Some(t) = ledger.get_mut(tid) {
+            t.state.set_balance(t.state.balance() + treasury_share);
+        }
+        // missing cell => burned
+    }
+}
+
 impl TurnExecutor {
     /// Execute a turn against a ledger, returning the result.
     ///
@@ -212,6 +238,15 @@ impl TurnExecutor {
                         gate_cell.lock().unwrap().commit_debit(digest);
                     }
 
+                    // Fee distribution via common helper (extracted for consistency).
+                    // Now called before post_state_hash + receipt + delta in proof path too.
+                    distribute_fee_shares(
+                        ledger,
+                        self.proposer_cell.as_ref(),
+                        self.treasury_cell.as_ref(),
+                        turn.fee,
+                    );
+
                     let post_state_hash = ledger.root();
                     let turn_hash = turn.hash();
                     let forest_hash = turn.call_forest.compute_hash();
@@ -293,29 +328,27 @@ impl TurnExecutor {
                     // executor has been configured with a signing key.
                     receipt.executor_signature = self.maybe_sign_receipt(&receipt);
 
-                    // Fee distribution (same as normal path).
-                    let proposer_share = turn.fee / 2;
-                    let treasury_share = turn.fee * 3 / 10;
-                    if let Some(proposer_id) = &self.proposer_cell {
-                        if let Some(proposer) = ledger.get_mut(proposer_id) {
-                            proposer
-                                .state
-                                .set_balance(proposer.state.balance() + proposer_share);
-                        }
-                    }
-                    if let Some(treasury_id) = &self.treasury_cell {
-                        if let Some(treasury) = ledger.get_mut(treasury_id) {
-                            treasury
-                                .state
-                                .set_balance(treasury.state.balance() + treasury_share);
-                        }
-                    }
-
                     let mut delta = pyana_cell::LedgerDelta::new();
                     let mut agent_delta = pyana_cell::CellStateDelta::empty();
                     agent_delta.balance_change = -(turn.fee as i64);
                     agent_delta.nonce_increment = true;
                     delta.updated.push((turn.agent, agent_delta));
+
+                    // Include fee share credits in delta (to match normal path's
+                    // compute_delta_from_journal_with_fee which receives the
+                    // proposer/treasury cells + fee). This makes the returned
+                    // delta (and thus AR / cross-fed consumers) reflect the
+                    // full value movement.
+                    if let Some(proposer_id) = &self.proposer_cell {
+                        let mut d = pyana_cell::CellStateDelta::empty();
+                        d.balance_change = (turn.fee / 2) as i64;
+                        delta.updated.push((*proposer_id, d));
+                    }
+                    if let Some(treasury_id) = &self.treasury_cell {
+                        let mut d = pyana_cell::CellStateDelta::empty();
+                        d.balance_change = (turn.fee * 3 / 10) as i64;
+                        delta.updated.push((*treasury_id, d));
+                    }
 
                     // P0-3: record the new chain-head for this agent.
                     self.record_receipt_hash(turn.agent, receipt.receipt_hash());
@@ -724,27 +757,13 @@ impl TurnExecutor {
         // Only executed after successful forest execution. If neither proposer
         // nor treasury is configured, all fees are burned (backward compatible).
         // =====================================================================
-        let proposer_share = turn.fee / 2; // 50%
-        let treasury_share = turn.fee * 3 / 10; // 30%
-        // burned = fee - proposer_share - treasury_share (the remaining 20%)
-
-        if let Some(proposer_id) = &self.proposer_cell {
-            if let Some(proposer) = ledger.get_mut(proposer_id) {
-                proposer
-                    .state
-                    .set_balance(proposer.state.balance() + proposer_share);
-            }
-            // If proposer cell doesn't exist in ledger, share is burned.
-        }
-
-        if let Some(treasury_id) = &self.treasury_cell {
-            if let Some(treasury) = ledger.get_mut(treasury_id) {
-                treasury
-                    .state
-                    .set_balance(treasury.state.balance() + treasury_share);
-            }
-            // If treasury cell doesn't exist in ledger, share is burned.
-        }
+        // Use extracted helper (removes dupe with proof path).
+        distribute_fee_shares(
+            ledger,
+            self.proposer_cell.as_ref(),
+            self.treasury_cell.as_ref(),
+            turn.fee,
+        );
 
         // Phase 4: Compute receipt.
         let post_state_hash = ledger.root();

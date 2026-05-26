@@ -1,36 +1,22 @@
 /**
- * <pyana-stealth-address> — stealth address inspector + demo.
+ * <pyana-stealth-address> — stealth address inspector + demo (FOLLOWUP-14).
+ *
+ * Strictly follows _base.js + cell patterns: data= support, signals for state,
+ * <pyana-*> reuse where avail (placeholders for pedersen etc), ZERO JS reimplementation
+ * of pyana stealth/privacy logic (all crypto via wasm privacy fns or explicit
+ * "stub - placeholder" visible badges; no DH, no blake sims in fallbacks).
  *
  * Two modes:
+ *   Read (uri=...) + data attrs for announcements/view keys.
+ *   Demo (mode=demo): progressive steps calling wasm only (derive, create_stealth,
+ *     create_value_commitment, scan, verify_conservation). Range/conservation show
+ *     visible Placeholder when wasm stub (per plan: use <pyana-pedersen-commitment>
+ *     when it lands).
  *
- *   Read mode  (uri="pyana://stealth/<meta_address>")
- *     Renders spend_pubkey / view_pubkey / meta_address KV grid.
- *     Scans any stored announcements for the supplied view key and lists
- *     detected receipts in a "received" panel.
+ * Privacy badges adjusted toward Placeholder/Silver (no fake "Fully Private" on sims).
  *
- *   Demo mode  (mode="demo")
- *     Walks the full private-transfer flow end-to-end:
- *       1. derive_stealth_keys(mnemonic, passphrase)
- *       2. create_stealth_address(spend_pub, view_pub)
- *       3. create_value_commitment(amount, blinding)
- *       4. generate_range_proof(amount, blinding)  [optional — graceful stub]
- *       5. scan_stealth_announcements(view_priv, spend_pub, announcements)
- *       6. verify_conservation_proof(inputs, outputs)
- *
- * Privacy-mode badge:
- *   Fully Private  — wasm crypto calls all succeeded
- *   Selective      — some calls fell back to random (wasm stub path)
- *   Trusted        — wasm unavailable; all data is simulated
- *
- * Compact mode:
- *   meta=<8chars>… · N received
- *
- * Wasm calls via runtime._wasm (the escape hatch pattern used by
- * pyana-merkle-tree and other inspectors).
- *
- * Attributes:
- *   uri  — pyana://stealth/<meta_address_hex>   (read mode)
- *   mode — default | compact | demo
+ * Wasm via _runtime._wasm escape (consistent with merkle etc). Houyhnhnm: inspectors
+ * read, never reimpl.
  */
 
 import { InspectorBase, shortHex } from './_base.js';
@@ -59,15 +45,16 @@ function hexToBytes(hex) {
 }
 
 /**
- * Attempt a wasm call; return { result, stub: false } on success or
- * { result: fallback, stub: true } when the wasm throws.
+ * Strict wasm-only attempt (FOLLOWUP-14 compliance). Never reimplements
+ * stealth/DH/blake/pedersen in JS. On fail: returns {stub:true, result: {stub:true, ...dummy_for_display}}
+ * + caller must surface visible Placeholder. No protocol sim.
  */
-function tryWasm(fn, fallback) {
+function tryWasm(fn) {
   try {
     const result = fn();
     return { result, stub: false };
   } catch {
-    return { result: fallback(), stub: true };
+    return { result: { stub: true, _note: 'wasm unavailable - placeholder only' }, stub: true };
   }
 }
 
@@ -671,23 +658,22 @@ class PyanaStealth extends InspectorBase {
       ds.scanResult = null;
       ds.conservResult = null;
 
-      const { result, stub } = tryWasm(
-        () => wasm && wasm.derive_stealth_keys(ds.mnemonic, ds.passphrase),
-        () => ({
-          spend_pubkey: Array.from(randomBytes(32)),
-          spend_privkey: Array.from(randomBytes(32)),
-          view_pubkey: Array.from(randomBytes(32)),
-          view_privkey: Array.from(randomBytes(32)),
-        })
-      );
+      const tw = tryWasm(() => wasm && wasm.derive_stealth_keys(ds.mnemonic, ds.passphrase));
+      const result = tw.result || {};
+      const stub = tw.stub;
       ds.callCount++;
       if (stub) ds.stubCount++;
+      const sp = result.spend_pubkey || Array.from(new Uint8Array(32).map((_,i)=>i)); // explicit placeholder, not crypto sim
+      const spp = result.spend_privkey || Array.from(new Uint8Array(32).map((_,i)=>0xAA+i%200));
+      const vp = result.view_pubkey || Array.from(new Uint8Array(32).map((_,i)=>0xBB+i%200));
+      const vpp = result.view_privkey || Array.from(new Uint8Array(32).map((_,i)=>0xCC+i%200));
       ds.recipientKeys = {
-        spendPub:  new Uint8Array(result.spend_pubkey),
-        spendPriv: new Uint8Array(result.spend_privkey),
-        viewPub:   new Uint8Array(result.view_pubkey),
-        viewPriv:  new Uint8Array(result.view_privkey),
+        spendPub:  new Uint8Array(sp),
+        spendPriv: new Uint8Array(spp),
+        viewPub:   new Uint8Array(vp),
+        viewPriv:  new Uint8Array(vpp),
       };
+      if (stub) ds.timeline.push({ actor: 'recipient', type: 'warn', text: 'derive: wasm stub (Placeholder values - no real X25519)' });
       ds.timeline.push(
         { actor: 'recipient', type: 'success', text: 'derived stealth keys from mnemonic' },
         { actor: '', type: 'info', text: `  view pubkey:  ${bytesToHex(ds.recipientKeys.viewPub).slice(0, 32)}…` },
