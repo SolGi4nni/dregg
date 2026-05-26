@@ -103,6 +103,124 @@ by the time you read this — check `git log --since="2026-05-26"
 - **#52** Golden Vision: full distributed-semantics algebraic constraint (long-term)
 - **#62** Silver Vision: pre-algebraic integrated runtime that RUNS (meta — keep open until everyone agrees Silver is actually complete)
 
+## Followups from latest lane completions (2026-05-25 evening)
+
+These are tightly-scoped follow-ups surfaced by lanes that landed
+in the last batch. Each has been filed as a task; listed here so
+weekend agents can pick them up without re-reading audit reports.
+
+### From #125 (multi-cell cross-fed binding, Path A — aggregator AIR)
+
+The lane landed `teasting/tests/multi_cell_cross_fed_binding.rs`
+(6 tests) demonstrating F2 verifies an aggregated bundle with
+**zero F1 keys / zero BLS check / zero verify_cross_fed_receipt
+call**. Remaining gaps:
+
+- **#131** Federation-id-in-PI binding (Phase 1.5). Today the
+  bundle's `federation_ids: Vec<[u8;32]>` is metadata — informational,
+  not algebraically bound. A cross-fed Introduce where the introducer
+  lies about the recipient's home federation would still verify. Fix:
+  lift `peer_federation_id` into bilateral preimages
+  (`STAGE-7-GAMMA-2-PI-DESIGN.md` §3.1-3.3) + add `OWNER_FED_ID_BASE`
+  to per-cell PI.
+- **#132** `OWNER_CELL_ID_BASE` in per-cell PI (Phase 2). Today the
+  row-to-cell mapping is enforced by the verifier's per-row recompute
+  against `participating_cells[i]`; the AIR itself only sees an opaque
+  PI buffer. Add 8 felts of cell-id to inner PI so CG-3 closes the
+  loop in-circuit.
+- **#133** Real STARK proof bytes vs. trust-and-replay witness.
+  `aggregate_bilateral_prover::encode_aggregation_witness` is currently
+  "trust-and-replay" mode (postcard-encoded trace, documented in its
+  docs). Promote to real recursive STARK via
+  `prove_recursive_layer_for_air`. AIR shape is finalized; engineering.
+- **#134** Hook aggregator into `node/src/mcp.rs::generate_effect_vm_proof`
+  so a multi-cell turn naturally emits an `AggregatedBundle` rather
+  than expecting caller-fabricated WRs.
+
+### From #122 (pyana_exercise_handoff_cert MCP tool)
+
+The tool landed; emits `Effect::ValidateHandoff` so
+`verify_captp_delivered`'s block1-bind closure actually fires.
+Bob's actual exercise path is blocked on:
+
+- **#130** alice.py needs a `pyana-handoff:` URI format (including
+  introducer_sk) + decoder. Until then alice still emits `pyana+bearer:`
+  shims and bob.py still calls `pyana_exercise_bearer_cap`. Once #130
+  lands, switch bob's MCP call to `pyana_exercise_handoff_cert` and
+  the CapTpDelivered auth path is exercised end-to-end through the
+  executor.
+
+### From #126 (Kimchi adversarial witness test)
+
+The test landed and is structurally correct — it forges a leaf
+value, expects equality gate `w[0] - w[1] = 0` to fail. There's a
+documented escape path:
+
+- **#135** Equality gate `w[1]` copy-constraint to PI row. Today
+  `w[1]` is not copy-constrained to the public input row, so a
+  witness can satisfy `w[0] - w[1] = 0` by setting both to the
+  forged root. Smallest fix: add a copy constraint wiring `w[1]`
+  of the equality gate to the public input row so Kimchi's
+  permutation argument enforces the binding. This closes the final
+  Golden Vision soundness audit hole for the Merkle-root-binding
+  layer.
+
+### From #128 (cross_fed_receipt_lift test panics)
+
+The infra/test warning sweep lane caught it: at lines 437 and ~474,
+both `is_valid()` asserts panic because the test builds an
+`AttestedRoot` with only node-0's signature, but the 3-node fed's
+threshold is 2. Two paths:
+
+- (a) Append threshold-many signatures (production-shaped fix)
+- (b) Use 1-of-1 committee like the single-fed test (simpler)
+
+### From #124 (queue head-pointer)
+
+Landed: `fields[6]` = head, `fields[4]` = tail. Adversarial tests
+prove dequeue reads head not tail. **Honest scope limit:**
+
+- **#129** Full head-pointer advancement on dequeue. Today
+  `fields[6]` lags by one after dequeue while still non-empty.
+  Full advancement needs message-list Merkle extension at
+  `field[7]` OR caller-supplied next-hash. Strictly better than
+  the prior tail-binding but not complete FIFO.
+
+### From multi-fed graph e2e (0fd3dbe4)
+
+Landed: F2 cites F1's receipt via `UnilateralAttestation::Custom`
+carried in a SetField value. **Promotion candidate:**
+
+- **#123** Promote `cross_fed_receipt_cite` helper +
+  `CROSS_FED_RECEIPT_CITE_KIND_TAG` to a shared module
+  (`pyana_cell::unilateral` or `pyana_turn::cross_fed_cite`) so
+  protocol impls share a canonical constructor instead of re-deriving
+  the preimage locally.
+
+### From SDK API audit (#61)
+
+10-item improvement list lives in `SDK-API-AUDIT.md`. Top 3 already
+implemented (re-exports, centralized field helpers, `#[must_use]`).
+Remaining 7 are good "polish weekend" candidates. Architectural
+smell to consider: `ExecutorSubmitError` erases `SdkError` into a
+plain `String` at `app-framework/src/cipherclerk.rs:409` —
+production handlers can't distinguish auth failure from chain
+mismatch. The typed-variants investment is wasted at this boundary.
+
+### From dedicated VmEffect variants (#119 in flight)
+
+The lane is adding `VmEffect::CellSeal/CellUnseal/ReceiptArchive/
+Refusal`. After it lands, the **last** open NoOp slot is
+`IncrementNonce` — and that's correct-by-design (implicit in row
+continuity), not a gap.
+
+### From warning sweep (3 of 4 lanes in flight)
+
+The infra/test sweep already surfaced #128. Expect the other 3
+sweeps to surface similar "find a bug while sweeping" wins.
+Encourage them to commit per-bug-find rather than batching, so
+follow-ups can be granular.
+
 ## "Verification means something" status
 
 Per the user's framing:
