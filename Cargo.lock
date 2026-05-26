@@ -6501,16 +6501,22 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "postcard",
+ "pyana-app-framework",
  "pyana-captp",
  "pyana-cell",
  "pyana-circuit",
  "pyana-commit",
+ "pyana-credentials",
  "pyana-federation",
  "pyana-turn",
  "pyana-types",
  "pyana-verifier",
  "serde",
  "serde_json",
+ "starbridge-governed-namespace",
+ "starbridge-identity",
+ "starbridge-nameservice",
+ "starbridge-subscription",
 ]
 
 [[package]]
@@ -7021,6 +7027,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "x25519-dalek",
  "zeroize",
 ]
 
