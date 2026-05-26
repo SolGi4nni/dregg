@@ -5999,4 +5999,199 @@ mod tests {
              If this fires, remove the explicit set in generate_effect_vm_proof."
         );
     }
+
+    // =====================================================================
+    // Cross-app starbridge-tool integration tests (Issue #106 closure).
+    //
+    // These tests drive the four new tools (pyana_register_name,
+    // pyana_publish_subscription, pyana_issue_credential,
+    // pyana_register_service) through `dispatch_tool` against a real
+    // NodeState (a fresh ledger + cipherclerk in a tempdir) and assert each
+    // produces a receipt with a non-empty `effect_vm_proof_hex` plus
+    // populated `effect_vm_public_inputs` / `effect_vm_trace_rows` /
+    // `effect_vm_witness_hash_hex`. This is the "smallest test that
+    // proves the loop closes" path: if every starbridge tool produces a
+    // proof here, the same tools called over MCP stdio from a re-targeted
+    // cross_app_helper will produce the same proofs in the demo's
+    // on-disk receipt chain, and `verify_real.py`'s
+    // `replay-chain` will Verify (not Unwitnessable) each entry.
+    // =====================================================================
+
+    use crate::state::NodeState;
+
+    /// Build a fresh NodeState in a tempdir, unlock the cipherclerk, and
+    /// return it ready for tool dispatch.
+    async fn fresh_unlocked_state() -> (NodeState, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Deterministic seed so the test is reproducible.
+        let mut seed = [0u8; 32];
+        seed[0] = 0xA1;
+        let state = NodeState::with_cclerk(tmp.path(), vec![], seed)
+            .expect("NodeState::with_cclerk");
+        // Flip the unlocked flag — `with_cclerk` defaults to locked,
+        // but the test bypasses passphrase entry.
+        {
+            let mut s = state.write().await;
+            s.unlocked = true;
+        }
+        (state, tmp)
+    }
+
+    fn extract_json(result: &McpToolResult) -> Value {
+        assert!(
+            result.is_error.unwrap_or(false) == false,
+            "tool returned error: {}",
+            result.content.first().map(|c| c.text.as_str()).unwrap_or("(no content)")
+        );
+        let text = result
+            .content
+            .first()
+            .map(|c| c.text.as_str())
+            .unwrap_or("");
+        serde_json::from_str(text).expect("tool result content must be JSON")
+    }
+
+    fn assert_proof_populated(label: &str, j: &Value) {
+        assert_eq!(
+            j.get("committed").and_then(|v| v.as_bool()),
+            Some(true),
+            "[{label}] tool must commit; got: {j}",
+        );
+        let proof = j.get("effect_vm_proof_hex").cloned().unwrap_or(Value::Null);
+        assert!(
+            proof.is_string(),
+            "[{label}] effect_vm_proof_hex must be a string; got {proof:?}",
+        );
+        let proof_hex = proof.as_str().unwrap_or("");
+        assert!(
+            proof_hex.len() > 128,
+            "[{label}] effect_vm_proof_hex must be substantial (>64 bytes); got {} chars",
+            proof_hex.len()
+        );
+        let pi = j.get("effect_vm_public_inputs").cloned().unwrap_or(Value::Null);
+        assert!(pi.is_array(), "[{label}] public_inputs must be array");
+        assert!(
+            pi.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            "[{label}] public_inputs must be non-empty"
+        );
+        let trace = j.get("effect_vm_trace_rows").cloned().unwrap_or(Value::Null);
+        assert!(trace.is_array(), "[{label}] trace_rows must be array");
+        assert!(
+            j.get("effect_vm_witness_hash_hex").and_then(|v| v.as_str()).map(|s| s.len() == 64).unwrap_or(false),
+            "[{label}] witness_hash_hex must be a 64-char hex string"
+        );
+    }
+
+    #[tokio::test]
+    async fn pyana_register_name_produces_proof_carrying_receipt() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let params = serde_json::json!({
+            "name": "alice.dev",
+            "expiry_height": 2_000_000_000u64,
+        });
+        let result = dispatch_tool("pyana_register_name", params, &state).await;
+        let j = extract_json(&result);
+        assert_proof_populated("register_name", &j);
+        // Confirm cross-app link metadata is surfaced.
+        assert_eq!(
+            j.get("registered_name").and_then(|v| v.as_str()),
+            Some("alice.dev")
+        );
+        assert!(j.get("schema_commitment").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[tokio::test]
+    async fn pyana_publish_subscription_produces_proof_carrying_receipt() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let bounty_id = "abcd".repeat(16);
+        let msg_root = "1234".repeat(16);
+        let actor_pk_hash = "5678".repeat(16);
+        let params = serde_json::json!({
+            "new_head": 1u64,
+            "new_message_root": msg_root,
+            "bounty_id": bounty_id,
+            "prior_state": "posted",
+            "new_state": "claimed",
+            "actor_pk_hash": actor_pk_hash,
+        });
+        let result = dispatch_tool("pyana_publish_subscription", params, &state).await;
+        let j = extract_json(&result);
+        assert_proof_populated("publish_subscription", &j);
+        assert_eq!(j.get("prior_state").and_then(|v| v.as_str()), Some("posted"));
+        assert_eq!(j.get("new_state").and_then(|v| v.as_str()), Some("claimed"));
+        assert!(j.get("payload_hash").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[tokio::test]
+    async fn pyana_issue_credential_produces_proof_carrying_receipt() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let params = serde_json::json!({
+            "schema": "kyc",
+            "attributes": {
+                "given_name": "Bob",
+                "verification_level": 2,
+            },
+        });
+        let result = dispatch_tool("pyana_issue_credential", params, &state).await;
+        let j = extract_json(&result);
+        assert_proof_populated("issue_credential", &j);
+        assert!(j.get("credential_id").and_then(|v| v.as_str()).is_some());
+        assert_eq!(j.get("schema").and_then(|v| v.as_str()), Some("kyc"));
+        assert!(j.get("credential_encoded").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[tokio::test]
+    async fn pyana_register_service_produces_proof_carrying_receipt() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let params = serde_json::json!({
+            "path": "/alice.dev",
+        });
+        let result = dispatch_tool("pyana_register_service", params, &state).await;
+        let j = extract_json(&result);
+        assert_proof_populated("register_service", &j);
+        assert_eq!(j.get("path").and_then(|v| v.as_str()), Some("/alice.dev"));
+        // The synthesized-row note must be present so reviewers see the
+        // documented coverage gap.
+        assert!(
+            j.get("synthesized_vm_setfield_note").and_then(|v| v.as_str()).is_some(),
+            "register_service must surface the documented coverage-gap note"
+        );
+    }
+
+    /// Adversarial test: a receipt with a forged Effect-VM proof bytes
+    /// must still parse out of the tool response, but the standalone
+    /// verifier would reject it. We cannot drive `pyana-verifier
+    /// replay-chain` from in-process tests (no cargo / no spawning
+    /// the verifier binary in this lane), so we test the in-process
+    /// `pyana_circuit::stark::proof_from_bytes` gate: forged bytes
+    /// fail to deserialize as a valid proof.
+    #[tokio::test]
+    async fn forged_proof_bytes_fail_to_deserialize() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let params = serde_json::json!({
+            "name": "carol.dev",
+            "expiry_height": 2_000_000_000u64,
+        });
+        let result = dispatch_tool("pyana_register_name", params, &state).await;
+        let j = extract_json(&result);
+        let proof_hex = j
+            .get("effect_vm_proof_hex")
+            .and_then(|v| v.as_str())
+            .expect("proof_hex");
+        // Sanity check: the real bytes deserialize.
+        let proof_bytes = hex_decode_var(proof_hex).expect("hex decode");
+        assert!(
+            pyana_circuit::stark::proof_from_bytes(&proof_bytes).is_ok(),
+            "real proof must deserialize"
+        );
+        // Forge: flip every byte. The PYNA magic header check rejects.
+        let mut forged = proof_bytes.clone();
+        for b in &mut forged {
+            *b ^= 0xFF;
+        }
+        assert!(
+            pyana_circuit::stark::proof_from_bytes(&forged).is_err(),
+            "forged proof bytes must NOT deserialize as a valid proof"
+        );
+    }
 }
