@@ -1056,6 +1056,102 @@ fn custom_accepts_when_dsl_runtime_resolves() {
 }
 
 // ===========================================================================
+// 28. Renounced (sentinel-rejected today — requires executor-side registry)
+// ===========================================================================
+
+#[test]
+fn renounced_returns_sentinel_without_registry() {
+    // Per CAVEAT-LAYER-COVERAGE.md §1 row 28 (Renounced):
+    // `StateConstraint::Renounced` dispatches through the
+    // `WitnessedPredicateKind::NonMembership` verifier in the executor
+    // registry. Without a registry the cell-side evaluator returns
+    // `SenderMembershipWitnessMissing` — the same sentinel as
+    // `SenderAuthorized` in the no-registry path. This is fail-closed:
+    // a cell declaring `Renounced` is unreachable today (bricked) until
+    // the caveat-correctness lane wires the NonMembership verifier.
+    use pyana_cell::program::RenouncedSet;
+    let p = single_predicate(StateConstraint::Renounced {
+        set: RenouncedSet::BlindedSet {
+            commitment: [0xABu8; 32],
+        },
+    });
+    let new = CellState::default();
+    // No ctx needed — the sentinel fires before ctx lookup.
+    assert_reject_err(
+        &p,
+        &new,
+        None,
+        None,
+        |e| matches!(e, ProgramError::MissingContextField { field: "sender" }),
+        "Renounced without ctx returns sentinel",
+    );
+}
+
+#[test]
+fn renounced_public_root_returns_sentinel_without_registry() {
+    // Same sentinel shape for the `PublicRoot` sub-variant of `RenouncedSet`.
+    use pyana_cell::program::RenouncedSet;
+    let p = single_predicate(StateConstraint::Renounced {
+        set: RenouncedSet::PublicRoot { set_root_index: 0 },
+    });
+    let new = CellState::default();
+    assert_reject_err(
+        &p,
+        &new,
+        None,
+        None,
+        |e| matches!(e, ProgramError::MissingContextField { field: "sender" }),
+        "Renounced PublicRoot without ctx returns sentinel",
+    );
+}
+
+#[test]
+#[ignore = "blocked on caveat-correctness lane: NonMembership verifier registry dispatch + sorted-set neighbor-witness (CAVEAT-LAYER-COVERAGE.md §1 row 28)"]
+fn renounced_accepts_when_sender_not_in_set() {
+    panic!("blocked");
+}
+
+#[test]
+#[ignore = "blocked on caveat-correctness lane: Renounced rejects when sender IS in set"]
+fn renounced_rejects_when_sender_in_set() {
+    panic!("blocked");
+}
+
+// ===========================================================================
+// 29. SenderAuthorized with CredentialSet sub-variant (sentinel today)
+// ===========================================================================
+
+#[test]
+fn sender_authorized_credential_set_sentinel_without_registry() {
+    // `AuthorizedSet::CredentialSet` dispatches to the `BlindedSet`
+    // verifier against a commitment derived from `(issuer_cell,
+    // schema_id)`. Without an executor-side registry the sentinel
+    // `SenderMembershipWitnessMissing` fires (same path as BlindedSet).
+    let p = single_predicate(StateConstraint::SenderAuthorized {
+        set: AuthorizedSet::CredentialSet {
+            issuer_cell: [0x01u8; 32],
+            credential_schema_id: [0x02u8; 32],
+        },
+    });
+    let new = CellState::default();
+    let ctx = EvalContext::minimal(0, 0);
+    assert_reject_err(
+        &p,
+        &new,
+        None,
+        Some(&ctx),
+        |e| matches!(e, ProgramError::MissingContextField { field: "sender" }),
+        "SenderAuthorized CredentialSet returns sentinel without ctx.sender",
+    );
+}
+
+#[test]
+#[ignore = "blocked on caveat-correctness: CredentialSet credential-gated voting path (starbridge-governed-namespace) — needs BlindedSet verifier + issuer cell out-of-band lookup"]
+fn sender_authorized_credential_set_accepts_with_valid_presentation() {
+    panic!("blocked");
+}
+
+// ===========================================================================
 // Operation-scoped Cases (CellProgram::Cases — Cav-Codex Block 4)
 // ===========================================================================
 
