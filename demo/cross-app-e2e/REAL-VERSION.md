@@ -31,13 +31,53 @@
 
 **What's still NOT real here:** the receipts produced by
 `EmbeddedExecutor` carry no STARK proofs. Proof generation lives in
-`pyana-node`'s MCP layer (`generate_effect_vm_proof`), and no MCP
-tool exposes the four anchor starbridge-apps yet
-(no `pyana_register_name`, no `pyana_publish_subscription`, etc.).
-Adding those MCP tools is the next lane; once they land, the helper
-can be re-targeted at MCP and per-step `effect_vm_proof_hex` will
-populate the receipt artifacts (matching the
-`demo/two-ai-handoff/grant.proof.json` shape).
+`pyana-node`'s MCP layer (`generate_effect_vm_proof`).
+
+### Issue #106 closure (2026-05-25)
+
+The four MCP tools that the prior status note flagged as missing have
+landed in `node/src/mcp.rs`:
+
+- `pyana_register_name`  — wraps `starbridge_nameservice::build_register_with_credential_action`.
+- `pyana_publish_subscription` — wraps `starbridge_subscription::build_bounty_state_publish_action`.
+- `pyana_issue_credential` — wraps `pyana_credentials::issue` + `starbridge_identity::build_issue_credential_action`.
+- `pyana_register_service` — wraps `starbridge_governed_namespace::build_register_service_action`.
+
+Each tool drives the action through `TurnExecutor`, projects the
+action's `SetField` effects into Effect-VM domain, and calls
+`generate_effect_vm_proof` so the response JSON carries
+`effect_vm_proof_hex`, `effect_vm_public_inputs`,
+`effect_vm_trace_rows`, and `effect_vm_witness_hash_hex` — matching
+`demo/two-ai-handoff/grant.proof.json`'s shape.
+
+In-crate tokio integration tests under
+`node/src/mcp.rs::tests::pyana_*_produces_proof_carrying_receipt`
+drive each tool through `dispatch_tool` against a real NodeState and
+assert the proof / PI / trace / witness-hash are populated. An
+adversarial test (`forged_proof_bytes_fail_to_deserialize`) pins
+the producer-side gate by flipping every byte of a real proof and
+confirming `pyana_circuit::stark::proof_from_bytes` rejects.
+
+### Coverage gap (intentional, documented in tool body)
+
+`pyana_register_service` wraps an action that emits only
+`EmitEvent("service-registered", [path_hash, target])` — no
+`SetField`. The current `EffectVmAir` has no `EmitEvent` row variant,
+so directly projecting the action's effects yields an empty
+`vm_effects` list (no proof). The tool synthesises one
+`SetField(slot=0, value=u32(path_hash[0..4]) LE)` row so the proof
+remains non-trivial. A real `EffectVmAir::EmitEvent` row is the next
+AIR-extension lane — when it lands, the synthetic projection can be
+removed.
+
+### Helper re-target (not in this lane)
+
+`cross_app_helper.rs` still calls `EmbeddedExecutor::submit_action`.
+Re-targeting it at the MCP tools requires either an HTTP MCP
+endpoint on the node (currently stdio-only) or promoting `node` to a
+library so the helper can call `dispatch_tool` in-process. The
+in-crate integration tests stand in for that re-target until one of
+those paths lands.
 
 ## What the current verify.py actually does
 
