@@ -329,7 +329,8 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     // The cert_hash is BLAKE3 over the presentation bytes (the wire handler
     // uses this exact convention; see server.rs PresentHandoff handler).
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash);
+    let effect =
+        captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
 
     // Bob computes the canonical CapTP-delivery signing message and signs it.
     let effects = vec![effect.clone()];
@@ -420,7 +421,8 @@ fn captp_delivered_rejects_wrong_sender_signature() {
     let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
     let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash);
+    let effect =
+        captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
 
     // Bad signature: 64 zero bytes (not a valid sig for any sender_pk).
     let bad_sig = [0u8; 64];
@@ -476,7 +478,7 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 
     let target_cell = cell(0x42);
     let target_fed = fed(0xCA);
-    let (alice_sk, _alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
         make_delivery_setup(target_cell, target_fed);
 
     let cert = HandoffCertificate::create(
@@ -495,7 +497,8 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
     let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
     let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash);
+    let effect =
+        captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
 
     let effects = vec![effect.clone()];
     let signing_msg = pyana_turn::action::Authorization::captp_delivered_signing_message(
@@ -546,6 +549,192 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
             );
         }
         other => panic!("expected Rejected for wrong introducer_pk, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Block1-bind closure: `ValidateHandoff-runtime-variant-extend` — the
+// effect's carried `(recipient_pk, introducer_pk)` MUST match the
+// CapTpDelivered authorization's cert. Forged keys → rejection.
+// ---------------------------------------------------------------------------
+
+/// Forged `Effect::ValidateHandoff.recipient_pk` (different from the cert's
+/// recipient_pk) is rejected by `verify_captp_delivered`. This closes the
+/// BLOCK1-BIND-CLOSURE-NOTES.md `ValidateHandoff-runtime-variant-extend`
+/// gap: the AIR's PI binds `recipient_pk` directly from the runtime
+/// variant, so without this authorization-side equality check, a prover
+/// could supply forged keys that nonetheless pass cert-signature
+/// verification.
+#[test]
+fn captp_delivered_rejects_forged_effect_recipient_pk() {
+    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use pyana_turn::action::Authorization;
+    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+
+    let target_cell = cell(0x42);
+    let target_fed = fed(0xCA);
+    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+        make_delivery_setup(target_cell, target_fed);
+
+    let cert = HandoffCertificate::create(
+        &alice_sk,
+        alice_fed,
+        target_fed,
+        target_cell,
+        bob_sk.public_key().0,
+        AuthRequired::None,
+        None,
+        Some(500),
+        Some(1),
+        swiss_num,
+    );
+
+    let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
+    let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
+    let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
+
+    // Forge: the effect declares a recipient_pk that is NOT cert.recipient_pk.
+    let (_evil_sk, evil_pk) = generate_keypair();
+    let forged_effect =
+        captp_routing::validate_handoff_effect(cert_hash, evil_pk.0, alice_pk.0);
+
+    let effects = vec![forged_effect.clone()];
+    let signing_msg = Authorization::captp_delivered_signing_message(
+        &cert.nonce,
+        &target_cell,
+        &target_cell,
+        0,
+        &effects,
+    );
+    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+
+    let turn = captp_routing::build_captp_turn_delivered_from_parts(
+        target_cell,
+        target_cell,
+        forged_effect,
+        0,
+        cert.clone(),
+        alice_pk.0,
+        cert.recipient_pk,
+        sig.0,
+    );
+
+    let mut ledger = Ledger::new();
+    let mut target = Cell::remote_stub_with_id(target_cell);
+    target.permissions = Permissions {
+        send: P::None,
+        receive: P::None,
+        set_state: P::None,
+        set_permissions: P::None,
+        set_verification_key: P::None,
+        increment_nonce: P::None,
+        delegate: P::None,
+        access: P::None,
+    };
+    ledger.insert_cell(target).expect("insert target cell");
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        pyana_turn::TurnResult::Rejected { reason, .. } => {
+            let s = format!("{reason:?}");
+            assert!(
+                s.contains("ValidateHandoff.recipient_pk")
+                    || s.contains("InvalidAuthorization"),
+                "expected effect.recipient_pk mismatch failure, got: {s}"
+            );
+        }
+        other => panic!(
+            "expected Rejected for forged effect.recipient_pk, got {other:?}"
+        ),
+    }
+}
+
+/// Forged `Effect::ValidateHandoff.introducer_pk` (different from the
+/// authorization's introducer_pk) is rejected. Complement of the
+/// recipient-mismatch test.
+#[test]
+fn captp_delivered_rejects_forged_effect_introducer_pk() {
+    use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
+    use pyana_turn::action::Authorization;
+    use pyana_turn::executor::{ComputronCosts, TurnExecutor};
+
+    let target_cell = cell(0x42);
+    let target_fed = fed(0xCA);
+    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
+        make_delivery_setup(target_cell, target_fed);
+
+    let cert = HandoffCertificate::create(
+        &alice_sk,
+        alice_fed,
+        target_fed,
+        target_cell,
+        bob_sk.public_key().0,
+        AuthRequired::None,
+        None,
+        Some(500),
+        Some(1),
+        swiss_num,
+    );
+
+    let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
+    let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
+    let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
+
+    // Forge: the effect declares an introducer_pk that is NOT alice's.
+    let (_evil_sk, evil_pk) = generate_keypair();
+    let forged_effect =
+        captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, evil_pk.0);
+
+    let effects = vec![forged_effect.clone()];
+    let signing_msg = Authorization::captp_delivered_signing_message(
+        &cert.nonce,
+        &target_cell,
+        &target_cell,
+        0,
+        &effects,
+    );
+    let sig = pyana_types::sign(&bob_sk, &signing_msg);
+
+    let turn = captp_routing::build_captp_turn_delivered_from_parts(
+        target_cell,
+        target_cell,
+        forged_effect,
+        0,
+        cert.clone(),
+        alice_pk.0,
+        cert.recipient_pk,
+        sig.0,
+    );
+
+    let mut ledger = Ledger::new();
+    let mut target = Cell::remote_stub_with_id(target_cell);
+    target.permissions = Permissions {
+        send: P::None,
+        receive: P::None,
+        set_state: P::None,
+        set_permissions: P::None,
+        set_verification_key: P::None,
+        increment_nonce: P::None,
+        delegate: P::None,
+        access: P::None,
+    };
+    ledger.insert_cell(target).expect("insert target cell");
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        pyana_turn::TurnResult::Rejected { reason, .. } => {
+            let s = format!("{reason:?}");
+            assert!(
+                s.contains("ValidateHandoff.introducer_pk")
+                    || s.contains("InvalidAuthorization"),
+                "expected effect.introducer_pk mismatch failure, got: {s}"
+            );
+        }
+        other => panic!(
+            "expected Rejected for forged effect.introducer_pk, got {other:?}"
+        ),
     }
 }
 
