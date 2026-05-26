@@ -5016,8 +5016,12 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
 // path_hash so the proof remains non-trivial).
 
 /// Translate a turn-domain `Effect` into a single Effect-VM `Effect`.
-/// Returns `None` for variants without an AIR-side analog (EmitEvent,
-/// IncrementNonce when projected from an event, etc.).
+/// Covers all AIR-side variants:
+/// - `SetField` → `VmEffect::SetField`
+/// - `Transfer` → `VmEffect::Transfer` (debit side, direction=1)
+/// - `EmitEvent` → `VmEffect::EmitEvent` (BLAKE3 topic + payload, per #110)
+/// Returns `None` for variants without an AIR-side analog (IncrementNonce,
+/// GrantCapability, RevokeCapability, CreateCell, etc.).
 fn project_setfield_to_vm(effect: &pyana_turn::Effect) -> Option<pyana_circuit::effect_vm::Effect> {
     match effect {
         pyana_turn::Effect::SetField { index, value, .. } => {
@@ -5032,6 +5036,33 @@ fn project_setfield_to_vm(effect: &pyana_turn::Effect) -> Option<pyana_circuit::
             Some(pyana_circuit::effect_vm::Effect::Transfer {
                 amount: *amount,
                 direction: 1,
+            })
+        }
+        pyana_turn::Effect::EmitEvent { event, .. } => {
+            // Canonical (topic_hash, payload_hash) projection — mirrors
+            // `turn/src/executor/effect_vm_bridge.rs` EmitEvent arm (#110).
+            // topic_hash  = BLAKE3(event.topic)
+            // payload_hash = BLAKE3(event.data[0] ‖ event.data[1] ‖ …)
+            let topic_bytes = *blake3::hash(&event.topic).as_bytes();
+            let mut payload_hasher = blake3::Hasher::new();
+            for d in &event.data {
+                payload_hasher.update(d);
+            }
+            let payload_bytes = *payload_hasher.finalize().as_bytes();
+
+            fn bytes32_to_8_felts(b: &[u8; 32]) -> [pyana_circuit::BabyBear; 8] {
+                let mut out = [pyana_circuit::BabyBear::ZERO; 8];
+                for i in 0..8 {
+                    let off = i * 4;
+                    let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
+                    out[i] = pyana_circuit::BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                }
+                out
+            }
+
+            Some(pyana_circuit::effect_vm::Effect::EmitEvent {
+                topic_hash: bytes32_to_8_felts(&topic_bytes),
+                payload_hash: bytes32_to_8_felts(&payload_bytes),
             })
         }
         _ => None,

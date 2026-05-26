@@ -132,27 +132,49 @@ else
     VERIFY_OK=0
 fi
 
-# ── Step 11: executor-invoking helper (real receipts) ─────────────────
-# This step is **optional** — it runs only when the cross-app-helper
-# binary is available. Build it out-of-band with
-#   cargo build -p pyana-demo --bin cross-app-helper
-# (the demo intentionally does not run cargo from the harness; the
-# parent BOUNDARIES.md no-cargo-from-demos rule).
-step 11 "executor-invoking cross-app-helper + verify_real.py (real TurnReceipts)"
+# ── Step 11: MCP-subprocess driver + verify_real.py (real TurnReceipts + STARK proofs) ─
+# Prefers the new cross_app_mcp.py path (pyana-node mcp subprocess, JSON-RPC
+# over stdio) over the legacy compiled cross-app-helper binary.
+# Falls back to the compiled binary if both pyana-node and the Python script
+# are absent.
+step 11 "MCP-subprocess driver + verify_real.py (real TurnReceipts + STARK proofs)"
+NODE_BIN="${PYANA_NODE_BIN:-$HERE/../../target/debug/pyana-node}"
 HELPER_BIN="${CROSS_APP_HELPER_BIN:-$HERE/../../target/debug/cross-app-helper}"
 VERIFIER_BIN="${PYANA_VERIFIER_BIN:-$HERE/../../target/debug/pyana-verifier}"
+MCP_DRIVER="$HERE/cross_app_mcp.py"
 REAL_VERDICT="$STATE_DIR/verdict.real.json"
-if [ -x "$HELPER_BIN" ]; then
-    if "$HELPER_BIN" --state-dir "$STATE_DIR" \
-            >"$LOG_DIR/11a.cross-app-helper.stdout" \
-            2>"$LOG_DIR/11a.cross-app-helper.stderr"; then
-        ok "cross-app-helper produced 9 receipt artifacts"
+
+# Determine which driver to use.
+MCP_DATA_DIR="${PYANA_NODE_DATA_DIR:-$HOME/.pyana}"
+if [ -x "$NODE_BIN" ] && [ -f "$MCP_DRIVER" ]; then
+    ok "pyana-node found at $NODE_BIN; using MCP subprocess driver"
+    DRIVER_CMD=("$PY" "$MCP_DRIVER" --state-dir "$STATE_DIR" --node-bin "$NODE_BIN" --data-dir "$MCP_DATA_DIR")
+    DRIVER_LOG_A="11a.cross-app-mcp.stdout"
+    DRIVER_LOG_B="11a.cross-app-mcp.stderr"
+    DRIVER_LABEL="cross_app_mcp.py (pyana-node mcp)"
+elif [ -x "$HELPER_BIN" ]; then
+    warn "pyana-node not found; falling back to compiled cross-app-helper"
+    DRIVER_CMD=("$HELPER_BIN" --state-dir "$STATE_DIR")
+    DRIVER_LOG_A="11a.cross-app-helper.stdout"
+    DRIVER_LOG_B="11a.cross-app-helper.stderr"
+    DRIVER_LABEL="cross-app-helper (EmbeddedExecutor)"
+else
+    warn "neither pyana-node nor cross-app-helper found; skipping step 11"
+    warn "build pyana-node with: cargo build -p pyana-node"
+    REAL_VERIFY_OK=-1
+fi
+
+if [ "${REAL_VERIFY_OK:-}" != "-1" ]; then
+    if "${DRIVER_CMD[@]}" \
+            >"$LOG_DIR/$DRIVER_LOG_A" \
+            2>"$LOG_DIR/$DRIVER_LOG_B"; then
+        ok "$DRIVER_LABEL produced 9 receipt artifacts"
         VERIFIER_FLAG=""
         if [ -x "$VERIFIER_BIN" ]; then
             VERIFIER_FLAG="--verifier-bin $VERIFIER_BIN"
-            ok "pyana-verifier available; replay-chain will be invoked"
+            ok "pyana-verifier available; proof verification will be invoked"
         else
-            warn "pyana-verifier not found at $VERIFIER_BIN; skipping replay-chain step of verify_real.py"
+            warn "pyana-verifier not found at $VERIFIER_BIN; skipping proof verification step"
         fi
         if "$PY" "$HERE/verify_real.py" \
                 --state-dir "$STATE_DIR" \
@@ -167,13 +189,9 @@ if [ -x "$HELPER_BIN" ]; then
             REAL_VERIFY_OK=0
         fi
     else
-        fail "cross-app-helper crashed (see $LOG_DIR/11a.cross-app-helper.stderr)"
+        fail "$DRIVER_LABEL crashed (see $LOG_DIR/$DRIVER_LOG_B)"
         REAL_VERIFY_OK=0
     fi
-else
-    warn "cross-app-helper not built at $HELPER_BIN; skipping step 11"
-    warn "build with: cargo build -p pyana-demo --bin cross-app-helper"
-    REAL_VERIFY_OK=-1  # neither pass nor fail; the lane is informational
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────
@@ -188,16 +206,16 @@ else
 fi
 case "$REAL_VERIFY_OK" in
     1)
-        printf '%s — executor-invoking verify_real.py PASS (real receipts + receipt-chain + cross-app links)\n' \
+        printf '%s — MCP-driver verify_real.py PASS (real receipts + STARK proofs + cross-app links)\n' \
             "$(color_green '[demo]')"
         ;;
     0)
-        printf '%s — executor-invoking verify_real.py FAIL (verdict $REAL_VERDICT)\n' \
+        printf '%s — MCP-driver verify_real.py FAIL (verdict $REAL_VERDICT)\n' \
             "$(color_red '[demo]')"
         SUMMARY_FAIL=1
         ;;
     -1)
-        printf '%s — executor-invoking verify_real.py SKIPPED (cross-app-helper not built)\n' \
+        printf '%s — MCP-driver verify_real.py SKIPPED (pyana-node and cross-app-helper both absent)\n' \
             "$(color_dim '[demo]')"
         ;;
 esac

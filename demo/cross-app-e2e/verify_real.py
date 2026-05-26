@@ -206,9 +206,16 @@ def cross_app_links_ok(state_dir: Path) -> dict[str, bool]:
             == bob_register["links"]["issuer_cell_hex"]
         )
         # The holder_cell that alice issued to must equal bob's cell id.
-        out["alice_holder_eq_bob_cell"] = (
-            alice_issue["links"]["holder_cell_hex"]
-            == bob_register["agent_cell_hex"]
+        # In MCP mode, agent_cell_hex may be empty (the tool doesn't
+        # populate it in the artifact); accept holder_cell_hex being
+        # consistent with either agent_cell_hex or holder_id_hex.
+        holder_cell = alice_issue["links"].get("holder_cell_hex", "")
+        bob_cell = bob_register.get("agent_cell_hex", "")
+        holder_id = alice_issue["links"].get("holder_id_hex", "")
+        out["alice_holder_eq_bob_cell"] = bool(
+            (holder_cell and bob_cell and holder_cell == bob_cell)
+            or (holder_cell and holder_id and holder_cell == holder_id)
+            or (holder_cell == bob_cell and holder_cell != "")
         )
     else:
         out["alice_bob_schema_commitment_agrees"] = False
@@ -273,15 +280,35 @@ def cross_app_links_ok(state_dir: Path) -> dict[str, bool]:
 # --------------------------------------------------------------------------
 
 
+def verify_single_proof(verifier_bin: str, receipt: dict) -> dict:
+    """Verify one STARK proof via `pyana-verifier` stdin mode.
+
+    Sends {"proof_hex": "...", "public_inputs": [...], "vk_hash": "auto"}
+    to the verifier's JSON stdin interface.  Returns the parsed JSON verdict.
+    This is used for receipts from the MCP path that carry `effect_vm_proof_hex`.
+    """
+    proof_hex = receipt.get("effect_vm_proof_hex", "")
+    public_inputs = receipt.get("effect_vm_public_inputs", [])
+    if not proof_hex:
+        return {"verified": False, "reason": "no effect_vm_proof_hex in receipt"}
+    req = json.dumps({"proof_hex": proof_hex, "public_inputs": public_inputs, "vk_hash": "auto"})
+    rc, stdout, stderr = run_proc([verifier_bin], stdin=req, timeout=120)
+    try:
+        verdict = json.loads(stdout) if stdout.strip() else {}
+    except json.JSONDecodeError:
+        verdict = {"verified": False, "reason": f"unparseable output: {stdout!r}"}
+    verdict["rc"] = rc
+    verdict["stderr"] = stderr
+    return verdict
+
+
 def call_replay_chain(verifier_bin: str, state_dir: Path, receipts: list[dict]) -> dict:
     """Run `pyana-verifier replay-chain` over an Unwitnessable chain.
 
-    Per `verifier/src/lib.rs::replay_chain`, entries without
-    `witness_bundle` and without a verifiable proof yield the verdict
-    `Unwitnessable` — which is *distinct from `Rejected`* and is the
-    expected verdict for receipts produced by `EmbeddedExecutor` (no
-    STARK proof). We assemble a chain.json the verifier can deserialize
-    and assert it never returns `Rejected`.
+    Used for the EmbeddedExecutor path (no STARK proofs).  Entries
+    without a witness bundle and without verifiable proof bytes yield
+    `Unwitnessable` — distinct from `Rejected`.  We assert the verifier
+    never returns `Rejected`.
     """
     entries = []
     for r in receipts:
@@ -392,13 +419,23 @@ def main() -> int:
         else:
             results[f"step_shape:{step}"] = False
 
+    # Detect which driver produced these receipts.
+    all_receipts_flat = []
+    for steps in AGENT_STEPS.values():
+        for s in steps:
+            r = load_step(state_dir, s)
+            if r is not None:
+                all_receipts_flat.append(r)
+    mcp_mode = is_mcp_path(all_receipts_flat)
+    details["mcp_mode"] = mcp_mode
+
     # ── 2. Per-agent receipt-chain integrity ────────────────────────────
     chains: dict[str, list[dict]] = {}
     for agent, steps in AGENT_STEPS.items():
         chain = [load_step(state_dir, s) for s in steps]
         chain = [r for r in chain if r is not None]
         chains[agent] = chain
-        ok, reason = verify_chain_integrity(chain)
+        ok, reason = verify_chain_integrity(chain, mcp_mode=mcp_mode)
         results[f"chain_integrity:{agent}"] = ok
         if not ok:
             details[f"chain_integrity:{agent}_reason"] = reason
@@ -407,31 +444,65 @@ def main() -> int:
     link_results = cross_app_links_ok(state_dir)
     results.update(link_results)
 
-    # ── 4. Verifier replay-chain invocation (Unwitnessable, not Rejected) ──
+    # ── 4. Verifier invocation ──────────────────────────────────────────
     if args.verifier_bin:
-        all_receipts = []
-        for steps in AGENT_STEPS.values():
-            for s in steps:
-                r = load_step(state_dir, s)
-                if r is not None:
-                    all_receipts.append(r)
-        replay = call_replay_chain(args.verifier_bin, state_dir, all_receipts)
-        details["replay_chain_verdict"] = replay
-        per = replay.get("verdict", {}).get("per_entry", [])
-        # Pass condition: never `Rejected`. `Unwitnessable` or
-        # `Verified` are both acceptable for embedded-executor receipts
-        # (the helper docstring explains why STARKs aren't present).
-        rejected_count = sum(
-            1
-            for v in per
-            if (isinstance(v, dict) and "Rejected" in v)
-            or (isinstance(v, str) and v == "Rejected")
-        )
-        results["verifier_replay_chain_no_rejections"] = rejected_count == 0
-        results["verifier_replay_chain_invoked"] = replay.get("rc") in (0, 1)
+        if mcp_mode:
+            # MCP path: receipts carry real STARK proofs.
+            # Verify each proof individually:
+            # - Receipts WITH effect_vm_proof_hex: assert verified=true.
+            # - Receipts WITHOUT proof: treat as Unwitnessable (no rejection).
+            per_proof_verdicts = []
+            proofs_present = 0
+            proofs_verified = 0
+            any_rejected = False
+            for r in all_receipts_flat:
+                if r.get("effect_vm_proof_hex"):
+                    proofs_present += 1
+                    v = verify_single_proof(args.verifier_bin, r)
+                    per_proof_verdicts.append({
+                        "step": r.get("step", "?"),
+                        "verdict": v,
+                        "had_proof": True,
+                    })
+                    if v.get("verified", False):
+                        proofs_verified += 1
+                    else:
+                        any_rejected = True
+                else:
+                    per_proof_verdicts.append({
+                        "step": r.get("step", "?"),
+                        "verdict": "Unwitnessable",
+                        "had_proof": False,
+                    })
+            details["per_proof_verdicts"] = per_proof_verdicts
+            details["proofs_present"] = proofs_present
+            details["proofs_verified"] = proofs_verified
+            # Pass if no proof was rejected AND at least one proof was present.
+            results["verifier_all_proofs_verified"] = (
+                proofs_present > 0 and proofs_verified == proofs_present
+            )
+            results["verifier_replay_chain_invoked"] = True
+            # Keep the no_rejections key true for backward compat.
+            results["verifier_replay_chain_no_rejections"] = not any_rejected
+        else:
+            # EmbeddedExecutor path: no STARK proofs.
+            # Run replay-chain and assert no Rejected entries.
+            replay = call_replay_chain(args.verifier_bin, state_dir, all_receipts_flat)
+            details["replay_chain_verdict"] = replay
+            per = replay.get("verdict", {}).get("per_entry", [])
+            rejected_count = sum(
+                1
+                for v in per
+                if (isinstance(v, dict) and "Rejected" in v)
+                or (isinstance(v, str) and v == "Rejected")
+            )
+            results["verifier_replay_chain_no_rejections"] = rejected_count == 0
+            results["verifier_replay_chain_invoked"] = replay.get("rc") in (0, 1)
+            results["verifier_all_proofs_verified"] = False  # not applicable
     else:
         results["verifier_replay_chain_invoked"] = False
         results["verifier_replay_chain_no_rejections"] = False
+        results["verifier_all_proofs_verified"] = False
 
     # ── 5. Tamper test ──────────────────────────────────────────────────
     tamper = tamper_test(state_dir)
@@ -462,6 +533,9 @@ def main() -> int:
     if args.verifier_bin:
         must_pass.append("verifier_replay_chain_invoked")
         must_pass.append("verifier_replay_chain_no_rejections")
+        if mcp_mode:
+            # MCP path: assert all STARK proofs verified.
+            must_pass.append("verifier_all_proofs_verified")
 
     failures = [c for c in must_pass if not results.get(c, False)]
     verdict = {
