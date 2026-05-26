@@ -1106,15 +1106,82 @@ fn renounced_public_root_returns_sentinel_without_registry() {
 }
 
 #[test]
-#[ignore = "blocked on caveat-correctness lane: NonMembership verifier registry dispatch + sorted-set neighbor-witness (CAVEAT-LAYER-COVERAGE.md §1 row 28)"]
 fn renounced_accepts_when_sender_not_in_set() {
-    panic!("blocked");
+    // Sender 0x05.. is strictly between lower=0x04.. and upper=0x06..;
+    // the SortedNeighborNonMembershipVerifier (registered in default_builtins)
+    // must accept the proof and the program must evaluate Ok(()).
+    use pyana_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
+    use pyana_cell::program::{RenouncedSet, TransitionMeta, WitnessBundle, WitnessBlobView, WitnessKindTag};
+
+    let commitment = [0xABu8; 32];
+    let candidate = [0x05u8; 32];
+    let proof = NonMembershipNeighborProof::new(&commitment, [0x04u8; 32], [0x06u8; 32]);
+    let proof_bytes = proof.to_bytes();
+
+    let registry = WitnessedPredicateRegistry::default_builtins();
+    let blobs: [WitnessBlobView<'_>; 1] = [WitnessBlobView {
+        kind: WitnessKindTag::ProofBytes,
+        bytes: &proof_bytes,
+    }];
+    let bundle = WitnessBundle {
+        blobs: &blobs,
+        registry: Some(&registry),
+    };
+    let p = single_predicate(StateConstraint::Renounced {
+        set: RenouncedSet::BlindedSet { commitment },
+    });
+    let new = CellState::default();
+    let ctx = EvalContext {
+        sender: Some(candidate),
+        ..Default::default()
+    };
+    let result = p.evaluate_full(&new, None, Some(&ctx), &TransitionMeta::wildcard(), &bundle);
+    assert!(result.is_ok(), "valid non-membership proof must be accepted, got: {result:?}");
 }
 
 #[test]
-#[ignore = "blocked on caveat-correctness lane: Renounced rejects when sender IS in set"]
 fn renounced_rejects_when_sender_in_set() {
-    panic!("blocked");
+    // Adversarial: sender == lower neighbor — the prover IS in the set.
+    // The neighbor invariant `lower < candidate` is violated; verifier rejects.
+    use pyana_cell::predicate::{NonMembershipNeighborProof, WitnessedPredicateRegistry};
+    use pyana_cell::program::{RenouncedSet, TransitionMeta, WitnessBundle, WitnessBlobView, WitnessKindTag};
+
+    let commitment = [0xABu8; 32];
+    let candidate = [0x05u8; 32];
+    // lower == candidate: the prover IS on the lower boundary (i.e., in the set).
+    let proof = NonMembershipNeighborProof::new(&commitment, candidate, [0x06u8; 32]);
+    let proof_bytes = proof.to_bytes();
+
+    let registry = WitnessedPredicateRegistry::default_builtins();
+    let blobs: [WitnessBlobView<'_>; 1] = [WitnessBlobView {
+        kind: WitnessKindTag::ProofBytes,
+        bytes: &proof_bytes,
+    }];
+    let bundle = WitnessBundle {
+        blobs: &blobs,
+        registry: Some(&registry),
+    };
+    let p = single_predicate(StateConstraint::Renounced {
+        set: RenouncedSet::BlindedSet { commitment },
+    });
+    let new = CellState::default();
+    let ctx = EvalContext {
+        sender: Some(candidate),
+        ..Default::default()
+    };
+    let err = p
+        .evaluate_full(&new, None, Some(&ctx), &TransitionMeta::wildcard(), &bundle)
+        .expect_err("candidate-in-set must be rejected");
+    assert!(
+        matches!(
+            err,
+            ProgramError::WitnessedPredicateRejected {
+                kind_name: "NonMembership",
+                ..
+            }
+        ),
+        "expected WitnessedPredicateRejected(NonMembership), got: {err:?}"
+    );
 }
 
 // ===========================================================================

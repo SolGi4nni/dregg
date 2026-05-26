@@ -425,9 +425,84 @@ fn executor_rejects_cell_declaring_renounced_variant_today() {
 }
 
 #[test]
-#[ignore = "blocked on caveat-correctness lane: NonMembership verifier + sorted-set neighbor-witness dispatch (CAVEAT-LAYER-COVERAGE.md §1 row 28)"]
 fn executor_renounced_accepts_when_sender_not_in_set() {
-    panic!("blocked");
+    // Cell declares Renounced { BlindedSet { commitment } }.
+    // Agent (sender) has pk with first byte 0x0B; proof brackets it between
+    // lower=0x0A.. and upper=0x0C..  The executor wires default_builtins()
+    // (SortedNeighborNonMembershipVerifier), and the action carries the 96-byte
+    // neighbor proof as a ProofBytes witness blob.
+    use pyana_cell::predicate::NonMembershipNeighborProof;
+    use pyana_cell::program::RenouncedSet;
+    use pyana_turn::action::{WitnessBlob, WitnessKind};
+
+    let commitment = [0xABu8; 32];
+    // Agent pk is controlled by make_cell_with_program(seed=11, …):
+    //   pk[0] = 11 = 0x0B, pk[31] = 11*7 = 77 = 0x4D, rest = 0x00.
+    // lower = [0x0A; 32]: 0x0A00…00 < 0x0B00…00 ✓
+    // upper = [0x0C; 32]: 0x0B00…00 < 0x0C00…00 ✓
+    let mut lower = [0u8; 32];
+    lower[0] = 0x0A;
+    let mut upper = [0u8; 32];
+    upper[0] = 0x0C;
+
+    let proof = NonMembershipNeighborProof::new(&commitment, lower, upper);
+    let proof_bytes = proof.to_bytes().to_vec();
+
+    let program = CellProgram::Predicate(vec![StateConstraint::Renounced {
+        set: RenouncedSet::BlindedSet { commitment },
+    }]);
+    let agent_cell = make_cell_with_program(11, 1000, program);
+    let agent = agent_cell.id();
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent_cell).unwrap();
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+
+    // Build a SetField turn carrying the non-membership proof as a ProofBytes blob.
+    let mut forest = CallForest::new();
+    let action = Action {
+        target: agent,
+        method: symbol("set_field"),
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![Effect::SetField {
+            cell: agent,
+            index: 0,
+            value: field_from_u64(1),
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![WitnessBlob::new(WitnessKind::ProofBytes, proof_bytes)],
+    };
+    forest.add_root(action);
+
+    let turn = Turn {
+        agent,
+        nonce: 0,
+        call_forest: forest,
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+
+    let r = executor.execute(&turn, &mut ledger);
+    assert!(
+        matches!(r, TurnResult::Committed { .. }),
+        "valid non-membership proof must cause executor to accept, got: {r:?}"
+    );
 }
 
 // ===========================================================================
