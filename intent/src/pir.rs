@@ -1081,7 +1081,6 @@ mod tests {
     fn build_test_index(num_tags: usize) -> IntentIndex {
         let mut intents = Vec::new();
         for tag_idx in 0..num_tags {
-            let tag_name = format!("action:capability_{tag_idx}");
             // Each tag gets 2-3 intents.
             for intent_num in 0..((tag_idx % 3) + 1) {
                 let spec = MatchSpec {

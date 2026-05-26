@@ -1,4 +1,6 @@
 //! HTTP wrapper around [`BlindedQueue`] and [`FairDistribution`].
+// Storage types are deprecated pending cell-program migration (STORAGE-AS-CELL-PROGRAMS.md §3.4).
+#![allow(deprecated)]
 //!
 //! `FairDistributionEndpoint` exposes four routes:
 //!
@@ -148,6 +150,10 @@ pub struct BlindedStatusResponse {
 #[derive(Clone)]
 struct EndpointState {
     queue: Arc<Mutex<BlindedQueue>>,
+    // FairDistribution wiring is plumbed through but not yet consumed by any
+    // handler. Handlers will activate this slot when the claim-window logic
+    // is wired in (post cell-program migration).
+    #[allow(dead_code)]
     distribution: Option<Arc<Mutex<FairDistribution>>>,
 }
 

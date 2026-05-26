@@ -24,10 +24,10 @@
 
 use pyana_macaroon::Macaroon;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+
 use thiserror::Error;
 
-use pyana_token::{Attenuation, AuthToken, MacaroonToken};
+use pyana_token::{Attenuation, MacaroonToken};
 
 use crate::schema::{AttrValue, AttributeAttenuation, CredentialAttributes, CredentialSchema};
 
@@ -228,18 +228,6 @@ fn hex_encode(bytes: &[u8]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
-}
-
-/// Helper for the test path: pull the attribute name/value pairs out of
-/// a credential, indexed by name.
-#[doc(hidden)]
-pub fn attribute_map(creds: &Credential) -> BTreeMap<String, AttrValue> {
-    creds
-        .attributes
-        .attributes
-        .iter()
-        .map(|a| (a.name.clone(), a.value.clone()))
-        .collect()
 }
 
 // Silence the unused import warning if the consumer doesn't reach into

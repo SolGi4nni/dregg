@@ -928,6 +928,38 @@ fn tool_definitions() -> Vec<McpToolDef> {
                 "required": ["target_cell"]
             }),
         },
+        // ─── CapTP Handoff Cert Exercise (γ.1 extension) ────────────────────────────
+        McpToolDef {
+            name: "pyana_exercise_handoff_cert",
+            description: "Exercise a CapTP HandoffCertificate: constructs a Turn authorized by \
+                `Authorization::CapTpDelivered` (mirroring `pyana_captp_deliver`) and attaches a \
+                `Effect::ValidateHandoff { cert_hash, recipient_pk, introducer_pk }` so the \
+                executor's `verify_captp_delivered` block1-bind closure fires. \
+                The node cipherclerk is the recipient/sender; the introducer key is supplied \
+                or generated ephemerally. An optional `effects` array lets the caller attach \
+                downstream effects (e.g. a Transfer). Returns the turn hash, cert nonce, STARK \
+                proof, and all Effect-VM fields.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target_cell": { "type": "string", "description": "Hex-encoded 32-byte target cell." },
+                    "introducer_sk": { "type": "string", "description": "Hex-encoded 32-byte introducer Ed25519 secret seed (testing-only). Omit for a fresh ephemeral key." },
+                    "introducer_pk": { "type": "string", "description": "Hex-encoded 32-byte introducer public key. Ignored when introducer_sk is supplied (derived from it). When both are omitted, a fresh ephemeral key is generated." },
+                    "recipient_pk": { "type": "string", "description": "Hex-encoded 32-byte recipient public key. Defaults to the node cipherclerk's public key." },
+                    "introducer_federation": { "type": "string", "description": "Hex-encoded 32-byte introducer federation id. Defaults to BLAKE3(introducer_pk)." },
+                    "target_federation": { "type": "string", "description": "Hex-encoded 32-byte target federation id. Default: zero federation." },
+                    "permissions": { "type": "string", "enum": ["none","signature","proof","either"], "description": "Permission level encoded in the cert. Default: signature." },
+                    "expires_at": { "type": "integer", "description": "Optional cert expiry block height." },
+                    "swiss": { "type": "string", "description": "Hex-encoded 32-byte swiss number (default: random)." },
+                    "effects": {
+                        "type": "array",
+                        "description": "Additional effects to attach after ValidateHandoff (e.g. a Transfer). Per parse_effect_json contract.",
+                        "items": { "type": "object" }
+                    }
+                },
+                "required": ["target_cell"]
+            }),
+        },
         // ─── Sovereign Cell Witness (reshaped) ─────────────────────────────────────
         McpToolDef {
             name: "pyana_sign_sovereign_witness",
@@ -1124,6 +1156,8 @@ async fn dispatch_tool(name: &str, params: Value, state: &NodeState) -> McpToolR
         "pyana_place_bid" => tool_place_bid(&params, state).await,
         // CapTP delivery
         "pyana_captp_deliver" => tool_captp_deliver(&params, state).await,
+        // CapTP handoff cert exercise (ValidateHandoff block1-bind)
+        "pyana_exercise_handoff_cert" => tool_exercise_handoff_cert(&params, state).await,
         // Sovereign witness (reshaped)
         "pyana_sign_sovereign_witness" => tool_sign_sovereign_witness(&params, state).await,
         // γ.2 bilateral binding
@@ -4378,6 +4412,397 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
 }
 
 // =============================================================================
+// CapTP HandoffCertificate exercise (pyana_exercise_handoff_cert)
+// =============================================================================
+
+/// Exercise a CapTP HandoffCertificate via `Authorization::CapTpDelivered`.
+///
+/// Unlike `tool_captp_deliver` (which generates a fresh cert entirely in-process),
+/// this tool models the *recipient* exercising a cert they received from a third-party
+/// introducer. The caller supplies introducer identity (sk or pk), optional downstream
+/// effects, and optionally a pre-built cert hash (if omitted we BLAKE3 the serialised
+/// cert). The action always carries an `Effect::ValidateHandoff` so the executor's
+/// block1-bind closure fires and confirms the cert's `(recipient_pk, introducer_pk)`
+/// match those on the action. A STARK proof is generated over the downstream effects
+/// (or a NoOp if none) so the receipt chain carries verifiable provenance.
+async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToolResult {
+    // ── Parse required inputs ────────────────────────────────────────────────
+    let target_cell_hex = match params.get("target_cell").and_then(|v| v.as_str()) {
+        Some(h) => h,
+        None => return McpToolResult::error("missing required parameter: target_cell"),
+    };
+    let target_cell_bytes = match hex_decode(target_cell_hex) {
+        Ok(b) => b,
+        Err(_) => return McpToolResult::error("invalid hex for target_cell"),
+    };
+
+    // ── Permissions ──────────────────────────────────────────────────────────
+    let permissions_str = params
+        .get("permissions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("signature");
+    let permissions = match permissions_str {
+        "none" | "None" => pyana_cell::AuthRequired::None,
+        "signature" | "Signature" => pyana_cell::AuthRequired::Signature,
+        "proof" | "Proof" => pyana_cell::AuthRequired::Proof,
+        "either" | "Either" => pyana_cell::AuthRequired::Either,
+        other => {
+            return McpToolResult::error(format!(
+                "invalid permissions: '{other}' (none|signature|proof|either)"
+            ));
+        }
+    };
+
+    // ── Swiss number ─────────────────────────────────────────────────────────
+    let swiss: [u8; 32] = match params.get("swiss").and_then(|v| v.as_str()) {
+        Some(h) => match hex_decode(h) {
+            Ok(b) => b,
+            Err(_) => return McpToolResult::error("invalid hex for swiss"),
+        },
+        None => {
+            let mut s = [0u8; 32];
+            if getrandom::fill(&mut s).is_err() {
+                return McpToolResult::error("failed to generate swiss");
+            }
+            s
+        }
+    };
+
+    // ── Expiry ───────────────────────────────────────────────────────────────
+    let expires_at = params.get("expires_at").and_then(|v| v.as_u64());
+
+    // ── Target federation ────────────────────────────────────────────────────
+    let target_federation_bytes: [u8; 32] =
+        match params.get("target_federation").and_then(|v| v.as_str()) {
+            Some(h) => match hex_decode(h) {
+                Ok(b) => b,
+                Err(_) => return McpToolResult::error("invalid hex for target_federation"),
+            },
+            None => [0u8; 32],
+        };
+    let target_federation = pyana_types::FederationId(target_federation_bytes);
+
+    // ── Introducer key ───────────────────────────────────────────────────────
+    // If introducer_sk is supplied, derive pk from it (testing path).
+    // Otherwise, if introducer_pk is supplied, use it directly and construct
+    // a cert using a fresh ephemeral signing key whose pk matches (not possible
+    // without the sk — so we must require either sk or accept an ephemeral key
+    // when only pk is given, and the sig won't verify against that pk).
+    // Simplest contract: if sk supplied → use it; else generate fresh ephemeral.
+    let introducer_sk = match params.get("introducer_sk").and_then(|v| v.as_str()) {
+        Some(h) => match hex_decode(h) {
+            Ok(b) => pyana_types::SigningKey::from_bytes(&b),
+            Err(_) => return McpToolResult::error("invalid hex for introducer_sk"),
+        },
+        None => {
+            // Caller may supply an explicit introducer_pk for the non-sk path;
+            // we cannot create a valid cert in that case (we don't hold the sk).
+            // Generate an ephemeral key so the cert's signature is consistent —
+            // test adversarial paths via mismatched introducer_pk below.
+            let mut seed = [0u8; 32];
+            if getrandom::fill(&mut seed).is_err() {
+                return McpToolResult::error("failed to generate introducer seed");
+            }
+            pyana_types::SigningKey::from_bytes(&seed)
+        }
+    };
+    let introducer_pk_bytes: [u8; 32] = *introducer_sk.public_key().as_bytes();
+
+    // Allow caller to override the introducer_pk that ends up on the Action
+    // (distinct from the cert's introducer field). Used only in adversarial
+    // tests — the executor will reject when the override does not match the
+    // cert's introducer.0. When absent, use the sk-derived pk (honest path).
+    let action_introducer_pk_bytes: [u8; 32] =
+        match params.get("introducer_pk").and_then(|v| v.as_str()) {
+            Some(h) => match hex_decode(h) {
+                Ok(b) => b,
+                Err(_) => return McpToolResult::error("invalid hex for introducer_pk"),
+            },
+            None => introducer_pk_bytes,
+        };
+
+    // ── Introducer federation ────────────────────────────────────────────────
+    // The canonical convention (captp/src/handoff.rs `setup_introducer`) is
+    // `FederationId(pk.0)` — the federation id IS the introducer's raw Ed25519
+    // public key bytes. The executor's `verify_captp_delivered` step 2 enforces
+    // `action.introducer_pk == cert.introducer.0`, so we must pass the raw pk
+    // as the default federation, not its hash.
+    let introducer_federation_bytes: [u8; 32] =
+        match params.get("introducer_federation").and_then(|v| v.as_str()) {
+            Some(h) => match hex_decode(h) {
+                Ok(b) => b,
+                Err(_) => return McpToolResult::error("invalid hex for introducer_federation"),
+            },
+            None => introducer_pk_bytes, // FederationId = raw pk bytes (canonical convention)
+        };
+    let introducer_federation = pyana_types::FederationId(introducer_federation_bytes);
+
+    // ── Optional downstream effects ──────────────────────────────────────────
+    let downstream_effects: Vec<pyana_turn::Effect> =
+        match params.get("effects").and_then(|v| v.as_array()) {
+            Some(arr) => {
+                let mut out = Vec::with_capacity(arr.len());
+                for ev in arr {
+                    match parse_effect_json(ev) {
+                        Ok(e) => out.push(e),
+                        Err(msg) => return McpToolResult::error(format!("invalid effect: {msg}")),
+                    }
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+
+    // ── Acquire state ────────────────────────────────────────────────────────
+    let mut s = state.write().await;
+    if !s.unlocked {
+        return McpToolResult::error("cipherclerk is locked; unlock first");
+    }
+
+    let recipient_pk: [u8; 32] = match params.get("recipient_pk").and_then(|v| v.as_str()) {
+        Some(h) => match hex_decode(h) {
+            Ok(b) => b,
+            Err(_) => return McpToolResult::error("invalid hex for recipient_pk"),
+        },
+        None => s.cclerk.public_key().0,
+    };
+    let target_cell_id = pyana_cell::CellId(target_cell_bytes);
+    let target_cell_captp = pyana_types::CellId(target_cell_bytes);
+
+    // ── Create HandoffCertificate ─────────────────────────────────────────────
+    let cert = pyana_captp::HandoffCertificate::create(
+        &introducer_sk,
+        introducer_federation,
+        target_federation,
+        target_cell_captp,
+        recipient_pk,
+        permissions,
+        None,
+        expires_at,
+        None,
+        swiss,
+    );
+
+    // Derive cert_hash: BLAKE3 over the serialised cert bytes (mirrors
+    // wire/src/server.rs line 3060: `blake3::hash(&presentation_bytes).into()`).
+    let cert_bytes = cert.to_bytes();
+    let cert_hash: [u8; 32] = blake3::hash(&cert_bytes).into();
+    let cert_nonce_hex = hex_encode(&cert.nonce);
+
+    // ── Build effects list: ValidateHandoff first, then downstream ────────────
+    // The block1-bind closure in `verify_captp_delivered` checks every
+    // `Effect::ValidateHandoff` in the action against the cert's keys.
+    let validate_effect = pyana_turn::Effect::ValidateHandoff {
+        cert_hash,
+        recipient_pk,
+        introducer_pk: action_introducer_pk_bytes,
+    };
+    let mut all_effects = vec![validate_effect];
+    all_effects.extend(downstream_effects.iter().cloned());
+
+    // ── Sender signature (recipient signs the canonical delivery message) ─────
+    let agent_cell_id = target_cell_id;
+    let turn_nonce = s.cclerk.receipt_chain_length() as u64;
+    let signing_msg = pyana_turn::Authorization::captp_delivered_signing_message(
+        &cert.nonce,
+        &agent_cell_id,
+        &target_cell_id,
+        turn_nonce,
+        &all_effects,
+    );
+    let recipient_signature = pyana_types::sign(&s.cclerk.gossip_signing_key(), &signing_msg);
+
+    // ── Stub target cell if absent ────────────────────────────────────────────
+    if s.ledger.get(&target_cell_id).is_none() {
+        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(
+            target_cell_id,
+            recipient_pk,
+            1_000_000,
+        );
+        let _ = s.ledger.insert_cell(stub);
+    }
+    // Stub any effect-referenced cells.
+    for effect in &downstream_effects {
+        match effect {
+            pyana_turn::Effect::Transfer { from, to, amount } => {
+                if s.ledger.get(from).is_none() {
+                    let bal = (*amount).saturating_mul(10).max(1_000_000);
+                    let stub =
+                        pyana_cell::Cell::remote_stub_with_id_pk_balance(*from, recipient_pk, bal);
+                    let _ = s.ledger.insert_cell(stub);
+                }
+                if s.ledger.get(to).is_none() {
+                    let stub = pyana_cell::Cell::remote_stub_with_id(*to);
+                    let _ = s.ledger.insert_cell(stub);
+                }
+            }
+            pyana_turn::Effect::SetField { cell, .. }
+            | pyana_turn::Effect::IncrementNonce { cell } => {
+                if s.ledger.get(cell).is_none() {
+                    let stub = pyana_cell::Cell::remote_stub_with_id(*cell);
+                    let _ = s.ledger.insert_cell(stub);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ── Snapshot agent pre-state for Effect-VM proof ──────────────────────────
+    let pre_state: Option<(u64, u64)> = s
+        .ledger
+        .get(&agent_cell_id)
+        .map(|c| (c.state.balance(), c.state.nonce()));
+
+    // ── Build and execute the Turn ────────────────────────────────────────────
+    let action = pyana_turn::Action {
+        target: target_cell_id,
+        method: pyana_turn::action::symbol("captp.route"),
+        args: vec![],
+        authorization: pyana_turn::Authorization::CapTpDelivered {
+            handoff_cert: cert,
+            introducer_pk: action_introducer_pk_bytes,
+            sender_pk: recipient_pk,
+            sender_signature: recipient_signature.0,
+        },
+        preconditions: pyana_cell::Preconditions::default(),
+        effects: all_effects.clone(),
+        may_delegate: pyana_turn::DelegationMode::None,
+        commitment_mode: pyana_turn::CommitmentMode::Full,
+        balance_change: None,
+        witness_blobs: vec![],
+    };
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+
+    let turn = Turn {
+        agent: agent_cell_id,
+        nonce: turn_nonce,
+        fee: 10_000,
+        memo: Some("captp.handoff-cert-exercise (mcp)".to_string()),
+        valid_until: None,
+        call_forest: forest,
+        depends_on: vec![],
+        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+    let turn_hash = hex_encode(&turn.hash());
+
+    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let exec_result = executor.execute(&turn, &mut s.ledger);
+
+    match exec_result {
+        pyana_turn::TurnResult::Committed { receipt, .. } => {
+            s.cclerk
+                .append_receipt(receipt)
+                .expect("local executor and cclerk chains must agree");
+            drop(s);
+            state.emit(crate::state::NodeEvent::Receipt {
+                hash: turn_hash.clone(),
+            });
+
+            // ── Project downstream effects into the Effect-VM domain ──────────
+            // ValidateHandoff has no VM-domain analogue; emit a NoOp so the
+            // trace length stays at ≥ 2. Downstream effects are projected
+            // the same way as tool_exercise_bearer_cap.
+            let mut vm_effects: Vec<pyana_circuit::effect_vm::Effect> =
+                vec![pyana_circuit::effect_vm::Effect::NoOp]; // ValidateHandoff → NoOp
+            for e in &downstream_effects {
+                match e {
+                    pyana_turn::Effect::Transfer { amount, .. } => {
+                        vm_effects.push(pyana_circuit::effect_vm::Effect::Transfer {
+                            amount: *amount,
+                            direction: 1,
+                        });
+                    }
+                    pyana_turn::Effect::SetField { index, value, .. } => {
+                        let mut le4 = [0u8; 4];
+                        le4.copy_from_slice(&value[..4]);
+                        vm_effects.push(pyana_circuit::effect_vm::Effect::SetField {
+                            field_idx: *index as u32,
+                            value: pyana_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                        });
+                    }
+                    pyana_turn::Effect::IncrementNonce { .. } => {
+                        vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
+                    }
+                    _ => {}
+                }
+            }
+
+            let (proof_hex, public_inputs, trace_rows, witness_hash_hex) = match pre_state {
+                Some((bal, n)) => generate_effect_vm_proof(bal, n, &vm_effects),
+                None => {
+                    eprintln!(
+                        "tool_exercise_handoff_cert: agent cell {} not in ledger; \
+                         skipping Effect VM proof",
+                        hex_encode(&agent_cell_id.0)
+                    );
+                    (String::new(), Vec::new(), Vec::new(), String::new())
+                }
+            };
+
+            let proof_field: serde_json::Value = if proof_hex.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(proof_hex)
+            };
+            let trace_field: serde_json::Value = if trace_rows.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::to_value(&trace_rows).unwrap_or(serde_json::Value::Null)
+            };
+            let witness_hash_field: serde_json::Value = if witness_hash_hex.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(witness_hash_hex)
+            };
+
+            McpToolResult::json(&serde_json::json!({
+                "exercised": true,
+                "target_cell": target_cell_hex,
+                "turn_hash": turn_hash,
+                "cert_nonce": cert_nonce_hex,
+                "cert_hash": hex_encode(&cert_hash),
+                "introducer_pk": hex_encode(&introducer_pk_bytes),
+                "introducer_federation": hex_encode(&introducer_federation_bytes),
+                "target_federation": hex_encode(&target_federation_bytes),
+                "recipient_pk": hex_encode(&recipient_pk),
+                "permissions": permissions_str,
+                "swiss": hex_encode(&swiss),
+                "effect_vm_proof_hex": proof_field,
+                "effect_vm_public_inputs": public_inputs,
+                "effect_vm_trace_rows": trace_field,
+                "effect_vm_witness_hash_hex": witness_hash_field,
+            }))
+        }
+        pyana_turn::TurnResult::Rejected { reason, .. } => {
+            drop(s);
+            McpToolResult::json(&serde_json::json!({
+                "exercised": false,
+                "error": format!("handoff cert exercise rejected: {reason}"),
+                "turn_hash": turn_hash,
+                "cert_nonce": cert_nonce_hex,
+            }))
+        }
+        _ => {
+            drop(s);
+            McpToolResult::json(&serde_json::json!({
+                "exercised": false,
+                "error": "handoff cert exercise did not commit",
+            }))
+        }
+    }
+}
+
+// =============================================================================
 // Sovereign witness signing (reshaped per soundness-sweep redesign)
 // =============================================================================
 
@@ -6185,6 +6610,127 @@ mod tests {
             j.get("synthesized_vm_setfield_note").is_none(),
             "register_service must NOT surface the legacy coverage-gap note \
              once #110 lands a real AIR EmitEvent variant"
+        );
+    }
+
+    // =====================================================================
+    // pyana_exercise_handoff_cert unit tests
+    // =====================================================================
+
+    /// Honest path: exercise_handoff_cert with a valid introducer key commits
+    /// and emits a STARK proof. Mirrors the existing `pyana_captp_deliver`
+    /// integration but confirms the ValidateHandoff block1-bind fires.
+    #[tokio::test]
+    async fn exercise_handoff_cert_honest_path_commits() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+
+        // Generate a deterministic introducer seed (32 bytes → secret key).
+        let mut seed = [0u8; 32];
+        seed[0] = 0xBB;
+        let introducer_sk_hex = hex_encode(&seed); // pass as introducer_sk
+
+        // Create an agent cell so pre_state is non-None and the proof fires.
+        let create_res = dispatch_tool(
+            "pyana_create_agent",
+            serde_json::json!({ "name": "honest-bob", "initial_balance": 1_000_000 }),
+            &state,
+        )
+        .await;
+        let create_j = extract_json(&create_res);
+        let target_cell = create_j["cell_id"].as_str().expect("cell_id").to_string();
+
+        let params = serde_json::json!({
+            "target_cell": target_cell,
+            "introducer_sk": introducer_sk_hex,
+            "permissions": "signature",
+        });
+        let result = dispatch_tool("pyana_exercise_handoff_cert", params, &state).await;
+        let j = extract_json(&result);
+
+        assert_eq!(
+            j.get("exercised").and_then(|v| v.as_bool()),
+            Some(true),
+            "honest handoff cert exercise must commit; got: {j}"
+        );
+        assert!(
+            j.get("turn_hash").and_then(|v| v.as_str()).is_some(),
+            "must return turn_hash"
+        );
+        assert!(
+            j.get("cert_nonce").and_then(|v| v.as_str()).is_some(),
+            "must return cert_nonce"
+        );
+        assert!(
+            j.get("cert_hash").and_then(|v| v.as_str()).is_some(),
+            "must return cert_hash"
+        );
+        // STARK proof must be present because the agent cell is in the ledger.
+        let proof = j.get("effect_vm_proof_hex").cloned().unwrap_or(Value::Null);
+        assert!(
+            proof.is_string(),
+            "honest path must emit effect_vm_proof_hex; got: {proof:?}"
+        );
+        let proof_hex = proof.as_str().unwrap_or("");
+        assert!(
+            proof_hex.len() > 128,
+            "proof must be non-trivial (>64 bytes); got {} chars",
+            proof_hex.len()
+        );
+    }
+
+    /// Adversarial test: supplying a forged `introducer_pk` that does NOT
+    /// match the cert's introducer causes the executor to reject the Turn.
+    ///
+    /// Security property: `verify_captp_delivered` step 2 checks
+    /// `introducer_pk == cert.introducer.0`. A forged pk diverges and the
+    /// executor returns `Rejected` rather than committing.
+    #[tokio::test]
+    async fn exercise_handoff_cert_forged_introducer_pk_rejected() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+
+        // Honest introducer secret key seed (32 bytes).
+        let mut seed = [0u8; 32];
+        seed[0] = 0xCC;
+        let honest_sk_hex = hex_encode(&seed); // pass as introducer_sk
+
+        // Create a target cell so the ledger has something to act on.
+        let create_res = dispatch_tool(
+            "pyana_create_agent",
+            serde_json::json!({ "name": "adversarial-bob", "initial_balance": 1_000_000 }),
+            &state,
+        )
+        .await;
+        let create_j = extract_json(&create_res);
+        let target_cell = create_j["cell_id"].as_str().expect("cell_id").to_string();
+
+        // Forged introducer pk: all 0xAA bytes — definitely not the honest key.
+        let forged_pk_hex = "aa".repeat(32);
+
+        // We supply the honest_sk (so the cert is signed with the honest key),
+        // but override `introducer_pk` with the forged value. The executor sees
+        // the cert signed by the honest key but `introducer_pk` pointing at the
+        // forged bytes — step 2 rejects immediately.
+        let params = serde_json::json!({
+            "target_cell": target_cell,
+            "introducer_sk": honest_sk_hex,
+            "introducer_pk": forged_pk_hex,
+            "permissions": "signature",
+        });
+        let result = dispatch_tool("pyana_exercise_handoff_cert", params, &state).await;
+        let j = extract_json(&result);
+
+        assert_eq!(
+            j.get("exercised").and_then(|v| v.as_bool()),
+            Some(false),
+            "forged introducer_pk MUST cause executor rejection; got: {j}"
+        );
+        let err = j
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no error field)");
+        assert!(
+            err.contains("rejected") || err.contains("introducer") || err.contains("invalid"),
+            "rejection error must mention the authorization failure; got: '{err}'"
         );
     }
 

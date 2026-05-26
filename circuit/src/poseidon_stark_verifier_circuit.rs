@@ -1366,6 +1366,139 @@ mod tests {
         }
     }
 
+    // ========================================================================
+    // SOUNDNESS AUDIT: Adversarial Kimchi witness test
+    //
+    // Scenario: adversary supplies the correct Merkle path bytes for a valid
+    // leaf, but substitutes a *wrong* leaf value. The circuit computes the
+    // Poseidon hash of the forged leaf, walks the honest path, arrives at a
+    // root that differs from the public trace_commitment, then hits the
+    // Generic equality gate at row (C):
+    //
+    //   coeffs[0]*w[0] + coeffs[1]*w[1] = 0
+    //   => computed_root - public_root = 0   (must be zero)
+    //
+    // If computed_root != public_root the constraint is unsatisfied and
+    // ProverProof::create must return Err (or panic). If it returns Ok, that
+    // is an escape path: the equality gate is not enforcing root binding and
+    // the circuit is unsound.
+    // ========================================================================
+
+    /// ADVERSARIAL: forge leaf value, keep honest Merkle path.
+    ///
+    /// The forged leaf hashes to a different value than the honest leaf, so
+    /// the Merkle path recomputes to a wrong root.  The equality gate at step
+    /// (C) then has w[0]=wrong_root, w[1]=public_root — a violated constraint.
+    ///
+    /// Expected outcome: `circuit.prove()` returns `Err(_)`.
+    /// If it returns `Ok(_)`: SOUNDNESS BUG — name escape path and escalate.
+    #[test]
+    fn adversarial_forged_leaf_wrong_root_rejected_by_equality_gate() {
+        // Step 1: generate a real, valid STARK proof.
+        let (trace, pi) = generate_merkle_trace(
+            42,
+            &[[1u32, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]],
+            &[0u32, 1, 2, 3],
+        );
+        let air = MerkleStarkAir;
+        let honest_proof = prove_poseidon(&air, &trace, &pi);
+
+        // Sanity: honest proof verifies.
+        assert!(
+            verify_poseidon(&air, &honest_proof, &pi).is_ok(),
+            "Baseline: honest proof must verify"
+        );
+
+        // Step 2: build forged proof — correct path bytes, wrong leaf value.
+        //
+        // We flip one bit in trace_values[0] of query 0 while keeping
+        // trace_path[0] exactly as produced by the honest prover.
+        // The honest leaf hash = Poseidon(domain_sep || tv[0] || tv[1] || ...)
+        // The forged leaf hash  = Poseidon(domain_sep || (tv[0]^1) || tv[1] || ...)
+        // These differ with overwhelming probability.
+        //
+        // Walking the honest Merkle siblings with the forged leaf hash produces
+        // a root ≠ honest_proof.trace_commitment.  The circuit's equality gate
+        // at step (C) therefore has:
+        //   w[0] = forged_root    (computed by the witness)
+        //   w[1] = public_root   (public input, the true trace_commitment)
+        // Constraint: w[0] - w[1] = 0 → NOT satisfied → prover must fail.
+        let mut forged_proof = honest_proof.clone();
+        {
+            let q = forged_proof
+                .query_proofs
+                .first_mut()
+                .expect("proof must have at least one query");
+            // Flip LSB of first trace column value — guaranteed to change the leaf.
+            let original = q.trace_values[0];
+            q.trace_values[0] = original ^ 1;
+            // trace_path is left UNCHANGED — correct sibling bytes, wrong leaf.
+            // This is the exact forgery described in the Pickles bridge agent report.
+        }
+
+        // Step 3: build the Kimchi verifier circuit for the forged proof.
+        let forged_circuit = PoseidonStarkVerifierCircuit::new_minimal(forged_proof);
+
+        // Step 4: attempt to prove.  The equality gate at step (C) is violated,
+        // so ProverProof::create should return Err.
+        let result = forged_circuit.prove();
+
+        match &result {
+            Err(e) => {
+                // EXPECTED: the equality gate (or debug pre-check) caught the
+                // root mismatch and refused to produce a proof.
+                //
+                // Gates are SOUND: the forged witness is rejected.
+                // This completes the Golden Vision soundness audit for the
+                // Kimchi verifier circuit's Merkle root binding layer.
+                println!(
+                    "SOUNDNESS OK: forged witness rejected at prove() stage: {}",
+                    e
+                );
+            }
+            Ok(kimchi_proof) => {
+                // ESCAPE PATH FOUND — the prover accepted the forged witness.
+                //
+                // Root cause analysis:
+                //   The Generic equality gate emitted at step (C) has coefficients
+                //   [1, -1, 0, ...], encoding: w[0] - w[1] = 0.
+                //   Kimchi's prover accepts ANY witness that satisfies the gate
+                //   polynomial. If w[0] and w[1] were both set to the same
+                //   (wrong) value in generate_witness(), the gate evaluates to
+                //   zero even though neither equals the public input.
+                //
+                //   Specifically: generate_witness() sets:
+                //     witness[0][eq_row] = computed_forged_root  (from Merkle walk)
+                //     witness[1][eq_row] = trace_root             (public input)
+                //   When these differ, the gate IS violated.  If the prover still
+                //   succeeds, it means one of:
+                //     (a) The public input binding at rows 0-1 doesn't constrain
+                //         the equality gate's w[1] column (wiring gap).
+                //     (b) The prover ignores unsatisfied Generic gates (bug in
+                //         Kimchi version pinned here).
+                //     (c) The gate coefficients are zero (emit_generic_gate bug).
+                //
+                //   Smallest fix: wire w[1] of the equality gate directly to the
+                //   public-input row via a copy constraint, so Kimchi's permutation
+                //   argument enforces equality with the committed public value.
+                //
+                // Severity: CRITICAL — the Merkle root is not bound to the public
+                // input; an adversary can prove membership of any leaf in any tree.
+
+                // Try to verify: if verification also accepts, that confirms the gap.
+                let verify_result = PoseidonStarkVerifierCircuit::verify(kimchi_proof);
+                panic!(
+                    "SOUNDNESS BUG — ESCAPE PATH FOUND: forged leaf (correct path, wrong leaf \
+                     value) was accepted by prove(). Verification result: {:?}. \
+                     The equality gate at step (C) does NOT bind the computed Merkle root \
+                     to the public trace_commitment. See comment above for root cause \
+                     and fix sketch.",
+                    verify_result
+                );
+            }
+        }
+    }
+
     /// Helper to create a dummy proof for unit tests that don't need real proof data.
     fn make_dummy_proof() -> PoseidonStarkProof {
         use crate::poseidon_stark::{PoseidonFriLayerQuery, PoseidonQueryProof};

@@ -2382,8 +2382,7 @@ mod tests {
     /// fail-closed on a not-yet-wired kind.
     #[test]
     fn p0_82_default_predicate_verifier_rejects_dfa_kind() {
-        use crate::predicate::IntentPredicateVerifier;
-        use pyana_cell::predicate::ResourceDfa;
+        use crate::predicate::{IntentPredicateVerifier, ResourceDfa};
 
         let verifier = IntentPredicateVerifier::default();
         let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);

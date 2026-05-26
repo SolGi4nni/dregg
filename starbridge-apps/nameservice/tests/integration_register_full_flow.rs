@@ -17,7 +17,6 @@
 //! computed consistently — they never call `submit_action` and therefore never
 //! exercise the executor's slot-caveat enforcement or signature validation.
 
-use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 use starbridge_nameservice::{
     NAME_HASH_SLOT, build_register_action, build_renew_action, build_revoke_action,
     build_transfer_action, expiry_field, name_factory_descriptor, name_hash, revoked_tombstone,

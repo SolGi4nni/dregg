@@ -9,9 +9,7 @@ use pyana_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
 use pyana_cell::permissions::AuthRequired;
 use pyana_cell::predicate::WitnessedPredicate;
 use pyana_cell::state::FieldElement;
-use pyana_cell::{
-    CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox,
-};
+use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
 #[allow(unused_imports)]
 use pyana_cell::{ValueCommitment, ValueCommitmentBytes};
 use serde::{Deserialize, Serialize};

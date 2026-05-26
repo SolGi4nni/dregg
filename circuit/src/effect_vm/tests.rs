@@ -4200,8 +4200,7 @@ fn test_receipt_archive_forged_cap_root_rejected() {
         .expect("at least one row must carry sel::RECEIPT_ARCHIVE");
     // Forge: advance cap_root by hashing with an arbitrary value.
     let old_cap = trace[ra_row][STATE_BEFORE_BASE + state::CAP_ROOT];
-    trace[ra_row][STATE_AFTER_BASE + state::CAP_ROOT] =
-        hash_2_to_1(old_cap, BabyBear::new(0xBAD));
+    trace[ra_row][STATE_AFTER_BASE + state::CAP_ROOT] = hash_2_to_1(old_cap, BabyBear::new(0xBAD));
 
     let air = EffectVmAir::new(trace.len());
     let proof = prove(&air, &trace, &public_inputs);

@@ -1159,7 +1159,10 @@ pub fn generate_effect_vm_trace_ext(
             }
 
             // ---- AIR-impl lane #119 ----
-            Effect::CellSeal { target, reason_hash } => {
+            Effect::CellSeal {
+                target,
+                reason_hash,
+            } => {
                 // State passthrough: balance/fields/cap_root/reserved unchanged.
                 // Both params bind so the proof cannot alias SetPermissions
                 // (which only carries one non-zero param).
@@ -1185,7 +1188,10 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + param::RECEIPT_ARCHIVE_TERMINAL_HASH] = *terminal_receipt_hash;
                 new_state.nonce += 1;
             }
-            Effect::Refusal { target, reason_hash } => {
+            Effect::Refusal {
+                target,
+                reason_hash,
+            } => {
                 // State passthrough; two params — same count as CellSeal —
                 // but algebraically distinct because the selector gate is
                 // different (`sel::REFUSAL` vs. `sel::CELL_SEAL`).

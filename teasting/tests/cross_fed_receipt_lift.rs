@@ -360,8 +360,12 @@ fn cross_fed_receipt_lift_seam6() {
     // ── 9. Consensus on both federations + AttestedRoot binding ──────────
     //
     // Submit nominal revocations so the consensus round produces a block.
-    harness.federation_mut(0).submit_revocation(0, "t1-t2-anchor");
-    harness.federation_mut(1).submit_revocation(0, "t3-t4-anchor");
+    harness
+        .federation_mut(0)
+        .submit_revocation(0, "t1-t2-anchor");
+    harness
+        .federation_mut(1)
+        .submit_revocation(0, "t3-t4-anchor");
 
     let f1_finalized = harness.run_consensus_round(0);
     let f2_finalized = harness.run_consensus_round(1);
@@ -397,7 +401,8 @@ fn cross_fed_receipt_lift_seam6() {
         let dalek_sk = ed25519_dalek::SigningKey::from_bytes(&seat.signing_key.to_bytes());
         let sig_bytes = dalek_sk.sign(&msg).to_bytes();
         let pk = pyana_types::PublicKey(dalek_sk.verifying_key().to_bytes());
-        ar.quorum_signatures.push((pk, pyana_types::Signature(sig_bytes)));
+        ar.quorum_signatures
+            .push((pk, pyana_types::Signature(sig_bytes)));
         ar
     };
 
@@ -438,7 +443,8 @@ fn cross_fed_receipt_lift_seam6() {
         let dalek_sk = ed25519_dalek::SigningKey::from_bytes(&seat.signing_key.to_bytes());
         let sig_bytes = dalek_sk.sign(&msg).to_bytes();
         let pk = pyana_types::PublicKey(dalek_sk.verifying_key().to_bytes());
-        ar.quorum_signatures.push((pk, pyana_types::Signature(sig_bytes)));
+        ar.quorum_signatures
+            .push((pk, pyana_types::Signature(sig_bytes)));
         ar
     };
 

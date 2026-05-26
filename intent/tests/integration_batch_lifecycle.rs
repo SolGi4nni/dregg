@@ -8,9 +8,7 @@
 //! submissions either carry a witnessed_predicate or run against the strict
 //! verifier so the proof path is explicit.
 
-use pyana_cell::predicate::{
-    InputRef, WitnessedPredicate, WitnessedPredicateKind, WitnessedPredicateRegistry,
-};
+use pyana_cell::predicate::WitnessedPredicateRegistry;
 use pyana_federation::threshold_decrypt::{
     KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
     threshold_encrypt,
@@ -143,8 +141,6 @@ fn replay_of_encrypted_intent_is_rejected() {
 
 #[test]
 fn out_of_range_validator_index_rejected() {
-    use pyana_federation::threshold_decrypt::DecryptionShare;
-
     let (key, shares) = make_keys(2, 3);
     let mut engine = TrustlessIntentEngine::new(2, 3);
     let intent = make_intent(1);
@@ -191,8 +187,6 @@ fn bond_conservation_winner_released_loser_slashed() {
 
     // Solver B challenges and wins with score 9.
     engine.advance_height(3); // within challenge window
-    let sub_b = plain_submission(0xBB, &intents, 9.0);
-    sub_b.clone(); // just to confirm Clone works
     engine
         .challenge(plain_submission(0xBB, &intents, 9.0))
         .unwrap();

@@ -1,4 +1,6 @@
 //! HTTP wrapper around [`ProgrammableQueue`].
+// Storage types are deprecated pending cell-program migration (STORAGE-AS-CELL-PROGRAMS.md §3.2).
+#![allow(deprecated)]
 //!
 //! `QueueEndpoint` exposes three routes:
 //!

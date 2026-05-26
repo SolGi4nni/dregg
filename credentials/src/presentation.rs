@@ -23,7 +23,7 @@ use pyana_bridge::present::{
     prove_predicate_for_fact,
 };
 use pyana_circuit::poseidon2;
-use pyana_token::{AuthRequest, AuthToken};
+use pyana_token::AuthRequest;
 
 use crate::issuance::Credential;
 use crate::schema::{AttrValue, PredicateRequest};

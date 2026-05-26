@@ -635,7 +635,6 @@ mod tests {
     #[test]
     fn verify_selective_disclosure_rejects_wrong_revealed_facts() {
         use pyana_circuit::BabyBear;
-        use pyana_circuit::binding::WideHash;
         use pyana_circuit::stark;
 
         // Build a valid STARK proof with a specific revealed_facts_commitment in its PI.

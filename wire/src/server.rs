@@ -2658,6 +2658,22 @@ impl SiloServer {
 
             WireMessage::NonMembershipResponse { .. } => None,
 
+            // Receipt fetch: this silo does not store receipts locally; return
+            // NeverExisted so the caller can try an archival source.  When a
+            // receipt store is wired into SiloState this arm should be replaced
+            // with a lookup (see `message::ReceiptBody`).
+            WireMessage::RequestReceipt { cell_id, height } => Some(WireMessage::ReceiptResponse {
+                cell_id,
+                height,
+                body: crate::message::ReceiptBody::Unavailable(
+                    crate::message::ReceiptUnavailable::NeverExisted { current_tip: None },
+                ),
+            }),
+
+            // ReceiptResponse is a response variant; silently ignore on the
+            // server side (it is only produced by us, not consumed here).
+            WireMessage::ReceiptResponse { .. } => None,
+
             WireMessage::Error { .. } => None,
 
             // =================================================================

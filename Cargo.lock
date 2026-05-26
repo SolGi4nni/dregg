@@ -6925,6 +6925,7 @@ dependencies = [
  "pyana-token",
  "pyana-turn",
  "pyana-types",
+ "pyana-verifier",
  "pyana-wire",
  "serde",
  "tokio",

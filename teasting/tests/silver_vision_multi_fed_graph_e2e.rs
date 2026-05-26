@@ -88,9 +88,11 @@ use std::collections::HashMap;
 
 use ed25519_dalek::{Signer as _, SigningKey as DalekSigningKey};
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use pyana_cell::{UnilateralAttestation, UnilateralAttestationKind};
 use pyana_circuit::{
-    BabyBear, CellState as VmCellState, Effect as VmEffect, EffectVmAir, generate_effect_vm_trace,
+    BabyBear, CellState as VmCellState, Effect as VmEffect, EffectVmAir,
     effect_vm::pi as vm_pi,
+    generate_effect_vm_trace,
     stark::{self, proof_to_bytes},
 };
 use pyana_commit::typed::canonical_32_to_felts_4;
@@ -98,13 +100,10 @@ use pyana_turn::{
     ActionBuilder, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect, Turn,
     TurnExecutor, TurnReceipt, TurnResult,
 };
-use pyana_types::{
-    AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes,
-};
+use pyana_types::{AttestedRoot, PublicKey, Signature, merkle_root_of_receipt_hashes};
 use pyana_verifier::{
     ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle, replay_chain,
 };
-use pyana_cell::{UnilateralAttestation, UnilateralAttestationKind};
 
 // ---------------------------------------------------------------------------
 // Federation identity seeds
@@ -329,14 +328,8 @@ fn build_attested_root(
     let pk = PublicKey(sk.verifying_key().to_bytes());
     let stream_root = merkle_root_of_receipt_hashes(receipt_hashes);
 
-    let mut root = AttestedRoot::new_legacy(
-        ledger.root_cached(),
-        height,
-        timestamp,
-        Vec::new(),
-        None,
-        1,
-    );
+    let mut root =
+        AttestedRoot::new_legacy(ledger.root_cached(), height, timestamp, Vec::new(), None, 1);
     root.receipt_stream_root = Some(stream_root);
 
     let msg = root.signing_message();
@@ -394,8 +387,7 @@ fn verify_cross_fed_citation(
             if *kind_tag == CROSS_FED_RECEIPT_CITE_KIND_TAG => {}
         _ => return false,
     }
-    let expected =
-        cross_fed_receipt_cite(citing_cell_id, source_federation_id, cited_receipt_hash);
+    let expected = cross_fed_receipt_cite(citing_cell_id, source_federation_id, cited_receipt_hash);
     attestation.attestation_data == expected.attestation_data
 }
 
@@ -480,8 +472,7 @@ fn silver_vision_multi_fed_graph_e2e() {
 
     // The cross-fed citation: C in F2 cites t2's receipt by hash.
     let t2_receipt_hash = r2.receipt_hash();
-    let cross_fed_attestation =
-        cross_fed_receipt_cite(&f2_ids[0], &f1_id, &t2_receipt_hash);
+    let cross_fed_attestation = cross_fed_receipt_cite(&f2_ids[0], &f1_id, &t2_receipt_hash);
 
     // Encode the attestation in the turn's memo (synthetic — in production the
     // attestation would be a sovereign witness or a custom effect field; we use
@@ -785,12 +776,21 @@ fn cross_fed_citation_is_receipt_hash_bound() {
     let fake_att = cross_fed_receipt_cite(&cell_id, &f1_id, &fake_receipt_hash);
 
     assert_ne!(
-        real_att.attestation_data,
-        fake_att.attestation_data,
+        real_att.attestation_data, fake_att.attestation_data,
         "different receipt hashes MUST produce different attestation_data"
     );
-    assert!(verify_cross_fed_citation(&real_att, &cell_id, &f1_id, &real_receipt_hash));
-    assert!(!verify_cross_fed_citation(&real_att, &cell_id, &f1_id, &fake_receipt_hash));
+    assert!(verify_cross_fed_citation(
+        &real_att,
+        &cell_id,
+        &f1_id,
+        &real_receipt_hash
+    ));
+    assert!(!verify_cross_fed_citation(
+        &real_att,
+        &cell_id,
+        &f1_id,
+        &fake_receipt_hash
+    ));
 }
 
 /// Citing the same receipt from two different source federations produces
@@ -807,12 +807,21 @@ fn cross_fed_citation_is_federation_id_bound() {
     let att_f1_prime = cross_fed_receipt_cite(&cell_id, &f1_prime_id, &receipt_hash);
 
     assert_ne!(
-        att_f1.attestation_data,
-        att_f1_prime.attestation_data,
+        att_f1.attestation_data, att_f1_prime.attestation_data,
         "different source federations MUST produce different attestation_data"
     );
-    assert!(verify_cross_fed_citation(&att_f1, &cell_id, &f1_id, &receipt_hash));
-    assert!(!verify_cross_fed_citation(&att_f1, &cell_id, &f1_prime_id, &receipt_hash));
+    assert!(verify_cross_fed_citation(
+        &att_f1,
+        &cell_id,
+        &f1_id,
+        &receipt_hash
+    ));
+    assert!(!verify_cross_fed_citation(
+        &att_f1,
+        &cell_id,
+        &f1_prime_id,
+        &receipt_hash
+    ));
 }
 
 /// Citing the same receipt from the same federation by two different cells
@@ -829,8 +838,7 @@ fn cross_fed_citation_is_citing_cell_bound() {
     let att_c2 = cross_fed_receipt_cite(&cell_c2, &f1_id, &receipt_hash);
 
     assert_ne!(
-        att_c.attestation_data,
-        att_c2.attestation_data,
+        att_c.attestation_data, att_c2.attestation_data,
         "different citing cells MUST produce different attestation_data"
     );
 }
@@ -846,7 +854,12 @@ fn cross_fed_citation_rejects_wrong_kind() {
 
     // Build a valid cross-fed citation.
     let att = cross_fed_receipt_cite(&cell_id, &f1_id, &receipt_hash);
-    assert!(verify_cross_fed_citation(&att, &cell_id, &f1_id, &receipt_hash));
+    assert!(verify_cross_fed_citation(
+        &att,
+        &cell_id,
+        &f1_id,
+        &receipt_hash
+    ));
 
     // Forge it with SelfStateTransition kind (same attestation_data bytes).
     let forged = UnilateralAttestation {
@@ -868,14 +881,32 @@ fn f1_attested_root_rejects_forged_receipt() {
     f1_executor.set_local_federation_id(f1_id);
 
     let t1 = build_single_effect_turn(
-        f1_ids[0], 0, None, vec![], f1_ids[0], "issue_credential",
-        Effect::SetField { cell: f1_ids[0], index: 0, value: [0xCC; 32] },
+        f1_ids[0],
+        0,
+        None,
+        vec![],
+        f1_ids[0],
+        "issue_credential",
+        Effect::SetField {
+            cell: f1_ids[0],
+            index: 0,
+            value: [0xCC; 32],
+        },
         "t1",
     );
     let r1 = execute_or_panic(&f1_executor, &mut f1_ledger, &t1, "t1");
     let t2 = build_single_effect_turn(
-        f1_ids[1], 0, None, vec![t1.hash()], f1_ids[1], "register_name",
-        Effect::SetField { cell: f1_ids[1], index: 0, value: [0xDD; 32] },
+        f1_ids[1],
+        0,
+        None,
+        vec![t1.hash()],
+        f1_ids[1],
+        "register_name",
+        Effect::SetField {
+            cell: f1_ids[1],
+            index: 0,
+            value: [0xDD; 32],
+        },
         "t2",
     );
     let r2 = execute_or_panic(&f1_executor, &mut f1_ledger, &t2, "t2");

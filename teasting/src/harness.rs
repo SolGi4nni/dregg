@@ -829,13 +829,9 @@ impl SimulationHarness {
             *h.finalize().as_bytes()
         };
         let fed_receipt = match &result {
-            TurnResult::Committed { receipt, .. } => Some(self.lift_turn_receipt(
-                fed_idx,
-                receipt,
-                turn.nonce,
-                block_height,
-                block_id,
-            )),
+            TurnResult::Committed { receipt, .. } => {
+                Some(self.lift_turn_receipt(fed_idx, receipt, turn.nonce, block_height, block_id))
+            }
             _ => None,
         };
         (result, fed_receipt)

@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use pyana_circuit::PresentationVerification;
 
-use crate::presentation::{Presentation, WirePresentation};
+use crate::presentation::Presentation;
 use crate::revocation::RevocationProof;
 use crate::schema::{AttrValue, CredentialSchema, PredicateRequest};
 

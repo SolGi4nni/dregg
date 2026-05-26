@@ -230,7 +230,8 @@ fn cross_fed_transfer_aggregates_and_f2_verifies_autonomously() {
         "bilateral consistency is bound to the outer proof",
     );
     assert_eq!(
-        bundle.outer_pi[ag::OUTER_N_CELLS], 2,
+        bundle.outer_pi[ag::OUTER_N_CELLS],
+        2,
         "outer PI binds n_cells = 2",
     );
     assert_eq!(bundle.bundle_epoch, 42, "bundle_epoch == turn.nonce");

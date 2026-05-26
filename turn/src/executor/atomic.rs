@@ -135,6 +135,8 @@ pub enum AtomicTurnError {
     HostedAuthorizationFailed { cell: CellId, reason: String },
     /// An action in the hosted side failed preconditions or effect application.
     HostedApplyFailed { cell: CellId, reason: String },
+    /// The agent's nonce overflowed u64::MAX (P2-2 guard).
+    NonceOverflow(CellId),
 }
 
 impl core::fmt::Display for AtomicTurnError {
@@ -191,6 +193,14 @@ impl core::fmt::Display for AtomicTurnError {
                     f,
                     "hosted action on cell {} failed to apply: {}",
                     cell, reason
+                )
+            }
+            Self::NonceOverflow(id) => {
+                write!(
+                    f,
+                    "nonce overflow on agent cell {}: u64::MAX exceeded; \
+                     turn rejected to prevent P2-2 replay window",
+                    id
                 )
             }
         }
@@ -604,7 +614,9 @@ impl TurnExecutor {
             agent
                 .state
                 .set_balance(agent.state.balance() - atomic_turn.fee);
-            agent.state.increment_nonce();
+            if !agent.state.increment_nonce() {
+                return Err(AtomicTurnError::NonceOverflow(atomic_turn.agent));
+            }
         }
 
         // Update all sovereign commitments.
@@ -1039,7 +1051,9 @@ impl TurnExecutor {
             agent
                 .state
                 .set_balance(agent.state.balance() - mixed_turn.fee);
-            agent.state.increment_nonce();
+            if !agent.state.increment_nonce() {
+                return Err(AtomicTurnError::NonceOverflow(mixed_turn.agent));
+            }
         }
 
         for (cell_id, new_commitment) in &new_commitments {

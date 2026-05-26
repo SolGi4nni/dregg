@@ -2,6 +2,7 @@
 //!
 //! Consolidates mock-receipt construction and cipherclerk setup so each test
 //! file does not duplicate the same boilerplate.
+#![allow(dead_code)]
 
 use pyana_sdk::{AgentCipherclerk, CellId};
 use pyana_turn::TurnReceipt;

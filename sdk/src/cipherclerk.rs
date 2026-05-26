@@ -954,11 +954,6 @@ pub struct AgentCipherclerk {
 }
 
 impl AgentCipherclerk {
-    /// Domain separation prefix for all signatures produced by this cipherclerk.
-    /// Prevents cross-protocol signature reuse (e.g., a signed message being
-    /// replayed as a turn signature or vice versa).
-    const DOMAIN_PREFIX: &'static [u8] = b"pyana-v1:";
-
     /// Create a new cipherclerk with a randomly generated Ed25519 identity.
     ///
     /// # Example
@@ -4788,18 +4783,6 @@ impl AgentCipherclerk {
         }
         // No transfer found — use zero amount (other effects only).
         Ok((0, 0))
-    }
-
-    /// Compute effects hash matching the executor's format.
-    ///
-    /// The executor hashes effects as: `blake3("pyana-sovereign-effects-v1:" || effect_hashes...)`.
-    fn compute_sovereign_effects_hash(effects: &[Effect]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
-        for effect in effects {
-            hasher.update(&effect.hash());
-        }
-        *hasher.finalize().as_bytes()
     }
 
     /// Convert turn-level Effects into circuit-level effect_vm::Effects for STARK proving.

@@ -334,6 +334,12 @@ pub enum TurnError {
         /// Human-readable name of the conflicting effect for triage.
         conflicting_effect: String,
     },
+
+    /// The cell's nonce overflowed u64::MAX.
+    ///
+    /// Per audit P2-2: wrapping a nonce would re-enable replay of historical
+    /// actions. The turn is rejected rather than allowing the wrap.
+    NonceOverflow { cell: CellId },
 }
 
 impl core::fmt::Display for TurnError {
@@ -730,6 +736,13 @@ impl core::fmt::Display for TurnError {
                      state-mutating effect '{conflicting_effect}' on the same cell: \
                      refusal is evidence-of-non-action and cannot coexist with a \
                      real mutation in the same action"
+                )
+            }
+            TurnError::NonceOverflow { cell } => {
+                write!(
+                    f,
+                    "nonce overflow on cell {cell}: u64::MAX exceeded; \
+                     turn rejected to prevent P2-2 replay window"
                 )
             }
         }

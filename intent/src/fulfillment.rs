@@ -1323,7 +1323,6 @@ pub fn execute_committed_fulfillment_flow(
 mod tests {
     use super::*;
     use crate::{ActionPattern, CommitmentId, Intent, IntentKind, MatchSpec, VerificationMode};
-    use pyana_circuit::compute_action_binding_narrow;
     use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
     use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, build_multi_step_witness};
     use pyana_circuit::poseidon2::hash_fact;
@@ -2498,7 +2497,6 @@ mod tests {
 
     #[test]
     fn test_execute_fulfillment_flow_success() {
-        use crate::matcher::{HeldCapability, Sensitivity};
         use pyana_cell::{AuthRequired, Cell, Ledger, Permissions};
 
         let spec = MatchSpec {

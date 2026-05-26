@@ -162,8 +162,7 @@ use pyana_cell::state::FieldElement;
 use pyana_cell::{CapabilityRef, CellId, Preconditions};
 
 use crate::action::{
-    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event,
-    WitnessBlob, symbol,
+    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event, symbol,
 };
 use crate::forest::CallForest;
 use crate::turn::Turn;
@@ -225,10 +224,6 @@ pub struct TurnBuilder {
     /// Per-action declared excess deltas, parallel to `actions` (for
     /// conservation derivation summing).
     declared_excesses: Vec<i64>,
-    /// Crate-private legacy builders accumulated via the deprecated `.action()`
-    /// method. Drained into `actions` at `.build()` time. No external callers
-    /// remain; this field will be removed when `LegacyActionBuilder` is deleted.
-    legacy_action_builders: Vec<LegacyActionBuilder>,
 }
 
 /// A built `Action` plus its already-built children. Internal to the builder
@@ -266,7 +261,6 @@ impl TurnBuilder {
             previous_receipt_hash: None,
             actions: Vec::new(),
             declared_excesses: Vec::new(),
-            legacy_action_builders: Vec::new(),
         }
     }
 
@@ -312,20 +306,6 @@ impl TurnBuilder {
         self
     }
 
-    /// Legacy entry point — all external callers have been migrated to
-    /// [`TurnBuilder::add_action`]. This method and [`LegacyActionBuilder`]
-    /// are now crate-private. Use `add_action` with a typestate
-    /// [`ActionBuilder`] instead.
-    #[deprecated(
-        since = "0.0.0",
-        note = "All callers migrated. Use add_action with ActionBuilder instead."
-    )]
-    pub(crate) fn action(&mut self, target: CellId, method: &str) -> &mut LegacyActionBuilder {
-        self.legacy_action_builders
-            .push(LegacyActionBuilder::new(target, method));
-        self.legacy_action_builders.last_mut().unwrap()
-    }
-
     /// Set the computron fee for this turn.
     pub fn fee(mut self, fee: u64) -> Self {
         self.fee = fee;
@@ -366,20 +346,6 @@ impl TurnBuilder {
     pub fn build(mut self) -> Turn {
         // Drain legacy builders into the canonical action list. Each legacy
         // action enters in its `UncheckedOptIn` state.
-        for lab in std::mem::take(&mut self.legacy_action_builders) {
-            let (action, children) = lab.into_action_and_children();
-            let declared = action.balance_change.unwrap_or(0);
-            let children = children
-                .into_iter()
-                .map(|c| ActionWithChildren {
-                    action: c,
-                    children: Vec::new(),
-                })
-                .collect();
-            self.actions.push(ActionWithChildren { action, children });
-            self.declared_excesses.push(declared);
-        }
-
         let mut forest = CallForest::new();
         for awc in self.actions {
             awc.attach_to_forest(&mut forest);
@@ -421,9 +387,6 @@ impl TurnBuilder {
         let mut total: i64 = 0;
         for d in &self.declared_excesses {
             total = total.checked_sub(*d).unwrap_or(i64::MAX);
-        }
-        for lab in &self.legacy_action_builders {
-            total = total.saturating_add(lab.compute_excess_recursive());
         }
         total
     }
@@ -1156,289 +1119,5 @@ impl<S: Authorized> ActionBuilder<S> {
         let children = self.children.clone();
         let action = self.build();
         (action, children)
-    }
-}
-
-// ─── Legacy ActionBuilder (compat) ────────────────────────────────────────────
-
-/// Legacy `&mut self`-chain builder, preserved for migration scaffolding.
-///
-/// New code should use the typestate [`ActionBuilder`] directly. This type
-/// always produces actions with `Authorization::Unchecked` and is intended
-/// only for tests/benches that have not yet been migrated.
-///
-/// All external call sites have been migrated to [`ActionBuilder`]. This type
-/// is now crate-private; it will be deleted in a follow-up cleanup once
-/// `TurnBuilder::action()` and `TurnBuilder::legacy_action_builders` are
-/// fully excised.
-pub(crate) struct LegacyActionBuilder {
-    target: CellId,
-    method: String,
-    args: Vec<FieldElement>,
-    authorization: Authorization,
-    preconditions: Preconditions,
-    effects: Vec<Effect>,
-    may_delegate: DelegationMode,
-    commitment_mode: CommitmentMode,
-    balance_change: Option<i64>,
-    witness_blobs: Vec<WitnessBlob>,
-    children: Vec<LegacyActionBuilder>,
-}
-
-impl LegacyActionBuilder {
-    /// Internal constructor used by `TurnBuilder::action()`.
-    fn new(target: CellId, method: &str) -> Self {
-        LegacyActionBuilder {
-            target,
-            method: method.to_string(),
-            args: Vec::new(),
-            // NOTE: This intentionally defaults to `Unchecked`. The
-            // typestate-bearing path (`turn::builder::ActionBuilder`) cannot
-            // reach this state without the loud
-            // `new_unchecked_for_tests` constructor. This legacy path is for
-            // tests/benches only; CI grep-guards production code paths.
-            authorization: Authorization::Unchecked,
-            preconditions: Preconditions::default(),
-            effects: Vec::new(),
-            may_delegate: DelegationMode::None,
-            commitment_mode: CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-            children: Vec::new(),
-        }
-    }
-
-    /// Add an argument to the action.
-    pub fn arg(&mut self, value: FieldElement) -> &mut Self {
-        self.args.push(value);
-        self
-    }
-
-    /// Set the authorization to a signature.
-    pub fn authorize_signature(&mut self, sig: [u8; 64]) -> &mut Self {
-        self.authorization = Authorization::from_sig_bytes(sig);
-        self
-    }
-
-    /// Set the authorization to a ZK proof with its bound (action, resource) pair.
-    pub fn authorize_proof(
-        &mut self,
-        proof: Vec<u8>,
-        bound_action: impl Into<String>,
-        bound_resource: impl Into<String>,
-    ) -> &mut Self {
-        self.authorization = Authorization::Proof {
-            proof_bytes: proof,
-            bound_action: bound_action.into(),
-            bound_resource: bound_resource.into(),
-        };
-        self
-    }
-
-    /// Set the authorization to a breadstuff capability token.
-    pub fn authorize_breadstuff(&mut self, token: [u8; 32]) -> &mut Self {
-        self.authorization = Authorization::Breadstuff(token);
-        self
-    }
-
-    /// Add an effect to this action.
-    pub fn effect(&mut self, effect: Effect) -> &mut Self {
-        self.effects.push(effect);
-        self
-    }
-
-    /// Set the delegation mode for children.
-    pub fn delegation(&mut self, mode: DelegationMode) -> &mut Self {
-        self.may_delegate = mode;
-        self
-    }
-
-    /// Set a nonce precondition.
-    pub fn require_nonce(&mut self, nonce: u64) -> &mut Self {
-        let cell_pre = self
-            .preconditions
-            .cell_state
-            .get_or_insert_with(Default::default);
-        cell_pre.nonce = Some(nonce);
-        self
-    }
-
-    /// Set a minimum balance precondition.
-    pub fn require_min_balance(&mut self, min: u64) -> &mut Self {
-        let cell_pre = self
-            .preconditions
-            .cell_state
-            .get_or_insert_with(Default::default);
-        cell_pre.min_balance = Some(min);
-        self
-    }
-
-    /// Set a state field equality precondition.
-    pub fn require_field_equals(&mut self, index: usize, value: FieldElement) -> &mut Self {
-        let cell_pre = self
-            .preconditions
-            .cell_state
-            .get_or_insert_with(Default::default);
-        cell_pre.field_equals.push((index, value));
-        self
-    }
-
-    /// Set a proved_state precondition.
-    pub fn require_proved_state(&mut self, expected: bool) -> &mut Self {
-        let cell_pre = self
-            .preconditions
-            .cell_state
-            .get_or_insert_with(Default::default);
-        cell_pre.proved_state = Some(expected);
-        self
-    }
-
-    /// Set preconditions directly.
-    pub fn preconditions(&mut self, pre: Preconditions) -> &mut Self {
-        self.preconditions = pre;
-        self
-    }
-
-    /// Add a child action.
-    pub fn child(&mut self, target: CellId, method: &str) -> &mut LegacyActionBuilder {
-        self.children.push(LegacyActionBuilder::new(target, method));
-        self.children.last_mut().unwrap()
-    }
-
-    /// Set the commitment mode for this action.
-    pub fn commitment_mode(&mut self, mode: CommitmentMode) -> &mut Self {
-        self.commitment_mode = mode;
-        self
-    }
-
-    /// Set a signed balance change for this action (Mina-style excess tracking).
-    pub fn balance_change(&mut self, delta: i64) -> &mut Self {
-        self.balance_change = Some(delta);
-        self
-    }
-
-    fn build_action(&self) -> Action {
-        Action {
-            target: self.target,
-            method: symbol(&self.method),
-            args: self.args.clone(),
-            authorization: self.authorization.clone(),
-            preconditions: self.preconditions.clone(),
-            effects: self.effects.clone(),
-            may_delegate: self.may_delegate,
-            commitment_mode: self.commitment_mode,
-            balance_change: self.balance_change,
-            witness_blobs: vec![],
-        }
-    }
-
-    fn into_action_and_children(self) -> (Action, Vec<Action>) {
-        let action = self.build_action();
-        let children = self
-            .children
-            .into_iter()
-            .map(|c| c.build_action())
-            .collect();
-        (action, children)
-    }
-
-    fn compute_excess_recursive(&self) -> i64 {
-        let mut total: i64 = 0;
-        if let Some(delta) = self.balance_change {
-            total = total.saturating_sub(delta);
-        }
-        for child in &self.children {
-            total = total.saturating_add(child.compute_excess_recursive());
-        }
-        total
-    }
-}
-
-/// Convenience functions for building common effect types on the legacy
-/// builder. Maintained for test scaffolding.
-impl LegacyActionBuilder {
-    pub fn set_field(&mut self, cell: CellId, index: usize, value: FieldElement) -> &mut Self {
-        self.effects.push(Effect::SetField { cell, index, value });
-        self
-    }
-
-    pub fn transfer(&mut self, from: CellId, to: CellId, amount: u64) -> &mut Self {
-        self.effects.push(Effect::Transfer { from, to, amount });
-        self
-    }
-
-    pub fn increment_nonce(&mut self, cell: CellId) -> &mut Self {
-        self.effects.push(Effect::IncrementNonce { cell });
-        self
-    }
-
-    pub fn emit_event(&mut self, cell: CellId, topic: &str, data: Vec<FieldElement>) -> &mut Self {
-        self.effects.push(Effect::EmitEvent {
-            cell,
-            event: Event::new(symbol(topic), data),
-        });
-        self
-    }
-
-    pub fn grant_capability(&mut self, from: CellId, to: CellId, cap: CapabilityRef) -> &mut Self {
-        self.effects.push(Effect::GrantCapability { from, to, cap });
-        self
-    }
-
-    pub fn revoke_capability(&mut self, cell: CellId, slot: u32) -> &mut Self {
-        self.effects.push(Effect::RevokeCapability { cell, slot });
-        self
-    }
-
-    pub fn create_cell(
-        &mut self,
-        public_key: [u8; 32],
-        token_id: [u8; 32],
-        balance: u64,
-    ) -> &mut Self {
-        self.effects.push(Effect::CreateCell {
-            public_key,
-            token_id,
-            balance,
-        });
-        self
-    }
-
-    pub fn set_permissions(
-        &mut self,
-        cell: CellId,
-        new_permissions: pyana_cell::Permissions,
-    ) -> &mut Self {
-        self.effects.push(Effect::SetPermissions {
-            cell,
-            new_permissions,
-        });
-        self
-    }
-
-    pub fn set_verification_key(
-        &mut self,
-        cell: CellId,
-        new_vk: Option<pyana_cell::VerificationKey>,
-    ) -> &mut Self {
-        self.effects
-            .push(Effect::SetVerificationKey { cell, new_vk });
-        self
-    }
-
-    pub fn introduce(
-        &mut self,
-        introducer: CellId,
-        recipient: CellId,
-        target: CellId,
-        permissions: pyana_cell::AuthRequired,
-    ) -> &mut Self {
-        self.effects.push(Effect::Introduce {
-            introducer,
-            recipient,
-            target,
-            permissions,
-        });
-        self
     }
 }

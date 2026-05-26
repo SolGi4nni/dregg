@@ -739,7 +739,9 @@ impl TurnExecutor {
             .get_mut(cell)
             .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
         journal.record_set_nonce(*cell, c.state.nonce());
-        c.state.increment_nonce();
+        if !c.state.increment_nonce() {
+            return Err((TurnError::NonceOverflow { cell: *cell }, path.to_vec()));
+        }
         Ok(())
     }
 
@@ -3041,7 +3043,14 @@ impl TurnExecutor {
         let parent_mut = ledger.get_mut(action_target).unwrap();
         let old_epoch = parent_mut.state.delegation_epoch();
         journal.record_set_delegation_epoch(*action_target, old_epoch);
-        parent_mut.state.bump_delegation_epoch();
+        if !parent_mut.state.bump_delegation_epoch() {
+            return Err((
+                TurnError::NonceOverflow {
+                    cell: *action_target,
+                },
+                path.to_vec(),
+            ));
+        }
 
         let child_mut = ledger.get_mut(child).unwrap();
         journal.record_set_delegation(*child, old_child_delegation);
@@ -3350,10 +3359,27 @@ impl TurnExecutor {
         let queue_mut = ledger.get_mut(queue).unwrap();
         queue_mut.state.fields[1][..8].copy_from_slice(&new_len.to_le_bytes());
 
-        // Store the message hash in field[4] (latest enqueued message).
+        // Store the message hash in field[4] (tail: latest enqueued message).
         let old_field4 = queue_mut.state.fields[4];
         journal.record_set_field(*queue, 4, old_field4);
         queue_mut.state.fields[4] = *message_hash;
+
+        // Field[6] = head message hash (earliest enqueued, for FIFO dequeue ordering).
+        // When the queue transitions from empty (current_len == 0) to non-empty,
+        // the first message is simultaneously the head AND the tail.  Only write
+        // field[6] on this 0→1 transition; subsequent enqueues do NOT touch it,
+        // preserving the original head until it is dequeued.
+        //
+        // NOTE: After a dequeue that leaves len > 1, the head pointer cannot be
+        // advanced without out-of-band knowledge of the next message hash (we do not
+        // store the full message list in queue cell fields).  The advancement gap is
+        // documented at apply_queue_dequeue below.  For single-message queues and
+        // for the 0→1 case this is fully correct FIFO ordering.
+        if current_len == 0 {
+            let old_field6 = queue_mut.state.fields[6];
+            journal.record_set_field(*queue, 6, old_field6);
+            queue_mut.state.fields[6] = *message_hash;
+        }
 
         Ok(())
     }
@@ -3397,6 +3423,29 @@ impl TurnExecutor {
         journal.record_set_field(*queue, 1, old_len_field);
         let queue_mut = ledger.get_mut(queue).unwrap();
         queue_mut.state.fields[1][..8].copy_from_slice(&new_len.to_le_bytes());
+
+        // Update head pointer (field[6]).
+        //
+        // When the queue becomes empty (new_len == 0) the head pointer is reset
+        // to all-zeros so the next enqueue correctly re-establishes it on the
+        // 0→1 transition in apply_queue_enqueue.
+        //
+        // When new_len > 0 the head cannot be advanced to the next message hash
+        // without out-of-band knowledge of the message sequence (queue cell fields
+        // do not store a full message list — only head and tail).  A future
+        // extension (e.g. a committed Merkle list in field[7]) would close this
+        // gap.  For now the head stays pointing at the *original* first message,
+        // which is still the correct FIFO head for a newly-allocated queue that
+        // enqueues messages before any dequeue: after the first dequeue the head
+        // lags by one until the queue drains to zero.  This is strictly better
+        // than the previous behaviour (reading tail = most-recently-enqueued).
+        let old_field6 = queue_mut.state.fields[6];
+        journal.record_set_field(*queue, 6, old_field6);
+        if new_len == 0 {
+            queue_mut.state.fields[6] = [0u8; 32];
+        }
+        // else: head stays; advancement of a multi-message queue requires caller
+        // to supply the next-message hash (future work, see field[7] extension).
 
         // Refund the deposit to the dequeuer.
         let queue_balance = queue_mut.state.balance();
@@ -3583,9 +3632,17 @@ impl TurnExecutor {
                     ledger.get_mut(queue).unwrap().state.fields[1][..8]
                         .copy_from_slice(&new_len.to_le_bytes());
 
+                    // Tail: always updated to latest enqueued message.
                     let old_field4 = ledger.get(queue).unwrap().state.fields[4];
                     journal.record_set_field(*queue, 4, old_field4);
                     ledger.get_mut(queue).unwrap().state.fields[4] = *message_hash;
+
+                    // Head (fields[6]): set on 0→1 transition only.
+                    if current_len == 0 {
+                        let old_field6 = ledger.get(queue).unwrap().state.fields[6];
+                        journal.record_set_field(*queue, 6, old_field6);
+                        ledger.get_mut(queue).unwrap().state.fields[6] = *message_hash;
+                    }
                 }
                 crate::action::QueueTxOp::Dequeue { queue } => {
                     let queue_cell = ledger
@@ -3615,6 +3672,14 @@ impl TurnExecutor {
                     journal.record_set_field(*queue, 1, old_len_field);
                     ledger.get_mut(queue).unwrap().state.fields[1][..8]
                         .copy_from_slice(&new_len.to_le_bytes());
+
+                    // Clear head pointer when queue becomes empty.
+                    let old_field6 = ledger.get(queue).unwrap().state.fields[6];
+                    journal.record_set_field(*queue, 6, old_field6);
+                    if new_len == 0 {
+                        ledger.get_mut(queue).unwrap().state.fields[6] = [0u8; 32];
+                    }
+                    // else: head stays; advancement requires caller-supplied next hash.
 
                     // Refund deposit.
                     let queue_balance = ledger.get(queue).unwrap().state.balance();
@@ -3719,14 +3784,29 @@ impl TurnExecutor {
             }
         }
 
-        // Dequeue from source.
+        // Read the FIFO head message hash from the source before decrementing.
+        // This is the message being moved through the pipeline.
+        let moved_msg_hash = ledger.get(source).unwrap().state.fields[6];
+
+        // Dequeue from source: decrement length.
         let old_source_len_field = ledger.get(source).unwrap().state.fields[1];
         let new_source_len = source_len - 1;
         journal.record_set_field(*source, 1, old_source_len_field);
         ledger.get_mut(source).unwrap().state.fields[1][..8]
             .copy_from_slice(&new_source_len.to_le_bytes());
 
-        // Enqueue to each sink (fan-out).
+        // Clear source head pointer when queue becomes empty; leave otherwise
+        // (multi-message head advancement requires out-of-band state, see
+        // apply_queue_dequeue for the documented gap).
+        {
+            let old_src_field6 = ledger.get(source).unwrap().state.fields[6];
+            journal.record_set_field(*source, 6, old_src_field6);
+            if new_source_len == 0 {
+                ledger.get_mut(source).unwrap().state.fields[6] = [0u8; 32];
+            }
+        }
+
+        // Enqueue to each sink (fan-out): update tail and head pointer.
         for sink in sinks {
             let sink_len = u64::from_le_bytes(
                 ledger.get(sink).unwrap().state.fields[1][..8]
@@ -3738,6 +3818,18 @@ impl TurnExecutor {
             journal.record_set_field(*sink, 1, old_sink_len_field);
             ledger.get_mut(sink).unwrap().state.fields[1][..8]
                 .copy_from_slice(&new_sink_len.to_le_bytes());
+
+            // Update tail (fields[4]).
+            let old_sink_field4 = ledger.get(sink).unwrap().state.fields[4];
+            journal.record_set_field(*sink, 4, old_sink_field4);
+            ledger.get_mut(sink).unwrap().state.fields[4] = moved_msg_hash;
+
+            // Update head (fields[6]) on 0→1 transition only.
+            if sink_len == 0 {
+                let old_sink_field6 = ledger.get(sink).unwrap().state.fields[6];
+                journal.record_set_field(*sink, 6, old_sink_field6);
+                ledger.get_mut(sink).unwrap().state.fields[6] = moved_msg_hash;
+            }
         }
 
         Ok(())
@@ -4053,7 +4145,9 @@ impl TurnExecutor {
         // Bump nonce (orders the refusal with respect to other
         // turns on this cell).
         journal.record_set_nonce(*cell, c.state.nonce());
-        c.state.increment_nonce();
+        if !c.state.increment_nonce() {
+            return Err((TurnError::NonceOverflow { cell: *cell }, path.to_vec()));
+        }
         // Compute audit commitment for slot[4]:
         //   blake3("pyana-refusal-audit-v1" ||
         //          offered_action_commitment ||

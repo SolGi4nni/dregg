@@ -404,7 +404,7 @@ impl PendingTurnRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+    use crate::action::{Action, Authorization, CommitmentMode, DelegationMode};
     use crate::forest::CallForest;
     use pyana_cell::{CellId, Preconditions};
 

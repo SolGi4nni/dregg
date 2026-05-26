@@ -156,7 +156,12 @@ impl TurnExecutor {
         {
             let agent = ledger.get_mut(&turn.agent).unwrap();
             agent.state.set_balance(agent.state.balance() - turn.fee);
-            agent.state.increment_nonce();
+            if !agent.state.increment_nonce() {
+                return TurnResult::Rejected {
+                    reason: TurnError::NonceOverflow { cell: turn.agent },
+                    at_action: vec![],
+                };
+            }
         }
 
         // =====================================================================

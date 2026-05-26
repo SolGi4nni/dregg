@@ -7772,7 +7772,6 @@ fn generate_valid_sovereign_proof_with_new_commit(
     old_commitment: &[u8; 32],
 ) -> (Vec<u8>, [u8; 32]) {
     use pyana_circuit::effect_vm::{CellState, Effect as VmEffect, pi};
-    use pyana_circuit::field::BabyBear;
     use pyana_circuit::stark::{proof_to_bytes, prove};
     use pyana_circuit::{EffectVmAir, generate_effect_vm_trace};
 
@@ -8078,8 +8077,7 @@ fn hash_tree_effects_test(tree: &crate::forest::CallTree, hasher: &mut blake3::H
 fn test_custom_program_proof_carrying_turn() {
     use pyana_circuit::field::BabyBear;
     use pyana_dsl_runtime::{
-        BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
-        ConstraintExpr, PolyTerm, ProgramRegistry,
+        CellProgram, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, ProgramRegistry,
     };
     use std::collections::HashMap;
 
@@ -8659,7 +8657,7 @@ fn test_unfaceted_capability_allows_all_effects() {
 #[test]
 fn test_facet_attenuation_only_restricts() {
     // Test that attenuate_faceted prevents amplification.
-    use pyana_cell::{EFFECT_SET_FIELD, EFFECT_TRANSFER, FACET_STATE_WRITER, FACET_TRANSFER_ONLY};
+    use pyana_cell::{EFFECT_SET_FIELD, FACET_STATE_WRITER, FACET_TRANSFER_ONLY};
 
     let mut cset = pyana_cell::CapabilitySet::new();
     let target = CellId::from_bytes([1u8; 32]);

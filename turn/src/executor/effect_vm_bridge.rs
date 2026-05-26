@@ -348,9 +348,7 @@ pub(super) fn convert_turn_effects_to_vm(
                     // necessarily the beneficiary).
                     let (stake_amount, beneficiary_hash) = obligations
                         .get(obligation_id)
-                        .map(|rec| {
-                            (rec.stake_amount, hash_to_bb(rec.beneficiary.as_bytes()))
-                        })
+                        .map(|rec| (rec.stake_amount, hash_to_bb(rec.beneficiary.as_bytes())))
                         .unwrap_or((0, hash_to_bb(cell_id.as_bytes())));
                     vm_effects.push(VmEffect::SlashObligation {
                         obligation_id: hash_to_bb(obligation_id),
@@ -1087,11 +1085,9 @@ pub(super) fn convert_turn_effects_to_vm(
                     // Low-30-bit truncation of the end height for the AIR
                     // balance-arithmetic shape; consistent with how other
                     // u64-height fields are projected in this bridge.
-                    let end_height_bb = BabyBear::new(
-                        (*prefix_end_height & ((1u64 << 30) - 1)) as u32,
-                    );
-                    let terminal_hash =
-                        hash_to_bb(&checkpoint.archive_terminal_receipt_hash);
+                    let end_height_bb =
+                        BabyBear::new((*prefix_end_height & ((1u64 << 30) - 1)) as u32);
+                    let terminal_hash = hash_to_bb(&checkpoint.archive_terminal_receipt_hash);
                     vm_effects.push(VmEffect::ReceiptArchive {
                         target: target_hash,
                         archive_end_height: end_height_bb,
@@ -1122,8 +1118,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         offered_action_commitment[3],
                     ]);
                     let reason_hash = BabyBear::new(
-                        (discriminant ^ commitment_trunc)
-                            % pyana_circuit::field::BABYBEAR_P,
+                        (discriminant ^ commitment_trunc) % pyana_circuit::field::BABYBEAR_P,
                     );
                     vm_effects.push(VmEffect::Refusal {
                         target: target_hash,
@@ -1178,6 +1173,7 @@ mod tests {
     use crate::action::Effect;
     use crate::builder::{ActionBuilder, TurnBuilder};
     use crate::executor::ObligationRecord;
+    use crate::turn::Turn;
 
     use super::convert_turn_effects_to_vm;
 
@@ -1191,10 +1187,9 @@ mod tests {
 
     fn make_single_effect_turn(agent: CellId, target: CellId, effect: Effect) -> Turn {
         let mut builder = TurnBuilder::new(agent, 0);
-        let action =
-            ActionBuilder::new_unchecked_for_tests(agent, "test", target)
-                .effect(effect)
-                .build();
+        let action = ActionBuilder::new_unchecked_for_tests(agent, "test", target)
+            .effect(effect)
+            .build();
         builder.add_action(action);
         builder.fee(0).build()
     }
@@ -1237,8 +1232,7 @@ mod tests {
         // Honest projection: reads real stake from obligations map.
         let effects_honest = convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &obligations);
         // Forged projection: empty obligations (as if stake_return = 0).
-        let effects_forged =
-            convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &HashMap::new());
+        let effects_forged = convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &HashMap::new());
 
         // The honest projection must carry the real stake_return.
         match &effects_honest[0] {
@@ -1295,15 +1289,11 @@ mod tests {
             },
         );
 
-        let turn = make_single_effect_turn(
-            cell_id,
-            cell_id,
-            Effect::SlashObligation { obligation_id },
-        );
+        let turn =
+            make_single_effect_turn(cell_id, cell_id, Effect::SlashObligation { obligation_id });
 
         let effects_honest = convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &obligations);
-        let effects_forged =
-            convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &HashMap::new());
+        let effects_forged = convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &HashMap::new());
 
         match &effects_honest[0] {
             VmEffect::SlashObligation { stake_amount, .. } => {
@@ -1356,7 +1346,9 @@ mod tests {
         let mut ledger_forged = Ledger::new();
         {
             // fields[6] stays [0u8; 32] by default.
-            ledger_forged.insert_cell(make_cell_with_seed(5, 0)).unwrap();
+            ledger_forged
+                .insert_cell(make_cell_with_seed(5, 0))
+                .unwrap();
         }
 
         let turn =

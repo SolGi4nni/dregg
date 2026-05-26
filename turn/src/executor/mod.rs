@@ -58,7 +58,9 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, Authorization, DelegationMode, Effect, Event};
 use crate::budget_gate::BudgetGate;
 use crate::error::TurnError;
-use crate::escrow::{CommittedEscrow, EscrowClaimAuth, EscrowCondition, EscrowRecord, verify_escrow_claim};
+use crate::escrow::{
+    CommittedEscrow, EscrowClaimAuth, EscrowCondition, EscrowRecord, verify_escrow_claim,
+};
 use crate::forest::CallTree;
 use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;

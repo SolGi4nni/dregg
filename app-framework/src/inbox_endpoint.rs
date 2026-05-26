@@ -1,4 +1,6 @@
 //! HTTP wrapper around [`CapInbox`].
+// Storage types are deprecated pending cell-program migration (STORAGE-AS-CELL-PROGRAMS.md §3.1).
+#![allow(deprecated)]
 //!
 //! `InboxEndpoint` exposes three routes:
 //!
