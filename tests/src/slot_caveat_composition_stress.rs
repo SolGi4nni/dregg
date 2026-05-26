@@ -168,13 +168,13 @@ fn predicate_all_honest_variants_one_violation_rejects_whole_program() {
             index: 0,
             value: field_from_u64(1),
         },
-        StateConstraint::Monotonic { index: 7 },
-        StateConstraint::StrictMonotonic { index: 8 },
+        StateConstraint::Monotonic { index: 6 },
+        StateConstraint::StrictMonotonic { index: 7 }, // valid: indices 0..7 only
     ];
     let program = CellProgram::Predicate(constraints);
-    let old = state_with(&[(7, 50), (8, 50)]);
-    // Monotonic broken: slot 7 decreases from 50 → 49.
-    let new = state_with(&[(0, 1), (7, 49), (8, 60)]);
+    let old = state_with(&[(6, 50), (7, 50)]);
+    // Monotonic broken: slot 6 decreases from 50 → 49.
+    let new = state_with(&[(0, 1), (6, 49), (7, 60)]);
     assert!(
         program.evaluate(&new, Some(&old), None).is_err(),
         "single conjunct violation must reject the whole conjunction"
@@ -404,13 +404,12 @@ fn cases_program_does_not_try_other_arms_when_matching_arm_rejects() {
 /// methods, then an inner `AllOf` mixing `MethodIs` and `SlotChanged`.
 /// This stresses the guard-tree composition.
 #[test]
-#[ignore = "blocks on TransitionGuard::SlotChanged: cell program evaluator needs old+new state visible to guard matcher (matches() is called but uses TransitionMeta only; SlotChanged path needs full state plumb-through)"]
 fn cases_with_compound_transition_guards() {
     use pyana_turn::action::symbol;
     let m_a = symbol("act_a");
     let m_b = symbol("act_b");
 
-    let cases = vec![TransitionCase {
+    let program = CellProgram::Cases(vec![TransitionCase {
         guard: TransitionGuard::AllOf(vec![
             TransitionGuard::AnyOf(vec![
                 TransitionGuard::MethodIs { method: m_a },
@@ -419,9 +418,39 @@ fn cases_with_compound_transition_guards() {
             TransitionGuard::SlotChanged { index: 0 },
         ]),
         constraints: vec![StateConstraint::Monotonic { index: 0 }],
-    }];
-    let _program = CellProgram::Cases(cases);
-    panic!("blocked");
+    }]);
+
+    // Case 1: method=m_a, slot 0 increased => AllOf matches, Monotonic satisfied => Ok
+    let old = state_with(&[(0, 5)]);
+    let new = state_with(&[(0, 10)]);
+    let meta_a = TransitionMeta::new(m_a, 0);
+    assert!(
+        program.evaluate_with_meta(&new, Some(&old), None, &meta_a).is_ok(),
+        "m_a + slot 0 changed + monotonic satisfied => must accept"
+    );
+
+    // Case 2: method=m_b, slot 0 increased => AllOf matches, Monotonic satisfied => Ok
+    let meta_b = TransitionMeta::new(m_b, 0);
+    assert!(
+        program.evaluate_with_meta(&new, Some(&old), None, &meta_b).is_ok(),
+        "m_b + slot 0 changed + monotonic satisfied => must accept"
+    );
+
+    // Case 3: method=m_a, slot 0 did NOT change => SlotChanged is false =>
+    //         AllOf fails => no case matched => must reject
+    let unchanged = state_with(&[(0, 5)]);
+    assert!(
+        program.evaluate_with_meta(&unchanged, Some(&old), None, &meta_a).is_err(),
+        "m_a + slot 0 unchanged => SlotChanged false => no case matched => must reject"
+    );
+
+    // Case 4: slot 0 changed but method is neither m_a nor m_b =>
+    //         AnyOf fails => AllOf fails => no case matched => must reject
+    let unrelated_meta = TransitionMeta::new(symbol("unrelated"), 0);
+    assert!(
+        program.evaluate_with_meta(&new, Some(&old), None, &unrelated_meta).is_err(),
+        "unrelated method + slot changed => AnyOf fails => no case matched => must reject"
+    );
 }
 
 // ===========================================================================
