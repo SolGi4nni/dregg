@@ -661,10 +661,55 @@ impl TurnExecutor {
                 || !t.cross_effect_dependencies.is_empty()
                 || !t.effect_witness_index_map.is_empty()
             {
+                // Without ledger snapshot: any Burn binding proof routes
+                // through the snapshot-aware error path. Callers that need
+                // Burn coverage must use
+                // `verify_proof_carrying_turn_bundle_with_ledger`.
                 Self::verify_effect_binding_proofs(t)?;
             }
         }
 
+        Ok(())
+    }
+
+    /// Snapshot-aware variant of `verify_proof_carrying_turn_bundle`.
+    /// Same shape, but threads a `&Ledger` into the binding-proof sweep so
+    /// `SCHEMA_BURN` proofs can reconstruct `(old_balance, new_balance)`
+    /// from the target cell's state. Closes AIR-SOUNDNESS-AUDIT #75.
+    ///
+    /// To avoid running the binding sweep twice (once snapshot-free,
+    /// once snapshot-aware), this function temporarily clones the turn
+    /// without its `effect_binding_proofs` and routes the cross-bundle
+    /// PI check through that copy; then it issues the snapshot-aware
+    /// binding-proof sweep against the original turn.
+    pub fn verify_proof_carrying_turn_bundle_with_ledger(
+        bundle_pis: &[Vec<pyana_circuit::field::BabyBear>],
+        turn: Option<&Turn>,
+        ledger: Option<&Ledger>,
+    ) -> Result<(), TurnError> {
+        // Run the cross-bundle PI checks via the existing path, with a
+        // shallow clone that omits `effect_binding_proofs` so the
+        // snapshot-free Burn arm is skipped. The other two
+        // binding-extension fields (`cross_effect_dependencies` and
+        // `effect_witness_index_map`) are ledger-independent and can
+        // run either way; we drop all three from the clone and re-issue
+        // the full sweep below with the snapshot-aware extractor.
+        let stripped_turn: Option<Turn> = turn.map(|t| {
+            let mut t = t.clone();
+            t.effect_binding_proofs = Vec::new();
+            t.cross_effect_dependencies = Vec::new();
+            t.effect_witness_index_map = Vec::new();
+            t
+        });
+        Self::verify_proof_carrying_turn_bundle(bundle_pis, stripped_turn.as_ref())?;
+        if let Some(t) = turn {
+            if !t.effect_binding_proofs.is_empty()
+                || !t.cross_effect_dependencies.is_empty()
+                || !t.effect_witness_index_map.is_empty()
+            {
+                Self::verify_effect_binding_proofs_with_ledger(t, ledger)?;
+            }
+        }
         Ok(())
     }
 
@@ -694,6 +739,27 @@ impl TurnExecutor {
     /// generalized AIR exposes a `witness_blob_hash` schema slot when
     /// the binding schema declares one).
     pub fn verify_effect_binding_proofs(turn: &Turn) -> Result<(), TurnError> {
+        // Backwards-compat wrapper: callers that don't have a ledger
+        // snapshot (the `verify_proof_carrying_turn_bundle` static path,
+        // and existing structural tests) route through here. The Burn
+        // arm is the only schema whose executor-side projection requires
+        // a snapshot (`old_balance`, `new_balance`); without one it
+        // continues to surface as a schema/variant mismatch, the same
+        // pre-AIR-#75 shape, so cleartext non-Burn turns are unaffected.
+        Self::verify_effect_binding_proofs_with_ledger(turn, None)
+    }
+
+    /// Snapshot-aware variant. Pass `Some(ledger)` to wire the per-effect
+    /// snapshot-dependent extractors (today: `SCHEMA_BURN`); pass `None`
+    /// for the snapshot-free legacy behavior. Closes
+    /// `AIR-SOUNDNESS-AUDIT.md` #75 by giving the Burn arm of
+    /// `extract_binding_params` the pre/post ledger snapshot it needs
+    /// to reconstruct `old_balance` / `new_balance` from `Effect::Burn`
+    /// alone.
+    pub fn verify_effect_binding_proofs_with_ledger(
+        turn: &Turn,
+        ledger: Option<&Ledger>,
+    ) -> Result<(), TurnError> {
         use pyana_circuit::effect_action_air as eaa;
         use pyana_circuit::stark;
 
@@ -722,15 +788,29 @@ impl TurnExecutor {
             })?;
 
             // Reconstruct expected (fields, amounts) from the executor's
-            // view of the effect's typed parameters.
-            let (exp_fields, exp_amounts) = Self::extract_binding_params(eff, &bp.schema_id)
-                .ok_or_else(|| {
+            // view of the effect's typed parameters. Burn routes through
+            // the snapshot-aware extractor; everything else uses the
+            // snapshot-free path.
+            let (exp_fields, exp_amounts) = if bp.schema_id == "pyana-effect-burn-v1" {
+                Self::extract_burn_binding_params(eff, ledger).ok_or_else(|| {
+                    TurnError::InvalidExecutionProof(format!(
+                        "effect_binding_proofs[{}]: Burn binding requires a ledger \
+                         snapshot to reconstruct (old_balance, new_balance); the \
+                         caller did not provide one OR the effect at index {} is \
+                         not an Effect::Burn / its target balance is not on the \
+                         ledger",
+                        i, bp.effect_index
+                    ))
+                })?
+            } else {
+                Self::extract_binding_params(eff, &bp.schema_id).ok_or_else(|| {
                     TurnError::InvalidExecutionProof(format!(
                         "effect_binding_proofs[{}]: effect at index {} does not match \
                          schema_id {:?} (schema/variant mismatch)",
                         i, bp.effect_index, bp.schema_id
                     ))
-                })?;
+                })?
+            };
             if exp_fields.len() != schema.field_count || exp_amounts.len() != schema.amount_count {
                 return Err(TurnError::InvalidExecutionProof(format!(
                     "effect_binding_proofs[{}]: schema {:?} expects {} fields + \
@@ -1025,14 +1105,16 @@ impl TurnExecutor {
             ("pyana-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
                 Some((vec![*child.as_bytes()], vec![]))
             }
-            // SCHEMA_BURN (AIR-SOUNDNESS-AUDIT.md #75) is wired below in
+            // SCHEMA_BURN (AIR-SOUNDNESS-AUDIT.md #75) is wired in
             // `extract_burn_binding_params` because it needs the pre/post
-            // ledger snapshot (`old_balance`, `new_balance`) which the
-            // generic snapshot-free extractor cannot reconstruct. Returning
-            // None here means the wire-PI matching loop must route Burn
-            // through the snapshot-aware path; see
-            // `verify_effect_binding_proofs` for the snapshot-supplied
-            // call site.
+            // ledger snapshot (`old_balance`, `new_balance`) which this
+            // snapshot-free extractor cannot reconstruct. The snapshot-
+            // aware path is taken from
+            // `verify_effect_binding_proofs_with_ledger` when the schema
+            // id is `pyana-effect-burn-v1`; the snapshot-free path keeps
+            // returning None here as a structural rejection so a Burn
+            // binding proof can never silently slip through without
+            // ledger context.
             ("pyana-effect-burn-v1", Effect::Burn { .. }) => None,
             // Other variants: extend as wire-in surface grows. Today
             // the lane closes NoteSpend/NoteCreate/BridgeLock at full
@@ -1040,6 +1122,48 @@ impl TurnExecutor {
             // schema_ids are valid for off-AIR construction but not
             // re-extracted by this executor-side projection. Add new
             // arms here as their executor-side projection is needed.
+            _ => None,
+        }
+    }
+
+    /// Snapshot-aware Burn binding parameter extractor (AIR-SOUNDNESS-AUDIT
+    /// #75). `SCHEMA_BURN` has the field layout
+    /// `fields = [target]`, `amounts = [old_balance, new_balance, amount,
+    /// was_burn_flag]`. Of those, only `target` and `amount` are present on
+    /// `Effect::Burn`; the executor-side projection reconstructs `old_balance`
+    /// from the supplied ledger snapshot and `new_balance = old_balance -
+    /// amount` (saturating at zero — runtime apply rejects underflow
+    /// separately). `was_burn_flag` is always `1` for any Burn binding proof
+    /// since the AIR enforces the disclosure bit. Returns `None` if `ledger`
+    /// is `None`, if `effect` is not a `Burn`, or if the target cell is not
+    /// in the ledger.
+    pub(super) fn extract_burn_binding_params(
+        effect: &Effect,
+        ledger: Option<&Ledger>,
+    ) -> Option<(Vec<[u8; 32]>, Vec<u64>)> {
+        match effect {
+            Effect::Burn {
+                target,
+                slot: _slot,
+                amount,
+            } => {
+                let ledger = ledger?;
+                let cell = ledger.get(target)?;
+                let old_balance = cell.state.balance();
+                // `new_balance` is the post-Burn balance. The AIR's
+                // algebraic constraint is `new = old - amount` with a
+                // boolean borrow; underflow is rejected by the executor's
+                // runtime `InsufficientBalance` check before this code is
+                // reached. Use saturating_sub so an off-AIR sanity test
+                // doesn't panic; a real Burn that underflows would be
+                // rejected by the runtime apply gate before we ever try
+                // to verify its binding proof.
+                let new_balance = old_balance.saturating_sub(*amount);
+                Some((
+                    vec![*target.as_bytes()],
+                    vec![old_balance, new_balance, *amount, 1],
+                ))
+            }
             _ => None,
         }
     }
@@ -1294,6 +1418,20 @@ impl TurnExecutor {
         )],
         turn: Option<&Turn>,
     ) -> Result<(), TurnError> {
+        Self::verify_bundle_with_stark_and_ledger(bundle, turn, None)
+    }
+
+    /// Snapshot-aware variant of `verify_bundle_with_stark` that threads a
+    /// `&Ledger` into the binding-proof sweep. Closes AIR #75 for callers
+    /// who carry a Burn binding proof in `turn.effect_binding_proofs`.
+    pub fn verify_bundle_with_stark_and_ledger(
+        bundle: &[(
+            pyana_circuit::stark::StarkProof,
+            Vec<pyana_circuit::field::BabyBear>,
+        )],
+        turn: Option<&Turn>,
+        ledger: Option<&Ledger>,
+    ) -> Result<(), TurnError> {
         use pyana_circuit::stark;
 
         for (i, (proof, pis)) in bundle.iter().enumerate() {
@@ -1303,7 +1441,7 @@ impl TurnExecutor {
             })?;
         }
         let pi_vecs: Vec<Vec<_>> = bundle.iter().map(|(_, pis)| pis.clone()).collect();
-        Self::verify_proof_carrying_turn_bundle(&pi_vecs, turn)
+        Self::verify_proof_carrying_turn_bundle_with_ledger(&pi_vecs, turn, ledger)
     }
 
     /// Read the per-cell `max_custom_effects` from the cell's program manifest.

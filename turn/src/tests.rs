@@ -10773,6 +10773,258 @@ mod binding_proof_executor_tests {
         let h_c = t2.hash();
         assert_ne!(h_a, h_c, "adding a binding proof must change the hash");
     }
+
+    // -----------------------------------------------------------------------
+    // Burn binding seam (AIR-SOUNDNESS-AUDIT.md #75): the snapshot-aware
+    // extractor `extract_burn_binding_params` reconstructs (old_balance,
+    // new_balance) from the ledger, restoring the wire-PI matching loop for
+    // Burn. Without the snapshot, Burn binding proofs surface a structured
+    // error rather than a silent pass (matching the pre-#75 shape).
+    // -----------------------------------------------------------------------
+
+    use crate::action::{Action, Authorization, DelegationMode, Effect};
+    use crate::forest::{CallForest, CallTree};
+    use crate::turn::Turn;
+    use pyana_cell::permissions::{AuthRequired, Permissions};
+    use pyana_cell::{Cell, Ledger, Preconditions};
+
+    fn permissive_perms() -> Permissions {
+        Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        }
+    }
+
+    fn permissive_cell_with_balance(seed: u8, balance: u64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        let token = [0u8; 32];
+        let mut cell = Cell::with_balance(pk, token, balance);
+        cell.permissions = permissive_perms();
+        cell
+    }
+
+    fn turn_with_burn_binding(
+        agent: CellId,
+        target: CellId,
+        amount: u64,
+        public_inputs_u32: Vec<u32>,
+        proof_bytes: Vec<u8>,
+    ) -> Turn {
+        let action = Action {
+            target,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Burn {
+                target,
+                slot: 0,
+                amount,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let tree = CallTree {
+            action,
+            children: vec![],
+            hash: [0u8; 32],
+        };
+        let mut turn = Turn {
+            agent,
+            nonce: 0,
+            call_forest: CallForest {
+                roots: vec![tree],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        turn.effect_binding_proofs.push(EffectBindingProof {
+            effect_index: 0,
+            schema_id: "pyana-effect-burn-v1".to_string(),
+            proof_bytes,
+            public_inputs: public_inputs_u32,
+        });
+        turn
+    }
+
+    /// Without a ledger snapshot, a Burn binding proof surfaces a
+    /// structured InvalidExecutionProof error. This pins the pre-#75
+    /// shape so the binding sweep does not silently accept a Burn proof
+    /// it cannot reconstruct.
+    #[test]
+    fn burn_binding_without_ledger_snapshot_rejects() {
+        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::stark;
+
+        let target = CellId::from_bytes([0xB7; 32]);
+        let witness = EffectActionWitness {
+            schema: SCHEMA_BURN,
+            fields: vec![*target.as_bytes()],
+            amounts: vec![1000, 900, 100, 1],
+        };
+        let proof = prove_effect_action(&witness);
+        let pi = witness.public_inputs();
+        let pi_u32: Vec<u32> = pi.iter().map(|f| f.0).collect();
+        let proof_bytes = stark::proof_to_bytes(&proof);
+
+        let agent = CellId::from_bytes([0x10; 32]);
+        let turn = turn_with_burn_binding(agent, target, 100, pi_u32, proof_bytes);
+
+        // No ledger passed → snapshot-free path → Burn arm returns None →
+        // structured error.
+        let r = TurnExecutor::verify_effect_binding_proofs(&turn);
+        match r {
+            Err(crate::error::TurnError::InvalidExecutionProof(msg)) => {
+                assert!(
+                    msg.contains("Burn") || msg.contains("schema/variant"),
+                    "expected Burn snapshot-required error, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidExecutionProof, got {:?}", other),
+        }
+    }
+
+    /// Happy path: with a ledger snapshot whose target balance matches the
+    /// (old_balance, amount → new_balance) the prover claimed, the
+    /// snapshot-aware extractor reconstructs the same PI and the wire-PI
+    /// matching loop accepts.
+    #[test]
+    fn burn_binding_with_honest_ledger_snapshot_verifies() {
+        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::stark;
+
+        // Build a ledger where the target's balance is exactly the
+        // `old_balance` we claim in the binding proof.
+        let target_cell = permissive_cell_with_balance(0xB8, 1000);
+        let target_id = target_cell.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(target_cell).unwrap();
+
+        // Prover claims: old=1000 (from ledger), new=900, amount=100.
+        let witness = EffectActionWitness {
+            schema: SCHEMA_BURN,
+            fields: vec![*target_id.as_bytes()],
+            amounts: vec![1000, 900, 100, 1],
+        };
+        let proof = prove_effect_action(&witness);
+        let pi = witness.public_inputs();
+        let pi_u32: Vec<u32> = pi.iter().map(|f| f.0).collect();
+        let proof_bytes = stark::proof_to_bytes(&proof);
+
+        let agent = CellId::from_bytes([0x10; 32]);
+        let turn = turn_with_burn_binding(agent, target_id, 100, pi_u32, proof_bytes);
+
+        let r = TurnExecutor::verify_effect_binding_proofs_with_ledger(&turn, Some(&ledger));
+        assert!(
+            r.is_ok(),
+            "honest Burn with matching ledger snapshot must verify, got: {r:?}"
+        );
+    }
+
+    /// A Burn AIR PI that LIES about `amount` (claims 50 but the runtime
+    /// `Effect::Burn` records 100) → executor's snapshot-aware
+    /// reconstruction gives `new = 1000 - 100 = 900`, but the prover's
+    /// claimed PI uses `new = 1000 - 50 = 950`. The wire-PI matching loop
+    /// MUST reject. This is the matching loop catching it.
+    #[test]
+    fn burn_binding_air_pi_lies_about_amount_is_rejected() {
+        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::stark;
+
+        let target_cell = permissive_cell_with_balance(0xB9, 1000);
+        let target_id = target_cell.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(target_cell).unwrap();
+
+        // Prover constructs a Burn AIR PI that claims amount=50 (lying;
+        // the runtime effect carries amount=100). The witness is
+        // self-consistent (1000 - 50 = 950) so the STARK itself verifies;
+        // the wire-PI check is what rejects.
+        let witness = EffectActionWitness {
+            schema: SCHEMA_BURN,
+            fields: vec![*target_id.as_bytes()],
+            amounts: vec![1000, 950, 50, 1],
+        };
+        let proof = prove_effect_action(&witness);
+        let pi = witness.public_inputs();
+        let pi_u32: Vec<u32> = pi.iter().map(|f| f.0).collect();
+        let proof_bytes = stark::proof_to_bytes(&proof);
+
+        // The runtime Effect::Burn records amount=100. Executor-side
+        // reconstruction: (old=1000, new=1000-100=900, amount=100,
+        // was_burn=1). The prover's PI claims amount=50 → mismatch.
+        let agent = CellId::from_bytes([0x10; 32]);
+        let turn = turn_with_burn_binding(agent, target_id, 100, pi_u32, proof_bytes);
+
+        let r = TurnExecutor::verify_effect_binding_proofs_with_ledger(&turn, Some(&ledger));
+        match r {
+            Err(crate::error::TurnError::InvalidExecutionProof(msg)) => {
+                assert!(
+                    msg.contains("wire PI disagrees"),
+                    "expected wire-PI mismatch on lying Burn amount, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected InvalidExecutionProof(wire PI disagrees), got: {:?}",
+                other
+            ),
+        }
+    }
+
+    /// A Burn binding proof for a target NOT in the ledger surfaces a
+    /// structured error rather than silently accepting. This protects
+    /// against a verifier supplying an empty / stale ledger and getting a
+    /// "yes" they shouldn't.
+    #[test]
+    fn burn_binding_unknown_target_in_ledger_rejects() {
+        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::stark;
+
+        let target = CellId::from_bytes([0xBA; 32]);
+        // Ledger has no cell at `target`.
+        let ledger = Ledger::new();
+
+        let witness = EffectActionWitness {
+            schema: SCHEMA_BURN,
+            fields: vec![*target.as_bytes()],
+            amounts: vec![1000, 900, 100, 1],
+        };
+        let proof = prove_effect_action(&witness);
+        let pi = witness.public_inputs();
+        let pi_u32: Vec<u32> = pi.iter().map(|f| f.0).collect();
+        let proof_bytes = stark::proof_to_bytes(&proof);
+
+        let agent = CellId::from_bytes([0x10; 32]);
+        let turn = turn_with_burn_binding(agent, target, 100, pi_u32, proof_bytes);
+
+        let r = TurnExecutor::verify_effect_binding_proofs_with_ledger(&turn, Some(&ledger));
+        assert!(
+            matches!(r, Err(crate::error::TurnError::InvalidExecutionProof(_))),
+            "expected InvalidExecutionProof when target missing from ledger, got: {r:?}"
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
