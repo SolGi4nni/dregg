@@ -218,6 +218,7 @@ impl AgentRuntime {
     ///
     /// A [`TurnReceipt`] proving the turn was committed, or an error if
     /// execution was rejected.
+    #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         // LOCK ORDER: ledger → nonce → cipherclerk (canonical order to prevent deadlock).
         // We acquire ledger first, then nonce, then cipherclerk for signing/receipts.
@@ -322,6 +323,7 @@ impl AgentRuntime {
     ///
     /// Use this when you need full control over the turn structure (multiple
     /// root actions, child actions, custom authorization, etc.)
+    #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute_turn(&self, turn: &Turn) -> Result<TurnReceipt, SdkError> {
         // LOCK ORDER: ledger → nonce → cipherclerk (canonical order to prevent deadlock).
         let mut ledger = self.ledger.lock().unwrap();
@@ -602,6 +604,7 @@ impl SubAgent {
     /// Each turn is bound to this sub-agent's receipt chain via `previous_receipt_hash`,
     /// which prevents reordering and replay of sub-agent turns. The binding is updated
     /// after each successful commit.
+    #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
 

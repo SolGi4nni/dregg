@@ -220,6 +220,7 @@ impl AppCipherclerk {
     /// `Authorization::Signature(..)`); pair with
     /// [`EmbeddedExecutor::submit_turn`] (or any in-process executor /
     /// remote node `/turns/submit`) to actually mint the cell.
+    #[must_use = "the signed Turn must be submitted to an executor to actually mint the cell"]
     pub fn create_from_factory(
         &self,
         factory_vk: [u8; 32],
@@ -365,6 +366,7 @@ impl EmbeddedExecutor {
     /// runtime's owned cipherclerk copy). This is the path that closes
     /// `APPS-USERSPACE-GAPS.md` §Gap 4 — handlers can now actually
     /// observe a receipt instead of building an action and dropping it.
+    #[must_use = "dropping the receipt silently discards proof that the turn was committed"]
     pub fn submit_turn(&self, turn: &Turn) -> Result<TurnReceipt, ExecutorSubmitError> {
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         rt.execute_turn(turn)
@@ -379,6 +381,7 @@ impl EmbeddedExecutor {
     /// builds the canonical single-action call forest the executor
     /// expects. Useful for endpoints that produced their own signed
     /// action through [`AppCipherclerk::make_action`] and just want to ship it.
+    #[must_use = "dropping the receipt silently discards proof that the turn was committed"]
     pub fn submit_action(
         &self,
         cipherclerk: &AppCipherclerk,

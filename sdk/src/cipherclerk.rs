@@ -1195,6 +1195,7 @@ impl AgentCipherclerk {
     /// # Returns
     ///
     /// A [`HeldToken`] representing the unrestricted root token.
+    #[must_use = "a minted token that is never used or stored provides no capability"]
     pub fn mint_token(&mut self, root_key: &[u8; 32], service: &str) -> HeldToken {
         let kid = format!("{}:{}", service, self.next_token_id);
         self.next_token_id += 1;
@@ -1229,6 +1230,7 @@ impl AgentCipherclerk {
     ///
     /// A new [`HeldToken`] with the restrictions applied, or an error if
     /// attenuation is not possible (e.g., empty restrictions).
+    #[must_use = "the attenuated token must be stored or presented; dropping it leaks a capability"]
     pub fn attenuate(
         &mut self,
         token: &HeldToken,
@@ -1276,6 +1278,7 @@ impl AgentCipherclerk {
     /// # Returns
     ///
     /// A [`DelegatedToken`] containing the attenuated token for the delegatee.
+    #[must_use = "the DelegatedToken must be transmitted to the delegatee; dropping it wastes the delegation"]
     pub fn delegate(
         &mut self,
         token: &HeldToken,
