@@ -79,12 +79,12 @@
 //! CLIs use.
 
 use pyana_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
+    Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
+    CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    InputRef, InspectorDescriptor, StarbridgeAppContext, StateConstraint, WitnessedPredicate,
+    WitnessedPredicateKind, canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32,
+    symbol,
 };
-use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
-use pyana_cell::program::AuthorizedSet;
 
 // =============================================================================
 // State schema (per-registry-cell field-slot layout)
@@ -112,7 +112,7 @@ pub const EXPIRY_SLOT: usize = 4;
 /// State field slot at which the name's revocation marker is recorded.
 ///
 /// Zero = active. Non-zero = revoked (the non-zero value is the
-/// `blake3_field(b"revoked:" || name_hash)` tombstone so the
+/// `field_from_bytes(b"revoked:" || name_hash)` tombstone so the
 /// revocation is bound to the name being revoked and replays do not
 /// move a different name's tombstone here).
 ///
@@ -329,9 +329,9 @@ pub fn build_register_action(
     owner: [u8; 32],
     expiry_height: u64,
 ) -> Action {
-    let name_hash = blake3_field(name.as_bytes());
-    let owner_hash = blake3_field(&owner);
-    let expiry_field = u64_field(expiry_height);
+    let name_hash = field_from_bytes(name.as_bytes());
+    let owner_hash = field_from_bytes(&owner);
+    let expiry_field = field_from_u64(expiry_height);
 
     let effects = vec![
         Effect::SetField {
@@ -376,8 +376,8 @@ pub fn build_renew_action(
     name: &str,
     new_expiry_height: u64,
 ) -> Action {
-    let name_hash = blake3_field(name.as_bytes());
-    let new_expiry_field = u64_field(new_expiry_height);
+    let name_hash = field_from_bytes(name.as_bytes());
+    let new_expiry_field = field_from_u64(new_expiry_height);
 
     let effects = vec![
         Effect::SetField {
@@ -412,9 +412,9 @@ pub fn build_transfer_action(
     old_owner: [u8; 32],
     new_owner: [u8; 32],
 ) -> Action {
-    let name_hash = blake3_field(name.as_bytes());
-    let old_hash = blake3_field(&old_owner);
-    let new_hash = blake3_field(&new_owner);
+    let name_hash = field_from_bytes(name.as_bytes());
+    let old_hash = field_from_bytes(&old_owner);
+    let new_hash = field_from_bytes(&new_owner);
 
     let effects = vec![
         Effect::SetField {
@@ -453,7 +453,7 @@ pub fn build_revoke_action(
     registry_cell: CellId,
     name: &str,
 ) -> Action {
-    let name_hash = blake3_field(name.as_bytes());
+    let name_hash = field_from_bytes(name.as_bytes());
     let tombstone = revoked_tombstone(name);
 
     let effects = vec![
@@ -474,7 +474,7 @@ pub fn build_revoke_action(
 /// Build the on-ledger [`Action`] that re-points a name's resolve target.
 ///
 /// Updates [`RESOLVE_TARGET_SLOT`] to a new 32-byte target (conventionally
-/// `blake3_field(target_uri.as_bytes())` where `target_uri` is the
+/// `field_from_bytes(target_uri.as_bytes())` where `target_uri` is the
 /// `pyana://cell/<id>` URI the name should resolve to) and emits a
 /// `name-target-set` event.
 ///
@@ -490,7 +490,7 @@ pub fn build_set_target_action(
     name: &str,
     target: FieldElement,
 ) -> Action {
-    let name_hash = blake3_field(name.as_bytes());
+    let name_hash = field_from_bytes(name.as_bytes());
 
     let effects = vec![
         Effect::SetField {
@@ -510,7 +510,7 @@ pub fn build_set_target_action(
 /// Compute the canonical revocation tombstone for a name.
 ///
 /// Public so off-chain indexers / cross-app code can reproduce it.
-/// The tombstone is `blake3_field(b"pyana-nameservice-revoked:" || name_bytes)`,
+/// The tombstone is `field_from_bytes(b"pyana-nameservice-revoked:" || name_bytes)`,
 /// which is content-addressed to the name being revoked. This means:
 ///
 /// - A replay attacker cannot move one name's tombstone into another
@@ -523,7 +523,7 @@ pub fn revoked_tombstone(name: &str) -> FieldElement {
     let mut input = Vec::with_capacity(b"pyana-nameservice-revoked:".len() + name.len());
     input.extend_from_slice(b"pyana-nameservice-revoked:");
     input.extend_from_slice(name.as_bytes());
-    blake3_field(&input)
+    field_from_bytes(&input)
 }
 
 /// Convenience: hash a name string to its canonical 32-byte field.
@@ -531,20 +531,20 @@ pub fn revoked_tombstone(name: &str) -> FieldElement {
 /// Public for off-chain indexers + cross-app code that wants to
 /// reproduce the value the executor sees in `NAME_HASH_SLOT`.
 pub fn name_hash(name: &str) -> FieldElement {
-    blake3_field(name.as_bytes())
+    field_from_bytes(name.as_bytes())
 }
 
 /// Convenience: encode a u64 as the canonical big-endian-padded
 /// [`FieldElement`] used by the nameservice's `EXPIRY_SLOT`.
 pub fn expiry_field(expiry_height: u64) -> FieldElement {
-    u64_field(expiry_height)
+    field_from_u64(expiry_height)
 }
 
 /// Convenience: hash a target URI string to a [`FieldElement`] suitable
 /// for [`RESOLVE_TARGET_SLOT`]. Public so callers can prepare the
 /// target value the same way the inspector chain expects.
 pub fn resolve_target(uri: &str) -> FieldElement {
-    blake3_field(uri.as_bytes())
+    field_from_bytes(uri.as_bytes())
 }
 
 // =============================================================================
@@ -633,8 +633,8 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "revoked":     REVOKED_SLOT,
                 "target":      RESOLVE_TARGET_SLOT,
             },
-            "factory_vk_hex": hex_encode(&factory_vk),
-            "child_program_vk_hex": hex_encode(&name_child_program_vk()),
+            "factory_vk_hex": hex_encode_32(&factory_vk),
+            "child_program_vk_hex": hex_encode_32(&name_child_program_vk()),
         }),
     });
 
@@ -674,16 +674,6 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     });
 
     factory_vk
-}
-
-/// Hex-encode a 32-byte array (small helper used by inspector
-/// descriptor JSON). Kept private to this crate.
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(64);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 // =============================================================================
@@ -791,9 +781,9 @@ pub fn build_register_with_credential_action(
     credential_schema_id: [u8; 32],
     credential_presentation_proof_bytes: Vec<u8>,
 ) -> Action {
-    let name_hash_val = blake3_field(name.as_bytes());
-    let owner_hash = blake3_field(&owner);
-    let expiry_field = u64_field(expiry_height);
+    let name_hash_val = field_from_bytes(name.as_bytes());
+    let owner_hash = field_from_bytes(&owner);
+    let expiry_field = field_from_u64(expiry_height);
     let issuer_field = *issuer_cell.as_bytes();
 
     let effects = vec![
@@ -831,28 +821,6 @@ pub fn build_register_with_credential_action(
         credential_presentation_proof_bytes,
     )];
     action
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/// Hash arbitrary bytes into a [`FieldElement`] (32-byte) suitable
-/// for effect data fields.
-fn blake3_field(bytes: &[u8]) -> FieldElement {
-    *blake3::hash(bytes).as_bytes()
-}
-
-/// Encode a `u64` as a big-endian-padded 32-byte [`FieldElement`].
-///
-/// Big-endian so the low bytes are at the end — matches the
-/// `field_from_u64_be` convention used in `pyana_cell::program`
-/// (which keeps SetField values comparable to integer-typed
-/// constraint operands).
-fn u64_field(value: u64) -> FieldElement {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&value.to_be_bytes());
-    out
 }
 
 // =============================================================================
@@ -1070,7 +1038,7 @@ mod tests {
     fn state_with(name_hash: FieldElement, expiry: u64) -> pyana_cell::state::CellState {
         let mut s = empty_state();
         s.fields[NAME_HASH_SLOT] = name_hash;
-        s.fields[EXPIRY_SLOT] = u64_field(expiry);
+        s.fields[EXPIRY_SLOT] = field_from_u64(expiry);
         s
     }
 
@@ -1081,7 +1049,7 @@ mod tests {
         // the prior value is zero; Monotonic permits any expiry on init.
         let program = build_name_program();
         let old = empty_state();
-        let new = state_with(blake3_field(b"alice.pyana"), 1_000);
+        let new = state_with(field_from_bytes(b"alice.pyana"), 1_000);
         let result = program.evaluate(&new, Some(&old), None);
         assert!(
             result.is_ok(),
@@ -1092,8 +1060,8 @@ mod tests {
     #[test]
     fn slot_caveats_reregister_taken_name_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
-        let bob_hash = blake3_field(b"bob.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
+        let bob_hash = field_from_bytes(b"bob.pyana");
         let mut old = state_with(alice_hash, 1_000);
         old.set_nonce(1); // not a fresh cell
         // Attempt: overwrite NAME_HASH_SLOT with a different value.
@@ -1113,7 +1081,7 @@ mod tests {
     #[test]
     fn slot_caveats_expiry_decrease_is_monotonic_violation() {
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         // Attempt: shorten expiry from 5000 → 4000.
@@ -1134,7 +1102,7 @@ mod tests {
     fn slot_caveats_legal_renewal_succeeds() {
         // Renewal extends expiry — Monotonic permits new >= old.
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         let new = state_with(alice_hash, 10_000);
@@ -1209,7 +1177,7 @@ mod tests {
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
                 assert_eq!(*index, EXPIRY_SLOT);
-                assert_eq!(*value, u64_field(2_000));
+                assert_eq!(*value, field_from_u64(2_000));
             }
             other => panic!("expected SetField, got {other:?}"),
         }
@@ -1226,7 +1194,7 @@ mod tests {
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
                 assert_eq!(*index, OWNER_HASH_SLOT);
-                assert_eq!(*value, blake3_field(&new));
+                assert_eq!(*value, field_from_bytes(&new));
             }
             other => panic!("expected SetField, got {other:?}"),
         }
@@ -1338,7 +1306,7 @@ mod tests {
             .as_str()
             .expect("factory_vk_hex must be a string");
         assert_eq!(hex.len(), 64);
-        assert_eq!(hex, hex_encode(&NAME_FACTORY_VK));
+        assert_eq!(hex, hex_encode_32(&NAME_FACTORY_VK));
     }
 
     #[test]
@@ -1389,14 +1357,14 @@ mod tests {
     fn name_hash_is_blake3_of_name_bytes() {
         // Public helper must match the value the executor sees in
         // NAME_HASH_SLOT.
-        let direct = blake3_field(b"alice.pyana");
+        let direct = field_from_bytes(b"alice.pyana");
         let helper = name_hash("alice.pyana");
         assert_eq!(direct, helper);
     }
 
     #[test]
     fn expiry_field_helper_matches_internal_encoding() {
-        let direct = u64_field(5_000);
+        let direct = field_from_u64(5_000);
         let helper = expiry_field(5_000);
         assert_eq!(direct, helper);
         // Sanity: low byte ends up at position 31 (big-endian).
@@ -1408,7 +1376,7 @@ mod tests {
     #[test]
     fn slot_caveats_double_revoke_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         old.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
@@ -1431,7 +1399,7 @@ mod tests {
     #[test]
     fn slot_caveats_un_revoke_clearing_to_zero_is_write_once_violation() {
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         old.fields[REVOKED_SLOT] = revoked_tombstone("alice.pyana");
@@ -1454,7 +1422,7 @@ mod tests {
         // First revocation on an active name: REVOKED_SLOT transitions
         // FIELD_ZERO → tombstone. WriteOnce permits.
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         let mut new = state_with(alice_hash, 5_000);
@@ -1471,7 +1439,7 @@ mod tests {
         // RESOLVE_TARGET_SLOT carries no slot caveats — the owner may
         // freely set, change, and re-clear the slot.
         let program = build_name_program();
-        let alice_hash = blake3_field(b"alice.pyana");
+        let alice_hash = field_from_bytes(b"alice.pyana");
         let mut old = state_with(alice_hash, 5_000);
         old.set_nonce(1);
         old.fields[RESOLVE_TARGET_SLOT] = resolve_target("pyana://cell/first");
@@ -1491,7 +1459,7 @@ mod tests {
         // The constraint and predicate MUST agree on the 32-byte
         // commitment, otherwise the executor cannot dispatch.
         let issuer = CellId::from_bytes([42u8; 32]);
-        let schema_id = blake3_field(b"verified-developer-v1");
+        let schema_id = field_from_bytes(b"verified-developer-v1");
         let constraint = identity_attested_tier_constraint(issuer, schema_id);
         let predicate = identity_attested_witness_predicate(issuer, schema_id, 0);
 
@@ -1514,7 +1482,7 @@ mod tests {
     fn build_register_with_credential_attaches_proof_witness_blob() {
         let cipherclerk = test_cipherclerk();
         let issuer = CellId::from_bytes([42u8; 32]);
-        let schema_id = blake3_field(b"verified-developer-v1");
+        let schema_id = field_from_bytes(b"verified-developer-v1");
         let presentation_bytes = b"presentation-proof-stub".to_vec();
         let action = build_register_with_credential_action(
             &cipherclerk,
@@ -1560,8 +1528,8 @@ mod tests {
         // proofs to the correct registered verifier instance.
         let issuer_a = CellId::from_bytes([1u8; 32]);
         let issuer_b = CellId::from_bytes([2u8; 32]);
-        let schema_a = blake3_field(b"verified-developer-v1");
-        let schema_b = blake3_field(b"verified-developer-v2");
+        let schema_a = field_from_bytes(b"verified-developer-v1");
+        let schema_b = field_from_bytes(b"verified-developer-v2");
         let c1 = match identity_attested_tier_constraint(issuer_a, schema_a) {
             StateConstraint::SenderAuthorized {
                 set:

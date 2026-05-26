@@ -71,11 +71,11 @@
 #![forbid(unsafe_code)]
 
 use pyana_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
+    Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
+    CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk,
+    field_from_u64, hex_encode_32, symbol,
 };
-use pyana_cell::program::AuthorizedSet;
 
 pub use pyana_credentials::{
     AttrValue, AttributeAttenuation, Credential, CredentialAttributes, CredentialSchema,
@@ -350,7 +350,7 @@ pub fn build_issue_credential_action(
 ) -> Action {
     let id = credential.id();
     let holder_id = credential.holder_id;
-    let counter_field = u64_field(new_counter);
+    let counter_field = field_from_u64(new_counter);
     let effects = vec![
         Effect::SetField {
             cell: issuer_cell,
@@ -486,7 +486,7 @@ pub fn build_verify_presentation_action(
     let accept = result.is_ok();
     let revealed_facts_commitment = wide_hash_bytes(&presentation.proof.revealed_facts_commitment);
     let accept_field = bool_field(accept);
-    let pred_count = u64_field(presentation.predicate_proofs.len() as u64);
+    let pred_count = field_from_u64(presentation.predicate_proofs.len() as u64);
 
     let topic = if accept {
         "presentation-accepted"
@@ -529,7 +529,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     let factory_vk = ctx.register_factory(issuer_factory_descriptor());
 
     let module_path = "/starbridge-apps/identity/inspectors.js";
-    let factory_vk_hex = hex_encode(&factory_vk);
+    let factory_vk_hex = hex_encode_32(&factory_vk);
 
     // 2. Per-credential view (read-only).
     ctx.register_inspector(InspectorDescriptor {
@@ -540,7 +540,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "uri_prefix": "pyana://credential/",
             "summary_fields": ["schema", "holder_id", "issued_at", "not_after", "status"],
             "factory_vk_hex": factory_vk_hex,
-            "child_program_vk_hex": hex_encode(&issuer_child_program_vk()),
+            "child_program_vk_hex": hex_encode_32(&issuer_child_program_vk()),
         }),
     });
 
@@ -670,15 +670,6 @@ pub fn credential_set_predicate(
 // Helpers
 // =============================================================================
 
-/// Encode a `u64` as a 32-byte big-endian-padded `FieldElement`. Matches
-/// the `field_from_u64_be` convention used in `pyana_cell::program` so
-/// integer-typed constraints see comparable operands.
-fn u64_field(value: u64) -> FieldElement {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&value.to_be_bytes());
-    out
-}
-
 /// Encode a boolean as a 32-byte `FieldElement` (zero or one in the LSB).
 fn bool_field(value: bool) -> FieldElement {
     let mut out = [0u8; 32];
@@ -699,15 +690,6 @@ fn wide_hash_bytes(hash: &pyana_circuit::binding::WideHash) -> FieldElement {
         hasher.update(&limb.as_u32().to_le_bytes());
     }
     *hasher.finalize().as_bytes()
-}
-
-/// Hex-encode a 32-byte digest.
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(64);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 // =============================================================================
@@ -941,7 +923,7 @@ mod tests {
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
                 assert_eq!(*index, ISSUANCE_COUNTER_SLOT);
-                assert_eq!(*value, u64_field(1));
+                assert_eq!(*value, field_from_u64(1));
             }
             other => panic!("expected SetField on counter slot, got {other:?}"),
         }

@@ -160,12 +160,12 @@
 //!    factory + inspector descriptors into a shared host context.
 
 use pyana_app_framework::{
-    Action, AppCipherclerk, AuthRequired, Authorization, CapTarget, CapTemplate, CellId, CellMode,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, symbol,
+    Action, AppCipherclerk, AuthRequired, AuthorizedSet, Authorization, CapTarget, CapTemplate,
+    CellId, CellMode, CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor,
+    FieldConstraint, FieldElement, InputRef, InspectorDescriptor, StarbridgeAppContext,
+    StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate, WitnessedPredicateKind,
+    field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
-use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
-use pyana_cell::program::{AuthorizedSet, CellProgram, TransitionCase, TransitionGuard};
 use pyana_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use pyana_turn::action::WitnessBlob;
 
@@ -655,10 +655,10 @@ pub fn build_propose_table_update_action(
     description: &str,
 ) -> Action {
     let proposed_root = route_table_commitment(proposed_route_table);
-    let description_hash = blake3_field(description.as_bytes());
+    let description_hash = field_from_bytes(description.as_bytes());
     let proposal_root =
         compose_proposal_root(&proposed_root, dispute_window_height, &description_hash);
-    let window_field = u64_field(dispute_window_height);
+    let window_field = field_from_u64(dispute_window_height);
 
     let effects = vec![
         Effect::SetField {
@@ -709,10 +709,10 @@ pub fn build_vote_on_proposal_action(
     vote_kind: VoteKind,
     vote_weight: u64,
 ) -> Action {
-    let voter_pk_hash = blake3_field(&cipherclerk.public_key().0);
+    let voter_pk_hash = field_from_bytes(&cipherclerk.public_key().0);
     let new_proposal_root =
         compose_vote_update(&prior_proposal_root, &voter_pk_hash, vote_kind, vote_weight);
-    let weight_field = u64_field(vote_weight);
+    let weight_field = field_from_u64(vote_weight);
     let kind_tag = vote_kind.tag_field();
 
     let effects = vec![
@@ -802,7 +802,7 @@ pub fn build_commit_table_update_action(
     governance_committee_root: FieldElement,
 ) -> Action {
     let new_root = route_table_commitment(committed_route_table);
-    let new_version_field = u64_field(new_version);
+    let new_version_field = field_from_u64(new_version);
 
     let effects = vec![
         Effect::SetField {
@@ -884,7 +884,7 @@ pub fn build_register_service_action(
     path: &str,
     target_cell: CellId,
 ) -> Action {
-    let path_hash = blake3_field(path.as_bytes());
+    let path_hash = field_from_bytes(path.as_bytes());
     let target_field = cell_id_field(target_cell);
 
     let effects = vec![Effect::EmitEvent {
@@ -1041,9 +1041,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "dispute_window_height":       DISPUTE_WINDOW_HEIGHT_SLOT,
                 "pending_proposal_root":       PENDING_PROPOSAL_ROOT_SLOT,
             },
-            "factory_vk_hex":              hex_encode(&factory_vk),
-            "child_program_vk_hex":        hex_encode(&GOVERNANCE_CHILD_PROGRAM_VK),
-            "governance_vk_hex":           hex_encode(&GOVERNANCE_VK),
+            "factory_vk_hex":              hex_encode_32(&factory_vk),
+            "child_program_vk_hex":        hex_encode_32(&GOVERNANCE_CHILD_PROGRAM_VK),
+            "governance_vk_hex":           hex_encode_32(&GOVERNANCE_VK),
             "namespace_service_kind":      NAMESPACE_SERVICE_KIND,
         }),
     });
@@ -1054,7 +1054,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "component": "pyana-namespace-route-table",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
             "uri_prefix": "pyana://cell/",
-            "factory_vk_hex": hex_encode(&GOVERNANCE_FACTORY_VK),
+            "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
         })
     });
 
@@ -1064,7 +1064,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "component": "pyana-namespace-proposal",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
             "uri_prefix": "pyana://cell/",
-            "factory_vk_hex": hex_encode(&GOVERNANCE_FACTORY_VK),
+            "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
             "builders_module": "/starbridge-apps/governed-namespace/turn-builders.js",
             "methods": [
                 "propose_table_update",
@@ -1081,7 +1081,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "component": "pyana-namespace-dispatch",
             "module": "/starbridge-apps/governed-namespace/inspectors.js",
             "uri_prefix": "pyana://cell/",
-            "factory_vk_hex": hex_encode(&GOVERNANCE_FACTORY_VK),
+            "factory_vk_hex": hex_encode_32(&GOVERNANCE_FACTORY_VK),
         })
     });
 
@@ -1183,7 +1183,7 @@ pub fn register_nameservice_route_action(
     target_cell: CellId,
     nameservice_resolve_target: FieldElement,
 ) -> Action {
-    let path_hash = blake3_field(path.as_bytes());
+    let path_hash = field_from_bytes(path.as_bytes());
     let target_field = cell_id_field(target_cell);
 
     let effects = vec![Effect::EmitEvent {
@@ -1202,16 +1202,16 @@ pub fn register_nameservice_route_action(
 // =============================================================================
 
 /// Hash arbitrary bytes into a 32-byte `FieldElement`.
-pub fn blake3_field(bytes: &[u8]) -> FieldElement {
-    *blake3::hash(bytes).as_bytes()
-}
+///
+/// Deprecated alias for [`pyana_app_framework::field_from_bytes`]; kept
+/// `pub` because integration tests import this name directly.
+pub use pyana_app_framework::field_from_bytes as blake3_field;
 
 /// Encode a `u64` as a big-endian-padded 32-byte `FieldElement`.
-pub fn u64_field(value: u64) -> FieldElement {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&value.to_be_bytes());
-    out
-}
+///
+/// Deprecated alias for [`pyana_app_framework::field_from_u64`]; kept
+/// `pub` because integration tests import this name directly.
+pub use pyana_app_framework::field_from_u64 as u64_field;
 
 /// Encode a `CellId` as a 32-byte `FieldElement`.
 ///
@@ -1219,16 +1219,6 @@ pub fn u64_field(value: u64) -> FieldElement {
 /// reference target cells.
 pub fn cell_id_field(cell_id: CellId) -> FieldElement {
     *cell_id.as_bytes()
-}
-
-/// Hex-encode a 32-byte array (small helper used by inspector
-/// descriptor JSON). Kept private to this crate.
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(64);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 // =============================================================================
@@ -1256,7 +1246,7 @@ mod tests {
     }
 
     fn dummy_committee_root() -> FieldElement {
-        blake3_field(b"committee-v0")
+        field_from_bytes(b"committee-v0")
     }
 
     fn dummy_route_table(routes: &[(&str, &str)]) -> RouteTable {
@@ -1547,7 +1537,7 @@ mod tests {
     fn vote_action_shape() {
         let cipherclerk = test_cipherclerk();
         let cell = test_cell();
-        let prior_root = blake3_field(b"prior-proposal-root");
+        let prior_root = field_from_bytes(b"prior-proposal-root");
         let action =
             build_vote_on_proposal_action(&cipherclerk, cell, prior_root, VoteKind::Approve, 1);
 
@@ -1595,7 +1585,7 @@ mod tests {
         match &action.effects[1] {
             Effect::SetField { index, value, .. } => {
                 assert_eq!(*index, VERSION_SLOT as usize);
-                assert_eq!(*value, u64_field(1));
+                assert_eq!(*value, field_from_u64(1));
             }
             other => panic!("expected SetField, got {other:?}"),
         }
@@ -1646,7 +1636,7 @@ mod tests {
             Effect::EmitEvent { event, .. } => {
                 assert_eq!(event.topic, symbol("service-registered"));
                 assert_eq!(event.data.len(), 2);
-                assert_eq!(event.data[0], blake3_field(b"/treasury/main"));
+                assert_eq!(event.data[0], field_from_bytes(b"/treasury/main"));
                 assert_eq!(event.data[1], cell_id_field(target));
             }
             other => panic!("expected EmitEvent, got {other:?}"),
@@ -1675,7 +1665,7 @@ mod tests {
         let cc1 = AppCipherclerk::new(AgentCipherclerk::new(), [1u8; 32]);
         let cc2 = AppCipherclerk::new(AgentCipherclerk::new(), [1u8; 32]);
         let cell = test_cell();
-        let prior = blake3_field(b"prior");
+        let prior = field_from_bytes(b"prior");
         let a1 = build_vote_on_proposal_action(&cc1, cell, prior, VoteKind::Approve, 1);
         let a2 = build_vote_on_proposal_action(&cc2, cell, prior, VoteKind::Approve, 1);
         // Signatures differ even though logical input is identical.
@@ -1700,8 +1690,8 @@ mod tests {
 
     #[test]
     fn proposal_root_is_deterministic() {
-        let root = blake3_field(b"new-table");
-        let desc = blake3_field(b"desc");
+        let root = field_from_bytes(b"new-table");
+        let desc = field_from_bytes(b"desc");
         let a = compose_proposal_root(&root, 100, &desc);
         let b = compose_proposal_root(&root, 100, &desc);
         assert_eq!(a, b);
@@ -1709,16 +1699,16 @@ mod tests {
 
     #[test]
     fn proposal_root_sensitive_to_proposed_table() {
-        let desc = blake3_field(b"desc");
-        let r1 = compose_proposal_root(&blake3_field(b"a"), 100, &desc);
-        let r2 = compose_proposal_root(&blake3_field(b"b"), 100, &desc);
+        let desc = field_from_bytes(b"desc");
+        let r1 = compose_proposal_root(&field_from_bytes(b"a"), 100, &desc);
+        let r2 = compose_proposal_root(&field_from_bytes(b"b"), 100, &desc);
         assert_ne!(r1, r2);
     }
 
     #[test]
     fn proposal_root_sensitive_to_window() {
-        let root = blake3_field(b"new-table");
-        let desc = blake3_field(b"desc");
+        let root = field_from_bytes(b"new-table");
+        let desc = field_from_bytes(b"desc");
         let r1 = compose_proposal_root(&root, 100, &desc);
         let r2 = compose_proposal_root(&root, 200, &desc);
         assert_ne!(r1, r2);
@@ -1726,8 +1716,8 @@ mod tests {
 
     #[test]
     fn vote_update_distinguishes_approve_vs_reject() {
-        let prior = blake3_field(b"prior");
-        let voter = blake3_field(b"voter");
+        let prior = field_from_bytes(b"prior");
+        let voter = field_from_bytes(b"voter");
         let approve = compose_vote_update(&prior, &voter, VoteKind::Approve, 1);
         let reject = compose_vote_update(&prior, &voter, VoteKind::Reject, 1);
         assert_ne!(approve, reject);
@@ -1735,9 +1725,9 @@ mod tests {
 
     #[test]
     fn vote_update_distinguishes_voters() {
-        let prior = blake3_field(b"prior");
-        let a = blake3_field(b"voter-a");
-        let b = blake3_field(b"voter-b");
+        let prior = field_from_bytes(b"prior");
+        let a = field_from_bytes(b"voter-a");
+        let b = field_from_bytes(b"voter-b");
         let r1 = compose_vote_update(&prior, &a, VoteKind::Approve, 1);
         let r2 = compose_vote_update(&prior, &b, VoteKind::Approve, 1);
         assert_ne!(r1, r2);
@@ -1802,9 +1792,9 @@ mod tests {
 
         let factory_hex = insp.descriptor["factory_vk_hex"].as_str().unwrap();
         assert_eq!(factory_hex.len(), 64);
-        assert_eq!(factory_hex, hex_encode(&GOVERNANCE_FACTORY_VK));
+        assert_eq!(factory_hex, hex_encode_32(&GOVERNANCE_FACTORY_VK));
         let gov_hex = insp.descriptor["governance_vk_hex"].as_str().unwrap();
-        assert_eq!(gov_hex, hex_encode(&GOVERNANCE_VK));
+        assert_eq!(gov_hex, hex_encode_32(&GOVERNANCE_VK));
     }
 
     #[test]
@@ -1909,7 +1899,7 @@ mod tests {
     #[test]
     fn credential_gated_voting_constraint_and_predicate_agree_on_commitment() {
         let issuer = CellId::from_bytes([55u8; 32]);
-        let schema_id = blake3_field(b"verified-developer-v1");
+        let schema_id = field_from_bytes(b"verified-developer-v1");
         let constraint = credential_gated_voting_constraint(issuer, schema_id);
         let predicate = credential_gated_witness_predicate(issuer, schema_id, 0);
 
@@ -1932,8 +1922,8 @@ mod tests {
     fn credential_gated_constraint_distinguishes_issuer_and_schema() {
         let i_a = CellId::from_bytes([1u8; 32]);
         let i_b = CellId::from_bytes([2u8; 32]);
-        let s_a = blake3_field(b"schema-a");
-        let s_b = blake3_field(b"schema-b");
+        let s_a = field_from_bytes(b"schema-a");
+        let s_b = field_from_bytes(b"schema-b");
         let extract = |c: StateConstraint| match c {
             StateConstraint::SenderAuthorized {
                 set:
@@ -1956,7 +1946,7 @@ mod tests {
         let cclerk = test_cipherclerk();
         let cell = test_cell();
         let target_cell = CellId::from_bytes([77u8; 32]);
-        let ns_resolve = blake3_field(b"pyana://cell/bob.dev-actual-target");
+        let ns_resolve = field_from_bytes(b"pyana://cell/bob.dev-actual-target");
 
         let action =
             register_nameservice_route_action(&cclerk, cell, "/bob.dev", target_cell, ns_resolve);
@@ -1969,7 +1959,7 @@ mod tests {
                 // The 3-fact form for the nameservice-bound variant:
                 // [path_hash, target_cell_id, nameservice_resolve_target]
                 assert_eq!(event.data.len(), 3);
-                assert_eq!(event.data[0], blake3_field(b"/bob.dev"));
+                assert_eq!(event.data[0], field_from_bytes(b"/bob.dev"));
                 assert_eq!(event.data[1], cell_id_field(target_cell));
                 assert_eq!(event.data[2], ns_resolve);
             }

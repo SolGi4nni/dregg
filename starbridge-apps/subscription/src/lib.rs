@@ -152,11 +152,11 @@
 //! state. See the README for the dependency note.
 
 use pyana_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
+    Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
+    CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
+    canonical_program_vk, hex_encode_32, symbol,
 };
-use pyana_cell::program::{AuthorizedSet, CellProgram, TransitionCase, TransitionGuard};
 
 // =============================================================================
 // Slot layout
@@ -821,8 +821,8 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "publishers_root", "consumers_root", "message_root",
                 "latest_payload_hash",
             ],
-            "factory_vk_hex": hex_encode(&factory_vk),
-            "child_program_vk_hex": hex_encode(&subscription_child_program_vk()),
+            "factory_vk_hex": hex_encode_32(&factory_vk),
+            "child_program_vk_hex": hex_encode_32(&subscription_child_program_vk()),
         }),
     });
 
@@ -833,7 +833,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "component": "pyana-subscription-publish-form",
             "module": "/starbridge-apps/subscription/inspectors.js",
             "uri_prefix": "pyana://cell/",
-            "factory_vk_hex": hex_encode(&SUBSCRIPTION_FACTORY_VK),
+            "factory_vk_hex": hex_encode_32(&SUBSCRIPTION_FACTORY_VK),
         })
     });
 
@@ -843,20 +843,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "component": "pyana-subscription-feed",
             "module": "/starbridge-apps/subscription/inspectors.js",
             "uri_prefix": "pyana://cell/",
-            "factory_vk_hex": hex_encode(&SUBSCRIPTION_FACTORY_VK),
+            "factory_vk_hex": hex_encode_32(&SUBSCRIPTION_FACTORY_VK),
         })
     });
 
     factory_vk
-}
-
-/// Hex-encode a 32-byte array (used by inspector JSON descriptors).
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(64);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 // =============================================================================
