@@ -1,7 +1,5 @@
 # `dregg` - Dragon's Egg
 
-\[fka. `dregg`, working on the rename!\]
-
 Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a direct expression of my original impetus to build <https://rbg.systems>. Maybe Dragon's Egg will be a Robigalia userspace. In the meantime, here's what the LLMs have to say about it:
 
 (end-of-human-text)
