@@ -1,9 +1,9 @@
 # TOPLEVEL-MD-INDEX — canonical map of workspace-root markdown
 
-**Date:** 2026-05-24. **Purpose:** one-stop index of every `.md` at the
-workspace root, plus what was moved into `audits/` and `docs-history/`
-during this audit pass. New design docs added at the toplevel should
-be listed here.
+**Date:** 2026-05-25 (updated; original: 2026-05-24). **Purpose:** one-stop
+index of every `.md` at the workspace root, plus what was moved into
+`audits/` and `docs-history/` during this audit pass. New design docs
+added at the toplevel should be listed here.
 
 Categories:
 
@@ -20,19 +20,33 @@ preserved for archaeology, not as current truth.
 
 ---
 
-## Toplevel `.md` (33 files)
+## Toplevel `.md` (57 files)
+
+### Foundational / entry
 
 | File | Class | One-line description |
 |---|---|---|
 | `README.md` | entry | Repo entry point; one-screen pitch + key capabilities. |
-| `NEW-WORLD.md` | canonical | The current coherent story of what pyana is — layers, naming, composition. Read after `README.md`. |
+| `NEW-WORLD.md` | canonical | The current coherent story of what pyana is — layers, naming, composition. Read after `README.md`. Updated 2026-05-25. |
+| `TOPLEVEL-MD-INDEX.md` | entry | This file. Updated 2026-05-25. |
+
+### Canonical reference
+
+| File | Class | One-line description |
+|---|---|---|
 | `PYANA_DESIGN.md` | canonical | Older architectural overview (Fabric / Cells / Turns). Pre-dates `NEW-WORLD.md`; still accurate at the headline level. |
-| `BOUNDARIES.md` | canonical | What's inside, what's outside, what enforces the boundary. Companion audit set: `audits/AUDIT-privacy.md`, `audits/AUDIT-distributed-semantics.md`, `audits/AUDIT-protocol-composition.md`, `audits/AUDIT-federation.md`. |
+| `BOUNDARIES.md` | canonical | What's inside, what's outside, what enforces the boundary. Companion audit set: `audits/AUDIT-privacy.md`, etc. |
 | `PREDICATE-INVENTORY.md` | canonical | Every predicate in pyana + the `WitnessedPredicate` unification. |
-| `EFFECT-VM-SHAPE-A.md` | canonical | Origin master plan for codebase remediation. Stage 3 complete; Stage 7+ work has spawned its own design docs. Updated status header points at current canonical references. |
-| `EXECUTOR-HONESTY-AUDIT.md` | canonical | Framework + threat ledger for executor honesty (T1..T9+). Tracks which threats are closed at AIR, recursion, or off-chain. |
+| `EFFECT-VM-SHAPE-A.md` | canonical | Origin master plan for codebase remediation. Stage 3 complete; Stage 7+ has its own docs. |
+| `EXECUTOR-HONESTY-AUDIT.md` | canonical | Framework + threat ledger for executor honesty (T1..T15). Tracks which threats are closed at AIR, recursion, or off-chain. |
 | `CAVEAT-LAYER-COVERAGE.md` | canonical | Three-layer audit (slot caveats × token caveats × Effect-VM AIRs) of constraint vocabulary coverage. |
-| `STARBRIDGE-APPS-PLAN.md` | design-active | Plan for `starbridge-apps/` as the post-`apps/` userspace. Implementation underway (`starbridge-apps/nameservice`, `starbridge-apps/identity`, `starbridge-apps/subscription` already exist). |
+| `SILVER-DEBT.md` | canonical | Per-item debt ledger (Tier 1/2/3) mapping every place the implementation falls short of the docs/tagline. §0 lists items retired this session. Added 2026-05-25. |
+
+### Design (active)
+
+| File | Class | One-line description |
+|---|---|---|
+| `STARBRIDGE-APPS-PLAN.md` | design-active | Plan for `starbridge-apps/` as the post-`apps/` userspace. |
 | `STUDIO-REFACTOR-PICKUP.md` | design-active | Hand-off doc to the studio agent on returning. |
 | `SILVER-VISION-E2E-VERIFICATION.md` | design-active | Cross-federation end-to-end verification design (bearer cap demo lineage). |
 | `VK-AS-RE-EXECUTION-RECIPE.md` | design-active | Pre-recursion VKs commit canonical bytes — canonical encoders implemented; starbridge-apps migrated. |
@@ -43,18 +57,65 @@ preserved for archaeology, not as current truth.
 | `FEDERATION-UNIFICATION-DESIGN.md` | design-active | Collapse the four disjoint "federation" concepts into one canonical type. |
 | `DFA-RATIONALIZATION-DESIGN.md` | design-active | Decide the future shape of the three DFA / pattern-routing implementations. |
 | `SOVEREIGN-WITNESS-AIR-DESIGN.md` | design-active | Implementation design for the algebraic teeth identified in `audits/AUDIT-sovereign-witness-teeth.md`. |
-| `STAGE-7-GAMMA-2-PI-DESIGN.md` | design-active | Bilateral cross-cell algebraic binding via shared PIs (Phase 1). Phase 1 implemented; supersedes `docs-history/STAGE-7-PLUS-DESIGN.md` and `docs-history/STAGE-7-GAMMA-AGGREGATION-DESIGN.md`. |
-| `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md` | design-study | Sketch for Phase 2 (joint aggregation AIR) — picks up after the Phase 1 PI binding lands. |
-| `PICKLES-OUTER-LAYER-PLAN.md` | design-study | Plan for Kimchi/Pickles as the outer recursive layer. |
-| `KIMCHI-SURVEY.md` | design-study | Inventory + decision input on Kimchi-vs-Plonky3 recursion. |
-| `DESIGN-dsl.md` | design-active | Pyana user-facing DSL surface. Supersedes the ad-hoc surface audited in `audits/AUDIT-dsl.md`. |
+| `STAGE-7-GAMMA-2-PI-DESIGN.md` | design-active | Bilateral cross-cell algebraic binding via shared PIs (Phase 1). Phase 1 implemented. |
+| `DESIGN-dsl.md` | design-active | Pyana user-facing DSL surface. |
 | `DESIGN-receipts.md` | design-active | Sovereign / federation / bridge receipt formats; BLS ThresholdQC; IBC-style bridge phases. |
 | `DESIGN-commitment-framework.md` | design-active | Typed `Commitment<T>` framework, dual BLAKE3+Poseidon2. |
 | `DESIGN-captp-integration.md` | design-active | Wire `captp/` into the AIR variants (`ExportSturdyRef` / `EnlivenRef` / `DropRef` / `ValidateHandoff`). |
 | `DESIGN-pipelined-send.md` | design-active | `Effect::PipelinedSend` semantics, runtime, and AIR. |
 | `DESIGN-max-custom-effects.md` | design-active | `MAX_CUSTOM_EFFECTS` constraints, costs, per-cell-program design. |
+| `PROOF-TO-ACTION-BINDING-SWEEP.md` | design-active | Sweep of proof-to-action binding gaps across executor boundary. Added 2026-05-25. |
+| `BLOCK1-BIND-CLOSURE-NOTES.md` | design-active | Closure notes for the block1-bind TODO wave (queue, capability, handoff AIR arms). Added 2026-05-25. |
+
+### Design (study / sketch)
+
+| File | Class | One-line description |
+|---|---|---|
+| `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md` | design-study | Sketch for Phase 2 (joint aggregation AIR). |
+| `PICKLES-OUTER-LAYER-PLAN.md` | design-study | Plan for Kimchi/Pickles as the outer recursive layer. |
+| `KIMCHI-SURVEY.md` | design-study | Inventory + decision input on Kimchi-vs-Plonky3 recursion. |
+| `FEDERATION-AS-CELL.md` | design-study | Adjunction between Federation and Cell; argument for keeping them separate. |
+| `EFFECT-VM-SHAPE-A.md` | design-study | (See canonical above; also serves as the original shape-A motivation doc.) |
+| `CROSS-CELL-CATEGORICAL-ANALYSIS.md` | design-study | Categorical analysis of cross-cell interaction primitives. Added 2026-05-25. |
+| `CROSS-CELL-COORDINATION.md` | design-study | Cross-cell coordination patterns and design tradeoffs. Added 2026-05-25. |
+
+### Audit + study docs (session 2026-05-25)
+
+| File | Class | One-line description |
+|---|---|---|
+| `AIR-SOUNDNESS-AUDIT.md` | canonical | Complete AIR soundness sweep; attack sketches for T1.5, T2.5, T2.7, T2.9, T2.11. Source commit `ce1e2def`. |
+| `EXECUTOR-VK-AUDIT.md` | canonical | Executor + VK layering audit with closure plans for T1.3, T1.6, T1.7, T2.17, T2.18, T3.3. |
+| `RECEIPT-ARCHITECTURE-STUDY.md` | canonical | Receipt chain / audit trail deep dive; receipts as the primary causal record. |
+| `HOUYHNHNM-COMPARISON.md` | design-study | Side-by-side comparison of pyana vs. Houyhnhnm system principles. |
+| `HOUYHNHNM-DEEP-CRITIQUE.md` | design-study | Deep critique of pyana from the Houyhnhnm perspective (source `1a8299eb`). |
+| `PROTOCOL-CATEGORICAL-ANALYSIS.md` | design-study | Categorical treatment of pyana protocol primitives (Tier 1/2/3 punch list). |
+| `KIMI-DAMAGE-AUDIT.md` | canonical | Audit of prior Kimi-authored code for soundness regressions. |
+| `TEST-REALITY-AUDIT.md` | canonical | Test suite honesty audit — fake assertions, scaffold `must_pass` labeling. |
+| `MULTI-NODE-DEVNET-RUN.md` | canonical | First end-to-end multi-node devnet run report. |
+| `PREV-SESSION-AUDIT.md` | canonical | Cross-session state reconciliation and carryover items. |
+| `DEMO-INTERACTION-MATRIX.md` | design-study | Demo scenario matrix for the two-AI handoff and related demos. |
+| `STORAGE-SECONDARIES-TRIAGE.md` | design-active | Triage of storage secondary index and secondary-cell design gaps. |
+| `CELL-TURN-TEST-AUDIT.md` | canonical | Per-crate test audit for cell + turn layers; new integration test inventory. |
+| `CIRCUIT-VERIFIER-TEST-AUDIT.md` | canonical | Test audit for circuit + verifier layers. |
+| `INTENT-BRIDGE-TEST-AUDIT.md` | canonical | Test audit for intent + bridge layers (40 tests). |
+| `FEDERATION-CAPTP-TEST-AUDIT.md` | canonical | Test audit for federation + CapTP layers. |
+| `SDK-NODE-WIRE-TEST-AUDIT.md` | canonical | Test audit for SDK, node, and wire layers. |
+| `STARBRIDGE-APPS-TEST-AUDIT.md` | canonical | Test audit for starbridge-apps. |
+| `META-TEST-AUDIT.md` | canonical | Meta-level test audit: scaffold labels, fake assertions, must_pass demotion. |
+| `SUBSTRATE-TEST-AUDIT.md` | canonical | Test audit for storage-templates, credentials, app-framework substrate. |
+| `AUDIT-pyana-turn-verifier-test-quality.md` | canonical | Turn + verifier test quality audit (standalone). |
+
+### Session summaries
+
+| File | Class | One-line description |
+|---|---|---|
+| `SESSION-2026-05-25-SUMMARY.md` | entry | One-page summary of the 2026-05-25 session: soundness emergency, receipt fixes, lifecycle effects, ~200 tests, 20+ audit docs. |
+
+### Infra
+
+| File | Class | One-line description |
+|---|---|---|
 | `PERSVATI.md` | infra | Remote build offload box on the LAN. |
-| `TOPLEVEL-MD-INDEX.md` | entry | This file. |
 
 ---
 
