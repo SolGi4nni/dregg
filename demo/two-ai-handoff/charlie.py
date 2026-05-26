@@ -21,6 +21,7 @@ The verdict JSON shape:
     "replay_chain_verified":        bool,
     "captp_delivered_verified":     bool,
     "captp_delivered_tampered_rejected": bool,
+    "captp_delivered_in_chain":     bool,
     "sovereign_witness_self_verifies":   bool,
     "sovereign_witness_tampered_rejected": bool,
     "slot_caveat_first_write_ok":   bool,
@@ -163,6 +164,17 @@ def build_witnessed_chain(state_dir: Path) -> list[dict]:
     versions emitted only {"source": "…"} which caused the verifier to reject
     with "missing field 'turn_hash'".  We now load turn_hash and metadata from
     the companion output files written by alice.py / bob.py.
+
+    The chain now includes three entries (when all artifacts are present):
+      [0] grant   — alice's pyana_grant_capability Effect VM proof
+      [1] exercise — bob's pyana_exercise_bearer_cap Effect VM proof
+      [2] captp-delivered — the CapTpDelivered Turn's Effect VM proof
+                            (from silver-helper make-captp-delivered-chain)
+
+    Entry [2] closes the off-band gap: previously charlie verified the
+    CapTpDelivered cert only via a standalone silver-helper call. Now the
+    cert's associated Turn is in the witnessed chain so pyana-verifier
+    replay-chain processes it alongside the other turns.
     """
     chain: list[dict] = []
     for name, fname in [("grant", "grant.proof.json"), ("exercise", "exercise.proof.json")]:
@@ -200,6 +212,25 @@ def build_witnessed_chain(state_dir: Path) -> list[dict]:
                 "public_inputs": [int(v) for v in pi],
                 "witness_hash": _zeros32(),
             })
+
+    # ── CapTpDelivered chain entry ─────────────────────────────────────────
+    # silver-helper make-captp-delivered-chain writes a single-entry
+    # WitnessedReceipt chain JSON at silver.captp-delivered-chain.json.
+    # We read it back as a raw JSON list and splice in the first entry so
+    # the replay-chain verifier sees the CapTpDelivered Turn's STARK proof
+    # alongside the grant + exercise proofs.  The CapTpDelivered auth check
+    # (Ed25519: introducer sig on cert + sender sig on signing message) is
+    # still verified separately via `silver-helper verify-captp-delivered`;
+    # having the Turn in the chain links the two checks by shared turn_hash.
+    captp_chain_path = state_dir / "silver.captp-delivered-chain.json"
+    if captp_chain_path.exists():
+        try:
+            captp_entries = json.loads(captp_chain_path.read_text())
+            if captp_entries and isinstance(captp_entries, list):
+                chain.append(captp_entries[0])
+        except (json.JSONDecodeError, IndexError):
+            pass  # missing or malformed; the summary check will report it
+
     return chain
 
 
@@ -319,6 +350,37 @@ def main() -> int:
     # `expected_rejected` should be true; the binary exits 0 only when correctly rejected.
     captp_tampered_rejected = (not bool(tamper_verdict.get("tampered_signature_accepted", True))
                                and rc_tamper == 0)
+
+    # ─── CapTpDelivered in-chain check ────────────────────────────────────
+    # silver-helper make-captp-delivered-chain writes the CapTpDelivered Turn's
+    # STARK proof as a WitnessedReceipt entry, which build_witnessed_chain()
+    # above splices into the replay chain as entry [2]. Check that the chain
+    # file exists and is non-empty; the replay-chain verifier above will
+    # confirm the STARK proof is valid.  The Ed25519 auth check is already
+    # covered by captp_delivered_verified above.
+    captp_chain_path = state_dir / "silver.captp-delivered-chain.json"
+    captp_chain_summary_path = state_dir / "silver.captp-delivered-chain-summary.json"
+    captp_delivered_in_chain = False
+    captp_delivered_turn_hash = captp_verdict.get("turn_hash", "")
+    if captp_chain_path.exists() and captp_chain_summary_path.exists():
+        try:
+            chain_summary = json.loads(captp_chain_summary_path.read_text())
+            captp_delivered_in_chain = bool(chain_summary.get("chain_built", False))
+            # Cross-check: the turn_hash from verify-captp-delivered should
+            # match the turn_hash recorded in the chain summary.
+            chain_turn_hash = chain_summary.get("turn_hash_hex", "")
+            if captp_delivered_in_chain and captp_delivered_turn_hash:
+                if chain_turn_hash != captp_delivered_turn_hash:
+                    captp_delivered_in_chain = False
+                    blocker_notes.append(
+                        f"captp-delivered turn_hash mismatch: verify says "
+                        f"{captp_delivered_turn_hash[:16]}… but chain summary says "
+                        f"{chain_turn_hash[:16]}…"
+                    )
+        except (json.JSONDecodeError, KeyError):
+            blocker_notes.append("captp-delivered chain summary unparseable")
+    else:
+        blocker_notes.append("no silver.captp-delivered-chain.json (run make-captp-delivered-chain)")
 
     # ─── Sovereign witness (from silver.sovereign-witness.json) ───────────
     sov_path = state_dir / "silver.sovereign-witness.json"
@@ -473,6 +535,7 @@ def main() -> int:
         "captp_delivered_verified": captp_delivered_verified,
         "captp_delivered_details": captp_verdict,
         "captp_delivered_tampered_rejected": captp_tampered_rejected,
+        "captp_delivered_in_chain": captp_delivered_in_chain,
         "sovereign_witness_self_verifies": sovereign_witness_self_verifies,
         "sovereign_witness_tampered_rejected": sovereign_witness_tampered_rejected,
         "slot_caveat_first_write_ok": slot_caveat_first_write_ok,

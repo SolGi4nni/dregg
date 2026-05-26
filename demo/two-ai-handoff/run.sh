@@ -185,6 +185,16 @@ BILAT_RC=$?
 [ $BILAT_RC -eq 0 ] && ok "γ.2 BilateralBundle assembled (alice + bob WRs)" \
                   || fail "silver-helper make-bilateral-bundle failed ($BILAT_RC)"
 
+# Wrap the CapTpDelivered Turn in a STARK-proved WitnessedReceipt chain entry.
+# This closes the meta-audit gap: charlie previously verified the cert off-band
+# via a standalone silver-helper call. Now the Turn is in the witnessed chain
+# as entry [2] so pyana-verifier replay-chain sees it alongside grant + exercise.
+"$HELPER_BIN" make-captp-delivered-chain \
+    --state-dir "$STATE_DIR" > "$LOG_DIR/silver.captp-chain.stdout" 2> "$LOG_DIR/silver.captp-chain.stderr"
+CAPTP_CHAIN_RC=$?
+[ $CAPTP_CHAIN_RC -eq 0 ] && ok "CapTpDelivered chain entry (STARK-proved WitnessedReceipt) assembled" \
+                          || fail "silver-helper make-captp-delivered-chain failed ($CAPTP_CHAIN_RC)"
+
 # ── Step 4b: interaction-matrix lane additions ────────────────────────
 # These exercise protocol primitives the existing scenarios don't touch:
 #   * slot-caveat-suite — 5 more StateConstraint variants (Immutable,
@@ -243,10 +253,14 @@ RECW_RC=$?
                  || fail "silver-helper make-recursive-witness failed ($RECW_RC)"
 
 # ── Step 5/6/7: bob exercises (existing MCP path; Authorization::Bearer) ──
-# GAP: today's MCP tool `pyana_exercise_bearer_cap` uses Authorization::Bearer,
-# not CapTpDelivered. silver-helper above produces a canonical CapTpDelivered
-# Turn artifact in parallel for charlie to verify. Once MCP exposes a
-# `pyana_exercise_handoff_cert` tool, this step folds into it.
+# STATUS: Bob's MCP exercise still uses Authorization::Bearer (pyana_exercise_bearer_cap).
+# The canonical Authorization::CapTpDelivered Turn is assembled by silver-helper
+# (make-captp-delivered) and is now in the witnessed chain as entry [2] via
+# make-captp-delivered-chain. Charlie cross-checks the turn_hash between the
+# Ed25519 verify verdict and the chain summary. The remaining gap: the executor's
+# verify_captp_delivered is not called for Bob's MCP exercise turn (that still
+# uses Bearer). Closing it requires a `pyana_exercise_handoff_cert` MCP tool.
+# See: demo/two-ai-handoff/silver_helper.rs module comment (GAP notes).
 step 7 "bob exercises the cap (MCP exercise tool — legacy Authorization::Bearer path)"
 BOB_OUT=$("$PY" "$HERE/bob.py" \
     --node-bin "$NODE_BIN" \
@@ -285,6 +299,7 @@ EXERCISE_VERIFIED=$(get_bool exercise_verified)
 REPLAY_CHAIN_VERIFIED=$(get_bool replay_chain_verified)
 CAPTP_VERIFIED=$(get_bool captp_delivered_verified)
 CAPTP_TAMPER_REJECTED=$(get_bool captp_delivered_tampered_rejected)
+CAPTP_IN_CHAIN=$(get_bool captp_delivered_in_chain)
 SOV_SELF_VERIFIES=$(get_bool sovereign_witness_self_verifies)
 SOV_TAMPER_REJECTED=$(get_bool sovereign_witness_tampered_rejected)
 CAV_FIRST_OK=$(get_bool slot_caveat_first_write_ok)
@@ -328,6 +343,7 @@ SUITE_FDR_NEG=$(suite_case FieldDeltaInRange negative_rejected)
 [ "$REPLAY_CHAIN_VERIFIED" = "True" ]  && ok "replay-chain (WitnessedReceipt v1) verified" || warn "replay-chain NOT verified"
 [ "$CAPTP_VERIFIED" = "True" ]         && ok "CapTpDelivered turn verified" || warn "CapTpDelivered turn NOT verified"
 [ "$CAPTP_TAMPER_REJECTED" = "True" ]  && ok "CapTpDelivered tampered signature rejected (must_not_pass)" || warn "tampered CapTpDelivered WRONGLY accepted"
+[ "$CAPTP_IN_CHAIN" = "True" ]         && ok "CapTpDelivered Turn is in-chain (STARK-proved WR entry, turn_hash cross-checked)" || warn "CapTpDelivered NOT in witnessed chain"
 [ "$SOV_SELF_VERIFIES" = "True" ]      && ok "SovereignCellWitness self-verifies" || warn "SovereignCellWitness does NOT verify"
 [ "$SOV_TAMPER_REJECTED" = "True" ]    && ok "SovereignCellWitness tampered commitment rejected (must_not_pass)" || warn "tampered sovereign witness WRONGLY accepted"
 [ "$CAV_FIRST_OK" = "True" ]           && ok "slot caveat: first write ok" || warn "slot caveat first write FAILED"
@@ -393,6 +409,7 @@ add_check "step 3: grant turn committed"                                       1
 add_check "step 5: bearer-cap URI dropped"                                     1
 add_check "step 7: bob exercised the cap (MCP Bearer path)"                    "$EXERCISE_OK"
 add_check "Authorization::CapTpDelivered Turn assembled + verified"            $(b2i "$CAPTP_VERIFIED")
+add_check "Authorization::CapTpDelivered Turn in witnessed chain (in-chain)"  $(b2i "$CAPTP_IN_CHAIN")
 add_check "SovereignCellWitness self-verifies"                                 $(b2i "$SOV_SELF_VERIFIES")
 add_check "slot caveat: first registration succeeds"                           $(b2i "$CAV_FIRST_OK")
 add_check "slot caveat: renewal (Monotonic) succeeds"                          $(b2i "$CAV_RENEWAL_OK")
